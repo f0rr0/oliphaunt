@@ -6,6 +6,7 @@ import path from 'node:path';
 import { renderReleaseCargoToml } from '../../src/native/sdks/rust/tools/prepare-rust-release-source.mts';
 import { assertWasixNapiCarrierManifest } from '../../src/wasix/node-addon/tools/check-release-assets.mts';
 import {
+  resolvedAdapterRuntimeContract,
   workspaceCarrierManifest,
   workspaceRuntimeVersion,
 } from '../../src/wasix/node-addon/tools/workspace-runtime-contract.mts';
@@ -210,22 +211,34 @@ test('WASIX tools staging retains its explicit SDK pin after that SDK advances',
   }
 });
 
-test('WASIX addon qualification identifies the compiled workspace runtime without changing release pins', () => {
+test('WASIX addon qualification holds registry identities after current producers advance', () => {
   const product = json('src/wasix/node-addon/package.json');
   const original = json('src/wasix/node-addon/packages/linux-x64-gnu/package.json');
   const staged = workspaceCarrierManifest(original, product.oliphaunt);
-  assert.equal(staged.oliphaunt.runtimeVersion, workspaceRuntimeVersion());
-  assert.notEqual(staged.oliphaunt.runtimeVersion, original.oliphaunt.runtimeVersion);
+  const resolved = resolvedAdapterRuntimeContract();
+  assert.equal(staged.oliphaunt.runtimeVersion, resolved.runtimeVersion);
+  assert.equal(staged.oliphaunt.runtimeVersion, original.oliphaunt.runtimeVersion);
+  assert.notEqual(staged.oliphaunt.runtimeVersion, workspaceRuntimeVersion());
   assert.equal(staged.oliphaunt.qualificationOnly, true);
-  const currentRust = Bun.TOML.parse(read('src/wasix/sdks/rust/Cargo.toml')).package.version;
-  const currentContract = {
-    runtimeVersion: workspaceRuntimeVersion(),
-    rustBindingVersion: currentRust,
-  };
-  const aligned = workspaceCarrierManifest(original, currentContract);
-  assert.equal(Object.hasOwn(aligned.oliphaunt, 'qualificationOnly'), false);
+  const aligned = workspaceCarrierManifest(original, resolved);
+  assert.equal(aligned.oliphaunt.qualificationOnly, true);
+  const runtimeFile = 'src/wasix/runtime/VERSION';
+  const sdkFile = 'src/wasix/sdks/rust/Cargo.toml';
+  const runtimeText = read(runtimeFile);
+  const sdkText = read(sdkFile);
+  try {
+    write(runtimeFile, `${resolved.runtimeVersion}\n`);
+    write(
+      sdkFile,
+      sdkText.replace(/^version = "[^"]+"/mu, `version = "${resolved.rustBindingVersion}"`),
+    );
+    assert.equal(workspaceCarrierManifest(original, resolved).oliphaunt.qualificationOnly, true);
+  } finally {
+    write(runtimeFile, runtimeText);
+    write(sdkFile, sdkText);
+  }
   const rustOnly = workspaceCarrierManifest(original, {
-    ...currentContract,
+    ...resolved,
     rustBindingVersion: '0.0.0',
   });
   assert.equal(rustOnly.oliphaunt.qualificationOnly, true);
@@ -255,6 +268,21 @@ test('WASIX addon qualification identifies the compiled workspace runtime withou
   );
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.split('\t')[0], staged.oliphaunt.runtimeVersion);
+  const lockFile = 'src/wasix/node-addon/Cargo.lock';
+  const lockText = read(lockFile);
+  try {
+    const lock = Bun.TOML.parse(lockText);
+    const runtime = lock.package.find((pkg) => pkg.name === 'liboliphaunt-wasix-portable');
+    write(lockFile, lockText.replace(`checksum = "${runtime.checksum}"`, 'checksum = "invalid"'));
+    assert.throws(() => resolvedAdapterRuntimeContract(), /checksum-pinned registry/u);
+    write(
+      lockFile,
+      lockText.replace(`source = "${runtime.source}"\nchecksum = "${runtime.checksum}"`, ''),
+    );
+    assert.throws(() => resolvedAdapterRuntimeContract(), /checksum-pinned registry/u);
+  } finally {
+    write(lockFile, lockText);
+  }
 });
 
 test('WASIX SDK release requires the same portable and addon runtime', () => {
@@ -296,7 +324,9 @@ test('WASIX workspace consumer uses current producers while its release package 
 test('native Rust source generation uses its native runtime and broker pins', () => {
   const source = read('src/native/sdks/rust/Cargo.toml');
   const original = Bun.TOML.parse(source);
-  const staged = Bun.TOML.parse(packagedCargoManifestText(renderReleaseCargoToml(source)));
+  const staged = Bun.TOML.parse(
+    packagedCargoManifestText(renderReleaseCargoToml(source), read('Cargo.toml')),
+  );
   assert.equal(
     staged.dependencies['oliphaunt-query'].version,
     original.dependencies['oliphaunt-query'].version,

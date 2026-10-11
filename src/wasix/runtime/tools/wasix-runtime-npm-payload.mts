@@ -326,7 +326,7 @@ export function stageWasixRuntimeNpmPayload({
     name: WASIX_RUNTIME_NPM_PACKAGE,
     version,
     description: 'Portable liboliphaunt WASIX runtime assets for Oliphaunt hosts.',
-    license: releaseProfilePackageLicense('wasix-runtime').spdx,
+    license: releaseProfilePackageLicense('wasix-runtime', noticeOptions).spdx,
     type: 'module',
     sideEffects: false,
     repository: { type: 'git', url: NPM_TRUSTED_PUBLISHING_REPOSITORY },

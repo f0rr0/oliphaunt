@@ -372,15 +372,16 @@ export function liboliphauntAndroidAbi(target) {
   return abi;
 }
 
-function liboliphauntNativeRows(prefix) {
+function liboliphauntNativeRows(prefix, declaredTargets = undefined) {
   const product = 'liboliphaunt-native';
   const targets = new Set(
-    productTargets(
-      product,
-      PRODUCT_PRESETS[product],
-      new Set(Object.keys(NATIVE_RUNTIME_TARGETS)),
-      prefix,
-    ),
+    declaredTargets ??
+      productTargets(
+        product,
+        PRODUCT_PRESETS[product],
+        new Set(Object.keys(NATIVE_RUNTIME_TARGETS)),
+        prefix,
+      ),
   );
   const rows = [];
   for (const target of [...targets].sort(compareText)) {
@@ -455,15 +456,16 @@ function githubChecksumRow(product, asset = `${product}-{version}-release-assets
   };
 }
 
-function postgresToolsNativeRows(prefix) {
+function postgresToolsNativeRows(prefix, declaredTargets = undefined) {
   const product = 'postgres-tools-native';
   const targets = new Set(
-    productTargets(
-      product,
-      PRODUCT_PRESETS[product],
-      new Set(Object.keys(DESKTOP_TARGETS)),
-      prefix,
-    ),
+    declaredTargets ??
+      productTargets(
+        product,
+        PRODUCT_PRESETS[product],
+        new Set(Object.keys(DESKTOP_TARGETS)),
+        prefix,
+      ),
   );
   const rows = [];
   for (const target of [...targets].filter((item) => item in DESKTOP_TARGETS).sort(compareText)) {
@@ -680,6 +682,30 @@ export function nativeHelperArtifactRows(
     : nodeDirectRows(prefix, [...targets]);
 }
 
+/** Project canonical runtime assets from explicitly read release targets. */
+export function nativeRuntimeArtifactRows(
+  product,
+  declaredTargets,
+  prefix = 'release-artifact-targets.mts',
+) {
+  const knownTargets =
+    product === 'liboliphaunt-native'
+      ? new Set(Object.keys(NATIVE_RUNTIME_TARGETS))
+      : product === 'postgres-tools-native'
+        ? new Set(Object.keys(DESKTOP_TARGETS))
+        : null;
+  if (knownTargets === null) fail(prefix, `not a native runtime product: ${product}`);
+  const targets = productTargetsFromConfig(
+    product,
+    { targets: declaredTargets },
+    knownTargets,
+    prefix,
+  );
+  return product === 'liboliphaunt-native'
+    ? liboliphauntNativeRows(prefix, targets)
+    : postgresToolsNativeRows(prefix, targets);
+}
+
 function wasixNapiRows(prefix) {
   const product = 'oliphaunt-wasix-napi';
   const rows = [];
@@ -720,7 +746,7 @@ function wasixNapiRows(prefix) {
   return rows;
 }
 
-function databaseResourceRows() {
+export function databaseResourceArtifactRows(contract = undefined) {
   const rows = [
     {
       id: 'database-resources.swift-source',
@@ -742,7 +768,7 @@ function databaseResourceRows() {
       _source_file: 'Moon release metadata',
     },
   ];
-  for (const { family, target, profile, suffix } of seedCarrierIdentities()) {
+  for (const { family, target, profile, suffix } of seedCarrierIdentities(contract)) {
     for (const extension of ['tar.zst', 'json']) {
       rows.push({
         id: `database-resources.${family}.${target}.${profile}.${extension}`,
@@ -775,7 +801,7 @@ export function rawArtifactTargetRows(prefix = 'release-artifact-targets.mts') {
       ...githubChecksumRow('oliphaunt-swift'),
       _source_file: 'src/native/sdks/swift/tools/build-bindings-xcframework.sh',
     },
-    ...databaseResourceRows(),
+    ...databaseResourceArtifactRows(),
     ...liboliphauntNativeRows(prefix),
     ...postgresToolsNativeRows(prefix),
     ...postgresToolsWasixRows(prefix),

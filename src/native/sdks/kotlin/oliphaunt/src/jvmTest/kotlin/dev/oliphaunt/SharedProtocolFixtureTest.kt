@@ -148,10 +148,12 @@ class SharedProtocolFixtureTest {
 
 private fun sharedProtocolFixturePath(name: String): Path {
     val directory =
-        checkNotNull(System.getProperty("oliphaunt.sharedFixturesDir")?.takeIf(String::isNotBlank)
-            ?: System.getenv("TEST_SRCDIR")?.let { runfiles ->
-                Path.of(runfiles, requireNotNull(System.getenv("TEST_WORKSPACE")), "src/test-fixtures").toString()
-            }) {
+        checkNotNull(
+            System.getProperty("oliphaunt.sharedFixturesDir")?.takeIf(String::isNotBlank)
+                ?: System.getenv("TEST_SRCDIR")?.let { runfiles ->
+                    Path.of(runfiles, requireNotNull(System.getenv("TEST_WORKSPACE")), "src/test-fixtures").toString()
+                },
+        ) {
             "The fixture test requires the declared shared fixture directory"
         }
     return Path.of(directory, "protocol", name)

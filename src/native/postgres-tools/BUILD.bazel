@@ -1,0 +1,31 @@
+load("//build_defs/native/carriers:defs.bzl", "native_desktop_carriers", "native_tools_facades")
+load("//build_defs/native/carriers:tests.bzl", "native_cargo_consumer_test", "native_installed_carrier_test")
+load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["release.toml", "tools/package-cargo-artifacts.mts"])
+exports_files(glob(["npm/*", "npm-platforms/*/package.json", "npm-platforms/*/README.md", "crates/tools/**"], exclude = ["**/target/**"]))
+
+native_desktop_carriers(
+    product = "postgres-tools-native",
+    root_mappings = [],
+    runtime_mappings = ["//src/native/runtime:tools_binaries", "//src/native/runtime:runtime_libpq"],
+    binary_mappings = ["//src/native/runtime:tools_binaries", "//src/native/runtime:runtime_libpq"],
+)
+
+native_tools_facades()
+
+native_cargo_consumer_test(
+    name = "installed_cargo_test",
+    packages = ":cargo_packages",
+    archive = ":github_archive",
+    target_compatible_with = NATIVE_COMPATIBLE,
+    size = "medium",
+)
+
+native_installed_carrier_test(
+    name = "installed_carrier_test",
+    inputs = ["//src/native/runtime:github_archive", ":github_archive", ":npm_facade", ":npm", "//src/native/runtime:profile_smoke", "//build_defs/native/carriers:tools-consumer.mts", "//src/test-fixtures:postgres/logical-tools.json"],
+    target_compatible_with = NATIVE_COMPATIBLE,
+    size = "medium",
+)

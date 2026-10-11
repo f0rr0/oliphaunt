@@ -1,0 +1,58 @@
+diff --git a/crate_universe/extensions.bzl b/crate_universe/extensions.bzl
+index 99ce629..172dc76 100644
+--- a/crate_universe/extensions.bzl
++++ b/crate_universe/extensions.bzl
+@@ -637,7 +637,10 @@ def _generate_hub_and_spokes(
+                 fail("Invalid immutable Cargo source metadata for " + crate_id)
+             name, version = parts
+             if (
+-                source["strip_prefix"] != name + "-" + version or
++                type(source["strip_prefix"]) != "string" or
++                not source["strip_prefix"] or
++                [c for c in source["strip_prefix"].elems() if c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._+/"] or
++                [part for part in source["strip_prefix"].split("/") if part in ["", ".", ".."]] or
+                 not source["url"].startswith("https://") or
+                 len(source["sha256"]) != 64 or
+                 [c for c in source["sha256"].elems() if c not in "0123456789abcdef"]
+@@ -815,12 +818,30 @@ def _generate_hub_and_spokes(
+                 sorted(patches) != sorted(source["patches"])
+             ):
+                 fail("Generated HTTP source differs from canonical acquisition: " + crate_id)
++            crate = contents["crates"][crate_id]
++            default_prefix = crate["name"] + "-" + crate["version"]
++            repository_name = cfg.name + "__" + crate["name"] + "-" + crate["version"].replace("+", "-")
++            blocks = rendered.split("\n    maybe(\n")
++            marker = "        http_archive,\n        name = " + json.encode(repository_name) + ",\n"
++            matches = [index for index in range(len(blocks)) if marker in blocks[index]]
++            if len(matches) != 1 or blocks[matches[0]].count(marker) != 1:
++                fail("Expected one generated HTTP repository for " + crate_id)
++            index = matches[0]
++            block = blocks[index]
++            original_prefix = "        strip_prefix = " + json.encode(default_prefix) + ",\n"
++            if block.count(original_prefix) != 1:
++                fail("Expected the generated HTTP crate prefix for " + crate_id)
++            if source["strip_prefix"] != default_prefix:
++                block = block.replace(original_prefix, "        strip_prefix = " + json.encode(source["strip_prefix"]) + ",\n")
++                repository["strip_prefix"] = source["strip_prefix"]
+             if patches != source["patches"]:
+                 original = "        patches = [\n" + "".join(["            %s,\n" % json.encode(patch) for patch in patches]) + "        ],"
+                 ordered = "        patches = [\n" + "".join(["            %s,\n" % json.encode(patch) for patch in source["patches"]]) + "        ],"
+-                if rendered.count(original) != 1:
++                if block.count(original) != 1:
+                     fail("Expected one generated HTTP patch list for " + crate_id)
+-                rendered = rendered.replace(original, ordered)
++                block = block.replace(original, ordered)
++            blocks[index] = block
++            rendered = "\n    maybe(\n".join(blocks)
+             repository["patches"] = source["patches"]
+         module_ctx.file(rendered_file, rendered)
+         module_ctx.file(lockfile, json.encode(contents))
+@@ -876,7 +897,7 @@ def _generate_hub_and_spokes(
+                 sha256 = repo.get("sha256", None),
+                 type = "tar.gz",
+                 urls = [repo["url"]],
+-                strip_prefix = "%s-%s" % (crate["name"], crate["version"]),
++                strip_prefix = repo.get("strip_prefix", "%s-%s" % (crate["name"], crate["version"])),
+                 build_file_content = build_file_content,
+             )
+         elif "Git" in repo:

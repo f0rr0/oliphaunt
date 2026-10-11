@@ -1,11 +1,65 @@
+load("//build_defs/resources:resources.bzl", "linux_resource_slice")
+load("//build_defs/resources:mobile.bzl", "android_resource_slice", "native_abi_receipt")
+load("//build_defs/android:toolchain.bzl", "android_artifact")
+load("//build_defs/foundation:bun.bzl", "bun_script_test")
+load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS")
+
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "VERSION",
     "seeds/carrier-identities.mts",
-])
+] + glob(["contracts/*.mts", "contracts/*.json", "seeds/*.mts", "seeds/native/tools/*.mts"]))
 
 filegroup(
     name = "cluster_seed_contract_fixtures",
     srcs = glob(["contracts/fixtures/*.properties"]),
+)
+
+native_abi_receipt(name = "native_target_abi")
+
+[android_artifact(
+    name = "android_" + architecture + "_abi",
+    artifact = ":native_target_abi",
+    platform = "//build_defs/android:android_" + architecture,
+) for architecture in ["arm64", "x86_64"]]
+
+linux_resource_slice(name = "linux_shipping_export", templates = {
+    "//src/database-resources/icu:npm/package.json": "npm/package.json",
+    "//src/database-resources/icu:npm/README.md": "npm/README.md",
+    "//src/database-resources/icu:npm/OliphauntICU.podspec": "npm/OliphauntICU.podspec",
+    "//src/database-resources/icu:npm/react-native.config.cts": "npm/react-native.config.cts",
+    "//src/database-resources/icu:cargo/Cargo.toml": "cargo/Cargo.toml",
+    "//src/database-resources/icu:cargo/README.md": "cargo/README.md",
+    "//src/database-resources/icu:cargo/build.rs": "cargo/build.rs",
+    "//src/database-resources/icu:cargo/build-support.rs": "cargo/build-support.rs",
+    "//src/database-resources/icu:cargo/src/lib.rs": "cargo/src/lib.rs",
+})
+
+android_resource_slice(name = "android_shipping_export")
+
+bun_script_test(
+    name = "linux_resource_test",
+    entry_point = "//build_defs/resources:resource_slice.test.mts",
+    args = [
+        "$(location //src/native/runtime:runtime_payload)", "$(location //build_defs/resources:seed_consumer)",
+        PRODUCTS["liboliphaunt-native"]["version"], PRODUCTS["database-resources"]["version"],
+        "$(location :icu_payload)", "$(location :icu_carriers_npm_files)", "$(location :icu_carriers_cargo_files)", "$(location :icu_carriers_maven_files)",
+        "$(location :linux_x64_standard_archive)", "$(location :linux_x64_standard_manifest)", "$(location :linux_x64_standard_frozen)", "$(location :linux_x64_standard_abi)",
+        "$(location :linux_x64_standard_carriers_npm_files)", "$(location :linux_x64_standard_carriers_cargo_files)",
+        "$(location :linux_x64_icu_archive)", "$(location :linux_x64_icu_manifest)", "$(location :linux_x64_icu_frozen)", "$(location :linux_x64_icu_abi)",
+        "$(location :linux_x64_icu_carriers_npm_files)", "$(location :linux_x64_icu_carriers_cargo_files)",
+    ],
+    data = [
+        "//build_defs/resources:helpers", "//build_defs/resources:shared.mts", "//src/native/runtime:runtime_payload", "//build_defs/resources:seed_consumer",
+        "//src/native/sdks/ts:src/root-descriptor.ts", "//src/native/sdks/ts:src/native/filesystem-durability.ts",
+        ":icu_payload", ":icu_carriers_npm_files", ":icu_carriers_cargo_files", ":icu_carriers_maven_files",
+        ":linux_x64_standard_archive", ":linux_x64_standard_manifest", ":linux_x64_standard_frozen", ":linux_x64_standard_abi",
+        ":linux_x64_standard_carriers_npm_files", ":linux_x64_standard_carriers_cargo_files",
+        ":linux_x64_icu_archive", ":linux_x64_icu_manifest", ":linux_x64_icu_frozen", ":linux_x64_icu_abi",
+        ":linux_x64_icu_carriers_npm_files", ":linux_x64_icu_carriers_cargo_files",
+        "contracts/profile-probe.json",
+    ],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "medium",
 )

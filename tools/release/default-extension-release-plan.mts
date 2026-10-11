@@ -88,13 +88,19 @@ export function defaultExtensionReleasePlan(
     const target = requirements.get(`${sdk}:${runtime}`)?.version ?? pin(sdk, runtime);
     const addon = 'oliphaunt-wasix-napi';
     const version = pin(sdk, addon);
+    const buildsRuntime = buildBound.get(addon)?.has(runtime);
     const currentHost =
-      selected.has(addon) && version === products[addon].version
+      buildsRuntime && selected.has(addon) && version === products[addon].version
         ? products[runtime].version
         : pin(addon, runtime, version);
     if (currentHost !== target) {
-      const host = selected.has(addon) ? products[runtime].version : pin(addon, runtime);
+      const host =
+        buildsRuntime && selected.has(addon) ? products[runtime].version : pin(addon, runtime);
       if (host !== target) {
+        if (!buildsRuntime)
+          throw new Error(
+            `default-extension-release-plan: ${addon} adopts ${runtime}@${host}; update its conventional runtime and SDK requirements before targeting ${runtime}@${target}`,
+          );
         if (target !== products[runtime].version)
           throw new Error(
             `default-extension-release-plan: ${addon} cannot embed older ${runtime}@${target}`,

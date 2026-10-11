@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { archive } from '../../query/package.mts';
-import { candidateConsumerManifest, cargoCandidate } from './consumer.mts';
+import { candidateConsumerManifest, cargoCandidate, resolvedSdkRuntime } from './consumer.mts';
 
 const template = readFileSync(`${import.meta.dir}/fixture/Cargo.toml`, 'utf8');
 const sdkManifest = Bun.TOML.parse(
@@ -54,16 +54,71 @@ test('candidate SDK/helper bumps update their consumer constraints and hold runt
 });
 
 test('broker-only candidate version changes do not retarget SDK or its runtime', () => {
-  expect(candidateConsumerManifest(template, candidates('0.3.2', '0.3.2', '0.3.2'))).toBe(
-    candidateConsumerManifest(template, candidates()),
-  );
-});
-
-test('a missing packaged SDK/helper identity cannot silently use the checkout', () => {
-  expect(() =>
+  expect(
     candidateConsumerManifest(
       template,
-      candidates().filter((candidate) => candidate.name !== 'oliphaunt'),
+      candidates('0.3.2', '0.3.2', '0.3.2').filter(
+        (candidate) => candidate.name === 'oliphaunt-broker',
+      ),
     ),
-  ).toThrow();
+  ).toBe(template);
+  expect(candidateConsumerManifest(template, [])).toBe(template);
+});
+
+test('selected SDK/helper roots change only their own authored consumer constraints', () => {
+  const selectedSdk = candidates('0.3.3').filter((candidate) => candidate.name === 'oliphaunt');
+  const sdkOnly = Bun.TOML.parse(candidateConsumerManifest(template, selectedSdk));
+  expect(sdkOnly.dependencies.oliphaunt).toBe('=0.3.3');
+  expect(sdkOnly['build-dependencies']['oliphaunt-build']).toBe('=0.3.2');
+  const helperOnly = Bun.TOML.parse(
+    candidateConsumerManifest(
+      template,
+      candidates('0.3.2', '0.3.4').filter((candidate) => candidate.name === 'oliphaunt-build'),
+    ),
+  );
+  expect(helperOnly.dependencies.oliphaunt).toBe('=0.3.2');
+  expect(helperOnly['build-dependencies']['oliphaunt-build']).toBe('=0.3.4');
+});
+
+test('held SDK runtime comes from the checksum-authenticated resolved archive', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'oliphaunt-held-sdk-test-'));
+  try {
+    const file = join(
+      directory,
+      'registry/cache/index.crates.io-1949cf8c6b5b557f/oliphaunt-0.3.2.crate',
+    );
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      archive({
+        'oliphaunt-0.3.2/Cargo.toml': Buffer.from(
+          `[package]\nname="oliphaunt"\nversion="0.3.2"\n[package.metadata.oliphaunt]\nnative-version="${heldRuntime}"\n`,
+        ),
+      }),
+    );
+    const selected = cargoCandidate(file);
+    const lock = `[[package]]\nname="oliphaunt"\nversion="0.3.2"\nsource="registry+https://github.com/rust-lang/crates.io-index"\nchecksum="${selected.sha256}"\n`;
+    expect(resolvedSdkRuntime(template, lock, [], directory)).toBe(heldRuntime);
+    expect(() =>
+      resolvedSdkRuntime(template, lock.replace(selected.sha256, '0'.repeat(64)), [], directory),
+    ).toThrow('held SDK archive differs');
+    expect(() =>
+      resolvedSdkRuntime(
+        template.replace(`runtime-version = "${heldRuntime}"`, 'runtime-version = "9.0.0"'),
+        lock,
+        [],
+        directory,
+      ),
+    ).toThrow();
+    expect(() =>
+      resolvedSdkRuntime(
+        template,
+        '[[package]]\nname="oliphaunt"\nversion="0.3.2"\n',
+        [],
+        directory,
+      ),
+    ).toThrow('explicitly selected candidate');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

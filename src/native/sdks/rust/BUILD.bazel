@@ -4,13 +4,10 @@ load("//build_defs/languages:source.bzl", "cargo_source_package")
 package(default_visibility = ["//visibility:public"])
 exports_files(["Cargo.toml", "release.toml"])
 
-PATH_DEPS = {
-    "oliphaunt-broker": "//src/native/broker:lib",
-    "liboliphaunt-native-bindings": "//src/native/rust-bindings:lib",
-}
+PATH_DEPS = {}
 
 cargo_package_env()
-BUILD_SCRIPT_DEPS = PATH_DEPS | {"oliphaunt-build": "//src/native/sdks/rust/crates/oliphaunt-build:lib"}
+BUILD_SCRIPT_DEPS = PATH_DEPS
 cargo_generator(path_dependencies = BUILD_SCRIPT_DEPS)
 cargo_generator(name = "mobile_build_script", path_dependencies = BUILD_SCRIPT_DEPS, features = ["mobile-bindings"], default_features = False)
 cargo_generator(name = "minimal_build_script", path_dependencies = BUILD_SCRIPT_DEPS, default_features = False)

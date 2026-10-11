@@ -56,6 +56,30 @@ test('release sync preserves wildcard Cargo path dependencies', () => {
   assert.equal(desiredCargoPathDependencyVersion('=0.1.0', '0.2.0'), '=0.2.0');
 });
 
+test('compatibility sync preserves exact installed Cargo requirements and their operator spacing', () => {
+  for (const requirement of ['=0.1.1', '= 0.1.1']) {
+    for (const source of [
+      `[dependencies]\nquery = { version = '${requirement}', features = ['one'] }\n`,
+      `[dependencies.query]\nversion = '${requirement}'\nfeatures = ['one']\n`,
+      `[workspace.dependencies]\nquery = { version = '${requirement}' }\n`,
+    ]) {
+      const dotted = source.startsWith('[workspace.')
+        ? 'workspace.dependencies.query.version'
+        : 'dependencies.query.version';
+      assert.deepEqual(syncTomlStringPath(source, dotted, '0.1.1', 'consumer'), {
+        text: source,
+        detail: undefined,
+      });
+      const result = syncTomlStringPath(source, dotted, '0.1.2', 'consumer');
+      const expected = Bun.TOML.parse(source);
+      (expected.workspace?.dependencies ?? expected.dependencies).query.version =
+        requirement.replace('0.1.1', '0.1.2');
+      assert.deepEqual(Bun.TOML.parse(result.text), expected);
+      assert.equal(syncTomlStringPath(result.text, dotted, '0.1.2', 'consumer').detail, undefined);
+    }
+  }
+});
+
 test('release sync updates table-form Cargo pins and keeps target-specific requirements distinct', () => {
   const manifestPath = path.resolve('/release-fixture/client/Cargo.toml');
   const packages = new Map([

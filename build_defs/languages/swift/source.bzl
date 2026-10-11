@@ -1,7 +1,8 @@
 """The final SwiftPM source carrier, using its declared frozen native pin."""
 
 load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS")
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
+load("//build_defs/foundation:bun-sources.bzl", "bun_source_path", "bun_source_tree")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 
 def _swift_source_impl(ctx):
@@ -14,8 +15,9 @@ def _swift_source_impl(ctx):
             fail("duplicate Swift source member " + member)
         sources[member] = file.path
     generators = {}
+    code = bun_source_tree(ctx, ctx.label.name + ".sources", [ctx.file._packager] + ctx.files._helpers + ctx.files.generators)
     for file in ctx.files.generators:
-        generators[file.basename.removesuffix(".mts") + ".mjs"] = file.path
+        generators[file.basename.removesuffix(".mts") + ".mjs"] = bun_source_path(ctx, code, file)
         inputs.append(file)
     specification = ctx.actions.declare_file(ctx.label.name + ".sources.json")
     ctx.actions.write(specification, json.encode({
@@ -36,9 +38,11 @@ def _swift_source_impl(ctx):
     tree = ctx.actions.declare_directory(ctx.label.name + "/release-tree")
     generator_files = [ctx.actions.declare_file(ctx.label.name + "/extension-generator/" + name) for name in ["extension-resource-inventory.mjs", "render-extension-products.mjs", "swift-carrier-resolver.mjs", "extension-owner-catalog.json"]]
     outputs = [archive, manifest, tree] + generator_files
-    ctx.actions.run(
-        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
-        arguments = [ctx.file._packager.path, archive.dirname, specification.path],
+    bun_file_action(
+        ctx,
+        entry_point = ctx.file._packager,
+        sources = code,
+        arguments = [archive.dirname, specification.path],
         inputs = depset(inputs + [specification]),
         outputs = outputs,
         mnemonic = "OliphauntSwiftSourceEnvelope",
@@ -56,7 +60,7 @@ def _swift_source_impl(ctx):
 
 _swift_source = rule(
     implementation = _swift_source_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "version": attr.string(mandatory = True),
         "native_version": attr.string(mandatory = True),

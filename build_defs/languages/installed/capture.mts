@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } fro
 import os from 'node:os';
 import path from 'node:path';
 import { stageCargoCarrierInputs } from '../../../tools/packaging/frozen-cargo.mts';
-import { candidateConsumerManifest, cargoCandidate } from './consumer.mts';
+import { candidateConsumerManifest, cargoCandidate, resolvedSdkRuntime } from './consumer.mts';
 import { type RegistryContext, validateRegistryContext } from './context.mts';
 
 /** Explicit network-enabled qualification preflight; Cargo is the only resolver. */
@@ -38,6 +38,12 @@ export async function captureCargoContext(
     assert.equal(result.exitCode, 0, `real Cargo preflight failed: ${command.join(' ')}`);
   }
   const lockText = readFileSync(path.join(consumer, 'Cargo.lock'), 'utf8');
+  resolvedSdkRuntime(
+    readFileSync(path.join(consumer, 'Cargo.toml'), 'utf8'),
+    lockText,
+    candidates,
+    cargoHome,
+  );
   const lock = Bun.TOML.parse(lockText);
   const metadata = Bun.spawnSync(
     [
@@ -134,6 +140,6 @@ export async function captureCargoContext(
 
 if (import.meta.main) {
   const [cargo, rustc, output, ...archives] = process.argv.slice(2);
-  assert(cargo && rustc && output && archives.length);
+  assert(cargo && rustc && output);
   console.log(JSON.stringify(await captureCargoContext(cargo, rustc, archives, output)));
 }

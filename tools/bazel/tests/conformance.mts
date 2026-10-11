@@ -185,8 +185,11 @@ function scenario(
     `${name}: duplicate test execution`,
   );
   for (const spawn of production) {
+    const preparesExpectedTest =
+      spawn.mnemonic === 'CopyToDirectory' &&
+      expectedTests.some((product) => targetName(spawn) === `${product}_test`);
     assert.ok(
-      allowedProduction.includes(targetName(spawn)),
+      allowedProduction.includes(targetName(spawn)) || preparesExpectedTest,
       `${name}: unnecessary ${spawn.mnemonic} for ${spawn.targetLabel}`,
     );
   }
@@ -475,7 +478,9 @@ function realQueryShipping(name: string, allowedTargets: string[], expectedEnvel
     if (rust) {
       assert.ok(
         actions.every((action) =>
-          ['FileWrite', 'ExecutableSymlink', 'CargoSourceEnvelope'].includes(action.mnemonic),
+          ['FileWrite', 'ExecutableSymlink', 'CopyToDirectory', 'CargoSourceEnvelope'].includes(
+            action.mnemonic,
+          ),
         ),
         'a source crate requires packaging without compilation',
       );
@@ -1062,6 +1067,7 @@ try {
   const heldQueryDependencyGraph = () => {
     const graph = bazel('cquery', [
       'filter("oliphaunt_query", deps(set(//src/native/sdks/rust:lib //src/wasix/sdks/rust:lib //src/native/broker:lib //src/wasix/pgwire-server:lib)))',
+      '--config=wasix-aot',
       '--output=label',
       '--platforms=//build_defs/native:linux_x86_64_glibc_2_28',
       '--host_platform=//build_defs/native:linux_x86_64_glibc_2_28',

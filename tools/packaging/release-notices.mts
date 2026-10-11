@@ -461,13 +461,21 @@ export function releaseNoticeInputPaths(
   return Object.freeze(releaseNoticeRows(options).map((row) => row.source));
 }
 
-export function releaseLicenseComponents(ids) {
+export function releaseLicenseComponents(ids, { sourceRoot } = {}) {
+  if (sourceRoot !== undefined)
+    return Object.freeze(
+      releaseNoticeRows({ components: ids, sourceRoot }).filter((row) => row.id),
+    );
   return Object.freeze(
     checkedComponents(ids).map((id) => validateRuntimeLicenseSource(LICENSE_COMPONENT_ROWS[id])),
   );
 }
 
-export function releasePackageLicense({ components = [], includeOliphaunt = true } = {}) {
+export function releasePackageLicense({
+  components = [],
+  includeOliphaunt = true,
+  sourceRoot,
+} = {}) {
   const entries = [];
   if (includeOliphaunt) {
     entries.push(
@@ -476,12 +484,12 @@ export function releasePackageLicense({ components = [], includeOliphaunt = true
         spdx: 'MIT',
         name: 'MIT License (Oliphaunt)',
         member: 'LICENSE',
-        source: path.join(ROOT, 'LICENSE'),
+        source: path.join(sourceRoot ?? ROOT, 'LICENSE'),
         licenseUrl: 'https://github.com/f0rr0/oliphaunt/blob/main/LICENSE',
       }),
     );
   }
-  entries.push(...releaseLicenseComponents(components));
+  entries.push(...releaseLicenseComponents(components, { sourceRoot }));
   return Object.freeze({
     spdx: entries.map((entry) => entry.spdx).join(' AND '),
     entries: Object.freeze(entries),
@@ -493,6 +501,7 @@ export function releaseProfilePackageLicense(profile, options = {}) {
   return releasePackageLicense({
     components: selection.components,
     includeOliphaunt: options.includeOliphaunt ?? true,
+    sourceRoot: options.sourceRoot,
   });
 }
 
@@ -501,6 +510,7 @@ export function releaseMavenLicenses({
   version,
   components = [],
   includeOliphaunt = true,
+  sourceRoot,
 } = {}) {
   if (typeof product !== 'string' || !/^[a-z0-9][a-z0-9-]*$/u.test(product)) {
     throw new Error('release Maven licenses require a canonical product id');
@@ -509,7 +519,7 @@ export function releaseMavenLicenses({
     throw new Error('release Maven licenses require a portable package version');
   }
   return Object.freeze(
-    releasePackageLicense({ components, includeOliphaunt }).entries.map((entry) =>
+    releasePackageLicense({ components, includeOliphaunt, sourceRoot }).entries.map((entry) =>
       Object.freeze({
         name: entry.name,
         url:
@@ -524,7 +534,7 @@ export function releaseMavenLicenses({
 
 export function releaseProfileMavenLicenses(
   profile,
-  { product, version, includeOliphaunt = true } = {},
+  { product, version, includeOliphaunt = true, sourceRoot } = {},
 ) {
   const selection = releaseCarrierProfile(profile);
   return releaseMavenLicenses({
@@ -532,6 +542,7 @@ export function releaseProfileMavenLicenses(
     version,
     components: selection.components,
     includeOliphaunt,
+    sourceRoot,
   });
 }
 

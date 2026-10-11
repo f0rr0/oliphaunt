@@ -15,6 +15,7 @@ cp "$root/src/wasix/node-addon/tools/workspace-runtime-contract.mts" "$product/t
 cp "$root/src/wasix/node-addon/tools/package-platform."{sh,mts} "$product/tools/"
 cp "$root/src/wasix/node-addon/tools/smoke-packaged-addon."{sh,mts} "$product/tools/"
 cp "$root/src/wasix/node-addon/package.json" "$product/"
+cp "$root/src/wasix/node-addon/Cargo.lock" "$product/"
 ln -s "$root/src/wasix/node-addon/packages" "$product/packages"
 ln -s "$root/tools/packaging" "$fixture/tools/packaging"
 ln -s "$root/tools/dev" "$fixture/tools/dev"

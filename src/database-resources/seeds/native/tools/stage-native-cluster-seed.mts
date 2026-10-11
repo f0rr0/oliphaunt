@@ -53,31 +53,23 @@ function requireDirectory(directory, label) {
   if (!existsSync(directory)) fail(`${label} does not exist: ${directory}`);
 }
 
-const [mode, ...argv] = process.argv.slice(2);
-const source = mode === 'install' ? argv.shift() : undefined;
-if (!['prepare', 'install'].includes(mode) || (mode === 'install' && !source)) {
-  fail('usage: stage-native-cluster-seed.mts prepare|install [prepared-seed] <seed options>');
+function validateArgs(args) {
+  requireDirectory(args.runtime, 'native runtime');
+  if (args.icuData !== undefined) requireDirectory(args.icuData, 'ICU data');
+  if (!NATIVE_CLUSTER_SEED_TARGETS.includes(args.target))
+    fail('unsupported native cluster-seed target');
+  if (
+    !['standard', 'icu'].includes(args.profile) ||
+    (args.profile === 'icu') !== Boolean(args.icuData)
+  )
+    fail('seed profile must match its explicit ICU data');
+  if (args.destination === path.parse(args.destination).root)
+    fail('destination must not be a filesystem root');
 }
-const args = parseArgs(argv);
-requireDirectory(args.runtime, 'native runtime');
-if (args.icuData !== undefined) requireDirectory(args.icuData, 'ICU data');
-if (!NATIVE_CLUSTER_SEED_TARGETS.includes(args.target))
-  fail('unsupported native cluster-seed target');
-if (args.destination === path.parse(args.destination).root)
-  fail('destination must not be a filesystem root');
-if (mode === 'prepare') {
-  for (const value of [
-    args.runtime,
-    args.destination,
-    args.target,
-    args.profile,
-    args.icuData ?? '',
-  ]) {
-    if (value.includes('\0')) fail('cluster-seed paths must not contain NUL');
-    process.stdout.write(`${value}\0`);
-  }
-} else {
-  const contract = JSON.parse(
+
+export function installNativeClusterSeed(source, args, contract) {
+  validateArgs(args);
+  contract ??= JSON.parse(
     readFileSync(new URL('../../../contracts/contract.json', import.meta.url), 'utf8'),
   );
   const files = path.join(source, 'files');
@@ -139,7 +131,30 @@ if (mode === 'prepare') {
   });
   rmSync(args.destination, { recursive: true, force: true });
   cpSync(source, args.destination, { recursive: true, errorOnExist: true });
-  console.log(
-    `clusterSeed=${args.destination}\ncatalogProfile=${args.profile}\ntarget=${args.target}`,
-  );
+}
+
+if (import.meta.main) {
+  const [mode, ...argv] = process.argv.slice(2);
+  const source = mode === 'install' ? argv.shift() : undefined;
+  if (!['prepare', 'install'].includes(mode) || (mode === 'install' && !source))
+    fail('usage: stage-native-cluster-seed.mts prepare|install [prepared-seed] <seed options>');
+  const args = parseArgs(argv);
+  validateArgs(args);
+  if (mode === 'prepare') {
+    for (const value of [
+      args.runtime,
+      args.destination,
+      args.target,
+      args.profile,
+      args.icuData ?? '',
+    ]) {
+      if (value.includes('\0')) fail('cluster-seed paths must not contain NUL');
+      process.stdout.write(`${value}\0`);
+    }
+  } else {
+    installNativeClusterSeed(source, args);
+    console.log(
+      `clusterSeed=${args.destination}\ncatalogProfile=${args.profile}\ntarget=${args.target}`,
+    );
+  }
 }

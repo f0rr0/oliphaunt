@@ -2,6 +2,8 @@
 
 load("@aspect_rules_js//npm:providers.bzl", "NpmPackageInfo")
 load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
+load("//build_defs/foundation:bun-sources.bzl", "bun_source_path", "bun_source_runfile", "bun_source_tree")
 
 _NODE_TOOLCHAIN = "@rules_nodejs//nodejs:toolchain_type"
 
@@ -33,10 +35,12 @@ browser_wasm = rule(
 
 def _bindings_impl(ctx):
     output = ctx.actions.declare_directory(ctx.label.name)
-    ctx.actions.run(
-        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
-        arguments = [ctx.file._runner.path, ctx.attr.mode, ctx.file.input.path, output.path, ctx.file.compiler.path, ctx.file.context.path],
-        inputs = [ctx.file.input, ctx.file.context, ctx.file._runner],
+    bun_file_action(
+        ctx,
+        ctx.file._runner,
+        arguments = [ctx.attr.mode, ctx.file.input.path, output.path, ctx.file.compiler.path, ctx.file.context.path],
+        inputs = [ctx.file.input, ctx.file.context],
+        source_files = [],
         tools = [ctx.file.compiler],
         outputs = [output],
         mnemonic = "BrowserWasmBindgen" if ctx.attr.mode == "bindgen" else "BrowserWasmOptimize",
@@ -45,7 +49,7 @@ def _bindings_impl(ctx):
 
 browser_bindings = rule(
     implementation = _bindings_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "input": attr.label(mandatory = True, allow_single_file = True),
         "compiler": attr.label(mandatory = True, allow_single_file = True, cfg = "exec"),
@@ -75,10 +79,13 @@ def _bundle_impl(ctx):
     # IDs and physical package paths come from the same canonical npm lock.
     ctx.actions.write(specification, json.encode({"sources": sources, "packages": packages}))
     output = ctx.actions.declare_directory(ctx.label.name)
-    ctx.actions.run(
-        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
-        arguments = [ctx.file._runner.path, ctx.file.bindings.path, output.path, node.path, ctx.file.context.path, specification.path, ctx.file._driver.path],
-        inputs = [ctx.file.bindings, ctx.file.context, ctx.file._runner, ctx.file._driver, ctx.file._archives, specification] + ctx.files.sources + package_files,
+    code = bun_source_tree(ctx, ctx.label.name + ".sources", [ctx.file._runner, ctx.file._driver, ctx.file._archives])
+    bun_file_action(
+        ctx,
+        ctx.file._runner,
+        sources = code,
+        arguments = [ctx.file.bindings.path, output.path, node.path, ctx.file.context.path, specification.path, bun_source_path(ctx, code, ctx.file._driver)],
+        inputs = [ctx.file.bindings, ctx.file.context, specification] + ctx.files.sources + package_files,
         tools = [node],
         outputs = [output],
         mnemonic = "BrowserRollup",
@@ -87,7 +94,7 @@ def _bundle_impl(ctx):
 
 browser_bundle = rule(
     implementation = _bundle_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE, _NODE_TOOLCHAIN],
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_NODE_TOOLCHAIN],
     attrs = {
         "bindings": attr.label(mandatory = True, allow_single_file = True),
         "sources": attr.label_list(mandatory = True, allow_files = True),
@@ -112,10 +119,13 @@ def _host_impl(ctx):
     specification = ctx.actions.declare_file(ctx.label.name + ".compiler-inputs.json")
     ctx.actions.write(specification, json.encode({"packages": packages}))
     output = ctx.actions.declare_directory(ctx.label.name)
-    inputs = [ctx.file.dist, ctx.file.curated, ctx.file.license, ctx.file.std_receipt, ctx.file.context, ctx.file._node_version, specification, ctx.file._runner, ctx.file._driver] + ctx.files._helpers + package_files
-    ctx.actions.run(
-        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
-        arguments = [ctx.file._runner.path, ctx.file.dist.path, ctx.file.curated.path, ctx.file.license.path, ctx.file.std_receipt.path, ctx.file.context.path, node.path, ctx.file._node_version.path, specification.path, ctx.file._driver.path, output.path],
+    inputs = [ctx.file.dist, ctx.file.curated, ctx.file.license, ctx.file.std_receipt, ctx.file.context, ctx.file._node_version, specification] + package_files
+    code = bun_source_tree(ctx, ctx.label.name + ".sources", [ctx.file._runner, ctx.file._driver] + ctx.files._helpers)
+    bun_file_action(
+        ctx,
+        ctx.file._runner,
+        sources = code,
+        arguments = [ctx.file.dist.path, ctx.file.curated.path, ctx.file.license.path, ctx.file.std_receipt.path, ctx.file.context.path, node.path, ctx.file._node_version.path, specification.path, bun_source_path(ctx, code, ctx.file._driver), output.path],
         inputs = inputs,
         tools = [node],
         outputs = [output],
@@ -125,7 +135,7 @@ def _host_impl(ctx):
 
 browser_host_package = rule(
     implementation = _host_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE, _NODE_TOOLCHAIN],
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_NODE_TOOLCHAIN],
     attrs = {
         "dist": attr.label(mandatory = True, allow_single_file = True),
         "curated": attr.label(default = "//src/wasix/sdks/ts/src/host:index.d.mts", allow_single_file = True),
@@ -142,10 +152,12 @@ browser_host_package = rule(
 
 def _host_assets_impl(ctx):
     outputs = [ctx.actions.declare_file("lib/host/" + name) for name in ["index.mjs", "worker.mjs", "wasmer_js_bg.wasm", "index.d.mts", "LICENSE", "provenance.json"]]
-    ctx.actions.run(
-        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
-        arguments = [ctx.file._copier.path, ctx.file.host.path] + [file.path for file in outputs],
-        inputs = [ctx.file.host, ctx.file._copier] + ctx.files._helpers,
+    bun_file_action(
+        ctx,
+        ctx.file._copier,
+        arguments = [ctx.file.host.path] + [file.path for file in outputs],
+        inputs = [ctx.file.host],
+        source_files = ctx.files._helpers,
         outputs = outputs,
         mnemonic = "BrowserSdkHostAssets",
     )
@@ -153,7 +165,7 @@ def _host_assets_impl(ctx):
 
 browser_host_assets = rule(
     implementation = _host_assets_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "host": attr.label(mandatory = True, allow_single_file = True),
         "_copier": attr.label(default = "//build_defs/wasix/browser:copy-host-assets.mts", allow_single_file = True),
@@ -184,16 +196,17 @@ def _consumer_launcher(ctx, mode, extra):
         sources += [ctx.file.runtime_acquisition, ctx.file.manifest]
     ctx.actions.write(specification, json.encode(data))
     arguments = [ctx.file._runner, specification, ctx.file.acquisition, node, ctx.file._driver] + extra
+    code = bun_source_tree(ctx, ctx.label.name + ".sources", [ctx.file._runner, ctx.file._driver] + ctx.files._helpers)
     launcher = ctx.actions.declare_file(ctx.label.name + ".sh")
-    command = ['"$runfiles_dir/%s"' % _runfile(ctx, arguments[0]), mode] + ['"$runfiles_dir/%s"' % _runfile(ctx, file) for file in arguments[1:]]
+    command = ['"$runfiles_dir/%s"' % bun_source_runfile(ctx, code, ctx.file._runner), mode] + ['"$runfiles_dir/%s"' % (bun_source_runfile(ctx, code, file) if file == ctx.file._driver else _runfile(ctx, file)) for file in arguments[1:]]
     ctx.actions.write(launcher, """#!/usr/bin/env bash
 set -euo pipefail
 runfiles_dir="$(cd "${RUNFILES_DIR:-${TEST_SRCDIR:-$0.runfiles}}" && pwd)"
 cd "$runfiles_dir/%s"
 export OLIPHAUNT_BAZEL_RUNFILES="$runfiles_dir"
-exec "$runfiles_dir/%s" %s "$@"
+exec "$runfiles_dir/%s" --no-install --no-env-file %s "$@"
 """ % (ctx.workspace_name, _runfile(ctx, bun), " ".join(command)), is_executable = True)
-    return [DefaultInfo(executable = launcher, runfiles = ctx.runfiles(files = arguments + sources + ctx.files._helpers + [bun]))]
+    return [DefaultInfo(executable = launcher, runfiles = ctx.runfiles(files = arguments + sources + ctx.files._helpers + [bun], transitive_files = code.files))]
 
 def _consumer_tools_impl(ctx):
     return _consumer_launcher(ctx, "tools", [])
@@ -210,7 +223,7 @@ _CONSUMER_ATTRS = {
 browser_consumer_tools_test = rule(
     implementation = _consumer_tools_impl,
     test = True,
-    toolchains = [BUN_TOOLCHAIN_TYPE, _NODE_TOOLCHAIN],
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_NODE_TOOLCHAIN],
     attrs = _CONSUMER_ATTRS,
 )
 
@@ -229,7 +242,7 @@ _SQL_CONSUMER_ATTRS = _CONSUMER_ATTRS | {
 browser_sql_consumer = rule(
     implementation = _consumer_impl,
     executable = True,
-    toolchains = [BUN_TOOLCHAIN_TYPE, _NODE_TOOLCHAIN],
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_NODE_TOOLCHAIN],
     attrs = _SQL_CONSUMER_ATTRS | {
         "sdk": attr.label(mandatory = True, allow_single_file = [".tgz"]),
         "query": attr.label(mandatory = True, allow_single_file = [".tgz"]),
@@ -243,6 +256,6 @@ def _consumer_lifecycle_impl(ctx):
 browser_sql_lifecycle = rule(
     implementation = _consumer_lifecycle_impl,
     executable = True,
-    toolchains = [BUN_TOOLCHAIN_TYPE, _NODE_TOOLCHAIN],
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_NODE_TOOLCHAIN],
     attrs = _SQL_CONSUMER_ATTRS,
 )

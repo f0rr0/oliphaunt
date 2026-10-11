@@ -199,6 +199,8 @@ dependencies = [
 [[package]]
 name = "liboliphaunt-native-bindings"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b0e758a0af81e354205e9ba8e668175357c974f3c3ad3421e681ad7e07d1ed8"
 dependencies = [
  "fs2",
  "getrandom 0.3.4",
@@ -383,6 +385,8 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "oliphaunt"
 version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f66cc378f5512a12e58b927b0ac013510c08d8d3f803d76ecce96fa07606faa5"
 dependencies = [
  "getrandom 0.3.4",
  "liboliphaunt-native-bindings",
@@ -402,6 +406,8 @@ dependencies = [
 [[package]]
 name = "oliphaunt-broker"
 version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76788356082fcb1e935fc13c16d8f3fff3d240867291229d0714a982ee2a53a9"
 dependencies = [
  "getrandom 0.3.4",
  "liboliphaunt-native-bindings",
@@ -435,6 +441,8 @@ checksum = "136d2fb6262d793d3cac04daf04a3f8354d91de50719bb6045f649234cfbbee0"
 [[package]]
 name = "oliphaunt-build"
 version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a2a676749df3756473b4fd0deea7ef194a5d78bbcfb6fb46f5ae1da8f058f82"
 dependencies = [
  "serde",
  "sha2",
@@ -444,6 +452,8 @@ dependencies = [
 [[package]]
 name = "oliphaunt-query"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "523a7416f6a830ef02928994a2a89e9fd9d01e4fe67b22f0480d377d5f9b235c"
 
 [[package]]
 name = "pkg-config"

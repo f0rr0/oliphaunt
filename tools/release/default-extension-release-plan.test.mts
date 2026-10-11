@@ -103,6 +103,19 @@ test('an existing compatible addon and historical platform SDKs avoid unnecessar
   expect(state.pins['oliphaunt-wasix-ts']['oliphaunt-wasix-napi']).toBe('0.2.1');
 });
 
+test('a held registry addon cannot acquire a new runtime merely by selecting its product', () => {
+  for (const selected of [[extension], [extension, 'oliphaunt-wasix-napi']]) {
+    const state = fixture();
+    delete state.products['oliphaunt-wasix-napi'].embedded_payload_products;
+    advance(state.products[wasix]);
+    const before = structuredClone({ products: state.products, pins: state.pins });
+    expect(() => defaultExtensionReleasePlan(state.products, selected, state)).toThrow(
+      'update its conventional runtime and SDK requirements',
+    );
+    expect({ products: state.products, pins: state.pins }).toEqual(before);
+  }
+});
+
 test('authored requirements beyond available producer versions fail before candidate application', () => {
   const state = fixture();
   state.pins['oliphaunt-js'][native] = '9.0.0';

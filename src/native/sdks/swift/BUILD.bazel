@@ -11,6 +11,8 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 package(default_visibility = ["//visibility:public"])
 exports_files(["Package.swift", "VERSION", "LIBOLIPHAUNT_VERSION", "tools/swift-native-carrier-contract.mts", "tools/native-legal-source-basis.mts", "tools/swift-xcframework-contract.mts", "tools/swift-release-manifest.mts", "tools/prepare-swift-release-consumer.mts"])
 
+filegroup(name = "broker_templates", srcs = glob(["Templates/OliphauntBroker/*"]))
+
 uniffi_swift(
     name = "generated_bindings",
     generator = "//src/native/mobile-bindings:bindgen",

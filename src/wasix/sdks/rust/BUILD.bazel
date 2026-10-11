@@ -21,6 +21,8 @@ cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"])
 cargo_integration_test(
     name = "postgres_regression_test",
     source = "tests/postgres_regression.rs",
+    path_dependencies = PATH_DEPS,
+    proc_macro_names = ["async-trait"],
     data = ["//src/test-fixtures:rust_fixtures"],
     size = "large",
     timeout = "long",

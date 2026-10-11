@@ -7,7 +7,10 @@ import {
   rustNativeTargetCfg,
 } from '../../tools/packaging/rust-native-targets.mts';
 import { archive } from '../query/package.mts';
-import { renderToml } from './cargo-metadata.mts';
+import {
+  renderCargoToml as renderToml,
+  resolveCargoWorkspaceInheritance,
+} from '../../tools/packaging/cargo-manifest.mts';
 
 type Table = Record<string, any>;
 export type SourceMetadata = {
@@ -75,42 +78,20 @@ async function conventionalSourceEntries(cargo: string, entries: Record<string, 
   }
 }
 
-function resolveInherited(table: Table, inherited: Table, label: string): Table {
-  return Object.fromEntries(
-    Object.entries(table).map(([key, value]) => {
-      if (!value || typeof value !== 'object' || value.workspace !== true) return [key, value];
-      const resolved = inherited[key];
-      if (resolved === undefined) throw new Error(`Missing inherited Cargo ${label}.${key}`);
-      if (typeof resolved !== 'object') return [key, resolved];
-      const merged = {
-        ...resolved,
-        ...Object.fromEntries(Object.entries(value).filter(([name]) => name !== 'workspace')),
-      };
-      if (label === 'dependencies' && (resolved.features || value.features))
-        merged.features = [...new Set([...(resolved.features ?? []), ...(value.features ?? [])])];
-      return [key, merged];
-    }),
-  );
-}
-
 export function sourceManifest(
   original: string,
   workspaceText: string,
   metadata: SourceMetadata,
 ): Table {
-  const manifest: Table = Bun.TOML.parse(original);
-  const workspace: Table = Bun.TOML.parse(workspaceText).workspace;
-  manifest.package = resolveInherited(manifest.package, workspace.package ?? {}, 'package');
+  const manifest: Table = resolveCargoWorkspaceInheritance(
+    Bun.TOML.parse(original),
+    Bun.TOML.parse(workspaceText).workspace ?? {},
+  );
   if (manifest.package.version !== metadata.version)
     throw new Error(`Source package version disagrees with ${metadata.product} owner`);
   for (const table of [manifest, ...Object.values(manifest.target ?? {})] as Table[]) {
     for (const section of ['dependencies', 'dev-dependencies', 'build-dependencies']) {
       if (!table[section]) continue;
-      table[section] = resolveInherited(
-        table[section],
-        workspace.dependencies ?? {},
-        'dependencies',
-      );
       for (const [name, dependency] of Object.entries(table[section]) as [
         string,
         Table | string,
@@ -129,6 +110,7 @@ export function sourceManifest(
     }
   }
   // Isolate the conventional consumer from a surrounding checkout workspace.
+  delete manifest.package.workspace;
   manifest.workspace = {};
   if (metadata.nativeArtifacts || metadata.brokerArtifacts) {
     const native = metadata.nativeArtifacts ?? [];

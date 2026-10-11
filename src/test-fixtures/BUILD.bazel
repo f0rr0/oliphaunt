@@ -1,4 +1,5 @@
 exports_files([
+    "postgres/logical-tools.json",
     "protocol/query-response-cases.json",
     "protocol/structured-sql-cases.json",
     "storage/physical-backup-wal-range-v1.properties",

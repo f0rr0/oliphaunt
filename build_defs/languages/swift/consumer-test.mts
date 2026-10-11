@@ -17,7 +17,7 @@ const [
   swiftc,
   clang,
   clangxx,
-  sdk,
+  sdkFile,
   receipt,
   triple,
 ] = process.argv.slice(2);
@@ -28,6 +28,9 @@ assert.equal(
 );
 const root = process.env.TEST_TMPDIR;
 assert.ok(root && path.isAbsolute(root), 'Bazel must supply a private TEST_TMPDIR');
+const sdkMarker = `${path.sep}sdk_macosx${path.sep}`;
+assert.ok(sdkFile.includes(sdkMarker), 'Expected a file from the declared macOS SDK');
+const sdk = sdkFile.slice(0, sdkFile.indexOf(sdkMarker)) + `${path.sep}sdk_macosx`;
 const home = path.join(root, 'home');
 mkdirSync(home);
 const packageRoot = path.join(root, 'package');

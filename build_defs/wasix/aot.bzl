@@ -5,7 +5,7 @@ deserialize, query and reopen consumer proofs.
 """
 
 load("@wasix_tool_metadata//:targets.bzl", "WASIX_AOT_TARGETS")
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load(":wasm.bzl", "WasmModuleInfo")
 load(":platform.bzl", "WASIX_PORTABLE_TRANSITION")
 
@@ -80,14 +80,15 @@ def _aot_payload_impl(ctx):
     }))
     output = ctx.actions.declare_directory(ctx.label.name + "/" + target)
     args = ctx.actions.args()
-    args.add(ctx.file._packager)
     args.add("--spec", spec)
     args.add("--output", output.path)
     args.add("--manifest-tool", ctx.executable._manifest_tool)
-    ctx.actions.run(
-        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
+    bun_file_action(
+        ctx,
+        ctx.file._packager,
         arguments = [args],
-        inputs = depset(inputs + [spec, ctx.file._packager]),
+        inputs = depset(inputs + [spec]),
+        source_files = [],
         tools = [ctx.attr._manifest_tool[DefaultInfo].files_to_run],
         outputs = [output],
         env = {"LC_ALL": "C"},
@@ -98,7 +99,7 @@ def _aot_payload_impl(ctx):
 
 wasix_aot_payload = rule(
     implementation = _aot_payload_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "target_id": attr.string(mandatory = True),
         "portable": attr.label(mandatory = True),

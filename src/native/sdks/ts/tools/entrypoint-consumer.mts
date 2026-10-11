@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { pathToFileURL } from 'node:url';
 import { extensions } from '@oliphaunt/ts';
 import { directory } from '@oliphaunt/ts/storage/node';
 import { directory as bunDirectory } from '@oliphaunt/ts/storage/bun';
@@ -22,7 +23,7 @@ assert.equal(direct, namedDirect);
 assert.equal(broker, namedBroker);
 assert.equal(directory, bunDirectory);
 assert.equal(directory, denoDirectory);
-assert.deepEqual(directory(new URL('file:///unused/database')), directConfig.storage);
+assert.deepEqual(directory(pathToFileURL('/unused/database')), directConfig.storage);
 // @ts-expect-error restore accepts the same directory descriptor as open
 await assert.rejects(direct.restore('/unused/database', new Uint8Array()), /directory/);
 

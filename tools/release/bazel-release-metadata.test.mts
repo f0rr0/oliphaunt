@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { nativeCargoArtifactRows } from '../packaging/rust-native-targets.mts';
-import { nativeHelperArtifactRows } from './release-artifact-targets.mts';
+import {
+  databaseResourceArtifactRows,
+  nativeHelperArtifactRows,
+  nativeRuntimeArtifactRows,
+} from './release-artifact-targets.mts';
 import {
   loadReleaseMetadata,
   renderReleaseMetadata,
@@ -145,6 +149,68 @@ test('native helper projection uses canonical artifact rows and explicit descrip
       'id="oliphaunt-broker"\nregistry_packages=["crates:oliphaunt-broker-linux-x64-gnu"]\n',
     );
     expect(() => loadReleaseMetadata(root)).toThrow('has no canonical artifact targets');
+  });
+});
+
+test('runtime and resource construction reuse canonical artifact rows and captured contracts', () => {
+  fixture((root, write) => {
+    const config = JSON.parse(readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
+    const manifest = JSON.parse(
+      readFileSync(path.join(root, '.release-please-manifest.json'), 'utf8'),
+    );
+    config.packages['src/native/postgres-tools'] = { component: 'postgres-tools-native' };
+    config.packages['src/database-resources'] = { component: 'database-resources' };
+    manifest['src/native/postgres-tools'] = '4.5.6';
+    manifest['src/database-resources'] = '5.6.7';
+    write('release-please-config.json', JSON.stringify(config));
+    write('.release-please-manifest.json', JSON.stringify(manifest));
+    write(
+      'src/native/postgres-tools/release.toml',
+      'id="postgres-tools-native"\nregistry_packages=["npm:@oliphaunt/tools-linux-x64-gnu"]\n[artifact_targets]\npreset="postgres-tools-native"\ntargets=["linux-x64-gnu"]\n',
+    );
+    write(
+      'src/database-resources/release.toml',
+      'id="database-resources"\nregistry_packages=["npm:@oliphaunt/icu"]\n',
+    );
+    const profiles: Record<string, Record<string, unknown>> = { standard: {} };
+    const contract = {
+      profiles,
+      compatibilityKeys: { native: { 'linux-x64-gnu': 'fixture' } },
+    };
+    const contractPath = 'src/database-resources/contracts/contract.json';
+    write(contractPath, JSON.stringify(contract));
+    const metadata = loadReleaseMetadata(root);
+    expect(metadata.nativeRuntimeArtifacts).toEqual(
+      nativeRuntimeArtifactRows('postgres-tools-native', ['linux-x64-gnu']),
+    );
+    expect(metadata.databaseResourceContract).toEqual(contract);
+    expect(metadata.inputs[contractPath]).toBe(JSON.stringify(contract));
+    expect(metadata.databaseResourceArtifacts).toEqual(databaseResourceArtifactRows(contract));
+    expect(metadata.databaseResourceArtifacts).toHaveLength(7);
+    const rendered = renderReleaseMetadata(metadata, '@//build_defs/release:identity.bzl');
+    expect(rendered.bzl).toContain('NATIVE_RUNTIME_ARTIFACTS');
+    expect(rendered.bzl).toContain('DATABASE_RESOURCE_CONTRACT');
+    expect(rendered.bzl).toContain('DATABASE_RESOURCE_ARTIFACTS');
+    expect(rendered.extensionSourcesBzl).not.toContain('DATABASE_RESOURCE_ARTIFACTS');
+    contract.profiles.icu = {};
+    write(contractPath, JSON.stringify(contract));
+    const changed = loadReleaseMetadata(root);
+    expect(changed.databaseResourceArtifacts).toHaveLength(11);
+    expect(
+      renderReleaseMetadata(changed, '@//build_defs/release:identity.bzl').extensionSourcesBzl,
+    ).toBe(rendered.extensionSourcesBzl);
+    for (const [product, targets, diagnostic] of [
+      ['postgres-tools-native', ['unsupported'], 'unknown artifact target'],
+      ['native', ['linux-x64-gnu'], 'not a native runtime product'],
+    ] as const) {
+      const rejected = Bun.spawnSync([
+        process.execPath,
+        '--eval',
+        `import { nativeRuntimeArtifactRows } from ${JSON.stringify(path.join(import.meta.dir, 'release-artifact-targets.mts'))}; nativeRuntimeArtifactRows(${JSON.stringify(product)}, ${JSON.stringify(targets)});`,
+      ]);
+      expect(rejected.exitCode).toBe(1);
+      expect(rejected.stderr.toString()).toContain(diagnostic);
+    }
   });
 });
 

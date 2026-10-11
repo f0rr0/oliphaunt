@@ -1,14 +1,15 @@
 """Kotlin bindings from the same declared Unix mobile metadata and UniFFI CLI."""
 
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 
 def _uniffi_kotlin_impl(ctx):
     library = ctx.file.library
     output = ctx.actions.declare_file(ctx.label.name + "/dev/oliphaunt/bindings/oliphaunt_mobile_bindings.kt")
-    bun = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun
-    ctx.actions.run(
-        executable = bun,
-        arguments = [ctx.file.driver.path, ctx.executable.generator.path, library.path, ctx.file.configuration.path, output.dirname.removesuffix("/dev/oliphaunt/bindings")],
+    bun_file_action(
+        ctx,
+        entry_point = ctx.file.driver,
+        source_files = [ctx.file.driver, ctx.file.helper],
+        arguments = [ctx.executable.generator.path, library.path, ctx.file.configuration.path, output.dirname.removesuffix("/dev/oliphaunt/bindings")],
         inputs = [ctx.file.driver, ctx.file.helper, library, ctx.file.configuration],
         tools = [ctx.attr.generator[DefaultInfo].files_to_run],
         outputs = [output],
@@ -26,5 +27,5 @@ uniffi_kotlin = rule(
         "driver": attr.label(default = Label("//build_defs/languages/jvm:generate-kotlin.mts"), allow_single_file = True),
         "helper": attr.label(default = Label("//build_defs/languages:uniffi.mts"), allow_single_file = True),
     },
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
 )

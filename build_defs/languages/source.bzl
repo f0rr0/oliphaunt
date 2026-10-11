@@ -2,7 +2,7 @@
 
 load("@native_cargo_metadata//:cargo.bzl", "CARGO")
 load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS", "PUBLICATION_CARRIERS")
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 
 _RUST_TOOLCHAIN = "@rules_rust//rust:toolchain"
@@ -31,15 +31,15 @@ def _source_impl(ctx):
     if not cargo:
         fail("Conventional Cargo source inventory requires the pinned Cargo toolchain")
     args = ctx.actions.args()
-    args.add_all([ctx.file._packager, output, ctx.file.manifest, ctx.file.workspace_manifest, specification, metadata, cargo])
+    args.add_all([output, ctx.file.manifest, ctx.file.workspace_manifest, specification, metadata, cargo])
     # Enumeration needs only Cargo itself, not a compiled target sysroot. It is
     # offline metadata; all archive construction remains this bounded action.
-    ctx.actions.run(executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun, arguments = [args], inputs = depset(inputs + [specification, metadata, cargo]), outputs = [output], mnemonic = "CargoSourceEnvelope")
+    bun_file_action(ctx, entry_point = ctx.file._packager, arguments = [args], inputs = depset(inputs + [specification, metadata, cargo]), source_files = [ctx.file._packager] + ctx.files._helpers, outputs = [output], mnemonic = "CargoSourceEnvelope")
     return [DefaultInfo(files = depset([output]))]
 
 _cargo_source = rule(
     implementation = _source_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE, _RUST_TOOLCHAIN],
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_RUST_TOOLCHAIN],
     attrs = {
         "entries": attr.label_keyed_string_dict(allow_files = True),
         "manifest": attr.label(allow_single_file = True, mandatory = True),
@@ -47,12 +47,12 @@ _cargo_source = rule(
         "metadata": attr.string(mandatory = True),
         "out": attr.string(mandatory = True),
         "_packager": attr.label(default = Label("//build_defs/languages:source-package.mts"), allow_single_file = True),
-        "_helpers": attr.label_list(default = [Label("//build_defs/languages:cargo-metadata.mts"), Label("//build_defs/query:package.mts"), Label("//:tools/packaging/archive-directory.mts"), Label("//:tools/packaging/portable-archive.mts"), Label("//:tools/packaging/rust-native-targets.mts")], allow_files = True),
+        "_helpers": attr.label_list(default = [Label("//:tools/packaging/cargo-manifest.mts"), Label("//build_defs/query:package.mts"), Label("//:tools/packaging/archive-directory.mts"), Label("//:tools/packaging/portable-archive.mts"), Label("//:tools/packaging/rust-native-targets.mts")], allow_files = True),
     },
 )
 
-def cargo_source_package(product, fixtures = "", native_sdk = False):
-    facts = CARGO[native.package_name()]
+def cargo_source_package(product, fixtures = "", native_sdk = False, cargo_facts = CARGO, workspace_manifest = "//:Cargo.toml"):
+    facts = cargo_facts[native.package_name()]
     descriptor = PRODUCTS[product]
     if "crates:" + facts["name"] not in descriptor.get("registry_packages", []):
         fail("Cargo source package is not declared by its release owner: " + facts["name"])
@@ -86,6 +86,6 @@ def cargo_source_package(product, fixtures = "", native_sdk = False):
             entries["//:" + name] = name
     if fixtures:
         entries["//src/test-fixtures:rust_fixtures"] = fixtures
-    _cargo_source(name = "crate", manifest = "Cargo.toml", entries = entries, metadata = json.encode(metadata), out = facts["name"] + ".crate")
+    _cargo_source(name = "crate", manifest = "Cargo.toml", workspace_manifest = workspace_manifest, entries = entries, metadata = json.encode(metadata), out = facts["name"] + ".crate")
     shipping_package(name = "shipping_package", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":crate"], ecosystem = "cargo", package_name = facts["name"], configuration = "source", role = carriers[0]["role"])
     shipping_export(name = "shipping_export", packages = [":shipping_package"])

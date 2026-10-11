@@ -81,7 +81,8 @@ if [ "$asset_mode" = "full" ]; then
   # Each extension must pass direct execution, restart, physical backup/restore,
   # server execution and materialization. Tests record only completed modes.
   oliphaunt_wasix_library_tests extension_tests::public_extensions
-  server_command=(cargo test -p oliphaunt-pgwire-server --locked --no-default-features
+  server_command=(cargo test --manifest-path "$root/src/wasix/pgwire-server/Cargo.toml"
+    --target-dir "${CARGO_TARGET_DIR:-$root/target}" -p oliphaunt-pgwire-server --locked --no-default-features
     --features "${full_evidence_features/,tools/}" --test extensions public_extensions_pass_server_smoke)
   oliphaunt_require_cargo_test_filter public_extensions_pass_server_smoke "${server_command[@]}"
   "${server_command[@]}" -- --ignored --exact --nocapture --test-threads=1

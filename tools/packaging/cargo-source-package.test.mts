@@ -20,6 +20,8 @@ import {
   createDeterministicTar,
   fitCargoPayloadParts,
   packageGeneratedCargoSource,
+  packagedCargoManifestText,
+  parseCargoPackageNameVersion,
 } from './cargo-source-package.mts';
 import { readPortableArchiveEntries } from './portable-archive.mts';
 import { assertReleaseNoticesInArchive } from './release-notices.mts';
@@ -46,6 +48,40 @@ function manifest(name, extra = []) {
     '',
   ].join('\n');
 }
+
+test('standalone public manifests resolve inherited requirements and structurally remove every path', () => {
+  const source =
+    '[package]\nname="sdk"\nversion="0.3.2"\nworkspace="../adapters"\n[dependencies]\nquery={workspace=true,optional=true}\n[build-dependencies]\nhelper={path="../helper",version="0.3.2"}\n[target.\'cfg(unix)\'.dependencies]\nruntime={path="../runtime",version="=0.3.2"}\n[workspace]\n';
+  const text = packagedCargoManifestText(
+    source,
+    '[workspace.dependencies]\nquery={version="=0.1.1",features=["std"]}\n',
+  );
+  assert.deepEqual(parseCargoPackageNameVersion(text, 'normalized manifest'), {
+    name: 'sdk',
+    version: '0.3.2',
+  });
+  assert.throws(
+    () =>
+      parseCargoPackageNameVersion('[package]\nname="sdk"\nversion={workspace=true}\n', 'source'),
+    /package.name and package.version/u,
+  );
+  assert.throws(
+    () => parseCargoPackageNameVersion('[package', 'invalid source'),
+    /valid Cargo TOML/u,
+  );
+  const standalone = Bun.TOML.parse(text);
+  assert.deepEqual(standalone.dependencies.query, {
+    version: '=0.1.1',
+    features: ['std'],
+    optional: true,
+  });
+  assert.deepEqual(standalone['build-dependencies'].helper, { version: '0.3.2' });
+  assert.deepEqual(standalone.target['cfg(unix)'].dependencies.runtime, { version: '=0.3.2' });
+  assert.equal(standalone.package.workspace, undefined);
+  assert.deepEqual(standalone.workspace, {});
+  assert.equal(text.match(/\["workspace"\]/gu)?.length, 1);
+  assert.throws(() => packagedCargoManifestText(source), /inheritance/);
+});
 
 if (['prepare', 'verify'].includes(process.argv[2])) {
   const [phase, root] = process.argv.slice(2);

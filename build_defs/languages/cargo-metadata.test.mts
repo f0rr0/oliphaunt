@@ -77,6 +77,47 @@ function fixture() {
   return { workspace, manifests, lock, project };
 }
 
+test('a conventional adapter workspace keeps sibling members within declared repository paths', () => {
+  const { workspace, manifests, lock } = fixture();
+  const owner = {
+    ...manifests['sdk/Cargo.toml'],
+    workspace: { ...workspace.workspace, members: ['.', '../core'] },
+  };
+  const sources = {
+    'nested/adapter/Cargo.toml': owner,
+    'nested/core/Cargo.toml': {
+      ...manifests['core/Cargo.toml'],
+      package: { ...manifests['core/Cargo.toml'].package, workspace: '../adapter' },
+    },
+  };
+  const result = projectCargoWorkspace(
+    owner,
+    lock,
+    [],
+    (relative) => sources[relative],
+    (relative) => relative.endsWith('/src/lib.rs'),
+    {},
+    'nested/adapter',
+  );
+  expect(Object.keys(result.facts).sort()).toEqual(['nested/adapter', 'nested/core']);
+  expect(Bun.TOML.parse(result.files['Cargo.toml']).workspace.members).toEqual([
+    'nested/adapter',
+    'nested/core',
+  ]);
+  expect(Bun.TOML.parse(result.files['nested/core/Cargo.toml']).package.workspace).toBeUndefined();
+  expect(() =>
+    projectCargoWorkspace(
+      { workspace: { members: ['../../../outside'] } },
+      lock,
+      [],
+      () => ({}),
+      () => false,
+      {},
+      'nested/adapter',
+    ),
+  ).toThrow('escapes');
+});
+
 test('preserves resolver, feature, optional, target/dev, generator and exact external lock facts', () => {
   const { project } = fixture();
   const result = project();

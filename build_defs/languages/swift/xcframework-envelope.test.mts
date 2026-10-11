@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import {
+  chmodSync,
   copyFileSync,
   mkdirSync,
   mkdtempSync,
@@ -17,7 +18,7 @@ import { readPortableArchiveEntries } from '../../../tools/packaging/portable-ar
 import { packageBindingsXcframework } from './xcframework-envelope.mts';
 
 const OWNER = 'src/native/mobile-bindings';
-function legalSources(): Record<string, string> {
+function legalSources(root: string): Record<string, string> {
   const members = [
     'LICENSE',
     'THIRD_PARTY_NOTICES.md',
@@ -26,12 +27,21 @@ function legalSources(): Record<string, string> {
   ];
   for (const name of readdirSync(`${OWNER}/dependency-license-blobs`))
     members.push(`${OWNER}/dependency-license-blobs/${name}`);
-  return Object.fromEntries(members.map((member) => [member, path.resolve(member)]));
+  return Object.fromEntries(
+    members.map((member) => {
+      const destination = path.join(root, member);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      copyFileSync(realpathSync(member), destination);
+      chmodSync(destination, 0o644);
+      return [member, destination];
+    }),
+  );
 }
 
 test('canonical FFI envelope reuses strict target license bytes and deterministic archives', async () => {
   const scratch = mkdtempSync(path.join(tmpdir(), 'oliphaunt-swift-envelope-'));
   try {
+    const legal = legalSources(path.join(scratch, 'legal-inputs'));
     const framework = path.join(scratch, 'OliphauntNativeBindingsFFI.xcframework');
     mkdirSync(framework);
     const slices = [
@@ -51,18 +61,14 @@ test('canonical FFI envelope reuses strict target license bytes and deterministi
     writeFileSync(intermediate, await createDeterministicZip(framework, { keepParent: true }));
     const first = path.join(scratch, 'first.zip');
     const second = path.join(scratch, 'second.zip');
-    await packageBindingsXcframework(
-      intermediate,
-      path.relative(process.cwd(), first),
-      legalSources(),
-    );
-    await packageBindingsXcframework(intermediate, second, legalSources());
+    await packageBindingsXcframework(intermediate, path.relative(process.cwd(), first), legal);
+    await packageBindingsXcframework(intermediate, second, legal);
     expect(readFileSync(first).equals(readFileSync(second))).toBeTrue();
     const entries = readPortableArchiveEntries(first, { format: 'zip' });
     // Runfiles inputs may be links; independent contract verification uses a
     // physical source tree just as the declared packaging action does.
     const sourceRoot = path.join(scratch, 'expected-sources');
-    for (const [member, source] of Object.entries(legalSources())) {
+    for (const [member, source] of Object.entries(legal)) {
       const destination = path.join(sourceRoot, member);
       mkdirSync(path.dirname(destination), { recursive: true });
       copyFileSync(realpathSync(source), destination);
@@ -75,11 +81,11 @@ test('canonical FFI envelope reuses strict target license bytes and deterministi
           prefix: `OliphauntNativeBindingsFFI.xcframework/licenses/${target}`,
         }).length,
       ).toBeGreaterThan(0);
-    const unexpected = { ...legalSources(), '../outside': path.resolve('LICENSE') };
+    const unexpected = { ...legal, '../outside': legal.LICENSE };
     await expect(
       packageBindingsXcframework(intermediate, path.join(scratch, 'bad.zip'), unexpected),
     ).rejects.toThrow('Unexpected legal source');
-    const missing = legalSources();
+    const missing = { ...legal };
     delete missing[`${OWNER}/dependency-licenses.json`];
     await expect(
       packageBindingsXcframework(intermediate, path.join(scratch, 'missing.zip'), missing),

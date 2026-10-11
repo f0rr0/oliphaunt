@@ -1,16 +1,17 @@
 """Declared UniFFI generation from the native mobile library's metadata."""
 
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 
 def _uniffi_swift_impl(ctx):
     library = ctx.file.library
     swift = ctx.actions.declare_file(ctx.label.name + "/OliphauntNativeBindings.swift")
     header = ctx.actions.declare_file(ctx.label.name + "/OliphauntNativeBindingsFFI.h")
     modulemap = ctx.actions.declare_file(ctx.label.name + "/OliphauntNativeBindingsFFI.modulemap")
-    bun = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun
-    ctx.actions.run(
-        executable = bun,
-        arguments = [ctx.file.driver.path, ctx.executable.generator.path, library.path, ctx.file.configuration.path, swift.dirname],
+    bun_file_action(
+        ctx,
+        entry_point = ctx.file.driver,
+        source_files = [ctx.file.driver, ctx.file._invocation],
+        arguments = [ctx.executable.generator.path, library.path, ctx.file.configuration.path, swift.dirname],
         inputs = [ctx.file.driver, ctx.file._invocation, library, ctx.file.configuration],
         tools = [ctx.attr.generator[DefaultInfo].files_to_run],
         outputs = [swift, header, modulemap],
@@ -28,7 +29,7 @@ uniffi_swift = rule(
         "driver": attr.label(default = Label("//build_defs/languages/swift:generate.mts"), allow_single_file = True),
         "_invocation": attr.label(default = Label("//build_defs/languages:uniffi.mts"), allow_single_file = True),
     },
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
 )
 
 def _uniffi_output_impl(ctx):

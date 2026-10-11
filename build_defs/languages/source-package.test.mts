@@ -77,6 +77,28 @@ test('wildcard path carriers resolve to their consumer compatibility contract', 
   expect(() => sourceManifest(source, workspace, metadata)).toThrow('Missing installed');
 });
 
+test('inherited string requirements keep optionality and target feature additions', () => {
+  const manifest = sourceManifest(
+    '[package]\nname="sdk"\nversion="0.3.2"\nworkspace="../adapters"\n[dependencies]\nquery={workspace=true,optional=true}\n[target.\'cfg(unix)\'.build-dependencies]\nquery={workspace=true,features=["std"]}\n',
+    '[workspace.dependencies]\nquery="=0.1.1"\n',
+    metadata,
+  );
+  expect(manifest.dependencies.query).toEqual({ version: '=0.1.1', optional: true });
+  expect(manifest.target['cfg(unix)']['build-dependencies'].query).toEqual({
+    version: '=0.1.1',
+    features: ['std'],
+  });
+  expect(manifest.package.workspace).toBeUndefined();
+  expect(manifest.workspace).toEqual({});
+  expect(() =>
+    sourceManifest(
+      '[package]\nname="sdk"\nversion="0.3.2"\n[dependencies]\nquery.workspace=true\n',
+      '[workspace]\n',
+      metadata,
+    ),
+  ).toThrow('Missing inherited');
+});
+
 test('admits exactly Cargo-listed declared bytes and rejects undeclared source or duplicate entries', () => {
   const entries = {
     'Cargo.toml': Buffer.from('manifest'),

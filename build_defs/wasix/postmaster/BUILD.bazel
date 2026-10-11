@@ -1,0 +1,12 @@
+load("//build_defs/foundation:bun.bzl", "bun_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["metadata.mts", "repositories.bzl", "cargo-extension.bzl", "crate-monorepo-source.patch"])
+
+bun_test(
+    name = "metadata_test",
+    entry_point = "metadata.test.mts",
+    data = ["metadata.mts", "//:tools/packaging/cargo-manifest.mts"],
+    size = "small",
+)

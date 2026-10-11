@@ -228,9 +228,8 @@ export function stageNpmPackageDescriptor(
   packageName,
   sourceDir,
   version,
-  { extraDescriptors = [], target = null } = {},
+  { extraDescriptors = [], target = null, stageDir = npmPackageSourceStageDir(packageName) } = {},
 ) {
-  const stageDir = npmPackageSourceStageDir(packageName);
   rmSync(stageDir, { recursive: true, force: true });
   mkdirSync(stageDir, { recursive: true });
   for (const descriptor of ['package.json', 'README.md', ...extraDescriptors]) {

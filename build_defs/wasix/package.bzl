@@ -1,6 +1,6 @@
 """A declared portable runtime tree for source carriers and installed consumers."""
 
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load(":wasm.bzl", "WasmExportPolicyInfo", "WasmModuleInfo")
 
 def postgres_patch_inputs(paths):
@@ -59,7 +59,6 @@ def _payload_impl(ctx):
     }))
     output = ctx.actions.declare_directory(ctx.label.name)
     arguments = ctx.actions.args()
-    arguments.add(ctx.file._packager)
     arguments.add("--spec", specification)
     arguments.add("--output", output.path)
     arguments.add("--manifest-tool", ctx.executable._manifest_tool)
@@ -70,10 +69,12 @@ def _payload_impl(ctx):
     tree_arguments.add_all(trees, expand_directories = True)
     tree_arguments.use_param_file("--tree-files=%s", use_always = True)
     tree_arguments.set_param_file_format("multiline")
-    ctx.actions.run(
-        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
+    bun_file_action(
+        ctx,
+        ctx.file._packager,
         arguments = [arguments, tree_arguments],
-        inputs = depset(inputs + [specification, ctx.file._packager] + ctx.files._helpers),
+        inputs = depset(inputs + [specification]),
+        source_files = ctx.files._helpers,
         tools = [ctx.attr._manifest_tool[DefaultInfo].files_to_run],
         outputs = [output],
         env = {"LC_ALL": "C"},
@@ -84,7 +85,7 @@ def _payload_impl(ctx):
 
 wasix_runtime_payload = rule(
     implementation = _payload_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "runtime": attr.label(providers = [WasmModuleInfo], mandatory = True),
         "initdb": attr.label(providers = [WasmModuleInfo], mandatory = True),

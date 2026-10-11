@@ -1,0 +1,52 @@
+#include "oliphaunt.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static uint32_t read_u32(const uint8_t *data) {
+    return ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) |
+           ((uint32_t)data[2] << 8) | (uint32_t)data[3];
+}
+
+int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        puts(oliphaunt_version());
+        return 0;
+    }
+    if (argc != 5) return 2;
+    OliphauntConfig config = {
+        .abi_version = OLIPHAUNT_ABI_VERSION, .pgdata = argv[1], .runtime_dir = argv[2],
+        .username = "postgres", .database = "postgres", .icu_data_dir = getenv("ICU_DATA"),
+    };
+    OliphauntHandle *database = NULL;
+    OliphauntErrorCapture error = {0};
+    if (oliphaunt_init_with_error(&config, &database, &error) != 0 || database == NULL) {
+        fprintf(stderr, "seed open failed: %s\n", error.message);
+        return 1;
+    }
+    OliphauntResponse response = {0};
+    int failed = oliphaunt_exec_simple_query_with_error(database, argv[3], strlen(argv[3]), &response, &error) != 0;
+    size_t expected = strlen(argv[4]);
+    int found = 0, complete = 0, ready = 0;
+    size_t cursor = 0;
+    while (!failed && cursor < response.len) {
+        if (response.len - cursor < 5) { failed = 1; break; }
+        const uint8_t *message = response.data + cursor;
+        uint32_t length = read_u32(message + 1);
+        if (length < 4 || (size_t)length + 1 > response.len - cursor) { failed = 1; break; }
+        if (message[0] == 'E') failed = 1;
+        if (message[0] == 'C') complete = 1;
+        if (message[0] == 'Z') ready = 1;
+        if (message[0] == 'D' && length >= 10 && message[5] == 0 && message[6] == 1) {
+            uint32_t value_length = read_u32(message + 7);
+            if ((size_t)value_length == expected && value_length == length - 10 &&
+                memcmp(message + 11, argv[4], expected) == 0) found = 1;
+        }
+        cursor += (size_t)length + 1;
+    }
+    if (failed || !found || !complete || !ready)
+        fprintf(stderr, "seed query did not return expected PostgreSQL row: %s: %s\n", argv[3], error.message);
+    oliphaunt_free_response(&response);
+    if (oliphaunt_close(database) != 0) return 1;
+    return !failed && found && complete && ready ? 0 : 1;
+}

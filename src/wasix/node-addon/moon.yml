@@ -26,7 +26,15 @@ project:
 owners:
   defaultOwner: "@oliphaunt/wasix-napi"
 
+workspace:
+  mergeStrategies:
+    fileGroups: replace
+
 fileGroups:
+  cargo-workspace:
+    - "/src/wasix/node-addon/Cargo.lock"
+    - "/src/wasix/node-addon/Cargo.toml"
+    - "/rust-toolchain.toml"
   code:
     - "**/*"
     - "!**/*.md"
@@ -82,7 +90,7 @@ tasks:
 
   rust-format-check:
     tags: ["quality", "static", "format", "requires-rust"]
-    command: "cargo fmt -p oliphaunt-wasix-napi --check"
+    command: "cargo fmt --manifest-path src/wasix/node-addon/Cargo.toml -p oliphaunt-wasix-napi --check"
     inputs: ["/src/wasix/node-addon/**/*.rs","/src/wasix/node-addon/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
     options:
       runFromWorkspaceRoot: true
@@ -91,7 +99,7 @@ tasks:
       - target: cargo-sources
         cacheStrategy: hash
     tags: ["quality", "static", "requires-rust"]
-    command: "cargo clippy -p oliphaunt-wasix-napi --all-targets --locked -- -D warnings"
+    command: "cargo clippy --manifest-path src/wasix/node-addon/Cargo.toml -p oliphaunt-wasix-napi --all-targets --locked -- -D warnings"
     env:
       CARGO_TARGET_DIR: "target"
     inputs: ["/src/wasix/node-addon/**/*.rs","/src/wasix/node-addon/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]

@@ -235,7 +235,7 @@ describe('normal publication plan', () => {
     expect(project).toThrow(/publication unit dependency cycle/u);
   });
 
-  test('real release selections include exact embedded consumers without unrelated products', () => {
+  test('real release selections respect shared owners and held consumer requirements', () => {
     const external = realSelection('src/extensions/external/vector/CHANGELOG.md');
     expect(external.release.directProducts).toEqual(['oliphaunt-extension-vector']);
     expect(external.release.releaseProducts).toEqual(['oliphaunt-extension-vector']);
@@ -261,24 +261,16 @@ describe('normal publication plan', () => {
     expect(runtime.topology.carrierCount).toBe(runtime.catalog.carriers.length);
 
     const contrib = realSelection('src/extensions/contrib/postgres18.toml');
-    expect(contrib.release.directProducts).toEqual([
-      'liboliphaunt-native',
-      'liboliphaunt-wasix',
-      'oliphaunt-wasix-napi',
-    ]);
-    expect(contrib.release.releaseProducts).toEqual([
-      'liboliphaunt-native',
-      'liboliphaunt-wasix',
-      'oliphaunt-wasix-napi',
-    ]);
+    expect(contrib.release.directProducts).toEqual(['liboliphaunt-native', 'liboliphaunt-wasix']);
+    expect(contrib.release.releaseProducts).toEqual(['liboliphaunt-native', 'liboliphaunt-wasix']);
 
     const icu = realSelection('src/database-resources/icu/cargo/src/lib.rs');
-    expect(icu.release.directProducts.sort()).toEqual([
-      'database-resources',
-      'oliphaunt-wasix-napi',
-    ]);
-    expect(icu.release.releaseProducts.sort()).toEqual([
-      'database-resources',
+    expect(icu.release.directProducts).toEqual(['database-resources']);
+    expect(icu.release.releaseProducts).toEqual(['database-resources']);
+
+    const pgwire = realSelection('src/wasix/pgwire-server/src/lib.rs');
+    expect(pgwire.release.releaseProducts).toEqual([
+      'oliphaunt-pgwire-server',
       'oliphaunt-wasix-napi',
     ]);
 

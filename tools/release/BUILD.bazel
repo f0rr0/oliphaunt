@@ -2,7 +2,7 @@ load("//build_defs/foundation:bun.bzl", "bun_test")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["bazel-release-metadata.mts", "bazel-shipping-inputs.mts", "extension-release-metadata.mts", "compatibility-version-parser.mts", "platform-compatibility-policy.mts", "frozen-extension-consumer.mts"])
+exports_files(["bazel-release-metadata.mts", "bazel-shipping-inputs.mts", "extension-release-metadata.mts", "compatibility-version-parser.mts", "compatibility-version-policy.mts", "product-version.mts", "platform-compatibility-policy.mts", "frozen-extension-consumer.mts", "release-artifact-targets.mts", "release-graph.mts", "release-history.mts"])
 
 bun_test(
     name = "bazel_metadata_test",

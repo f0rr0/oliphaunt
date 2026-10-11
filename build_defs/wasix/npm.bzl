@@ -1,7 +1,7 @@
 """Npm envelope for the declared portable runtime, using the shared formatter."""
 
 load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS")
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 
@@ -34,7 +34,7 @@ def _runtime_npm_impl(ctx):
     identity = ctx.attr.product[ReleaseIdentityInfo]
     if identity.id != "liboliphaunt-wasix":
         fail("WASIX runtime npm carrier requires its canonical product owner")
-    inputs = payloads + [ctx.file._packager] + ctx.files._helpers
+    inputs = payloads[:]
     notices = {}
     for target, destination in ctx.attr.notices.items():
         files = target[DefaultInfo].files.to_list()
@@ -46,13 +46,21 @@ def _runtime_npm_impl(ctx):
     ctx.actions.write(spec, json.encode({"version": identity.version, "packageName": ctx.attr.package_name, "portableAssets": payloads[0].path, "notices": notices}))
     output = ctx.actions.declare_file(ctx.label.name + ".tgz")
     args = ctx.actions.args()
-    args.add_all([ctx.file._packager, "--spec", spec, "--output", output])
-    ctx.actions.run(executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun, arguments = [args], inputs = depset(inputs + [spec]), outputs = [output], mnemonic = "WasixRuntimeNpmEnvelope")
+    args.add_all(["--spec", spec, "--output", output])
+    bun_file_action(
+        ctx,
+        ctx.file._packager,
+        arguments = [args],
+        inputs = depset(inputs + [spec]),
+        source_files = ctx.files._helpers,
+        outputs = [output],
+        mnemonic = "WasixRuntimeNpmEnvelope",
+    )
     return [DefaultInfo(files = depset([output]))]
 
 _runtime_npm = rule(
     implementation = _runtime_npm_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "payload": attr.label(mandatory = True),
         "product": attr.label(mandatory = True, providers = [ReleaseIdentityInfo]),

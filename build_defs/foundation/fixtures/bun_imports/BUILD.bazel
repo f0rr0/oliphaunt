@@ -1,0 +1,30 @@
+load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
+load(":external-test.bzl", "external_source_test")
+
+package(default_visibility = ["//visibility:public"])
+
+_MODULES = [
+    "sibling.mts",
+    "nested/helper.mts",
+    "nested/deep/value.mts",
+]
+
+bun_test(
+    name = "module_boundary_test",
+    entry_point = "module-boundary.test.mts",
+    data = _MODULES,
+    size = "small",
+)
+
+bun_binary(
+    name = "module_launcher",
+    entry_point = "launcher.mts",
+    data = _MODULES,
+    args = ['"declared launcher"'],
+)
+
+external_source_test(
+    name = "external_collision_test",
+    modules = ["@rules_cc//:MODULE.bazel", "@rules_rust//:MODULE.bazel"],
+    size = "small",
+)

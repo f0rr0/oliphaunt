@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { workspaceRuntimeVersion } from './workspace-runtime-contract.mts';
+import { resolvedAdapterRuntimeContract } from './workspace-runtime-contract.mts';
 
 const require = createRequire(import.meta.url);
 const [command, ...args] = process.argv.slice(2);
@@ -7,7 +7,7 @@ switch (command) {
   case 'metadata': {
     const manifest = JSON.parse(require('node:fs').readFileSync(args[0], 'utf8'));
     const values = [
-      workspaceRuntimeVersion(),
+      resolvedAdapterRuntimeContract().runtimeVersion,
       manifest.oliphaunt?.addonAbiVersion,
       manifest.oliphaunt?.nodeApiVersion,
     ];

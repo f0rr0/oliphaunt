@@ -7,18 +7,18 @@ config_setting(
     values = {"compilation_mode": "opt"},
 )
 
-exports_files(["cargo-metadata.mts", "repositories.bzl", "rust.bzl", "mobile.bzl", "source.bzl", "source-package.mts", "uniffi.mts", "mobile-legal.mts", "wasix.bzl", "cargo-environment.mts", "cargo-toolchain.bzl"])
+exports_files(["cargo-metadata.mts", "repositories.bzl", "rust.bzl", "mobile.bzl", "source.bzl", "source-package.mts", "uniffi.mts", "mobile-legal.mts", "wasix.bzl", "cargo-environment.mts", "cargo-toolchain.bzl", "isolated-cache-test.mts"])
 
 bun_test(
     name = "cargo_metadata_test",
     size = "small",
     entry_point = "cargo-metadata.test.mts",
-    data = ["cargo-metadata.mts"],
+    data = ["cargo-metadata.mts", "//:tools/packaging/cargo-manifest.mts"],
 )
 
 bun_test(
     name = "source_package_test",
     size = "small",
     entry_point = "source-package.test.mts",
-    data = ["source-package.mts", "cargo-metadata.mts", "//build_defs/query:package.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/rust-native-targets.mts"],
+    data = ["source-package.mts", "//:tools/packaging/cargo-manifest.mts", "//build_defs/query:package.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/rust-native-targets.mts"],
 )

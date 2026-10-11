@@ -1,0 +1,17 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "release.toml",
+    "executor/Cargo.toml",
+    "executor/Cargo.lock",
+    "sources/wasmer.toml",
+    "sources/wasmer-napi.toml",
+    "sources/wasix-libc.toml",
+    "wasmer/patches/wasmer/0001-postgres-wasix-blockers.patch",
+    "wasmer/patches/wasix-libc/0001-postgres-wasix-blockers.patch",
+])
+
+filegroup(
+    name = "executor_sources",
+    srcs = glob(["executor/src/**/*.rs"]),
+)

@@ -4,9 +4,8 @@ load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
 load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES")
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 
-_BUN_TOOLCHAIN_TYPE = Label(BUN_TOOLCHAIN_TYPE)
 
 def _cc(ctx):
     toolchain = find_cc_toolchain(ctx)
@@ -32,8 +31,7 @@ def _exports_impl(ctx):
     ctx.actions.run(executable = ctx.file._dumpbin, arguments = ["/nologo", "/symbols", "/out:" + symbols.path] + sorted(archives),
                     inputs = depset(archives.values(), transitive = [toolchain.all_files]), outputs = [symbols], env = environment, mnemonic = "PostgresMsvcSymbols")
     output = ctx.actions.declare_file(ctx.label.name + ".def")
-    bun = ctx.toolchains[_BUN_TOOLCHAIN_TYPE].bun
-    ctx.actions.run(executable = bun, arguments = [ctx.file._parser.path, symbols.path, output.path],
+    bun_file_action(ctx, entry_point = ctx.file._parser, source_files = [ctx.file._parser], arguments = [symbols.path, output.path],
                     inputs = [ctx.file._parser, symbols], outputs = [output], mnemonic = "PostgresMsvcExports")
     return [DefaultInfo(files = depset([output]))]
 
@@ -45,7 +43,7 @@ postgres_windows_exports = rule(
         "_parser": attr.label(default = Label("//build_defs/native:windows-exports.mts"), allow_single_file = True),
     },
     fragments = ["cpp"],
-    toolchains = use_cc_toolchain() + [_BUN_TOOLCHAIN_TYPE],
+    toolchains = use_cc_toolchain() + BUN_SOURCE_TOOLCHAINS,
 )
 
 def _resource_impl(ctx):

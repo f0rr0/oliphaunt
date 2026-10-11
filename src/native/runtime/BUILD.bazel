@@ -2,13 +2,17 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library", "cc_test"
 load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files", "strip_prefix")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE", "NATIVE_C_COMPATIBLE", "NATIVE_EMBEDDED_DEFINES", "NATIVE_BUILTIN_SNOWBALL", "NATIVE_BUILTIN_SNOWBALL_DEPS", "NATIVE_LINKOPTS", "NATIVE_WRAPPER_COPTS", "NATIVE_WRAPPER_DEFINES", "NATIVE_BUILTIN_PLPGSQL_DEPS", "NATIVE_RUNTIME_LINKOPTS", "NATIVE_EMBEDDED_MODULE_LINKOPTS", "NATIVE_ELF_C_COMPATIBLE", "NATIVE_MACOS_COMPATIBLE", "NATIVE_WINDOWS_COMPATIBLE", "NATIVE_HOST_COMPATIBLE", "NATIVE_LINUX_COMPATIBLE", "NATIVE_UNIX_COMPATIBLE")
+load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE", "NATIVE_C_COMPATIBLE", "NATIVE_EMBEDDED_DEFINES", "NATIVE_BUILTIN_SNOWBALL", "NATIVE_BUILTIN_SNOWBALL_DEPS", "NATIVE_LINKOPTS", "NATIVE_RELEASE_LINKOPTS", "NATIVE_WRAPPER_COPTS", "NATIVE_WRAPPER_DEFINES", "NATIVE_BUILTIN_PLPGSQL_DEPS", "NATIVE_RUNTIME_LINKOPTS", "NATIVE_EMBEDDED_MODULE_LINKOPTS", "NATIVE_ELF_C_COMPATIBLE", "NATIVE_MACOS_COMPATIBLE", "NATIVE_WINDOWS_COMPATIBLE", "NATIVE_HOST_COMPATIBLE", "NATIVE_LINUX_COMPATIBLE", "NATIVE_UNIX_COMPATIBLE")
 load("//build_defs/native:windows_link.bzl", "postgres_windows_exports")
 load("//build_defs/foundation:bun.bzl", "bun_script_test")
+load("//build_defs/native/carriers:defs.bzl", "native_desktop_carriers")
+load("//build_defs/native/carriers:tests.bzl", "native_cargo_consumer_test")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["release.toml", "postgres/series", "include/oliphaunt.h", "bin/android-cxx-runtime.map"] + glob(["patches/**/*.patch"]))
+exports_files(["release.toml", "postgres/series", "include/oliphaunt.h", "bin/android-cxx-runtime.map", "tools/native-mobile-abi-contract.mts"] + glob(["patches/**/*.patch"]))
+exports_files(["THIRD_PARTY_NOTICES.md", "tools/native-runtime-payload.mts", "tools/native-runtime-payload-policy.json"])
+exports_files(glob(["packages/*/package.json", "packages/*/README.md"]))
 
 alias(name = "postgres_server_headers", actual = "@postgres//:server_headers")
 alias(name = "postgres_embedded_headers", actual = "@postgres//:embedded_headers")
@@ -43,7 +47,7 @@ cc_binary(
     name = "liboliphaunt.so",
     deps = [":wrapper", "@postgres//:backend_embedded", "@postgres//:main_embedded"] + NATIVE_BUILTIN_PLPGSQL_DEPS + NATIVE_BUILTIN_SNOWBALL_DEPS,
     linkshared = True,
-    linkopts = NATIVE_RUNTIME_LINKOPTS + NATIVE_LINKOPTS + select({
+    linkopts = NATIVE_RUNTIME_LINKOPTS + NATIVE_LINKOPTS + NATIVE_RELEASE_LINKOPTS + select({
         "//build_defs/native:android": ["-Wl,--exclude-libs,libc++_static.a:libc++abi.a:libunwind.a", "-Wl,--version-script,$(location :bin/android-cxx-runtime.map)"],
         "//conditions:default": [],
     }),
@@ -102,7 +106,7 @@ cc_binary(
     name = "dict_snowball.so",
     deps = [":liboliphaunt", "@postgres//:snowball_embedded"],
     linkshared = True,
-    linkopts = ["-Wl,-z,defs"],
+    linkopts = ["-Wl,-z,defs"] + NATIVE_RELEASE_LINKOPTS,
     target_compatible_with = NATIVE_ELF_C_COMPATIBLE,
 )
 
@@ -110,7 +114,7 @@ cc_binary(
     name = "plpgsql.so",
     deps = [":liboliphaunt", "@postgres//:plpgsql_embedded"],
     linkshared = True,
-    linkopts = ["-Wl,-z,defs"],
+    linkopts = ["-Wl,-z,defs"] + NATIVE_RELEASE_LINKOPTS,
     target_compatible_with = NATIVE_ELF_C_COMPATIBLE,
 )
 
@@ -188,6 +192,21 @@ pkg_files(name = "runtime_timezone_abbreviations", srcs = ["@postgres//:timezone
 pkg_files(name = "runtime_postgres_license", srcs = ["@postgres//:license"], prefix = "share/licenses/postgresql")
 pkg_files(name = "runtime_icu_data", srcs = ["@icu_data//:data"], prefix = "share/icu")
 pkg_files(name = "runtime_icu_notices", srcs = ["@icu_data//:notices"], prefix = "share/licenses/icu")
+
+native_desktop_carriers(
+    product = "liboliphaunt-native",
+    root_mappings = [":runtime_library", ":runtime_public_header", ":runtime_embedded_modules", ":runtime_windows_import_library", ":runtime_icu_libraries"],
+    runtime_mappings = [":runtime_binaries", ":runtime_libpq", ":runtime_server_modules", ":runtime_catalog", ":runtime_stopwords", ":runtime_extension_data", ":runtime_timezone", ":runtime_timezone_abbreviations", ":runtime_icu_libraries"],
+    binary_mappings = [":runtime_library", ":runtime_embedded_modules", ":runtime_binaries", ":runtime_libpq", ":runtime_server_modules", ":runtime_icu_libraries"],
+)
+
+native_cargo_consumer_test(
+    name = "installed_cargo_test",
+    packages = ":cargo_packages",
+    archive = ":github_archive",
+    target_compatible_with = NATIVE_COMPATIBLE,
+    size = "medium",
+)
 
 # This development payload proves the slice; release carriers keep their current
 # producer until profile, toolchain, platform and envelope equivalence is proven.

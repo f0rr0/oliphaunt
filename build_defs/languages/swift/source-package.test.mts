@@ -58,10 +58,11 @@ async function fixture(scratch: string, legalMode = 0o644): Promise<SwiftSourceS
       }
     }
     const archive = path.join(scratch, asset.name);
+    const modes = Object.fromEntries(group.files.map((legal) => [legal.member, legalMode]));
     const bytes =
       asset.format === 'zip'
-        ? await createDeterministicZip(path.join(root, asset.member), { keepParent: true })
-        : canonicalGzipSync(await createDeterministicTar(root));
+        ? await createDeterministicZip(path.join(root, asset.member), { keepParent: true, modes })
+        : canonicalGzipSync(await createDeterministicTar(root, { modes }));
     writeFileSync(archive, bytes);
     asset.bytes = bytes.length;
     asset.sha256 = digest(bytes);

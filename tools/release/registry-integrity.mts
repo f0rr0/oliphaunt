@@ -825,19 +825,22 @@ export function validateRegistryReceiptEvidence(
   return evidence;
 }
 
-export async function verifyLockedCarrierIntegrity(
-  lock,
-  carrierId,
+export async function verifyRegistryCarrierIntegrity(
+  carrier,
   { fetchImpl = fetch, cratesIoReadGate = DEFAULT_CRATES_IO_READ_GATE } = {},
 ) {
-  const carrier = lock.carriers.find((entry) => entry.id === carrierId);
-  if (carrier === undefined) throw error(`publication lock has no carrier ${carrierId}`);
   if (carrier.ecosystem === 'cargo') return cargoReceipt(carrier, fetchImpl, cratesIoReadGate);
   if (carrier.ecosystem === 'npm') return npmReceipt(carrier, fetchImpl);
   if (carrier.ecosystem === 'maven') return mavenReceipt(carrier, fetchImpl);
   throw error(
     `${carrier.id} byte-level registry verification is unsupported for ${carrier.ecosystem}`,
   );
+}
+
+export async function verifyLockedCarrierIntegrity(lock, carrierId, options = {}) {
+  const carrier = lock.carriers.find((entry) => entry.id === carrierId);
+  if (carrier === undefined) throw error(`publication lock has no carrier ${carrierId}`);
+  return verifyRegistryCarrierIntegrity(carrier, options);
 }
 
 export async function verifyLockedRegistryIntegrity(

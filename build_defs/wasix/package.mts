@@ -108,6 +108,7 @@ export async function stageRuntimeArchive(
   if (path.basename(stage) !== 'oliphaunt')
     throw new Error('runtime archive parent must be oliphaunt');
   const destinations = new Set<string>();
+  const modes: Record<string, number> = {};
   await mkdir(stage, { recursive: true });
   for (const entry of entries) {
     safePath(entry.destination);
@@ -126,6 +127,7 @@ export async function stageRuntimeArchive(
         throw new Error(`duplicate runtime destination: ${destination}`);
       }
       destinations.add(destination);
+      modes[`oliphaunt/${destination}`] = entry.executable ? 0o755 : 0o644;
       const output = path.join(stage, destination);
       await mkdir(path.dirname(output), { recursive: true });
       await copyFile(file, output);
@@ -151,7 +153,7 @@ export async function stageRuntimeArchive(
   }
   await writeFile(
     archive,
-    releaseZstdCompressSync(await createDeterministicTar(stage, { keepParent: true })),
+    releaseZstdCompressSync(await createDeterministicTar(stage, { keepParent: true, modes })),
   );
 }
 

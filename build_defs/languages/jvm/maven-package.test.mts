@@ -1,5 +1,14 @@
 import { expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { validateKotlinMavenStagingClosure } from '../../../src/native/sdks/kotlin/tools/kotlin-maven-staging.mts';
@@ -95,6 +104,15 @@ async function fixture(scratch: string) {
       (name) => `${OWNER}/dependency-license-blobs/${name}`,
     ),
   ];
+  const legalSources = Object.fromEntries(
+    members.map((member) => {
+      const destination = path.join(scratch, 'legal-inputs', member);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      copyFileSync(path.join(ROOT, member), destination);
+      chmodSync(destination, 0o644);
+      return [member, destination];
+    }),
+  );
   return {
     version: read('src/native/sdks/kotlin/VERSION').trim(),
     registryPackages: REGISTRY.map((coordinate) => `maven:${coordinate}`),
@@ -108,7 +126,7 @@ async function fixture(scratch: string) {
     coroutinesCoordinates: `${kotlin.libraries['kotlinx-coroutines-core'].module}-jvm:${kotlin.libraries['kotlinx-coroutines-core'].version}`,
     sources: { 'generated/Source.kt': source },
     javadoc: { 'index.html': html },
-    legalSources: Object.fromEntries(members.map((member) => [member, path.join(ROOT, member)])),
+    legalSources,
   };
 }
 test('three native envelopes preserve the exact existing ten-file Maven closure', async () => {

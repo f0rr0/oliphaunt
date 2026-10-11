@@ -131,6 +131,10 @@ NATIVE_LINKOPTS = select({
     _WINDOWS: WINDOWS_LINKOPTS,
     "//conditions:default": ["-lm", "-ldl", "-lpthread"],
 })
+# The pinned Zig toolchain intentionally has no post-link strip tool. Its
+# declared linker supports debug stripping without removing dynamic exports.
+# Keep development/debug outputs intact; apply only at final native links.
+NATIVE_RELEASE_LINKOPTS = select({"@oliphaunt//build_defs/native:linux_opt": ["-Wl,-S"], "//conditions:default": []})
 NATIVE_FRONTEND_LINKOPTS = select({_MACOS: ["-Wl,-rpath,@loader_path/../lib"], _WINDOWS: [], "//conditions:default": ["-Wl,-rpath,$ORIGIN/../lib"]})
 NATIVE_SERVER_LINKOPTS = select({_MACOS: [], _WINDOWS: [], "//conditions:default": ["-Wl,--export-dynamic"]})
 NATIVE_MODULE_LINKOPTS = select({_MACOS: ["-Wl,-undefined,dynamic_lookup"], _WINDOWS: [], "//conditions:default": []})

@@ -1,6 +1,6 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("//build_defs/foundation:bun.bzl", "bun_test")
+load("//build_defs/foundation:bun.bzl", "bun_script_test")
 load("//build_defs/release:identity.bzl", "release_identity")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load(":fixture.bzl", "fixture_header", "fixture_package")
@@ -48,7 +48,7 @@ release_identity(name = "gamma_identity", product_id = "fixture-gamma", version 
 
 shipping_export(name = "export", packages = [":alpha_ship", ":beta_ship", ":gamma_ship"])
 
-[bun_test(
+[bun_script_test(
     name = product + "_test",
     entry_point = "consumer.mts",
     data = [":" + product + "_archive", product + ".expected"],

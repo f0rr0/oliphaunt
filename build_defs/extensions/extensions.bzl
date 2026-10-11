@@ -1,5 +1,6 @@
 """Native member construction; publication ownership stays in imported metadata."""
 
+load("//build_defs/native:platform_config.bzl", "NATIVE_RELEASE_LINKOPTS")
 load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "CONTRIB_OWNERS", "EXTENSIONS", "EXTENSION_PROFILES", "EXTENSION_RECIPES", "EXTENSION_SOURCES", "POSTGRES_SOURCE")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
@@ -295,6 +296,6 @@ def native_extension_modules(name, srcs, hdrs = [], copts = [], deps = [], inclu
             linkshared = True,
             linkstatic = True,
             dynamic_deps = dynamic_deps,
-            linkopts = linkopts + (["-Wl,-z,defs"] if variant == "embedded" else []),
+            linkopts = linkopts + NATIVE_RELEASE_LINKOPTS + (["-Wl,-z,defs"] if variant == "embedded" else []),
             target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
         )

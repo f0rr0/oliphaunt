@@ -37,6 +37,7 @@ bun_test(
         "//:tools/dev/android-sdk.toml", "//:Cargo.lock", "//:LICENSE", "//:THIRD_PARTY_NOTICES.md", "//src/native/mobile-bindings:license_inputs",
         "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/testdata/release-fixture-utils.mts", "//:tools/packaging/testdata/zip-fixture.mts",
         "//:tools/packaging/maven-central-contract.mts", "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts",
+        "//:tools/packaging/windows-vc-runtime-policy.json",
         "//:tools/packaging/release-notices.mts", "//:tools/packaging/release-directory-safety.mts", "//:tools/packaging/rust-dependency-license-contract.mts", "//tools/release:platform-compatibility-policy.mts",
     ],
     size = "small",

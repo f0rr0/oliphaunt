@@ -99,11 +99,28 @@ sha2 = "0.10"
 oliphaunt-pgwire-server = { path = "../pgwire-server" }
 napi = { version = "=3.12.2", default-features = false, features = ["napi8"] }
 napi-derive = { version = "=3.6.3", default-features = false, features = ["strict", "type-def"] }
-liboliphaunt-wasix-portable = { version = "*", path = "../runtime/crates/assets" }
-oliphaunt-wasix = { version = "*", path = "../sdks/rust", features = ["__internal-napi"] }
+liboliphaunt-wasix-portable = { version = "=0.3.2" }
+oliphaunt-wasix = { workspace = true, features = ["__internal-napi"] }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "=1.1.4", features = ["fs"] }
 
 [build-dependencies]
 napi-build = "=2.4.1"
+
+# The installed SDK and its linked artifact carriers cannot share Cargo's
+# resolver with the source SDK/carriers that this repository constructs.
+[workspace]
+members = [".", "../pgwire-server"]
+resolver = "3"
+
+[workspace.package]
+repository = "https://github.com/f0rr0/oliphaunt"
+homepage = "https://oliphaunt.dev"
+
+[workspace.dependencies]
+# Both adapters pass SDK types and must adopt one crate identity.
+oliphaunt-wasix = { version = "0.3.2" }
+
+[profile.release]
+strip = "symbols"

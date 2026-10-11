@@ -1,7 +1,6 @@
 """Regression for declared native Bun actions and computed test arguments."""
 
-load(":bun.bzl", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
-load(":bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load(":bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
 
 def _impl(ctx):
     return bun_test_entrypoint(
@@ -21,7 +20,7 @@ _native_entry_test = rule(
         "_runner": attr.label(default = "//build_defs/foundation:native-entry.test.mts", allow_single_file = True),
         "_helper": attr.label(default = "//build_defs/foundation:native-entry-helper.mts", allow_single_file = True),
     }),
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     test = True,
 )
 

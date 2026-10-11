@@ -1,6 +1,7 @@
 import {
   chmodSync,
   copyFileSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
@@ -9,6 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { renderCargoToml, resolveCargoWorkspaceInheritance } from './cargo-manifest.mts';
 import { createDeterministicTar, listArchiveEntries } from './package-archive.mts';
 
 export { createDeterministicTar } from './package-archive.mts';
@@ -45,25 +47,14 @@ function abort(fail, message) {
 }
 
 export function parseCargoPackageNameVersion(text, context, { fail = null } = {}) {
-  let inPackage = false;
-  let name = null;
-  let version = null;
-  for (const rawLine of text.split(/\r?\n/u)) {
-    const line = rawLine.trim();
-    if (line === '[package]') {
-      inPackage = true;
-      continue;
-    }
-    if (inPackage && line.startsWith('[')) {
-      break;
-    }
-    if (!inPackage) {
-      continue;
-    }
-    name ??= line.match(/^name\s*=\s*"([^"]+)"/u)?.[1] ?? null;
-    version ??= line.match(/^version\s*=\s*"([^"]+)"/u)?.[1] ?? null;
+  let manifest;
+  try {
+    manifest = Bun.TOML.parse(text);
+  } catch {
+    abort(fail, `${context} must contain valid Cargo TOML`);
   }
-  if (!name || !version) {
+  const { name, version } = manifest.package ?? {};
+  if (typeof name !== 'string' || !name || typeof version !== 'string' || !version) {
     abort(fail, `${context} must declare package.name and package.version`);
   }
   return { name, version };
@@ -73,17 +64,63 @@ export function readCargoPackageNameVersion(manifest, { fail = null, rel = Strin
   return parseCargoPackageNameVersion(readFileSync(manifest, 'utf8'), rel(manifest), { fail });
 }
 
-export function packagedCargoManifestText(source) {
+export function packagedCargoManifestText(source, workspaceText?: string) {
+  if (workspaceText !== undefined) {
+    const manifest = resolveCargoWorkspaceInheritance(
+      Bun.TOML.parse(source),
+      Bun.TOML.parse(workspaceText).workspace ?? {},
+    );
+    delete manifest.package.workspace;
+    manifest.workspace = {};
+    for (const table of [manifest, ...Object.values(manifest.target ?? {})] as Record<
+      string,
+      any
+    >[]) {
+      for (const section of ['dependencies', 'dev-dependencies', 'build-dependencies']) {
+        for (const [name, dependency] of Object.entries(table[section] ?? {}) as [
+          string,
+          Record<string, any>,
+        ][]) {
+          if (!dependency || typeof dependency !== 'object' || !dependency.path) continue;
+          if (typeof dependency.version !== 'string')
+            throw new Error(`Unversioned public Cargo dependency ${name}`);
+          delete dependency.path;
+        }
+      }
+    }
+    return renderCargoToml(manifest);
+  }
   let text = source
     .replaceAll('repository.workspace = true', 'repository = "https://github.com/f0rr0/oliphaunt"')
     .replaceAll('homepage.workspace = true', 'homepage = "https://oliphaunt.dev"');
   text = text
     .replace(/(\{\s*)path\s*=\s*"[^"]+",\s*/gu, '$1')
     .replace(/,\s*path\s*=\s*"[^"]+"/gu, '');
+  if (/workspace\s*=\s*true/u.test(text))
+    throw new Error(
+      'Public Cargo workspace inheritance requires its conventional workspace manifest',
+    );
   if (!text.includes('\n[workspace]')) {
     text = `${text.trimEnd()}\n\n[workspace]\n`;
   }
   return text;
+}
+
+function conventionalWorkspaceText(manifest: string): string | undefined {
+  const packageDirectory = path.dirname(path.resolve(manifest));
+  const own = Bun.TOML.parse(readFileSync(manifest, 'utf8'));
+  if (typeof own.package?.workspace === 'string') {
+    const workspace = path.resolve(packageDirectory, own.package.workspace, 'Cargo.toml');
+    return readFileSync(workspace, 'utf8');
+  }
+  for (let directory = packageDirectory; ; directory = path.dirname(directory)) {
+    const candidate = path.join(directory, 'Cargo.toml');
+    if (existsSync(candidate)) {
+      const text = readFileSync(candidate, 'utf8');
+      if (Bun.TOML.parse(text).workspace !== undefined) return text;
+    }
+    if (directory === path.dirname(directory)) return undefined;
+  }
 }
 
 const CARGO_VIRTUAL_PACKAGE_FILES = new Set([
@@ -286,7 +323,7 @@ export function prepareCargoPackageSource(
   manifest,
   outputDir,
   files,
-  { fail = null, rel = String, noticeProfile = null } = {},
+  { fail = null, rel = String, noticeProfile = null, noticeSourceRoot = undefined } = {},
 ) {
   const { name, version } = readCargoPackageNameVersion(manifest, { fail, rel });
   const packageRoot = `${name}-${version}`;
@@ -295,7 +332,7 @@ export function prepareCargoPackageSource(
   const cratePath = path.resolve(outputDir, `${packageRoot}.crate`);
   let expectedMembers = [...copyCargoPackageSource(manifest, stageDir, files, { fail, rel })];
   if (noticeProfile !== null) {
-    stageReleaseNotices(stageDir, { profile: noticeProfile });
+    stageReleaseNotices(stageDir, { profile: noticeProfile, sourceRoot: noticeSourceRoot });
     // Notice staging may add or remove profile-owned members. Cargo still owns
     // every other source member; archive validation uses the final staged set.
     expectedMembers = listArchiveEntries(stageDir)
@@ -303,7 +340,13 @@ export function prepareCargoPackageSource(
       .map((file) => path.relative(stageDir, file).split(path.sep).join('/'));
   }
   const stagedManifest = path.join(stageDir, 'Cargo.toml');
-  writeFileSync(stagedManifest, packagedCargoManifestText(readFileSync(stagedManifest, 'utf8')));
+  writeFileSync(
+    stagedManifest,
+    packagedCargoManifestText(
+      readFileSync(stagedManifest, 'utf8'),
+      conventionalWorkspaceText(manifest),
+    ),
+  );
   return { name, version, packageRoot, stageDir, cratePath, expectedMembers, stagedManifest };
 }
 

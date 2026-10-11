@@ -190,6 +190,151 @@ test('rejects stale declarations, missing integrity, and unavailable held worksp
   }
 });
 
+test('compiler/type sharing admits exact lock context and rejects conflicting bytes or dependencies', () => {
+  const value = fixture();
+  value.manifests['src/sdk'].devDependencies.framework = '^2.0.0';
+  Object.assign(value.lock.packages, {
+    framework: [
+      'framework@2.1.0',
+      '',
+      { dependencies: { '@types/node': '^24.0.0' } },
+      'sha512-ZnJhbWU=',
+    ],
+    'framework/@types/node': structuredClone(value.lock.packages['@oliphaunt/sdk/@types/node']),
+    'framework/@types/node/undici-types': structuredClone(
+      value.lock.packages['@oliphaunt/sdk/@types/node/undici-types'],
+    ),
+  });
+  const selection = { workspaces: { '@oliphaunt/sdk': ['framework'] } };
+  const before = importJavascriptMetadata(value.root, value.lock, value.manifests);
+  const { compilerInputs, ...unchanged } = importJavascriptMetadata(
+    value.root,
+    value.lock,
+    value.manifests,
+    {},
+    selection,
+  );
+  expect(unchanged).toEqual(before);
+  const nodeId = before.workspaces['@oliphaunt/sdk'].types['@types/node'];
+  const undiciId = before.packages[nodeId].dependencies['undici-types'];
+  expect(compilerInputs?.shared).toEqual([nodeId, undiciId].sort());
+  expect(compilerInputs?.packages[nodeId]).toEqual(before.packages[nodeId]);
+  for (const mutate of [
+    (invalid: any) => {
+      invalid.lock.packages['framework/@types/node'][3] = 'sha512-Y29uZmxpY3Q=';
+    },
+    (invalid: any) => {
+      invalid.lock.packages['framework/@types/node'][2].dependencies['undici-types'] = '^7.1.0';
+      invalid.lock.packages['framework/@types/node/undici-types'] = [
+        'undici-types@7.2.0',
+        '',
+        {},
+        'sha512-Y29uZmxpY3Q=',
+      ];
+    },
+  ]) {
+    const invalid = structuredClone(value);
+    mutate(invalid);
+    expect(() =>
+      importJavascriptMetadata(invalid.root, invalid.lock, invalid.manifests, {}, selection),
+    ).toThrow('Conflicting compiler/type acquisition context');
+  }
+});
+
+test('compiler roots import declared type peers and every immutable tool platform without changing existing views', () => {
+  const value = fixture();
+  value.manifests['src/sdk'].devDependencies.framework = '^2.0.0';
+  value.root.overrides = { esbuild: '0.28.1' };
+  value.lock.overrides = { ...value.root.overrides };
+  Object.assign(value.lock.packages, {
+    framework: [
+      'framework@2.1.0',
+      '',
+      { peerDependencies: { '@types/render': '^19.0.0' }, optionalPeers: ['@types/render'] },
+      'sha512-ZnJhbWU=',
+    ],
+    '@types/render': ['@types/render@19.2.0', '', {}, 'sha512-cmVuZGVy'],
+    esbuild: [
+      'esbuild@0.28.1',
+      '',
+      { optionalDependencies: { linux: '0.28.1', darwin: '0.28.1' } },
+      'sha512-ZXNi',
+    ],
+    linux: ['linux@0.28.1', '', { os: 'linux', cpu: 'x64' }, 'sha512-bGludXg='],
+    darwin: ['darwin@0.28.1', '', { os: 'darwin', cpu: 'arm64' }, 'sha512-ZGFyd2lu'],
+  });
+  const selection = { workspaces: { '@oliphaunt/sdk': ['framework'] }, overrideTools: ['esbuild'] };
+  const before = importJavascriptMetadata(value.root, value.lock, value.manifests);
+  const { compilerInputs, ...unchanged } = importJavascriptMetadata(
+    value.root,
+    value.lock,
+    value.manifests,
+    {},
+    selection,
+  );
+  expect(unchanged).toEqual(before);
+  const compiled = compilerInputs!;
+  const framework = compiled.packages[compiled.roots['@oliphaunt/sdk'].framework];
+  expect(compiled.packages[framework.dependencies['@types/render']].version).toBe('19.2.0');
+  const tool = compiled.packages[compiled.tools.esbuild];
+  expect(
+    Object.values(tool.dependencies)
+      .map((id) => compiled.packages[id].os)
+      .sort(),
+  ).toEqual(['darwin', 'linux']);
+  const cyclic = structuredClone(value);
+  cyclic.lock.packages.framework[2].dependencies = { helper: '2.1.0' };
+  cyclic.lock.packages.helper = [
+    'helper@2.1.0',
+    '',
+    { dependencies: { framework: '^2.0.0' } },
+    'sha512-aGVscGVy',
+  ];
+  const withCycle = importJavascriptMetadata(
+    cyclic.root,
+    cyclic.lock,
+    cyclic.manifests,
+    {},
+    selection,
+  ).compilerInputs!;
+  const frameworkId = withCycle.roots['@oliphaunt/sdk'].framework;
+  const helperId = withCycle.packages[frameworkId].dependencies.helper;
+  expect(withCycle.packages[helperId].dependencies.framework).toBe(frameworkId);
+  expect(withCycle.closures[frameworkId]).toContain(helperId);
+  for (const mutate of [
+    (invalid: any) => {
+      invalid.lock.workspaces['src/sdk'] = {
+        ...invalid.lock.workspaces['src/sdk'],
+        devDependencies: {
+          ...invalid.lock.workspaces['src/sdk'].devDependencies,
+          framework: '^1.0.0',
+        },
+      };
+    },
+    (invalid: any) => {
+      delete invalid.lock.packages['@types/render'];
+    },
+    (invalid: any) => {
+      invalid.lock.packages['@types/render'][0] = '@types/render@18.0.0';
+    },
+    (invalid: any) => {
+      invalid.lock.overrides.esbuild = '0.21.0';
+    },
+    (invalid: any) => {
+      delete invalid.lock.packages.darwin;
+    },
+    (invalid: any) => {
+      invalid.lock.packages.linux[0] = 'linux@1.0.0';
+    },
+  ]) {
+    const invalid = structuredClone(value);
+    mutate(invalid);
+    expect(() =>
+      importJavascriptMetadata(invalid.root, invalid.lock, invalid.manifests, {}, selection),
+    ).toThrow();
+  }
+});
+
 test('detects cyclic type acquisitions and conflicting immutable package closures', () => {
   const cyclic = fixture();
   cyclic.lock.packages['bun-types'][2].dependencies['@types/bun'] = '1.4.2';
@@ -206,4 +351,38 @@ test('detects cyclic type acquisitions and conflicting immutable package closure
   expect(() =>
     importJavascriptMetadata(conflicting.root, conflicting.lock, conflicting.manifests),
   ).toThrow('Conflicting');
+});
+
+test('nested compiler dependencies inherit the nearest locked resolution context', () => {
+  const value = fixture();
+  value.manifests['src/sdk'].devDependencies.framework = '^2.0.0';
+  Object.assign(value.lock.packages, {
+    framework: [
+      'framework@2.1.0',
+      '',
+      { dependencies: { transformer: '2.1.0' } },
+      'sha512-ZnJhbWU=',
+    ],
+    transformer: ['transformer@2.1.0', '', {}, 'sha512-dHJhbnM='],
+    'framework/transformer': [
+      'transformer@2.1.0',
+      '',
+      { dependencies: { parser: '^3.5.0' } },
+      'sha512-dHJhbnM=',
+    ],
+    'framework/parser': ['parser@3.5.0', '', {}, 'sha512-bmVhcg=='],
+    parser: ['parser@3.3.0', '', {}, 'sha512-Z2xvYmFs'],
+  });
+  const compiled = importJavascriptMetadata(
+    value.root,
+    value.lock,
+    value.manifests,
+    {},
+    {
+      workspaces: { '@oliphaunt/sdk': ['framework'] },
+    },
+  ).compilerInputs!;
+  const framework = compiled.packages[compiled.roots['@oliphaunt/sdk'].framework];
+  const transformer = compiled.packages[framework.dependencies.transformer];
+  expect(compiled.packages[transformer.dependencies.parser].version).toBe('3.5.0');
 });

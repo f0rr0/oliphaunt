@@ -33,8 +33,8 @@ parser = "toml:dependencies.oliphaunt-query.version"
 [compatibility_versions.rust_native_bindings]
 public_support = false
 source_product = "liboliphaunt-native-bindings"
-path = "src/native/sdks/rust/Cargo.toml"
-parser = "toml:dependencies.liboliphaunt-native-bindings.version"
+path = "Cargo.toml"
+parser = "toml:workspace.dependencies.liboliphaunt-native-bindings.version"
 
 [compatibility_versions.broker_library]
 public_support = false

@@ -68,6 +68,7 @@ tasks:
       - /.release-please-manifest.json
       - /src/benchmarks/moon.yml
       - /Cargo.lock
+      - /src/wasix/node-addon/Cargo.lock
       - /Cargo.toml
       - /src/examples/moon.yml
       - /src/examples/**/Cargo.toml
@@ -175,6 +176,7 @@ tasks:
     inputs:
       - /Cargo.toml
       - /Cargo.lock
+      - /src/wasix/node-addon/Cargo.lock
       - "@group(package-test-metadata)"
       - "@group(release-target-contract)"
       - "@group(legal-files)"
@@ -214,6 +216,7 @@ tasks:
       - /.release-please-manifest.json
       - /Cargo.toml
       - /Cargo.lock
+      - /src/wasix/node-addon/Cargo.lock
       - /rust-toolchain.toml
       - /**/Cargo.toml
       - /src/**/*.rs

@@ -2,7 +2,7 @@
 
 load("@rules_rust//rust:defs.bzl", "rust_binary")
 load("@rules_rust//rust:toolchain.bzl", "rust_stdlib_filegroup", "rust_toolchain")
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 
 _StdCrateInfo = provider(fields = ["output", "closure"])
 _StdBuildInfo = provider(fields = ["flags", "environment", "out_dir"])
@@ -11,12 +11,13 @@ def _script_impl(ctx):
     flags = ctx.actions.declare_file(ctx.label.name + ".flags")
     environment = ctx.actions.declare_file(ctx.label.name + ".env")
     out_dir = ctx.actions.declare_directory(ctx.label.name + ".out")
-    bun = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun
     source_root = ctx.file.manifest.dirname
-    ctx.actions.run(
-        executable = bun,
-        arguments = [ctx.file._runner.path, ctx.executable.binary.path, source_root, out_dir.path, flags.path, environment.path, ctx.file.compiler.path],
-        inputs = depset([ctx.file._runner, ctx.file.manifest, ctx.file.compiler] + ctx.files.srcs + ctx.files.compiler_files),
+    bun_file_action(
+        ctx,
+        ctx.file._runner,
+        arguments = [ctx.executable.binary.path, source_root, out_dir.path, flags.path, environment.path, ctx.file.compiler.path],
+        inputs = depset([ctx.file.manifest, ctx.file.compiler] + ctx.files.srcs + ctx.files.compiler_files),
+        source_files = [],
         tools = [ctx.attr.binary[DefaultInfo].files_to_run],
         outputs = [flags, environment, out_dir],
         env = ctx.attr.environment,
@@ -36,7 +37,7 @@ _script = rule(
         "environment": attr.string_dict(),
         "_runner": attr.label(default = Label("//build_defs/wasix/browser/std:build-script.mts"), allow_single_file = True),
     },
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
 )
 
 def _crate_impl(ctx):
@@ -44,6 +45,8 @@ def _crate_impl(ctx):
     empty = ctx.actions.declare_file(ctx.label.name + ".empty-sysroot/anchor")
     ctx.actions.write(empty, "")
     arguments = ctx.actions.args()
+    for name in ["pwd", "exec_root", "output_base"]:
+        arguments.add_all(["--subst", name + "=${" + name + "}"])
     if ctx.attr.build_script:
         script = ctx.attr.build_script[_StdBuildInfo]
         arguments.add("--env-file", script.environment)
@@ -53,6 +56,13 @@ def _crate_impl(ctx):
     arguments.add(ctx.file.compiler)
     arguments.add(ctx.file.crate_root)
     arguments.add_all(["--crate-name", ctx.attr.crate_name, "--crate-type", "rlib", "--edition", ctx.attr.edition, "--target", "wasm32-unknown-unknown", "--sysroot", empty.dirname, "--emit=link", "--cap-lints=allow", "-Zforce-unstable-if-unmarked", "-Copt-level=" + str(ctx.attr.opt_level), "-Clto=fat", "-Clinker-plugin-lto", "-Cmetadata=oliphaunt-browser-std-" + ctx.attr.crate_name + "-" + ctx.attr.version, "-o", output.path])
+    # Match rules_rust's execution-path remapping, then give this pinned
+    # source repository a namespace independent of its generated repo name.
+    # Rust applies the most specific (last) matching prefix first.
+    for root in ["${output_base}", "${pwd}", "${exec_root}"]:
+        arguments.add("--remap-path-prefix=" + root + "=.")
+    for root in ["${output_base}/", "${pwd}/", "${exec_root}/", ""]:
+        arguments.add("--remap-path-prefix=" + root + ctx.label.workspace_root + "=/oliphaunt/browser-rust-std")
     arguments.add_all(ctx.attr.flags)
     if ctx.attr.codegen_units:
         arguments.add("-Ccodegen-units=" + str(ctx.attr.codegen_units))
@@ -104,11 +114,12 @@ _crate = rule(
 
 def _receipt_impl(ctx):
     output = ctx.actions.declare_file("construction-receipt.json")
-    bun = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun
-    ctx.actions.run(
-        executable = bun,
-        arguments = [ctx.file._receipt.path, ctx.file.metadata.path, output.path] + [file.path for file in ctx.files.stdlib],
-        inputs = [ctx.file._receipt, ctx.file.metadata] + ctx.files.stdlib,
+    bun_file_action(
+        ctx,
+        ctx.file._receipt,
+        arguments = [ctx.file.metadata.path, output.path] + [file.path for file in ctx.files.stdlib],
+        inputs = [ctx.file.metadata] + ctx.files.stdlib,
+        source_files = [],
         outputs = [output],
         mnemonic = "BrowserStdReceipt",
     )
@@ -121,7 +132,7 @@ _receipt = rule(
         "stdlib": attr.label_list(allow_files = True),
         "_receipt": attr.label(default = Label("//build_defs/wasix/browser/std:receipt.mts"), allow_single_file = True),
     },
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
 )
 
 def browser_std(graph, rust, target_env):
@@ -161,7 +172,7 @@ def browser_std(graph, rust, target_env):
         _crate(name = row["name"], crate_name = row["crate_name"], crate_root = row["root"], srcs = sources, edition = row["edition"], version = row["version"], crate_features = row["features"], flags = rust["flags"] + row["profile"].get("rustflags", []), opt_level = str(row["profile"].get("opt-level", rust["profile"]["opt-level"])), codegen_units = row["profile"].get("codegen-units", 0), environment = env, deps = {":" + target: name for name, target in row["deps"].items()}, build_script = script, compiler = "bin/rustc", compiler_files = [":compiler_files"])
     rust_stdlib_filegroup(name = "stdlib", srcs = [":" + row["name"] for row in graph])
     _receipt(name = "construction_receipt", metadata = "construction.json", stdlib = [":stdlib"])
-    for name, target, stdlib, flags, dylib in [("host", "x86_64-unknown-linux-gnu", ":host_stdlib", [], ".so"), ("wasm", rust["target"], ":stdlib", rust["flags"], ".wasm")]:
+    for name, target, stdlib, flags, dylib in [("host", "x86_64-unknown-linux-gnu", ":host_stdlib", ["-Zlinker-features=-lld"], ".so"), ("wasm", rust["target"], ":stdlib", rust["flags"], ".wasm")]:
         rust_toolchain(
             name = name + "_compiler",
             rustc = ":rustc", rust_doc = ":rustdoc", cargo = ":cargo", rustc_lib = ":rustc_lib", rust_std = stdlib,
@@ -169,7 +180,7 @@ def browser_std(graph, rust, target_env):
             exec_triple = "x86_64-unknown-linux-gnu", target_triple = target,
             binary_ext = "" if name == "host" else ".wasm", staticlib_ext = ".a", dylib_ext = dylib,
             default_edition = "2024", stdlib_linkflags = ["-ldl", "-lpthread"] if name == "host" else [],
-            extra_rustc_flags = flags, extra_exec_rustc_flags = [],
+            extra_rustc_flags = flags, extra_exec_rustc_flags = ["-Zlinker-features=-lld"] if name == "host" else [],
             opt_level = {"opt": "3", "dbg": "0", "fastbuild": "0"},
             version = "1.90.0", channel = "nightly", iso_date = "2025-07-05",
         )

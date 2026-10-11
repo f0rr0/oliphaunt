@@ -10,7 +10,7 @@ load(":config.bzl", "pg_config")
 load(":generators.bzl", "postgres_bison", "postgres_flex", "postgres_perl")
 load(":host_config.bzl", "postgres_host_configuration_targets")
 load(":windows_link.bzl", "postgres_windows_exports", "postgres_windows_resource", "postgres_windows_server")
-load(":platform_config.bzl", "NATIVE_CONFIG", "NATIVE_PROFILE", "NATIVE_C_COMPATIBLE", "NATIVE_PORT_REPLACEMENTS", "NATIVE_OS_HEADER", "NATIVE_BACKEND_PORT_SOURCES", "NATIVE_LINKOPTS", "NATIVE_EMBEDDED_DEFINES", "NATIVE_CONFIGURATION", "NATIVE_CONFIGURATION_ADMISSION", "NATIVE_INCLUDE_DIRECTORIES", "NATIVE_HEADER_DEFINES", "NATIVE_COPTS", "NATIVE_BACKEND_DEFINES", "NATIVE_PORT_ADDITIONAL_SOURCES", "NATIVE_PORT_CRC_SOURCES", "NATIVE_LIBPQ_ADDITIONAL_SOURCES", "NATIVE_FRONTEND_LINKOPTS", "NATIVE_SERVER_LINKOPTS", "NATIVE_MODULE_LINKOPTS", "NATIVE_LIBPQ_LINKOPTS", "NATIVE_UNIX_COMPATIBLE", "NATIVE_ELF_C_COMPATIBLE", "NATIVE_MACOS_COMPATIBLE", "NATIVE_WINDOWS_COMPATIBLE")
+load(":platform_config.bzl", "NATIVE_CONFIG", "NATIVE_PROFILE", "NATIVE_C_COMPATIBLE", "NATIVE_PORT_REPLACEMENTS", "NATIVE_OS_HEADER", "NATIVE_BACKEND_PORT_SOURCES", "NATIVE_LINKOPTS", "NATIVE_RELEASE_LINKOPTS", "NATIVE_EMBEDDED_DEFINES", "NATIVE_CONFIGURATION", "NATIVE_CONFIGURATION_ADMISSION", "NATIVE_INCLUDE_DIRECTORIES", "NATIVE_HEADER_DEFINES", "NATIVE_COPTS", "NATIVE_BACKEND_DEFINES", "NATIVE_PORT_ADDITIONAL_SOURCES", "NATIVE_PORT_CRC_SOURCES", "NATIVE_LIBPQ_ADDITIONAL_SOURCES", "NATIVE_FRONTEND_LINKOPTS", "NATIVE_SERVER_LINKOPTS", "NATIVE_MODULE_LINKOPTS", "NATIVE_LIBPQ_LINKOPTS", "NATIVE_UNIX_COMPATIBLE", "NATIVE_ELF_C_COMPATIBLE", "NATIVE_MACOS_COMPATIBLE", "NATIVE_WINDOWS_COMPATIBLE")
 load(":resources.bzl", "timezone_database")
 load(":frontend_sources.bzl", "POSTGRES_DUMP_COMMON_SOURCES", "POSTGRES_DUMP_SOURCES", "POSTGRES_BASEBACKUP_COMMON_SOURCES", "POSTGRES_PSQL_SOURCES")
 load(":postgres_sources.bzl",
@@ -180,7 +180,7 @@ def postgres_native_targets(version):
                copts = _COPTS, linkopts = _LINKOPTS, target_compatible_with = _COMPATIBLE)
     cc_library(name = "libpq_objects", srcs = POSTGRES_LIBPQ_SOURCES + NATIVE_LIBPQ_ADDITIONAL_SOURCES, deps = [":server_headers", ":common_frontend_shlib", ":port_frontend"], local_defines = ["FRONTEND", "SO_MAJOR_VERSION=5"], copts = _COPTS, alwayslink = True, target_compatible_with = _COMPATIBLE)
     cc_binary(name = "libpq.so", deps = [":libpq_objects"], linkshared = True,
-              features = ["-soname"], linkopts = NATIVE_LIBPQ_LINKOPTS + _LINKOPTS, target_compatible_with = NATIVE_ELF_C_COMPATIBLE)
+              features = ["-soname"], linkopts = NATIVE_LIBPQ_LINKOPTS + _LINKOPTS + NATIVE_RELEASE_LINKOPTS, target_compatible_with = NATIVE_ELF_C_COMPATIBLE)
     cc_binary(name = "libpq.dylib", deps = [":libpq_objects"], linkshared = True, linkopts = NATIVE_LIBPQ_LINKOPTS + _LINKOPTS, target_compatible_with = NATIVE_MACOS_COMPATIBLE)
     _postgres_windows_targets()
     native.alias(name = "libpq_shared", actual = select({"@oliphaunt//build_defs/native:macos_arm64": ":libpq.dylib", "@oliphaunt//build_defs/native:windows_x64": ":libpq.dll", "//conditions:default": ":libpq.so"}))
@@ -192,28 +192,28 @@ def postgres_native_targets(version):
                deps = [":server_headers"], includes = ["src/bin/pg_dump", "src/bin/pg_basebackup", "src/bin/psql"], target_compatible_with = _COMPATIBLE)
     frontend_deps = [":server_headers", ":common_frontend", ":port_frontend", ":libpq", ":frontend_utils"]
     cc_binary(name = "pg_ctl", srcs = ["src/bin/pg_ctl/pg_ctl.c"], deps = [":server_headers", ":common_frontend", ":port_frontend"],
-              defines = ["FRONTEND"], copts = _COPTS, target_compatible_with = _COMPATIBLE)
+              defines = ["FRONTEND"], copts = _COPTS, linkopts = NATIVE_RELEASE_LINKOPTS, target_compatible_with = _COMPATIBLE)
     cc_binary(name = "pg_config", srcs = POSTGRES_PG_CONFIG_SOURCES, deps = [":server_headers", ":common_frontend", ":port_frontend"],
               defines = ["FRONTEND"], copts = _COPTS, target_compatible_with = _COMPATIBLE)
     cc_library(name = "dump_common", srcs = POSTGRES_DUMP_COMMON_SOURCES, deps = frontend_deps + [":tools_headers"],
                defines = ["FRONTEND"], copts = _COPTS, target_compatible_with = _COMPATIBLE)
     cc_binary(name = "pg_dump", srcs = POSTGRES_DUMP_SOURCES, deps = frontend_deps + [":tools_headers", ":dump_common"],
-              defines = ["FRONTEND"], copts = _COPTS, linkopts = _FRONTEND_LINKOPTS, target_compatible_with = _COMPATIBLE)
+              defines = ["FRONTEND"], copts = _COPTS, linkopts = _FRONTEND_LINKOPTS + NATIVE_RELEASE_LINKOPTS, target_compatible_with = _COMPATIBLE)
     cc_library(name = "basebackup_common", srcs = POSTGRES_BASEBACKUP_COMMON_SOURCES, deps = frontend_deps + [":tools_headers"],
                defines = ["FRONTEND"], copts = _COPTS, target_compatible_with = _COMPATIBLE)
     cc_binary(name = "pg_basebackup", srcs = ["src/bin/pg_basebackup/pg_basebackup.c"], deps = frontend_deps + [":tools_headers", ":basebackup_common"],
-              defines = ["FRONTEND"], copts = _COPTS, linkopts = _FRONTEND_LINKOPTS, target_compatible_with = _COMPATIBLE)
+              defines = ["FRONTEND"], copts = _COPTS, linkopts = _FRONTEND_LINKOPTS + NATIVE_RELEASE_LINKOPTS, target_compatible_with = _COMPATIBLE)
     cc_binary(name = "psql", srcs = POSTGRES_PSQL_SOURCES + ["src/bin/psql/psqlscanslash.c", "src/bin/psql/tab-complete.c", "src/bin/psql/sql_help.c"],
-              deps = frontend_deps + [":tools_headers"], defines = ["FRONTEND"], copts = _COPTS, linkopts = _FRONTEND_LINKOPTS, target_compatible_with = _COMPATIBLE)
+              deps = frontend_deps + [":tools_headers"], defines = ["FRONTEND"], copts = _COPTS, linkopts = _FRONTEND_LINKOPTS + NATIVE_RELEASE_LINKOPTS, target_compatible_with = _COMPATIBLE)
     cc_library(name = "initdb_frontend_utils", srcs = ["src/fe_utils/option_utils.c", "src/fe_utils/string_utils.c"],
                deps = [":server_headers", ":common_frontend", ":port_frontend", ":libpq"], defines = ["FRONTEND"], copts = _COPTS, target_compatible_with = _COMPATIBLE)
     cc_binary(name = "postgres", srcs = POSTGRES_MAIN_SOURCES, deps = [":backend_server"], copts = _COPTS,
-              linkopts = NATIVE_SERVER_LINKOPTS + _LINKOPTS, target_compatible_with = NATIVE_UNIX_COMPATIBLE)
+              linkopts = NATIVE_SERVER_LINKOPTS + _LINKOPTS + NATIVE_RELEASE_LINKOPTS, target_compatible_with = NATIVE_UNIX_COMPATIBLE)
     native.alias(name = "server_executable", actual = select({"@oliphaunt//build_defs/native:windows_x64": ":postgres_windows", "//conditions:default": ":postgres"}))
     cc_library(name = "main_embedded", srcs = POSTGRES_MAIN_SOURCES, deps = [":embedded_headers"],
                local_defines = ["main=oliphaunt_postgres_main"] + NATIVE_BACKEND_DEFINES, copts = _COPTS, target_compatible_with = _COMPATIBLE)
     cc_binary(name = "initdb", srcs = POSTGRES_INITDB_SOURCES, deps = [":server_headers", ":common_frontend", ":port_frontend", ":libpq", ":initdb_frontend_utils", "@icu//:i18n"],
-              defines = ["FRONTEND", "USE_PRIVATE_ENCODING_FUNCS"], copts = _COPTS, linkopts = _LINKOPTS + _FRONTEND_LINKOPTS, target_compatible_with = _COMPATIBLE)
+              defines = ["FRONTEND", "USE_PRIVATE_ENCODING_FUNCS"], copts = _COPTS, linkopts = _LINKOPTS + _FRONTEND_LINKOPTS + NATIVE_RELEASE_LINKOPTS, target_compatible_with = _COMPATIBLE)
     cc_library(name = "zic_headers", hdrs = [
         "src/include/c.h", "src/include/pg_config_manual.h", "src/include/postgres_ext.h", "src/include/port.h",
         "src/include/postgres_fe.h", "src/include/common/fe_memutils.h", "src/include/pg_getopt.h", "src/include/pgtime.h", "src/include/lib/sort_template.h",
@@ -226,7 +226,7 @@ def postgres_native_targets(version):
               defines = ["FRONTEND"], copts = _COPTS, target_compatible_with = _COMPATIBLE)
     timezone_database(name = "timezone", source = "src/timezone/data/tzdata.zi", zic = ":zic")
     for name, dependency in [("plpgsql", ":plpgsql_server"), ("dict_snowball", ":snowball_server")]:
-        cc_binary(name = name + ".so", deps = [dependency], linkshared = True, target_compatible_with = NATIVE_ELF_C_COMPATIBLE)
+        cc_binary(name = name + ".so", deps = [dependency], linkshared = True, linkopts = NATIVE_RELEASE_LINKOPTS, target_compatible_with = NATIVE_ELF_C_COMPATIBLE)
         cc_binary(name = name + ".dylib", deps = [dependency], linkshared = True, linkopts = NATIVE_MODULE_LINKOPTS, target_compatible_with = NATIVE_MACOS_COMPATIBLE)
         cc_binary(name = name + ".dll", deps = [dependency, ":server_import_library"], linkshared = True, target_compatible_with = NATIVE_WINDOWS_COMPATIBLE)
         native.alias(name = name + "_module", actual = select({"@oliphaunt//build_defs/native:macos_arm64": ":" + name + ".dylib", "@oliphaunt//build_defs/native:windows_x64": ":" + name + ".dll", "//conditions:default": ":" + name + ".so"}))

@@ -285,6 +285,17 @@ export function createRustDependencyLicenseContract({
       if (candidates.length === 0) {
         fail(`cargo tree package ${key} is absent from cargo metadata`);
       }
+      const localSource = line.match(/^[^\s]+ v[^\s]+ \((.+)\)$/u)?.[1];
+      if (localSource !== undefined && path.isAbsolute(localSource)) {
+        const local = candidates.filter(
+          (row) =>
+            isAllowedRustPathPackageMetadataRow(row, workspaceMembers) &&
+            path.resolve(path.dirname(row.manifest_path)) === path.resolve(localSource),
+        );
+        if (local.length !== 1)
+          fail(`Rust graph contains unsupported local dependency ${key}: ${localSource}`);
+        continue;
+      }
       const registry = candidates.filter((row) => row.source === CARGO_SOURCE);
       if (registry.length === 1) {
         keys.add(key);

@@ -192,30 +192,21 @@ test('extension facade generator changes select every product shipping its outpu
   ).toEqual(['liboliphaunt-native', ...products].sort());
 });
 
-test('every binary release includes its compiled sources across product boundaries', () => {
+test('binary releases include local compiled sources and retain independent registry dependencies', () => {
   const mobile = ['oliphaunt-swift', 'oliphaunt-kotlin'];
   for (const [file, products] of [
-    ['src/wasix/sdks/rust/src/oliphaunt/base.rs', ['oliphaunt-wasix-rust', 'oliphaunt-wasix-napi']],
+    ['src/wasix/sdks/rust/src/oliphaunt/base.rs', ['oliphaunt-wasix-rust']],
     ['src/wasix/pgwire-server/src/lib.rs', ['oliphaunt-pgwire-server', 'oliphaunt-wasix-napi']],
-    [
-      'src/query/rust/src/lib.rs',
-      ['oliphaunt-query', 'oliphaunt-broker', 'oliphaunt-wasix-napi', ...mobile],
-    ],
-    ['src/wasix/runtime/crates/assets/src/lib.rs', ['liboliphaunt-wasix', 'oliphaunt-wasix-napi']],
-    ['src/wasix/runtime/toolchain.toml', ['liboliphaunt-wasix', 'oliphaunt-wasix-napi']],
-    [
-      'src/wasix/postgres-tools/crates/tools/build-support.rs',
-      ['postgres-tools-wasix', 'oliphaunt-wasix-napi'],
-    ],
-    ['src/database-resources/icu/cargo/src/lib.rs', ['database-resources', 'oliphaunt-wasix-napi']],
-    [
-      'src/native/rust-bindings/src/lib.rs',
-      ['liboliphaunt-native-bindings', 'oliphaunt-broker', 'oliphaunt-node-direct', ...mobile],
-    ],
-    ['src/native/broker/src/lib.rs', ['oliphaunt-broker', ...mobile]],
+    ['src/query/rust/src/lib.rs', ['oliphaunt-query']],
+    ['src/wasix/runtime/crates/assets/src/lib.rs', ['liboliphaunt-wasix']],
+    ['src/wasix/runtime/toolchain.toml', ['liboliphaunt-wasix']],
+    ['src/wasix/postgres-tools/crates/tools/build-support.rs', ['postgres-tools-wasix']],
+    ['src/database-resources/icu/cargo/src/lib.rs', ['database-resources']],
+    ['src/native/rust-bindings/src/lib.rs', ['liboliphaunt-native-bindings']],
+    ['src/native/broker/src/lib.rs', ['oliphaunt-broker']],
     ['src/native/sdks/rust/src/lib.rs', ['oliphaunt-rust', ...mobile]],
     ['src/native/mobile-bindings/src/lib.rs', mobile],
-    ['src/native/sdks/rust/crates/oliphaunt-build/src/lib.rs', ['oliphaunt-rust', ...mobile]],
+    ['src/native/sdks/rust/crates/oliphaunt-build/src/lib.rs', ['oliphaunt-rust']],
   ]) {
     const plan = buildPlan(graph, [file]);
     expect(plan.releaseProducts.sort()).toEqual(products.sort());
@@ -243,7 +234,6 @@ test('every binary release includes its compiled sources across product boundari
       'oliphaunt-kotlin',
       'oliphaunt-node-direct',
       'oliphaunt-swift',
-      'oliphaunt-wasix-napi',
     ]);
   }
 });
@@ -320,13 +310,15 @@ test('Cargo owns transitive, inherited, renamed, build, target and custom source
   }
 });
 
-test('embedded generated payloads follow private producer ownership for source-pin changes', () => {
-  for (const file of ['src/third-party/postgres/source.toml', 'src/third-party/icu/source.toml']) {
-    expect(existsSync(path.join(ROOT, file))).toBe(true);
-    const plan = buildPlan(graph, [file]);
-    expect(plan.releaseProducts).toContain('liboliphaunt-wasix');
-    expect(plan.releaseProducts).toContain('oliphaunt-wasix-napi');
-  }
+test('upstream source pins retain conservative legacy project scope independently of held payload declarations', () => {
+  const postgres = buildPlan(graph, ['src/third-party/postgres/source.toml']);
+  expect(postgres.releaseProducts).toContain('liboliphaunt-wasix');
+  expect(postgres.releaseProducts).not.toContain('oliphaunt-wasix-napi');
+  const icu = buildPlan(graph, ['src/third-party/icu/source.toml']);
+  expect(icu.releaseProducts).toContain('liboliphaunt-wasix');
+  // Legacy Moon private-project traversal still includes the addon for ICU;
+  // this conservative scope does not retarget its registry-installed payloads.
+  expect(icu.releaseProducts).toContain('oliphaunt-wasix-napi');
 });
 
 async function generate(commits, baselines = { [native]: first, [wasix]: first }) {
@@ -1330,15 +1322,11 @@ for (const scenario of [
     products: ['oliphaunt-js'],
   },
   {
-    name: 'query updates and native ecosystem dependency bumps',
+    name: 'independent query updates and npm ecosystem dependency bumps',
     files: ['src/query/ts/src/query.ts', 'src/query/rust/src/lib.rs'],
     products: [
       'oliphaunt-query-ts',
       'oliphaunt-query',
-      'oliphaunt-broker',
-      'oliphaunt-kotlin',
-      'oliphaunt-swift',
-      'oliphaunt-wasix-napi',
       'oliphaunt-js',
       'oliphaunt-react-native',
       'oliphaunt-wasix-ts',
@@ -1374,35 +1362,17 @@ for (const scenario of [
       'src/wasix/sdks/rust/src/oliphaunt/base.rs',
       'src/wasix/sdks/ts/src/index.ts',
     ],
-    products: [
-      'liboliphaunt-wasix',
-      'oliphaunt-wasix-napi',
-      'oliphaunt-wasix-rust',
-      'oliphaunt-wasix-ts',
-    ],
+    products: ['liboliphaunt-wasix', 'oliphaunt-wasix-rust', 'oliphaunt-wasix-ts'],
   },
   {
-    name: 'both runtime families and one extension close all default installs',
+    name: 'a changed WASIX default extension host requires explicit addon adoption before version closure',
     files: [
       `${native}/src/liboliphaunt.c`,
       `${wasix}/toolchain.toml`,
       'src/extensions/external/vector/source.toml',
     ],
-    products: [
-      'liboliphaunt-native',
-      'liboliphaunt-wasix',
-      ...Object.keys(graph.products).filter(
-        (id) => graph.products[id].extension?.class === 'external',
-      ),
-      'oliphaunt-js',
-      'oliphaunt-kotlin',
-      'oliphaunt-swift',
-      'oliphaunt-react-native',
-      'oliphaunt-wasix-rust',
-      'oliphaunt-wasix-ts',
-      'oliphaunt-wasix-napi',
-      'oliphaunt-pgwire-server',
-    ],
+    products: ['liboliphaunt-native', 'liboliphaunt-wasix', 'oliphaunt-extension-vector'],
+    error: 'update its conventional runtime and SDK requirements',
   },
   {
     name: 'shared package writer',
@@ -1422,8 +1392,13 @@ for (const scenario of [
       'oliphaunt-react-native',
     ],
   },
+  {
+    name: 'local pgwire input changes release the addon while its registry SDK and runtime stay held',
+    files: ['src/wasix/pgwire-server/src/lib.rs'],
+    products: ['oliphaunt-pgwire-server', 'oliphaunt-wasix-napi'],
+  },
 ])
-  test(`release scenario: ${scenario.name} produces coherent versions and exact consumer scope`, async () => {
+  test(`release scenario: ${scenario.name} ${scenario.error ? 'rejects incompatible default installs before application' : 'produces coherent versions and exact consumer scope'}`, async () => {
     if (!scenario.products.length) {
       const { candidate } = await generateProductCandidate([
         { sha: head, message: 'docs: clarify usage', files: scenario.files },
@@ -1511,6 +1486,32 @@ for (const scenario of [
             : readFileSync(path.join(scratch, entry.path), 'utf8'),
         );
       };
+      const queryManifest = path.join(scratch, 'src/wasix/sdks/rust/Cargo.toml');
+      const declaredQueryRequirement = Bun.TOML.parse(readFileSync(queryManifest, 'utf8'))
+        .dependencies['oliphaunt-query'].version;
+      const addonLockfile = path.join(scratch, 'src/wasix/node-addon/Cargo.lock');
+      const publishedCargoRows = Bun.TOML.parse(readFileSync(addonLockfile, 'utf8')).package.filter(
+        (pkg) => pkg.source,
+      );
+      if (scenario.error) {
+        await expect(
+          generateProductCandidate(
+            [
+              {
+                sha: source,
+                message: 'fix: repair shipped behavior',
+                files: run('git', ['diff', '--name-only', baseline, source]).split('\n'),
+              },
+            ],
+            readCompatibility,
+            undefined,
+            { root: scratch, baseline },
+          ),
+        ).rejects.toThrow(scenario.error);
+        expect(run('git', ['status', '--porcelain', '--untracked-files=all'])).toBe('');
+        expect(run('git', ['rev-parse', 'HEAD'])).toBe(source);
+        return;
+      }
       const { candidate, versions } = await generateProductCandidate(
         [
           {
@@ -1524,6 +1525,9 @@ for (const scenario of [
         { root: scratch, baseline },
       );
       applyCandidate(scratch, candidate);
+      expect(
+        Bun.TOML.parse(readFileSync(queryManifest, 'utf8')).dependencies['oliphaunt-query'].version,
+      ).toBe(declaredQueryRequirement);
       const declaredRequirements = new Map(
         entries.map((entry) => [
           entry.id,
@@ -1536,6 +1540,11 @@ for (const scenario of [
       writeFileSync(path.join(metadata, 'title'), `${candidate.title.toString()}\n`);
       writeFileSync(path.join(metadata, 'body.md'), `${candidate.body.toString()}\n`);
       run('bash', ['tools/release/close-release-candidate.sh', metadata]);
+      expect(
+        Bun.TOML.parse(readFileSync(queryManifest, 'utf8')).dependencies['oliphaunt-query'].version,
+      ).toBe(declaredQueryRequirement);
+      const addonCargoRows = Bun.TOML.parse(readFileSync(addonLockfile, 'utf8')).package;
+      expect(addonCargoRows.filter((pkg) => pkg.source)).toEqual(publishedCargoRows);
       const closed = run('git', ['rev-parse', 'HEAD']);
       expect(run('git', ['rev-parse', 'HEAD^'])).toBe(source);
       run('bash', ['tools/release/sync-release-pr.sh']);
@@ -1547,6 +1556,14 @@ for (const scenario of [
         readFileSync(path.join(scratch, '.release-please-manifest.json'), 'utf8'),
       );
       const changedOwners = Object.keys(after).filter((owner) => after[owner] !== versions[owner]);
+      for (const product of ['oliphaunt-wasix-napi', 'oliphaunt-pgwire-server']) {
+        const cargo = Bun.TOML.parse(
+          readFileSync(path.join(scratch, graph.products[product].path, 'Cargo.toml'), 'utf8'),
+        );
+        expect(
+          addonCargoRows.find((pkg) => pkg.name === cargo.package.name && !pkg.source).version,
+        ).toBe(cargo.package.version);
+      }
       expect(changedOwners.sort()).toEqual(
         scenario.products.map((id) => graph.products[id].path).sort(),
       );
@@ -1639,7 +1656,7 @@ for (const scenario of [
           ),
         );
         expect(readCompatibility('oliphaunt-wasix-napi', 'liboliphaunt-wasix')).toBe(
-          products['liboliphaunt-wasix'].version,
+          graph.products['liboliphaunt-wasix'].version,
         );
         run('git', ['reset', '--hard', source]);
         applyCandidate(scratch, candidate);
@@ -1753,7 +1770,11 @@ test('removing published exact host support supplies breaking intent before nati
   const reads = [];
   const readCompatibility = (product, source, _prefix, { ref = null } = {}) => {
     reads.push({ product, source, ref });
-    return ref ? '0.1.0' : graph.products[source].version;
+    return product === 'oliphaunt-extension-vector'
+      ? ref
+        ? '0.1.0'
+        : graph.products[source].version
+      : productCompatibilityVersion(product, source);
   };
   const { candidate, versions } = await generateProductCandidate(
     [

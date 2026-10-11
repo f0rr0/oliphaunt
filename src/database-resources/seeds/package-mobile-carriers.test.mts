@@ -16,7 +16,6 @@ import {
   readPortableArchiveEntries,
   releaseZstdCompressSync,
 } from '../../../tools/packaging/portable-archive.mts';
-import { currentProductVersionSync } from '../../../tools/release/release-artifact-targets.mts';
 import {
   NATIVE_PGDATA_DIRECTORIES,
   nativeClusterSeedCompatibilityKey,
@@ -79,7 +78,8 @@ test('mobile carrier preserves seed bytes and rejects wrong target, profile and 
     const work = path.join(scratch, 'mobile-carriers');
     const maven = path.join(scratch, 'maven');
     mkdirSync(assets);
-    const version = currentProductVersionSync('database-resources');
+    // Explicit action context must not fall back to the checkout's current owner version.
+    const version = '7.8.9';
     const stem = `database-resources-${version}-seed-native-android-datum64-standard`;
     copyFileSync(archive, path.join(assets, `${stem}.tar.zst`));
     copyFileSync(manifest, path.join(assets, `${stem}.json`));
@@ -90,6 +90,8 @@ test('mobile carrier preserves seed bytes and rejects wrong target, profile and 
       assetDir: assets,
       workDir: work,
       mavenDir: maven,
+      version,
+      contract,
     });
     expect(readdirSync(assets).sort()).toEqual(inputNames);
     expect(outputs).toEqual([path.join(work, `${stem}-maven.tar.gz`)]);
@@ -109,6 +111,12 @@ test('mobile carrier preserves seed bytes and rejects wrong target, profile and 
         ),
       ),
     ).toEqual(readFileSync(outputs[0]));
+    expect(
+      readFileSync(
+        path.join(maven, 'dev/oliphaunt/runtime', artifact, version, `${artifact}-${version}.pom`),
+        'utf8',
+      ),
+    ).toContain('<version>7.8.9</version>');
 
     writeFileSync(archive, Buffer.from('corrupt'));
     expect(() => stageMobileSeed(options)).toThrow('checksum');

@@ -7,7 +7,7 @@ filegroup(name = "carrier_legal_sources", srcs = ["dependency-licenses.json"] + 
 filegroup(name = "carrier_template_sources", srcs = glob(["packages/*/package.json", "packages/*/README.md"]))
 
 cargo_package_env()
-PATH_DEPS = {"liboliphaunt-native-bindings": "//src/native/rust-bindings:lib"}
+PATH_DEPS = {}
 cargo_generator(path_dependencies = PATH_DEPS, proc_macro_names = ["napi-derive"])
 cargo_library(
     name = "addon_library",

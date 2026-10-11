@@ -323,7 +323,14 @@ function validateZipExtra(
   extra,
   file,
   label,
-  { source = false, javaArchive = false, androidApkLocal = false, dataOffset = 0, method = -1, name = '' } = {},
+  {
+    source = false,
+    javaArchive = false,
+    androidApkLocal = false,
+    dataOffset = 0,
+    method = -1,
+    name = '',
+  } = {},
 ) {
   const seen = new Set();
   for (let offset = 0; offset < extra.length; ) {
@@ -545,7 +552,10 @@ function zipEntryType(versionMadeBy, externalAttributes, rawName, file, javaArch
       throw archiveError(file, `has conflicting FAT/Unix type metadata for ${rawName}`);
     }
     // Java archive writers leave FAT attributes at zero, including directories.
-    if (pathDirectory !== dosDirectory && !(javaArchive && pathDirectory && externalAttributes === 0)) {
+    if (
+      pathDirectory !== dosDirectory &&
+      !(javaArchive && pathDirectory && externalAttributes === 0)
+    ) {
       throw archiveError(file, `has inconsistent FAT directory metadata for ${rawName}`);
     }
     type = pathDirectory ? 'directory' : 'file';
@@ -717,7 +727,11 @@ function inflateZipEntry(buffer, entry, file, maxEntryBytes) {
   return data;
 }
 
-function readZipEntries(file, archiveLimits, { source = false, javaArchive = false, androidApk = false } = {}) {
+function readZipEntries(
+  file,
+  archiveLimits,
+  { source = false, javaArchive = false, androidApk = false } = {},
+) {
   const buffer = readFileSync(file);
   const eocdOffset = findZipEnd(buffer, file);
   const eocd = boundedSlice(buffer, eocdOffset, 22, file, 'ZIP end record');
@@ -820,7 +834,13 @@ function readZipEntries(file, archiveLimits, { source = false, javaArchive = fal
       source,
       javaArchive,
     });
-    const { mode, type } = zipEntryType(versionMadeBy, externalAttributes, rawName, file, javaArchive);
+    const { mode, type } = zipEntryType(
+      versionMadeBy,
+      externalAttributes,
+      rawName,
+      file,
+      javaArchive,
+    );
     const name = portableMemberName(rawName, type, file);
     if (type === 'directory' && (size !== 0 || expectedCrc !== 0)) {
       throw archiveError(file, `has a non-empty ZIP directory member ${rawName}`);

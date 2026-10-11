@@ -120,19 +120,10 @@
     }
   },
   "dependencies": {
-    "junit:junit": [
-      "org.hamcrest:hamcrest-core"
-    ],
-    "org.jetbrains.kotlin:kotlin-stdlib": [
-      "org.jetbrains:annotations"
-    ],
-    "org.jetbrains.kotlin:kotlin-test": [
-      "org.jetbrains.kotlin:kotlin-stdlib"
-    ],
-    "org.jetbrains.kotlin:kotlin-test-junit": [
-      "junit:junit",
-      "org.jetbrains.kotlin:kotlin-test"
-    ],
+    "junit:junit": ["org.hamcrest:hamcrest-core"],
+    "org.jetbrains.kotlin:kotlin-stdlib": ["org.jetbrains:annotations"],
+    "org.jetbrains.kotlin:kotlin-test": ["org.jetbrains.kotlin:kotlin-stdlib"],
+    "org.jetbrains.kotlin:kotlin-test-junit": ["junit:junit", "org.jetbrains.kotlin:kotlin-test"],
     "org.jetbrains.kotlinx:kotlinx-coroutines-core": [
       "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm"
     ],
@@ -148,9 +139,7 @@
       "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm",
       "org.jetbrains:annotations"
     ],
-    "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm": [
-      "org.jetbrains.kotlin:kotlin-stdlib"
-    ],
+    "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm": ["org.jetbrains.kotlin:kotlin-stdlib"],
     "org.jetbrains.kotlinx:kotlinx-serialization-json": [
       "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm"
     ],
@@ -200,11 +189,7 @@
       "com.sun.jna.ptr",
       "com.sun.jna.win32"
     ],
-    "org.hamcrest:hamcrest-core": [
-      "org.hamcrest",
-      "org.hamcrest.core",
-      "org.hamcrest.internal"
-    ],
+    "org.hamcrest:hamcrest-core": ["org.hamcrest", "org.hamcrest.core", "org.hamcrest.internal"],
     "org.jetbrains.kotlin:kotlin-stdlib": [
       "kotlin",
       "kotlin.annotation",
@@ -253,9 +238,7 @@
       "kotlin.time.jdk8",
       "kotlin.uuid"
     ],
-    "org.jetbrains.kotlin:kotlin-test": [
-      "kotlin.test"
-    ],
+    "org.jetbrains.kotlin:kotlin-test": ["kotlin.test"],
     "org.jetbrains.kotlin:kotlin-test-junit": [
       "kotlin.test.junit",
       "kotlin.test.junit.annotations"
@@ -292,13 +275,8 @@
       "kotlinx.serialization.json",
       "kotlinx.serialization.json.internal"
     ],
-    "org.jetbrains:annotations": [
-      "org.intellij.lang.annotations",
-      "org.jetbrains.annotations"
-    ],
-    "org.json:json": [
-      "org.json"
-    ]
+    "org.jetbrains:annotations": ["org.intellij.lang.annotations", "org.jetbrains.annotations"],
+    "org.json:json": ["org.json"]
   },
   "repositories": {
     "https://repo.maven.apache.org/maven2/": [
@@ -321,9 +299,7 @@
   },
   "services": {
     "org.jetbrains.kotlin:kotlin-test-junit": {
-      "kotlin.test.AsserterContributor": [
-        "kotlin.test.junit.JUnitContributor"
-      ]
+      "kotlin.test.AsserterContributor": ["kotlin.test.junit.JUnitContributor"]
     },
     "org.jetbrains.kotlinx:kotlinx-coroutines-test-jvm": {
       "kotlinx.coroutines.CoroutineExceptionHandler": [

@@ -1,8 +1,7 @@
 """Bounded query packaging and tests; compilation belongs to language rules."""
 
 load("@aspect_rules_js//js:providers.bzl", "JsInfo")
-load("//build_defs/foundation:bun.bzl", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "use_cc_toolchain")
 load("//build_defs/languages:cargo-toolchain.bzl", "cargo_test_toolchain")
 
@@ -36,7 +35,6 @@ def _envelope_impl(ctx):
     ctx.actions.write(specification, json.encode(mapping))
     output = ctx.actions.declare_file(ctx.attr.out)
     args = ctx.actions.args()
-    args.add(ctx.file._packager)
     args.add(ctx.attr.format)
     args.add(output)
     args.add(ctx.file.manifest)
@@ -44,10 +42,12 @@ def _envelope_impl(ctx):
     if ctx.file.workspace_manifest:
         args.add(ctx.file.workspace_manifest)
         inputs.append(ctx.file.workspace_manifest)
-    ctx.actions.run(
-        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
+    bun_file_action(
+        ctx,
+        entry_point = ctx.file._packager,
         arguments = [args],
         inputs = depset(inputs + [specification, ctx.file._packager] + ctx.files._archive_helpers),
+        source_files = [ctx.file._packager] + ctx.files._archive_helpers,
         outputs = [output],
         mnemonic = "QueryEnvelope",
         progress_message = "Packaging query %s %s" % (ctx.attr.format, ctx.label),
@@ -56,7 +56,7 @@ def _envelope_impl(ctx):
 
 query_envelope = rule(
     implementation = _envelope_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "entries": attr.label_keyed_string_dict(allow_files = True),
         "format": attr.string(mandatory = True, values = ["npm", "crate"]),
@@ -73,12 +73,12 @@ def _npm_consumer_test_impl(ctx):
     if not node:
         fail("query consumer tests require the pinned Node toolchain")
     files = [ctx.file.archive, ctx.file.consumer, ctx.file._runner, node]
-    return bun_test_entrypoint(ctx, ctx.file._runner, [ctx.file.archive, ctx.file.consumer, node], files)
+    return bun_test_entrypoint(ctx, ctx.file._runner, [ctx.file.archive, ctx.file.consumer, node], files, source_files = [ctx.file._runner])
 
 _npm_consumer_test = rule(
     implementation = _npm_consumer_test_impl,
     test = True,
-    toolchains = [_NODE_TOOLCHAIN, BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_NODE_TOOLCHAIN],
     attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
         "archive": attr.label(mandatory = True, allow_single_file = True),
         "consumer": attr.label(mandatory = True, allow_single_file = True),
@@ -97,12 +97,12 @@ def _cargo_consumer_test_impl(ctx):
     link_configuration = cc.configuration
     arguments = [ctx.file.archive, ctx.file.manifest, ctx.file.source, rust.cargo, rust.rustc, rust.rust_doc, link_configuration]
     files = [ctx.file.archive, ctx.file.manifest, ctx.file.source, ctx.file._runner, ctx.file._archive_helper, ctx.file._cargo_environment, link_configuration] + rust.all_files.to_list() + cc.files
-    return bun_test_entrypoint(ctx, ctx.file._runner, arguments, files, runfiles_argument = True)
+    return bun_test_entrypoint(ctx, ctx.file._runner, arguments, files, source_files = [ctx.file._runner, ctx.file._archive_helper, ctx.file._cargo_environment], runfiles_argument = True)
 
 _cargo_consumer_test = rule(
     implementation = _cargo_consumer_test_impl,
     test = True,
-    toolchains = [_RUST_TOOLCHAIN, BUN_TOOLCHAIN_TYPE] + use_cc_toolchain(),
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_RUST_TOOLCHAIN] + use_cc_toolchain(),
     fragments = ["cpp"],
     attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
         "archive": attr.label(mandatory = True, allow_single_file = True),

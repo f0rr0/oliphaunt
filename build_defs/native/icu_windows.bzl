@@ -1,19 +1,19 @@
 """Direct Windows ICU shared construction with the canonical full data object."""
 
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library", "cc_test")
-load("@oliphaunt//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("@oliphaunt//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 
-_BUN_TOOLCHAIN_TYPE = Label(BUN_TOOLCHAIN_TYPE)
 _WINDOWS = ["@platforms//os:windows", "@platforms//cpu:x86_64"]
 _COPTS = ["/std:c++17", "/utf-8"]
 _DEFINES = ["_CRT_SECURE_NO_DEPRECATE", "_HAS_EXCEPTIONS=0", "U_ATTRIBUTE_DEPRECATED="]
 
 def _data_object_impl(ctx):
     output = ctx.actions.declare_file(ctx.label.name + ".obj")
-    bun = ctx.toolchains[_BUN_TOOLCHAIN_TYPE].bun
-    ctx.actions.run(
-        executable = bun,
-        arguments = [ctx.file._generator.path, ctx.file.data.path, ctx.file.version.path, ctx.file.types.path, "amd64", output.path],
+    bun_file_action(
+        ctx,
+        entry_point = ctx.file._generator,
+        source_files = [ctx.file._generator],
+        arguments = [ctx.file.data.path, ctx.file.version.path, ctx.file.types.path, "amd64", output.path],
         inputs = [ctx.file._generator, ctx.file.data, ctx.file.version, ctx.file.types],
         outputs = [output],
         mnemonic = "IcuDataObject",
@@ -29,7 +29,7 @@ _data_object = rule(
         "types": attr.label(mandatory = True, allow_single_file = True),
         "_generator": attr.label(default = Label("@oliphaunt//build_defs/native:icu-data-object.mts"), allow_single_file = True),
     },
-    toolchains = [_BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
 )
 
 def _shared(name, srcs = [], deps = [], import_deps = [], linkopts = []):

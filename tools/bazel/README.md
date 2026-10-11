@@ -29,8 +29,7 @@ installations. Rust uses the registered toolchain and an isolated offline Cargo
 home; Node checks both ESM and CommonJS. A nested-module fixture checks that
 packaging preserves generated module and declaration paths.
 
-Run Linux PostgreSQL, ICU, frontends, crypto, extension SQL and the Gradle
-plugin contract together:
+Run Linux PostgreSQL, ICU, frontends, crypto and extension SQL together:
 
 ```sh
 profile=//build_defs/native:linux_x86_64_glibc_2_28
@@ -46,7 +45,7 @@ extension modules. Linux ARM64 and Android have separate configured targets.
 Cross-compilation proves construction and binary contracts; runtime behavior
 still requires the actual host or device.
 
-Run CI's installed Rust, Node and Android package cohort locally with the same
+Run CI's installed package and frozen-resource cohort locally with the same
 Linux profile and optimized package construction:
 
 ```sh
@@ -54,9 +53,23 @@ profile=//build_defs/native:linux_x86_64_glibc_2_28
 bash tools/dev/bazel.sh test -c opt \
   //build_defs/languages/installed:consumer_test \
   //build_defs/languages/carriers:installed_sql_test \
+  //src/native/rust-bindings:unit_test \
+  //build_defs/native/carriers:package_test \
+  //src/native/runtime:npm \
+  //src/native/runtime:installed_cargo_test \
+  //src/native/postgres-tools:cargo_facade \
+  //src/native/postgres-tools:installed_cargo_test \
+  //src/native/postgres-tools:installed_carrier_test \
+  //build_defs/resources:resource_contract_test \
+  //src/database-resources:linux_resource_test \
+  //src/database-resources:android_datum64_standard_carriers \
+  //src/database-resources:android_datum64_icu_carriers \
+  //src/native/sdks/react-native:source_consumer_test \
+  //src/native/sdks/react-native:lifecycle_test \
   //src/native/sdks/kotlin:android_maven \
   //src/native/sdks/kotlin:installed_public_api_consumer \
   //src/native/sdks/kotlin:android_test \
+  //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:contract_test \
   //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:plugin_maven \
   //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:marker_maven \
   --platforms="$profile" --host_platform="$profile" \
@@ -66,11 +79,45 @@ bash tools/dev/bazel.sh test -c opt \
 These tests consume the constructed archives, verify direct and broker SQL and
 reopening, and check the actual installed dependency versions. Packaging-only
 edits reuse the compiler outputs; unchanged requests execute zero actions.
+The resource tests reopen the exact frozen seed bytes with the candidate Linux
+runtime. Android carrier construction checks actual configured runtime ABI
+receipts; device execution remains a separate qualification requirement.
 
 WASIX AOT construction uses `--config=wasix-aot` to declare the Linux LLVM
 execution platform. Its build tools require glibc 2.34; public native Linux
 packages retain their glibc 2.28 target profile. Cross-target AOT construction
 still needs deserialization and runtime checks on each supported host.
+
+Construct the four Linux x64 AOT images and exercise the source SDK locally:
+
+```sh
+sdk_cache="$(mktemp -d)"
+bash tools/dev/bazel.sh test --config=wasix-aot \
+  //src/wasix/runtime:aot_linux_x64_gnu_payload \
+  //src/wasix/sdks/rust:postgres_regression_test \
+  --platforms=//build_defs/native:linux_x86_64_glibc_2_28 \
+  --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2 \
+  --test_env=OLIPHAUNT_WASM_AOT_VERIFY=full \
+  --test_env=XDG_CACHE_HOME="$sdk_cache" --test_arg=--test-threads=1
+```
+
+With Chrome or Chromium installed, run the same actual browser consumer locally:
+
+```sh
+profile=//build_defs/native:linux_x86_64_glibc_2_28
+receipt_dir="$(mktemp -d)"
+chrome_binary="$(bash tools/dev/bun.sh build_defs/wasix/browser/chrome-receipt.mts \
+  "$receipt_dir/chrome-host.json" local-linux unmanaged)"
+bash tools/dev/bazel.sh run //src/wasix/sdks/ts:browser_sql_consumer \
+  --platforms="$profile" --host_platform="$profile" --jobs=2 \
+  -- "$chrome_binary" "$receipt_dir/chrome-host.json"
+```
+
+The local labels identify an unmanaged workstation. The receipt records and
+rechecks the actual browser executable SHA, version, kernel and OS release hash.
+CI supplies its runner image/version labels through the same helper. This test
+installs the constructed SDK/query/runtime archives and executes both default
+and worker exports; it preserves its scratch directory and receipts on failure.
 
 The `Native Bazel qualification` workflow uses the same Linux commands and
 declared profiles, alongside native macOS/Windows SDK and installed package

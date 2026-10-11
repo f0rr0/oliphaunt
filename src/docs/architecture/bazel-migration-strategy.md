@@ -1061,6 +1061,18 @@ The real installed browser SDK/query/runtime archives execute SQL through both
 default and worker exports in Chrome. The native browser host and portable
 runtime are constructed on Linux; Chrome's observed executable and host identity
 are explicit consumer inputs.
+The four actual WASIX AOT images are also constructed through the declared Linux
+LLVM execution profile. Seven source-SDK AOT tests cover SQL, savepoints, error
+handling, isolation, reopen and abrupt durability. These do not qualify an
+installed Cargo envelope or foreign-host deserialization.
+Finished Linux runtime/tools GitHub, npm and Cargo carriers pass relocation,
+offline Cargo reconstruction, persistence, dump/restore and backup/reopen. The
+tools npm consumer executes the declared Node toolchain. Resource construction
+and physical seed consumers pass for Linux x64; Android domain admission uses
+both actual configured runtime ABI receipts and preserves the frozen seed bytes.
+These resource slices cover 13 of 33 registry carriers and nine of 31 GitHub
+identities. Android device execution and the remaining resource identities are
+separate gates.
 Physical conformance fixtures cover seeded edit subsets, independent release
 baselines, malformed ownership and cached reuse. These construction results do
 not admit all products or replace real installed compatibility qualification.
@@ -1084,4 +1096,8 @@ qualifies an exact source commit; its platform results are required before the
 corresponding cutover. No registry mutation or release cutover was performed. Complete declared
 toolchain and execution identity, remaining runtime/extension profiles,
 Android/Apple package rules, final carriers, seed freeze/compatibility and release-hook
-integration remain concrete acceptance work.
+integration remain concrete acceptance work. The completed-source package bridge
+compares authenticated delivered bytes and reports release necessity as
+unverified. A changed VCS stamp can change an archive without changing its
+consumed source; delivery differences cannot become release decisions. Trusted
+completed construction inputs are still required for causal release selection.

@@ -5,7 +5,7 @@ load("@oliphaunt_kotlin_manifest//:metadata.bzl", "KOTLIN")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
 load("@rules_jvm_external//:providers.bzl", "MavenInfo")
 load("@rules_jvm_external//private/rules:has_maven_deps.bzl", "has_maven_deps")
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/release:shipping.bzl", "shipping_package")
 
 _JAVA_RUNTIME = "@bazel_tools//tools/jdk:runtime_toolchain_type"
@@ -16,9 +16,11 @@ def _javadoc_impl(ctx):
     spec = ctx.actions.declare_file(ctx.label.name + ".json")
     ctx.actions.write(spec, json.encode({"sources": [file.path for file in ctx.files.srcs], "classpath": [file.path for file in classpath.to_list()], "javaHome": runtime.java_home, "release": KOTLIN["jvmTarget"]}))
     output = ctx.actions.declare_file(ctx.label.name + ".zip")
-    ctx.actions.run(
-        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
-        arguments = [ctx.file._driver.path, output.path, spec.path],
+    bun_file_action(
+        ctx,
+        entry_point = ctx.file._driver,
+        source_files = [ctx.file._driver] + ctx.files._helpers,
+        arguments = [output.path, spec.path],
         inputs = depset(ctx.files.srcs + [spec, ctx.file._driver] + ctx.files._helpers, transitive = [classpath, runtime.files]),
         outputs = [output],
         mnemonic = "OliphauntPluginJavadoc",
@@ -28,7 +30,7 @@ def _javadoc_impl(ctx):
 
 java_javadoc = rule(
     implementation = _javadoc_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE, _JAVA_RUNTIME],
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_JAVA_RUNTIME],
     attrs = {
         "srcs": attr.label_list(allow_files = [".java"], mandatory = True),
         "deps": attr.label_list(providers = [JavaInfo]),
@@ -97,9 +99,11 @@ def _maven_package_impl(ctx):
         "coroutinesCoordinates": coroutines_coordinates,
         "javadocArchive": ctx.file.javadoc.path if ctx.file.javadoc else None,
     }))
-    ctx.actions.run(
-        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
-        arguments = [ctx.file._packager.path, root, spec.path],
+    bun_file_action(
+        ctx,
+        entry_point = ctx.file._packager,
+        source_files = [ctx.file._packager] + ctx.files._helpers,
+        arguments = [root, spec.path],
         inputs = depset(inputs + [spec]),
         outputs = files,
         mnemonic = "OliphauntMavenEnvelope",
@@ -109,7 +113,7 @@ def _maven_package_impl(ctx):
 
 _maven_package = rule(
     implementation = _maven_package_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "coordinate": attr.string(mandatory = True),
         "packaging": attr.string(mandatory = True, values = ["aar", "jar", "pom"]),
@@ -126,6 +130,7 @@ _maven_package = rule(
             Label("//src/native/sdks/kotlin:tools/kotlin-maven-staging.mts"), Label("//src/native/mobile-bindings:tools/dependency-license-contract.mts"),
             Label("//:tools/packaging/maven-central-contract.mts"), Label("//:tools/packaging/archive-directory.mts"), Label("//:tools/packaging/portable-archive.mts"),
             Label("//:tools/packaging/platform-binary-contract.mts"), Label("//:tools/packaging/windows-vc-runtime-closure.mts"), Label("//tools/release:platform-compatibility-policy.mts"),
+            Label("//:tools/packaging/windows-vc-runtime-policy.json"),
             Label("//:tools/packaging/release-notices.mts"), Label("//:tools/packaging/release-directory-safety.mts"), Label("//:tools/packaging/rust-dependency-license-contract.mts"),
         ], allow_files = True),
     },

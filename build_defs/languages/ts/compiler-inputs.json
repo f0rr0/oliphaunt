@@ -1,0 +1,11 @@
+{
+  "workspaces": {
+    "@oliphaunt/react-native": [
+      "@react-native/typescript-config",
+      "react-native",
+      "react",
+      "@react-native/codegen"
+    ]
+  },
+  "overrideTools": ["esbuild"]
+}

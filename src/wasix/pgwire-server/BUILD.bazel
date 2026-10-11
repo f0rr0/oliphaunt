@@ -1,18 +1,18 @@
 load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_library", "cargo_library_test", "cargo_package_env")
 load("//build_defs/languages:source.bzl", "cargo_source_package")
+load("@wasix_adapter_cargo_metadata//:cargo.bzl", "CARGO")
+load("@wasix_adapter_crates//:defs.bzl", "all_crate_deps", "crate_deps")
 
 package(default_visibility = ["//visibility:public"])
 exports_files(["Cargo.toml"])
 
-PATH_DEPS = {
-    "oliphaunt-wasix": "//src/wasix/sdks/rust:lib",
-}
+PATH_DEPS = {}
 
-cargo_package_env()
-cargo_library(path_dependencies = PATH_DEPS)
+cargo_package_env(workspace_manifest = "//src/wasix/node-addon:Cargo.toml")
+cargo_library(path_dependencies = PATH_DEPS, cargo_facts = CARGO, crate_dependencies = crate_deps)
 # Cargo unifies the SDK's dependency feature from the N-API root across both
 # direct and pgwire paths. Keep that one configured SDK instance in this root.
-cargo_library(name = "napi_lib", path_dependencies = PATH_DEPS | {"oliphaunt-wasix": "//src/wasix/sdks/rust:napi_lib"})
-cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"])
-cargo_binary(name = "server", source = "src/main.rs", path_dependencies = PATH_DEPS, library = ":lib")
-cargo_source_package(product = "oliphaunt-pgwire-server")
+cargo_library(name = "napi_lib", path_dependencies = PATH_DEPS, cargo_facts = CARGO, crate_dependencies = crate_deps)
+cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"], cargo_facts = CARGO, all_dependencies = all_crate_deps)
+cargo_binary(name = "server", source = "src/main.rs", path_dependencies = PATH_DEPS, library = ":lib", cargo_facts = CARGO, crate_dependencies = crate_deps)
+cargo_source_package(product = "oliphaunt-pgwire-server", cargo_facts = CARGO, workspace_manifest = "//src/wasix/node-addon:Cargo.toml")

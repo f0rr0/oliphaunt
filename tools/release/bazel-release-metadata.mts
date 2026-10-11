@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
 import { loadContribCarriers } from '../../src/extensions/artifacts/packages/tools/contrib-carriers.mts';
 import { validateExtensionTargetProfiles } from '../../src/extensions/contracts/extension-target-profiles.mts';
 import { nativeCargoArtifactRows } from '../packaging/rust-native-targets.mts';
@@ -12,8 +13,10 @@ import {
 } from './extension-release-metadata.mts';
 import { loadPublicationCatalog } from './publication-catalog.mts';
 import {
+  databaseResourceArtifactRows,
   extensionRegistryPackageTargetSetsFromRows,
   nativeHelperArtifactRows,
+  nativeRuntimeArtifactRows,
   runtimeExtensionTargetRowsFromConfigs,
   validateExtensionCatalogRows,
 } from './release-artifact-targets.mts';
@@ -55,6 +58,10 @@ export interface ReleaseMetadata {
     role: string;
   }[];
   nativeHelperArtifacts: Record<string, unknown>[];
+  nativeRuntimeArtifacts: Record<string, unknown>[];
+  databaseResourceContract: Record<string, unknown> | null;
+  databaseResourceArtifacts: Record<string, unknown>[];
+  databaseSeedCarriers: ReturnType<typeof seedCarrierIdentities>;
   inputs: Record<string, string | null>;
   directories: Record<string, string[] | null>;
 }
@@ -343,6 +350,28 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
       throw new Error(`${product} must declare artifact targets for native helper construction`);
     return nativeHelperArtifactRows(product, identity.artifact_targets.targets, 'release metadata');
   });
+  const nativeRuntimeArtifacts = ['liboliphaunt-native', 'postgres-tools-native'].flatMap(
+    (product) => {
+      const identity = products[product];
+      if (!identity) return [];
+      if (!identity.artifact_targets)
+        throw new Error(`${product} must declare artifact targets for native runtime construction`);
+      return nativeRuntimeArtifactRows(
+        product,
+        identity.artifact_targets.targets,
+        'release metadata',
+      );
+    },
+  );
+  const databaseResourceContract = products['database-resources']
+    ? json('src/database-resources/contracts/contract.json')
+    : null;
+  const databaseResourceArtifacts = databaseResourceContract
+    ? databaseResourceArtifactRows(databaseResourceContract)
+    : [];
+  const databaseSeedCarriers = databaseResourceContract
+    ? seedCarrierIdentities(databaseResourceContract)
+    : [];
   const extensionReleaseMetadata = [];
   for (const [product, descriptor] of descriptors) {
     if (descriptor.extension === undefined) continue;
@@ -406,6 +435,10 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
     extensionProfiles,
     publicationCarriers,
     nativeHelperArtifacts,
+    nativeRuntimeArtifacts,
+    databaseResourceContract,
+    databaseResourceArtifacts,
+    databaseSeedCarriers,
     inputs,
     directories,
   };
@@ -443,6 +476,10 @@ export function renderReleaseMetadata(metadata: ReleaseMetadata, identityRule: s
     EXTENSION_PROFILES: metadata.extensionProfiles,
     PUBLICATION_CARRIERS: metadata.publicationCarriers,
     NATIVE_HELPER_ARTIFACTS: metadata.nativeHelperArtifacts,
+    NATIVE_RUNTIME_ARTIFACTS: metadata.nativeRuntimeArtifacts,
+    DATABASE_RESOURCE_CONTRACT: metadata.databaseResourceContract,
+    DATABASE_RESOURCE_ARTIFACTS: metadata.databaseResourceArtifacts,
+    DATABASE_SEED_CARRIERS: metadata.databaseSeedCarriers,
   };
   const bzl = `${Object.entries(definitions)
     .map(([name, value]) => `${name} = ${starlark(value)}`)

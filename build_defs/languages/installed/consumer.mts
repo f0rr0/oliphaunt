@@ -3,15 +3,24 @@ import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { stageCargoCarrierInputs } from '../../../tools/packaging/frozen-cargo.mts';
-import { readFileOnlyTarGzipEntries } from '../../../tools/packaging/portable-archive.mts';
+import {
+  readFileOnlyTarGzipEntries,
+  readPortableArchiveEntries,
+} from '../../../tools/packaging/portable-archive.mts';
 import { type CargoLinkConfiguration, cargoLinkEnvironment } from '../cargo-environment.mts';
 
 export function cargoCandidate(file: string) {
-  const entries = readFileOnlyTarGzipEntries(file);
+  return cargoArchiveIdentity(file, readFileOnlyTarGzipEntries(file));
+}
+
+function cargoArchiveIdentity(
+  file: string,
+  entries: ReturnType<typeof readPortableArchiveEntries>,
+) {
   const manifests = [...entries].filter(([name]) => name.endsWith('/Cargo.toml'));
   assert.equal(manifests.length, 1, 'candidate envelope must have one conventional manifest');
   const entry = manifests[0];
-  assert(entry);
+  assert(entry && entry[1].isFile, 'Cargo manifest must be a regular archive member');
   const manifest = Bun.TOML.parse(Buffer.from(entry[1].data()).toString('utf8'));
   assert.equal(typeof manifest.package?.name, 'string');
   assert.equal(typeof manifest.package?.version, 'string');
@@ -30,13 +39,15 @@ export function candidateConsumerManifest(
 ) {
   const sdk = candidates.find((candidate) => candidate.name === 'oliphaunt');
   const helper = candidates.find((candidate) => candidate.name === 'oliphaunt-build');
-  assert(sdk && helper);
   let text = template;
-  for (const candidate of [sdk, helper]) {
+  for (const candidate of [sdk, helper].filter((value) => value !== undefined)) {
     const expression = new RegExp(`^${candidate.name}\\s*=\\s*"[^"]*"`, 'mu');
     assert(expression.test(text), `missing fixture candidate requirement: ${candidate.name}`);
     text = text.replace(expression, `${candidate.name} = "=${candidate.version}"`);
   }
+  // Unselected roots retain the fixture's explicit published requirements. Their
+  // authentic resolved SDK manifest is checked after Cargo generates the lock.
+  if (!sdk) return text;
   const runtime = sdk.manifest.package.metadata.oliphaunt['native-version'];
   assert.equal(typeof runtime, 'string');
   text = text.replace(
@@ -47,15 +58,49 @@ export function candidateConsumerManifest(
   return text;
 }
 
+export function resolvedSdkRuntime(
+  consumerText: string,
+  lockText: string,
+  candidates: ReturnType<typeof cargoCandidate>[],
+  cargoHome: string,
+) {
+  const consumer = Bun.TOML.parse(consumerText);
+  const lock = Bun.TOML.parse(lockText);
+  const rows = lock.package.filter((pkg: any) => pkg.name === 'oliphaunt');
+  assert.equal(rows.length, 1, 'consumer must resolve one SDK identity');
+  const sdk = rows[0];
+  let archive;
+  if (sdk.source) {
+    assert.equal(sdk.source, 'registry+https://github.com/rust-lang/crates.io-index');
+    const file = path.join(
+      cargoHome,
+      'registry/cache/index.crates.io-1949cf8c6b5b557f',
+      `oliphaunt-${sdk.version}.crate`,
+    );
+    // Genuine Cargo registry archives may include explicit directory entries.
+    // Candidate output envelopes keep their stricter canonical file-only format.
+    archive = cargoArchiveIdentity(file, readPortableArchiveEntries(file));
+    assert.equal(archive.sha256, sdk.checksum, 'held SDK archive differs from genuine Cargo lock');
+  } else {
+    archive = candidates.find(
+      (candidate) => candidate.name === sdk.name && candidate.version === sdk.version,
+    );
+    assert(archive, 'resolved local SDK is not an explicitly selected candidate');
+  }
+  const runtime = archive.manifest.package.metadata.oliphaunt['native-version'];
+  assert.equal(typeof runtime, 'string');
+  assert.equal(consumer.package.metadata.oliphaunt['runtime-version'], runtime);
+  assert.equal(consumer.dependencies['liboliphaunt-native-linux-x64-gnu'], `=${runtime}`);
+  return runtime;
+}
+
 async function main(args: string[]) {
   const [specification, runfiles] = args;
   assert(specification && runfiles && process.env.TEST_TMPDIR);
   const spec = JSON.parse(readFileSync(specification, 'utf8'));
   const file = (name: string) => path.join(runfiles, name);
   const root = path.join(process.env.TEST_TMPDIR, 'installed-cargo');
-  const consumer = path.join(root, 'consumer');
   const cargoHome = path.join(root, 'cargo-home');
-  mkdirSync(path.join(consumer, 'src'), { recursive: true });
   for (const [input, destination] of Object.entries(spec.cargoHome) as [string, string][]) {
     const output = path.join(cargoHome, 'registry', destination);
     mkdirSync(path.dirname(output), { recursive: true });
@@ -70,15 +115,6 @@ async function main(args: string[]) {
     copyFileSync(file(archive), copied);
     return cargoCandidate(copied);
   });
-  const config = stageCargoCarrierInputs(candidates, root);
-  writeFileSync(
-    path.join(consumer, 'Cargo.toml'),
-    candidateConsumerManifest(readFileSync(file(spec.manifest), 'utf8'), candidates),
-  );
-  copyFileSync(file(spec.lock), path.join(consumer, 'Cargo.lock'));
-  copyFileSync(file(spec.source), path.join(consumer, 'src/main.rs'));
-  copyFileSync(file(spec.buildScript), path.join(consumer, 'build.rs'));
-  const storage = path.join(root, 'database-storage');
   const env: Record<string, string> = {
     ...cargoLinkEnvironment(
       JSON.parse(readFileSync(file(spec.compiler), 'utf8')) as CargoLinkConfiguration,
@@ -92,40 +128,102 @@ async function main(args: string[]) {
     PATH: path.dirname(file(spec.rustc)),
     HOME: root,
     TMPDIR: root,
-    OLIPHAUNT_INSTALLED_STORAGE: storage,
   };
-  const cargo = (command: string[]) => {
-    const result = Bun.spawnSync(
-      [
-        file(spec.cargo),
-        '--config',
-        config,
-        ...command,
-        '--offline',
-        '--manifest-path',
-        path.join(consumer, 'Cargo.toml'),
-      ],
-      { cwd: consumer, env, stdout: 'inherit', stderr: 'inherit' },
+  const cases = [
+    ['checkout', candidates],
+    [
+      'sdk',
+      candidates.filter((candidate: any) =>
+        ['oliphaunt', 'oliphaunt-build'].includes(candidate.name),
+      ),
+    ],
+    ...['oliphaunt-broker', 'oliphaunt-query'].map((name) => [
+      name,
+      candidates.filter((candidate: any) => candidate.name === name),
+    ]),
+    ['held', []],
+  ] as [string, ReturnType<typeof cargoCandidate>[]][];
+  const receipts = [];
+  for (const [name, selectedCandidates] of cases) {
+    const directory = path.join(root, name);
+    const consumer = path.join(directory, 'consumer');
+    const storage = path.join(directory, 'database-storage');
+    mkdirSync(path.join(consumer, 'src'), { recursive: true });
+    const config = stageCargoCarrierInputs(selectedCandidates, directory);
+    const manifest = candidateConsumerManifest(
+      readFileSync(file(spec.manifest), 'utf8'),
+      selectedCandidates,
     );
-    assert.equal(result.exitCode, 0, `installed Cargo qualification failed: ${command.join(' ')}`);
-  };
-  // Genuine Cargo reconciles candidate versions using the closed registry context.
-  // This is qualification/preflight, never construction or a publication baseline.
-  cargo(['generate-lockfile']);
-  const lock = Bun.TOML.parse(readFileSync(path.join(consumer, 'Cargo.lock'), 'utf8'));
-  for (const candidate of candidates) {
-    const selected = lock.package.find((pkg: any) => pkg.name === candidate.name && !pkg.source);
-    if (['oliphaunt', 'oliphaunt-build'].includes(candidate.name))
-      assert(selected, `consumer root candidate not selected: ${candidate.name}`);
-    if (selected)
-      assert.equal(
-        selected.version,
-        candidate.version,
-        `candidate identity differs: ${candidate.name}`,
+    writeFileSync(path.join(consumer, 'Cargo.toml'), manifest);
+    copyFileSync(file(spec.lock), path.join(consumer, 'Cargo.lock'));
+    copyFileSync(file(spec.source), path.join(consumer, 'src/main.rs'));
+    copyFileSync(file(spec.buildScript), path.join(consumer, 'build.rs'));
+    const cargo = (command: string[]) => {
+      const result = Bun.spawnSync(
+        [
+          file(spec.cargo),
+          '--config',
+          config,
+          ...command,
+          '--offline',
+          '--manifest-path',
+          path.join(consumer, 'Cargo.toml'),
+        ],
+        {
+          cwd: consumer,
+          env: { ...env, OLIPHAUNT_INSTALLED_STORAGE: storage },
+          stdout: 'inherit',
+          stderr: 'inherit',
+        },
       );
+      assert.equal(
+        result.exitCode,
+        0,
+        `installed Cargo qualification failed: ${command.join(' ')}`,
+      );
+    };
+    // Genuine Cargo reconciles candidate versions using the closed registry context.
+    // This is qualification/preflight, never construction or a publication baseline.
+    cargo(['generate-lockfile']);
+    const lockText = readFileSync(path.join(consumer, 'Cargo.lock'), 'utf8');
+    const lock = Bun.TOML.parse(lockText);
+    const runtime = resolvedSdkRuntime(manifest, lockText, selectedCandidates, cargoHome);
+    for (const pkg of lock.package) {
+      if (pkg.source || pkg.name === 'frozen-consumer') continue;
+      assert(
+        selectedCandidates.some(
+          (candidate) => candidate.name === pkg.name && candidate.version === pkg.version,
+        ),
+        `unselected package was resolved from local source: ${pkg.name}@${pkg.version}`,
+      );
+    }
+    for (const candidate of selectedCandidates) {
+      const selected = lock.package.find((pkg: any) => pkg.name === candidate.name && !pkg.source);
+      if (['oliphaunt', 'oliphaunt-build'].includes(candidate.name))
+        assert(selected, `consumer root candidate not selected: ${candidate.name}`);
+      if (selected)
+        assert.equal(
+          selected.version,
+          candidate.version,
+          `candidate identity differs: ${candidate.name}`,
+        );
+    }
+    cargo(['run', '--locked', '--jobs', '2']);
+    rmSync(storage, { recursive: true });
+    receipts.push({
+      case: name,
+      runtime,
+      candidates: selectedCandidates.map(({ name, version, sha256 }) => ({
+        name,
+        version,
+        sha256,
+        selected: lock.package.some(
+          (pkg: any) => pkg.name === name && pkg.version === version && !pkg.source,
+        ),
+      })),
+      cargoLockSha256: createHash('sha256').update(lockText).digest('hex'),
+    });
   }
-  cargo(['run', '--locked', '--jobs', '2']);
-  rmSync(storage, { recursive: true });
   writeFileSync(
     path.join(root, 'qualification.json'),
     `${JSON.stringify(
@@ -133,17 +231,7 @@ async function main(args: string[]) {
         scope: 'checkout-composition-installed-consumer',
         status: 'passed',
         cases: ['direct-sql-reopen', 'broker-sql-reopen'],
-        candidates: candidates.map(({ name, version, sha256 }) => ({
-          name,
-          version,
-          sha256,
-          selected: lock.package.some(
-            (pkg: any) => pkg.name === name && pkg.version === version && !pkg.source,
-          ),
-        })),
-        cargoLockSha256: createHash('sha256')
-          .update(readFileSync(path.join(consumer, 'Cargo.lock')))
-          .digest('hex'),
+        compositions: receipts,
       },
       null,
       2,

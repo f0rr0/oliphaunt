@@ -1,12 +1,250 @@
 {
   "schema": "oliphaunt-installed-cargo-fixture-v1",
   "cargo": "1.93.1",
-  "qualification": "closed installed consumer test context; no publication admission",
+  "repository": "index.crates.io-1949cf8c6b5b557f",
+  "target": "x86_64-unknown-linux-gnu",
+  "archives": [
+    {
+      "name": "bitflags",
+      "version": "2.13.2"
+    },
+    {
+      "name": "block-buffer",
+      "version": "0.10.4"
+    },
+    {
+      "name": "cc",
+      "version": "1.7.0"
+    },
+    {
+      "name": "cfg-if",
+      "version": "1.0.5"
+    },
+    {
+      "name": "cpufeatures",
+      "version": "0.2.17"
+    },
+    {
+      "name": "crypto-common",
+      "version": "0.1.7"
+    },
+    {
+      "name": "digest",
+      "version": "0.10.7"
+    },
+    {
+      "name": "equivalent",
+      "version": "1.0.2"
+    },
+    {
+      "name": "errno",
+      "version": "0.3.14"
+    },
+    {
+      "name": "filetime",
+      "version": "0.2.29"
+    },
+    {
+      "name": "find-msvc-tools",
+      "version": "0.1.14"
+    },
+    {
+      "name": "fs2",
+      "version": "0.4.3"
+    },
+    {
+      "name": "generic-array",
+      "version": "0.14.7"
+    },
+    {
+      "name": "getrandom",
+      "version": "0.3.4"
+    },
+    {
+      "name": "hashbrown",
+      "version": "0.17.1"
+    },
+    {
+      "name": "indexmap",
+      "version": "2.14.2"
+    },
+    {
+      "name": "itoa",
+      "version": "1.0.18"
+    },
+    {
+      "name": "jobserver",
+      "version": "0.1.35"
+    },
+    {
+      "name": "libc",
+      "version": "0.2.190"
+    },
+    {
+      "name": "libloading",
+      "version": "0.8.9"
+    },
+    {
+      "name": "liboliphaunt-native-bindings",
+      "version": "0.2.0"
+    },
+    {
+      "name": "liboliphaunt-native-linux-x64-gnu-part-001",
+      "version": "0.3.2"
+    },
+    {
+      "name": "liboliphaunt-native-linux-x64-gnu-part-002",
+      "version": "0.3.2"
+    },
+    {
+      "name": "liboliphaunt-native-linux-x64-gnu-part-003",
+      "version": "0.3.2"
+    },
+    {
+      "name": "liboliphaunt-native-linux-x64-gnu",
+      "version": "0.3.2"
+    },
+    {
+      "name": "linux-raw-sys",
+      "version": "0.12.1"
+    },
+    {
+      "name": "memchr",
+      "version": "2.8.3"
+    },
+    {
+      "name": "oliphaunt-broker-linux-x64-gnu",
+      "version": "0.3.1"
+    },
+    {
+      "name": "oliphaunt-broker",
+      "version": "0.3.1"
+    },
+    {
+      "name": "oliphaunt-build",
+      "version": "0.3.2"
+    },
+    {
+      "name": "oliphaunt-query",
+      "version": "0.1.1"
+    },
+    {
+      "name": "oliphaunt",
+      "version": "0.3.2"
+    },
+    {
+      "name": "pkg-config",
+      "version": "0.3.34"
+    },
+    {
+      "name": "proc-macro2",
+      "version": "1.0.107"
+    },
+    {
+      "name": "quote",
+      "version": "1.0.47"
+    },
+    {
+      "name": "rustix",
+      "version": "1.1.5"
+    },
+    {
+      "name": "serde_core",
+      "version": "1.0.229"
+    },
+    {
+      "name": "serde_derive",
+      "version": "1.0.229"
+    },
+    {
+      "name": "serde_json",
+      "version": "1.0.152"
+    },
+    {
+      "name": "serde_spanned",
+      "version": "1.1.2"
+    },
+    {
+      "name": "serde",
+      "version": "1.0.229"
+    },
+    {
+      "name": "sha2",
+      "version": "0.10.9"
+    },
+    {
+      "name": "shlex",
+      "version": "2.0.1"
+    },
+    {
+      "name": "syn",
+      "version": "3.0.7"
+    },
+    {
+      "name": "tar",
+      "version": "0.4.46"
+    },
+    {
+      "name": "toml_datetime",
+      "version": "0.7.5+spec-1.1.0"
+    },
+    {
+      "name": "toml_parser",
+      "version": "1.1.5+spec-1.1.0"
+    },
+    {
+      "name": "toml_writer",
+      "version": "1.1.3+spec-1.1.0"
+    },
+    {
+      "name": "toml",
+      "version": "0.9.12+spec-1.1.0"
+    },
+    {
+      "name": "typenum",
+      "version": "1.20.1"
+    },
+    {
+      "name": "unicode-ident",
+      "version": "1.0.26"
+    },
+    {
+      "name": "version_check",
+      "version": "0.9.5"
+    },
+    {
+      "name": "winnow",
+      "version": "0.7.15"
+    },
+    {
+      "name": "winnow",
+      "version": "1.0.4"
+    },
+    {
+      "name": "xattr",
+      "version": "1.6.1"
+    },
+    {
+      "name": "zmij",
+      "version": "1.0.23"
+    },
+    {
+      "name": "zstd-safe",
+      "version": "7.3.0"
+    },
+    {
+      "name": "zstd-sys",
+      "version": "2.1.1+zstd.1.5.7"
+    },
+    {
+      "name": "zstd",
+      "version": "0.13.3"
+    }
+  ],
   "config": {
     "dl": "https://static.crates.io/crates",
     "api": "https://crates.io"
   },
-  "repository": "index.crates.io-1949cf8c6b5b557f",
   "indexes": [
     {
       "path": "2/cc",
@@ -1733,6 +1971,97 @@
       ]
     },
     {
+      "path": "li/bo/liboliphaunt-native-bindings",
+      "header": "AwIAAABldGFnOiAiYjE0YWFiOThjODgyOTM4YmNmZDEzNjIyZTIxYjc3MjYiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-bindings",
+          "vers": "0.2.0",
+          "deps": [
+            {
+              "name": "fs2",
+              "req": "^0.4",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "getrandom",
+              "req": "^0.3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "libloading",
+              "req": "^0.8",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde",
+              "req": "^1",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde_json",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "sha2",
+              "req": "^0.10",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "tar",
+              "req": "^0.4",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "zstd",
+              "req": "^0.13",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "7b0e758a0af81e354205e9ba8e668175357c974f3c3ad3421e681ad7e07d1ed8",
+          "features": {
+            "internal-native-packaging": []
+          },
+          "yanked": false,
+          "rust_version": "1.93",
+          "pubtime": "2026-10-03T01:03:02Z"
+        }
+      ]
+    },
+    {
       "path": "li/bo/liboliphaunt-native-linux-arm64-gnu",
       "header": "AwIAAABldGFnOiAiZWE1NGQ1ZmE3MzNmZTgyNGIwNjM4YjEzM2FmZTgyMGMiAA==",
       "records": [
@@ -2403,6 +2732,227 @@
       ]
     },
     {
+      "path": "ol/ip/oliphaunt",
+      "header": "AwIAAABldGFnOiAiMDdmZmMzYmQzY2ZkYTEyNTRhNTgxNTZmNzk3ZWRlNWQiAA==",
+      "records": [
+        {
+          "name": "oliphaunt",
+          "vers": "0.3.2",
+          "deps": [
+            {
+              "name": "getrandom",
+              "req": "^0.3",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "liboliphaunt-native-bindings",
+              "req": "^0.2.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "liboliphaunt-native-linux-arm64-gnu",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"linux\", target_arch = \"aarch64\", target_env = \"gnu\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "liboliphaunt-native-linux-x64-gnu",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"linux\", target_arch = \"x86_64\", target_env = \"gnu\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "liboliphaunt-native-macos-arm64",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"macos\", target_arch = \"aarch64\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "liboliphaunt-native-windows-x64-msvc",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"windows\", target_arch = \"x86_64\", target_env = \"msvc\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-broker",
+              "req": "^0.3.1",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-broker-linux-arm64-gnu",
+              "req": "=0.3.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"linux\", target_arch = \"aarch64\", target_env = \"gnu\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-broker-linux-x64-gnu",
+              "req": "=0.3.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"linux\", target_arch = \"x86_64\", target_env = \"gnu\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-broker-macos-arm64",
+              "req": "=0.3.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"macos\", target_arch = \"aarch64\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-broker-windows-x64-msvc",
+              "req": "=0.3.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"windows\", target_arch = \"x86_64\", target_env = \"msvc\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-build",
+              "req": "^0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "oliphaunt-query",
+              "req": "^0.1.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde",
+              "req": "^1",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde_json",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "tokio",
+              "req": "^1",
+              "features": ["rt", "time"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "f66cc378f5512a12e58b927b0ac013510c08d8d3f803d76ecce96fa07606faa5",
+          "features": {},
+          "features2": {
+            "default": ["desktop"],
+            "desktop": ["dep:oliphaunt-broker", "dep:getrandom"],
+            "mobile-bindings": ["dep:oliphaunt-broker", "dep:libc"]
+          },
+          "yanked": false,
+          "links": "oliphaunt_artifact_relay",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:42:17Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "ol/ip/oliphaunt-broker",
+      "header": "AwIAAABldGFnOiAiMzNmMTA4ZDE4Mjk3ZjZmZGNlY2I5MTBmZDkwZDFkZjIiAA==",
+      "records": [
+        {
+          "name": "oliphaunt-broker",
+          "vers": "0.3.1",
+          "deps": [
+            {
+              "name": "getrandom",
+              "req": "^0.3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "liboliphaunt-native-bindings",
+              "req": "^0.2.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-query",
+              "req": "^0.1.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "76788356082fcb1e935fc13c16d8f3fff3d240867291229d0714a982ee2a53a9",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:55Z"
+        }
+      ]
+    },
+    {
       "path": "ol/ip/oliphaunt-broker-linux-arm64-gnu",
       "header": "AwIAAABldGFnOiAiNGRjNWM5NGZiNzYyMjE5YzI2NGEzZmRkNDZlMTQwNmYiAA==",
       "records": [
@@ -2467,6 +3017,75 @@
           "links": "oliphaunt_artifact_broker_windows_x64_msvc",
           "rust_version": "1.93",
           "pubtime": "2026-10-07T07:40:55Z"
+        }
+      ]
+    },
+    {
+      "path": "ol/ip/oliphaunt-build",
+      "header": "AwIAAABldGFnOiAiOTUzOGIxZTVlZjNmNzNiYmRjNWJjZDM0N2M0YjU2YzAiAA==",
+      "records": [
+        {
+          "name": "oliphaunt-build",
+          "vers": "0.3.2",
+          "deps": [
+            {
+              "name": "serde",
+              "req": "^1",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "sha2",
+              "req": "^0.10",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "tempfile",
+              "req": "^3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "toml",
+              "req": "^0.9",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "5a2a676749df3756473b4fd0deea7ef194a5d78bbcfb6fb46f5ae1da8f058f82",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:42:02Z"
+        }
+      ]
+    },
+    {
+      "path": "ol/ip/oliphaunt-query",
+      "header": "AwIAAABldGFnOiAiNDk3ZWM1ZGNjZmQyOTIyNTY1ODM2ZWQ3YTZlMDRkZTUiAA==",
+      "records": [
+        {
+          "name": "oliphaunt-query",
+          "vers": "0.1.1",
+          "deps": [],
+          "cksum": "523a7416f6a830ef02928994a2a89e9fd9d01e4fe67b22f0480d377d5f9b235c",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.93",
+          "pubtime": "2026-10-03T01:03:22Z"
         }
       ]
     },
@@ -5428,225 +6047,6 @@
           "v": 2
         }
       ]
-    }
-  ],
-  "target": "x86_64-unknown-linux-gnu",
-  "archives": [
-    {
-      "name": "bitflags",
-      "version": "2.13.2"
-    },
-    {
-      "name": "block-buffer",
-      "version": "0.10.4"
-    },
-    {
-      "name": "cc",
-      "version": "1.7.0"
-    },
-    {
-      "name": "cfg-if",
-      "version": "1.0.5"
-    },
-    {
-      "name": "cpufeatures",
-      "version": "0.2.17"
-    },
-    {
-      "name": "crypto-common",
-      "version": "0.1.7"
-    },
-    {
-      "name": "digest",
-      "version": "0.10.7"
-    },
-    {
-      "name": "equivalent",
-      "version": "1.0.2"
-    },
-    {
-      "name": "errno",
-      "version": "0.3.14"
-    },
-    {
-      "name": "filetime",
-      "version": "0.2.29"
-    },
-    {
-      "name": "find-msvc-tools",
-      "version": "0.1.14"
-    },
-    {
-      "name": "fs2",
-      "version": "0.4.3"
-    },
-    {
-      "name": "generic-array",
-      "version": "0.14.7"
-    },
-    {
-      "name": "getrandom",
-      "version": "0.3.4"
-    },
-    {
-      "name": "hashbrown",
-      "version": "0.17.1"
-    },
-    {
-      "name": "indexmap",
-      "version": "2.14.2"
-    },
-    {
-      "name": "itoa",
-      "version": "1.0.18"
-    },
-    {
-      "name": "jobserver",
-      "version": "0.1.35"
-    },
-    {
-      "name": "libc",
-      "version": "0.2.190"
-    },
-    {
-      "name": "libloading",
-      "version": "0.8.9"
-    },
-    {
-      "name": "liboliphaunt-native-linux-x64-gnu-part-001",
-      "version": "0.3.2"
-    },
-    {
-      "name": "liboliphaunt-native-linux-x64-gnu-part-002",
-      "version": "0.3.2"
-    },
-    {
-      "name": "liboliphaunt-native-linux-x64-gnu-part-003",
-      "version": "0.3.2"
-    },
-    {
-      "name": "liboliphaunt-native-linux-x64-gnu",
-      "version": "0.3.2"
-    },
-    {
-      "name": "linux-raw-sys",
-      "version": "0.12.1"
-    },
-    {
-      "name": "memchr",
-      "version": "2.8.3"
-    },
-    {
-      "name": "oliphaunt-broker-linux-x64-gnu",
-      "version": "0.3.1"
-    },
-    {
-      "name": "pkg-config",
-      "version": "0.3.34"
-    },
-    {
-      "name": "proc-macro2",
-      "version": "1.0.107"
-    },
-    {
-      "name": "quote",
-      "version": "1.0.47"
-    },
-    {
-      "name": "rustix",
-      "version": "1.1.5"
-    },
-    {
-      "name": "serde_core",
-      "version": "1.0.229"
-    },
-    {
-      "name": "serde_derive",
-      "version": "1.0.229"
-    },
-    {
-      "name": "serde_json",
-      "version": "1.0.152"
-    },
-    {
-      "name": "serde_spanned",
-      "version": "1.1.2"
-    },
-    {
-      "name": "serde",
-      "version": "1.0.229"
-    },
-    {
-      "name": "sha2",
-      "version": "0.10.9"
-    },
-    {
-      "name": "shlex",
-      "version": "2.0.1"
-    },
-    {
-      "name": "syn",
-      "version": "3.0.7"
-    },
-    {
-      "name": "tar",
-      "version": "0.4.46"
-    },
-    {
-      "name": "toml_datetime",
-      "version": "0.7.5+spec-1.1.0"
-    },
-    {
-      "name": "toml_parser",
-      "version": "1.1.5+spec-1.1.0"
-    },
-    {
-      "name": "toml_writer",
-      "version": "1.1.3+spec-1.1.0"
-    },
-    {
-      "name": "toml",
-      "version": "0.9.12+spec-1.1.0"
-    },
-    {
-      "name": "typenum",
-      "version": "1.20.1"
-    },
-    {
-      "name": "unicode-ident",
-      "version": "1.0.26"
-    },
-    {
-      "name": "version_check",
-      "version": "0.9.5"
-    },
-    {
-      "name": "winnow",
-      "version": "0.7.15"
-    },
-    {
-      "name": "winnow",
-      "version": "1.0.4"
-    },
-    {
-      "name": "xattr",
-      "version": "1.6.1"
-    },
-    {
-      "name": "zmij",
-      "version": "1.0.23"
-    },
-    {
-      "name": "zstd-safe",
-      "version": "7.3.0"
-    },
-    {
-      "name": "zstd-sys",
-      "version": "2.1.1+zstd.1.5.7"
-    },
-    {
-      "name": "zstd",
-      "version": "0.13.3"
     }
   ]
 }

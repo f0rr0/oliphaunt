@@ -2,6 +2,7 @@ module(name = "oliphaunt")
 
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "bazel_lib", version = "3.7.0")
 bazel_dep(name = "apple_support", version = "2.9.1")
 bazel_dep(name = "rules_cc", version = "0.2.26")
 bazel_dep(name = "rules_rust", version = "0.74.0")
@@ -160,15 +161,18 @@ javascript_metadata(
         "//src/native/sdks/ts:package.json",
         "//src/query/ts:package.json",
         "//src/wasix/sdks/ts:package.json",
+        "//src/native/sdks/react-native:package.json",
     ],
     consumer_tools = {"@oliphaunt/wasix-ts": ["vite"]},
+    compiler_inputs = "//build_defs/languages/ts:compiler-inputs.json",
 )
 javascript_packages = use_extension("//build_defs/languages/ts:repositories.bzl", "javascript_packages")
 javascript_packages.configure(
     metadata = "@oliphaunt_javascript_metadata//:acquisition.json",
     consumer_metadata = "@oliphaunt_javascript_metadata//:consumer-tools.json",
+    compiler_metadata = "@oliphaunt_javascript_metadata//:compiler-inputs.json",
 )
-use_repo(javascript_packages, "javascript_packages", "javascript_consumer_packages")
+use_repo(javascript_packages, "javascript_packages", "javascript_consumer_packages", "javascript_compiler_packages")
 
 icu(name = "icu_wasix", build_file = "//build_defs/wasix:icu.BUILD.bazel")
 
@@ -383,3 +387,26 @@ llvm_gnu_runtime(
     binary_prefix = "auto",
     enable_fortran = False,
 )
+
+# Separate conventional resolver: held linked WASIX dependencies cannot share the
+# source-producer root Cargo workspace and its current linked carrier packages.
+native_cargo_metadata(
+    name = "wasix_adapter_cargo_metadata",
+    workspace = "//src/wasix/node-addon:Cargo.toml",
+    lockfile = "//src/wasix/node-addon:Cargo.lock",
+    workspace_prefix = "src/wasix/node-addon",
+)
+wasix_adapter_crates = use_extension("//build_defs/languages:adapter-cargo-extension.bzl", "crate")
+wasix_adapter_crates.from_cargo(
+    name = "wasix_adapter_crates",
+    cargo_lockfile = "@wasix_adapter_cargo_metadata//:Cargo.lock",
+    manifests = ["@wasix_adapter_cargo_metadata//:Cargo.toml"],
+    skip_cargo_lockfile_overwrite = True,
+    supported_platform_triples = [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+    ],
+)
+use_repo(wasix_adapter_crates, "wasix_adapter_crates")

@@ -36,6 +36,7 @@ bun_test(
 
 exports_files([
     "bun.bzl",
+    "bun-sources.bzl",
     "bun-test-entrypoint.mts.tpl",
     "bun-toolchain.bzl",
     "bun-toolchain-test.mts",

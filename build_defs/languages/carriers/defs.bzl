@@ -2,8 +2,7 @@
 
 load("@oliphaunt_metadata//:metadata.bzl", "NATIVE_HELPER_ARTIFACTS", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "use_cc_toolchain")
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
-load("//build_defs/foundation:bun.bzl", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/languages:cargo-toolchain.bzl", "cargo_test_toolchain")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 
@@ -18,6 +17,7 @@ _HELPERS = [
     "//src/native/broker:tools/broker-dependency-license-contract.mts",
     "//:tools/packaging/archive-directory.mts",
     "//:tools/packaging/cargo-source-package.mts",
+    "//:tools/packaging/cargo-manifest.mts",
     "//:tools/packaging/npm-trusted-publishing.mts",
     "//:tools/packaging/package-archive.mts",
     "//:tools/packaging/platform-binary-contract.mts",
@@ -69,13 +69,13 @@ def _package_impl(ctx):
     manifest = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(manifest, json.encode(specification))
     arguments = ctx.actions.args()
-    arguments.add_all([ctx.file._packager, manifest])
-    ctx.actions.run(executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun, arguments = [arguments], inputs = depset(inputs + [manifest]), outputs = outputs, mnemonic = "NativeHelperEnvelope")
+    arguments.add(manifest)
+    bun_file_action(ctx, entry_point = ctx.file._packager, source_files = [ctx.file._packager] + ctx.files._helpers, arguments = [arguments], inputs = depset(inputs + [manifest]), outputs = outputs, mnemonic = "NativeHelperEnvelope")
     return [DefaultInfo(files = depset(outputs)), OutputGroupInfo(**groups)]
 
 _native_helper_package = rule(
     implementation = _package_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "binary": attr.label(allow_single_file = True, mandatory = True),
         "metadata": attr.string(mandatory = True),
@@ -203,13 +203,13 @@ def _installed_sql_impl(ctx):
     cc = cargo_test_toolchain(ctx)
     arguments = [ctx.file.sdk, ctx.file.query, ctx.file.addon, ctx.file.broker, ctx.file.runtime, node, ctx.file._consumer, ctx.file.artifact_crate, rust.cargo, rust.rustc, rust.rust_doc, cc.configuration]
     files = arguments + ctx.files._helpers + rust.all_files.to_list() + cc.files
-    return bun_test_entrypoint(ctx, runner = ctx.file._runner, arguments = arguments, files = files, runfiles_argument = True)
+    return bun_test_entrypoint(ctx, runner = ctx.file._runner, arguments = arguments, files = files, runfiles_argument = True, source_files = [ctx.file._runner] + ctx.files._helpers)
 
 _native_installed_sql_test = rule(
     implementation = _installed_sql_impl,
     test = True,
     fragments = ["cpp"],
-    toolchains = [BUN_TOOLCHAIN_TYPE, "@rules_nodejs//nodejs:toolchain_type", "@rules_rust//rust:toolchain_type"] + use_cc_toolchain(),
+    toolchains = BUN_SOURCE_TOOLCHAINS + ["@rules_nodejs//nodejs:toolchain_type", "@rules_rust//rust:toolchain_type"] + use_cc_toolchain(),
     attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
         "sdk": attr.label(mandatory = True, allow_single_file = [".tgz"]),
         "query": attr.label(mandatory = True, allow_single_file = [".tgz"]),

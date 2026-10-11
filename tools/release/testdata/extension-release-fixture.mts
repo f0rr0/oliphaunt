@@ -40,6 +40,9 @@ export function fixture() {
             ? { exact_extension_runtime: false }
             : {}),
         ...(id === 'oliphaunt-extension-vector' ? { extension: { class: 'external' } } : {}),
+        ...(id === 'oliphaunt-wasix-napi'
+          ? { embedded_payload_products: ['liboliphaunt-wasix'] }
+          : {}),
       },
     ]),
   );

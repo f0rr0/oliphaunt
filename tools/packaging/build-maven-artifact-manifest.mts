@@ -56,11 +56,16 @@ function canonicalMavenPayloadPrefix(file, entries) {
   return expected;
 }
 
-function assertMavenPayloadLegal(file, profile, sqlNames = []) {
+function assertMavenPayloadLegal(file, profile, sqlNames = [], sourceRoot) {
   try {
     const entries = readPortableArchiveEntries(file);
     const prefix = canonicalMavenPayloadPrefix(file, entries);
-    assertReleaseNoticesInEntries(entries, { profile, prefix, label: path.basename(file) });
+    assertReleaseNoticesInEntries(entries, {
+      profile,
+      prefix,
+      label: path.basename(file),
+      sourceRoot,
+    });
     if (sqlNames.length > 0) {
       // Native singleton payloads install upstream notices with runtime files
       // below files/, while aggregate bundles stage their combined legal tree
@@ -80,12 +85,15 @@ function repoPath(value) {
   return path.isAbsolute(value) ? value : path.join(ROOT, value);
 }
 
-function productArtifactTargets(product, version) {
-  return allArtifactTargets(
-    {
-      product,
-    },
-    PREFIX,
+function productArtifactTargets(product, version, context) {
+  return (
+    context?.artifactTargets ??
+    allArtifactTargets(
+      {
+        product,
+      },
+      PREFIX,
+    )
   )
     .filter((target) => target.surfaces.includes('maven'))
     .map((target) => ({
@@ -138,9 +146,9 @@ function runtimeMavenArtifactMetadata(target) {
   fail(`unsupported liboliphaunt-native Maven artifact target ${target.id}`);
 }
 
-function productMavenArtifacts(product, version) {
+function productMavenArtifacts(product, version, context) {
   const artifacts = new Map();
-  for (const target of productArtifactTargets(product, version)) {
+  for (const target of productArtifactTargets(product, version, context)) {
     const artifactId = runtimeMavenArtifactId(target);
     if (artifactId === undefined) {
       continue;
@@ -213,20 +221,21 @@ function tsvRow({
   return values.join('\t');
 }
 
-async function productRows(assetRoot, product, artifactIds) {
-  const version = await currentVersion(product);
-  const artifacts = productMavenArtifacts(product, version);
+async function productRows(assetRoot, product, artifactIds, context) {
+  const version = context?.version ?? (await currentVersion(product));
+  const artifacts = productMavenArtifacts(product, version, context);
   const rows = [];
   const selected = artifactIds === undefined ? undefined : new Set(artifactIds);
-  for (const coordinate of registryPackageRows(
-    {
-      product,
-      packageKind: 'maven',
-    },
-    PREFIX,
-  )
-    .map((row) => row.packageName)
-    .filter((name) => name.startsWith('dev.oliphaunt.runtime:'))) {
+  for (const coordinate of (
+    context?.registryPackages ??
+    registryPackageRows(
+      {
+        product,
+        packageKind: 'maven',
+      },
+      PREFIX,
+    ).map((row) => row.packageName)
+  ).filter((name) => name.startsWith('dev.oliphaunt.runtime:'))) {
     const [groupId, artifactId] = splitMavenCoordinate(coordinate);
     if (selected && !selected.delete(artifactId)) continue;
     if (groupId !== 'dev.oliphaunt.runtime') {
@@ -237,7 +246,7 @@ async function productRows(assetRoot, product, artifactIds) {
       fail(`${product} Maven artifact ${coordinate} has no release asset mapping`);
     }
     const file = await requireFile(path.join(assetRoot, artifact.filename), artifactId);
-    assertMavenPayloadLegal(file, artifact.licenseProfile);
+    assertMavenPayloadLegal(file, artifact.licenseProfile, [], context?.noticeSourceRoot);
     rows.push(
       tsvRow({
         groupId,
@@ -246,10 +255,13 @@ async function productRows(assetRoot, product, artifactIds) {
         file,
         name: artifact.name,
         description: artifact.description,
-        licenseSpdx: releaseProfilePackageLicense(artifact.licenseProfile).spdx,
+        licenseSpdx: releaseProfilePackageLicense(artifact.licenseProfile, {
+          sourceRoot: context?.noticeSourceRoot,
+        }).spdx,
         licenses: releaseProfileMavenLicenses(artifact.licenseProfile, {
           product,
           version,
+          sourceRoot: context?.noticeSourceRoot,
         }),
       }),
     );
@@ -435,13 +447,16 @@ export async function buildMavenArtifactManifest(
     runtime = false,
     extensions = false,
     extensionProducts = [],
+    context,
   } = {},
 ) {
   const includeRuntime = runtime || !extensions;
   const includeExtensions = extensions || extensionProducts.length > 0;
   const rows = [];
   if (includeRuntime) {
-    rows.push(...(await productRows(repoPath(runtimeAssetRoot), artifactProduct, artifactIds)));
+    rows.push(
+      ...(await productRows(repoPath(runtimeAssetRoot), artifactProduct, artifactIds, context)),
+    );
   }
   if (includeExtensions) {
     rows.push(...(await extensionRows(repoPath(extensionArtifactRoot), extensionProducts)));

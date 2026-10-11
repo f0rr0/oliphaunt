@@ -1,18 +1,18 @@
 """Native SDK manifest projection and consumers of actual npm envelopes."""
 
 load("@aspect_rules_js//npm:providers.bzl", "NpmPackageInfo")
-load("//build_defs/foundation:bun.bzl", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 
 _NODE_TOOLCHAIN = "@rules_nodejs//nodejs:toolchain_type"
 
 def _publish_files_impl(ctx):
     outputs = [ctx.actions.declare_file(ctx.label.name + "/" + name) for name in ["package.json", "LICENSE", "THIRD_PARTY_NOTICES.md"]]
-    bun = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun
-    ctx.actions.run(
-        executable = bun,
-        arguments = [ctx.file._writer.path, ctx.attr.profile, ctx.file.manifest.path, outputs[0].dirname],
+    bun_file_action(
+        ctx,
+        entry_point = ctx.file._writer,
+        arguments = [ctx.attr.profile, ctx.file.manifest.path, outputs[0].dirname],
         inputs = [ctx.file.manifest, ctx.file._writer, ctx.file.profile_helper] + ctx.files._helpers,
+        source_files = [ctx.file._writer, ctx.file.profile_helper] + ctx.files._helpers,
         outputs = outputs,
         mnemonic = "SourceSdkManifest",
     )
@@ -20,7 +20,7 @@ def _publish_files_impl(ctx):
 
 _source_sdk_publish_files = rule(
     implementation = _publish_files_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "manifest": attr.label(mandatory = True, allow_single_file = [".json"]),
         "profile": attr.string(default = "js", values = ["js", "wasix-ts"]),
@@ -77,12 +77,12 @@ def _consumer_impl(ctx):
     ctx.actions.write(specification, json.encode({"packages": packages, "types": ctx.attr.types}))
     files = [ctx.file.archive, ctx.file.query, ctx.file.consumer, ctx.file._runner, ctx.file.acquisition, ctx.file.typescript, specification, node] + type_files
     arguments = [ctx.file.archive, ctx.file.query, ctx.file.consumer, node, ctx.file.typescript, ctx.file.acquisition, specification]
-    return bun_test_entrypoint(ctx, ctx.file._runner, arguments, files, runfiles_environment = ["OLIPHAUNT_BAZEL_RUNFILES"])
+    return bun_test_entrypoint(ctx, ctx.file._runner, arguments, files, source_files = [ctx.file._runner], runfiles_environment = ["OLIPHAUNT_BAZEL_RUNFILES"])
 
 _source_sdk_consumer_test = rule(
     implementation = _consumer_impl,
     test = True,
-    toolchains = [BUN_TOOLCHAIN_TYPE, _NODE_TOOLCHAIN],
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_NODE_TOOLCHAIN],
     attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
         "archive": attr.label(mandatory = True, allow_single_file = [".tgz"]),
         "query": attr.label(mandatory = True, allow_single_file = [".tgz"]),

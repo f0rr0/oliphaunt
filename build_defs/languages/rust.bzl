@@ -4,6 +4,7 @@ load("@cargo_crates//:defs.bzl", "all_crate_deps", "crate_deps")
 load("@native_cargo_metadata//:cargo.bzl", "CARGO")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script", "cargo_toml_env_vars")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_static_library", "rust_test")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
 
 # These are the canonical first-party Cargo conditions currently in the workspace.
 # Unknown conditions fail instead of silently dropping a dependency. The labels
@@ -63,11 +64,14 @@ def _table_dependencies(table, facts, features, path_dependencies, proc_macro_na
             normal.extend(crate_dependencies([name], package_name = native.package_name()))
     return normal, macros
 
-def _dependencies(facts, features, section, path_dependencies, proc_macro_names, crate_dependencies = crate_deps):
-    normal, macros = _table_dependencies(facts[section], facts, features, path_dependencies, proc_macro_names, crate_dependencies)
+def _dependencies(facts, features, section, path_dependencies, proc_macro_names, crate_dependencies = crate_deps, include_dev = False):
+    table = facts[section] | facts["dev_dependencies"] if include_dev else facts[section]
+    normal, macros = _table_dependencies(table, facts, features, path_dependencies, proc_macro_names, crate_dependencies)
     cargo_section = section.replace("_", "-")
     for condition, table in facts["target_dependencies"].items():
         dependencies = table.get(cargo_section, {})
+        if include_dev:
+            dependencies = dependencies | table.get("dev-dependencies", {})
         if not dependencies:
             continue
         if condition not in _TARGET_CONDITIONS:
@@ -88,20 +92,20 @@ def _release_flags(facts):
         fail("Unrepresented conventional Cargo release strip setting: " + str(strip))
     return select({"//build_defs/languages:release": ["-Cstrip=" + strip], "//conditions:default": []})
 
-def cargo_package_env(name = "cargo_env"):
+def cargo_package_env(name = "cargo_env", workspace_manifest = "//:Cargo.toml"):
     cargo_toml_env_vars(
         name = name,
         src = "Cargo.toml",
-        workspace = "//:Cargo.toml",
+        workspace = workspace_manifest,
     )
 
-def cargo_generator(name = "build_script", path_dependencies = {}, srcs = [], data = [], tools = [], build_script_env = {}, features = [], default_features = True, proc_macro_names = []):
-    facts = CARGO[native.package_name()]
+def cargo_generator(name = "build_script", path_dependencies = {}, srcs = [], data = [], tools = [], build_script_env = {}, features = [], default_features = True, proc_macro_names = [], cargo_facts = CARGO, crate_dependencies = crate_deps):
+    facts = cargo_facts[native.package_name()]
     if not facts["build"]:
         fail("Cargo manifest has no build script for " + native.package_name())
     enabled = cargo_features(facts, features, default_features)
-    deps, macros = _dependencies(facts, enabled, "build_dependencies", path_dependencies, proc_macro_names)
-    link_deps, _ = _dependencies(facts, enabled, "dependencies", path_dependencies, proc_macro_names)
+    deps, macros = _dependencies(facts, enabled, "build_dependencies", path_dependencies, proc_macro_names, crate_dependencies)
+    link_deps, _ = _dependencies(facts, enabled, "dependencies", path_dependencies, proc_macro_names, crate_dependencies)
     cargo_build_script(
         name = name,
         srcs = [facts["build"]] + srcs,
@@ -141,14 +145,14 @@ def cargo_generator_test(name = "generator_test", path_dependencies = {}, srcs =
         **kwargs
     )
 
-def cargo_library(name = "lib", kind = "rlib", path_dependencies = {}, proc_macro_names = [], features = [], default_features = True, build_script = None, compile_data = [], rustc_env = {}, rustc_flags = [], **kwargs):
-    facts = CARGO[native.package_name()]
+def cargo_library(name = "lib", kind = "rlib", path_dependencies = {}, proc_macro_names = [], features = [], default_features = True, build_script = None, compile_data = [], rustc_env = {}, rustc_flags = [], cargo_facts = CARGO, crate_dependencies = crate_deps, **kwargs):
+    facts = cargo_facts[native.package_name()]
     if not facts["library"]:
         fail("Cargo manifest has no library for " + native.package_name())
     if bool(facts["build"]) != bool(build_script):
         fail("Native Cargo build script must match the conventional manifest for " + native.package_name())
     enabled = cargo_features(facts, features, default_features)
-    deps, macros = _dependencies(facts, enabled, "dependencies", path_dependencies, proc_macro_names)
+    deps, macros = _dependencies(facts, enabled, "dependencies", path_dependencies, proc_macro_names, crate_dependencies)
     constructor = {"rlib": rust_library, "cdylib": rust_shared_library, "staticlib": rust_static_library}.get(kind)
     if not constructor:
         fail("Unsupported native Cargo library kind " + kind)
@@ -171,34 +175,27 @@ def cargo_library(name = "lib", kind = "rlib", path_dependencies = {}, proc_macr
 
 def _isolated_cache_test_impl(ctx):
     binary = ctx.attr.binary[DefaultInfo].files_to_run.executable
-    path = binary.short_path
-    if path.startswith("../"):
-        path = path[3:]
-    else:
-        path = ctx.workspace_name + "/" + path
-    launcher = ctx.actions.declare_file(ctx.label.name + ".sh")
-    ctx.actions.write(launcher, """#!/usr/bin/env bash
-set -euo pipefail
-export OLIPHAUNT_RUNTIME_CACHE_DIR="$TEST_TMPDIR/native-cache"
-exec "$TEST_SRCDIR/%s" "$@"
-""" % path, is_executable = True)
-    return [DefaultInfo(executable = launcher, runfiles = ctx.attr.binary[DefaultInfo].default_runfiles.merge(ctx.runfiles(files = [binary]))), ctx.attr.binary[RunEnvironmentInfo]]
+    return bun_test_entrypoint(ctx, runner = ctx.file._runner, arguments = [binary], files = [binary], source_files = [ctx.file._runner], additional_runfiles = ctx.attr.binary[DefaultInfo].default_runfiles) + [ctx.attr.binary[RunEnvironmentInfo]]
 
 _isolated_cache_test = rule(
     implementation = _isolated_cache_test_impl,
     test = True,
-    attrs = {"binary": attr.label(mandatory = True, executable = True, cfg = "target")},
+    attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
+        "binary": attr.label(mandatory = True, executable = True, cfg = "target"),
+        "_runner": attr.label(default = "//build_defs/languages:isolated-cache-test.mts", allow_single_file = True),
+    }),
+    toolchains = BUN_SOURCE_TOOLCHAINS,
 )
 
-def cargo_library_test(name = "unit_test", crate = ":lib", data = [], isolated_cache = False, **kwargs):
-    facts = CARGO[native.package_name()]
+def cargo_library_test(name = "unit_test", crate = ":lib", data = [], isolated_cache = False, cargo_facts = CARGO, all_dependencies = all_crate_deps, **kwargs):
+    facts = cargo_facts[native.package_name()]
     rust_test(
         name = name + "_binary" if isolated_cache else name,
         crate = crate,
         edition = facts["edition"],
         version = facts["version"],
-        deps = all_crate_deps(normal_dev = True),
-        proc_macro_deps = all_crate_deps(proc_macro_dev = True),
+        deps = all_dependencies(normal_dev = True),
+        proc_macro_deps = all_dependencies(proc_macro_dev = True),
         rustc_env_files = [":cargo_env"],
         rustc_env = {"CARGO_MANIFEST_DIR": native.package_name()},
         data = data,
@@ -206,28 +203,30 @@ def cargo_library_test(name = "unit_test", crate = ":lib", data = [], isolated_c
         **kwargs
     )
     if isolated_cache:
-        _isolated_cache_test(name = name, binary = ":" + name + "_binary", size = kwargs.get("size", "small"))
+        _isolated_cache_test(name = name, binary = ":" + name + "_binary", args = bun_test_entrypoint_args(name), size = kwargs.get("size", "small"))
 
-def cargo_integration_test(name, source, crate = ":lib", data = [], features = [], **kwargs):
+def cargo_integration_test(name, source, crate = ":lib", data = [], features = [], default_features = True, path_dependencies = {}, proc_macro_names = [], cargo_facts = CARGO, crate_dependencies = crate_deps, **kwargs):
     """Compile a conventional external integration root against its actual library."""
-    facts = CARGO[native.package_name()]
+    facts = cargo_facts[native.package_name()]
+    enabled = cargo_features(facts, features, default_features)
+    normal, macros = _dependencies(facts, enabled, "dependencies", path_dependencies, proc_macro_names, crate_dependencies, include_dev = True)
     rust_test(
         name = name,
         srcs = [source],
         crate_root = source,
         edition = facts["edition"],
         version = facts["version"],
-        crate_features = cargo_features(facts, features),
-        deps = [crate] + all_crate_deps(normal_dev = True),
-        proc_macro_deps = all_crate_deps(proc_macro_dev = True),
+        crate_features = enabled,
+        deps = [crate] + normal,
+        proc_macro_deps = macros,
         rustc_env_files = [":cargo_env"],
         rustc_env = {"CARGO_MANIFEST_DIR": native.package_name()},
         data = data,
         **kwargs
     )
 
-def cargo_binary(name, source, path_dependencies = {}, features = [], default_features = True, build_script = None, proc_macro_names = [], library = None, crate_dependencies = crate_deps, rustc_flags = [], **kwargs):
-    facts = CARGO[native.package_name()]
+def cargo_binary(name, source, path_dependencies = {}, features = [], default_features = True, build_script = None, proc_macro_names = [], library = None, crate_dependencies = crate_deps, rustc_flags = [], cargo_facts = CARGO, **kwargs):
+    facts = cargo_facts[native.package_name()]
     enabled = cargo_features(facts, features, default_features)
     binaries = [target for target in facts["binaries"] if target["path"] == source]
     if not binaries and source == "src/main.rs":

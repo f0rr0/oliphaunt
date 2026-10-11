@@ -1,6 +1,6 @@
 """Portable frontend payloads depend only on their actual command producers."""
 
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load(":npm.bzl", "RUNTIME_NPM_NOTICES")
 load(":wasm.bzl", "WasmModuleInfo")
@@ -34,11 +34,13 @@ def _tools_impl(ctx):
     }))
     output = ctx.actions.declare_directory(ctx.label.name)
     arguments = ctx.actions.args()
-    arguments.add_all([ctx.file._packager, "--spec", specification, "--output", output.path, "--manifest-tool", ctx.executable._manifest_tool])
-    ctx.actions.run(
-        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
+    arguments.add_all(["--spec", specification, "--output", output.path, "--manifest-tool", ctx.executable._manifest_tool])
+    bun_file_action(
+        ctx,
+        ctx.file._packager,
         arguments = [arguments],
-        inputs = depset(inputs + [specification, ctx.file._packager] + ctx.files._helpers),
+        inputs = depset(inputs + [specification]),
+        source_files = ctx.files._helpers,
         tools = [ctx.attr._manifest_tool[DefaultInfo].files_to_run],
         outputs = [output],
         env = {"LC_ALL": "C"},
@@ -49,7 +51,7 @@ def _tools_impl(ctx):
 
 wasix_tools_payload = rule(
     implementation = _tools_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "pg_dump": attr.label(providers = [WasmModuleInfo], mandatory = True),
         "psql": attr.label(providers = [WasmModuleInfo], mandatory = True),

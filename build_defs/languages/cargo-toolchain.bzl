@@ -30,7 +30,7 @@ def cargo_test_toolchain(ctx):
         ("cflags", ACTION_NAMES.c_compile, ctx.fragments.cpp.copts + ctx.fragments.cpp.conlyopts),
         ("cxxflags", ACTION_NAMES.cpp_compile, ctx.fragments.cpp.copts + ctx.fragments.cpp.cxxopts),
     ]:
-        variables = cc_common.create_compile_variables(cc_toolchain = cc, feature_configuration = features, user_compile_flags = flags, use_pic = True)
+        variables = cc_common.create_compile_variables(cc_toolchain = cc, feature_configuration = features, user_compile_flags = flags, use_pic = cc_common.is_enabled(feature_configuration = features, feature_name = "supports_pic"))
         compile_flags[name] = cc_common.get_memory_inefficient_command_line(feature_configuration = features, action_name = action, variables = variables)
     configuration = ctx.actions.declare_file(ctx.label.name + ".compiler.json")
     ctx.actions.write(configuration, json.encode(tools | compile_flags | {

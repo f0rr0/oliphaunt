@@ -17,25 +17,29 @@ function fail(message) {
   throw new Error(message);
 }
 
-export function packageIcuCargo(argv) {
+export function packageIcuCargo(argv, context = {}) {
   const { values } = parseArgs({
     args: argv,
     options: {
-      version: { type: 'string', default: currentProductVersionSync('database-resources') },
+      version: {
+        type: 'string',
+        default: context.version ?? currentProductVersionSync('database-resources'),
+      },
       asset: { type: 'string' },
       'output-dir': { type: 'string', default: 'target/database-resources/cargo-artifacts' },
       'work-dir': { type: 'string', default: 'target/database-resources' },
     },
   });
+  const root = context.root ?? ROOT;
   const prefix = `database-resources-${values.version}-icu-data`;
   const archive = path.resolve(
-    ROOT,
+    root,
     values.asset ?? `target/database-resources/release-assets/${prefix}.tar.gz`,
   );
-  const work = path.resolve(ROOT, values['work-dir']);
+  const work = path.resolve(root, values['work-dir']);
   const extracted = path.join(work, 'icu-cargo-extracted');
   const sourceRoot = path.join(work, 'cargo-package-sources');
-  const outputDir = path.resolve(ROOT, values['output-dir']);
+  const outputDir = path.resolve(root, values['output-dir']);
   // Own only this crate's scratch: future resource carriers share the output directory.
   for (const directory of [extracted, path.join(sourceRoot, 'oliphaunt-icu')])
     rmSync(directory, { recursive: true, force: true });
@@ -59,7 +63,7 @@ export function packageIcuCargo(argv) {
       name: 'oliphaunt-icu',
       target: 'portable',
       kind: 'icu-data',
-      templateDir: path.join(ROOT, 'src/database-resources/icu/cargo'),
+      templateDir: context.templateDir ?? path.join(ROOT, 'src/database-resources/icu/cargo'),
       payloadRoot,
       payloadDirName: 'payload',
     },
@@ -68,9 +72,10 @@ export function packageIcuCargo(argv) {
       sourceRoot,
       outputDir,
       cargoTargetDir: path.join(work, 'cargo-package-target'),
+      noticeSourceRoot: context.noticeSourceRoot,
     },
   );
-  const relative = (value) => path.relative(ROOT, value).split(path.sep).join('/');
+  const relative = (value) => path.relative(root, value).split(path.sep).join('/');
   writeFileSync(
     path.join(outputDir, 'packages.json'),
     `${JSON.stringify(

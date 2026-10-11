@@ -1,38 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import {
+  renderCargoToml as renderToml,
+  resolveCargoWorkspaceInheritance,
+} from '../../tools/packaging/cargo-manifest.mts';
+
+export { renderCargoToml as renderToml } from '../../tools/packaging/cargo-manifest.mts';
 
 type Table = Record<string, any>;
 const dependencySections = ['dependencies', 'dev-dependencies', 'build-dependencies'];
-
-function tomlValue(value: unknown): string {
-  if (typeof value === 'string') return JSON.stringify(value);
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) return `[${value.map(tomlValue).join(', ')}]`;
-  if (value && typeof value === 'object')
-    return `{ ${Object.entries(value)
-      .map(([key, item]) => `${JSON.stringify(key)} = ${tomlValue(item)}`)
-      .join(', ')} }`;
-  throw new Error(`Unsupported Cargo TOML value: ${String(value)}`);
-}
-
-export function renderToml(table: Table): string {
-  const scalars = Object.entries(table).filter(
-    ([, value]) => !value || typeof value !== 'object' || Array.isArray(value),
-  );
-  const tables = Object.entries(table).filter(
-    ([, value]) => value && typeof value === 'object' && !Array.isArray(value),
-  );
-  return `${[
-    ...scalars.map(([key, value]) => `${JSON.stringify(key)} = ${tomlValue(value)}`),
-    ...tables.flatMap(([key, value]) => [
-      '',
-      `[${JSON.stringify(key)}]`,
-      ...Object.entries(value as Table).map(
-        ([name, item]) => `${JSON.stringify(name)} = ${tomlValue(item)}`,
-      ),
-    ]),
-  ].join('\n')}\n`;
-}
 
 function dependencyTables(manifest: Table): Table[] {
   return [manifest, ...Object.values(manifest.target ?? {})].flatMap((table) =>
@@ -68,10 +44,11 @@ export function projectCargoWorkspace(
   readManifest: (relative: string) => Table,
   sourceExists: (relative: string) => boolean,
   activations: Record<string, string[]> = {},
+  workspacePrefix = '',
 ) {
   if (lock.version !== 4) throw new Error('Native Cargo import requires lockfile schema 4');
-  if (!workspace.workspace || workspace.package)
-    throw new Error('Native Cargo import requires the canonical virtual workspace');
+  if (!workspace.workspace || (workspace.package && !workspacePrefix))
+    throw new Error('Native Cargo import requires a conventional workspace');
   if (workspace.patch || workspace.replace)
     throw new Error('Native Cargo import does not yet represent workspace patch/replace sources');
   const releaseKeys = Object.keys(workspace.profile?.release ?? {});
@@ -83,36 +60,36 @@ export function projectCargoWorkspace(
   if (releaseStrip !== null && releaseStrip !== 'symbols')
     throw new Error(`Unsupported conventional Cargo release strip setting: ${releaseStrip}`);
   const members = new Map<string, Table>();
-  const pending = roots.length ? [...roots] : [...workspace.workspace.members];
+  const declaredMembers = workspace.workspace.members.map((member: string) =>
+    path.posix.normalize(path.posix.join(workspacePrefix, member)),
+  );
+  const pending = roots.length ? [...roots] : [...declaredMembers];
   for (const candidate of pending) {
     const relative = path.posix.normalize(candidate);
     if (relative.startsWith('../') || relative === '..' || path.posix.isAbsolute(relative))
       throw new Error(`Cargo path dependency escapes the workspace: ${relative}`);
     if (members.has(relative)) continue;
-    if (!workspace.workspace.members.includes(relative))
+    if (!declaredMembers.includes(relative))
       throw new Error(`Cargo package is not a declared workspace member: ${relative}`);
     const manifest = readManifest(`${relative}/Cargo.toml`);
-    if (!manifest.package || manifest.workspace || manifest.patch || manifest.replace)
+    if (
+      !manifest.package ||
+      (manifest.workspace && relative !== workspacePrefix) ||
+      manifest.patch ||
+      manifest.replace
+    )
       throw new Error(`Unsupported Cargo member shape: ${relative}`);
-    const copy = structuredClone(manifest);
-    for (const table of dependencyTables(copy)) {
+    const copy = resolveCargoWorkspaceInheritance(manifest, workspace.workspace);
+    delete copy.workspace;
+    const originalDependencyTables = dependencyTables(manifest);
+    for (const [index, table] of dependencyTables(copy).entries()) {
       for (const [name, declaration] of Object.entries(table)) {
         const dependency = declaration as Table;
-        if (dependency?.workspace === true) {
-          const inherited = workspace.workspace.dependencies?.[name];
-          if (!inherited) throw new Error(`Missing workspace dependency ${name}`);
-          table[name] =
-            typeof inherited === 'string'
-              ? { version: inherited, ...dependency }
-              : {
-                  ...inherited,
-                  ...dependency,
-                  features: [...(inherited.features ?? []), ...(dependency.features ?? [])],
-                };
-          delete table[name].workspace;
-          if (typeof inherited !== 'string' && inherited.path)
-            table[name].path = path.posix.relative(relative, inherited.path);
-        }
+        if (dependency?.path && originalDependencyTables[index]?.[name]?.workspace === true)
+          dependency.path = path.posix.relative(
+            relative,
+            path.posix.join(workspacePrefix, dependency.path),
+          );
         const resolved = table[name];
         if (resolved?.path) pending.push(path.posix.join(relative, resolved.path));
       }
@@ -320,7 +297,11 @@ if (import.meta.main) {
   const [workspaceFile, lockFile, output, ...options] = process.argv.slice(2);
   if (!workspaceFile || !lockFile || !output)
     throw new Error('Expected canonical workspace, lockfile, and output directory');
-  const root = path.dirname(workspaceFile);
+  const prefixIndex = options.indexOf('--workspace-prefix');
+  const workspacePrefix = prefixIndex < 0 ? '' : options.splice(prefixIndex, 2)[1];
+  const root = workspacePrefix
+    ? path.resolve(path.dirname(workspaceFile), path.relative(workspacePrefix, '.'))
+    : path.dirname(workspaceFile);
   const activationIndex = options.indexOf('--activate');
   const activations = activationIndex < 0 ? {} : JSON.parse(options[activationIndex + 1]);
   const roots = activationIndex < 0 ? options : options.slice(0, activationIndex);
@@ -333,6 +314,7 @@ if (import.meta.main) {
     (relative) => Bun.TOML.parse(readFileSync(path.join(root, relative), 'utf8')),
     (relative) => existsSync(path.join(root, relative)),
     activations,
+    workspacePrefix,
   );
   for (const [relative, text] of Object.entries(result.files)) {
     const destination = path.join(output, relative);

@@ -134,9 +134,9 @@ test('declared TreeArtifact leaves preserve nested destinations and reject undec
   );
   const projected = expandDeclaredTrees(entries, leaves);
   expect(projected.some((entry) => entry.tree)).toBe(false);
-  expect(projected.find((entry) => entry.source.endsWith('America/New_York'))?.destination).toBe(
-    'share/postgresql/timezone/America/New_York',
-  );
+  expect(
+    projected.find((entry) => entry.source.endsWith(path.join('America', 'New_York')))?.destination,
+  ).toBe('share/postgresql/timezone/America/New_York');
   await expect(
     stageRuntimeArchive(
       projected,

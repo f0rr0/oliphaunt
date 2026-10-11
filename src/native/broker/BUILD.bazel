@@ -7,9 +7,7 @@ exports_files(["Cargo.toml", "tools/broker-dependency-license-contract.mts"])
 filegroup(name = "carrier_legal_sources", srcs = ["dependency-licenses.json"] + glob(["dependency-license-blobs/*.base64"]))
 filegroup(name = "carrier_template_sources", srcs = glob(["packages/*/package.json", "packages/*/README.md", "crates/*/Cargo.toml", "crates/*/build.rs", "crates/*/src/lib.rs", "crates/*/README.md"]))
 
-PATH_DEPS = {
-    "liboliphaunt-native-bindings": "//src/native/rust-bindings:lib",
-}
+PATH_DEPS = {}
 
 cargo_package_env()
 cargo_library(path_dependencies = PATH_DEPS)

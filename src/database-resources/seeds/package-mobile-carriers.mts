@@ -27,12 +27,20 @@ import {
 } from '../contracts/native-manifest.mts';
 import { validateNativeIcuDataManifest } from '../contracts/icu-data.mts';
 
-const contract = JSON.parse(
+const defaultContract = JSON.parse(
   readFileSync(new URL('../contracts/contract.json', import.meta.url), 'utf8'),
 );
 
 /** Adapt the canonical seed into the existing native mobile resource contract. */
-export function stageMobileSeed({ archive, manifest, destination, target, profile, icuData }) {
+export function stageMobileSeed({
+  archive,
+  manifest,
+  destination,
+  target,
+  profile,
+  icuData,
+  contract = defaultContract,
+}) {
   if (
     !['android-datum64', 'ios-datum64'].includes(target) ||
     !['standard', 'icu'].includes(profile)
@@ -75,9 +83,9 @@ export function stageMobileSeed({ archive, manifest, destination, target, profil
     cacheKey: logicalTreeSha256(filesystemTreeRows(files)),
   };
   const unbound = Buffer.from(
-    Object.entries(properties)
+    `${Object.entries(properties)
       .map(([key, value]) => `${key}=${value}`)
-      .join('\n') + '\n',
+      .join('\n')}\n`,
   );
   writeFileSync(
     path.join(destination, 'manifest.properties'),
@@ -93,8 +101,12 @@ export async function packageMobileSeedCarriers({
   assetDir,
   workDir,
   mavenDir,
+  version = currentProductVersionSync('database-resources'),
+  noticeSourceRoot,
+  contract = defaultContract,
 } = {}) {
-  const version = currentProductVersionSync('database-resources');
+  if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(version))
+    throw new Error('mobile seed carriers require an exact resource version');
   const assets = path.resolve(
     assetDir ?? path.join(ROOT, 'target/database-resources/release-assets'),
   );
@@ -137,8 +149,12 @@ export async function packageMobileSeedCarriers({
         target,
         profile,
         icuData: profile === 'icu' ? path.join(extractedIcu, 'share/icu') : undefined,
+        contract,
       });
-      stageReleaseNotices(swift ? swiftRoot : stage, { profile: 'native-runtime-resources' });
+      stageReleaseNotices(swift ? swiftRoot : stage, {
+        profile: 'native-runtime-resources',
+        sourceRoot: noticeSourceRoot,
+      });
       if (swift) {
         writeFileSync(
           path.join(resourceRoot, 'Resources.swift'),
@@ -161,11 +177,14 @@ export async function packageMobileSeedCarriers({
             `Selectable PostgreSQL native ${profile} cluster seed for Android.`,
             '',
             '',
-            releaseProfilePackageLicense('native-runtime-resources').spdx,
+            releaseProfilePackageLicense('native-runtime-resources', {
+              sourceRoot: noticeSourceRoot,
+            }).spdx,
             JSON.stringify(
               releaseProfileMavenLicenses('native-runtime-resources', {
                 product: 'database-resources',
                 version,
+                sourceRoot: noticeSourceRoot,
               }),
             ),
           ].join('\t'),
@@ -205,10 +224,11 @@ export async function packageMobileSeedCarriers({
   }
   if (rows.length) {
     const manifest = path.join(work, 'maven.tsv');
-    writeFileSync(manifest, rows.join('\n') + '\n');
+    writeFileSync(manifest, `${rows.join('\n')}\n`);
     await stageMavenArtifactManifest(
       manifest,
       mavenDir ?? path.join(ROOT, 'target/release/maven-staging/database-resources-seeds'),
+      { noticeSourceRoot },
     );
   }
   return results;

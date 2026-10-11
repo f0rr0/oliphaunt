@@ -33,7 +33,17 @@ import {
 } from '../../../tools/release/release-artifact-targets.mts';
 import { seedCarrierIdentities } from './carrier-identities.mts';
 
-export function packageSeedCarriers(argv = [], { assetDir, outputDir, sourceDir } = {}) {
+export function packageSeedCarriers(
+  argv = [],
+  {
+    assetDir,
+    outputDir,
+    sourceDir,
+    version = currentProductVersionSync('database-resources'),
+    contract,
+    noticeSourceRoot,
+  } = {},
+) {
   const { values } = parseArgs({
     args: argv,
     options: {
@@ -42,11 +52,10 @@ export function packageSeedCarriers(argv = [], { assetDir, outputDir, sourceDir 
       profile: { type: 'string' },
     },
   });
-  const selected = seedCarrierIdentities().filter((item) =>
+  const selected = seedCarrierIdentities(contract).filter((item) =>
     Object.entries(values).every(([key, value]) => item[key] === value),
   );
   if (!selected.length) throw new Error('no declared seed carrier matches the selection');
-  const version = currentProductVersionSync('database-resources');
   const output = path.resolve(
     outputDir ?? path.join(ROOT, 'target/database-resources/seed-carriers'),
   );
@@ -84,8 +93,10 @@ export function packageSeedCarriers(argv = [], { assetDir, outputDir, sourceDir 
     copyFileSync(archive, path.join(stage, 'seed.tar.zst'));
     copyFileSync(manifestFile, path.join(stage, 'manifest.json'));
     const noticeProfile = 'native-runtime-resources';
-    const license = releaseProfilePackageLicense(noticeProfile).spdx;
-    stageReleaseNotices(stage, { profile: noticeProfile });
+    const license = releaseProfilePackageLicense(noticeProfile, {
+      sourceRoot: noticeSourceRoot,
+    }).spdx;
+    stageReleaseNotices(stage, { profile: noticeProfile, sourceRoot: noticeSourceRoot });
     writeFileSync(
       path.join(stage, 'README.md'),
       `# ${identity.npm}\n\nOne ${identity.profile} ${identity.family} PostgreSQL cluster seed for ${identity.target}.\nSee manifest.json for physical compatibility and producer identity.\n${identity.profile === 'icu' ? 'ICU data comes from the separate canonical ICU dependency.\n' : ''}`,
@@ -131,6 +142,7 @@ export function packageSeedCarriers(argv = [], { assetDir, outputDir, sourceDir 
           target: identity.target,
           profile: identity.profile,
           icuData,
+          contract,
         });
         rmSync(icuStage, { recursive: true, force: true });
         directory = `${bundle}/${resource}/files`;

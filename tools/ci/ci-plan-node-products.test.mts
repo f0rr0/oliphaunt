@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { loadExtensionTargetProfiles } from '../../src/extensions/contracts/extension-target-profiles.mts';
 import { publishedConsumerDependencies } from '../../src/native/sdks/ts/tools/published-consumer.mts';
+import { resolvedAdapterRuntimeContract } from '../../src/wasix/node-addon/tools/workspace-runtime-contract.mts';
 import {
   contribCarrierDescriptor,
   extensionProductForSqlName,
@@ -666,29 +667,32 @@ test('combined JavaScript SDK and WASIX N-API changes release only changed produ
   assert.deepEqual(result.releaseProducts, ['oliphaunt-js', 'oliphaunt-wasix-napi']);
 });
 
-test('shared contrib source releases its runtime owners and the addon embedding WASIX payloads', () => {
+test('shared contrib source releases its runtime owners while the addon retains its registry payloads', () => {
   const release = buildPlan(
     GRAPH,
     ['src/extensions/contrib/postgres18.toml'],
     'ci-plan-node-products.test.mts',
   );
-  assert.deepEqual(release.directProducts, [
-    'liboliphaunt-native',
-    'liboliphaunt-wasix',
-    'oliphaunt-wasix-napi',
-  ]);
-  assert.deepEqual(release.releaseProducts, [
-    'liboliphaunt-native',
-    'liboliphaunt-wasix',
-    'oliphaunt-wasix-napi',
-  ]);
+  assert.deepEqual(release.directProducts, ['liboliphaunt-native', 'liboliphaunt-wasix']);
+  assert.deepEqual(release.releaseProducts, ['liboliphaunt-native', 'liboliphaunt-wasix']);
   const plan = planForReleaseProducts(release.releaseProducts, 'c'.repeat(40));
   const contrib = contribCarrierDescriptor();
   assert(plan.extension_package_products.includes(contrib.artifactProduct));
   assert(plan.tasks.includes('native-extension-lifecycle:lifecycle'));
   assert(plan.tasks.includes('extension-artifacts-wasix:build-target'));
-  assert(plan.tasks.includes('oliphaunt-wasix-napi:build-release-assets'));
-  assert(plan.tasks.includes('oliphaunt-wasix-napi:finalize-release-assets'));
+  assert.deepEqual(plan.qualification_products, release.releaseProducts);
+  const binding = plan.package_bindings.find(
+    ({ consumer, producer }) =>
+      consumer === 'oliphaunt-wasix-napi' && producer === 'liboliphaunt-wasix',
+  );
+  assert(binding, 'downstream addon qualification must retain its installed runtime binding');
+  assert.equal(binding.producerVersion, resolvedAdapterRuntimeContract().runtimeVersion);
+  const adoption = buildPlan(
+    GRAPH,
+    ['src/wasix/node-addon/Cargo.toml', 'src/wasix/node-addon/Cargo.lock'],
+    'ci-plan-node-products.test.mts',
+  );
+  assert(adoption.directProducts.includes('oliphaunt-wasix-napi'));
   for (const sql of ['hstore', 'pg_trgm']) {
     assert(plan.native_extension_lifecycle_sql_names.includes(sql));
     assert(

@@ -40,7 +40,10 @@ export { cargoManifestPaths } from './release-please-transition.mts';
 
 const PREFIX = 'sync-release-pr.mts';
 const DEPENDENCY_TABLES = ['dependencies', 'dev-dependencies', 'build-dependencies'];
-const LOCKFILES = [path.join(ROOT, 'Cargo.lock')];
+const LOCKFILES = [
+  path.join(ROOT, 'Cargo.lock'),
+  path.join(ROOT, 'src/wasix/node-addon/Cargo.lock'),
+];
 const BUN_LOCKFILE = path.join(ROOT, 'bun.lock');
 const RELEASE_PLEASE_CONFIG = path.join(ROOT, 'release-please-config.json');
 const RELEASE_PLEASE_MANIFEST = path.join(ROOT, '.release-please-manifest.json');
@@ -160,9 +163,14 @@ function setJsonPath(data, dotted, expected, context) {
 export function syncTomlStringPath(text, dotted, expected, context) {
   const entryParts = dotted.split('.');
   if (entryParts.at(-1) === 'version' && DEPENDENCY_TABLES.includes(entryParts.at(-3))) {
+    // Compatibility reads normalize Cargo's exact requirement to its installed
+    // version. Writing that value must retain the authored constraint.
+    const actual = valueAt(Bun.TOML.parse(text), entryParts);
+    const exact = typeof actual === 'string' ? /^(=\s*)/u.exec(actual) : null;
+    const requirement = exact && !expected.startsWith('=') ? `${exact[1]}${expected}` : expected;
     return replaceUniqueDependencyVersion(
       text,
-      { entryParts: entryParts.slice(0, -1), expected, name: context },
+      { entryParts: entryParts.slice(0, -1), expected: requirement, name: context },
       context,
     );
   }
@@ -854,6 +862,7 @@ export function syncLockfile(lockfile, versions, changes, { write }) {
 function syncLockfiles(changes, { write }) {
   const versions = localCargoPackageVersions();
   for (const lockfile of LOCKFILES) {
+    if (lockfile !== LOCKFILES[0] && !existsSync(lockfile)) continue;
     syncLockfile(lockfile, versions, changes, { write });
   }
   // Bun can defer workspace dependency changes when their package versions also change.

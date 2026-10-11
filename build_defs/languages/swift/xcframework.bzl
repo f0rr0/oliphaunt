@@ -3,7 +3,7 @@
 load("@oliphaunt_toolchain_metadata//:apple-platforms.bzl", "APPLE_DEPLOYMENT_TARGETS")
 load("@rules_apple//apple:apple.bzl", "apple_static_xcframework")
 load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS")
-load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 
 _MACOS_PROFILE = "@apple_support//platforms:macos_arm64_platform"
 
@@ -52,9 +52,11 @@ def _bindings_envelope_impl(ctx):
     ctx.actions.write(specification, json.encode(source_paths))
     archive = ctx.actions.declare_file(ctx.attr.archive_name)
     checksums = ctx.actions.declare_file(ctx.attr.checksum_name)
-    ctx.actions.run(
-        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
-        arguments = [ctx.file._packager.path, ctx.file.intermediate.path, archive.path, specification.path, checksums.path],
+    bun_file_action(
+        ctx,
+        entry_point = ctx.file._packager,
+        source_files = [ctx.file._packager] + ctx.files._helpers,
+        arguments = [ctx.file.intermediate.path, archive.path, specification.path, checksums.path],
         inputs = depset([ctx.file.intermediate, ctx.file._packager, specification] + files + ctx.files._helpers),
         outputs = [archive, checksums],
         mnemonic = "OliphauntSwiftBindingsEnvelope",
@@ -64,7 +66,7 @@ def _bindings_envelope_impl(ctx):
 
 _bindings_envelope = rule(
     implementation = _bindings_envelope_impl,
-    toolchains = [BUN_TOOLCHAIN_TYPE],
+    toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "intermediate": attr.label(mandatory = True, allow_single_file = [".zip"]),
         "sources": attr.label_list(allow_files = True, mandatory = True),

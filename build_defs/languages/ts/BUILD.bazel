@@ -4,6 +4,8 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["metadata.mts", "repositories.bzl", "defs.bzl", "publish-manifest.mts", "consumer-test.mts"])
 
+exports_files(["compiler-inputs.json"])
+
 bun_test(
     name = "metadata_test",
     entry_point = "metadata.test.mts",
