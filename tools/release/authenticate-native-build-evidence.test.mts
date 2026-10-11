@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   assureReviewedNativeBuildProducer,
   authenticateNativeBuildEvidence,
+  validateReviewedNativeProducerAssurance,
 } from './authenticate-native-build-evidence.mts';
 import {
   type NativeBuildEvidence,
@@ -352,6 +353,13 @@ test('reviewed producer rejects unreviewed sources, PR origins and noncanonical 
       },
     ],
     [
+      'unknown job with missing artifact',
+      (f) => {
+        f.request.expected.github.job = 'Unreviewed builder';
+        Reflect.deleteProperty(f.request.expected, 'artifactName');
+      },
+    ],
+    [
       'missing tests',
       (f) => {
         Reflect.deleteProperty(f.request, 'requiredTests');
@@ -377,6 +385,24 @@ test('reviewed producer rejects unreviewed sources, PR origins and noncanonical 
       }),
     ).rejects.toThrow();
     expect(calls, name).toBe(0);
+  }
+});
+
+test('retained assurance rejects unknown jobs even when the artifact name is absent', async () => {
+  const f = syntheticReviewedProducer();
+  const { assurance } = await assureReviewedNativeBuildProducer('synthetic', f.request, f);
+  expect(
+    validateReviewedNativeProducerAssurance(assurance, { source: f.request.reviewedSource }),
+  ).toBe(assurance);
+  for (const job of ['Unreviewed builder', expected.github.job]) {
+    const malformed = structuredClone(assurance);
+    malformed.github.job = job;
+    Reflect.deleteProperty(malformed.artifact, 'name');
+    expect(() =>
+      validateReviewedNativeProducerAssurance(malformed, {
+        source: f.request.reviewedSource,
+      }),
+    ).toThrow('assurance identity is invalid');
   }
 });
 

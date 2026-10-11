@@ -67,6 +67,7 @@ export function validateReviewedNativeProducerAssurance(
     value.github.repository !== 'f0rr0/oliphaunt' ||
     value.github.workflow !== 'Native Bazel qualification' ||
     value.github.workflowPath !== '.github/workflows/bazel.yml' ||
+    !reviewedProducerArtifacts.has(value.github.job) ||
     reviewedProducerArtifacts.get(value.github.job) !== value.artifact?.name ||
     value.shippingAnalysis !== 'bound' ||
     value.testQualification !== 'passed' ||
@@ -276,7 +277,10 @@ export async function assureReviewedNativeBuildProducer(
     expected.github.workflowPath !== '.github/workflows/bazel.yml'
   )
     throw new Error('reviewed native producer requires the canonical main workflow');
-  if (reviewedProducerArtifacts.get(expected.github.job) !== expected.artifactName)
+  if (
+    !reviewedProducerArtifacts.has(expected.github.job) ||
+    reviewedProducerArtifacts.get(expected.github.job) !== expected.artifactName
+  )
     throw new Error('reviewed native producer job/artifact role is not canonical');
   if (!Array.isArray(requiredTests) || !requiredTests.length)
     throw new Error('reviewed native producer requires controller-owned mandatory tests');
