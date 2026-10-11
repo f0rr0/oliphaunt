@@ -19,6 +19,7 @@ import {
   nativeRuntimeArtifactRows,
   runtimeExtensionTargetRowsFromConfigs,
   validateExtensionCatalogRows,
+  wasixArtifactRows,
 } from './release-artifact-targets.mts';
 
 export interface ProductIdentity {
@@ -59,6 +60,7 @@ export interface ReleaseMetadata {
   }[];
   nativeHelperArtifacts: Record<string, unknown>[];
   nativeRuntimeArtifacts: Record<string, unknown>[];
+  wasixArtifacts: Record<string, unknown>[];
   databaseResourceContract: Record<string, unknown> | null;
   databaseResourceArtifacts: Record<string, unknown>[];
   databaseSeedCarriers: ReturnType<typeof seedCarrierIdentities>;
@@ -372,6 +374,18 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
   const databaseSeedCarriers = databaseResourceContract
     ? seedCarrierIdentities(databaseResourceContract)
     : [];
+  const wasixArtifacts = [
+    'liboliphaunt-wasix',
+    'postgres-tools-wasix',
+    'liboliphaunt-wasix-postmaster',
+    'oliphaunt-wasix-napi',
+  ].flatMap((product) => {
+    const identity = products[product];
+    if (!identity) return [];
+    if (!identity.artifact_targets)
+      throw new Error(`${product} must declare WASIX artifact targets`);
+    return wasixArtifactRows(product, identity.artifact_targets.targets, 'release metadata');
+  });
   const extensionReleaseMetadata = [];
   for (const [product, descriptor] of descriptors) {
     if (descriptor.extension === undefined) continue;
@@ -436,6 +450,7 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
     publicationCarriers,
     nativeHelperArtifacts,
     nativeRuntimeArtifacts,
+    wasixArtifacts,
     databaseResourceContract,
     databaseResourceArtifacts,
     databaseSeedCarriers,
@@ -477,6 +492,7 @@ export function renderReleaseMetadata(metadata: ReleaseMetadata, identityRule: s
     PUBLICATION_CARRIERS: metadata.publicationCarriers,
     NATIVE_HELPER_ARTIFACTS: metadata.nativeHelperArtifacts,
     NATIVE_RUNTIME_ARTIFACTS: metadata.nativeRuntimeArtifacts,
+    WASIX_ARTIFACTS: metadata.wasixArtifacts,
     DATABASE_RESOURCE_CONTRACT: metadata.databaseResourceContract,
     DATABASE_RESOURCE_ARTIFACTS: metadata.databaseResourceArtifacts,
     DATABASE_SEED_CARRIERS: metadata.databaseSeedCarriers,

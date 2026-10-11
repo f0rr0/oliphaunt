@@ -41,7 +41,7 @@ function link(relative: string, target: string, root = sdk) {
   rmSync(destination, { force: true });
   symlinkSync(target, destination);
 }
-function runBuild(outputBase: string) {
+function runBuild(outputBase: string, inventory = false) {
   return spawnSync(
     binary,
     [
@@ -51,7 +51,7 @@ function runBuild(outputBase: string) {
       `--output_base=${outputBase}`,
       '--host_jvm_args=-Xmx512m',
       'build',
-      '//:read_sdk',
+      inventory ? '//:inventory_sdk' : '//:read_sdk',
       '--noshow_progress',
       '--lockfile_mode=off',
       '--incompatible_autoload_externally=',
@@ -62,12 +62,15 @@ function runBuild(outputBase: string) {
     { cwd: workspace, encoding: 'utf8', timeout: 60_000 },
   );
 }
-function build(outputBase = output) {
-  const result = runBuild(outputBase);
+function build(outputBase = output, inventory = false) {
+  const result = runBuild(outputBase, inventory);
   assert.equal(result.error, undefined, String(result.error));
   assert.equal(result.status, 0, result.stderr);
   const repository = path.join(outputBase, 'external', '+_repo_rules+sdk');
-  const rows = readFileSync(path.join(workspace, 'bazel-bin', 'read_sdk.txt'), 'utf8').trim();
+  const rows = readFileSync(
+    path.join(workspace, 'bazel-bin', inventory ? 'inventory_sdk.txt' : 'read_sdk.txt'),
+    'utf8',
+  ).replace(/\n$/u, '');
   const prefix = 'external/+_repo_rules+sdk/sdk/';
   const files = Object.fromEntries(
     rows
@@ -82,6 +85,9 @@ function build(outputBase = output) {
     files,
     modified: statSync(path.join(repository, 'BUILD.bazel')).mtimeMs,
     executed: readFileSync(path.join(workspace, 'execution.json'), 'utf8').includes('SdkRead'),
+    watchInputs: readFileSync(path.join(outputBase, 'external', '@+_repo_rules+sdk.marker'), 'utf8')
+      .split('\n')
+      .filter((row) => /^(FILE|DIRENTS|DIRTREE):/u.test(row)),
   };
 }
 function check(name: string, verify: (files: Record<string, string>) => void) {
@@ -107,16 +113,17 @@ try {
   copyFileSync(path.join(import.meta.dir, 'sdk-tree.bzl'), path.join(workspace, 'sdk-tree.bzl'));
   writeFileSync(
     path.join(workspace, 'BUILD.bazel'),
-    'load(":read-sdk.bzl", "read_sdk")\nplatform(name="host")\nread_sdk(name="read_sdk", srcs=["@sdk//:all"])\nexports_files(["sdk-tree.bzl"])\n',
+    'load(":read-sdk.bzl", "read_sdk")\nplatform(name="host")\nread_sdk(name="read_sdk", srcs=["@sdk//:all"])\nread_sdk(name="inventory_sdk", srcs=["@sdk//:all"], inventory=True)\nexports_files(["sdk-tree.bzl"])\n',
   );
   writeFileSync(
     path.join(workspace, 'read-sdk.bzl'),
     `def _impl(ctx):
     output = ctx.actions.declare_file(ctx.label.name + ".txt")
     inputs = ctx.files.srcs
-    ctx.actions.run_shell(inputs = inputs, outputs = [output], arguments = [output.path] + [source.path for source in inputs], command = 'set -eu; output="$1"; shift; for source in "$@"; do printf "%s\\\\t" "$source"; cat "$source"; printf "\\\\n"; done > "$output"', mnemonic = "SdkRead")
+    read = "" if ctx.attr.inventory else 'cat "$source"; '
+    ctx.actions.run_shell(inputs = inputs, outputs = [output], arguments = [output.path] + [source.path for source in inputs], command = 'set -eu; output="$1"; shift; for source in "$@"; do printf "%s\\\\t" "$source"; ' + read + 'printf "\\\\n"; done > "$output"', mnemonic = "SdkRead")
     return [DefaultInfo(files = depset([output]))]
-read_sdk = rule(implementation = _impl, attrs = {"srcs": attr.label_list(allow_files = True)})
+read_sdk = rule(implementation = _impl, attrs = {"srcs": attr.label_list(allow_files = True), "inventory": attr.bool()})
 `,
   );
   writeFileSync(
@@ -255,6 +262,58 @@ sdk_repo = repository_rule(implementation = _impl, attrs = {"path": attr.string(
   assert.notEqual(illegalHeader.status, 0);
   assert.match(illegalHeader.stderr, /invalid label .*usr\/include\/APR::Base64\.h/u);
   records.push('illegal labels outside documentation fail closed without dropping usable inputs');
+
+  // Framework version aliases plus a Ruby-style header cycle reproduce the
+  // SDK's repeated logical paths without needing an installed Apple SDK.
+  const largeSdk = path.join(scratch, 'large-sdk');
+  let physicalHeaders = 0;
+  for (let framework = 0; framework < 16; framework++) {
+    const prefix = `Frameworks/F${framework}.framework`;
+    for (let header = 0; header < (framework === 0 ? 4 : 64); header++) {
+      file(`${prefix}/Versions/A/Headers/h${header}.h`, `header-${framework}-${header}`, largeSdk);
+      physicalHeaders++;
+    }
+    link(`${prefix}/Versions/Current`, 'A', largeSdk);
+    link(`${prefix}/Headers`, 'Versions/Current/Headers', largeSdk);
+  }
+  link('Frameworks/F0.framework/Versions/A/Headers/ruby', '.', largeSdk);
+  mkdirSync(path.join(largeSdk, 'FrameworkAliases'));
+  link('FrameworkAliases/Current', '../Frameworks', largeSdk);
+  link('FrameworkAliases/Compat', '../Frameworks', largeSdk);
+  file('usr/share/man/man3/Excluded::Manual.3pm', 'manual', largeSdk);
+  rmSync(alias);
+  symlinkSync(largeSdk, alias);
+  const largeOutput = path.join(scratch, 'large-output');
+  const started = performance.now();
+  const large = build(largeOutput, true);
+  const elapsedMs = Math.round(performance.now() - started);
+  assert.equal(Object.keys(large.files).length, physicalHeaders * 9);
+  assert.ok(!Object.keys(large.files).some((name) => name.includes('/ruby/')));
+  assert.ok(!large.watchInputs.some((row) => row.includes('/usr/share/man/')));
+  assert.ok(
+    large.watchInputs.length < Object.keys(large.files).length / 8,
+    `SDK repository watches must coalesce aliases: ${large.watchInputs.length} inputs for ${Object.keys(large.files).length} files`,
+  );
+  console.log(
+    JSON.stringify({
+      scenario: 'large framework alias graph coalesces actual recorded repository inputs',
+      physicalHeaders,
+      declaredFiles: Object.keys(large.files).length,
+      recordedWatchInputs: large.watchInputs.length,
+      elapsedMs,
+    }),
+  );
+  records.push('large framework alias graph coalesces actual recorded repository inputs');
+  link('Frameworks/F1.framework/Versions/A/Headers/new-cycle', '.', largeSdk);
+  const newCycle = runBuild(largeOutput, true);
+  assert.equal(newCycle.error, undefined, String(newCycle.error));
+  assert.notEqual(newCycle.status, 0, 'a cyclic replacement must not reuse an acyclic tree watch');
+  assert.match(newCycle.stderr, /cycle|cyclic/iu);
+  records.push('acyclic watched subtree becoming cyclic fails closed');
+  const reacquired = build(path.join(scratch, 'large-cycle-output'), true);
+  assert.equal(Object.keys(reacquired.files).length, physicalHeaders * 9);
+  assert.ok(!Object.keys(reacquired.files).some((name) => name.includes('/new-cycle/')));
+  records.push('fresh acquisition bounds the newly cyclic subtree');
   console.log(JSON.stringify({ passed: records.length, scenarios: records }));
 } finally {
   if (process.env.OLIPHAUNT_KEEP_SDK_PROBE === '1') console.log(JSON.stringify({ scratch }));

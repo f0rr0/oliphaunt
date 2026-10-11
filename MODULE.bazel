@@ -77,7 +77,7 @@ register_toolchains("@bun_toolchains//:all")
 
 wasix_toolchain = use_repo_rule("//build_defs/wasix:repositories.bzl", "wasix_toolchain_repository")
 wasix_toolchain(name = "wasix_toolchain")
-register_toolchains("//build_defs/wasix:cc_toolchain")
+register_toolchains("//build_defs/wasix/postmaster/libc_toolchain:toolchain", "//build_defs/wasix:cc_toolchain")
 
 wasix_tool_metadata = use_repo_rule("//build_defs/wasix:repositories.bzl", "wasix_tool_metadata")
 wasix_tool_metadata(name = "wasix_tool_metadata", bun = "@bun_runtime//:bun")
@@ -170,17 +170,27 @@ javascript_metadata(
         "//src/query/ts:package.json",
         "//src/wasix/sdks/ts:package.json",
         "//src/native/sdks/react-native:package.json",
+        "//src/wasix/postgres-tools/ts:package.json",
     ],
+    dependency_manifests = ["//src/wasix/postgres-tools:npm/package.json"],
     consumer_tools = {"@oliphaunt/wasix-ts": ["vite"]},
     compiler_inputs = "//build_defs/languages/ts:compiler-inputs.json",
+)
+javascript_metadata(
+    name = "tools_installed_javascript_metadata",
+    package = "//src/wasix/postgres-tools/ts/tests/installed:package.json",
+    lockfile = "//src/wasix/postgres-tools/ts/tests/installed:bun.lock",
+    manifests = ["//src/wasix/postgres-tools/ts/tests/installed:package.json"],
+    consumer_tools = {"oliphaunt-wasix-tools-installed-consumer": ["@oliphaunt/wasix-ts"]},
 )
 javascript_packages = use_extension("//build_defs/languages/ts:repositories.bzl", "javascript_packages")
 javascript_packages.configure(
     metadata = "@oliphaunt_javascript_metadata//:acquisition.json",
     consumer_metadata = "@oliphaunt_javascript_metadata//:consumer-tools.json",
     compiler_metadata = "@oliphaunt_javascript_metadata//:compiler-inputs.json",
+    installed_metadata = "@tools_installed_javascript_metadata//:consumer-tools.json",
 )
-use_repo(javascript_packages, "javascript_packages", "javascript_consumer_packages", "javascript_compiler_packages")
+use_repo(javascript_packages, "javascript_packages", "javascript_consumer_packages", "javascript_compiler_packages", "javascript_installed_packages")
 
 icu(name = "icu_wasix", build_file = "//build_defs/wasix:icu.BUILD.bazel")
 
@@ -500,7 +510,15 @@ postmaster_crates.from_cargo(
     skip_cargo_lockfile_overwrite = True,
     supported_platform_triples = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"],
 )
-use_repo(postmaster_crates, "postmaster_executor_crates", "postmaster_compiler_crates")
+postmaster_crates.from_cargo(
+    name = "postmaster_sealing_crates",
+    cargo_lockfile = "//src/wasix/postmaster/tools/sealed-export-closure:Cargo.lock",
+    manifests = ["//src/wasix/postmaster/tools/sealed-export-closure:Cargo.toml"],
+    host_tools = "@rust_host_tools//:BUILD.bazel",
+    skip_cargo_lockfile_overwrite = True,
+    supported_platform_triples = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"],
+)
+use_repo(postmaster_crates, "postmaster_executor_crates", "postmaster_compiler_crates", "postmaster_sealing_crates")
 
 # Core Cargo consumers use source construction on Linux or exact final-file inputs.
 wasix_runtime_carriers = use_repo_rule("//build_defs/wasix:carriers-repository.bzl", "wasix_runtime_carriers_repository")

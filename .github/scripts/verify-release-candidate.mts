@@ -45,7 +45,7 @@ function parseArgs(argv) {
         '--native-evidence-required',
         '--native-evidence-root',
         '--native-build-evidence-root',
-        '--native-build-origin-json',
+        '--native-build-context-json',
         '--wasix-evidence-required',
         '--wasix-evidence-root',
       ].includes(name)
@@ -78,8 +78,8 @@ function parseArgs(argv) {
     fail('--native-evidence-required must be true or false');
   if (nativeRequired === 'true' && !values.has('native-evidence-root'))
     fail('--native-evidence-root is required when native evidence is required');
-  if (values.has('native-build-evidence-root') !== values.has('native-build-origin-json'))
-    fail('--native-build-evidence-root and --native-build-origin-json must be supplied together');
+  if (values.has('native-build-evidence-root') !== values.has('native-build-context-json'))
+    fail('--native-build-evidence-root and --native-build-context-json must be supplied together');
   const qualificationMode = values.get('qualification-mode') ?? FULL_PAYLOAD_QUALIFICATION_MODE;
   if (
     ![FULL_PAYLOAD_QUALIFICATION_MODE, PRODUCT_QUALIFICATION_MODE, 'release'].includes(
@@ -100,7 +100,7 @@ function parseArgs(argv) {
     nativeEvidenceRequired: nativeRequired === 'true',
     nativeEvidenceRoot: values.get('native-evidence-root'),
     nativeBuildEvidenceRoot: values.get('native-build-evidence-root'),
-    nativeBuildOriginJson: values.get('native-build-origin-json'),
+    nativeBuildContextJson: values.get('native-build-context-json'),
     wasixEvidenceRoot: values.get('wasix-evidence-root'),
     qualificationMode,
     products,
@@ -163,15 +163,15 @@ if (Object.hasOwn(candidate.evidence ?? {}, 'nativeBuild') || args.nativeBuildEv
   if (!candidate.evidence?.nativeBuild || !args.nativeBuildEvidenceRoot)
     fail('native build evidence must be present in both candidate and verification inputs');
   try {
-    const origin = JSON.parse(args.nativeBuildOriginJson);
-    if (origin.github?.repository !== expected.repository)
+    const context = JSON.parse(args.nativeBuildContextJson);
+    if (context.github?.repository !== expected.repository)
       throw new Error('native build producing repository differs from qualification');
     assertBindingMatches(
       candidate.evidence.nativeBuild,
-      nativeBuildEvidenceBinding(args.nativeBuildEvidenceRoot, {
+      await nativeBuildEvidenceBinding(args.nativeBuildEvidenceRoot, {
         sha: expected.sha,
         tree: expectedTree,
-        origin,
+        context,
       }),
       'release candidate native build evidence',
     );

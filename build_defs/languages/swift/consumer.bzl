@@ -21,7 +21,7 @@ def _consumer_impl(ctx):
     if len(receipts) != 1:
         fail("Installed Swift consumer requires one exact host SDK receipt")
     inputs = [ctx.file.archive, ctx.file.base, ctx.file.bindings, ctx.file.resources, ctx.file.consumer]
-    arguments = inputs + selected + [sdk_files[0], receipts[0], "arm64-apple-macosx%s" % APPLE_DEPLOYMENT_TARGETS["package_macos"]]
+    arguments = inputs + selected + [sdk_files[0], receipts[0], "arm64-apple-macosx%s" % APPLE_DEPLOYMENT_TARGETS["package_macos"], "bundled-candidate" if ctx.attr.require_bundled_resources else "frozen"]
     return bun_test_entrypoint(ctx, ctx.file._runner, arguments, tools + inputs + ctx.files._helpers, source_files = [ctx.file._runner] + ctx.files._helpers)
 
 _swift_package_consumer_test = rule(
@@ -34,8 +34,9 @@ _swift_package_consumer_test = rule(
         "resources": attr.label(default = Label("@swift_frozen_native//:runtime_resources_archive"), allow_single_file = [".tar.gz"]),
         "bindings": attr.label(mandatory = True, allow_single_file = [".zip"]),
         "consumer": attr.label(mandatory = True, allow_single_file = [".swift"]),
+        "require_bundled_resources": attr.bool(default = False),
         "_runner": attr.label(default = Label("//build_defs/languages/swift:consumer-test.mts"), allow_single_file = True),
-        "_helpers": attr.label_list(default = [Label("//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts"), Label("//:tools/packaging/portable-archive.mts")], allow_files = True),
+        "_helpers": attr.label_list(default = [Label("//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts"), Label("//build_defs/native/apple:swift-candidate-contract.mts"), Label("//:tools/packaging/portable-archive.mts")], allow_files = True),
     }),
 )
 

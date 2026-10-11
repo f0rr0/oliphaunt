@@ -1,0 +1,32 @@
+load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
+load("//build_defs/native/carriers:defs.bzl", "native_carrier_legal_inputs", "native_payload_helpers")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.mts"]))
+exports_files(["bundled-consumer.swift"])
+
+filegroup(name = "framework_helpers", srcs = native_payload_helpers() + [
+    "//build_defs/native/carriers:payload.mts",
+    "//build_defs/resources:shared.mts",
+    "//build_defs/native:host-runtime-test-helpers.mts",
+    "//src/native/runtime:tools/native-mobile-abi-contract.mts",
+    "//src/native/runtime:tools/finalize-native-runtime-carrier.mts",
+    "//src/native/runtime:tools/native-runtime-carrier-contract.mts",
+    "//src/native/sdks/swift:tools/swift-xcframework-contract.mts",
+    "//src/database-resources:contracts/native-manifest.mts",
+    "//src/database-resources:contracts/contract.json",
+    "//:tools/packaging/archive-directory.mts",
+])
+
+bun_binary(name = "framework_envelope", entry_point = "framework-envelope.mts", data = [":framework_helpers"])
+bun_binary(name = "seed_envelope", entry_point = "seed-envelope.mts", data = ["//build_defs/resources:helpers"])
+
+bun_test(name = "framework_contract_test", entry_point = "framework-envelope.test.mts", data = ["framework-envelope.mts", ":framework_helpers"], size = "small")
+bun_test(name = "swift_candidate_contract_test", entry_point = "swift-candidate-contract.test.mts", data = ["swift-candidate-contract.mts", "//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts"], size = "small")
+bun_test(
+    name = "mobile_seed_contract_test",
+    entry_point = "//src/database-resources:seeds/package-mobile-carriers.test.mts",
+    data = ["//build_defs/resources:helpers"] + native_carrier_legal_inputs().keys(),
+    size = "small",
+)

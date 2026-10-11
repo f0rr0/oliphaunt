@@ -12,11 +12,14 @@ load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["package.json", "release.toml"])
+exports_files(["src/native/extension-contract.ts"])
 
 SDK = JAVASCRIPT["@oliphaunt/ts"]
 QUERY = JAVASCRIPT["@oliphaunt/ts-query"]
 
 SDK_SRCS = glob(["src/**/*.ts"], exclude = ["src/__tests__/**", "src/extensions.ts", "src/generated/extensions.ts"])
+
+filegroup(name = "native_asset_sources", srcs = SDK_SRCS + [":extension_projections", "package.json"])
 
 javascript_type_links(SDK["types"])
 

@@ -23,7 +23,7 @@ _source_sdk_publish_files = rule(
     toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "manifest": attr.label(mandatory = True, allow_single_file = [".json"]),
-        "profile": attr.string(default = "js", values = ["js", "wasix-ts"]),
+        "profile": attr.string(default = "js", values = ["js", "wasix-ts", "wasix-tools"]),
         "_writer": attr.label(default = "//build_defs/languages/ts:publish-manifest.mts", allow_single_file = True),
         "profile_helper": attr.label(mandatory = True, allow_single_file = True),
         "_helpers": attr.label_list(default = [
@@ -41,7 +41,11 @@ def source_sdk_publish_files(name, manifest, profile = "js", **kwargs):
         name = name,
         manifest = manifest,
         profile = profile,
-        profile_helper = "//:tools/packaging/source-only-sdk-package.mts" if profile == "js" else "//src/wasix/sdks/ts:tools/package.mts",
+        profile_helper = {
+            "js": "//:tools/packaging/source-only-sdk-package.mts",
+            "wasix-ts": "//src/wasix/sdks/ts:tools/package.mts",
+            "wasix-tools": "//src/wasix/postgres-tools/ts:tools/package.mts",
+        }[profile],
         **kwargs
     )
 
@@ -97,3 +101,55 @@ _source_sdk_consumer_test = rule(
 
 def source_sdk_consumer_test(name, args = [], **kwargs):
     _source_sdk_consumer_test(name = name, args = bun_test_entrypoint_args(name) + args, **kwargs)
+
+def _installed_npm_consumer_impl(ctx):
+    node = ctx.toolchains[_NODE_TOOLCHAIN].nodeinfo.node
+    if not node:
+        fail("Installed npm consumers require the pinned Node toolchain")
+    packages = {}
+    package_files = []
+    for target, identity in ctx.attr.packages.items():
+        source = target[NpmPackageInfo].src
+        packages[identity] = _runfile(ctx, source)
+        package_files.append(source)
+    archives = {}
+    for target, name in ctx.attr.archives.items():
+        files = target[DefaultInfo].files.to_list()
+        if len(files) != 1:
+            fail("Installed npm archive must have exactly one producer file: " + str(target.label))
+        archives[name] = _runfile(ctx, files[0])
+        package_files += files
+    specification = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
+    ctx.actions.write(specification, json.encode({"packages": packages, "archives": archives, "roots": ctx.attr.roots, "consumer": _runfile(ctx, ctx.file.consumer), "helpers": [_runfile(ctx, file) for file in ctx.files.helpers], "acquisitions": [_runfile(ctx, file) for file in ctx.files.acquisitions]}))
+    files = package_files + [specification, node, ctx.file.typescript, ctx.file.runner, ctx.file.consumer] + ctx.files.helpers + ctx.files.acquisitions
+    return bun_test_entrypoint(ctx, ctx.file.runner, [specification, node, ctx.file.typescript], files, source_files = [ctx.file.runner, ctx.file.consumer] + ctx.files.helpers, runfiles_environment = ["OLIPHAUNT_BAZEL_RUNFILES"])
+
+_installed_npm_consumer_test = rule(
+    implementation = _installed_npm_consumer_impl,
+    test = True,
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_NODE_TOOLCHAIN],
+    attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
+        "packages": attr.label_keyed_string_dict(providers = [NpmPackageInfo]),
+        "archives": attr.label_keyed_string_dict(allow_files = True),
+        "roots": attr.string_dict(mandatory = True),
+        "acquisitions": attr.label_list(allow_files = [".json"], mandatory = True),
+        "runner": attr.label(allow_single_file = True, mandatory = True),
+        "consumer": attr.label(allow_single_file = True, mandatory = True),
+        "helpers": attr.label_list(allow_files = True),
+        "typescript": attr.label(default = "@npm_typescript//:node_modules/typescript/dir", allow_single_file = True),
+    }),
+)
+
+def installed_npm_consumer_test(name, args = [], **kwargs):
+    _installed_npm_consumer_test(name = name, args = bun_test_entrypoint_args(name) + args, **kwargs)
+
+def npm_dependency_closure(packages, roots):
+    selected = {identity: True for identity in roots}
+    for _ in range(len(packages) + 1):
+        previous = len(selected)
+        for identity in selected.keys():
+            for dependency in packages[identity]["dependencies"].values():
+                selected[dependency] = True
+        if len(selected) == previous:
+            return selected.keys()
+    fail("npm dependency closure exceeds its declared packages")

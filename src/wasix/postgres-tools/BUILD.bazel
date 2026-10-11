@@ -1,9 +1,17 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
 load("@postgres_wasix//:patches.bzl", "POSTGRES_PATCHES")
 load("//build_defs/wasix:package.bzl", "postgres_patch_inputs")
 load("//build_defs/wasix:platform.bzl", "wasix_artifact")
 load("//build_defs/wasix:tools.bzl", "wasix_tools_payload")
+load("//build_defs/wasix:aot.bzl", "wasix_tools_aot_targets")
+load("//build_defs/wasix:tools-carriers.bzl", "wasix_tools_carriers")
 
 package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["tools/*.mts", "npm/native.mts"]))
+exports_files(["npm/package.json", "npm/index.d.ts", "CHANGELOG.md"])
+
+js_library(name = "npm_types", srcs = ["npm/index.d.ts", "npm/package.json"])
 
 wasix_tools_payload(
     name = "portable_payload_files",
@@ -14,3 +22,12 @@ wasix_tools_payload(
 )
 
 wasix_artifact(name = "portable_payload", artifact = ":portable_payload_files")
+
+alias(name = "pg_dump", actual = "//src/wasix/runtime:pg_dump")
+alias(name = "psql", actual = "//src/wasix/runtime:psql")
+
+wasix_tools_aot_targets()
+
+wasix_tools_carriers(patches = postgres_patch_inputs(POSTGRES_PATCHES))
+
+filegroup(name = "carrier_source_patches", srcs = postgres_patch_inputs(POSTGRES_PATCHES))

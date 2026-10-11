@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 
+const native = process.env.FAKE_NATIVE_ORIGIN === 'true';
+const nativeCase = process.env.FAKE_NATIVE_CASE;
+const nativeSourceCommit = process.env.FAKE_NATIVE_SOURCE_COMMIT || 'a'.repeat(40);
+const nativeSourceTree = process.env.FAKE_NATIVE_SOURCE_TREE || 'b'.repeat(40);
+
 globalThis.fetch = async (input, options) => {
   const url = new URL(input);
   assert.equal(url.origin, 'https://api.github.com');
@@ -40,33 +45,101 @@ globalThis.fetch = async (input, options) => {
     const bytes = fs.readFileSync(process.env.FAKE_ARTIFACT_ARCHIVE);
     const identity = {
       id: Number(process.env.FAKE_ARTIFACT_ID || '101'),
-      name: 'exact-artifact',
+      name: native ? 'native-build-evidence-x86_64' : 'exact-artifact',
       size_in_bytes: bytes.length,
       expired: false,
       digest: 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex'),
+      ...(native
+        ? {
+            created_at:
+              nativeCase === 'stale-artifact' ? '2026-10-10T01:00:00Z' : '2026-10-11T01:01:00Z',
+            workflow_run: {
+              id: 77,
+              head_sha: nativeCase === 'artifact-source' ? 'f'.repeat(40) : nativeSourceCommit,
+            },
+          }
+        : {}),
     };
+    if (nativeCase === 'digest') identity.digest = 'sha256:' + 'f'.repeat(64);
+    if (nativeCase === 'artifact-missing') identity.name = 'other-artifact';
+    if (nativeCase === 'artifact-window-missing') delete identity.created_at;
+    if (nativeCase === 'artifact-head-missing') delete identity.workflow_run.head_sha;
     return Response.json({
-      artifacts: [identity, { ...identity, id: 102, name: 'exact-artifact-near-match' }],
+      artifacts: [
+        identity,
+        {
+          ...identity,
+          id: 102,
+          name: nativeCase === 'artifact-ambiguous' ? identity.name : 'exact-artifact-near-match',
+        },
+      ],
     });
   }
   if (/actions\/runs\/77\/jobs/.test(endpoint)) {
     const jobs = [
-      { id: 501, name: 'Qualified', status: 'completed', conclusion: 'success', run_attempt: 1 },
+      {
+        id: 501,
+        name: native ? 'Linux runtime (x86_64)' : 'Qualified',
+        status: 'completed',
+        conclusion: nativeCase === 'job-failure' ? 'failure' : 'success',
+        run_attempt: nativeCase === 'job-attempt' ? 2 : 1,
+        ...(native
+          ? { started_at: '2026-10-11T01:00:00Z', completed_at: '2026-10-11T01:02:00Z' }
+          : {}),
+      },
     ];
+    if (native)
+      jobs.push({
+        id: 502,
+        name: 'Unrelated WASIX lane',
+        status: 'completed',
+        conclusion: 'failure',
+        run_attempt: 1,
+      });
+    if (nativeCase === 'job-window-missing') delete jobs[0].started_at;
     if (process.env.FAKE_DUPLICATE_JOB === 'true') jobs.push({ ...jobs[0], id: 502 });
     return Response.json({ jobs });
   }
   if (/actions\/runs\/77$/.test(endpoint)) {
     return Response.json({
       id: 77,
-      head_sha: 'a'.repeat(40),
+      head_sha:
+        nativeCase === 'source' ? 'f'.repeat(40) : native ? nativeSourceCommit : 'a'.repeat(40),
       workflow_id: 9,
-      run_attempt: 1,
+      run_attempt: nativeCase === 'attempt' ? 2 : 1,
       status: process.env.FAKE_RUN_STATUS || 'completed',
       conclusion: process.env.FAKE_RUN_CONCLUSION || 'success',
+      ...(native
+        ? {
+            path:
+              nativeCase === 'run-workflow'
+                ? '.github/workflows/other.yml'
+                : '.github/workflows/bazel.yml',
+            event: nativeCase === 'event' ? 'pull_request' : 'workflow_dispatch',
+            head_branch: nativeCase === 'ref' ? 'other' : 'main',
+            pull_requests: [],
+          }
+        : {}),
     });
   }
-  if (/actions\/workflows\/9$/.test(endpoint)) return Response.json({ id: 9, name: 'CI' });
+  if (/actions\/workflows\/9$/.test(endpoint))
+    return Response.json({
+      id: 9,
+      name: native ? 'Native Bazel qualification' : 'CI',
+      ...(native
+        ? {
+            path:
+              nativeCase === 'workflow'
+                ? '.github/workflows/other.yml'
+                : '.github/workflows/bazel.yml',
+          }
+        : {}),
+    });
+  if (/git\/commits\/[0-9a-f]{40}$/.test(endpoint))
+    return Response.json({
+      sha: url.pathname.split('/').at(-1),
+      tree: { sha: nativeCase === 'tree' ? 'f'.repeat(40) : nativeSourceTree },
+    });
   if (/actions\/artifacts\/101\/zip$/.test(endpoint)) {
     const state = process.env.FAKE_GH_STATE;
     const count = fs.existsSync(state) ? Number(fs.readFileSync(state, 'utf8')) : 0;
@@ -74,6 +147,11 @@ globalThis.fetch = async (input, options) => {
     if (process.env.FAKE_MODE === 'transient' && count === 0)
       return new Response('unavailable', { status: 503 });
     if (process.env.FAKE_MODE === 'permanent') return new Response('not found', { status: 404 });
+    if (native && process.env.FAKE_NATIVE_MUTATE_LOCAL_PACKET)
+      fs.writeFileSync(
+        process.env.FAKE_NATIVE_MUTATE_LOCAL_PACKET,
+        '{"changedAfterAuthenticatedRead":true}',
+      );
     return new Response(fs.readFileSync(process.env.FAKE_ARTIFACT_ARCHIVE));
   }
   throw new Error('unexpected GitHub endpoint ' + endpoint);

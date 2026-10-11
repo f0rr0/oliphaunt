@@ -149,7 +149,10 @@ def postgres_host_configuration_targets(version):
                   checks.AC_CHECK_ALIGNOF("__int128", define = "ALIGNOF_PG_INT128_TYPE", requires = ["HAVE_PG_INT128"])]
         # Compilation flags and SDK feature visibility must match production.
         tests = [json.encode(json.decode(test) | {"copts": opts, "compile_defines": definitions + ["__STDC_WANT_LIB_EXT1__"]}) for test in tests]
-        autoconf(name = name + "_facts", checks = [checks.AC_DEFINE(d, "1") for d in definitions + ["__STDC_WANT_LIB_EXT1__"]] + tests + [checks.AC_DEFINE(key, value) for key, value in policy.items()], target_compatible_with = compatible)
+        # AC_DEFINE preserves the value's JSON type in probe preambles. Feature
+        # switches must be integers: "1" would emit a C string literal, which
+        # conflicts with MSVC's /D_CRT_SECURE_NO_DEPRECATE=1 under /WX.
+        autoconf(name = name + "_facts", checks = [checks.AC_DEFINE(d, 1) for d in definitions + ["__STDC_WANT_LIB_EXT1__"]] + tests + [checks.AC_DEFINE(key, value) for key, value in policy.items()], target_compatible_with = compatible)
         autoconf_hdr(name = name + "_config", out = name + "/src/include/pg_config.h", template = "src/include/pg_config.h.in", deps = [":" + name + "_facts"], defaults = False, target_compatible_with = compatible)
         pg_config_layout(name = name + "_layout", os_header = "src/include/port/" + ("win32.h" if windows else "darwin.h"), output_directory = name + "/src/include", target_compatible_with = compatible)
         cc_binary(name = name + "_sanity", srcs = ["@oliphaunt//build_defs/native:probe-sanity.c"], copts = opts, target_compatible_with = compatible)

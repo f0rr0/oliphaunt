@@ -4,6 +4,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//build_defs/extensions:contrib.bzl", "contrib_generated_sources")
 load("//build_defs/extensions:extensions.bzl", "native_extension_modules")
 load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load("//build_defs/native:platform_config.bzl", "NATIVE_RELEASE_LINKOPTS")
 load(":libraries.bzl", "postgis_configuration", "postgis_source_headers")
 load(":generators.bzl", "postgis_flex")
 
@@ -46,7 +47,7 @@ def postgis_dependency_module(name):
     # module consumers use dynamic_deps to prevent a second static dependency copy.
     cc_shared_library(name = name, shared_lib_name = "liboliphaunt_postgis_deps.so",
                       deps = ["//build_defs/extensions/postgis:" + library for library in ["geos", "proj", "json_c", "libxml2", "iconv", "sqlite"]],
-                      user_link_flags = ["-Wl,-z,defs"], target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+                      user_link_flags = ["-Wl,-z,defs"] + NATIVE_RELEASE_LINKOPTS, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
 
 def native_postgis_modules(name, standalone, dependency_module):
     prefix = "@postgis//:"

@@ -123,6 +123,33 @@ function bazel(command: string, args: string[], expectFailure = false) {
   return result;
 }
 
+function externalBunEntrypoints() {
+  const repository = path.join(scratch, 'external-bun');
+  cpSync(path.join(workspace, 'build_defs/foundation/fixtures/bun_external'), repository, {
+    recursive: true,
+  });
+  const build = readFileSync(path.join(repository, 'fixture.BUILD.bazel'));
+  writeFileSync(path.join(repository, 'BUILD.bazel'), build);
+  mkdirSync(path.join(repository, 'nested'));
+  writeFileSync(path.join(repository, 'nested/BUILD.bazel'), build);
+  writeFileSync(path.join(repository, 'WORKSPACE.bazel'), '');
+  const injection = `--inject_repository=conformance_external_bun=${repository}`;
+  const packages = ['@conformance_external_bun//', '@conformance_external_bun//nested'];
+  bazel('test', [
+    ...packages.flatMap((pkg) =>
+      ['test', 'script_test', 'toolchain_test'].map((name) => `${pkg}:${name}`),
+    ),
+    injection,
+    '--test_output=errors',
+    '--noshow_progress',
+  ]);
+  for (const pkg of packages) {
+    const result = bazel('run', [`${pkg}:binary`, injection, '--noshow_progress']);
+    assert.equal(result.stdout.trim(), 'external Bun entrypoint');
+  }
+  console.log(JSON.stringify({ externalBunEntrypoints: { tests: 6, binaries: 2 } }));
+}
+
 function writeModel() {
   writeFileSync(
     path.join(fixture, 'shared.h'),
@@ -525,6 +552,7 @@ function realQueryShipping(name: string, allowedTargets: string[], expectedEnvel
 
 try {
   snapshot();
+  externalBunEntrypoints();
   writeModel();
   const allProduction = [
     'config',

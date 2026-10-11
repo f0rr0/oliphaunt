@@ -10,6 +10,7 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 exports_files(["Package.swift", "VERSION", "LIBOLIPHAUNT_VERSION", "tools/swift-native-carrier-contract.mts", "tools/native-legal-source-basis.mts", "tools/swift-xcframework-contract.mts", "tools/swift-release-manifest.mts", "tools/prepare-swift-release-consumer.mts"])
+exports_files(["tools/ios-carrier-manifest.mts"])
 
 filegroup(name = "broker_templates", srcs = glob(["Templates/OliphauntBroker/*"]))
 
@@ -44,6 +45,22 @@ swift_package_consumer_test(
     archive = ":release_input_Oliphaunt-source_zip",
     bindings = ":bindings_archive",
     consumer = "Tests/PublicApiConsumer/Sources/OliphauntPublicApiConsumer/main.swift",
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
+    size = "large",
+    timeout = "long",
+    tags = ["no-remote"],
+)
+
+# Qualify the native candidate at this source package's authored held version.
+# This does not change its frozen public dependency or release checksum.
+swift_package_consumer_test(
+    name = "native_candidate_consumer_test",
+    archive = ":release_input_Oliphaunt-source_zip",
+    base = "//src/native/runtime:apple_swiftpm",
+    resources = "//src/native/runtime:apple_macos_resources",
+    bindings = ":bindings_archive",
+    consumer = "//build_defs/native/apple:bundled-consumer.swift",
+    require_bundled_resources = True,
     target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
     size = "large",
     timeout = "long",

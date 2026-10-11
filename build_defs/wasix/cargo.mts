@@ -28,7 +28,7 @@ export interface RuntimeCargoSpec {
   toolchain: string;
 }
 
-function copyDeclaredSources(files: Record<string, string>, destination: string): void {
+export function copyDeclaredSources(files: Record<string, string>, destination: string): void {
   for (const [relative, source] of Object.entries(files)) {
     const file = path.join(destination, ...cargoPackageRelativePathParts(relative));
     mkdirSync(path.dirname(file), { recursive: true });
@@ -37,7 +37,10 @@ function copyDeclaredSources(files: Record<string, string>, destination: string)
   }
 }
 
-function stageDeclaredPayload(spec: RuntimeCargoSpec, destination: string): void {
+export function stageDeclaredPayload(
+  spec: Pick<RuntimeCargoSpec, 'payload' | 'payloadFiles'>,
+  destination: string,
+): void {
   if (!Array.isArray(spec.payloadFiles) || spec.payloadFiles.length === 0)
     throw new Error('WASIX Cargo payload requires its declared TreeArtifact leaves');
   const sources: Record<string, string> = {};

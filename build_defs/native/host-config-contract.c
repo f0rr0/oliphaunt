@@ -4,6 +4,14 @@
 #include <sys/types.h>
 #include "pg_config.h"
 
+#if !defined(SIZEOF_LONG) || !defined(SIZEOF_LONG_LONG) || \
+    !defined(SIZEOF_OFF_T) || !defined(SIZEOF_SIZE_T) || \
+    !defined(SIZEOF_VOID_P) || !defined(ALIGNOF_DOUBLE) || \
+    !defined(ALIGNOF_INT) || !defined(ALIGNOF_INT64_T) || \
+    !defined(ALIGNOF_LONG) || !defined(ALIGNOF_SHORT)
+#error "Host ABI facts are missing: inspect the native compiler probe diagnostics"
+#else
+
 #define ALIGNOF(type) offsetof(struct { char byte; type value; }, value)
 #define ASSERT(name, condition) typedef char name[(condition) ? 1 : -1]
 ASSERT(long_size, SIZEOF_LONG == sizeof(long));
@@ -22,4 +30,5 @@ ASSERT(profile_pointer_size, SIZEOF_VOID_P == 8);
 ASSERT(windows_llp64, SIZEOF_LONG == 4 && SIZEOF_OFF_T == 4);
 #else
 ASSERT(apple_lp64, SIZEOF_LONG == 8 && SIZEOF_OFF_T == 8);
+#endif
 #endif

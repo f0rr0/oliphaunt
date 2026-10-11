@@ -3,7 +3,9 @@
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 load("//build_defs/resources:resources.bzl", "NativeSeedInfo", "native_seed_envelopes")
 load("//build_defs/release:shipping.bzl", "shipping_export")
-load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_CONTRACT")
+load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS", "DATABASE_RESOURCE_CONTRACT", "PRODUCTS")
+load("//build_defs/native/carriers:defs.bzl", "native_carrier_legal_inputs")
+load("//build_defs/release:shipping.bzl", "shipping_package")
 
 NativeAbiReceiptInfo = provider(fields = ["receipt", "runtime", "target"])
 
@@ -127,3 +129,53 @@ def android_resource_slice(name):
         native.filegroup(name = prefix + "_frozen", srcs = [":" + prefix + "_seed"], output_group = "frozen")
         packages.extend(native_seed_envelopes(prefix, "android-datum64", profile, ":" + prefix + "_seed", icu = icu, compatible = compatible))
     shipping_export(name = name, packages = packages)
+
+def _swift_seed_envelope_impl(ctx):
+    output = ctx.actions.declare_file(ctx.attr.out)
+    notices = {}
+    inputs = ctx.files.assets
+    for target, relative in ctx.attr.notices.items():
+        files = target[DefaultInfo].files.to_list()
+        if len(files) != 1:
+            fail("Swift seed notice must resolve to one declared source")
+        notices[relative] = files[0].path
+        inputs += files
+    specification = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
+    ctx.actions.write(specification, json.encode({
+        "version": PRODUCTS["database-resources"]["version"],
+        "contract": DATABASE_RESOURCE_CONTRACT,
+        "assets": [file.path for file in ctx.files.assets],
+        "notices": notices,
+        "output": output.path,
+    }) + "\n")
+    bun_action(ctx, ctx.attr._tool, arguments = [specification.path], inputs = inputs + [specification], outputs = [output], mnemonic = "SwiftSeedEnvelope")
+    return [DefaultInfo(files = depset([output]))]
+
+_swift_seed_envelope = rule(implementation = _swift_seed_envelope_impl, attrs = {
+    "assets": attr.label_list(allow_files = True, mandatory = True),
+    "notices": attr.label_keyed_string_dict(allow_files = True),
+    "out": attr.string(mandatory = True),
+    "_tool": attr.label(default = "//build_defs/native/apple:seed_envelope", providers = [BunScriptInfo], cfg = "exec"),
+})
+
+def ios_resource_slice(name):
+    """Admit the real Mac bootstrap against both actual dynamic iOS producers."""
+    compatible = ["@platforms//os:macos", "@platforms//cpu:aarch64"]
+    packages, assets = [], [":icu_payload"]
+    for profile in DATABASE_RESOURCE_CONTRACT["profiles"]:
+        prefix = "ios_datum64_" + profile
+        icu = ":icu_payload" if profile == "icu" else None
+        native_seed_domain(name = prefix + "_seed", producer = ":macos_arm64_" + profile + "_seed",
+                           receipts = ["//src/native/runtime:apple_ios_device_abi", "//src/native/runtime:apple_ios_simulator_abi"],
+                           domain = "ios-datum64", icu = icu, target_compatible_with = compatible)
+        native.filegroup(name = prefix + "_frozen", srcs = [":" + prefix + "_seed"], output_group = "frozen")
+        packages.extend(native_seed_envelopes(prefix, "ios-datum64", profile, ":" + prefix + "_seed", icu = icu, compatible = compatible))
+        assets.append(":" + prefix + "_assets")
+    rows = [row for row in DATABASE_RESOURCE_ARTIFACTS if row["kind"] == "swift-source"]
+    if len(rows) != 1:
+        fail("Swift seed envelope requires exactly one canonical artifact")
+    asset = rows[0]["asset"].replace("{version}", PRODUCTS["database-resources"]["version"])
+    _swift_seed_envelope(name = "swift_seed_archive", assets = assets, notices = native_carrier_legal_inputs(), out = asset, target_compatible_with = compatible)
+    shipping_package(name = "swift_seed_shipping", owner = "@oliphaunt_metadata//:product_database-resources", artifacts = [":swift_seed_archive"],
+                     ecosystem = "github", package_name = asset, configuration = rows[0]["target"], role = "github-release-asset")
+    shipping_export(name = name, packages = packages + [":swift_seed_shipping"], target_compatible_with = compatible)

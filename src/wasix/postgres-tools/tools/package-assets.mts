@@ -1,18 +1,23 @@
 #!/usr/bin/env bun
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { createDeterministicTar } from '../../../../tools/packaging/cargo-source-package.mts';
+import { listArchiveEntries } from '../../../../tools/packaging/package-archive.mts';
+import { canonicalGzipSync } from '../../../../tools/packaging/portable-archive.mts';
+import {
+  assertReleaseNoticesInDirectory,
+  releaseNoticeRows,
+  stageReleaseNotices,
+} from '../../../../tools/packaging/release-notices.mts';
+import { currentProductVersionSync } from '../../../../tools/release/release-artifact-targets.mts';
 import { assertWasixAotArtifactPayloads } from '../../runtime/tools/check-release-assets.mts';
 import { validateAotPayload } from '../../runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
 import { postgresSourceFingerprint } from '../../runtime/tools/package-release-assets.mts';
 import { assertCanonicalWasixAotManifest } from '../../runtime/tools/wasix-aot-manifest.mts';
 import { AOT_TARGET_TRIPLES } from '../../runtime/tools/wasix-cargo-artifact-contract.mts';
-import { createDeterministicTar } from '../../../../tools/packaging/cargo-source-package.mts';
-import { canonicalGzipSync } from '../../../../tools/packaging/portable-archive.mts';
-import { stageReleaseNotices } from '../../../../tools/packaging/release-notices.mts';
-import { currentProductVersionSync } from '../../../../tools/release/release-artifact-targets.mts';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 export const PORTABLE_SCHEMA = 'postgres-tools-wasix-portable-v1';
@@ -26,23 +31,35 @@ export function readJson(file) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
 
-export function validateToolsAotPayload(root, triple) {
+export function validateToolsAotPayload(
+  root,
+  triple,
+  { sourceFingerprint = postgresSourceFingerprint(), sourceRoot = ROOT } = {},
+) {
   const manifest = readJson(path.join(root, 'manifest.json'));
-  assertSource(manifest);
+  assertSource(manifest, sourceFingerprint);
   const names = manifest.artifacts?.map((row) => row.name).sort();
   if (JSON.stringify(names) !== JSON.stringify(['tool:pg_dump', 'tool:psql']))
     fail('WASIX tools AOT archive must contain exactly pg_dump and psql');
-  validateAotPayload(root, triple);
+  validateAotPayload(root, triple, { sourceRoot });
   return manifest;
 }
 
-export function validatePortableToolsPayload(root, version) {
+export function validatePortableToolsPayload(
+  root,
+  version,
+  {
+    runtimeVersion = currentProductVersionSync('liboliphaunt-wasix'),
+    sourceFingerprint = postgresSourceFingerprint(),
+    sourceRoot = ROOT,
+  } = {},
+) {
   const manifest = readJson(path.join(root, 'manifest.json'));
   if (
     manifest.schema !== PORTABLE_SCHEMA ||
     manifest.version !== version ||
-    manifest.runtimeVersion !== currentProductVersionSync('liboliphaunt-wasix') ||
-    manifest.sourceFingerprint !== postgresSourceFingerprint()
+    manifest.runtimeVersion !== runtimeVersion ||
+    manifest.sourceFingerprint !== sourceFingerprint
   )
     fail('WASIX tools portable archive has incompatible producer identity');
   for (const [key, name] of [
@@ -60,14 +77,25 @@ export function validatePortableToolsPayload(root, version) {
     )
       fail(`WASIX ${name} archive bytes do not match its manifest`);
   }
+  const notices = { profile: 'wasix-tools', sourceRoot };
+  assertReleaseNoticesInDirectory(root, notices);
+  const expected = [
+    'manifest.json',
+    'bin/pg_dump.wasix.wasm',
+    'bin/psql.wasix.wasm',
+    ...releaseNoticeRows(notices).map(({ member }) => member),
+  ].sort();
+  const actual = listArchiveEntries(root)
+    .filter((file) => statSync(file).isFile())
+    .map((file) => path.relative(root, file).split(path.sep).join('/'))
+    .sort();
+  if (JSON.stringify(actual) !== JSON.stringify(expected))
+    fail('WASIX tools portable payload must contain exactly its two commands and legal notices');
   return manifest;
 }
 
-function assertSource(manifest) {
-  if (
-    manifest['source-lane'] !== 'stable' ||
-    manifest['source-fingerprint'] !== postgresSourceFingerprint()
-  ) {
+function assertSource(manifest, fingerprint = postgresSourceFingerprint()) {
+  if (manifest['source-lane'] !== 'stable' || manifest['source-fingerprint'] !== fingerprint) {
     fail(
       'WASIX tools inputs do not match the current PostgreSQL source fingerprint; rebuild the producer',
     );

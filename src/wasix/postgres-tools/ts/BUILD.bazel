@@ -1,0 +1,115 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@aspect_rules_js//npm:defs.bzl", "npm_link_package", "npm_package")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
+load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
+load("@oliphaunt_metadata//:metadata.bzl", "PUBLICATION_CARRIERS")
+load("@javascript_packages//:defs.bzl", "javascript_type_links", TYPE_PACKAGES = "PACKAGES")
+load("@javascript_installed_packages//:defs.bzl", INSTALLED_PACKAGES = "PACKAGES")
+load("@javascript_installed_packages//:roots.bzl", "CONSUMER_TOOLS")
+load("//build_defs/languages/ts:defs.bzl", "installed_npm_consumer_test", "npm_dependency_closure", "source_sdk_publish_files")
+load("//build_defs/query:defs.bzl", "query_envelope")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["package.json", "tools/package.mts"])
+
+SDK = JAVASCRIPT["@oliphaunt/wasix-tools"]
+WASIX = JAVASCRIPT["@oliphaunt/wasix-ts"]
+
+javascript_type_links(SDK["types"])
+
+npm_package(
+    name = "wasix_types",
+    srcs = ["//src/wasix/sdks/ts:module", "//src/wasix/sdks/ts:publish_manifest"],
+    package = WASIX["name"],
+    version = WASIX["version"],
+    root_paths = ["src/wasix/sdks/ts"],
+    include_srcs_packages = ["src/wasix/sdks/ts"],
+    include_srcs_patterns = ["lib/**/*.d.ts", "publish_files/package.json"],
+    include_transitive_sources = False,
+    include_transitive_types = False,
+    replace_prefixes = {"publish_files/": ""},
+)
+npm_link_package(name = "node_modules/@oliphaunt/wasix-ts", src = ":wasix_types")
+js_library(name = "package_metadata", srcs = ["package.json"], deps = ["//src/wasix/postgres-tools:npm_types"])
+
+ts_project(
+    name = "module",
+    srcs = glob(["src/**/*.ts"], exclude = ["src/__tests__/**"]),
+    tsconfig = "tsconfig.build.json",
+    extends = "tsconfig.json",
+    declaration = True,
+    declaration_map = False,
+    out_dir = "lib",
+    root_dir = "src",
+    transpiler = "tsc",
+    supports_workers = 0,
+    deps = [":package_metadata", ":node_modules/@oliphaunt/wasix-ts"] + [":node_modules/" + name for name in SDK["types"]],
+)
+
+source_sdk_publish_files(name = "publish_files", manifest = "package.json", profile = "wasix-tools")
+filegroup(name = "publish_manifest", srcs = [":publish_files"], output_group = "manifest")
+filegroup(name = "license", srcs = [":publish_files"], output_group = "license")
+filegroup(name = "notices", srcs = [":publish_files"], output_group = "notices")
+
+query_envelope(
+    name = "npm",
+    format = "npm",
+    manifest = ":publish_manifest",
+    entries = {
+        ":module": "lib/",
+        ":publish_manifest": "package.json",
+        ":license": "LICENSE",
+        ":notices": "THIRD_PARTY_NOTICES.md",
+        "README.md": "README.md",
+        "//src/wasix/postgres-tools:CHANGELOG.md": "CHANGELOG.md",
+    },
+    out = "oliphaunt-wasix-tools.tgz",
+)
+
+shipping_package(
+    name = "shipping_package",
+    owner = "@oliphaunt_metadata//:product_postgres-tools-wasix",
+    artifacts = [":npm"],
+    ecosystem = "npm",
+    package_name = SDK["name"],
+    configuration = "portable",
+    role = [carrier["role"] for carrier in PUBLICATION_CARRIERS if carrier["product"] == "postgres-tools-wasix" and carrier["ecosystem"] == "npm" and carrier["name"] == SDK["name"]][0],
+)
+
+shipping_export(name = "shipping_export", packages = [":shipping_package"])
+
+INSTALLED_TYPES = {"@types/node": SDK["types"]["@types/node"]}
+
+installed_npm_consumer_test(
+    name = "installed_consumer_test",
+    archives = {
+        ":npm": SDK["name"],
+        "//src/wasix/postgres-tools:portable_npm": "@oliphaunt/liboliphaunt-wasix-tools",
+        "//src/wasix/postgres-tools:linux_x64_gnu_npm": "@oliphaunt/liboliphaunt-wasix-tools-linux-x64-gnu",
+    },
+    packages = {"@javascript_installed_packages//:" + key: key for key in INSTALLED_PACKAGES} | {"@javascript_packages//:" + key: key for key in npm_dependency_closure(TYPE_PACKAGES, INSTALLED_TYPES.values())},
+    roots = CONSUMER_TOOLS["oliphaunt-wasix-tools-installed-consumer"] | INSTALLED_TYPES,
+    acquisitions = ["@javascript_installed_packages//:acquisition.json", "@javascript_packages//:acquisition.json"],
+    runner = "tools/installed-consumer.mts",
+    consumer = "//src/wasix/postgres-tools/ts/tests/installed:consumer.mts",
+    helpers = [
+        "tests/direct-pg-dump-smoke.ts",
+        "src/index.ts",
+        "tsconfig.json",
+        "tsconfig.build.json",
+        "package.json",
+        "tools/wasix-tools-typescript-package.mts",
+        "tools/package.mts",
+        "//build_defs/wasix/browser:npm-archives.mts",
+        "//:tools/packaging/npm-trusted-publishing.mts",
+        "//:tools/packaging/portable-archive.mts",
+        "//:tools/packaging/release-notices.mts",
+        "//:tools/packaging/release-directory-safety.mts",
+        "//:LICENSE",
+        "//:THIRD_PARTY_NOTICES.md",
+    ],
+    size = "medium",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)

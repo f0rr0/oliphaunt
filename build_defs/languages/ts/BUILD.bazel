@@ -9,6 +9,6 @@ exports_files(["compiler-inputs.json"])
 bun_test(
     name = "metadata_test",
     entry_point = "metadata.test.mts",
-    data = ["metadata.mts"],
+    data = ["metadata.mts", "//src/wasix/postgres-tools/ts/tests/installed:package.json", "//src/wasix/postgres-tools/ts/tests/installed:bun.lock"],
     size = "small",
 )

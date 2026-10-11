@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   closeSync,
   constants,
+  existsSync,
   fstatSync,
   lstatSync,
   openSync,
@@ -11,14 +12,14 @@ import {
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
 import { strictGunzip } from '../../../../../tools/packaging/portable-archive.mts';
-
+import { releaseNoticeRows } from '../../../../../tools/packaging/release-notices.mts';
+import { extensionProductForSqlName } from '../../../../../tools/release/release-artifact-targets.mts';
 import { EXTENSION_ARTIFACT_ARCHIVE_POLICY } from '../../../tools/extension-artifact-archive-policy.mts';
 import {
   extensionCarrierLegalContract,
   extensionUpstreamLicenseRow,
+  validateNativeExtensionConstructionLicenseInventory,
 } from '../../../tools/extension-upstream-licenses.mts';
-import { extensionProductForSqlName } from '../../../../../tools/release/release-artifact-targets.mts';
-import { releaseNoticeRows } from '../../../../../tools/packaging/release-notices.mts';
 
 export const EXTENSION_ARTIFACT_PROPERTY_KEYS = Object.freeze([
   'packageLayout',
@@ -454,6 +455,12 @@ function normalizeMetadata(row, label) {
     extensionSqlFileNames: list('extensionSqlFileNames', 'extension-sql-file-names'),
     extensionSqlFilePrefixes: list('extensionSqlFilePrefixes', 'extension-sql-file-prefixes'),
     sharedPreloadLibraries: list('sharedPreloadLibraries', 'shared-preload-libraries'),
+    nativeDependencyModules: list(
+      'nativeDependencyModules',
+      'native-dependency-modules',
+      row?.nativeDependencyModules ?? [],
+    ),
+    nativeConstructionLicenseFiles: row?.nativeConstructionLicenseFiles ?? [],
   };
   for (const [field, values] of [
     ['selected-extension-dependencies', metadata.dependencies],
@@ -462,6 +469,13 @@ function normalizeMetadata(row, label) {
     if (values.some((item) => !PORTABLE_ID.test(item))) {
       throw inventoryError(label, `${field} contains a non-portable identifier`);
     }
+  }
+  if (
+    metadata.nativeDependencyModules.some(
+      (file) => !/^[A-Za-z0-9_-]+\.(?:so|dylib|dll)$/u.test(file),
+    )
+  ) {
+    throw inventoryError(label, 'native-dependency-modules must contain portable module basenames');
   }
   if (
     metadata.extensionSqlFileNames.some(
@@ -665,13 +679,10 @@ function validateStaticLinkage(properties, metadata, target, label) {
   }
 }
 
-function canonicalLegalContract(metadata, target, label) {
+function canonicalLegalContract(metadata, target, label, product) {
   let contract;
   try {
-    const product = extensionProductForSqlName(
-      metadata.sqlName,
-      'extension-artifact-inventory.mts',
-    );
+    product ??= extensionProductForSqlName(metadata.sqlName, 'extension-artifact-inventory.mts');
     contract = extensionCarrierLegalContract(product, [metadata.sqlName], {
       family: 'native',
       target,
@@ -707,6 +718,20 @@ function canonicalLegalContract(metadata, target, label) {
   for (const row of upstreamFiles) {
     add(`files/${row.destination}`, row.sha256, `${metadata.sqlName}:${row.path}`);
   }
+  const construction = validateNativeExtensionConstructionLicenseInventory(
+    metadata.sqlName,
+    target,
+    metadata.nativeConstructionLicenseFiles,
+  );
+  for (const row of construction)
+    add(`files/${row.path}`, row.sha256, 'immutable compiler-runtime source');
+  if (construction.length > 0)
+    contract = {
+      ...contract,
+      licenseFiles: [...contract.licenseFiles, ...construction.map((row) => row.path)].sort(
+        compareText,
+      ),
+    };
   return { contract, members };
 }
 
@@ -719,6 +744,7 @@ export function validateExtensionArtifactEntries({
   metadata: rawMetadata,
   target,
   nativeRuntimeVersion,
+  product,
   label,
 }) {
   if (!DESKTOP_NATIVE_TARGETS.has(target)) {
@@ -740,7 +766,35 @@ export function validateExtensionArtifactEntries({
     decodeUtf8(manifestEntry.data, `${label} manifest.properties`),
     `${label} manifest.properties`,
   );
-  const legal = canonicalLegalContract(metadata, target, label);
+  const legal = canonicalLegalContract(metadata, target, label, product);
+  if (metadata.nativeDependencyModules.length > 0) {
+    const recipePath = path.resolve(
+      import.meta.dirname,
+      '../../../external',
+      metadata.sqlName,
+      'recipe.toml',
+    );
+    if (!existsSync(recipePath))
+      throw inventoryError(label, 'native dependency modules require their canonical recipe');
+    const recipe = Bun.TOML.parse(readFileSync(recipePath, 'utf8'));
+    const declared = (recipe.artifacts?.native_dependency_modules ?? [])
+      .map((file) => {
+        if (
+          !file.startsWith('lib/postgresql/') ||
+          file.slice('lib/postgresql/'.length).includes('/')
+        ) {
+          throw inventoryError(
+            label,
+            'canonical native dependency module has a noncanonical destination',
+          );
+        }
+        return file.slice('lib/postgresql/'.length);
+      })
+      .sort(compareText);
+    if (JSON.stringify(declared) !== JSON.stringify(metadata.nativeDependencyModules)) {
+      throw inventoryError(label, 'native dependency modules differ from the canonical recipe');
+    }
+  }
   const expectedProperties = new Map([
     ['packageLayout', 'oliphaunt-extension-artifact-v1'],
     ['pgMajor', '18'],
@@ -832,6 +886,12 @@ export function validateExtensionArtifactEntries({
     if (DESKTOP_NATIVE_TARGETS.has(target)) {
       allowed.add(`files/lib/modules/${properties.get('nativeModuleFile')}`);
     }
+    for (const dependency of metadata.nativeDependencyModules) {
+      allowed.add(`files/lib/postgresql/${dependency}`);
+      allowed.add(`files/lib/modules/${dependency}`);
+    }
+  } else if (metadata.nativeDependencyModules.length > 0) {
+    throw inventoryError(label, 'SQL-only artifacts must not declare native dependency modules');
   }
   const mobilePaths = declaredMobilePaths(properties, metadata, label);
   if (

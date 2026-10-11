@@ -7,6 +7,7 @@ import type { NativeOutputMember } from './native-publication-staging.mts';
 
 type Row = Record<string, any>;
 export type NativeBuildSource = { commit: string; tree: string };
+export type NativeRequiredTest = { label: string; configuration: string };
 export type NativeBuildGithub = {
   repository: string;
   workflow: string;
@@ -260,13 +261,18 @@ function buildEvents(
     }
     return files;
   };
-  return { invocationId, configs, completed, filesOf };
+  return { invocationId, configs, completed, filesOf, events };
 }
 
 /** Validate content reported by the actual qualifying builder, including cache-backed success. */
 export function validateNativeBuildEvidence(
   raw: unknown,
-  expected: { source: NativeBuildSource; github: NativeBuildGithub; bazelVersion: string },
+  expected: {
+    source: NativeBuildSource;
+    github: NativeBuildGithub;
+    bazelVersion: string;
+    requiredTests?: NativeRequiredTest[];
+  },
 ) {
   source(expected.source);
   assertNativeBuildGithub(expected.github);
@@ -282,6 +288,28 @@ export function validateNativeBuildEvidence(
   if (!list(evidence.cohorts).length)
     throw new Error('native build evidence requires configured cohorts');
   const invocations = new Set<string>();
+  const requiredTests =
+    expected.requiredTests === undefined
+      ? undefined
+      : list(expected.requiredTests).map((raw) => {
+          const row = object(raw);
+          exactFields(row, ['label', 'configuration'], 'native required test');
+          return {
+            label: canonicalShippingLabel(row.label),
+            configuration: text(row.configuration),
+          };
+        });
+  if (
+    requiredTests &&
+    (!requiredTests.length ||
+      new Set(requiredTests.map((test) => `${test.label}\0${test.configuration}`)).size !==
+        requiredTests.length)
+  )
+    throw new Error('native required tests must be a nonempty unique configured root set');
+  const testObservations = new Map<
+    string,
+    { label: string; configuration: string; invocationId: string }[]
+  >();
   const cohorts = evidence.cohorts.map((cohort) => {
     exactFields(
       object(cohort),
@@ -348,6 +376,40 @@ export function validateNativeBuildEvidence(
     if (invocations.has(bep.invocationId))
       throw new Error('native evidence repeats a build invocation');
     invocations.add(bep.invocationId);
+    for (const test of requiredTests ?? []) {
+      const matches = (event: Row, field: string) =>
+        event.id?.[field] !== undefined &&
+        canonicalShippingLabel(event.id[field].label) === test.label &&
+        event.id[field].configuration?.id === test.configuration;
+      const summaries = bep.events.filter((event) => matches(event, 'testSummary'));
+      if (!summaries.length) continue;
+      const targets = bep.completed.filter(
+        (target) =>
+          canonicalShippingLabel(target.label) === test.label &&
+          target.configuration === test.configuration,
+      );
+      const results = bep.events.filter((event) => matches(event, 'testResult'));
+      if (
+        summaries.length !== 1 ||
+        summaries[0].testSummary?.overallStatus !== 'PASSED' ||
+        size(summaries[0].testSummary?.totalRunCount ?? 0) === 0 ||
+        targets.length !== 1 ||
+        targets[0].value.success !== true ||
+        !bep.configs.has(test.configuration) ||
+        !results.length ||
+        results.some((event) => event.testResult?.status !== 'PASSED') ||
+        size(summaries[0].testSummary.totalRunCount) !== results.length ||
+        new Set(results.map((event) => canonical(event.id.testResult))).size !== results.length
+      )
+        throw new Error(
+          `native BEP requires complete successful test results: ${test.label} (${test.configuration})`,
+        );
+      const key = `${test.label}\0${test.configuration}`;
+      testObservations.set(key, [
+        ...(testObservations.get(key) ?? []),
+        { ...test, invocationId: bep.invocationId },
+      ]);
+    }
     const roots = cohort.roots.map((root) => {
       const expectedFiles = root.package.outputs.flatMap((output) =>
         outputs
@@ -406,15 +468,28 @@ export function validateNativeBuildEvidence(
       buildEventsDigest: digest(cohort.buildEvents),
     };
   });
+  const tests = (requiredTests ?? []).map((test) => {
+    const matches = testObservations.get(`${test.label}\0${test.configuration}`) ?? [];
+    if (matches.length !== 1)
+      throw new Error(
+        `native BEP requires one mandatory configured test: ${test.label} (${test.configuration}); found ${matches.length}`,
+      );
+    return matches[0];
+  });
   return {
     scope: 'construction' as const,
     source: evidence.source,
     github: evidence.github,
     cohorts,
+    testQualification: requiredTests === undefined ? ('unverified' as const) : ('passed' as const),
+    requiredTests: tests,
     releaseDecision: 'unverified' as const,
     unverified: [
       'authenticated producing workflow, attempt, job and immutable artifact',
       'immutable input lifetime from the producing build through content capture',
+      ...(requiredTests === undefined
+        ? ['declared mandatory test roots and successful BEP results']
+        : []),
       'complete canonical product qualification and completed-baseline admission',
     ],
   };

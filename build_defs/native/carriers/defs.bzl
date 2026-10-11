@@ -282,9 +282,9 @@ def _checksums_impl(ctx):
 
 _native_checksums = rule(implementation = _checksums_impl, attrs = {"archives": attr.label_list(allow_files = True, mandatory = True), "expected": attr.string_list(mandatory = True), "out": attr.string(mandatory = True), "tool": attr.label(default = Label("//build_defs/native/carriers:checksum_tool"), providers = [BunScriptInfo], cfg = "exec")})
 
-def native_checksum_manifest(name, product, archives):
+def native_checksum_manifest(name, product, archives, artifact_rows = NATIVE_RUNTIME_ARTIFACTS):
     descriptor = PRODUCTS[product]
-    rows = [row for row in NATIVE_RUNTIME_ARTIFACTS if row["product"] == product and "github-release" in row["surfaces"]]
+    rows = [row for row in artifact_rows if row["product"] == product and "github-release" in row["surfaces"]]
     checksums = [row for row in rows if row["kind"] == "checksums"]
     if len(checksums) != 1:
         fail("product checksum descriptor must be unique")

@@ -1,7 +1,7 @@
 """Compile the authentic postmaster roles using their separate Cargo contexts."""
 
 load("@postmaster_compile_metadata//:cargo.bzl", "POSTMASTER_CARGO")
-load("@postmaster_compiler_crates//:defs.bzl", compiler_aliases = "aliases", compiler_deps = "all_crate_deps")
+load("@postmaster_compiler_crates//:defs.bzl", compiler_aliases = "aliases", compiler_deps = "all_crate_deps", compiler_crate_deps = "crate_deps")
 load("@postmaster_executor_crates//:defs.bzl", executor_aliases = "aliases", executor_deps = "all_crate_deps")
 load("@rules_rust//cargo:defs.bzl", "cargo_toml_env_vars")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
@@ -105,3 +105,28 @@ def postmaster_rust_targets(library_sources):
             tags = ["manual"],
             size = "small",
         )
+    rust_binary(
+        name = "memory_profile",
+        srcs = ["executor/src/bin/memory-profile.rs"],
+        crate_root = "executor/src/bin/memory-profile.rs",
+        crate_name = "oliphaunt_wasix_memory_profile",
+        edition = POSTMASTER_CARGO["edition"],
+        version = POSTMASTER_CARGO["version"],
+        crate_features = POSTMASTER_CARGO["roles"]["compiler"]["features"],
+        deps = [":compiler_library"] + compiler_crate_deps(["anyhow"], package_name = ""),
+        rustc_env_files = [":cargo_env", ":runtime_abi"],
+        experimental_use_cc_common_link = 1,
+        target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
+        tags = ["manual"],
+    )
+    rust_binary(
+        name = "start_proof",
+        srcs = ["executor/src/bin/start-proof.rs"],
+        crate_root = "executor/src/bin/start-proof.rs",
+        crate_name = "oliphaunt_wasix_start_proof",
+        edition = POSTMASTER_CARGO["edition"],
+        version = POSTMASTER_CARGO["version"],
+        deps = compiler_crate_deps(["anyhow", "hex", "serde", "serde_json", "sha2", "wasmparser"], package_name = ""),
+        rustc_env_files = [":cargo_env"],
+        tags = ["manual"],
+    )

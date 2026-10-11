@@ -4,20 +4,19 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import { requireSafeDirectoryChain as requireReleaseDirectoryChain } from '../../../tools/packaging/release-directory-safety.mts';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
+import { requireSafeDirectoryChain as requireReleaseDirectoryChain } from '../../../tools/packaging/release-directory-safety.mts';
 import {
   hasCanonicalReleaseStagingMode,
-  releaseNoticeRows,
   releaseMavenLicenses,
+  releaseNoticeRows,
   releaseProfilePackageLicense,
 } from '../../../tools/packaging/release-notices.mts';
 
@@ -442,7 +441,6 @@ export function externalReleaseExtensionSqlNames() {
         fail(`${path.relative(ROOT, releaseFile)} must declare a safe extension_sql_name`);
       }
       sqlNames.push(release.extension_sql_name);
-      continue;
     }
   }
   const canonical = [...new Set(sqlNames)].sort(compareText);
@@ -706,6 +704,58 @@ export function extensionUpstreamLicenseFileInventory(sqlNames) {
   );
 }
 
+/** The CPU-model implementation is acquired from this same immutable Bazel source pin. */
+export function nativeExtensionConstructionLicenseInventory(sqlName, target) {
+  if (sqlName !== 'vector' || target !== 'linux-x64-gnu') {
+    fail('compiler-runtime legal closure is declared only for native vector on linux-x64-gnu');
+  }
+  const source = JSON.parse(
+    readFileSync(path.join(ROOT, 'build_defs/extensions/compiler_rt/source.json'), 'utf8'),
+  );
+  const sortKeys = (value) =>
+    Array.isArray(value)
+      ? value.map(sortKeys)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.keys(value)
+              .sort(compareText)
+              .map((key) => [key, sortKeys(value[key])]),
+          )
+        : value;
+  const license = source.files.find((file) => file.destination === 'LICENSE.TXT');
+  if (
+    source.schema !== 'oliphaunt-compiler-runtime-source-v1' ||
+    source.project !== 'llvm-compiler-rt' ||
+    source.license !== 'Apache-2.0 WITH LLVM-exception' ||
+    !GIT_COMMIT.test(source.commit) ||
+    !license ||
+    !SHA256.test(license.sha256)
+  ) {
+    fail('invalid immutable compiler-runtime legal source');
+  }
+  return Object.freeze(
+    [
+      { path: 'share/licenses/llvm-compiler-rt/LICENSE.TXT', sha256: license.sha256, mode: '0644' },
+      {
+        path: 'share/licenses/llvm-compiler-rt/SOURCE.json',
+        sha256: createHash('sha256')
+          .update(JSON.stringify(sortKeys(source)))
+          .digest('hex'),
+        mode: '0644',
+      },
+    ].map(Object.freeze),
+  );
+}
+
+export function validateNativeExtensionConstructionLicenseInventory(sqlName, target, files = []) {
+  if (!Array.isArray(files)) fail('native construction legal inventory must be an array');
+  if (files.length === 0) return Object.freeze([]);
+  const expected = nativeExtensionConstructionLicenseInventory(sqlName, target);
+  if (JSON.stringify(files) !== JSON.stringify(expected))
+    fail('native construction legal inventory differs from the immutable compiler-runtime source');
+  return expected;
+}
+
 export function extensionCarrierLegalContract(
   product,
   sqlNames,
@@ -913,10 +963,25 @@ function archiveEntryKind(entry) {
   return 'special';
 }
 
-export function assertExtensionUpstreamLicensesInEntries(sqlNames, entries, { prefix = '' } = {}) {
+export function assertExtensionUpstreamLicensesInEntries(
+  sqlNames,
+  entries,
+  { prefix = '', constructionLicenseFiles = [], target = null } = {},
+) {
   if (!(entries instanceof Map)) fail('upstream license archive entries must be a Map');
   const normalizedPrefix = checkedArchivePrefix(prefix);
   const expected = expectedLicenseFiles(sqlNames);
+  if (constructionLicenseFiles.length > 0) {
+    if (sqlNames.length !== 1)
+      fail('construction license closure requires its exact extension owner');
+    for (const row of validateNativeExtensionConstructionLicenseInventory(
+      sqlNames[0],
+      target,
+      constructionLicenseFiles,
+    )) {
+      expected.set(row.path, { destination: row.path, sha256: row.sha256 });
+    }
+  }
   const expectedNames = [...expected.keys()]
     .map((member) => prefixed(normalizedPrefix, member))
     .sort(compareText);

@@ -150,7 +150,10 @@ jobs:
           bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel"
           --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" test //build_defs/host:host_swift_smoke
           //src/native/sdks/swift:installed_consumer_test
-          --platforms=//build_defs/host:apple_package_macos_arm64 --jobs=2
+          //src/native/sdks/swift:native_candidate_consumer_test
+          //src/database-resources:swift_seed_archive
+          --platforms=//build_defs/host:apple_package_macos_arm64
+          --host_platform=//build_defs/host:native_macos_arm64 --jobs=2
 
       - name: Construct native iOS device and simulator ABI consumers
         if: matrix.platform == 'macos-arm64'
@@ -237,6 +240,10 @@ jobs:
           //build_defs/languages/carriers:installed_sql_test
           //src/native/rust-bindings:unit_test
           //build_defs/native/carriers:package_test
+          //build_defs/extensions:native_carriers_test
+          //build_defs/native/apple:framework_contract_test
+          //build_defs/native/apple:swift_candidate_contract_test
+          //build_defs/native/apple:mobile_seed_contract_test
           //src/native/runtime:npm
           //src/native/runtime:installed_cargo_test
           //src/native/postgres-tools:cargo_facade
@@ -264,49 +271,34 @@ jobs:
         run: |
           profile="//build_defs/native:linux_${TARGET_CPU}_glibc_2_28"
           capture_root="$RUNNER_TEMP/native-build-capture"
-          mkdir -p "$capture_root"
-          test -z "$(git status --porcelain)"
+          input_root="$RUNNER_TEMP/native-build-inputs"
+          mkdir -p "$input_root"
           jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
             --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
             --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
-            > "$capture_root/github.json"
-          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
-            tools/release/capture-native-build-evidence.mts --build-metadata \
-            --github-json "$capture_root/github.json" > "$capture_root/metadata-flags.txt"
-          mapfile -t metadata_flags < "$capture_root/metadata-flags.txt"
-          configuration=(-c opt --platforms="$profile" --host_platform="$profile" \
-            --java_runtime_version=remotejdk_17 --tool_java_runtime_version=remotejdk_17 --jobs=2)
-          shipping_roots=(
-            //src/native/runtime:native_github_shipping
-            //src/native/runtime:native_npm_shipping
-            //src/native/runtime:native_cargo_shipping
-            //src/native/runtime:native_payload_shipping
-            //src/native/postgres-tools:native_github_shipping
-            //src/native/postgres-tools:native_npm_shipping
-            //src/native/postgres-tools:native_cargo_shipping
-            //src/native/postgres-tools:native_payload_shipping
-            //src/native/postgres-tools:npm_facade_shipping
-            //src/native/postgres-tools:cargo_facade_shipping
-          )
-          bash tools/dev/bazel.sh test //src/database-resources:linux_resource_test \
-            "${shipping_roots[@]}" "${configuration[@]}" "${metadata_flags[@]}" \
-            --build_event_json_file="$capture_root/build-events.jsonl"
-          expression="set(${shipping_roots[*]})"
-          bash tools/dev/bazel.sh cquery "$expression" "${configuration[@]}" \
-            --output=starlark --starlark:file=tools/bazel/shipping.cquery.bzl > "$capture_root/roots.jsonl"
-          bash tools/dev/bazel.sh cquery "$expression" "${configuration[@]}" \
-            --output=jsonproto --proto:include_configurations > "$capture_root/cquery.json"
-          bash tools/dev/bazel.sh aquery "deps($expression)" "${configuration[@]}" \
-            --include_artifacts --include_commandline --output=jsonproto > "$capture_root/aquery.json"
-          execution_root="$(bash tools/dev/bazel.sh info execution_root)"
-          test -z "$(git status --porcelain)"
-          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
-            tools/release/capture-native-build-evidence.mts \
-            --github-json "$capture_root/github.json" \
-            --cohort "$capture_root/roots.jsonl" "$capture_root/cquery.json" "$capture_root/aquery.json" \
-              "$capture_root/build-events.jsonl" "$execution_root" \
-            --output-directory "$capture_root/evidence"
+            > "$input_root/github.json"
+          jq -nc --arg profile "$profile" \
+            '["-c","opt","--platforms="+$profile,"--host_platform="+$profile,
+              "--java_runtime_version=remotejdk_17","--tool_java_runtime_version=remotejdk_17","--jobs=2"]' \
+            > "$input_root/configuration.json"
+          jq -nc '[
+            "//src/native/runtime:native_github_shipping",
+            "//src/native/runtime:native_npm_shipping",
+            "//src/native/runtime:native_cargo_shipping",
+            "//src/native/runtime:native_payload_shipping",
+            "//src/native/postgres-tools:native_github_shipping",
+            "//src/native/postgres-tools:native_npm_shipping",
+            "//src/native/postgres-tools:native_cargo_shipping",
+            "//src/native/postgres-tools:native_payload_shipping",
+            "//src/native/postgres-tools:npm_facade_shipping",
+            "//src/native/postgres-tools:cargo_facade_shipping"
+          ]' > "$input_root/roots.json"
+          jq -nc '["//src/database-resources:linux_resource_test"]' > "$input_root/targets.json"
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
+            --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
+            --shipping-roots-json "$input_root/roots.json" --targets-json "$input_root/targets.json" \
+            --output-directory "$capture_root"
 
       - name: Upload native construction evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -342,23 +334,45 @@ jobs:
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
 
       - name: Construct platform AOT packages and qualify Linux SDK and resources
-        run: >-
-          bash tools/dev/bazel.sh test --config=wasix-aot
-          //src/wasix/runtime:aot_linux_x64_gnu_payload
-          //src/wasix/runtime:aot_linux_arm64_gnu_payload
-          //src/wasix/runtime:aot_macos_arm64_payload
-          //src/wasix/runtime:aot_windows_x64_msvc_payload
-          //src/wasix/runtime:cargo
-          //src/wasix/sdks/ts:browser_sql_consumer
-          //build_defs/wasix:macos_aot_repeatability_test
-          //src/wasix/sdks/rust:postgres_regression_test
-          //src/database-resources:wasix_resource_test
-          --platforms=//build_defs/native:linux_x86_64_glibc_2_28
-          --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=1
-          --local_test_jobs=1
-          --test_env=OLIPHAUNT_WASM_AOT_VERIFY=full
-          --test_env=XDG_CACHE_HOME="$RUNNER_TEMP/wasix-source-sdk-cache"
-          --test_env=RUST_TEST_THREADS=1
+        env:
+          QUALIFICATION_JOB_NAME: Linux WASIX and installed browser
+        run: |
+          input_root="$RUNNER_TEMP/wasix-tools-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg cache "$RUNNER_TEMP/wasix-source-sdk-cache" '[
+            "--config=wasix-aot","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=1","--local_test_jobs=1",
+            "--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full","--test_env=XDG_CACHE_HOME="+$cache,"--test_env=RUST_TEST_THREADS=1"
+          ]' > "$input_root/configuration.json"
+          jq -nc '[
+            "//src/wasix/runtime:aot_linux_x64_gnu_payload",
+            "//src/wasix/runtime:aot_linux_arm64_gnu_payload",
+            "//src/wasix/runtime:aot_macos_arm64_payload",
+            "//src/wasix/runtime:aot_windows_x64_msvc_payload",
+            "//src/wasix/runtime:cargo",
+            "//src/wasix/sdks/ts:browser_sql_consumer",
+            "//build_defs/wasix:macos_aot_repeatability_test",
+            "//src/wasix/sdks/rust:postgres_regression_test",
+            "//src/database-resources:wasix_resource_test",
+            "//src/wasix/postgres-tools/ts:installed_consumer_test"
+          ]' > "$input_root/targets.json"
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
+            --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
+            --shipping-export //src/wasix/postgres-tools:shipping_export --targets-json "$input_root/targets.json" \
+            --output-directory "$RUNNER_TEMP/wasix-tools-build-capture"
+
+      - name: Upload tools construction evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-wasix-tools
+          path: ${{ runner.temp }}/wasix-tools-build-capture/evidence/native-build-evidence.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Capture final WASIX Cargo inputs for native hosts
         id: wasix-cargo-capture

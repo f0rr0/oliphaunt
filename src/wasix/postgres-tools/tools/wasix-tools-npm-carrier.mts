@@ -96,7 +96,13 @@ export function wasixToolsNpmInputs({ portableReleaseArchive }) {
   return Object.freeze({ tools: Object.freeze(tools), manifest });
 }
 
-export function stageWasixToolsNpmCarrier({ version, portableReleaseArchive, packageDir }) {
+export function stageWasixToolsNpmCarrier({
+  version,
+  portableReleaseArchive,
+  packageDir,
+  sourceRoot = ROOT,
+}) {
+  const noticeOptions = { ...NOTICE_OPTIONS, sourceRoot };
   if (typeof version !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(version)) {
     throw new TypeError(`${TOOL}: version must be an exact semantic version`);
   }
@@ -116,7 +122,7 @@ export function stageWasixToolsNpmCarrier({ version, portableReleaseArchive, pac
   writeFileSync(path.join(output, 'index.d.ts'), renderTypes(), { mode: 0o644 });
   writeFileSync(
     path.join(output, 'native.js'),
-    readFileSync(path.join(ROOT, 'src/wasix/postgres-tools/npm/native.mts')),
+    readFileSync(path.join(sourceRoot, 'src/wasix/postgres-tools/npm/native.mts')),
     { mode: 0o644 },
   );
   writeFileSync(
@@ -124,13 +130,13 @@ export function stageWasixToolsNpmCarrier({ version, portableReleaseArchive, pac
     `# ${PACKAGE_NAME}\n\nPortable PostgreSQL \`pg_dump\` and \`psql\` modules used by \`@oliphaunt/wasix-tools\`. Application code should depend on the facade rather than this asset carrier.\n`,
     { mode: 0o644 },
   );
-  stageReleaseNotices(output, NOTICE_OPTIONS);
-  const notices = releaseNoticeRows(NOTICE_OPTIONS).map(({ member }) => member);
+  stageReleaseNotices(output, noticeOptions);
+  const notices = releaseNoticeRows(noticeOptions).map(({ member }) => member);
   const manifest = {
     name: PACKAGE_NAME,
     version,
     description: 'Portable WASIX pg_dump and psql modules for Oliphaunt hosts.',
-    license: releaseProfilePackageLicense('wasix-runtime').spdx,
+    license: releaseProfilePackageLicense('wasix-runtime', { sourceRoot }).spdx,
     type: 'module',
     sideEffects: false,
     repository: { type: 'git', url: NPM_TRUSTED_PUBLISHING_REPOSITORY },
@@ -166,7 +172,7 @@ export function stageWasixToolsNpmCarrier({ version, portableReleaseArchive, pac
   writeFileSync(path.join(output, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`, {
     mode: 0o644,
   });
-  assertReleaseNoticesInDirectory(output, NOTICE_OPTIONS);
+  assertReleaseNoticesInDirectory(output, noticeOptions);
   return Object.freeze({ packageDir: output, descriptor });
 }
 
@@ -175,8 +181,14 @@ export function packWasixToolsNpmCarrier({
   portableReleaseArchive,
   packageDir = path.join(ROOT, 'target/release/npm-package-sources/liboliphaunt-wasix-tools'),
   tarballRoot = path.join(ROOT, 'target/release/npm-packages/liboliphaunt-wasix-tools'),
+  sourceRoot = ROOT,
 }) {
-  const staged = stageWasixToolsNpmCarrier({ version, portableReleaseArchive, packageDir });
+  const staged = stageWasixToolsNpmCarrier({
+    version,
+    portableReleaseArchive,
+    packageDir,
+    sourceRoot,
+  });
   const output = path.resolve(tarballRoot);
   rmSync(output, { recursive: true, force: true });
   mkdirSync(output, { recursive: true });
@@ -187,13 +199,14 @@ export function packWasixToolsNpmCarrier({
       createDeterministicTar(staged.packageDir, 'package', { fail, fixedFileMode: 0o644 }),
     ),
   );
-  assertWasixToolsNpmArchive(tarball, staged.descriptor);
+  assertWasixToolsNpmArchive(tarball, staged.descriptor, { sourceRoot });
   return Object.freeze({ ...staged, tarball });
 }
 
-export function assertWasixToolsNpmArchive(archive, descriptor) {
+export function assertWasixToolsNpmArchive(archive, descriptor, { sourceRoot = ROOT } = {}) {
+  const noticeOptions = { ...NOTICE_OPTIONS, sourceRoot };
   if (statSync(archive).size > 20 * 1024 * 1024) fail(`${archive} exceeds the package size limit`);
-  assertReleaseNoticesInArchive(archive, { ...NOTICE_OPTIONS, prefix: 'package' });
+  assertReleaseNoticesInArchive(archive, { ...noticeOptions, prefix: 'package' });
   const entries = readPortableArchiveEntries(archive);
   const expected = [
     'package/package.json',
@@ -203,7 +216,7 @@ export function assertWasixToolsNpmArchive(archive, descriptor) {
     'package/index.d.ts',
     'package/assets/pg_dump.wasix.wasm',
     'package/assets/psql.wasix.wasm',
-    ...releaseNoticeRows(NOTICE_OPTIONS).map(({ member }) => `package/${member}`),
+    ...releaseNoticeRows(noticeOptions).map(({ member }) => `package/${member}`),
   ].sort();
   const actual = [...entries]
     .filter(([, entry]) => entry.isFile)

@@ -25,10 +25,19 @@ pub(super) fn write_runtime_resource_tree(
     shared_preload_libraries: &[String],
     mobile_static_registry: &MobileStaticRegistryMetadata,
     extension_target: Option<&str>,
-) -> Result<()> {
+    runtime_cache_identity: Option<&str>,
+) -> Result<String> {
     let runtime_package = root.join("runtime");
     let runtime_files = runtime_package.join("files");
-    copy_portable_tree(&materialized.runtime_dir, &runtime_files)?;
+    // These two files validate the SDK's private acquisition cache. Public
+    // resource loaders use runtime/manifest.properties and create their own
+    // cache stamps; explicit content identities must not embed the private key.
+    let excluded = if runtime_cache_identity.is_some() {
+        &[".manifest", ".complete"][..]
+    } else {
+        &[][..]
+    };
+    copy_portable_tree_excluding(&materialized.runtime_dir, &runtime_files, excluded)?;
     let icu_data_tree_sha256 = if runtime_features.contains(&NativeRuntimeFeature::Icu) {
         logical_tree_sha256(&runtime_files.join("share/icu"))?
     } else {
@@ -49,10 +58,14 @@ pub(super) fn write_runtime_resource_tree(
         extension_target,
         mobile_static_registry,
     )?;
-    write_manifest(
+    let runtime_cache_key = write_manifest(
         &runtime_package,
         &RuntimeResourceManifest {
-            cache_key: &materialized.runtime_cache_key,
+            cache_key: if runtime_cache_identity.is_some() {
+                ""
+            } else {
+                &materialized.runtime_cache_key
+            },
             layout: RUNTIME_FILES_LAYOUT,
             artifact_role: "runtime",
             catalog_profile: "",
@@ -63,10 +76,11 @@ pub(super) fn write_runtime_resource_tree(
             shared_preload_libraries,
             mobile_static_registry,
         },
+        runtime_cache_identity,
     )?;
 
     write_static_registry_package(root, &runtime_files, extensions, mobile_static_registry)?;
-    Ok(())
+    Ok(runtime_cache_key)
 }
 
 fn remove_unselected_icu_data(runtime_files: &Path) -> Result<()> {
@@ -623,19 +637,33 @@ pub(super) struct RuntimeResourceManifest<'a> {
     pub(super) mobile_static_registry: &'a MobileStaticRegistryMetadata,
 }
 
-fn write_manifest(package_dir: &Path, manifest: &RuntimeResourceManifest<'_>) -> Result<()> {
+fn write_manifest(
+    package_dir: &Path,
+    manifest: &RuntimeResourceManifest<'_>,
+    runtime_cache_identity: Option<&str>,
+) -> Result<String> {
+    let mut text = manifest_text(manifest);
+    let cache_key = if let Some(identity) = runtime_cache_identity {
+        let mut digest = Sha256::new();
+        for field in [identity.as_bytes(), text.as_bytes()] {
+            digest.update((field.len() as u64).to_be_bytes());
+            digest.update(field);
+        }
+        let key = format!("runtime-{:x}", digest.finalize());
+        text = text.replacen("\ncacheKey=\n", &format!("\ncacheKey={key}\n"), 1);
+        key
+    } else {
+        manifest.cache_key.to_owned()
+    };
     fs::create_dir_all(package_dir)
         .map_err(|err| Error::Engine(format!("create {}: {err}", package_dir.display())))?;
-    fs::write(
-        package_dir.join("manifest.properties"),
-        manifest_text(manifest),
-    )
-    .map_err(|err| {
+    fs::write(package_dir.join("manifest.properties"), text).map_err(|err| {
         Error::Engine(format!(
             "write native resource manifest {}: {err}",
             package_dir.join("manifest.properties").display()
         ))
-    })
+    })?;
+    Ok(cache_key)
 }
 
 pub(super) fn manifest_text(manifest: &RuntimeResourceManifest<'_>) -> String {
@@ -732,6 +760,14 @@ pub(super) fn logical_tree_sha256_files(mut files: Vec<(String, PathBuf)>) -> Re
 }
 
 pub(super) fn copy_portable_tree(source: &Path, destination: &Path) -> Result<()> {
+    copy_portable_tree_excluding(source, destination, &[])
+}
+
+fn copy_portable_tree_excluding(
+    source: &Path,
+    destination: &Path,
+    excluded: &[&str],
+) -> Result<()> {
     let metadata = fs::symlink_metadata(source)
         .map_err(|err| Error::Engine(format!("stat {}: {err}", source.display())))?;
     let file_type = metadata.file_type();
@@ -772,6 +808,17 @@ pub(super) fn copy_portable_tree(source: &Path, destination: &Path) -> Result<()
         })?;
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
+        if excluded.iter().any(|name| entry.file_name() == *name) {
+            let metadata = fs::symlink_metadata(entry.path())
+                .map_err(|err| Error::Engine(format!("stat {}: {err}", entry.path().display())))?;
+            if !metadata.is_file() {
+                return Err(Error::Engine(format!(
+                    "private acquisition marker must be a regular file: {}",
+                    entry.path().display()
+                )));
+            }
+            continue;
+        }
         copy_portable_tree(&entry.path(), &destination.join(entry.file_name()))?;
     }
     Ok(())

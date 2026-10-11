@@ -1,5 +1,5 @@
 load("//build_defs/resources:resources.bzl", "linux_resource_slice", "linux_resource_test", "native_resource_test", "resource_compile_data", "wasix_resource_slice", "wasix_resource_test")
-load("//build_defs/resources:mobile.bzl", "android_resource_slice", "native_abi_receipt")
+load("//build_defs/resources:mobile.bzl", "android_resource_slice", "ios_resource_slice", "native_abi_receipt")
 load("//build_defs/android:toolchain.bzl", "android_artifact")
 
 package(default_visibility = ["//visibility:public"])
@@ -40,6 +40,7 @@ linux_resource_slice(name = "linux_shipping_export", templates = {
 })
 
 android_resource_slice(name = "android_shipping_export")
+ios_resource_slice(name = "ios_shipping_export")
 
 wasix_resource_slice(name = "wasix_shipping_export")
 wasix_resource_test(name = "wasix_resource_test")

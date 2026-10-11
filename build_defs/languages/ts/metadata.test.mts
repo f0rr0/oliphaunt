@@ -1,5 +1,40 @@
 import { expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { importJavascriptMetadata } from './metadata.mts';
+
+test('installed tools fixture acquires the public held SDK closure and rejects stale pins', () => {
+  const fixture = new URL('../../../src/wasix/postgres-tools/ts/tests/installed/', import.meta.url);
+  const manifest = JSON.parse(readFileSync(new URL('package.json', fixture), 'utf8'));
+  const lock = Bun.JSONC.parse(readFileSync(new URL('bun.lock', fixture), 'utf8'));
+  const project = (selectedManifest = manifest, selectedLock = lock) =>
+    importJavascriptMetadata(
+      { workspaces: {} },
+      selectedLock,
+      { '': selectedManifest },
+      { [manifest.name]: ['@oliphaunt/wasix-ts'] },
+    );
+  const acquisition = project().consumerTools;
+  expect(
+    Object.values(acquisition.packages)
+      .map((row) => row.package)
+      .sort(),
+  ).toEqual([
+    '@oliphaunt/liboliphaunt-wasix',
+    '@oliphaunt/ts-query',
+    '@oliphaunt/wasix-napi-linux-x64-gnu',
+    '@oliphaunt/wasix-ts',
+    'fzstd',
+  ]);
+  expect(
+    acquisition.packages[acquisition.roots[manifest.name]['@oliphaunt/wasix-ts']].version,
+  ).toBe(manifest.devDependencies['@oliphaunt/wasix-ts']);
+  const stale = structuredClone(manifest);
+  stale.devDependencies['@oliphaunt/wasix-ts'] = '99.0.0';
+  expect(() => project(stale)).toThrow(/stale consumer tool declaration/u);
+  const missing = structuredClone(lock);
+  delete missing.packages['@oliphaunt/liboliphaunt-wasix'];
+  expect(() => project(manifest, missing)).toThrow(/Missing Linux x64 consumer tool dependency/u);
+});
 
 function fixture() {
   const manifest = {
@@ -104,6 +139,36 @@ test('external runtime acquisition stays locked and local workspace dependencies
   expect(() =>
     importJavascriptMetadata(workspace.root, workspace.lock, workspace.manifests),
   ).toThrow('selected source package');
+});
+
+test('asset workspace dependency identities remain conventional without becoming compiler inputs', () => {
+  const value = fixture();
+  const asset = { name: '@oliphaunt/assets', version: '0.2.4', type: 'module' };
+  value.manifests['src/sdk'].dependencies[asset.name] = 'workspace:*';
+  value.lock.workspaces['src/assets'] = { ...asset };
+  const dependencies = { 'src/assets': asset };
+  const before = importJavascriptMetadata(
+    value.root,
+    value.lock,
+    value.manifests,
+    {},
+    {},
+    dependencies,
+  );
+  expect(before.workspaces[asset.name]).toEqual({ ...asset, dependencies: {}, types: {} });
+  expect(Object.values(before.packages).some((row) => row.package === asset.name)).toBe(false);
+  asset.version = '0.2.5';
+  expect(() =>
+    importJavascriptMetadata(value.root, value.lock, value.manifests, {}, {}, dependencies),
+  ).toThrow('stale workspace identity');
+  asset.version = '0.2.4';
+  value.manifests['src/sdk'].dependencies[asset.name] = '0.2.5';
+  expect(() =>
+    importJavascriptMetadata(value.root, value.lock, value.manifests, {}, {}, dependencies),
+  ).toThrow('conventional workspace version');
+  expect(() =>
+    importJavascriptMetadata(value.root, value.lock, value.manifests, {}, {}, value.manifests),
+  ).toThrow('both compiler and dependency');
 });
 
 test('consumer tools use an isolated exact lock closure with canonical overrides and host optional packages', () => {

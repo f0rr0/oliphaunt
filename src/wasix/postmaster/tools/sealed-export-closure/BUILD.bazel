@@ -1,0 +1,29 @@
+load("@postmaster_sealing_crates//:defs.bzl", "aliases", "all_crate_deps", "crate_edition")
+load("@rules_rust//cargo:defs.bzl", "cargo_toml_env_vars")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Cargo.toml", "Cargo.lock"])
+
+cargo_toml_env_vars(name = "cargo_env", src = "Cargo.toml")
+
+rust_binary(
+    name = "sealed_export_closure",
+    srcs = ["src/main.rs"],
+    crate_root = "src/main.rs",
+    crate_name = "oliphaunt_wasix_sealed_export_closure",
+    edition = crate_edition(),
+    deps = all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    aliases = aliases(),
+    rustc_env_files = [":cargo_env"],
+    tags = ["manual"],
+)
+
+rust_test(
+    name = "unit_test",
+    crate = ":sealed_export_closure",
+    tags = ["manual"],
+    size = "small",
+)

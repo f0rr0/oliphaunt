@@ -44,6 +44,13 @@ bun_test(
     size = "small",
 )
 
+bun_test(
+    name = "host_config_policy_test",
+    entry_point = "host-config-policy.test.mts",
+    data = ["host_config.bzl"],
+    size = "small",
+)
+
 bun_script_test(
     name = "host_runtime_test_helpers_test",
     entry_point = "host-runtime-test-helpers.test.mts",

@@ -40,7 +40,7 @@ import { mergeChecksumManifest } from './merge-checksum-manifest.mts';
 
 const USAGE =
   'usage: download-build-artifacts.sh <workflow> <sha> <destination> [--run-id <id>] [--job <name>] ' +
-  '[--artifact-metadata-json <json>] --artifact <name> [--artifact <name>...]';
+  '[--artifact-metadata-json <json>] [--job-success-only --workflow-path <path> --event <event> --ref <ref> --run-attempt <attempt> --source-tree <sha>] --artifact <name> [--artifact <name>...]';
 const SNAPSHOT_SCHEMA = 'oliphaunt-github-actions-run-snapshot-v1';
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const MAX_CAPTURE_BYTES = 128 * 1024 * 1024;
@@ -68,6 +68,12 @@ function parseArgs(argv) {
     requiredJob: '',
     selectedRunId: '',
     artifactMetadataJson: '',
+    workflowPath: '',
+    event: '',
+    ref: '',
+    runAttempt: '',
+    sourceTree: '',
+    jobSuccessOnly: false,
   };
   for (let index = 0; index < rest.length; ) {
     const arg = rest[index];
@@ -82,6 +88,22 @@ function parseArgs(argv) {
       index += 2;
     } else if (arg === '--artifact-metadata-json') {
       args.artifactMetadataJson = valueAfter(rest, index, '--artifact-metadata-json requires JSON');
+      index += 2;
+    } else if (arg === '--job-success-only' && !args.jobSuccessOnly) {
+      args.jobSuccessOnly = true;
+      index += 1;
+    } else if (
+      ['--workflow-path', '--event', '--ref', '--run-attempt', '--source-tree'].includes(arg)
+    ) {
+      const key = {
+        '--workflow-path': 'workflowPath',
+        '--event': 'event',
+        '--ref': 'ref',
+        '--run-attempt': 'runAttempt',
+        '--source-tree': 'sourceTree',
+      }[arg];
+      if (args[key] !== '') fail(`duplicate argument: ${arg}`, 2);
+      args[key] = valueAfter(rest, index, `${arg} requires a value`);
       index += 2;
     } else {
       fail(`unknown argument: ${arg}`, 2);
@@ -103,6 +125,15 @@ function parseArgs(argv) {
       2,
     );
   }
+  if (args.jobSuccessOnly && (!args.selectedRunId || !args.requiredJob))
+    fail('--job-success-only requires an exact --run-id and --job', 2);
+  if (
+    args.runAttempt &&
+    (!/^[1-9][0-9]*$/u.test(args.runAttempt) || !Number.isSafeInteger(Number(args.runAttempt)))
+  )
+    fail('--run-attempt requires a positive safe integer', 2);
+  if (args.sourceTree && !FULL_SHA.test(args.sourceTree))
+    fail('--source-tree requires an exact SHA', 2);
   return args;
 }
 
@@ -223,6 +254,10 @@ function normalizeArtifact(entry, runId) {
     id: entry.id,
     name: entry.name,
     size_in_bytes: entry.size_in_bytes,
+    ...(entry.created_at === undefined ? {} : { created_at: entry.created_at }),
+    ...((entry.workflow_run?.head_sha ?? entry.head_sha) === undefined
+      ? {}
+      : { head_sha: entry.workflow_run?.head_sha ?? entry.head_sha }),
   };
 }
 
@@ -293,12 +328,14 @@ async function jobRecords(repo, runId) {
       name: job.name,
       run_attempt: job.run_attempt,
       status: job.status,
+      ...(job.started_at === undefined ? {} : { started_at: job.started_at }),
+      ...(job.completed_at === undefined ? {} : { completed_at: job.completed_at }),
     });
   }
   return jobs;
 }
 
-function validateSnapshot(snapshot) {
+function validateSnapshot(snapshot, { requireWorkflowSuccess = true, sourceTree = '' } = {}) {
   if (
     snapshot === null ||
     Array.isArray(snapshot) ||
@@ -311,8 +348,24 @@ function validateSnapshot(snapshot) {
     snapshot.workflowId <= 0 ||
     typeof snapshot.workflowName !== 'string' ||
     snapshot.workflowName.length === 0 ||
-    snapshot.status !== 'completed' ||
-    snapshot.conclusion !== 'success' ||
+    (requireWorkflowSuccess &&
+      (snapshot.status !== 'completed' || snapshot.conclusion !== 'success')) ||
+    !['queued', 'in_progress', 'completed', 'waiting', 'pending', 'requested'].includes(
+      snapshot.status,
+    ) ||
+    ![
+      null,
+      'success',
+      'failure',
+      'cancelled',
+      'timed_out',
+      'action_required',
+      'neutral',
+      'skipped',
+      'stale',
+      'startup_failure',
+    ].includes(snapshot.conclusion) ||
+    (sourceTree !== '' && snapshot.headTree !== sourceTree) ||
     !Number.isSafeInteger(snapshot.runAttempt) ||
     snapshot.runAttempt <= 0 ||
     !Array.isArray(snapshot.jobs) ||
@@ -337,7 +390,9 @@ function validateSnapshot(snapshot) {
       typeof job.name !== 'string' ||
       typeof job.status !== 'string' ||
       (job.conclusion !== null && typeof job.conclusion !== 'string') ||
-      job.run_attempt !== snapshot.runAttempt
+      !Number.isSafeInteger(job.run_attempt) ||
+      job.run_attempt <= 0 ||
+      (requireWorkflowSuccess && job.run_attempt !== snapshot.runAttempt)
     ) {
       throw new Error(
         'cached GitHub workflow run snapshot contains malformed or cross-attempt jobs',
@@ -347,7 +402,7 @@ function validateSnapshot(snapshot) {
   return { ...snapshot, artifacts };
 }
 
-async function createRunSnapshot(repo, runId) {
+async function createRunSnapshot(repo, runId, options = {}) {
   const data = await requestGithubJsonWithRetry(
     `https://api.github.com/repos/${repo}/actions/runs/${runId}`,
   );
@@ -356,8 +411,8 @@ async function createRunSnapshot(repo, runId) {
     !FULL_SHA.test(data?.head_sha ?? '') ||
     !Number.isSafeInteger(data?.workflow_id) ||
     data.workflow_id <= 0 ||
-    data.status !== 'completed' ||
-    data.conclusion !== 'success' ||
+    (options.requireWorkflowSuccess !== false &&
+      (data.status !== 'completed' || data.conclusion !== 'success')) ||
     !Number.isSafeInteger(data.run_attempt) ||
     data.run_attempt <= 0
   ) {
@@ -373,34 +428,55 @@ async function createRunSnapshot(repo, runId) {
   ) {
     throw new Error(`workflow ${data.workflow_id} metadata is malformed`);
   }
-  return validateSnapshot({
-    artifacts: await artifactRecords(repo, runId),
-    conclusion: data.conclusion,
-    headSha: data.head_sha.toLowerCase(),
-    jobs: await jobRecords(repo, runId),
-    repo,
-    runAttempt: data.run_attempt,
-    runId: String(runId),
-    schema: SNAPSHOT_SCHEMA,
-    status: data.status,
-    workflowId: data.workflow_id,
-    workflowName: workflow.name,
-  });
+  let headTree;
+  if (options.sourceTree) {
+    const commit = await requestGithubJsonWithRetry(
+      `https://api.github.com/repos/${repo}/git/commits/${data.head_sha}`,
+    );
+    if (commit?.sha !== data.head_sha || !FULL_SHA.test(commit?.tree?.sha ?? ''))
+      throw new Error(`workflow run ${runId} source commit metadata is malformed`);
+    headTree = commit.tree.sha;
+  }
+  return validateSnapshot(
+    {
+      artifacts: await artifactRecords(repo, runId),
+      conclusion: data.conclusion,
+      headSha: data.head_sha.toLowerCase(),
+      jobs: await jobRecords(repo, runId),
+      repo,
+      runAttempt: data.run_attempt,
+      runId: String(runId),
+      schema: SNAPSHOT_SCHEMA,
+      status: data.status,
+      workflowId: data.workflow_id,
+      workflowName: workflow.name,
+      ...(workflow.path === undefined ? {} : { workflowPath: workflow.path }),
+      ...(data.path === undefined ? {} : { runWorkflowPath: data.path }),
+      ...(data.event === undefined ? {} : { event: data.event }),
+      ...(data.head_branch === undefined ? {} : { headBranch: data.head_branch }),
+      ...(data.pull_requests === undefined
+        ? {}
+        : { pullRequestNumbers: data.pull_requests.map((row) => row.number) }),
+      ...(headTree === undefined ? {} : { headTree }),
+    },
+    options,
+  );
 }
 
-async function runSnapshot(repo, runId) {
+async function runSnapshot(repo, runId, options = {}) {
   const file = snapshotFile(runId);
   if (file !== null && existsSync(file)) {
     assertRegularSnapshotFile(file);
     const snapshot = validateSnapshot(
       parsedJson(readFileSync(file, 'utf8'), `cached run ${runId} snapshot`),
+      options,
     );
     if (snapshot.repo !== repo || snapshot.runId !== String(runId)) {
       throw new Error(`cached run ${runId} snapshot belongs to a different repository or run`);
     }
     return snapshot;
   }
-  const snapshot = await createRunSnapshot(repo, runId);
+  const snapshot = await createRunSnapshot(repo, runId, options);
   if (file !== null) {
     mkdirSync(path.dirname(file), { recursive: true });
     assertRegularSnapshotFile(file);
@@ -421,11 +497,61 @@ function requiredJobSuccess(snapshot, requiredJob) {
     return true;
   }
   const matches = snapshot.jobs.filter((candidate) => candidate.name === requiredJob);
-  return matches.length === 1 && matches[0]?.conclusion === 'success';
+  return (
+    matches.length === 1 &&
+    matches[0]?.status === 'completed' &&
+    matches[0]?.conclusion === 'success' &&
+    matches[0]?.run_attempt === snapshot.runAttempt
+  );
 }
 
 function runMatchesRequest(snapshot, workflow, sha) {
   return snapshot.headSha === sha.toLowerCase() && snapshot.workflowName === workflow;
+}
+
+function assertRunIdentity(snapshot, args) {
+  for (const [observed, expected, context] of [
+    [snapshot.workflowPath, args.workflowPath, 'workflow path'],
+    [snapshot.runWorkflowPath, args.workflowPath, 'executed workflow path'],
+    [snapshot.event, args.event, 'event'],
+    [String(snapshot.runAttempt), args.runAttempt, 'run attempt'],
+  ])
+    if (expected && observed !== expected)
+      throw new Error(`workflow run ${snapshot.runId} ${context} mismatch`);
+  if (args.ref) {
+    const matches =
+      snapshot.event === 'pull_request'
+        ? /^refs\/pull\/[1-9][0-9]*\/merge$/u.test(args.ref) &&
+          snapshot.pullRequestNumbers?.includes(Number(args.ref.split('/')[2]))
+        : ['push', 'workflow_dispatch'].includes(snapshot.event) &&
+          args.ref === `refs/heads/${snapshot.headBranch}`;
+    if (!matches) throw new Error(`workflow run ${snapshot.runId} ref mismatch`);
+  }
+  if (args.jobSuccessOnly) {
+    const job = snapshot.jobs.find((row) => row.name === args.requiredJob);
+    const start = Date.parse(job.started_at);
+    const end = Date.parse(job.completed_at);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end)
+      throw new Error(`workflow run ${snapshot.runId} selected job timing is missing or malformed`);
+    for (const name of args.artifacts) {
+      const artifact = exactExpectedArtifact(
+        snapshot.artifacts,
+        snapshot.runId,
+        name,
+        args.expectedArtifactMetadata,
+      );
+      const created = Date.parse(artifact.created_at);
+      if (
+        artifact.head_sha !== args.sha ||
+        !Number.isFinite(created) ||
+        created < start ||
+        created >= end + 1000
+      )
+        throw new Error(
+          `workflow run ${snapshot.runId}/${name} artifact is not bound to the selected source/job attempt`,
+        );
+    }
+  }
 }
 
 async function candidateRunIds(repo, workflow, sha) {
@@ -696,7 +822,10 @@ async function mergeDownloadedArtifact(artifact, sourceDir, destination) {
 async function selectRunId(repo, args) {
   if (args.selectedRunId !== '') {
     const runId = args.selectedRunId;
-    const snapshot = await runSnapshot(repo, runId);
+    const snapshot = await runSnapshot(repo, runId, {
+      requireWorkflowSuccess: !args.jobSuccessOnly,
+      sourceTree: args.sourceTree,
+    });
     if (!runMatchesRequest(snapshot, args.workflow, args.sha)) {
       fail(`${args.workflow} run ${runId} does not belong to commit ${args.sha}`);
     }
@@ -705,6 +834,7 @@ async function selectRunId(repo, args) {
         `${args.workflow} run ${runId} does not satisfy required job ${args.requiredJob || '<none>'}`,
       );
     }
+    assertRunIdentity(snapshot, args);
     for (const artifact of args.artifacts) {
       exactExpectedArtifact(snapshot.artifacts, runId, artifact, args.expectedArtifactMetadata);
     }
@@ -719,6 +849,7 @@ async function selectRunId(repo, args) {
     if (!requiredJobSuccess(snapshot, args.requiredJob)) {
       continue;
     }
+    assertRunIdentity(snapshot, args);
     try {
       for (const artifact of args.artifacts)
         exactExpectedArtifact(snapshot.artifacts, candidate, artifact);

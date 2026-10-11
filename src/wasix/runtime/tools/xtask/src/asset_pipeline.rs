@@ -1099,10 +1099,10 @@ struct DeclaredToolsManifestSpec {
     sources: Vec<SourcePin>,
 }
 
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DeclaredToolsManifest {
-    schema: &'static str,
+    schema: String,
     version: String,
     runtime_version: String,
     source_fingerprint: String,
@@ -1110,9 +1110,10 @@ struct DeclaredToolsManifest {
     psql: DeclaredToolIdentity,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 struct DeclaredToolIdentity {
-    name: &'static str,
+    name: String,
     path: String,
     sha256: String,
     size: u64,
@@ -1132,7 +1133,7 @@ fn declared_tool_identity(name: &'static str, module: &Path) -> Result<DeclaredT
         "declared {name} must be a standalone WASIX command"
     );
     Ok(DeclaredToolIdentity {
-        name,
+        name: name.to_owned(),
         path: format!("bin/{name}.wasix.wasm"),
         sha256: sha256_file(module)?,
         size: fs::metadata(module)?.len(),
@@ -1164,7 +1165,7 @@ pub(crate) fn generate_declared_tools_manifest(args: &[String]) -> Result<()> {
         );
     }
     let manifest = DeclaredToolsManifest {
-        schema: "postgres-tools-wasix-portable-v1",
+        schema: "postgres-tools-wasix-portable-v1".to_owned(),
         pg_dump: declared_tool_identity("pg_dump", &spec.pg_dump)?,
         psql: declared_tool_identity("psql", &spec.psql)?,
         version: spec.version,
@@ -1197,20 +1198,74 @@ struct DeclaredAotArtifact {
     module: PathBuf,
 }
 
-fn declared_aot_manifest(spec: DeclaredAotManifestSpec) -> Result<AotManifest> {
-    // Admission of the exact target is owned by the canonical Bazel target
-    // projection. This I/O boundary still rejects empty or path-like triples.
-    ensure!(
-        spec.target_triple.split('-').count() >= 3
-            && spec.target_triple.split('-').all(|part| !part.is_empty())
-            && spec
-                .target_triple
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
-        "invalid declared AOT target triple"
-    );
-    let portable: AssetManifestOut = serde_json::from_slice(&fs::read(&spec.portable_manifest)?)
-        .context("parse declared portable runtime manifest")?;
+struct DeclaredAotModules {
+    source_lane: Option<String>,
+    source_fingerprint: Option<String>,
+    postgres_version: String,
+    modules: BTreeMap<String, String>,
+    paths: BTreeMap<String, String>,
+}
+
+fn declared_aot_modules(file: &Path) -> Result<DeclaredAotModules> {
+    let bytes = fs::read(file)?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    if value.get("schema").is_some() {
+        let portable: DeclaredToolsManifest =
+            serde_json::from_slice(&bytes).context("parse declared portable tools manifest")?;
+        ensure!(
+            portable.schema == "postgres-tools-wasix-portable-v1",
+            "declared AOT requires the canonical portable tools manifest"
+        );
+        for version in [&portable.version, &portable.runtime_version] {
+            let parts = version.split('.').collect::<Vec<_>>();
+            ensure!(
+                parts.len() == 3
+                    && parts.iter().all(|part| !part.is_empty()
+                        && (part.len() == 1 || !part.starts_with('0'))
+                        && part.bytes().all(|byte| byte.is_ascii_digit())),
+                "declared tools AOT requires stable product and runtime versions"
+            );
+        }
+        let fingerprint = portable.source_fingerprint;
+        let parts = fingerprint.split(':').collect::<Vec<_>>();
+        ensure!(
+            parts.len() == 3
+                && !parts[0].is_empty()
+                && parts[1..].iter().all(|part| part.len() == 64
+                    && part
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())),
+            "declared tools AOT requires the portable source fingerprint"
+        );
+        let postgres_version = parts[0].to_owned();
+        let mut modules = BTreeMap::new();
+        let mut paths = BTreeMap::new();
+        for (name, identity) in [("pg_dump", portable.pg_dump), ("psql", portable.psql)] {
+            ensure!(
+                identity.name == name
+                    && identity.path == format!("bin/{name}.wasix.wasm")
+                    && identity.size > 0
+                    && identity.sha256.len() == 64
+                    && identity
+                        .sha256
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+                "declared tools AOT requires canonical physical command identities"
+            );
+            let key = format!("tool:{name}");
+            modules.insert(key.clone(), identity.sha256);
+            paths.insert(key, format!("{name}-llvm-opta.bin.zst"));
+        }
+        return Ok(DeclaredAotModules {
+            source_lane: Some(DEFAULT_SOURCE_LANE.to_owned()),
+            source_fingerprint: Some(fingerprint),
+            postgres_version,
+            modules,
+            paths,
+        });
+    }
+    let portable: AssetManifestOut =
+        serde_json::from_slice(&bytes).context("parse declared portable runtime manifest")?;
     ensure!(
         portable.format_version == ASSET_MANIFEST_FORMAT_VERSION
             && portable.runtime.runtime_kind == "wasix-dynamic-main"
@@ -1247,20 +1302,44 @@ fn declared_aot_manifest(spec: DeclaredAotManifestSpec) -> Result<AotManifest> {
             "duplicate portable runtime support module"
         );
     }
-    let paths = BTreeMap::from([
-        ("runtime:oliphaunt", "oliphaunt-llvm-opta.bin.zst"),
-        ("tool:initdb", "initdb-llvm-opta.bin.zst"),
-        ("runtime-support:plpgsql", "plpgsql-llvm-opta.bin.zst"),
-        (
-            "runtime-support:dict_snowball",
-            "dict_snowball-llvm-opta.bin.zst",
-        ),
-    ]);
+    let paths = BTreeMap::from(
+        [
+            ("runtime:oliphaunt", "oliphaunt-llvm-opta.bin.zst"),
+            ("tool:initdb", "initdb-llvm-opta.bin.zst"),
+            ("runtime-support:plpgsql", "plpgsql-llvm-opta.bin.zst"),
+            (
+                "runtime-support:dict_snowball",
+                "dict_snowball-llvm-opta.bin.zst",
+            ),
+        ]
+        .map(|(name, path)| (name.to_owned(), path.to_owned())),
+    );
     ensure!(
-        modules.keys().map(String::as_str).collect::<BTreeSet<_>>()
-            == paths.keys().copied().collect::<BTreeSet<_>>(),
+        modules.keys().collect::<BTreeSet<_>>() == paths.keys().collect::<BTreeSet<_>>(),
         "portable manifest must contain exactly the four runtime AOT modules"
     );
+    Ok(DeclaredAotModules {
+        source_lane: portable.source_lane,
+        source_fingerprint: portable.source_fingerprint,
+        postgres_version: portable.runtime.postgres_version,
+        modules,
+        paths,
+    })
+}
+
+fn declared_aot_manifest(spec: DeclaredAotManifestSpec) -> Result<AotManifest> {
+    // Admission of the exact target is owned by the canonical Bazel target
+    // projection. This I/O boundary still rejects empty or path-like triples.
+    ensure!(
+        spec.target_triple.split('-').count() >= 3
+            && spec.target_triple.split('-').all(|part| !part.is_empty())
+            && spec
+                .target_triple
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+        "invalid declared AOT target triple"
+    );
+    let portable = declared_aot_modules(&spec.portable_manifest)?;
     let toolchain: WasixToolchainManifest = toml::from_str(&fs::read_to_string(&spec.toolchain)?)
         .context("parse declared WASIX toolchain manifest")?;
     ensure!(
@@ -1270,9 +1349,10 @@ fn declared_aot_manifest(spec: DeclaredAotManifestSpec) -> Result<AotManifest> {
     let mut seen = BTreeSet::new();
     let mut artifacts = Vec::new();
     for item in &spec.artifacts {
-        let expected_path = paths
+        let expected_path = portable
+            .paths
             .get(item.name.as_str())
-            .context("unknown declared runtime AOT module")?;
+            .context("unknown declared AOT module")?;
         ensure!(
             seen.insert(item.name.as_str()),
             "duplicate declared AOT module"
@@ -1281,7 +1361,7 @@ fn declared_aot_manifest(spec: DeclaredAotManifestSpec) -> Result<AotManifest> {
         let module_sha256 = sha256_file(&item.module)?;
         ensure_eq(
             &module_sha256,
-            &modules[&item.name],
+            &portable.modules[&item.name],
             "declared AOT portable module digest",
         )?;
         let raw = decode_zstd_file(&item.image)?;
@@ -1297,15 +1377,19 @@ fn declared_aot_manifest(spec: DeclaredAotManifestSpec) -> Result<AotManifest> {
         });
     }
     ensure!(
-        seen == paths.keys().copied().collect::<BTreeSet<_>>(),
-        "declared AOT requires all four runtime images"
+        seen == portable
+            .paths
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        "declared AOT requires every portable image"
     );
     artifacts.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(AotManifest {
         format_version: AOT_MANIFEST_FORMAT_VERSION,
         source_lane: portable.source_lane,
         source_fingerprint: portable.source_fingerprint,
-        postgres_version: Some(portable.runtime.postgres_version),
+        postgres_version: Some(portable.postgres_version),
         target_triple: spec.target_triple,
         engine: "llvm-opta".to_owned(),
         wasmer_version: toolchain.toolchain.wasmer,
@@ -3493,6 +3577,94 @@ mod tests {
         let mut collision = args.clone();
         collision[3] = psql.to_str().unwrap().to_owned();
         assert!(generate_declared_tools_manifest(&collision).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn declared_tools_aot_uses_only_its_two_commands_and_rejects_cross_family_inputs() {
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-declared-tools-aot-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let portable_path = root.join("tools.json");
+        let toolchain = root.join("toolchain.toml");
+        fs::write(
+            &toolchain,
+            "[toolchain]\nwasmer = '9.8.7'\nwasmer-wasix = '0.987.0'\n",
+        )
+        .unwrap();
+        let mut artifacts = Vec::new();
+        let mut identities = serde_json::Map::new();
+        for (key, name) in [("pgDump", "pg_dump"), ("psql", "psql")] {
+            let module = root.join(format!("{name}.wasm"));
+            let image = root.join(format!("{name}.bin.zst"));
+            fs::write(&module, format!("portable command {name}")).unwrap();
+            fs::write(
+                &image,
+                zstd::stream::encode_all(format!("AOT command {name}").as_bytes(), 19).unwrap(),
+            )
+            .unwrap();
+            identities.insert(key.to_owned(), serde_json::json!({"name": name, "path": format!("bin/{name}.wasix.wasm"), "sha256": sha256_file(&module).unwrap(), "size": fs::metadata(&module).unwrap().len()}));
+            artifacts.push(serde_json::json!({"name": format!("tool:{name}"), "path": format!("{name}-llvm-opta.bin.zst"), "image": image, "module": module}));
+        }
+        let mut portable = serde_json::json!({"schema": "postgres-tools-wasix-portable-v1", "version": "0.2.4", "runtimeVersion": "0.3.2", "sourceFingerprint": format!("18.4:{}:{}", "a".repeat(64), "b".repeat(64))});
+        portable.as_object_mut().unwrap().extend(identities);
+        fs::write(&portable_path, serde_json::to_vec(&portable).unwrap()).unwrap();
+        let spec = serde_json::json!({"portable_manifest": portable_path, "toolchain": toolchain, "target_triple": "aarch64-apple-darwin", "artifacts": artifacts});
+        let input = root.join("spec.json");
+        let output = root.join("manifest.json");
+        let args = [
+            "--spec".to_owned(),
+            input.to_str().unwrap().to_owned(),
+            "--output".to_owned(),
+            output.to_str().unwrap().to_owned(),
+        ];
+        fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+        generate_declared_aot_manifest(&args).unwrap();
+        let first = fs::read(&output).unwrap();
+        let manifest: AotManifest = serde_json::from_slice(&first).unwrap();
+        assert_eq!(
+            manifest
+                .artifacts
+                .iter()
+                .map(|row| row.name.as_str())
+                .collect::<Vec<_>>(),
+            ["tool:pg_dump", "tool:psql"]
+        );
+        assert_eq!(manifest.postgres_version.as_deref(), Some("18.4"));
+        assert_eq!(manifest.target_triple, "aarch64-apple-darwin");
+        generate_declared_aot_manifest(&args).unwrap();
+        assert_eq!(first, fs::read(&output).unwrap());
+        for case in ["family", "schema", "missing", "module", "duplicate", "path"] {
+            let mut invalid = spec.clone();
+            match case {
+                "family" => {
+                    invalid["artifacts"][0]["name"] = serde_json::json!("runtime:oliphaunt")
+                }
+                "schema" => {
+                    let mut invalid_portable = portable.clone();
+                    invalid_portable["schema"] = serde_json::json!("unknown");
+                    fs::write(
+                        &portable_path,
+                        serde_json::to_vec(&invalid_portable).unwrap(),
+                    )
+                    .unwrap();
+                }
+                "missing" => {
+                    invalid["artifacts"].as_array_mut().unwrap().pop();
+                }
+                "module" => {
+                    invalid["artifacts"][0]["module"] = invalid["artifacts"][1]["module"].clone()
+                }
+                "duplicate" => invalid["artifacts"][0] = invalid["artifacts"][1].clone(),
+                "path" => invalid["artifacts"][0]["path"] = serde_json::json!("../outside"),
+                _ => unreachable!(),
+            }
+            fs::write(&input, serde_json::to_vec(&invalid).unwrap()).unwrap();
+            assert!(generate_declared_aot_manifest(&args).is_err(), "{case}");
+            fs::write(&portable_path, serde_json::to_vec(&portable).unwrap()).unwrap();
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

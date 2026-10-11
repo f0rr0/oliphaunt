@@ -4,6 +4,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
+load(":libc-toolchain.bzl", "LIBC_CONSTRUCTION_TRANSITION")
 
 _COMPATIBLE = ["@platforms//cpu:wasm32", "@platforms//os:wasi"]
 
@@ -33,32 +34,39 @@ libc_headers = rule(
 )
 
 def _archive_impl(ctx):
-    archives = []
-    for dependency in ctx.attr.deps:
+    objects = []
+    records = []
+    for index, dependency in enumerate(ctx.attr.deps):
+        sources = json.decode(ctx.attr.source_groups[index])
+        compiled = []
         for linker_input in dependency[CcInfo].linking_context.linker_inputs.to_list():
             if linker_input.user_link_flags or linker_input.additional_inputs:
-                fail("Patched libc requires explicit static archives")
+                fail("Patched libc requires explicit compilation objects")
             for library in linker_input.libraries:
-                archive = library.pic_static_library or library.static_library
-                if not archive or archive in archives:
-                    fail("Missing or duplicate patched libc archive")
-                archives.append(archive)
+                compiled.extend(library.pic_objects or library.objects)
+        if len(compiled) != len(sources):
+            fail("Patched libc source/object membership differs for " + str(dependency.label))
+        for source, file in zip(sources, compiled):
+            records.append({"source": source, "path": file.path})
+        objects.extend(compiled)
     output = ctx.actions.declare_file(ctx.attr.output_name)
     spec = ctx.actions.declare_file(ctx.label.name + ".json")
-    ctx.actions.write(spec, json.encode([file.path for file in archives]))
+    ctx.actions.write(spec, json.encode(records))
     arguments = ctx.actions.args()
     arguments.add_all([spec, ctx.executable._archiver, output])
-    bun_file_action(ctx, ctx.file._writer, source_files = [ctx.file._writer], arguments = [arguments], inputs = [spec] + archives, tools = ctx.files._archiver_files, outputs = [output], mnemonic = "PostmasterLibcArchive")
+    bun_file_action(ctx, ctx.file._writer, source_files = [ctx.file._writer], arguments = [arguments], inputs = [spec] + objects, tools = ctx.files._archiver_files, outputs = [output], mnemonic = "PostmasterLibcArchive")
     return [DefaultInfo(files = depset([output]))]
 
 _libc_archive = rule(
     implementation = _archive_impl,
     attrs = {
-        "deps": attr.label_list(providers = [CcInfo], mandatory = True),
+        "deps": attr.label_list(providers = [CcInfo], mandatory = True, cfg = LIBC_CONSTRUCTION_TRANSITION),
+        "source_groups": attr.string_list(mandatory = True),
         "output_name": attr.string(mandatory = True),
         "_writer": attr.label(default = Label("//build_defs/wasix/postmaster:libc-archive.mts"), allow_single_file = True),
         "_archiver": attr.label(default = Label("@wasix_toolchain//:llvm/bin/llvm-ar"), allow_single_file = True, executable = True, cfg = "exec"),
         "_archiver_files": attr.label(default = Label("@wasix_toolchain//:llvm_files"), cfg = "exec"),
+        "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
     },
     toolchains = BUN_SOURCE_TOOLCHAINS,
 )
@@ -126,9 +134,10 @@ def patched_libc_targets(sources):
         ("mman", sources["mman"], [], []),
     ]
     for name, paths, includes, flags in groups:
-        cc_library(name = name, srcs = paths, hdrs = private_headers, deps = [":headers"], copts = common + ["-I" + prefix + path for path in includes] + flags, linkstatic = True, target_compatible_with = _COMPATIBLE)
-    cc_library(name = "assembly", srcs = [path for path in sources["top"] if path.endswith(".s")], linkstatic = True, target_compatible_with = _COMPATIBLE)
+        cc_library(name = name, srcs = paths, hdrs = private_headers, textual_hdrs = ["dlmalloc/src/malloc.c"] if name == "malloc" else [], deps = [":headers"], copts = common + ["-I" + prefix + path for path in includes] + flags, linkstatic = True, target_compatible_with = _COMPATIBLE)
+    cc_library(name = "assembly", srcs = [path for path in sources["top"] if path.endswith(".s")], copts = common, linkstatic = True, target_compatible_with = _COMPATIBLE)
     cc_library(name = "libc", deps = [":" + name for name in ["bottom", "top", "malloc", "printscan", "bulk", "assembly"]], target_compatible_with = _COMPATIBLE)
-    _libc_archive(name = "libc_archive", deps = [":libc"], output_name = "libc.a", target_compatible_with = _COMPATIBLE, exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
-    _libc_archive(name = "mman_archive", deps = [":mman"], output_name = "libwasi-emulated-mman.a", target_compatible_with = _COMPATIBLE, exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
+    archive_groups = [(name, paths) for name, paths, _includes, _flags in groups if name != "mman"] + [("assembly", [path for path in sources["top"] if path.endswith(".s")])]
+    _libc_archive(name = "libc_archive", deps = [":" + name for name, _paths in archive_groups], source_groups = [json.encode(paths) for _name, paths in archive_groups], output_name = "libc.a", target_compatible_with = _COMPATIBLE, exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
+    _libc_archive(name = "mman_archive", deps = [":mman"], source_groups = [json.encode(sources["mman"])], output_name = "libwasi-emulated-mman.a", target_compatible_with = _COMPATIBLE, exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
     _libc_sysroot(name = "sysroot", headers = ":headers", libc = ":libc_archive", mman = ":mman_archive", target_compatible_with = _COMPATIBLE)

@@ -50,7 +50,11 @@ def bun_test_entrypoint(ctx, runner, arguments, files, **kwargs):
     return [_bun_test_entrypoint(ctx, runner, arguments, files, **kwargs).info]
 
 def bun_test_entrypoint_args(name):
-    return [(native.package_name() + "/" if native.package_name() else "") + name + ".entry.mts"]
+    label = native.package_relative_label(":" + name)
+    # Bazel launches native executables from the main repository's runfiles.
+    repository = "../" + label.repo_name + "/" if label.repo_name else ""
+    package = label.package + "/" if label.package else ""
+    return [repository + package + name + ".entry.mts"]
 
 def _bun_impl(ctx):
     runtime = ctx.toolchains[BUN_TOOLCHAIN_TYPE]
@@ -123,7 +127,7 @@ _bun_toolchain_test = rule(
     test = True,
 )
 
-def bun_toolchain_test(name, entry_point = "//build_defs/foundation:bun-toolchain-test.mts", data = [], args = [], **kwargs):
+def bun_toolchain_test(name, entry_point = Label(":bun-toolchain-test.mts"), data = [], args = [], **kwargs):
     _bun_toolchain_test(name = name, entry_point = entry_point, data = data + [entry_point], args = bun_test_entrypoint_args(name) + args, **kwargs)
 
 def _source_output_impl(ctx):

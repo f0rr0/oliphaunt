@@ -3,7 +3,7 @@
 load("@aspect_rules_js//npm:repositories.bzl", "npm_import")
 
 def _metadata_impl(ctx):
-    inputs = [ctx.attr.package, ctx.attr.lockfile, ctx.attr.converter] + ctx.attr.manifests
+    inputs = [ctx.attr.package, ctx.attr.lockfile, ctx.attr.converter] + ctx.attr.manifests + ctx.attr.dependency_manifests
     for source in inputs:
         ctx.read(source)
     ctx.watch(ctx.path(ctx.attr.bun))
@@ -18,7 +18,7 @@ def _metadata_impl(ctx):
         ctx.path(ctx.attr.package),
         ctx.path(ctx.attr.lockfile),
         "--consumer-tools=" + str(ctx.path("consumer-selection.json")),
-    ] + compiler_arguments + [ctx.path(source) for source in ctx.attr.manifests], quiet = True)
+    ] + compiler_arguments + ["--dependency-manifest=" + str(ctx.path(source)) for source in ctx.attr.dependency_manifests] + [ctx.path(source) for source in ctx.attr.manifests], quiet = True)
     if result.return_code:
         fail("Cannot import canonical JavaScript workspace inputs: " + result.stderr)
     data = json.decode(result.stdout)
@@ -38,6 +38,7 @@ javascript_metadata_repository = repository_rule(
         "converter": attr.label(default = Label("//build_defs/languages/ts:metadata.mts"), allow_single_file = True),
         "bun": attr.label(default = Label("@bun_runtime//:bun"), allow_single_file = True),
         "manifests": attr.label_list(allow_files = True, mandatory = True),
+        "dependency_manifests": attr.label_list(allow_files = True, default = []),
         "consumer_tools": attr.string_list_dict(default = {}),
         "compiler_inputs": attr.label(allow_single_file = [".json"]),
     },
@@ -141,20 +142,23 @@ def _packages_impl(ctx):
         )
     _javascript_hub(name = "javascript_packages", metadata = metadata)
     repos = ["javascript_packages"]
-    if tags[0].consumer_metadata:
-        consumer = json.decode(ctx.read(tags[0].consumer_metadata))
+    for context, metadata in [("consumer", tags[0].consumer_metadata), ("installed", tags[0].installed_metadata)]:
+        if not metadata:
+            continue
+        consumer = json.decode(ctx.read(metadata))
         if consumer["platform"] != {"os": "linux", "cpu": "x64"}:
-            fail("The browser consumer tool closure requires Linux x64")
+            fail("The %s consumer closure requires Linux x64" % context)
         for key, package in consumer["packages"].items():
             npm_import(
-                name = "javascript_consumer_" + key,
+                name = "javascript_" + context + "_" + key,
                 package = package["package"],
                 version = package["version"],
                 integrity = package["integrity"],
                 lifecycle_hooks = [],
             )
-        _javascript_hub(name = "javascript_consumer_packages", metadata = tags[0].consumer_metadata, prefix = "javascript_consumer_", consumer = True)
-        repos.append("javascript_consumer_packages")
+        name = "javascript_" + context + "_packages"
+        _javascript_hub(name = name, metadata = metadata, prefix = "javascript_" + context + "_", consumer = True)
+        repos.append(name)
     if tags[0].compiler_metadata:
         compiler = json.decode(ctx.read(tags[0].compiler_metadata))
         shared = sorted([key for key in compiler["packages"] if key in packages])
@@ -182,6 +186,7 @@ javascript_packages = module_extension(
     tag_classes = {"configure": tag_class(attrs = {
         "metadata": attr.label(mandatory = True),
         "consumer_metadata": attr.label(),
+        "installed_metadata": attr.label(),
         "compiler_metadata": attr.label(),
     })},
 )

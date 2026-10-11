@@ -1,0 +1,7 @@
+load("//:test-entries.bzl", "external_bun_entries")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.mts"]))
+
+external_bun_entries()

@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { localizeSwiftReleaseManifest } from '../../../src/native/sdks/swift/tools/prepare-swift-release-consumer.mts';
-import { extractPortableArchiveTree } from '../../../tools/packaging/portable-archive.mts';
+import {
+  archiveLogicalTreeRows,
+  extractPortableArchiveTree,
+  readPortableArchiveEntries,
+} from '../../../tools/packaging/portable-archive.mts';
+import { composeSwiftCandidateManifest } from '../../native/apple/swift-candidate-contract.mts';
 
 assert.equal(process.platform, 'darwin', 'Installed Swift runtime qualification requires macOS');
 assert.equal(process.arch, 'arm64', 'Installed Swift runtime qualification requires Apple arm64');
@@ -20,26 +26,50 @@ const [
   sdkFile,
   receipt,
   triple,
+  mode,
 ] = process.argv.slice(2);
 assert.equal(
   process.argv.length,
-  14,
+  15,
   'Expected exact Swift package, native assets, consumer and declared toolchain',
 );
+assert.ok(['frozen', 'bundled-candidate'].includes(mode), 'Expected a declared consumer mode');
 const root = process.env.TEST_TMPDIR;
 assert.ok(root && path.isAbsolute(root), 'Bazel must supply a private TEST_TMPDIR');
 const sdkMarker = `${path.sep}sdk_macosx${path.sep}`;
 assert.ok(sdkFile.includes(sdkMarker), 'Expected a file from the declared macOS SDK');
-const sdk = sdkFile.slice(0, sdkFile.indexOf(sdkMarker)) + `${path.sep}sdk_macosx`;
+const sdk = `${sdkFile.slice(0, sdkFile.indexOf(sdkMarker))}${path.sep}sdk_macosx`;
 const home = path.join(root, 'home');
 mkdirSync(home);
 const packageRoot = path.join(root, 'package');
 extractPortableArchiveTree(realpathSync(source), packageRoot, 'package');
+const checksum = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
+const manifestFile = path.join(packageRoot, 'Package.swift');
+let composition;
+if (mode === 'bundled-candidate') {
+  const { manifest, ...identity } = composeSwiftCandidateManifest(
+    readFileSync(manifestFile, 'utf8'),
+    readFileSync(path.join(packageRoot, 'LIBOLIPHAUNT_VERSION'), 'utf8'),
+    path.basename(base),
+    checksum(base),
+  );
+  composition = identity;
+  writeFileSync(manifestFile, manifest);
+  const rows = (archive: string, prefix: string) =>
+    archiveLogicalTreeRows(readPortableArchiveEntries(realpathSync(archive)), archive, prefix).sort(
+      (left, right) => left.path.localeCompare(right.path),
+    );
+  assert.deepEqual(
+    rows(base, 'liboliphaunt.xcframework/macos-arm64/liboliphaunt.framework/Resources/oliphaunt/'),
+    rows(resources, 'oliphaunt/'),
+    'candidate macOS resource archive must match the actual bundled framework resources',
+  );
+}
 localizeSwiftReleaseManifest({
-  manifestFile: path.join(packageRoot, 'Package.swift'),
+  manifestFile,
   assetFile: realpathSync(base),
   bindingsAssetFile: realpathSync(bindings),
-  outputFile: path.join(packageRoot, 'Package.swift'),
+  outputFile: manifestFile,
 });
 extractPortableArchiveTree(
   realpathSync(base),
@@ -122,7 +152,9 @@ for (const phase of ['create', 'reopen']) {
   const run = spawnSync(executable, [phase, path.join(root, 'database')], {
     env: {
       ...environment,
-      OLIPHAUNT_RUNTIME_DIR: path.join(runtimeRoot, 'oliphaunt/runtime/files'),
+      ...(mode === 'frozen'
+        ? { OLIPHAUNT_RUNTIME_DIR: path.join(runtimeRoot, 'oliphaunt/runtime/files') }
+        : {}),
     },
     encoding: 'utf8',
   });
@@ -130,3 +162,25 @@ for (const phase of ['create', 'reopen']) {
   assert.equal(run.status, 0, `Installed Swift ${phase} failed: ${run.stderr}`);
   assert.equal(run.stdout.trim(), `installed-swift-${phase}-42`);
 }
+const output = process.env.TEST_UNDECLARED_OUTPUTS_DIR ?? root;
+mkdirSync(output, { recursive: true });
+writeFileSync(
+  path.join(output, 'swift-consumer-receipt.json'),
+  `${JSON.stringify(
+    {
+      schema: 'oliphaunt-installed-swift-consumer-v1',
+      mode,
+      composition,
+      inputs: Object.fromEntries(
+        Object.entries({ source, base, bindings, resources, consumer, hostSdk: receipt }).map(
+          ([name, file]) => [name, { name: path.basename(file), sha256: checksum(file) }],
+        ),
+      ),
+      triple,
+      resourceResolution: mode === 'bundled-candidate' ? 'framework-bundle' : 'explicit-runtime',
+      cases: ['create-query-42', 'reopen-query-42'],
+    },
+    null,
+    2,
+  )}\n`,
+);

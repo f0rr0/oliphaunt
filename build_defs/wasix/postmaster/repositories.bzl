@@ -88,7 +88,12 @@ def _cargo_impl(ctx):
         ctx.watch(wasmer.get_child(relative))
     for relative in observed["targets"]:
         ctx.watch(ctx.path(ctx.attr.workspace).dirname.get_child(relative))
-    exported = ["cargo-sources.json"] + observed["patches"]
+    ctx.read(ctx.attr.qualification_source)
+    ctx.read(ctx.attr.qualification_converter)
+    result = ctx.execute([ctx.path(ctx.attr.bun), "--no-install", "--no-env-file", ctx.path(ctx.attr.qualification_converter), ctx.path(ctx.attr.qualification_source), ctx.path("qualification-profile.json")], quiet = True)
+    if result.return_code:
+        fail("Cannot project canonical postmaster qualification profile: " + result.stderr)
+    exported = ["cargo-sources.json", "qualification-profile.json"] + observed["patches"]
     for role in ctx.attr.roles:
         ctx.symlink(wasmer, role + "/wasmer")
         exported.extend([role + "/Cargo.toml", role + "/Cargo.lock"])
@@ -134,6 +139,8 @@ postmaster_cargo_repository = repository_rule(
         "source_identity": attr.label(default = Label("@postmaster_wasmer//:source.json"), allow_single_file = True),
         "patch": attr.label(default = Label("//src/wasix/postmaster:wasmer/patches/wasmer/0001-postgres-wasix-blockers.patch"), allow_single_file = True),
         "roles": attr.string_dict(mandatory = True),
+        "qualification_source": attr.label(default = Label("//src/wasix/postmaster:lib/common.sh"), allow_single_file = True),
+        "qualification_converter": attr.label(default = Label("//build_defs/wasix/postmaster:qualification-profile.mts"), allow_single_file = True),
     }),
 )
 

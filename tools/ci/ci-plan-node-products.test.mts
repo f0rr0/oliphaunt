@@ -771,6 +771,20 @@ test('packaging fixtures select their owner tests without artifact builders', ()
   }
 });
 
+test('WASIX source lifecycle tracks the staged server manifest, README, code and nested tests', () => {
+  for (const file of [
+    paths.wasixServerManifest,
+    paths.wasixServerReadme,
+    paths.wasixServerSource,
+    paths.wasixServerNestedTest,
+  ]) {
+    assert(
+      effects(file).directTasks.includes('oliphaunt-wasix-rust:test-regression'),
+      `${file} is staged by the source lifecycle`,
+    );
+  }
+});
+
 test('WASIX test helpers invalidate only tasks that execute them', () => {
   const result = effects(paths.runtimesLiboliphauntWasixToolsCargoTestFilterSh);
   for (const target of [

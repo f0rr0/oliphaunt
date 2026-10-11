@@ -5,13 +5,30 @@ load(":extensions.bzl", "extension_default_version", "extension_perl_runtime")
 load(":smoke.bzl", "native_extension_sql_test")
 load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "EXTENSION_COMPATIBILITY")
 load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extension_carrier_legal", "native_extension_carrier_unit_inputs")
+load("//build_defs/foundation:bun.bzl", "bun_script_test")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["contrib.bzl", "extensions.bzl", "repositories.bzl", "uuid_config.h", "pgtap_upstream_parity_test.mts", "validate_member_payload.mts"])
 exports_files(["native_extension_all_sql_test.sh"])
+exports_files(["native_carriers.bzl", "native_carriers.mts", "native_carriers_installed.test.mts"])
 
 ARCHIVE_HELPERS = ["//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts"]
+
+native_extension_carrier_unit_inputs(name = "native_carrier_unit_inputs")
+test_suite(
+    name = "native_final_carriers_tests",
+    tests = ["//src/extensions/external/" + name + ":native_carriers_test" for name in sorted(EXTENSION_COMPATIBILITY.keys())],
+)
+
+bun_script_test(
+    name = "native_carriers_test",
+    entry_point = "native_carriers.test.mts",
+    args = ["$(location :native_carrier_unit_inputs)"],
+    data = [":native_carrier_unit_inputs", "native_carriers.mts", "member_payload.mts"] + native_extension_carrier_helpers() + native_extension_carrier_legal("pgtap"),
+    size = "small",
+)
 
 bun_binary(name = "pgtap_sql", entry_point = "pgtap_sql.mts")
 extension_perl_runtime(name = "perl_runtime")

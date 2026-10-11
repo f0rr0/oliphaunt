@@ -1,0 +1,348 @@
+/** Adapt declared native member bytes to the existing exact extension envelopes. */
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import {
+  EXTENSION_ARTIFACT_PROPERTY_KEYS,
+  validateExtensionArtifactArchive,
+} from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
+import {
+  packageNativeExtensionCargoCrates,
+  stageExtensionNativeNpmPackages,
+} from '../../src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts';
+import {
+  extensionCarrierLegalContract,
+  nativeExtensionConstructionLicenseInventory,
+  stageExtensionUpstreamLicenses,
+} from '../../src/extensions/tools/extension-upstream-licenses.mts';
+import { tarHeader } from '../../tools/packaging/archive-directory.mts';
+import { inspectPlatformBinaryBuffer } from '../../tools/packaging/platform-binary-contract.mts';
+import {
+  canonicalGzipSync,
+  readPortableArchiveEntries,
+} from '../../tools/packaging/portable-archive.mts';
+import { stageReleaseNotices } from '../../tools/packaging/release-notices.mts';
+import { inspect } from './validate_member_payload.mts';
+
+interface Carrier {
+  product: string;
+  ecosystem: string;
+  name: string;
+  version: string;
+  target: string | null;
+  role: string;
+}
+export interface NativeCarrierSpec {
+  product: string;
+  version: string;
+  sqlName: string;
+  target: string;
+  runtimeVersion: string;
+  descriptor: Record<string, any>;
+  recipe: Record<string, any>;
+  source: Record<string, any>;
+  selectedDependencies: string[];
+  compatibility: Record<string, string>;
+  carriers: Carrier[];
+  archive: string;
+  outputs: { github: string; npm: string; cargo: string; manifest: string; frozen: string };
+}
+
+/** Apply the existing release platform policy before accepting a compiled member. */
+export function validateNativeShippingModule(bytes: Buffer, target: string) {
+  const result = inspectPlatformBinaryBuffer(bytes, {
+    target,
+    label: 'native extension shipping module',
+  });
+  assert.equal(result.format, 'elf', 'shipping module must be ELF');
+  assert.equal(bytes.readUInt16LE(16), 3, 'shipping module must be ET_DYN');
+  return result;
+}
+
+export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<string, any>) {
+  assert.equal(actual.owner, spec.product, 'member owner differs from its release product');
+  assert.equal(actual.version, spec.version, 'member version differs from its release product');
+  assert.equal(actual.sql_name, spec.sqlName);
+  assert.equal(actual.configuration, spec.target);
+  assert.equal(
+    spec.runtimeVersion,
+    spec.compatibility.native_runtime_version,
+    'built native supplier version differs from the declared extension host',
+  );
+  assert.equal(actual.source_kind, spec.descriptor['source-kind']);
+  assert.deepEqual(
+    actual.source,
+    spec.source,
+    'member source pin differs from canonical acquisition',
+  );
+  assert.equal(actual.default_version, spec.source['extension-control']['default-version']);
+  assert.equal(actual.creates_extension, spec.descriptor.lifecycle['create-extension']);
+  const artifact = spec.recipe.artifacts ?? {};
+  const canonical = (values: string[] = []) => [...values].sort();
+  assert.deepEqual(canonical(actual.dependencies), canonical(spec.descriptor.dependencies));
+  assert.deepEqual(canonical(actual.data_files), canonical(artifact.data_files));
+  assert.deepEqual(canonical(actual.sql_files), canonical(artifact.extension_sql_file_names));
+  assert.deepEqual(canonical(actual.sql_prefixes), canonical(artifact.extension_sql_file_prefixes));
+  assert.equal(actual.module_file, spec.descriptor['native-module-file'] ?? '');
+  const nativeDependencyModules = canonical(artifact.native_dependency_modules).map((file) =>
+    path.posix.basename(file),
+  );
+  assert.deepEqual(
+    actual.dependency_modules,
+    nativeDependencyModules,
+    'native dependency modules differ from the canonical recipe',
+  );
+  const nativeConstructionLicenseFiles =
+    spec.sqlName === 'vector' && spec.target === 'linux-x64-gnu'
+      ? nativeExtensionConstructionLicenseInventory(spec.sqlName, spec.target)
+      : [];
+  assert.deepEqual(
+    actual.construction_licenses ?? [],
+    nativeConstructionLicenseFiles.map((row) => row.path),
+    'construction notices differ from the immutable compiler-runtime source',
+  );
+  const stem = actual.module_file ? actual.module_file.slice(0, -3) : null;
+  const startup = spec.descriptor.lifecycle['startup-config'] ?? [];
+  const sharedPreloadLibraries = startup
+    .flatMap((value: string) =>
+      value.startsWith('shared_preload_libraries=')
+        ? value.slice('shared_preload_libraries='.length).split(',')
+        : [],
+    )
+    .sort();
+  return {
+    sqlName: spec.sqlName,
+    createsExtension: actual.creates_extension,
+    nativeModuleStem: stem,
+    dependencies: spec.selectedDependencies,
+    dataFiles: canonical(actual.data_files).map((file) => {
+      assert(
+        file.startsWith('share/postgresql/'),
+        'extension data must have its canonical share destination',
+      );
+      return file.slice('share/postgresql/'.length);
+    }),
+    extensionSqlFileNames: canonical(actual.sql_files),
+    extensionSqlFilePrefixes: canonical(actual.sql_prefixes),
+    sharedPreloadLibraries,
+    ...(nativeDependencyModules.length === 0 ? {} : { nativeDependencyModules }),
+    ...(nativeConstructionLicenseFiles.length === 0 ? {} : { nativeConstructionLicenseFiles }),
+  };
+}
+
+function writeJson(file: string, value: unknown) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
+}
+
+function exactArchive(directory: string, output: string) {
+  const rows: { name: string; data: Buffer; mode: number }[] = [];
+  const visit = (current: string, prefix = '') => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const name = prefix + entry.name;
+      if (entry.isDirectory()) visit(path.join(current, entry.name), name + '/');
+      else {
+        assert(entry.isFile(), 'exact extension archive requires regular files');
+        rows.push({
+          name,
+          data: readFileSync(path.join(current, entry.name)),
+          mode: name.startsWith('files/lib/') ? 0o755 : 0o644,
+        });
+      }
+    }
+  };
+  visit(directory);
+  const blocks = rows
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .flatMap(({ name, data, mode }) => [
+      tarHeader({ name, owner: 'root' }, data.length, mode),
+      data,
+      Buffer.alloc((512 - (data.length % 512)) % 512),
+    ]);
+  blocks.push(Buffer.alloc(1024));
+  writeFileSync(output, canonicalGzipSync(Buffer.concat(blocks)));
+}
+
+export function validateNativeCarrierIdentities(spec: NativeCarrierSpec) {
+  const facades = spec.carriers.filter((row) => row.ecosystem === 'npm' && row.target === null);
+  assert.equal(facades.length, 1, 'canonical extension npm facade must be unique');
+  const selected = ['npm', 'cargo'].map((ecosystem) => {
+    const name = `${ecosystem === 'npm' ? facades[0].name : spec.product}-${spec.target}`;
+    const rows = spec.carriers.filter(
+      (row) => row.ecosystem === ecosystem && row.target === spec.target && row.name === name,
+    );
+    assert.equal(rows.length, 1, `canonical ${ecosystem} extension leaf must be unique`);
+    const row = rows[0];
+    assert.equal(row.product, spec.product);
+    assert.equal(row.version, spec.version);
+    return row;
+  });
+  assert.equal(
+    path.basename(spec.outputs.github),
+    `${spec.product}-${spec.version}-native-${spec.target}-runtime.tar.gz`,
+  );
+  return { npm: selected[0], cargo: selected[1] };
+}
+
+export function packageNativeCarriers(spec: NativeCarrierSpec) {
+  const identities = validateNativeCarrierIdentities(spec);
+  const actual = inspect(spec.archive, spec.sqlName, spec.product);
+  const metadata = frozenNativeMember(spec, actual);
+  const root = mkdtempSync(path.join(tmpdir(), 'native-extension-envelopes-'));
+  for (const output of Object.values(spec.outputs))
+    mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
+  try {
+    const productRoot = path.join(root, 'product');
+    const publicRoot = path.join(root, 'public');
+    mkdirSync(publicRoot, { recursive: true });
+    for (const [name, entry] of readPortableArchiveEntries(realpathSync(spec.archive))) {
+      if (name === 'extension.json') continue;
+      const output = path.join(publicRoot, 'files', name);
+      mkdirSync(path.dirname(output), { recursive: true });
+      writeFileSync(output, entry.data(), { mode: name.startsWith('lib/') ? 0o755 : 0o644 });
+      if (name.startsWith('lib/')) validateNativeShippingModule(entry.data(), spec.target);
+    }
+    stageExtensionUpstreamLicenses(spec.sqlName, path.join(publicRoot, 'files'));
+    const legal = extensionCarrierLegalContract(spec.product, [spec.sqlName], {
+      family: 'native',
+      target: spec.target,
+    });
+    stageReleaseNotices(publicRoot, { profile: legal.profile });
+    const compatibility = {
+      extensionRuntimeContract: spec.compatibility.extension_runtime_contract,
+      nativeRuntimeProduct: spec.compatibility.native_runtime_product,
+      nativeRuntimeVersion: spec.compatibility.native_runtime_version,
+      postgresMajor: spec.compatibility.postgres_major,
+      wasixRuntimeProduct: spec.compatibility.wasix_runtime_product,
+      wasixRuntimeVersion: spec.compatibility.wasix_runtime_version,
+    };
+    const properties: Record<string, string> = {
+      packageLayout: 'oliphaunt-extension-artifact-v1',
+      pgMajor: '18',
+      sqlName: spec.sqlName,
+      createsExtension: metadata.createsExtension ? 'yes' : 'no',
+      nativeModuleStem: metadata.nativeModuleStem ?? '',
+      nativeModuleFile: actual.module_file,
+      nativeTarget: spec.target,
+      nativeRuntimeProduct: compatibility.nativeRuntimeProduct,
+      nativeRuntimeVersion: compatibility.nativeRuntimeVersion,
+      dependencies: metadata.dependencies.join(','),
+      dataFiles: metadata.dataFiles.join(','),
+      extensionSqlFileNames: metadata.extensionSqlFileNames.join(','),
+      extensionSqlFilePrefixes: metadata.extensionSqlFilePrefixes.join(','),
+      sharedPreloadLibraries: metadata.sharedPreloadLibraries.join(','),
+      mobilePrebuilt: 'no',
+      mobileStaticArchives: '',
+      mobileStaticDependencyArchives: '',
+      staticSymbolPrefix: '',
+      staticSymbolAliases: '',
+      licenseFiles: [
+        ...legal.licenseFiles,
+        ...(metadata.nativeConstructionLicenseFiles ?? []).map((row) => row.path),
+      ]
+        .sort()
+        .join(','),
+      licenseProfile: legal.profile,
+      files: 'files',
+    };
+    writeFileSync(
+      path.join(publicRoot, 'manifest.properties'),
+      EXTENSION_ARTIFACT_PROPERTY_KEYS.map((key) => `${key}=${properties[key]}\n`).join(''),
+    );
+    exactArchive(publicRoot, spec.outputs.github);
+    validateExtensionArtifactArchive({
+      file: spec.outputs.github,
+      metadata,
+      product: spec.product,
+      target: spec.target,
+      nativeRuntimeVersion: compatibility.nativeRuntimeVersion,
+    });
+    const asset = {
+      name: path.basename(spec.outputs.github),
+      family: 'native',
+      target: spec.target,
+      kind: 'runtime',
+      identity: null,
+      bytes: readFileSync(spec.outputs.github).length,
+      sha256: createHash('sha256').update(readFileSync(spec.outputs.github)).digest('hex'),
+    };
+    mkdirSync(path.join(productRoot, 'release-assets'), { recursive: true });
+    copyFileSync(spec.outputs.github, path.join(productRoot, 'release-assets', asset.name));
+    const member = { ...metadata, assets: [asset] };
+    writeJson(path.join(productRoot, 'extension-artifacts.json'), {
+      schema: 'oliphaunt-extension-ci-artifacts-v1',
+      product: spec.product,
+      version: spec.version,
+      compatibility,
+      ...member,
+    });
+    writeJson(
+      path.join(productRoot, 'release-assets', `${spec.product}-${spec.version}-manifest.json`),
+      {
+        schema: 'oliphaunt-extension-release-manifest-v1',
+        product: spec.product,
+        version: spec.version,
+        versioning: 'upstream-bound',
+        compatibility,
+        ...member,
+      },
+    );
+    copyFileSync(path.join(productRoot, 'extension-artifacts.json'), spec.outputs.frozen);
+    copyFileSync(
+      path.join(productRoot, 'release-assets', `${spec.product}-${spec.version}-manifest.json`),
+      spec.outputs.manifest,
+    );
+    const result = { staged: [], skipped: [] };
+    const npmRoot = stageExtensionNativeNpmPackages(
+      [productRoot],
+      path.join(root, 'npm'),
+      spec.target,
+      result,
+      { metaTargets: [] },
+    );
+    assert(npmRoot, `native npm packaging failed: ${result.skipped.join('; ')}`);
+    const npmFiles = result.staged.filter((file) => file.endsWith('.tgz'));
+    assert.equal(npmFiles.length, 1);
+    const npm = npmFiles[0];
+    const npmManifest = JSON.parse(
+      readPortableArchiveEntries(npm).get('package/package.json')!.data().toString('utf8'),
+    );
+    assert.equal(npmManifest.name, identities.npm.name);
+    assert.equal(npmManifest.version, identities.npm.version);
+    copyFileSync(npm, spec.outputs.npm);
+    const crates = packageNativeExtensionCargoCrates(
+      [productRoot],
+      path.join(root, 'cargo'),
+      spec.target,
+      true,
+      result,
+    );
+    assert(crates.length > 0, `native Cargo packaging failed: ${result.skipped.join('; ')}`);
+    assert(
+      crates.some(
+        (file) => path.basename(file) === `${identities.cargo.name}-${spec.version}.crate`,
+      ),
+    );
+    mkdirSync(spec.outputs.cargo, { recursive: true });
+    for (const crate of crates)
+      copyFileSync(crate, path.join(spec.outputs.cargo, path.basename(crate)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+if (import.meta.main) {
+  assert.equal(process.argv.length, 3, 'usage: native_carriers.mts <declared-inputs.json>');
+  packageNativeCarriers(JSON.parse(readFileSync(process.argv[2], 'utf8')));
+}

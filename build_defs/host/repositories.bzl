@@ -69,6 +69,7 @@ def _host_sdk_impl(ctx):
         lines.append('filegroup(name = "runtime_dlls", srcs = %s)' % repr(sdk["runtimeDlls"]))
     lines.append("host_cc_profiles(HOST_SDK)")
     if ctx.attr.family == "apple":
+        lines.append("exports_files(%s)" % repr([sdk["tools"][name] for name in ["install_name_tool", "otool", "plutil"]]))
         lines.insert(0, 'load(%s, "declared_xcode_swift_toolchain")' % repr(str(ctx.attr.swift_profile)))
         prefix = "external/" + ctx.name + "/"
         tools = {":" + sdk["tools"][mode]: mode for mode in ["swiftc", "swift-symbolgraph-extract", "swift-synthesize-interface"]}

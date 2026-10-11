@@ -45,10 +45,11 @@ function headers(relative = '') {
     const path = relative ? `${relative}/${name}` : name;
     const source = join(spec.headers, path);
     const stat = lstatSync(source);
-    assert(!stat.isSymbolicLink(), 'Generated libc header tree contains a symlink');
     if (stat.isDirectory()) headers(path);
     else {
-      assert(stat.isFile(), 'Generated libc header is not regular');
+      // Bazel stages declared TreeArtifact children as sandbox leaf symlinks.
+      // The header producer writes regular files; do not recurse through links.
+      assert(statSync(source).isFile(), 'Generated libc header is not regular');
       const destination = join(output, 'include', path);
       mkdirSync(dirname(destination), { recursive: true });
       writeFileSync(destination, readFileSync(source));

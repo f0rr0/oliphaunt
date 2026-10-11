@@ -12,7 +12,8 @@ exports_files([
     "sources/wasix-libc.toml",
     "wasmer/patches/wasmer/0001-postgres-wasix-blockers.patch",
     "wasmer/patches/wasix-libc/0001-postgres-wasix-blockers.patch",
-] + glob(["postgres/**"]))
+    "lib/common.sh",
+] + glob(["postgres/**", "wasmer/policies/*", "lib/*.mts", "wasmer/bin/*.mts"]))
 
 filegroup(
     name = "executor_sources",

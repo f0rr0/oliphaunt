@@ -3,6 +3,7 @@ load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":llvm.bzl", "exec_files", "llvm_helper_runtime")
 load(":npm.bzl", "RUNTIME_NPM_HELPERS", "RUNTIME_NPM_NOTICES")
 load(":cargo.bzl", "RUNTIME_CARGO_HELPERS")
+load(":tools-carriers.bzl", "TOOLS_CARRIER_HELPERS")
 load(":aot-repeatability.bzl", "wasix_aot_repeatability_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -47,6 +48,21 @@ bun_test(
         "//src/wasix/runtime/crates/aot/aarch64-apple-darwin:package_sources",
         "//src/wasix/runtime/crates/aot/x86_64-pc-windows-msvc:package_sources",
     ],
+    size = "small",
+)
+
+bun_test(
+    name = "tools_carriers_test",
+    entry_point = "tools-carriers.test.mts",
+    data = [
+        "tools-carriers.mts",
+        "//src/wasix/runtime:toolchain.toml",
+        "//src/wasix/runtime:postgres/series",
+        "//src/wasix/postgres-tools:npm/native.mts",
+        "//src/wasix/postgres-tools:carrier_source_patches",
+    ] + ["//src/wasix/postgres-tools:" + target + "_package_sources" for target in [
+        "portable", "linux_arm64_gnu", "linux_x64_gnu", "macos_arm64", "windows_x64_msvc",
+    ]] + TOOLS_CARRIER_HELPERS + RUNTIME_NPM_NOTICES.keys(),
     size = "small",
 )
 

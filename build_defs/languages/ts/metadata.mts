@@ -45,6 +45,7 @@ export function importJavascriptMetadata(
   manifests: Record<string, Manifest>,
   consumerTools: Record<string, string[]> = {},
   compilerInputs: CompilerInputs = {},
+  dependencyManifests: Record<string, Manifest> = {},
 ) {
   if (lock.lockfileVersion !== 2 || lock.configVersion !== 1)
     throw new Error('Unsupported Bun lockfile schema');
@@ -167,16 +168,28 @@ export function importJavascriptMetadata(
       packages?: Record<string, string>;
     }
   > = {};
+  for (const path of Object.keys(dependencyManifests))
+    if (Object.hasOwn(manifests, path))
+      throw new Error(
+        `JavaScript workspace ${path} is selected as both compiler and dependency input`,
+      );
+  const selectedManifests = { ...manifests, ...dependencyManifests };
   let typescript: { package: string; version: string; integrity: string } | undefined;
-  for (const [path, manifest] of Object.entries(manifests).sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [path, manifest] of Object.entries(selectedManifests).sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
     const workspace = lock.workspaces[path];
     if (workspace?.name !== manifest.name || workspace.version !== manifest.version)
       throw new Error(`bun.lock has a stale workspace identity for ${path}`);
     const types: Record<string, string> = {};
-    for (const name of [
-      'typescript',
-      ...Object.keys(manifest.devDependencies ?? {}).filter((name) => name.startsWith('@types/')),
-    ]) {
+    for (const name of Object.hasOwn(manifests, path)
+      ? [
+          'typescript',
+          ...Object.keys(manifest.devDependencies ?? {}).filter((name) =>
+            name.startsWith('@types/'),
+          ),
+        ]
+      : []) {
       let requirement = manifest.devDependencies?.[name];
       if (workspace.devDependencies?.[name] !== requirement || !requirement)
         throw new Error(`bun.lock has a stale workspace declaration for ${path}/${name}`);
@@ -198,11 +211,16 @@ export function importJavascriptMetadata(
     }
     const dependencies = manifest.dependencies ?? {};
     const runtimePackages: Record<string, string> = {};
-    for (const [name, requirement] of Object.entries(dependencies)) {
+    for (const [name, requirement] of Object.hasOwn(manifests, path)
+      ? Object.entries(dependencies)
+      : []) {
       if (workspace.dependencies?.[name] !== requirement)
         throw new Error(`bun.lock has a stale workspace dependency for ${path}/${name}`);
-      const target = Object.values(manifests).find((row) => row.name === name);
-      if (target && !Bun.semver.satisfies(target.version, requirement))
+      const target = Object.values(selectedManifests).find((row) => row.name === name);
+      const range = requirement.startsWith('workspace:')
+        ? requirement.slice('workspace:'.length)
+        : requirement;
+      if (target && !Bun.semver.satisfies(target.version, ['^', '~'].includes(range) ? '*' : range))
         throw new Error(
           `Native JavaScript dependency ${name} must match its conventional workspace version`,
         );
@@ -317,10 +335,16 @@ if (import.meta.main) {
   const [rootFile, lockFile, ...parameters] = Bun.argv.slice(2);
   const options = parameters.filter((value) => value.startsWith('--consumer-tools='));
   const compilerOptions = parameters.filter((value) => value.startsWith('--compiler-inputs='));
+  const dependencyFiles = parameters
+    .filter((value) => value.startsWith('--dependency-manifest='))
+    .map((value) => value.slice('--dependency-manifest='.length));
   if (options.length > 1) throw new Error('Expected at most one consumer tool selection');
   if (compilerOptions.length > 1) throw new Error('Expected at most one compiler input selection');
   const manifestFiles = parameters.filter(
-    (value) => !value.startsWith('--consumer-tools=') && !value.startsWith('--compiler-inputs='),
+    (value) =>
+      !value.startsWith('--consumer-tools=') &&
+      !value.startsWith('--compiler-inputs=') &&
+      !value.startsWith('--dependency-manifest='),
   );
   const consumerTools = options.length
     ? JSON.parse(readFileSync(options[0].slice('--consumer-tools='.length), 'utf8'))
@@ -333,20 +357,22 @@ if (import.meta.main) {
       'Expected root package.json, bun.lock, and conventional workspace package.json files',
     );
   const root = dirname(rootFile);
-  const manifests = Object.fromEntries(
-    manifestFiles.map((file) => [
-      relative(root, dirname(file)).split('\\').join('/'),
-      JSON.parse(readFileSync(file, 'utf8')),
-    ]),
-  );
+  const readManifests = (files: string[]) =>
+    Object.fromEntries(
+      files.map((file) => [
+        relative(root, dirname(file)).split('\\').join('/'),
+        JSON.parse(readFileSync(file, 'utf8')),
+      ]),
+    );
   console.log(
     JSON.stringify(
       importJavascriptMetadata(
         JSON.parse(readFileSync(rootFile, 'utf8')),
         Bun.JSONC.parse(readFileSync(lockFile, 'utf8')),
-        manifests,
+        readManifests(manifestFiles),
         consumerTools,
         compilerInputs,
+        readManifests(dependencyFiles),
       ),
     ),
   );

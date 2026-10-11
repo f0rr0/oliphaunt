@@ -93,7 +93,7 @@ def _aot_payload_impl(ctx):
         outputs = [output],
         env = {"LC_ALL": "C"},
         mnemonic = "WasixAotEnvelope",
-        progress_message = "Package declared WASIX AOT runtime " + ctx.attr.target_id + " %{label}",
+        progress_message = "Package declared WASIX AOT " + ctx.attr.target_id + " %{label}",
     )
     return [DefaultInfo(files = depset([output]))]
 
@@ -110,16 +110,10 @@ wasix_aot_payload = rule(
     },
 )
 
-def wasix_runtime_aot_targets():
-    """Declare the four frozen runtime images for each canonical AOT target."""
+def _wasix_aot_targets(images):
     for target_id in WASIX_AOT_TARGETS:
         prefix = "aot_" + target_id.replace("-", "_") + "_"
-        for module, image in {
-            "postgres": "oliphaunt-llvm-opta.bin.zst",
-            "initdb": "initdb-llvm-opta.bin.zst",
-            "plpgsql": "plpgsql-llvm-opta.bin.zst",
-            "dict_snowball": "dict_snowball-llvm-opta.bin.zst",
-        }.items():
+        for module, (image, _identity) in images.items():
             wasix_aot(
                 name = prefix + module,
                 module = ":" + module,
@@ -133,12 +127,23 @@ def wasix_runtime_aot_targets():
             name = prefix + "payload",
             target_id = target_id,
             portable = ":portable_payload",
-            artifacts = {
-                ":" + prefix + "postgres": "runtime:oliphaunt",
-                ":" + prefix + "initdb": "tool:initdb",
-                ":" + prefix + "plpgsql": "runtime-support:plpgsql",
-                ":" + prefix + "dict_snowball": "runtime-support:dict_snowball",
-            },
+            artifacts = {":" + prefix + module: identity for module, (_image, identity) in images.items()},
             tags = ["manual"],
             target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
         )
+
+def wasix_runtime_aot_targets():
+    """Declare the four frozen runtime images for each canonical AOT target."""
+    _wasix_aot_targets({
+        "postgres": ("oliphaunt-llvm-opta.bin.zst", "runtime:oliphaunt"),
+        "initdb": ("initdb-llvm-opta.bin.zst", "tool:initdb"),
+        "plpgsql": ("plpgsql-llvm-opta.bin.zst", "runtime-support:plpgsql"),
+        "dict_snowball": ("dict_snowball-llvm-opta.bin.zst", "runtime-support:dict_snowball"),
+    })
+
+def wasix_tools_aot_targets():
+    """Serialize only pg_dump and psql; no core runtime construction edge."""
+    _wasix_aot_targets({
+        "pg_dump": ("pg_dump-llvm-opta.bin.zst", "tool:pg_dump"),
+        "psql": ("psql-llvm-opta.bin.zst", "tool:psql"),
+    })

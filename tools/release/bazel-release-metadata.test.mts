@@ -7,6 +7,7 @@ import {
   databaseResourceArtifactRows,
   nativeHelperArtifactRows,
   nativeRuntimeArtifactRows,
+  wasixArtifactRows,
 } from './release-artifact-targets.mts';
 import {
   loadReleaseMetadata,
@@ -107,6 +108,47 @@ kind="wasix-runtime"
     rmSync(root, { recursive: true, force: true });
   }
 }
+
+test('WASIX artifact projection follows explicit release targets without loading another source tree', () => {
+  fixture((root, write) => {
+    const config = JSON.parse(readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
+    const manifest = JSON.parse(
+      readFileSync(path.join(root, '.release-please-manifest.json'), 'utf8'),
+    );
+    config.packages['src/wasix/postgres-tools'] = { component: 'postgres-tools-wasix' };
+    manifest['src/wasix/postgres-tools'] = '4.5.6';
+    write('release-please-config.json', JSON.stringify(config));
+    write('.release-please-manifest.json', JSON.stringify(manifest));
+    write(
+      'src/wasix/postgres-tools/release.toml',
+      'id="postgres-tools-wasix"\n[artifact_targets]\npreset="postgres-tools-wasix"\ntargets=["portable","macos-arm64"]\n',
+    );
+    const metadata = loadReleaseMetadata(root);
+    expect(metadata.wasixArtifacts).toEqual(
+      wasixArtifactRows('postgres-tools-wasix', ['portable', 'macos-arm64']),
+    );
+    expect(
+      metadata.wasixArtifacts
+        .filter((row) => row.kind !== 'checksums')
+        .map((row) => row.target)
+        .sort(),
+    ).toEqual(['macos-arm64', 'portable']);
+    expect(renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl').bzl).toContain(
+      'WASIX_ARTIFACTS =',
+    );
+    write(
+      'src/wasix/postgres-tools/release.toml',
+      'id="postgres-tools-wasix"\n[artifact_targets]\npreset="postgres-tools-wasix"\ntargets=["android-x86_64"]\n',
+    );
+    const rejected = Bun.spawnSync([
+      process.execPath,
+      '--eval',
+      `import { loadReleaseMetadata } from ${JSON.stringify(import.meta.filename.replace('.test.mts', '.mts'))}; loadReleaseMetadata(${JSON.stringify(root)});`,
+    ]);
+    expect(rejected.exitCode).toBe(1);
+    expect(rejected.stderr.toString()).toContain('unknown artifact target(s): android-x86_64');
+  });
+});
 
 test('native helper projection uses canonical artifact rows and explicit descriptor targets', () => {
   fixture((root, write) => {

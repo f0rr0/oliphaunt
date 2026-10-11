@@ -174,6 +174,9 @@ pub struct NativeRuntimeResourceOptions {
     /// module, including iOS and Android artifacts whose modules are linked
     /// through `mobile-static` archives instead of copied as dynamic modules.
     pub extension_target: Option<String>,
+    /// Optional stable identity hashed with the packaged runtime manifest.
+    /// This does not change native resource acquisition or its cache.
+    pub runtime_cache_identity: Option<String>,
 }
 
 impl NativeRuntimeResourceOptions {
@@ -189,6 +192,7 @@ impl NativeRuntimeResourceOptions {
             prebuilt_extensions: Vec::new(),
             native_runtime_version: None,
             extension_target: None,
+            runtime_cache_identity: None,
         }
     }
 
@@ -244,6 +248,29 @@ impl NativeRuntimeResourceOptions {
         self.extension_target = Some(target.into());
         self
     }
+
+    /// Derive the packaged runtime cache key from a stable identity and manifest.
+    pub fn runtime_cache_identity(mut self, identity: impl Into<String>) -> Self {
+        self.runtime_cache_identity = Some(identity.into());
+        self
+    }
+}
+
+/// Validate the portable token accepted by `validNativeCacheKey` in the native
+/// database-resource manifest contract.
+pub fn validate_runtime_cache_identity(identity: &str) -> Result<()> {
+    if identity.is_empty()
+        || identity.len() > 128
+        || matches!(identity, "." | "..")
+        || !identity
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(Error::InvalidConfig(
+            "runtime cache identity must be a portable identifier of 1–128 ASCII letters, digits, '.', '_' or '-', excluding '.' and '..'".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Optional runtime data/features selected independently from PostgreSQL
@@ -415,7 +442,7 @@ pub struct NativeRuntimeResources {
     pub root: PathBuf,
     /// Runtime files directory copied into app storage before opening.
     pub runtime_files: PathBuf,
-    /// Content key of the source runtime cache.
+    /// Cache identity written into the packaged runtime manifest.
     pub runtime_cache_key: String,
     /// Built-in extensions materialized into the runtime resources.
     pub extensions: Vec<Extension>,
@@ -522,6 +549,9 @@ impl Drop for PreparedPrebuiltExtensionArtifacts {
 pub fn build_native_runtime_resources(
     options: NativeRuntimeResourceOptions,
 ) -> Result<NativeRuntimeResources> {
+    if let Some(identity) = options.runtime_cache_identity.as_deref() {
+        validate_runtime_cache_identity(identity)?;
+    }
     if options.output_dir.as_os_str().is_empty() {
         return Err(Error::InvalidConfig(
             "native runtime-resource output directory must not be empty".to_owned(),
@@ -556,7 +586,7 @@ pub fn build_native_runtime_resources(
     let root = options.output_dir.join("oliphaunt");
     prepare_output_root(&root, options.replace_existing)?;
 
-    write_runtime_resource_tree(
+    let runtime_cache_key = write_runtime_resource_tree(
         &root,
         &materialized,
         &selected_extensions,
@@ -564,6 +594,7 @@ pub fn build_native_runtime_resources(
         &shared_preload_libraries,
         &mobile_static_registry,
         options.extension_target.as_deref(),
+        options.runtime_cache_identity.as_deref(),
     )?;
     let size_report = runtime_resource_size_report(
         &root,
@@ -580,7 +611,7 @@ pub fn build_native_runtime_resources(
             == MobileStaticRegistryState::Complete)
             .then(|| root.join(format!("static-registry/{STATIC_REGISTRY_SOURCE_FILE}"))),
         root,
-        runtime_cache_key: materialized.runtime_cache_key,
+        runtime_cache_key,
         extensions,
         runtime_features,
         extension_names,
@@ -1035,6 +1066,174 @@ mod tests {
     use tar::EntryType;
 
     #[test]
+    fn runtime_cache_identity_uses_the_native_manifest_token_contract() {
+        for key in ["A-z_0.9-", "--key", "...", &"a".repeat(128)] {
+            validate_runtime_cache_identity(key).unwrap();
+        }
+        for key in [
+            "",
+            ".",
+            "..",
+            "a/b",
+            "a\\b",
+            "a b",
+            "a\n",
+            "é",
+            &"a".repeat(129),
+        ] {
+            assert!(
+                validate_runtime_cache_identity(key).is_err(),
+                "accepted {key:?}"
+            );
+        }
+        let output = tempfile::tempdir().unwrap();
+        let options = NativeRuntimeResourceOptions::new(output.path()).runtime_cache_identity(".");
+        assert!(build_native_runtime_resources(options).is_err());
+        assert!(!output.path().join("oliphaunt").exists());
+        assert_eq!(
+            NativeRuntimeResourceOptions::new("output").runtime_cache_identity,
+            None
+        );
+    }
+
+    #[test]
+    fn runtime_cache_identity_binds_the_manifest_and_preserves_default_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let materialized = MaterializedNativeResources {
+            runtime_dir: temp.path().join("materialized"),
+            runtime_cache_key: "installed-runtime-cache".to_owned(),
+        };
+        let relative = "share/postgresql/postgresql.conf.sample";
+        write_file(&materialized.runtime_dir.join(relative), b"core-runtime");
+        write_file(
+            &materialized.runtime_dir.join("share/icu/icudt76l.dat"),
+            b"icu-data",
+        );
+        write_file(
+            &materialized.runtime_dir.join(".manifest"),
+            b"key=private-cache-a\n",
+        );
+        write_file(&materialized.runtime_dir.join(".complete"), b"ok\n");
+        write_file(
+            &materialized.runtime_dir.join("share/.manifest"),
+            b"public nested data\n",
+        );
+        let metadata = mobile_static_registry_metadata(&[], &[]).unwrap();
+        let mut manifests = Vec::new();
+        let mut keys = Vec::new();
+        for (name, identity, features) in [
+            ("default", None, &[][..]),
+            ("identity", Some("bazel-runtime_18.4"), &[][..]),
+            ("repeat", Some("bazel-runtime_18.4"), &[][..]),
+            ("different-identity", Some("bazel-runtime_18.5"), &[][..]),
+            (
+                "icu-context",
+                Some("bazel-runtime_18.4"),
+                &[NativeRuntimeFeature::Icu][..],
+            ),
+        ] {
+            let root = temp.path().join(name);
+            let key = write_runtime_resource_tree(
+                &root,
+                &materialized,
+                &[],
+                features,
+                &[],
+                &metadata,
+                None,
+                identity,
+            )
+            .unwrap();
+            assert_eq!(
+                fs::read(root.join("runtime/files").join(relative)).unwrap(),
+                b"core-runtime"
+            );
+            let text = fs::read_to_string(root.join("runtime/manifest.properties")).unwrap();
+            assert!(text.lines().any(|line| line == format!("cacheKey={key}")));
+            validate_runtime_cache_identity(&key).unwrap();
+            if identity.is_some() {
+                assert!(!root.join("runtime/files/.manifest").exists());
+                assert!(!root.join("runtime/files/.complete").exists());
+                let digest = key.strip_prefix("runtime-").unwrap();
+                assert_eq!(digest.len(), 64);
+                assert!(
+                    digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                );
+            } else {
+                assert_eq!(
+                    fs::read(root.join("runtime/files/.manifest")).unwrap(),
+                    b"key=private-cache-a\n"
+                );
+                assert_eq!(
+                    fs::read(root.join("runtime/files/.complete")).unwrap(),
+                    b"ok\n"
+                );
+            }
+            assert_eq!(
+                fs::read(root.join("runtime/files/share/.manifest")).unwrap(),
+                b"public nested data\n"
+            );
+            keys.push(key);
+            manifests.push(text);
+        }
+        assert_eq!(
+            manifests[0],
+            "schema=oliphaunt-runtime-resources-v1\nlayout=postgres-runtime-files-v1\nartifactRole=runtime\ncatalogProfile=\nclusterSeedTarget=\nicuDataTreeSha256=\nmode=native-direct\ncacheKey=installed-runtime-cache\nselectedExtensions=\nextensions=\nruntimeFeatures=\nsharedPreloadLibraries=\nmobileStaticRegistryState=not-required\nmobileStaticRegistryRegistered=\nmobileStaticRegistryPending=\nnativeModuleStems=\nmobileStaticRegistrySource=\n"
+        );
+        assert_eq!(keys[0], "installed-runtime-cache");
+        assert_eq!(keys[1], keys[2]);
+        assert_eq!(manifests[1], manifests[2]);
+        assert_ne!(keys[1], keys[3]);
+        assert_ne!(keys[1], keys[4]);
+        assert_eq!(
+            manifests[1],
+            manifests[0].replace(
+                "cacheKey=installed-runtime-cache\n",
+                &format!("cacheKey={}\n", keys[1])
+            )
+        );
+        let different_acquired_cache = MaterializedNativeResources {
+            runtime_dir: temp.path().join("different-private-acquisition-path"),
+            runtime_cache_key: "different-acquired-cache".to_owned(),
+        };
+        copy_portable_tree(
+            &materialized.runtime_dir,
+            &different_acquired_cache.runtime_dir,
+        )
+        .unwrap();
+        write_file(
+            &different_acquired_cache.runtime_dir.join(".manifest"),
+            b"key=private-cache-b\n",
+        );
+        write_file(
+            &different_acquired_cache.runtime_dir.join(".complete"),
+            b"different-private-marker\n",
+        );
+        assert_eq!(
+            write_runtime_resource_tree(
+                &temp.path().join("different-acquired-cache"),
+                &different_acquired_cache,
+                &[],
+                &[],
+                &[],
+                &metadata,
+                None,
+                Some("bazel-runtime_18.4")
+            )
+            .unwrap(),
+            keys[1]
+        );
+        assert_eq!(
+            logical_tree_sha256(&temp.path().join("identity")).unwrap(),
+            logical_tree_sha256(&temp.path().join("different-acquired-cache")).unwrap(),
+            "all packaged paths and file bytes must ignore private acquisition paths/markers"
+        );
+        assert_eq!(materialized.runtime_cache_key, "installed-runtime-cache");
+    }
+
+    #[test]
     fn logical_tree_digest_uses_portable_path_order() {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join("a")).unwrap();
@@ -1237,7 +1436,8 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
 
         let metadata = mobile_static_registry_metadata(&[], &[]).unwrap();
-        write_runtime_resource_tree(&root, &materialized, &[], &[], &[], &metadata, None).unwrap();
+        write_runtime_resource_tree(&root, &materialized, &[], &[], &[], &metadata, None, None)
+            .unwrap();
 
         assert!(
             !root.join("runtime/files/share/icu").exists(),
@@ -1275,6 +1475,7 @@ mod tests {
             &[NativeRuntimeFeature::Icu],
             &[],
             &metadata,
+            None,
             None,
         )
         .unwrap();
@@ -1773,6 +1974,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             &[],
             &metadata,
             Some("test-target"),
+            None,
         )
         .unwrap();
 

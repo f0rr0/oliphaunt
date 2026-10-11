@@ -1,29 +1,52 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 
-// One declared archiver operation combines the maintained cc_library outputs.
+// Canonical Makefile-eh archive packaging over already compiled native objects.
+// Its sorted crs batches intentionally replace basename collisions.
 const [specPath, archiver, output] = process.argv.slice(2);
 assert(
   specPath && archiver && output && process.argv.length === 5,
-  'Expected archive specification, llvm-ar and output',
+  'Expected object specification, llvm-ar and output',
 );
-const archives = JSON.parse(readFileSync(specPath, 'utf8')) as string[];
+const records = JSON.parse(readFileSync(specPath, 'utf8')) as { source: string; path: string }[];
 assert(
-  archives.length && new Set(archives).size === archives.length,
-  'Empty or duplicate libc archives',
+  records.length && new Set(records.map((row) => row.source)).size === records.length,
+  'Empty or duplicate libc object sources',
 );
-for (const path of [...archives, output])
-  assert(/^[A-Za-z0-9_./+@=-]+$/.test(path), 'Invalid MRI archive path');
-mkdirSync(dirname(output), { recursive: true });
-const input = `CREATE ${output}\n${archives
-  .toReversed()
-  .map((path) => `ADDLIB ${path}\n`)
-  .join('')}SAVE\nEND\n`;
-const archiverProcess = Bun.spawn([archiver, '-M'], {
-  stdin: new Blob([input]),
-  stdout: 'inherit',
-  stderr: 'inherit',
-  env: { ...globalThis.process.env, LC_ALL: 'C' },
-});
-assert.equal(await archiverProcess.exited, 0, 'Native patched libc archiving failed');
+const staging = mkdtempSync(join(tmpdir(), 'postmaster-libc-archive-'));
+try {
+  const objects = records
+    .sort((a, b) => (a.source < b.source ? -1 : a.source > b.source ? 1 : 0))
+    .map((row) => {
+      assert(
+        /^[A-Za-z0-9_./-]+\.[cs]$/.test(row.source) &&
+          !row.source.split('/').some((part) => !part || part === '.' || part === '..'),
+        'Invalid libc object source',
+      );
+      const path = join(staging, `${row.source.slice(0, -2)}.o`);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, readFileSync(row.path));
+      return path;
+    });
+  mkdirSync(dirname(output), { recursive: true });
+  const destination = resolve(output);
+  for (const [start, end] of [
+    [0, 199],
+    [199, 399],
+    [399, 599],
+    [599, 799],
+    [799, objects.length],
+  ]) {
+    if (start >= objects.length) continue;
+    const child = Bun.spawn([archiver, 'crs', destination, ...objects.slice(start, end)], {
+      stdout: 'inherit',
+      stderr: 'inherit',
+      env: { ...process.env, LC_ALL: 'C' },
+    });
+    assert.equal(await child.exited, 0, 'Native patched libc archiving failed');
+  }
+} finally {
+  rmSync(staging, { recursive: true, force: true });
+}

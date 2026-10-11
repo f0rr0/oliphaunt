@@ -101,21 +101,25 @@ if (nativeRequired) {
 }
 
 let nativeBuild;
+if (process.env.NATIVE_BUILD_ORIGIN_JSON?.trim())
+  fail(
+    'NATIVE_BUILD_ORIGIN_JSON cannot authenticate native evidence; use NATIVE_BUILD_CONTEXT_JSON',
+  );
 if (process.env.NATIVE_BUILD_EVIDENCE_ROOT?.trim()) {
   try {
-    const origin = JSON.parse(requiredEnv('NATIVE_BUILD_ORIGIN_JSON'));
-    if (origin.github?.repository !== requiredEnv('GITHUB_REPOSITORY'))
+    const context = JSON.parse(requiredEnv('NATIVE_BUILD_CONTEXT_JSON'));
+    if (context.github?.repository !== requiredEnv('GITHUB_REPOSITORY'))
       throw new Error('native build producing repository differs from qualification');
-    nativeBuild = nativeBuildEvidenceBinding(requiredEnv('NATIVE_BUILD_EVIDENCE_ROOT'), {
+    nativeBuild = await nativeBuildEvidenceBinding(requiredEnv('NATIVE_BUILD_EVIDENCE_ROOT'), {
       sha: checkedOutSha,
       tree,
-      origin,
+      context,
     });
   } catch (error) {
     fail(error.message);
   }
-} else if (process.env.NATIVE_BUILD_ORIGIN_JSON?.trim()) {
-  fail('NATIVE_BUILD_EVIDENCE_ROOT is required with native build origin metadata');
+} else if (process.env.NATIVE_BUILD_CONTEXT_JSON?.trim()) {
+  fail('NATIVE_BUILD_EVIDENCE_ROOT is required with native build controller context');
 }
 
 const candidate = {

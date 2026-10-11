@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const [profile, source, directory] = Bun.argv.slice(2);
-if (!['js', 'wasix-ts'].includes(profile) || !source || !directory)
+if (!['js', 'wasix-ts', 'wasix-tools'].includes(profile) || !source || !directory)
   throw new Error('Expected SDK profile, source manifest and output directory');
 const inputs = process.cwd();
 const staging = await mkdtemp(join(tmpdir(), 'oliphaunt-sdk-manifest-'));
@@ -34,12 +34,19 @@ try {
     );
     prepareSourceOnlyNpmPackage(packageDirectory, SOURCE_ONLY_NPM_PROFILES.js);
   } else {
-    const canonical = 'src/wasix/sdks/ts/tools/package.mts';
+    const canonical =
+      profile === 'wasix-ts'
+        ? 'src/wasix/sdks/ts/tools/package.mts'
+        : 'src/wasix/postgres-tools/ts/tools/package.mts';
     const projected = join(staging, canonical);
-    await mkdir(join(staging, 'src/wasix/sdks/ts/tools'), { recursive: true });
+    await mkdir(join(projected, '..'), { recursive: true });
     await copyFile(join(inputs, canonical), projected);
-    const { prepareWasixTypescriptPackage } = await import(pathToFileURL(projected).href);
-    prepareWasixTypescriptPackage(packageDirectory);
+    const canonicalWriter = await import(pathToFileURL(projected).href);
+    const prepare =
+      profile === 'wasix-ts'
+        ? canonicalWriter.prepareWasixTypescriptPackage
+        : canonicalWriter.prepareWasixToolsTypescriptPackage;
+    prepare(packageDirectory);
   }
   await mkdir(directory, { recursive: true });
   for (const name of ['package.json', 'LICENSE', 'THIRD_PARTY_NOTICES.md'])

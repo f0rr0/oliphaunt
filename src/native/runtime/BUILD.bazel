@@ -4,7 +4,7 @@ load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE", "NATIVE_C_COMPATIBLE", "NATIVE_EMBEDDED_DEFINES", "NATIVE_BUILTIN_SNOWBALL", "NATIVE_BUILTIN_SNOWBALL_DEPS", "NATIVE_LINKOPTS", "NATIVE_RELEASE_LINKOPTS", "NATIVE_WRAPPER_COPTS", "NATIVE_WRAPPER_DEFINES", "NATIVE_BUILTIN_PLPGSQL_DEPS", "NATIVE_RUNTIME_LINKOPTS", "NATIVE_EMBEDDED_MODULE_LINKOPTS", "NATIVE_ELF_C_COMPATIBLE", "NATIVE_MACOS_COMPATIBLE", "NATIVE_WINDOWS_COMPATIBLE", "NATIVE_HOST_COMPATIBLE", "NATIVE_LINUX_COMPATIBLE", "NATIVE_UNIX_COMPATIBLE")
 load("//build_defs/native:windows_link.bzl", "postgres_windows_exports")
-load("//build_defs/native:mobile.bzl", "native_ios_runtime_targets")
+load("//build_defs/native:mobile.bzl", "native_apple_runtime_targets", "native_ios_runtime_targets")
 load("//build_defs/foundation:bun.bzl", "bun_script_test")
 load("//build_defs/native/carriers:defs.bzl", "native_desktop_carriers")
 load("//build_defs/native/carriers:tests.bzl", "native_cargo_consumer_test")
@@ -13,6 +13,7 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["release.toml", "postgres/series", "include/oliphaunt.h", "bin/android-cxx-runtime.map", "tools/native-mobile-abi-contract.mts"] + glob(["patches/**/*.patch"]))
 exports_files(["THIRD_PARTY_NOTICES.md", "tools/native-runtime-payload.mts", "tools/native-runtime-payload-policy.json"])
+exports_files(["tools/finalize-native-runtime-carrier.mts", "tools/native-runtime-carrier-contract.mts"])
 exports_files(glob(["packages/*/package.json", "packages/*/README.md"]))
 
 alias(name = "postgres_server_headers", actual = "@postgres//:server_headers")
@@ -85,6 +86,7 @@ cc_binary(
 
 alias(name = "runtime_shared", actual = select({"//build_defs/native:macos_arm64": ":liboliphaunt.dylib", "//build_defs/native:windows_x64": ":oliphaunt.dll", "//conditions:default": ":liboliphaunt.so"}))
 native_ios_runtime_targets()
+native_apple_runtime_targets()
 # The ABI receipt consumes the producer's exact File, including the iOS archive.
 alias(name = "runtime_abi_binary", actual = select({"//build_defs/native:ios": ":mobile_static_archive", "//conditions:default": ":runtime_shared"}))
 filegroup(name = "runtime_windows_interface", srcs = [":oliphaunt.dll"], output_group = "interface_library", target_compatible_with = NATIVE_WINDOWS_COMPATIBLE)

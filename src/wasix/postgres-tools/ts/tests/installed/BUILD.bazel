@@ -1,0 +1,1 @@
+exports_files(["package.json", "bun.lock", "consumer.mts"], visibility = ["//visibility:public"])

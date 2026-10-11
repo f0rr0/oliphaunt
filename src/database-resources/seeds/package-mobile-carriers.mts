@@ -7,17 +7,18 @@ import {
   createDeterministicTar,
   createDeterministicZip,
 } from '../../../tools/packaging/archive-directory.mts';
+import { stageMavenArtifactManifest } from '../../../tools/packaging/maven-artifact-staging.mts';
 import { extractPortableArchiveTree } from '../../../tools/packaging/portable-archive.mts';
 import {
   releaseProfileMavenLicenses,
   releaseProfilePackageLicense,
   stageReleaseNotices,
 } from '../../../tools/packaging/release-notices.mts';
-import { stageMavenArtifactManifest } from '../../../tools/packaging/maven-artifact-staging.mts';
 import {
   currentProductVersionSync,
   ROOT,
 } from '../../../tools/release/release-artifact-targets.mts';
+import { validateNativeIcuDataManifest } from '../contracts/icu-data.mts';
 import {
   bindNativeClusterSeedManifest,
   filesystemTreeRows,
@@ -25,7 +26,6 @@ import {
   nativeClusterSeedCompatibilityKey,
   validateNativeClusterSeedDirectory,
 } from '../contracts/native-manifest.mts';
-import { validateNativeIcuDataManifest } from '../contracts/icu-data.mts';
 
 const defaultContract = JSON.parse(
   readFileSync(new URL('../contracts/contract.json', import.meta.url), 'utf8'),
@@ -152,7 +152,7 @@ export async function packageMobileSeedCarriers({
         contract,
       });
       stageReleaseNotices(swift ? swiftRoot : stage, {
-        profile: 'native-runtime-resources',
+        profile: swift ? 'native-runtime' : 'native-runtime-resources',
         sourceRoot: noticeSourceRoot,
       });
       if (swift) {

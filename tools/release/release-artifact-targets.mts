@@ -491,9 +491,10 @@ function postgresToolsNativeRows(prefix, declaredTargets = undefined) {
   return rows;
 }
 
-function postgresToolsWasixRows(prefix) {
+function postgresToolsWasixRows(prefix, declaredTargets = undefined) {
   const product = 'postgres-tools-wasix';
-  const targets = productTargets(product, PRODUCT_PRESETS[product], WASIX_TARGETS, prefix);
+  const targets =
+    declaredTargets ?? productTargets(product, PRODUCT_PRESETS[product], WASIX_TARGETS, prefix);
   const rows = targets.map((target) => {
     const portable = target === 'portable';
     const platform = DESKTOP_TARGETS[target];
@@ -523,9 +524,11 @@ function postgresToolsWasixRows(prefix) {
   return rows;
 }
 
-function liboliphauntWasixRows(prefix) {
+function liboliphauntWasixRows(prefix, declaredTargets = undefined) {
   const product = 'liboliphaunt-wasix';
-  const targets = new Set(productTargets(product, PRODUCT_PRESETS[product], WASIX_TARGETS, prefix));
+  const targets = new Set(
+    declaredTargets ?? productTargets(product, PRODUCT_PRESETS[product], WASIX_TARGETS, prefix),
+  );
   if (!targets.has('portable')) {
     fail(prefix, `Moon release metadata for ${product} must include the portable runtime target`);
   }
@@ -561,14 +564,12 @@ function liboliphauntWasixRows(prefix) {
   return rows;
 }
 
-function liboliphauntWasixPostmasterRows(prefix) {
+function liboliphauntWasixPostmasterRows(prefix, declaredTargets = undefined) {
   const product = 'liboliphaunt-wasix-postmaster';
   const rows = [];
-  for (const target of productTargets(
-    product,
-    PRODUCT_PRESETS[product],
-    WASIX_POSTMASTER_TARGETS,
-    prefix,
+  for (const target of (
+    declaredTargets ??
+    productTargets(product, PRODUCT_PRESETS[product], WASIX_POSTMASTER_TARGETS, prefix)
   ).sort(compareText)) {
     const platform = DESKTOP_TARGETS[target];
     rows.push({
@@ -706,14 +707,11 @@ export function nativeRuntimeArtifactRows(
     : postgresToolsNativeRows(prefix, targets);
 }
 
-function wasixNapiRows(prefix) {
+function wasixNapiRows(prefix, declaredTargets = undefined) {
   const product = 'oliphaunt-wasix-napi';
   const rows = [];
-  for (const target of productTargets(
-    product,
-    PRODUCT_PRESETS[product],
-    WASIX_NAPI_TARGETS,
-    prefix,
+  for (const target of (
+    declaredTargets ?? productTargets(product, PRODUCT_PRESETS[product], WASIX_NAPI_TARGETS, prefix)
   ).sort(compareText)) {
     const platform = DESKTOP_TARGETS[target];
     rows.push({
@@ -783,6 +781,32 @@ export function databaseResourceArtifactRows(contract = undefined) {
   }
   rows.push(githubChecksumRow('database-resources'));
   return rows;
+}
+
+/** Project the maintained WASIX artifact contracts from explicit release targets. */
+export function wasixArtifactRows(
+  product,
+  declaredTargets,
+  prefix = 'release-artifact-targets.mts',
+) {
+  const renderers = {
+    'liboliphaunt-wasix': { render: liboliphauntWasixRows, targets: WASIX_TARGETS },
+    'postgres-tools-wasix': { render: postgresToolsWasixRows, targets: WASIX_TARGETS },
+    'liboliphaunt-wasix-postmaster': {
+      render: liboliphauntWasixPostmasterRows,
+      targets: WASIX_POSTMASTER_TARGETS,
+    },
+    'oliphaunt-wasix-napi': { render: wasixNapiRows, targets: WASIX_NAPI_TARGETS },
+  };
+  const descriptor = renderers[product];
+  if (!descriptor) fail(prefix, `not a WASIX artifact product: ${product}`);
+  const targets = productTargetsFromConfig(
+    product,
+    { targets: declaredTargets },
+    descriptor.targets,
+    prefix,
+  );
+  return descriptor.render(prefix, [...targets]);
 }
 
 export function rawArtifactTargetRows(prefix = 'release-artifact-targets.mts') {

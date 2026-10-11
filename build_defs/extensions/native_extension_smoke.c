@@ -90,6 +90,7 @@ int main(int argc, char **argv) {
     OliphauntConfig config = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .pgdata = argv[1], .runtime_dir = argv[2],
+        .module_dir = getenv("OLIPHAUNT_SMOKE_MODULE_DIR"),
         .username = "postgres", .database = "postgres",
         .startup_args = startup_arg_count ? startup_args : NULL,
         .startup_arg_count = startup_arg_count,
