@@ -131,11 +131,17 @@ function externalBunEntrypoints() {
   const build = readFileSync(path.join(repository, 'fixture.BUILD.bazel'));
   writeFileSync(path.join(repository, 'BUILD.bazel'), build);
   mkdirSync(path.join(repository, 'nested'));
-  writeFileSync(path.join(repository, 'nested/BUILD.bazel'), build);
+  writeFileSync(
+    path.join(repository, 'nested/BUILD.bazel'),
+    readFileSync(path.join(repository, 'nested.fixture.BUILD.bazel')),
+  );
   writeFileSync(path.join(repository, 'WORKSPACE.bazel'), '');
   const injection = `--inject_repository=conformance_external_bun=${repository}`;
   const packages = ['@conformance_external_bun//', '@conformance_external_bun//nested'];
   bazel('test', [
+    '//build_defs/foundation:bun_toolchain_test',
+    '//build_defs/foundation:native_entry_test',
+    '//build_defs/foundation:toolchain_metadata_test',
     ...packages.flatMap((pkg) =>
       ['test', 'script_test', 'toolchain_test'].map((name) => `${pkg}:${name}`),
     ),
@@ -147,7 +153,9 @@ function externalBunEntrypoints() {
     const result = bazel('run', [`${pkg}:binary`, injection, '--noshow_progress']);
     assert.equal(result.stdout.trim(), 'external Bun entrypoint');
   }
-  console.log(JSON.stringify({ externalBunEntrypoints: { tests: 6, binaries: 2 } }));
+  console.log(
+    JSON.stringify({ externalBunEntrypoints: { mainTests: 3, externalTests: 6, binaries: 2 } }),
+  );
 }
 
 function writeModel() {

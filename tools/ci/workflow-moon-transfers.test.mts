@@ -75,7 +75,8 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
         '-m',
         'fixture',
       ]);
-      const env = { ...process.env, MOON_CACHE: 'off' };
+      // Moon tasks inherit their parent's workspace; this proof owns a separate one.
+      const env = { ...process.env, MOON_CACHE: 'off', MOON_WORKSPACE_ROOT: scratch };
       delete env.MOON_BASE;
       delete env.MOON_HEAD;
       const run = () =>
