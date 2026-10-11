@@ -19,8 +19,8 @@ import {
   cargoPackageRelativePathParts,
   createDeterministicTar,
   fitCargoPayloadParts,
-  packageGeneratedCargoSource,
   packagedCargoManifestText,
+  packageGeneratedCargoSource,
   parseCargoPackageNameVersion,
 } from './cargo-source-package.mts';
 import { readPortableArchiveEntries } from './portable-archive.mts';
@@ -274,4 +274,49 @@ test('generated Cargo carriers match Cargo-selected source bytes and reject link
     /regular files/,
   );
   assert.throws(() => createDeterministicTar(source, 'unsafe', {}), /regular files/);
+});
+
+test('generated Cargo carriers apply explicit archive modes and preserve source modes by default', (t) => {
+  const { root, source } = fixture(t, 'generated-cargo-modes');
+  writeFileSync(path.join(source, 'Cargo.toml'), manifest('generated-modes'));
+  const writable = path.join(source, 'src/lib.rs');
+  const executable = path.join(source, 'build.rs');
+  writeFileSync(writable, 'pub const VALUE: u32 = 42;\n');
+  writeFileSync(executable, 'fn main() {}\n');
+  chmodSync(writable, 0o666);
+  chmodSync(executable, 0o755);
+
+  const archive = (directory, options = {}) =>
+    readPortableArchiveEntries(
+      packageGeneratedCargoSource(
+        path.join(source, 'Cargo.toml'),
+        path.join(root, directory),
+        options,
+      ),
+    );
+  const fixed = archive('fixed', { fixedFileMode: 0o644 });
+  for (const [name, entry] of fixed) {
+    assert.equal(entry.mode, entry.isFile ? 0o644 : 0o755, name);
+  }
+  assert.equal(
+    fixed.get('generated-modes-0.1.0/src/lib.rs').data().toString(),
+    readFileSync(writable, 'utf8'),
+  );
+  assert.equal(
+    fixed.get('generated-modes-0.1.0/build.rs').data().toString(),
+    readFileSync(executable, 'utf8'),
+  );
+
+  const preserved = archive('preserved');
+  assert.equal(
+    preserved.get('generated-modes-0.1.0/src/lib.rs').mode,
+    statSync(writable).mode & 0o777,
+  );
+  assert.equal(
+    preserved.get('generated-modes-0.1.0/build.rs').mode,
+    statSync(executable).mode & 0o777,
+  );
+  if (process.platform !== 'win32') {
+    assert.equal(preserved.get('generated-modes-0.1.0/build.rs').mode, 0o755);
+  }
 });

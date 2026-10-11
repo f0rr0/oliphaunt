@@ -366,12 +366,17 @@ export function finishCargoPackageSource(state, packageMetadata, options = {}) {
 
 function freezeCargoPackageSource(
   { stageDir, packageRoot, cratePath, expectedMembers },
-  { fail = null, rel = String, packageSizeLimitBytes = CARGO_PACKAGE_SIZE_LIMIT_BYTES } = {},
+  {
+    fail = null,
+    rel = String,
+    packageSizeLimitBytes = CARGO_PACKAGE_SIZE_LIMIT_BYTES,
+    fixedFileMode = undefined,
+  } = {},
 ) {
   rmSync(cratePath, { force: true });
   writeFileSync(
     cratePath,
-    canonicalGzipSync(createDeterministicTar(stageDir, packageRoot, { fail })),
+    canonicalGzipSync(createDeterministicTar(stageDir, packageRoot, { fail, fixedFileMode })),
   );
   requireExactCrateMembers(cratePath, packageRoot, expectedMembers, { fail, rel });
   const size = statSync(cratePath).size;

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { zstdCompressSync, zstdDecompressSync } from 'node:zlib';
@@ -127,6 +127,8 @@ async function fixture(target: Target = 'portable', version = '7.8.9', runtimeVe
     const file = path.join(payload, relative);
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, bytes);
+    // Public archive modes must not inherit writable Windows-style input modes.
+    await chmod(file, 0o666);
   }
   const spec: ToolsCarrierSpec = {
     ...facts,

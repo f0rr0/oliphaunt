@@ -107,6 +107,7 @@ export function cargoPackage(crateDir, targetDir) {
     root: ROOT,
     fail,
     rel,
+    fixedFileMode: 0o644,
   });
 }
 

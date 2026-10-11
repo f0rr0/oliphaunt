@@ -185,9 +185,11 @@ test('runtime Cargo rejects wrong carrier identity, unsafe sources, missing noti
       output,
     ),
   ).toThrow('Duplicate declared WASIX Cargo payload leaf');
-  expect(() =>
-    packageRuntimeCargo({ ...spec, payloadFiles: [spec.sources['Cargo.toml']] }, output),
-  ).toThrow('non-portable Cargo package path');
+  const outsideManifest = path.join(root, 'outside-Cargo.toml');
+  await writeFile(outsideManifest, await readFile(spec.sources['Cargo.toml']));
+  expect(() => packageRuntimeCargo({ ...spec, payloadFiles: [outsideManifest] }, output)).toThrow(
+    'non-portable Cargo package path',
+  );
   expect(() => packageRuntimeCargo({ ...spec, notices: {} }, output)).toThrow();
   manifest.extensions = ['omitted extension'];
   await writeFile(manifestPath, JSON.stringify(manifest));
