@@ -1,0 +1,77 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("//build_defs/android:toolchain.bzl", "android_artifact")
+load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
+load(":platform_config.bzl", "NATIVE_COMPATIBLE")
+load(":compiler_probes.bzl", "native_compiler_probe_targets")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.bzl", "*.bazel", "*.sh", "*.mts", "*.c", "*.cc", "patches/*.patch"]))
+
+config_setting(name = "linux_x86_64", constraint_values = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
+config_setting(name = "linux_x86_64_gnu_2_28", constraint_values = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.28"])
+config_setting(name = "linux_aarch64_gnu_2_28", constraint_values = ["@platforms//os:linux", "@platforms//cpu:aarch64", "@zig_sdk//libc:gnu.2.28"])
+config_setting(name = "android_arm64", constraint_values = ["@platforms//os:android", "@platforms//cpu:aarch64", "//build_defs/android:ndk_runtime"])
+config_setting(name = "android_x86_64", constraint_values = ["@platforms//os:android", "@platforms//cpu:x86_64", "//build_defs/android:ndk_runtime"])
+config_setting(name = "android", constraint_values = ["@platforms//os:android", "//build_defs/android:ndk_runtime"])
+config_setting(name = "macos_arm64", constraint_values = ["@platforms//os:macos", "@platforms//cpu:aarch64"])
+config_setting(name = "windows_x64", constraint_values = ["@platforms//os:windows", "@platforms//cpu:x86_64"])
+
+platform(name = "linux_x86_64_glibc_2_28", constraint_values = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.28"])
+platform(name = "linux_aarch64_glibc_2_28", constraint_values = ["@platforms//os:linux", "@platforms//cpu:aarch64", "@zig_sdk//libc:gnu.2.28"])
+
+native_compiler_probe_targets(name = "compiler_probe")
+
+cc_test(
+    name = "probe_process_test",
+    srcs = ["probe-process.test.cc"],
+    copts = select({"@platforms//os:windows": ["/std:c++17"], "//conditions:default": ["-std=c++17"]}),
+    deps = ["@rules_cc_autoconf//autoconf/private/checker:native_process"],
+    size = "small",
+)
+
+bun_test(
+    name = "windows_exports_test",
+    entry_point = "windows-exports.test.mts",
+    data = ["windows-exports.mts"],
+    size = "small",
+)
+
+bun_script_test(
+    name = "host_runtime_test_helpers_test",
+    entry_point = "host-runtime-test-helpers.test.mts",
+    data = ["host-runtime-test-helpers.mts", "//:tools/packaging/portable-archive.mts"],
+    size = "small",
+)
+
+bun_script_test(
+    name = "icu_data_object_test",
+    entry_point = "icu-data-object.test.mts",
+    args = ["$(location @icu_data//:data)", "$(location @icu//:common/unicode/uvernum.h)", "$(location @icu//:common/unicode/utypes.h)"],
+    data = ["icu-data-object.mts", "@icu_data//:data", "@icu//:common/unicode/uvernum.h", "@icu//:common/unicode/utypes.h"],
+    size = "small",
+)
+
+cc_test(
+    name = "crypto_smoke_test",
+    srcs = ["crypto_smoke.c"],
+    deps = ["@openssl//:crypto"],
+    env = {"OPENSSL_MODULES": "/nonexistent-oliphaunt-provider", "OPENSSL_CONF": "/nonexistent-oliphaunt-config"},
+    target_compatible_with = NATIVE_COMPATIBLE,
+)
+
+[android_artifact(
+    name = "android_runtime_" + name,
+    artifact = "//src/native/runtime:liboliphaunt.so",
+    platform = "//build_defs/android:android_" + name,
+    output = "android-" + name + "-liboliphaunt.so",
+) for name in ["arm64", "x86_64"]]
+
+bun_script_test(
+    name = "android_runtime_abi_test",
+    entry_point = "android-runtime-abi.test.mts",
+    args = ["$(location :android_runtime_arm64)", "$(location :android_runtime_x86_64)", "$(location @android_ndk//:nm)", "$(location //src/native/runtime:include/oliphaunt.h)"],
+    data = [":android_runtime_arm64", ":android_runtime_x86_64", "@android_ndk//:nm", "//src/native/runtime:include/oliphaunt.h", "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//tools/release:platform-compatibility-policy.mts"],
+    size = "medium",
+    tags = ["manual"],
+)

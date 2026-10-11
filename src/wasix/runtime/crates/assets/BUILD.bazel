@@ -1,0 +1,9 @@
+load("//build_defs/languages:rust.bzl", "cargo_generator_test")
+load("//build_defs/languages:wasix.bzl", "wasix_runtime_carrier")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["Cargo.toml"])
+
+wasix_runtime_carrier(payload = "//src/wasix/runtime:portable_payload", portable = True)
+
+cargo_generator_test(srcs = ["build-support.rs"])

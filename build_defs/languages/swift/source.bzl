@@ -1,0 +1,127 @@
+"""The final SwiftPM source carrier, using its declared frozen native pin."""
+
+load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS")
+load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+
+def _swift_source_impl(ctx):
+    sources = {}
+    inputs = ctx.files.sources + [ctx.file.generated_swift, ctx.file.public_header, ctx.file.bindings_archive, ctx.file.carrier, ctx.file.xcframework, ctx.file.runtime_resources, ctx.file.owner_catalog, ctx.file._packager] + ctx.files._helpers
+    prefix = ctx.label.package + "/"
+    for file in ctx.files.sources:
+        member = file.short_path[len(prefix):] if file.short_path.startswith(prefix) else file.short_path
+        if member in sources:
+            fail("duplicate Swift source member " + member)
+        sources[member] = file.path
+    generators = {}
+    for file in ctx.files.generators:
+        generators[file.basename.removesuffix(".mts") + ".mjs"] = file.path
+        inputs.append(file)
+    specification = ctx.actions.declare_file(ctx.label.name + ".sources.json")
+    ctx.actions.write(specification, json.encode({
+        "version": ctx.attr.version,
+        "nativeVersion": ctx.attr.native_version,
+        "sources": sources,
+        "generatedSwift": ctx.file.generated_swift.path,
+        "publicHeader": ctx.file.public_header.path,
+        "bindingsArchive": ctx.file.bindings_archive.path,
+        "carrier": ctx.file.carrier.path,
+        "xcframework": ctx.file.xcframework.path,
+        "runtimeResources": ctx.file.runtime_resources.path,
+        "generators": generators,
+        "ownerCatalog": ctx.file.owner_catalog.path,
+    }))
+    archive = ctx.actions.declare_file(ctx.label.name + "/Oliphaunt-source.zip")
+    manifest = ctx.actions.declare_file(ctx.label.name + "/Package.swift.release")
+    tree = ctx.actions.declare_directory(ctx.label.name + "/release-tree")
+    generator_files = [ctx.actions.declare_file(ctx.label.name + "/extension-generator/" + name) for name in ["extension-resource-inventory.mjs", "render-extension-products.mjs", "swift-carrier-resolver.mjs", "extension-owner-catalog.json"]]
+    outputs = [archive, manifest, tree] + generator_files
+    ctx.actions.run(
+        executable = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun,
+        arguments = [ctx.file._packager.path, archive.dirname, specification.path],
+        inputs = depset(inputs + [specification]),
+        outputs = outputs,
+        mnemonic = "OliphauntSwiftSourceEnvelope",
+        use_default_shell_env = False,
+    )
+    return [DefaultInfo(files = depset(outputs)), OutputGroupInfo(
+        source_archive = depset([archive]),
+        manifest = depset([manifest]),
+        tree = depset([tree]),
+        resource_inventory = depset([generator_files[0]]),
+        extension_generator = depset([generator_files[1]]),
+        carrier_resolver = depset([generator_files[2]]),
+        owner_catalog = depset([generator_files[3]]),
+    )]
+
+_swift_source = rule(
+    implementation = _swift_source_impl,
+    toolchains = [BUN_TOOLCHAIN_TYPE],
+    attrs = {
+        "version": attr.string(mandatory = True),
+        "native_version": attr.string(mandatory = True),
+        "sources": attr.label_list(allow_files = True, mandatory = True),
+        "generated_swift": attr.label(allow_single_file = [".swift"], mandatory = True),
+        "public_header": attr.label(default = Label("//src/native/runtime:include/oliphaunt.h"), allow_single_file = [".h"]),
+        "bindings_archive": attr.label(allow_single_file = [".zip"], mandatory = True),
+        "carrier": attr.label(allow_single_file = True, mandatory = True),
+        "xcframework": attr.label(allow_single_file = [".zip"], mandatory = True),
+        "runtime_resources": attr.label(allow_single_file = [".tar.gz"], mandatory = True),
+        "owner_catalog": attr.label(allow_single_file = [".json"], mandatory = True),
+        "generators": attr.label_list(allow_files = [".mts"], mandatory = True),
+        "_packager": attr.label(default = Label("//build_defs/languages/swift:source-package.mts"), allow_single_file = True),
+        "_helpers": attr.label_list(default = [
+            Label("//src/native/sdks/swift:tools/swift-native-carrier-contract.mts"),
+            Label("//src/native/sdks/swift:tools/swift-release-manifest.mts"),
+            Label("//src/native/sdks/swift:tools/swift-xcframework-contract.mts"),
+            Label("//:tools/packaging/archive-directory.mts"),
+            Label("//:tools/packaging/portable-archive.mts"),
+            Label("//:tools/packaging/release-notices.mts"),
+            Label("//:tools/packaging/release-directory-safety.mts"),
+            Label("//:tools/packaging/emit-javascript.mts"),
+        ], allow_files = True),
+    },
+)
+
+def swift_source_package(name, sources, bindings_archive, bindings_release_assets, generated_swift):
+    product = "oliphaunt-swift"
+    descriptor = PRODUCTS[product]
+    _swift_source(
+        name = name,
+        version = descriptor["version"],
+        native_version = descriptor["compatibility_versions"]["liboliphaunt-native"],
+        sources = sources,
+        generated_swift = generated_swift,
+        bindings_archive = bindings_archive,
+        carrier = "@swift_frozen_native//:carrier",
+        xcframework = "@swift_frozen_native//:xcframework_archive",
+        runtime_resources = "@swift_frozen_native//:runtime_resources_archive",
+        owner_catalog = "//src/extensions/generated/sdk:extensions.json",
+        generators = ["tools/extension-resource-inventory.mts", "tools/render-extension-products.mts", "tools/swift-carrier-resolver.mts"],
+        target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64"],
+    )
+    packages = []
+    for group, artifact_name in [
+        ("source_archive", "Oliphaunt-source.zip"),
+        ("manifest", "Package.swift.release"),
+        ("tree", "release-tree"),
+        ("tree", "oliphaunt-react-native-ios-carriers.json"),
+        ("resource_inventory", "extension-resource-inventory.mjs"),
+        ("extension_generator", "render-extension-products.mjs"),
+        ("carrier_resolver", "swift-carrier-resolver.mjs"),
+        ("owner_catalog", "extension-owner-catalog.json"),
+    ]:
+        suffix = artifact_name.replace(".", "_")
+        native.filegroup(name = "release_input_" + suffix, srcs = [":" + name], output_group = group)
+        package = "shipping_" + suffix
+        shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_input_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = "portable", role = "release-input")
+        packages.append(":" + package)
+    for group, suffix, artifact_name, configuration in [
+        ("archive", "bindings", "oliphaunt-swift-" + descriptor["version"] + "-bindings.xcframework.zip", "apple-xcframework"),
+        ("checksums", "checksums", "oliphaunt-swift-" + descriptor["version"] + "-release-assets.sha256", "portable"),
+    ]:
+        native.filegroup(name = "release_asset_" + suffix, srcs = [bindings_release_assets], output_group = group)
+        package = "shipping_" + suffix
+        shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_asset_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = configuration, role = "github-release-asset")
+        packages.append(":" + package)
+    shipping_export(name = "shipping_export", packages = packages)

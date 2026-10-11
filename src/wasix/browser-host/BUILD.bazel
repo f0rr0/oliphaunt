@@ -1,0 +1,61 @@
+load("@browser_cargo//:defs.bzl", "all_crate_deps", "aliases")
+load("@browser_npm//:defs.bzl", "BROWSER_NPM")
+load("@browser_sources//:metadata.bzl", "BROWSER")
+load("@rules_rust//cargo:defs.bzl", "cargo_toml_env_vars")
+load("@rules_rust//rust:defs.bzl", "rust_shared_library")
+load("//build_defs/wasix/browser:defs.bzl", "browser_bindings", "browser_bundle", "browser_host_package", "browser_wasm")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["source.toml", "build-provenance.mts", "build-sdk.sh"] + glob(["patches/*.patch"]))
+
+cargo_toml_env_vars(
+    name = "cargo_env",
+    src = "@browser_sources//:wasmer-js/Cargo.toml",
+    workspace = "@browser_sources//:cargo/Cargo.toml",
+)
+
+rust_shared_library(
+    name = "host_crate",
+    crate_name = "wasmer_js",
+    crate_root = "@browser_sources//:wasmer-js/src/lib.rs",
+    srcs = ["@browser_sources//:rust_sources"],
+    compile_data = ["@browser_sources//:wasmer-js/src-js/worker.js"],
+    edition = BROWSER["rust"]["edition"],
+    deps = all_crate_deps(normal = True, package_name = "wasmer-js"),
+    proc_macro_deps = all_crate_deps(proc_macro = True, package_name = "wasmer-js"),
+    aliases = aliases(package_name = "wasmer-js"),
+    rustc_env_files = [":cargo_env"],
+    rustc_flags = ["-Copt-level=" + str(BROWSER["rust"]["profile"]["opt-level"])],
+)
+
+browser_wasm(name = "host_wasm", crate = ":host_crate", lto = "fat" if BROWSER["rust"]["profile"]["lto"] else "off")
+
+browser_bindings(
+    name = "bindings",
+    input = ":host_wasm",
+    compiler = "@browser_wasm_bindgen_linux_x64//:wasm-bindgen",
+    mode = "bindgen",
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+browser_bindings(
+    name = "optimized_bindings",
+    input = ":bindings",
+    compiler = "@browser_binaryen_linux_x64//:bin/wasm-opt",
+    mode = "optimize",
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+browser_bundle(
+    name = "dist",
+    bindings = ":optimized_bindings",
+    sources = ["@browser_sources//:rollup_sources"],
+    packages = BROWSER_NPM,
+)
+
+browser_host_package(
+    name = "host",
+    dist = ":dist",
+    std_receipt = "//build_defs/wasix/browser/std:construction_receipt",
+    packages = BROWSER_NPM,
+)

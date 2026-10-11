@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { archiveDirectory } from '../archive-directory.mts';
+
 export { archiveDirectory };
 
 export function fail(message) {
@@ -116,9 +117,13 @@ export function elfFixture({
     note.write('Android\0', 12, 'ascii');
     note.writeUInt32LE(androidApi, 20);
   }
-  const noteOffset = align(64 + versionBytes.length, 4);
+  const programSize = androidApi !== null && type !== 1 ? 56 : 0;
+  const dataOffset = 64 + programSize;
+  const noteOffset = align(dataOffset + versionBytes.length, 4);
   const sectionOffset = note === null ? 0 : align(noteOffset + note.length, 8);
-  const buffer = Buffer.alloc(note === null ? 64 + versionBytes.length : sectionOffset + 128);
+  const buffer = Buffer.alloc(
+    note === null ? dataOffset + versionBytes.length : sectionOffset + 128,
+  );
   Buffer.from([0x7f, 0x45, 0x4c, 0x46]).copy(buffer, 0);
   buffer[4] = 2;
   buffer[5] = 1;
@@ -127,7 +132,17 @@ export function elfFixture({
   buffer.writeUInt16LE(machine, 18);
   buffer.writeUInt32LE(1, 20);
   buffer.writeUInt16LE(64, 52);
-  versionBytes.copy(buffer, 64);
+  versionBytes.copy(buffer, dataOffset);
+  if (programSize) {
+    buffer.writeBigUInt64LE(64n, 32);
+    buffer.writeUInt16LE(56, 54);
+    buffer.writeUInt16LE(1, 56);
+    buffer.writeUInt32LE(1, 64);
+    buffer.writeUInt32LE(5, 68);
+    buffer.writeBigUInt64LE(BigInt(buffer.length), 96);
+    buffer.writeBigUInt64LE(BigInt(buffer.length), 104);
+    buffer.writeBigUInt64LE(16_384n, 112);
+  }
   if (note !== null) {
     note.copy(buffer, noteOffset);
     buffer.writeBigUInt64LE(BigInt(sectionOffset), 40);

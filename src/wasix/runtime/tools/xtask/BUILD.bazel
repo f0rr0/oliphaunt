@@ -1,0 +1,34 @@
+load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_package_env")
+load("@aot_serializer_crates//:defs.bzl", serializer_crate_deps = "crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Cargo.toml"])
+
+cargo_package_env()
+
+# Native Rust compilation of the existing bounded WASM metadata utility.
+cargo_binary(name = "xtask", source = "src/main.rs", proc_macro_names = ["async-trait"])
+
+cargo_binary(
+    name = "aot_serializer",
+    source = "src/main.rs",
+    features = ["aot-serializer"],
+    proc_macro_names = ["async-trait"],
+    crate_dependencies = serializer_crate_deps,
+)
+
+rust_test(
+    name = "export_policy_test",
+    crate = ":xtask",
+    args = ["declared_"],
+    size = "small",
+)
+
+rust_test(
+    name = "aot_target_test",
+    crate = ":aot_serializer",
+    args = ["target"],
+    size = "small",
+)

@@ -1,0 +1,103 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load(":llvm.bzl", "exec_files")
+load(":npm.bzl", "RUNTIME_NPM_HELPERS", "RUNTIME_NPM_NOTICES")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.bzl", "*.bazel", "*.mts"]))
+
+
+bun_test(
+    name = "package_test",
+    entry_point = "package.test.mts",
+    data = [
+        "package.mts",
+        "//:tools/packaging/archive-directory.mts",
+        "//:tools/packaging/portable-archive.mts",
+    ],
+    size = "small",
+)
+
+bun_test(
+    name = "runtime_npm_test",
+    entry_point = "npm.test.mts",
+    data = ["npm.mts"] + RUNTIME_NPM_HELPERS + RUNTIME_NPM_NOTICES.keys(),
+    size = "small",
+)
+
+platform(
+    name = "portable",
+    constraint_values = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+# These source selectors avoid acquiring foreign LLVM archives during a native
+# serializer build. The forwarding rules select in execution configuration.
+config_setting(name = "llvm_linux_x64", constraint_values = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
+config_setting(name = "llvm_linux_arm64", constraint_values = ["@platforms//os:linux", "@platforms//cpu:aarch64"])
+config_setting(name = "llvm_macos_arm64", constraint_values = ["@platforms//os:macos", "@platforms//cpu:aarch64"])
+config_setting(name = "llvm_windows_x64", constraint_values = ["@platforms//os:windows", "@platforms//cpu:x86_64"])
+
+filegroup(
+    name = "llvm_files_for_host",
+    srcs = select({
+        ":llvm_linux_x64": ["@wasmer_llvm_linux_x64//:files"],
+        ":llvm_linux_arm64": ["@wasmer_llvm_linux_arm64//:files"],
+        ":llvm_macos_arm64": ["@wasmer_llvm_macos_arm64//:files"],
+        ":llvm_windows_x64": ["@wasmer_llvm_windows_x64//:files"],
+    }),
+)
+
+filegroup(
+    name = "llvm_env_for_host",
+    srcs = select({
+        ":llvm_linux_x64": ["@wasmer_llvm_linux_x64//:llvm.env"],
+        ":llvm_linux_arm64": ["@wasmer_llvm_linux_arm64//:llvm.env"],
+        ":llvm_macos_arm64": ["@wasmer_llvm_macos_arm64//:llvm.env"],
+        ":llvm_windows_x64": ["@wasmer_llvm_windows_x64//:llvm.env"],
+    }),
+)
+
+exec_files(name = "wasmer_llvm_files", srcs = [":llvm_files_for_host"])
+exec_files(name = "wasmer_llvm_env", srcs = [":llvm_env_for_host"])
+
+# Resolution reads only these constraints; acquire the compiler payload only
+# when a configured wasm32/WASI target selects its implementation.
+toolchain(
+    name = "cc_toolchain",
+    toolchain = "@wasix_toolchain//:compiler",
+    toolchain_type = "@rules_cc//cc:toolchain_type",
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    target_compatible_with = ["@platforms//os:wasi", "@platforms//cpu:wasm32"],
+)
+
+cc_library(
+    name = "config_probe",
+    linkstatic = True,
+    srcs = ["config_probe.c"],
+    deps = ["@postgres_wasix//:server_headers"],
+    copts = ["-std=gnu11", "-Werror=implicit-function-declaration", "-Werror=ignored-attributes"],
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+cc_test(
+    name = "bridge_abi_test",
+    size = "small",
+    srcs = [
+        "//src/wasix/runtime:assets/build/wasix_shim/oliphaunt_wasix_bridge.c",
+        "//src/wasix/runtime:assets/build/wasix_shim/oliphaunt_wasix_bridge_abi_test.c",
+    ],
+    copts = ["-std=c11", "-Wall", "-Wextra"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+cc_test(
+    name = "initdb_shim_abi_test",
+    size = "small",
+    srcs = [
+        "//src/wasix/runtime:assets/build/wasix_shim/oliphaunt_wasix_initdb_shim.c",
+        "//src/wasix/runtime:assets/build/wasix_shim/oliphaunt_wasix_initdb_shim_abi_test.c",
+    ],
+    copts = ["-std=c11", "-Wall", "-Wextra"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)

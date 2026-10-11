@@ -1,4 +1,5 @@
 /target/
+/bazel-*
 /.local/
 /.moon/cache/
 node_modules/

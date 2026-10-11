@@ -1,10 +1,9 @@
 import { readFileSync } from 'node:fs';
 
-const contract = JSON.parse(
-  readFileSync(new URL('../contracts/contract.json', import.meta.url), 'utf8'),
-);
-
 export function seedCarrierIdentities() {
+  const contract = JSON.parse(
+    readFileSync(new URL('../contracts/contract.json', import.meta.url), 'utf8'),
+  );
   return [
     ...Object.keys(contract.compatibilityKeys.native).map((target) => ({
       family: 'native',

@@ -1,0 +1,7 @@
+load("//build_defs/extensions:contrib.bzl", "native_contrib_members")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["carriers.toml"])
+
+native_contrib_members(crypto = "@openssl//:crypto")

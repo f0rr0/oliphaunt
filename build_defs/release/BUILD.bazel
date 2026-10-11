@@ -1,0 +1,31 @@
+load("//build_defs/foundation:bun.bzl", "bun_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.bzl", "*.mts", "*-source.json", "*-releases.json", "*-completed-publication.json", "*-npm-*.json", "testdata/*.json"]))
+
+bun_test(
+    name = "frozen_native_carrier_test",
+    entry_point = "frozen-native-carrier.test.mts",
+    data = ["frozen-native-carrier.mts", "//src/native/sdks/swift:tools/swift-native-carrier-contract.mts", "//src/native/sdks/swift:tools/native-legal-source-basis.mts"] + glob(["*-source.json", "*-releases.json", "*-completed-publication.json", "testdata/*.json"]),
+    size = "small",
+)
+
+bun_test(
+    name = "frozen_native_runtime_test",
+    entry_point = "frozen-native-runtime.test.mts",
+    data = ["frozen-native-runtime.mts", "native-0.3.2-releases.json", "native-0.3.2-completed-publication.json", "native-0.3.3-releases.json", "native-0.3.3-completed-publication.json",
+        "//src/native/sdks/rust:release.toml", "//src/native/sdks/rust:Cargo.toml", "//tools/release:compatibility-version-parser.mts",
+        "//src/native/sdks/kotlin:release.toml", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:src/main/resources/dev/oliphaunt/android/liboliphaunt.version",
+        "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts"],
+    size = "small",
+)
+
+bun_test(
+    name = "frozen_native_npm_test",
+    entry_point = "frozen-native-npm.test.mts",
+    data = ["frozen-native-npm.mts", "frozen-native-runtime.mts", "native-0.3.2-releases.json", "native-0.3.2-completed-publication.json", "native-0.3.2-npm-linux-x64-gnu.json", "native-0.3.2-npm-linux-x64-gnu-attestations.json",
+        "//src/native/sdks/ts:release.toml", "//src/native/sdks/ts:package.json", "//src/native/runtime:release.toml", "//tools/release:compatibility-version-parser.mts",
+        "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts"],
+    size = "small",
+)

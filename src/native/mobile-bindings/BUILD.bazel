@@ -1,0 +1,24 @@
+load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("//build_defs/languages:mobile.bzl", "mobile_bindgen")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["Cargo.toml", "uniffi.toml"])
+filegroup(
+    name = "license_inputs",
+    srcs = ["dependency-licenses.json", "tools/dependency-license-contract.mts"] + glob(["dependency-license-blobs/*.base64"]),
+)
+
+# The conventional mobile dependency disables the desktop SDK's default
+# broker implementation. Keep this variant explicit in the native graph.
+PATH_DEPS = {
+    "oliphaunt": "//src/native/sdks/rust:mobile_lib",
+    "liboliphaunt-native-bindings": "//src/native/rust-bindings:lib",
+}
+
+cargo_package_env()
+cargo_generator(path_dependencies = PATH_DEPS)
+cargo_library(name = "shared", kind = "cdylib", path_dependencies = PATH_DEPS, build_script = ":build_script")
+cargo_library(name = "static", kind = "staticlib", path_dependencies = PATH_DEPS, build_script = ":build_script")
+cargo_library(name = "lib", path_dependencies = PATH_DEPS, build_script = ":build_script")
+cargo_library_test()
+mobile_bindgen()

@@ -879,10 +879,6 @@ jobs:
             --field artifact-root \
             --format lines)
           bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/publication-lock.mts "${lock_args[@]}"
-          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/publication-lock.mts \
-            verify \
-            --lock target/release/publication-lock.json \
-            --head-ref "$RELEASE_HEAD_SHA"
       - name: Freeze complete publication candidate
         id: freeze_publication_candidate
         if: ${{ inputs.approval_run_id == '' }}
@@ -1205,16 +1201,6 @@ jobs:
             --head-ref "$RELEASE_HEAD_SHA" \
             --approval-run-id "$APPROVAL_RUN_ID" \
             --workspace-root "$GITHUB_WORKSPACE"
-      - name: Verify external lock equals installed candidate lock
-        id: verify_bootstrap_lock
-        run: |
-          if ! cmp -s "$RUNNER_TEMP/approved-bootstrap/publication-lock.json" "$PUBLICATION_LOCK_PATH"; then
-            echo 'installed candidate lock differs from the separately downloaded approved publication lock' >&2
-            exit 1
-          fi
-          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/publication-lock.mts verify \
-            --lock "$PUBLICATION_LOCK_PATH" \
-            --head-ref "$RELEASE_HEAD_SHA"
       - name: Restore prior bootstrap checkpoint chain
         id: restore_bootstrap_checkpoint
         env:

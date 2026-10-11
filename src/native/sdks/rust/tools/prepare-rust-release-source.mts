@@ -8,6 +8,7 @@ import {
 } from '../../../../../tools/packaging/release-notices.mts';
 import {
   assertSameNativeTargetSet,
+  nativeCargoPackageName,
   renderUnsupportedNativeTargetGuard,
   rustNativeTargetCfg,
 } from '../../../../../tools/packaging/rust-native-targets.mts';
@@ -42,11 +43,11 @@ function rel(file) {
 }
 
 function liboliphauntCargoPackageName(targetId, packageBase = LIBOLIPHAUNT_NATIVE_PRODUCT) {
-  return `${packageBase}-${targetId}`;
+  return nativeCargoPackageName(packageBase, targetId);
 }
 
 function brokerCargoPackageName(targetId) {
-  return `${BROKER_PRODUCT}-${targetId}`;
+  return nativeCargoPackageName(BROKER_PRODUCT, targetId);
 }
 
 function packageSection(text) {

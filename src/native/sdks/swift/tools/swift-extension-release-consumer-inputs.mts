@@ -83,10 +83,16 @@ function readJson(file, label) {
   }
 }
 
-export function extensionReleaseConsumerInputs({ sourceCarrierFile, extensionCarrierFiles }) {
+export function extensionReleaseConsumerInputs({
+  sourceCarrierFile,
+  extensionCarrierFiles,
+  nativeSourceBasis = undefined,
+}) {
   const sourceCarrier = readJson(sourceCarrierFile, 'source carrier');
   try {
-    validateSelectionNeutralSwiftSourceCarrier(sourceCarrier, sourceCarrierFile);
+    validateSelectionNeutralSwiftSourceCarrier(sourceCarrier, sourceCarrierFile, {
+      sourceBasis: nativeSourceBasis,
+    });
   } catch (cause) {
     fail(cause instanceof Error ? cause.message : String(cause));
   }

@@ -1,15 +1,18 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-
-import {
-  IOS_CARRIER_FILENAME,
-  buildIosCarrierManifest,
-} from '../../swift/tools/ios-carrier-manifest.mts';
 import { fail, requireDir } from '../../../../../tools/packaging/staging.mts';
 import { productDependencyCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
+import {
+  buildIosCarrierManifest,
+  IOS_CARRIER_FILENAME,
+} from '../../swift/tools/ios-carrier-manifest.mts';
 import { pinnedNativeCarrierDirectory } from '../../swift/tools/pinned-native-carrier.mts';
 
-export async function stageArtifacts(artifactRoot, workRoot) {
+export async function stageArtifacts(
+  artifactRoot,
+  workRoot,
+  { nativeSourceBasis = undefined } = {},
+) {
   const releasePackageDir = path.join(workRoot, 'package');
   requireDir(releasePackageDir);
   const producerAssetDir = process.env.OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR;
@@ -30,12 +33,14 @@ export async function stageArtifacts(artifactRoot, workRoot) {
         version: nativeVersion,
         assetDir: producerAssetDir,
         workRoot,
+        sourceBasis: nativeSourceBasis,
       });
   const carrier = buildIosCarrierManifest({
     baseAssetDir: assetDir,
     baseRuntimeVersion: nativeVersion,
     baseCarrierManifest,
     extensionManifests: [],
+    baseSourceBasis: nativeSourceBasis,
   });
   writeFileSync(
     path.join(releasePackageDir, IOS_CARRIER_FILENAME),

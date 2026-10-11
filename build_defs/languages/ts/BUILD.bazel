@@ -1,0 +1,12 @@
+load("//build_defs/foundation:bun.bzl", "bun_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["metadata.mts", "repositories.bzl", "defs.bzl", "publish-manifest.mts", "consumer-test.mts"])
+
+bun_test(
+    name = "metadata_test",
+    entry_point = "metadata.test.mts",
+    data = ["metadata.mts"],
+    size = "small",
+)

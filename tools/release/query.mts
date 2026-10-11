@@ -1,21 +1,19 @@
 #!/usr/bin/env bun
 import { parseArgs } from 'node:util';
-
+import { extensionPublicationMetadataRows } from './extension-release-metadata.mts';
 import {
   ciNpmPackageArtifactRows,
   ciReleaseAssetArtifactRows,
+  exactExtensionProducts,
   extensionArtifactProductRoot,
   extensionArtifactProductsForReleaseProducts,
   extensionMemberPath,
   extensionMetadata,
   extensionReleaseProduct,
-  extensionSqlNames,
   extensionSourceIdentity,
-  exactExtensionProducts,
   sdkPackageProducts,
 } from './release-artifact-targets.mts';
 import { compareText, loadProducts, releaseOrder } from './release-graph.mts';
-import { extensionNpmPackageForProduct } from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
 
 const TOOL = 'release_graph_query.mts';
 
@@ -200,17 +198,12 @@ function runExtensionMetadata(argv) {
   printJson(
     products.flatMap((product) => {
       const metadata = extensionMetadata(product, TOOL);
-      return extensionSqlNames(product, TOOL).map((sqlName) => ({
+      return extensionPublicationMetadataRows(
         product,
-        cargoPackage: product,
-        npmPackage: extensionNpmPackageForProduct(product),
-        mavenGroup: 'dev.oliphaunt.extensions',
-        mavenArtifact: product,
-        ...metadata,
-        sqlName,
-        memberPath: extensionMemberPath(product, sqlName, TOOL),
-        sourceIdentity: extensionSourceIdentity(product, TOOL),
-      }));
+        metadata,
+        extensionSourceIdentity(product, TOOL),
+        (sqlName) => extensionMemberPath(product, sqlName, TOOL),
+      );
     }),
   );
 }

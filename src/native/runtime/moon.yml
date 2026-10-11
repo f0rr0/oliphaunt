@@ -32,16 +32,6 @@ project:
   release:
     component: liboliphaunt-native
     packagePath: src/native/runtime
-    artifactTargets:
-      preset: liboliphaunt-native
-      targets:
-        - android-arm64-v8a
-        - android-x86_64
-        - ios-xcframework
-        - linux-arm64-gnu
-        - linux-x64-gnu
-        - macos-arm64
-        - windows-x64-msvc
 owners:
   defaultOwner: "@oliphaunt/core"
   paths:

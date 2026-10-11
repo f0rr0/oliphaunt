@@ -9,6 +9,10 @@ export OLIPHAUNT_PRODUCT_HISTORY="$state"
 reader="$owner/release-history.mts"
 bash "$owner/../dev/bun.sh" "$owner/release-graph.mts" --history-inputs "$repo" "$graph"
 head="$(git -C "$repo" rev-parse --verify "$head_ref^{commit}")"
+if [[ "${OLIPHAUNT_CAPTURE_COMMIT_PATHS:-0}" == 1 ]]; then
+  bash "$owner/snapshot-commit-paths.sh" "$repo" "$head" "$state/commit-paths"
+  export OLIPHAUNT_COMMIT_PATHS="$state/commit-paths"
+fi
 empty=4b825dc642cb6eb9a060e54bf8d69288fbee4904
 printf '%s\0%s\0%s\0' "$repo" "$head_ref" "$head" > "$state/context"
 printf '%s\0%s\0%s\0%s\0%s\0%s\0' "$head_ref" "$head" "$head" "$head" "$empty" "$empty" > "$state/refs"
@@ -30,9 +34,9 @@ record_diff() {
   if [[ "$base" != "$empty" ]]; then commit="$(git -C "$repo" rev-parse --verify "$base^{commit}")"; fi
   [[ ! -f "$state/changes/$commit" ]] || return 0
   if [[ "$base" == "$empty" ]]; then
-    git -C "$repo" diff --name-only -z "$empty" "$head" -- > "$state/changes/$commit"
+    git -C "$repo" diff --no-renames --name-only -z "$empty" "$head" -- > "$state/changes/$commit"
   else
-    git -C "$repo" diff --name-only -z "$commit...$head" -- > "$state/changes/$commit"
+    git -C "$repo" diff --no-renames --name-only -z "$commit...$head" -- > "$state/changes/$commit"
   fi
 }
 record_diff "$empty"

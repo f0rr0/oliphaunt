@@ -9,7 +9,7 @@ inputs:
   xcode-minor:
     description: Supported Xcode minor version installed on the pinned macOS runner image.
     required: false
-    default: "26.5"
+    default: ""
 
 runs:
   using: composite
@@ -18,16 +18,19 @@ runs:
       shell: bash
       env:
         REQUESTED_XCODE_MINOR: ${{ inputs.xcode-minor }}
-        SUPPORTED_XCODE_MINOR: "26.5"
       run: | # zizmor: ignore[github-env] DEVELOPER_DIR is an exact, allowlisted runner-owned Xcode bundle path.
         set -euo pipefail
+
+        host_policy="tools/dev/native-host-toolchains.json"
+        SUPPORTED_XCODE_MINOR="$(plutil -extract apple.xcode_version raw -o - "$host_policy")"
+        developer_dir="$(plutil -extract apple.developer_dir raw -o - "$host_policy")"
+        REQUESTED_XCODE_MINOR="${REQUESTED_XCODE_MINOR:-$SUPPORTED_XCODE_MINOR}"
 
         if [[ "$REQUESTED_XCODE_MINOR" != "$SUPPORTED_XCODE_MINOR" ]]; then
           echo "setup-apple: unsupported Xcode minor '$REQUESTED_XCODE_MINOR'; expected $SUPPORTED_XCODE_MINOR" >&2
           exit 1
         fi
 
-        developer_dir="/Applications/Xcode_26.5.app/Contents/Developer"
         if [[ ! -d "$developer_dir" ]]; then
           echo "setup-apple: required Xcode developer directory was not found at $developer_dir" >&2
           exit 1

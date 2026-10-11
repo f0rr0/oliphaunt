@@ -4,3 +4,11 @@ kind = "wasm-runtime"
 publish_targets = ["github-release-assets"]
 registry_packages = []
 release_artifacts = ["sealed-postmaster-carrier"]
+
+[artifact_targets]
+preset = "liboliphaunt-wasix-postmaster"
+targets = [
+  "linux-arm64-gnu",
+  "linux-x64-gnu",
+  "macos-arm64",
+]

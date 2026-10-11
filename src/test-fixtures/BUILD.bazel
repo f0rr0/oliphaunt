@@ -1,0 +1,11 @@
+exports_files([
+    "protocol/query-response-cases.json",
+    "protocol/structured-sql-cases.json",
+    "storage/physical-backup-wal-range-v1.properties",
+])
+
+filegroup(
+    name = "rust_fixtures",
+    srcs = glob(["**/*.json", "**/*.sql", "**/*.properties"]),
+    visibility = ["//visibility:public"],
+)

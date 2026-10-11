@@ -19,13 +19,6 @@ project:
   release:
     component: "oliphaunt-broker"
     packagePath: "src/native/broker"
-    artifactTargets:
-      preset: "broker-helper"
-      targets:
-        - "linux-arm64-gnu"
-        - "linux-x64-gnu"
-        - "macos-arm64"
-        - "windows-x64-msvc"
 
 owners:
   defaultOwner: "@oliphaunt/broker"

@@ -1,0 +1,47 @@
+load("//build_defs/foundation:bun.bzl", "bun_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["bazel-release-metadata.mts", "bazel-shipping-inputs.mts", "extension-release-metadata.mts", "compatibility-version-parser.mts", "platform-compatibility-policy.mts", "frozen-extension-consumer.mts"])
+
+bun_test(
+    name = "bazel_metadata_test",
+    size = "small",
+    entry_point = "bazel-release-metadata.test.mts",
+    data = [
+        "bazel-release-metadata.mts",
+        "compatibility-version-parser.mts",
+        "extension-release-metadata.mts",
+        "platform-compatibility-policy.mts",
+        "publication-catalog.mts",
+        "release-artifact-targets.mts",
+        "release-graph.mts",
+        "release-history.mts",
+        "//:src/extensions/artifacts/packages/tools/contrib-carriers.mts",
+        "//:src/extensions/artifacts/packages/tools/extension-registry-packages.mts",
+        "//:tools/packaging/portable-archive.mts",
+        "//:tools/packaging/release-directory-safety.mts",
+        "//:tools/packaging/release-notices.mts",
+        "//:tools/packaging/rust-dependency-license-contract.mts",
+        "//:tools/packaging/rust-native-targets.mts",
+        "//src/database-resources:seeds/carrier-identities.mts",
+        "//src/extensions/contracts:extension-target-profiles.mts",
+        "//src/native/mobile-bindings:tools/dependency-license-contract.mts",
+        "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
+        "//src/wasix/runtime:tools/wasix-runtime-npm-contract.mts",
+    ],
+)
+
+bun_test(
+    name = "bazel_shipping_inputs_test",
+    size = "small",
+    entry_point = "bazel-shipping-inputs.test.mts",
+    data = ["bazel-shipping-inputs.mts"],
+)
+
+bun_test(
+    name = "compatibility_version_parser_test",
+    size = "small",
+    entry_point = "compatibility-version-parser.test.mts",
+    data = ["compatibility-version-parser.mts"],
+)

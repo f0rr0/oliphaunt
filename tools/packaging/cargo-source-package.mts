@@ -3,14 +3,16 @@ import {
   copyFileSync,
   lstatSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { tarHeader } from './archive-directory.mts';
+import { createDeterministicTar, listArchiveEntries } from './package-archive.mts';
+
+export { createDeterministicTar } from './package-archive.mts';
+
 import { canonicalGzipSync, readPortableArchiveEntries } from './portable-archive.mts';
 import { stageReleaseNotices } from './release-notices.mts';
 
@@ -278,61 +280,6 @@ function requirePackagedCargoTargetSources(
     }
     sourceFileWithoutSymlinkComponents(stageDir, parts, stagedManifest, options);
   }
-}
-
-function listArchiveEntries(directory) {
-  const files = [];
-  const entries = readdirSync(directory, { withFileTypes: true });
-  entries.sort((left, right) => compareText(left.name, right.name));
-  for (const entry of entries) {
-    const fullPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      files.push(fullPath, ...listArchiveEntries(fullPath));
-    } else if (entry.isFile()) {
-      files.push(fullPath);
-    } else {
-      throw new Error(
-        'Cargo archive source must contain only regular files and directories: ' + fullPath,
-      );
-    }
-  }
-  return files;
-}
-
-export function createDeterministicTar(stageDir, packageRoot, options) {
-  const chunks = [];
-  const fixedFileMode = options.fixedFileMode;
-  if (
-    fixedFileMode !== undefined &&
-    (!Number.isInteger(fixedFileMode) || fixedFileMode < 0 || fixedFileMode > 0o777)
-  ) {
-    abort(
-      options.fail,
-      'fixed deterministic tar file mode must be an integer between 0000 and 0777',
-    );
-  }
-  const files = listArchiveEntries(stageDir).filter(
-    (file) => options.includeDirectories !== false || statSync(file).isFile(),
-  );
-  files.sort((left, right) =>
-    compareText(path.relative(stageDir, left), path.relative(stageDir, right)),
-  );
-  for (const file of files) {
-    const relative = path.relative(stageDir, file).split(path.sep).join('/');
-    const archivePath = `${packageRoot}/${relative}`;
-    const stats = statSync(file);
-    const isDirectory = stats.isDirectory();
-    const data = isDirectory ? Buffer.alloc(0) : readFileSync(file);
-    const mode = isDirectory ? 0o755 : (fixedFileMode ?? stats.mode & 0o777);
-    chunks.push(tarHeader({ name: archivePath, isDirectory }, data.length, mode));
-    chunks.push(data);
-    const remainder = data.length % 512;
-    if (remainder !== 0) {
-      chunks.push(Buffer.alloc(512 - remainder, 0));
-    }
-  }
-  chunks.push(Buffer.alloc(1024, 0));
-  return Buffer.concat(chunks);
 }
 
 export function prepareCargoPackageSource(

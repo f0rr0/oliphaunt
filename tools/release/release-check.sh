@@ -33,7 +33,7 @@ test_files=()
 shell_tests=()
 while IFS= read -r -d '' test_file; do
   case "$test_file" in
-    tools/release/prepare-release-candidate.test.*) continue ;;
+    tools/release/prepare-release-candidate.test.*|tools/release/independent-version-pins.test.*) continue ;;
     *.test.sh|*.test.mjs|*.test.mts) ;;
     *) continue ;;
   esac
@@ -51,3 +51,5 @@ done < "$inventory"
 
 bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-source.sh HEAD bash tools/ci/with-projects.sh test "${test_files[@]}"
 for shell_test in "${shell_tests[@]}"; do bash "$shell_test"; done
+# Moon owns this suite separately; the complete local check includes it once.
+if [ "$metadata" = 1 ]; then bash tools/release/independent-version-pins.test.sh; fi

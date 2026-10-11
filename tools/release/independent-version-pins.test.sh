@@ -5,7 +5,7 @@ scratch="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-independent-versions-XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 
 # Exercise the current sources in an isolated tree, including uncommitted fixes.
-git ls-files -z --cached --others --exclude-standard -- tools src \
+git ls-files -z --cached --others --exclude-standard -- tools src build_defs \
   LICENSE THIRD_PARTY_NOTICES.md .prototools package.json Cargo.toml Cargo.lock \
   release-please-config.json .release-please-manifest.json |
   while IFS= read -r -d '' file; do

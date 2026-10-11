@@ -72,7 +72,7 @@ try {
   const profile = path.join(root, 'chrome-profile');
   mkdirSync(profile);
   chrome = spawn(
-    'google-chrome',
+    process.env.OLIPHAUNT_BROWSER_CHROME ?? 'google-chrome',
     [
       '--headless=new',
       '--no-sandbox',
@@ -134,7 +134,9 @@ try {
   }
   assert(passed, 'installed browser module timed out');
   console.log(
-    'Installed browser default and worker exports loaded extensions and executed queries',
+    packages.length
+      ? 'Installed browser default and worker exports loaded extensions and executed queries'
+      : 'Installed browser default and worker exports executed queries',
   );
 } finally {
   socket?.close();

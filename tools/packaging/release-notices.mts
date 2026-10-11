@@ -7,8 +7,8 @@ import {
   copyFileSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
 } from 'node:fs';
 import path from 'node:path';
@@ -433,11 +433,23 @@ function unexpectedNamespaceEntry(namespaceEntry, expectedMembers) {
 
 export function releaseNoticeRows(options = {}) {
   const selection = checkedSelection(options);
+  const sourceRoot = options.sourceRoot;
+  if (sourceRoot !== undefined && (!sourceRoot || !path.isAbsolute(sourceRoot)))
+    throw new Error('Release notice source root must be an absolute directory');
+  const located = (row) => {
+    if (sourceRoot === undefined) return row;
+    const source = (file) => path.join(sourceRoot, path.relative(ROOT, file));
+    return {
+      ...row,
+      source: source(row.source),
+      ...(row.sourceManifest ? { sourceManifest: source(row.sourceManifest) } : {}),
+    };
+  };
   const rows = [
-    ...BASE_ROWS,
-    ...selection.products.map((product) => PRODUCT_NOTICE_ROWS[product]),
+    ...BASE_ROWS.map(located),
+    ...selection.products.map((product) => located(PRODUCT_NOTICE_ROWS[product])),
     ...selection.components.map((component) =>
-      validateRuntimeLicenseSource(LICENSE_COMPONENT_ROWS[component]),
+      validateRuntimeLicenseSource(located(LICENSE_COMPONENT_ROWS[component])),
     ),
   ];
   return Object.freeze(rows.map((row) => Object.freeze({ ...row })));

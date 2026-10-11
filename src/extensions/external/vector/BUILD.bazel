@@ -1,0 +1,39 @@
+load("//build_defs/extensions:external.bzl", "native_external_extension_modules")
+load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "extension_identity", "extension_member_payload", "extension_member_validation_test")
+load("//build_defs/release:shipping.bzl", "shipping_package")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["upstream-license-data.json"])
+
+native_external_extension_modules(name = "vector")
+
+
+extension_member_payload(
+    name = "native_payload",
+    sql_name = "vector",
+    owner = extension_identity("vector"),
+    resources = ["@pgvector//:sql_resources"],
+    main_sql = "@pgvector//:sql/vector.sql",
+    server_module = ":vector_server.so",
+    embedded_module = ":vector_embedded.so",
+    construction_licenses = select({
+        "//build_defs/native:linux_x86_64_gnu_2_28": {
+            "@pgvector_compiler_rt//:LICENSE.TXT": "share/licenses/llvm-compiler-rt/LICENSE.TXT",
+            "@pgvector_compiler_rt//:SOURCE.json": "share/licenses/llvm-compiler-rt/SOURCE.json",
+        },
+        "//conditions:default": {},
+    }),
+)
+
+shipping_package(
+    name = "native_member",
+    owner = extension_identity("vector"),
+    artifacts = [":native_payload"],
+    ecosystem = "internal",
+    package_name = "vector",
+    configuration = NATIVE_EXTENSION_CONFIGURATION,
+    role = "extension-member",
+)
+
+extension_member_validation_test(name = "native_payload_test", payload = ":native_payload", sql_name = "vector")

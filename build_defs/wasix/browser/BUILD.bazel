@@ -1,0 +1,50 @@
+load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
+load("@javascript_consumer_packages//:defs.bzl", "PACKAGES")
+load("@javascript_consumer_packages//:roots.bzl", "CONSUMER_TOOLS")
+load(":defs.bzl", "browser_consumer_tools_test")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["metadata.mts", "repositories.bzl", "defs.bzl", "compile.mts", "bundle.mts", "npm-archives.mts", "rollup-compile.mts", "provenance.mts", "package-host.mts", "check-host-abi.mts", "copy-host-assets.mts", "consumer.mts", "consumer-tools-driver.mts", "chrome-receipt.mts", "crate-source-metadata.patch", "cargo-extension.bzl"])
+
+browser_consumer_tools_test(
+    name = "consumer_tools_test",
+    size = "small",
+    packages = {"@javascript_consumer_packages//:" + key: key for key in PACKAGES},
+    roots = CONSUMER_TOOLS["@oliphaunt/wasix-ts"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+bun_test(
+    name = "metadata_test",
+    entry_point = "metadata.test.mts",
+    data = ["metadata.mts"],
+    size = "small",
+)
+
+bun_test(
+    name = "compile_test",
+    entry_point = "compile.test.mts",
+    data = ["npm-archives.mts"],
+    size = "small",
+)
+
+bun_test(
+    name = "chrome_receipt_test",
+    entry_point = "chrome-receipt.test.mts",
+    data = ["chrome-receipt.mts"],
+    size = "small",
+)
+
+bun_script_test(
+    name = "cargo_source_projection_test",
+    entry_point = "cargo-source-projection-test.mts",
+    data = ["metadata.mts", "@browser_sources//:cargo-sources.json", "@browser_cargo//:cargo-bazel.json", "@browser_cargo//:crates.bzl", "//src/wasix/browser-host:source.toml"],
+    size = "small",
+)
+
+bun_test(
+    name = "provenance_test",
+    entry_point = "provenance.test.mts",
+    data = ["provenance.mts", "metadata.mts"],
+    size = "small",
+)

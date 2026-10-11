@@ -1,0 +1,79 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_java//java:defs.bzl", "java_library", "java_test")
+load("//build_defs/languages/jvm:maven.bzl", "java_javadoc", "kotlin_maven_package")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["build.gradle.kts", "src/main/resources/dev/oliphaunt/android/liboliphaunt.version"])
+
+genrule(
+    name = "plugin_descriptor",
+    srcs = ["build.gradle.kts"],
+    tools = ["//build_defs/languages/jvm:plugin_descriptor"],
+    outs = ["src/main/resources/META-INF/gradle-plugins/dev.oliphaunt.android.properties"],
+    cmd = "$(location //build_defs/languages/jvm:plugin_descriptor) $(location build.gradle.kts) $@",
+)
+
+copy_file(name = "database_version", src = "//src/database-resources:VERSION", out = "src/main/resources/dev/oliphaunt/android/database-resources.version")
+copy_file(name = "public_header", src = "//src/native/runtime:include/oliphaunt.h", out = "src/main/resources/dev/oliphaunt/android/oliphaunt.h")
+copy_file(name = "cxx_map", src = "//src/native/runtime:bin/android-cxx-runtime.map", out = "src/main/resources/dev/oliphaunt/android/android-cxx-runtime.map")
+copy_file(name = "archive_policy", src = "//src/extensions/contracts:extension-artifact-archive-policy.properties", out = "src/main/resources/dev/oliphaunt/android/extension-artifact-archive-policy.properties")
+copy_file(name = "license", src = "//:LICENSE", out = "src/main/resources/META-INF/LICENSE")
+copy_file(name = "notices", src = "//:THIRD_PARTY_NOTICES.md", out = "src/main/resources/META-INF/THIRD_PARTY_NOTICES.md")
+
+java_library(
+    name = "plugin",
+    srcs = glob(["src/main/java/**/*.java"]),
+    resources = glob(["src/main/resources/**/*"]) + [":plugin_descriptor", ":database_version", ":public_header", ":cxx_map", ":archive_policy", ":license", ":notices"],
+    resource_strip_prefix = "src/native/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources",
+    deps = ["@oliphaunt_gradle_api//:api"],
+    javacopts = ["--release", "17"],
+)
+
+java_test(
+    name = "contract_test",
+    srcs = glob(["src/test/java/**/*.java"]),
+    deps = [":plugin", "@oliphaunt_gradle_api//:test_runtime"],
+    main_class = "dev.oliphaunt.android.OliphauntExtensionCatalogContractTest",
+    use_testrunner = False,
+    jvm_flags = ["--add-opens=java.base/java.lang=ALL-UNNAMED"],
+    javacopts = ["--release", "17"],
+    data = [
+        "//:LICENSE",
+        "//:THIRD_PARTY_NOTICES.md",
+        "//src/extensions/generated/sdk:metadata",
+        "//src/extensions/contrib:carriers.toml",
+        "//src/third-party/postgres:COPYRIGHT",
+        "//src/third-party/openssl:LICENSE.txt",
+        "//src/extensions/external/pg_hashids:upstream-license-data.json",
+        "//src/extensions/external/pg_uuidv7:upstream-license-data.json",
+        "//src/extensions/external/pg_ivm:upstream-license-data.json",
+        "//src/extensions/external/pg_textsearch:upstream-license-data.json",
+        "//src/extensions/external/pgtap:upstream-license-data.json",
+        "//src/extensions/external/vector:upstream-license-data.json",
+        "//src/extensions/external/postgis:upstream-license-data.json",
+    ],
+    size = "medium",
+)
+
+java_javadoc(
+    name = "plugin_javadoc",
+    srcs = glob(["src/main/java/**/*.java"]),
+    deps = ["@oliphaunt_gradle_api//:api"],
+)
+
+kotlin_maven_package(
+    name = "plugin_maven",
+    coordinate = "dev.oliphaunt:oliphaunt-android-gradle-plugin",
+    packaging = "jar",
+    classes = [":plugin"],
+    sources = glob(["src/main/java/**/*.java"]),
+    legal_sources = ["//:LICENSE", "//:THIRD_PARTY_NOTICES.md"],
+    javadoc = ":plugin_javadoc",
+)
+
+kotlin_maven_package(
+    name = "marker_maven",
+    coordinate = "dev.oliphaunt.android:dev.oliphaunt.android.gradle.plugin",
+    packaging = "pom",
+)

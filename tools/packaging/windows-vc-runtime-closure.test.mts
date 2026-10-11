@@ -16,6 +16,7 @@ import { stageWindowsVcRuntimeMembers } from './release-carrier.mts';
 
 import {
   inspectPortableExecutable,
+  renderWindowsVcRuntimeSourceReceipt,
   resolveInitializedVcRuntimeDirectory,
   stageWindowsVcRuntime,
   verifyWindowsVcRuntimeClosure,
@@ -115,6 +116,41 @@ if (['prepare', 'verify'].includes(process.argv[2])) {
 }
 
 describe('Windows VC runtime dependency closure', () => {
+  test('declared SDK files seed the existing receipt and import-derived carrier staging', () => {
+    const { root, source } = fixture();
+    try {
+      writeFileSync(
+        path.join(source, WINDOWS_VC_RUNTIME_RECEIPT),
+        renderWindowsVcRuntimeSourceReceipt({ sourceDirectory: source, profile: 'provider' }),
+      );
+      const carrier = path.join(root, 'carrier');
+      const bin = path.join(carrier, 'bin');
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(path.join(bin, 'app.exe'), pe({ imports: ['VCRUNTIME140.dll'] }));
+      const result = stageWindowsVcRuntime({
+        root: carrier,
+        sourceDirectory: source,
+        destinations: [bin],
+      });
+      assert.deepEqual(result.required, ['vcruntime140.dll']);
+      assert.match(
+        readFileSync(path.join(bin, WINDOWS_VC_RUNTIME_RECEIPT), 'utf8'),
+        /^[0-9a-f]{64} {2}vcruntime140\.dll\n$/u,
+      );
+      writeFileSync(path.join(source, 'vcruntime140.dll'), pe({ machine: 0x14c }));
+      assert.throws(
+        () => renderWindowsVcRuntimeSourceReceipt({ sourceDirectory: source, profile: 'provider' }),
+        /not an x64 PE32\+ image/u,
+      );
+      assert.throws(
+        () => renderWindowsVcRuntimeSourceReceipt({ sourceDirectory: source }),
+        /nonempty profile/u,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('parses normal and delay-load imports without an external Windows tool', () => {
     const parsed = inspectPortableExecutable(
       pe({

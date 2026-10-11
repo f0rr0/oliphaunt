@@ -1,6 +1,12 @@
 import path from 'node:path';
+import {
+  assertNativeBrowserHostProvenance,
+  HOST_FILES,
+  NATIVE_BROWSER_HOST_SCHEMA,
+} from '../../../../../build_defs/wasix/browser/provenance.mts';
 
 import { prepareWasixTypescriptPackage as prepareProductPackage } from './package.mts';
+
 const QUERY_PACKAGE = '@oliphaunt/ts-query';
 
 import { readPortableArchiveEntries } from '../../../../../tools/packaging/portable-archive.mts';
@@ -191,6 +197,13 @@ export function assertWasixTypescriptNpmArchive(archive) {
   for (const name of exportedFiles) {
     requireFile(name);
   }
-  JSON.parse(requireFile('lib/host/provenance.json').toString('utf8'));
+  const hostProvenance = JSON.parse(requireFile('lib/host/provenance.json').toString('utf8'));
+  if (hostProvenance.schema === NATIVE_BROWSER_HOST_SCHEMA) {
+    assertNativeBrowserHostProvenance(hostProvenance, {
+      files: Object.fromEntries(HOST_FILES.map((name) => [name, requireFile(`lib/host/${name}`)])),
+    });
+  } else if (hostProvenance.schema !== undefined) {
+    fail(`Unsupported browser host provenance schema ${hostProvenance.schema}`);
+  }
   return manifest;
 }

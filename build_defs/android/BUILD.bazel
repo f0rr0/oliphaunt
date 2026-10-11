@@ -1,0 +1,53 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load(":toolchain.bzl", "android_artifact")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.bzl", "*.mts", "*.bazel"]))
+
+constraint_setting(name = "ndk_profile")
+constraint_value(name = "ndk_runtime", constraint_setting = ":ndk_profile")
+
+platform(name = "android_arm64", constraint_values = ["@platforms//os:android", "@platforms//cpu:aarch64", ":ndk_runtime"])
+platform(name = "android_x86_64", constraint_values = ["@platforms//os:android", "@platforms//cpu:x86_64", ":ndk_runtime"])
+
+# Registration metadata is local and small: unrelated target/platform analysis
+# does not acquire the NDK just to discover its execution constraints.
+[toolchain(
+    name = "toolchain_" + name,
+    toolchain = "@android_ndk//:cc_" + name,
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    target_compatible_with = ["@platforms//os:android", "@platforms//cpu:" + cpu, ":ndk_runtime"],
+) for name, cpu in [("arm64", "aarch64"), ("x86_64", "x86_64")]]
+
+[cc_binary(
+    name = "libabi_smoke_" + name + ".so",
+    srcs = ["abi-smoke.cc"],
+    additional_linker_inputs = ["//src/native/runtime:bin/android-cxx-runtime.map"],
+    linkopts = ["-Wl,--exclude-libs,libc++_static.a:libc++abi.a:libunwind.a", "-Wl,--version-script,$(location //src/native/runtime:bin/android-cxx-runtime.map)"],
+    linkshared = True,
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:android", "@platforms//cpu:" + cpu, ":ndk_runtime"],
+) for name, cpu in [("arm64", "aarch64"), ("x86_64", "x86_64")]]
+
+[android_artifact(
+    name = "abi_" + name,
+    artifact = ":libabi_smoke_" + name + ".so",
+    platform = ":android_" + name,
+) for name in ["arm64", "x86_64"]]
+
+bun_test(
+    name = "metadata_test",
+    size = "small",
+    entry_point = "metadata.test.mts",
+    data = ["metadata.mts", "//tools/release:platform-compatibility-policy.mts"],
+)
+
+bun_test(
+    name = "abi_test",
+    size = "small",
+    entry_point = "abi.test.mts",
+    data = [":abi_arm64", ":abi_x86_64", "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//tools/release:platform-compatibility-policy.mts"],
+)

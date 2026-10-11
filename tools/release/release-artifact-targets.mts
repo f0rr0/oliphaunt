@@ -1,21 +1,26 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
-import { RUST_PAYLOAD_LICENSE as MOBILE_BINDINGS_LICENSE } from '../../src/native/mobile-bindings/tools/dependency-license-contract.mts';
-
-import {
-  PLATFORM_COMPATIBILITY_POLICY,
-  platformCompatibilityContract,
-} from './platform-compatibility-policy.mts';
+import { loadContribCarriers } from '../../src/extensions/artifacts/packages/tools/contrib-carriers.mts';
 import {
   extensionNativeRegistryPackageStrings,
   extensionWasixRegistryPackageStrings,
 } from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
-import { loadContribCarriers } from '../../src/extensions/artifacts/packages/tools/contrib-carriers.mts';
 import {
   EXTENSION_TARGET_PROFILES_RELATIVE_PATH,
   loadExtensionTargetProfiles,
 } from '../../src/extensions/contracts/extension-target-profiles.mts';
+import { RUST_PAYLOAD_LICENSE as MOBILE_BINDINGS_LICENSE } from '../../src/native/mobile-bindings/tools/dependency-license-contract.mts';
+import {
+  contribExtensionMetadata,
+  declaredExtensionMetadata,
+  EXTENSION_VERSIONING_BY_CLASS,
+  extensionSourceMetadata,
+} from './extension-release-metadata.mts';
+import {
+  PLATFORM_COMPATIBILITY_POLICY,
+  platformCompatibilityContract,
+} from './platform-compatibility-policy.mts';
 import { loadProducts, versionFiles } from './release-graph.mts';
 
 export { PLATFORM_COMPATIBILITY_POLICY };
@@ -137,11 +142,6 @@ const PRODUCT_PRESETS = {
 };
 const EXTENSION_FAMILIES = new Set(['native', 'wasix']);
 const EXTENSION_KINDS = new Set(['native-dynamic', 'native-static-registry', 'wasix-runtime']);
-const EXTENSION_VERSIONING_BY_CLASS = {
-  contrib: 'runtime-bound',
-  external: 'upstream-bound',
-  'first-party': 'repo-bound',
-};
 const EXTENSION_PRODUCT_KINDS = new Set(['exact-extension-artifact', 'exact-extension-bundle']);
 const EXTENSION_CATALOG_PATH = path.join(ROOT, 'src/extensions/generated/extensions.catalog.json');
 
@@ -269,38 +269,44 @@ function assertStringList(value, label, prefix) {
   return value;
 }
 
-function artifactTargetConfig(product, expectedPreset, prefix) {
-  const release = releaseMetadata(product, prefix);
-  const config = release.artifactTargets;
+export function artifactTargetConfig(
+  product,
+  expectedPreset,
+  prefix = 'release-artifact-targets.mts',
+) {
+  const release = productConfig(product, prefix);
+  return artifactTargetConfigFromRelease(product, release, expectedPreset, prefix);
+}
+
+function artifactTargetConfigFromRelease(product, release, expectedPreset, prefix) {
+  const config = release.artifact_targets;
   if (typeof config !== 'object' || config === null || Array.isArray(config)) {
-    fail(prefix, `Moon release metadata for ${product} must declare artifactTargets`);
+    fail(prefix, `${product} release.toml must declare artifact_targets`);
   }
   if (config.preset !== expectedPreset) {
-    fail(
-      prefix,
-      `Moon release metadata for ${product} artifactTargets.preset must be ${expectedPreset}`,
-    );
+    fail(prefix, `${product} release.toml artifact_targets.preset must be ${expectedPreset}`);
   }
   return config;
 }
 
 function productTargets(product, expectedPreset, knownTargets, prefix) {
   const config = artifactTargetConfig(product, expectedPreset, prefix);
+  return productTargetsFromConfig(product, config, knownTargets, prefix);
+}
+
+function productTargetsFromConfig(product, config, knownTargets, prefix) {
   const targets = assertStringList(config.targets ?? [], `${product}.targets`, prefix);
   const duplicates = [
     ...new Set(targets.filter((target, index) => targets.indexOf(target) !== index)),
   ];
   if (duplicates.length > 0) {
-    fail(
-      prefix,
-      `Moon release metadata for ${product} artifactTargets.targets contains duplicates`,
-    );
+    fail(prefix, `${product} release.toml artifact_targets.targets contains duplicates`);
   }
   const unknown = targets.filter((target) => !knownTargets.has(target)).sort(compareText);
   if (unknown.length > 0) {
     fail(
       prefix,
-      `Moon release metadata for ${product} declares unknown artifact target(s): ${unknown.join(', ')}`,
+      `${product} release.toml declares unknown artifact target(s): ${unknown.join(', ')}`,
     );
   }
   return targets;
@@ -587,14 +593,11 @@ function liboliphauntWasixPostmasterRows(prefix) {
   return rows;
 }
 
-function brokerRows(prefix) {
+function brokerRows(prefix, declaredTargets = undefined) {
   const product = 'oliphaunt-broker';
   const rows = [];
-  for (const target of productTargets(
-    product,
-    PRODUCT_PRESETS[product],
-    BROKER_TARGETS,
-    prefix,
+  for (const target of (
+    declaredTargets ?? productTargets(product, PRODUCT_PRESETS[product], BROKER_TARGETS, prefix)
   ).sort(compareText)) {
     const platform = DESKTOP_TARGETS[target];
     rows.push({
@@ -623,14 +626,12 @@ function brokerRows(prefix) {
   return rows;
 }
 
-function nodeDirectRows(prefix) {
+function nodeDirectRows(prefix, declaredTargets = undefined) {
   const product = 'oliphaunt-node-direct';
   const rows = [];
-  for (const target of productTargets(
-    product,
-    PRODUCT_PRESETS[product],
-    NODE_DIRECT_TARGETS,
-    prefix,
+  for (const target of (
+    declaredTargets ??
+    productTargets(product, PRODUCT_PRESETS[product], NODE_DIRECT_TARGETS, prefix)
   ).sort(compareText)) {
     const platform = DESKTOP_TARGETS[target];
     rows.push({
@@ -653,6 +654,30 @@ function nodeDirectRows(prefix) {
   }
   rows.push(githubChecksumRow(product));
   return rows;
+}
+
+/** Reuse canonical helper assets with explicitly read release.toml targets. */
+export function nativeHelperArtifactRows(
+  product,
+  declaredTargets,
+  prefix = 'release-artifact-targets.mts',
+) {
+  const knownTargets =
+    product === 'oliphaunt-broker'
+      ? BROKER_TARGETS
+      : product === 'oliphaunt-node-direct'
+        ? NODE_DIRECT_TARGETS
+        : null;
+  if (knownTargets === null) fail(prefix, `not a native helper product: ${product}`);
+  const targets = productTargetsFromConfig(
+    product,
+    { targets: declaredTargets },
+    knownTargets,
+    prefix,
+  );
+  return product === 'oliphaunt-broker'
+    ? brokerRows(prefix, [...targets])
+    : nodeDirectRows(prefix, [...targets]);
 }
 
 function wasixNapiRows(prefix) {
@@ -1035,7 +1060,7 @@ export function expectedAssetRows(
 }
 
 export function registryPackageRows(
-  { product, packageKind = undefined } = {},
+  { product, packageKind = undefined, inputContext = undefined } = {},
   prefix = 'release-artifact-targets.mts',
 ) {
   if (typeof product !== 'string' || product.length === 0) {
@@ -1044,7 +1069,9 @@ export function registryPackageRows(
   if (packageKind !== undefined && (typeof packageKind !== 'string' || packageKind.length === 0)) {
     fail(prefix, 'registry package kind must be a non-empty string');
   }
-  const config = productConfig(product, prefix);
+  const config =
+    inputContext === undefined ? productConfig(product, prefix) : inputContext.products[product];
+  if (config === undefined) fail(prefix, `unknown release product ${product}`);
   const declaredEntries = config.registry_packages ?? [];
   if (
     !Array.isArray(declaredEntries) ||
@@ -1053,9 +1080,13 @@ export function registryPackageRows(
     fail(prefix, `${product}.registry_packages must be a string list`);
   }
   const entries = [...declaredEntries];
-  const contrib = contribCarrierDescriptor(prefix);
+  const contrib =
+    inputContext === undefined ? contribCarrierDescriptor(prefix) : inputContext.contrib;
   if (product === contrib.nativeOwner || product === contrib.wasixOwner) {
-    const targets = extensionRegistryPackageTargetSets(contrib.artifactProduct, prefix);
+    const targets =
+      inputContext === undefined
+        ? extensionRegistryPackageTargetSets(contrib.artifactProduct, prefix)
+        : inputContext.contribRegistryTargets;
     if (product === contrib.nativeOwner) {
       entries.push(
         ...extensionNativeRegistryPackageStrings({
@@ -1104,54 +1135,6 @@ export function registryPackageRows(
       compareText(left.packageKind, right.packageKind) ||
       compareText(left.packageName, right.packageName),
   );
-}
-
-const releaseMetadataCache = new Map();
-
-export function releaseMetadata(product, prefix) {
-  const key = `${prefix}\0${product}`;
-  if (releaseMetadataCache.has(key)) return releaseMetadataCache.get(key);
-  const config = productConfig(product, prefix);
-  let directory = path.join(ROOT, config.path);
-  let release;
-  // Only literal product metadata is needed here. Dependency resolution stays in Moon.
-  while (directory !== ROOT) {
-    const file = path.join(directory, 'moon.yml');
-    if (existsSync(file)) {
-      const project = Bun.YAML.parse(readFileSync(file, 'utf8'));
-      if (project.id !== product)
-        fail(prefix, `Moon project at ${rel(file)} does not own ${product}`);
-      release = project.project?.release;
-      break;
-    }
-    directory = path.dirname(directory);
-    if (!directory.startsWith(ROOT + path.sep)) break;
-  }
-  if (!release) {
-    fail(prefix, `Moon release metadata does not include ${product}`);
-  }
-  if (release.component !== product) {
-    fail(prefix, `Moon release metadata for ${product} must use matching component`);
-  }
-  if (release.packagePath !== config.path) {
-    fail(prefix, `Moon release metadata for ${product} must match package path ${config.path}`);
-  }
-  const expectedPreset = PRODUCT_PRESETS[product];
-  if (expectedPreset !== undefined) {
-    const artifactTargets = release.artifactTargets;
-    if (
-      typeof artifactTargets !== 'object' ||
-      artifactTargets === null ||
-      artifactTargets.preset !== expectedPreset
-    ) {
-      fail(
-        prefix,
-        `Moon release metadata for ${product} must use artifactTargets preset ${expectedPreset}`,
-      );
-    }
-  }
-  releaseMetadataCache.set(key, release);
-  return release;
 }
 
 const versionCache = new Map();
@@ -1368,6 +1351,11 @@ function extensionCatalogRows(prefix) {
   } catch (error) {
     fail(prefix, `${rel(EXTENSION_CATALOG_PATH)} is not readable JSON: ${error.message}`);
   }
+  extensionCatalogRowsCache = validateExtensionCatalogRows(catalog, prefix);
+  return extensionCatalogRowsCache;
+}
+
+export function validateExtensionCatalogRows(catalog, prefix = 'release-artifact-targets.mts') {
   if (catalog?.['format-version'] !== 1 || !Array.isArray(catalog.extensions)) {
     fail(
       prefix,
@@ -1392,8 +1380,7 @@ function extensionCatalogRows(prefix) {
     }
     bySqlName.set(sqlName, row);
   }
-  extensionCatalogRowsCache = bySqlName;
-  return extensionCatalogRowsCache;
+  return bySqlName;
 }
 
 export function extensionPublicDependencySqlNames(
@@ -1508,11 +1495,8 @@ export function extensionMetadata(product, prefix = 'release-artifact-targets.mt
         `${contrib.sourcePath}.postgresql.version must begin with a stable major version`,
       );
     }
-    return {
-      sqlName: undefined,
+    return contribExtensionMetadata({
       sqlNames: extensionSqlNames(product, prefix),
-      class: 'contrib',
-      versioning: 'runtime-bound',
       sourcePath: contrib.sourcePath,
       artifactProduct: contrib.artifactProduct,
       compatibility: {
@@ -1523,7 +1507,7 @@ export function extensionMetadata(product, prefix = 'release-artifact-targets.mt
         wasixRuntimeProduct: contrib.wasixOwner,
         wasixRuntimeVersion: currentProductVersionSync(contrib.wasixOwner, prefix),
       },
-    };
+    });
   }
   const config = productConfig(product, prefix);
   if (!EXTENSION_PRODUCT_KINDS.has(config.kind)) {
@@ -1651,77 +1635,27 @@ export function extensionMetadata(product, prefix = 'release-artifact-targets.mt
       `${product}.extension.compatibility.wasix_runtime_product must be 'liboliphaunt-wasix'`,
     );
   }
-  const nativeVersion = nonEmptyString(
+  nonEmptyString(
     compatibility.native_runtime_version,
     `${product}.extension.compatibility.native_runtime_version`,
     prefix,
   );
-  const wasixVersion = nonEmptyString(
+  nonEmptyString(
     compatibility.wasix_runtime_version,
     `${product}.extension.compatibility.wasix_runtime_version`,
     prefix,
   );
-  return {
-    sqlName,
-    sqlNames,
-    artifactProduct: product,
-    class: extensionClass,
-    versioning,
-    sourcePath,
-    compatibility: {
-      postgresMajor,
-      extensionRuntimeContract: contractPath,
-      nativeRuntimeProduct: nativeProduct,
-      nativeRuntimeVersion: nativeVersion,
-      wasixRuntimeProduct: wasixProduct,
-      wasixRuntimeVersion: wasixVersion,
-    },
-  };
+  return declaredExtensionMetadata(product, metadata);
 }
 
 export function extensionSourceIdentity(product, prefix = 'release-artifact-targets.mts') {
   const metadata = extensionMetadata(product, prefix);
   const source = Bun.TOML.parse(readFileSync(path.join(ROOT, metadata.sourcePath), 'utf8'));
-  if (metadata.class === 'contrib') {
-    const postgresql = source.postgresql;
-    if (postgresql === null || Array.isArray(postgresql) || typeof postgresql !== 'object') {
-      fail(
-        prefix,
-        `${metadata.sourcePath} must declare [postgresql] for contrib extension products`,
-      );
-    }
-    return {
-      kind: 'postgres-contrib',
-      name: 'postgresql',
-      version: nonEmptyString(
-        postgresql.version,
-        `${metadata.sourcePath}.postgresql.version`,
-        prefix,
-      ),
-      url: nonEmptyString(postgresql.url, `${metadata.sourcePath}.postgresql.url`, prefix),
-      sha256: nonEmptyString(postgresql.sha256, `${metadata.sourcePath}.postgresql.sha256`, prefix),
-    };
-  }
-  if (metadata.class === 'external') {
-    return {
-      kind: 'external',
-      name: nonEmptyString(source.name, `${metadata.sourcePath}.name`, prefix),
-      url: nonEmptyString(source.url, `${metadata.sourcePath}.url`, prefix),
-      branch: nonEmptyString(source.branch, `${metadata.sourcePath}.branch`, prefix),
-      commit: nonEmptyString(source.commit, `${metadata.sourcePath}.commit`, prefix),
-    };
-  }
-  if (metadata.class === 'first-party') {
-    return {
-      kind: 'repo',
-      name: metadata.sqlName ?? product,
-      path: metadata.sourcePath,
-      version: currentProductVersionSync(product, prefix),
-    };
-  }
-  fail(
-    prefix,
-    `${product}.extension.class has unsupported source identity class ${JSON.stringify(metadata.class)}`,
+  return extensionSourceMetadata(
+    product,
+    metadata,
+    source,
+    metadata.class === 'first-party' ? currentProductVersionSync(product, prefix) : undefined,
   );
 }
 
@@ -1729,12 +1663,9 @@ function wasixExtensionTargetId(runtimeTarget) {
   return runtimeTarget === 'portable' ? 'wasix-portable' : runtimeTarget;
 }
 
-function runtimeExtensionTargetRows(prefix) {
+function runtimeExtensionTargetRowsFromTargets(nativeTargets, wasixTargets) {
   const rows = [];
-  for (const target of allArtifactTargets(
-    { product: 'liboliphaunt-native', kind: 'native-runtime' },
-    prefix,
-  )) {
+  for (const target of nativeTargets) {
     if (!target.extensionArtifacts) {
       continue;
     }
@@ -1747,20 +1678,49 @@ function runtimeExtensionTargetRows(prefix) {
           : 'native-dynamic',
     });
   }
-  for (const target of allArtifactTargets(
-    { product: 'liboliphaunt-wasix', kind: 'wasix-runtime' },
-    prefix,
-  )) {
+  for (const target of wasixTargets) {
     rows.push({
       target: wasixExtensionTargetId(target.target),
       family: 'wasix',
       kind: 'wasix-runtime',
     });
   }
-  if (rows.length === 0) {
-    fail(prefix, 'could not derive any exact-extension artifact targets from runtime products');
-  }
   return rows;
+}
+
+function runtimeExtensionTargetRows(prefix) {
+  const rows = runtimeExtensionTargetRowsFromTargets(
+    allArtifactTargets({ product: 'liboliphaunt-native', kind: 'native-runtime' }, prefix),
+    allArtifactTargets({ product: 'liboliphaunt-wasix', kind: 'wasix-runtime' }, prefix),
+  );
+  if (rows.length === 0)
+    fail(prefix, 'could not derive any exact-extension artifact targets from runtime products');
+  return rows;
+}
+
+/** Same runtime target policy, with an explicit descriptor snapshot for imports. */
+export function runtimeExtensionTargetRowsFromConfigs(
+  products,
+  prefix = 'release-artifact-targets.mts',
+  { nativeOwner = 'liboliphaunt-native', wasixOwner = 'liboliphaunt-wasix' } = {},
+) {
+  const targets = (product, preset, known) =>
+    productTargetsFromConfig(
+      product,
+      artifactTargetConfigFromRelease(product, products[product], preset, prefix),
+      known,
+      prefix,
+    );
+  const nativeTargets = targets(
+    nativeOwner,
+    'liboliphaunt-native',
+    new Set(Object.keys(NATIVE_RUNTIME_TARGETS)),
+  );
+  for (const target of nativeTargets) requiredBinaryCompatibility(target, 'native runtime', prefix);
+  return runtimeExtensionTargetRowsFromTargets(
+    nativeTargets.map((target) => ({ target, extensionArtifacts: true })),
+    targets(wasixOwner, 'liboliphaunt-wasix', WASIX_TARGETS).map((target) => ({ target })),
+  );
 }
 
 function readExtensionTargetRows(prefix) {
@@ -1855,22 +1815,29 @@ export function extensionTargetIds({ family }, prefix = 'release-artifact-target
   ].sort(compareText);
 }
 
-function extensionPublishedTargets(product, family, kind, prefix) {
-  return [
-    ...new Set(
-      extensionArtifactTargets({ product, family }, prefix)
-        .filter((target) => target.kind === kind)
-        .map((target) => target.target),
-    ),
-  ].sort(compareText);
-}
-
 export function extensionRegistryPackageTargetSets(
   product,
   prefix = 'release-artifact-targets.mts',
 ) {
-  const memberSignatures = extensionSqlNames(product, prefix).map((sqlName) => {
-    const rows = extensionArtifactTargets({ product }, prefix)
+  return extensionRegistryPackageTargetSetsFromRows(
+    product,
+    extensionSqlNames(product, prefix),
+    extensionArtifactTargets({ product }, prefix),
+    extensionWasixAotMemberSqlNames(product, prefix),
+    prefix,
+  );
+}
+
+/** Canonical carrier expansion from explicitly supplied, validated construction facts. */
+export function extensionRegistryPackageTargetSetsFromRows(
+  product,
+  sqlNames,
+  artifactRows,
+  wasixAotMembers,
+  prefix = 'release-artifact-targets.mts',
+) {
+  const memberSignatures = sqlNames.map((sqlName) => {
+    const rows = artifactRows
       .filter((row) => row.sqlName === sqlName)
       .map((row) => `${row.target}\0${row.family}\0${row.kind}`)
       .sort(compareText);
@@ -1886,23 +1853,22 @@ export function extensionRegistryPackageTargetSets(
       `${product} bundle members must publish an identical target carrier set; mismatched members: ${mismatched.join(', ')}`,
     );
   }
-  const nativeDynamicTargets = extensionPublishedTargets(
-    product,
-    'native',
-    'native-dynamic',
-    prefix,
-  );
+  const published = (family, kind) =>
+    [
+      ...new Set(
+        artifactRows
+          .filter((row) => row.family === family && row.kind === kind)
+          .map((row) => row.target),
+      ),
+    ].sort(compareText);
+  const nativeDynamicTargets = published('native', 'native-dynamic');
   if (nativeDynamicTargets.length === 0) {
     fail(prefix, `${product} has no native dynamic extension registry targets`);
   }
-  const androidTargets = extensionPublishedTargets(
-    product,
-    'native',
-    'native-static-registry',
-    prefix,
-  ).filter((target) => target.startsWith('android-'));
-  const wasixRuntimeTargets = extensionPublishedTargets(product, 'wasix', 'wasix-runtime', prefix);
-  const wasixAotMembers = extensionWasixAotMemberSqlNames(product, prefix);
+  const androidTargets = published('native', 'native-static-registry').filter((target) =>
+    target.startsWith('android-'),
+  );
+  const wasixRuntimeTargets = published('wasix', 'wasix-runtime');
   return {
     androidTargets,
     npmTargets: nativeDynamicTargets,

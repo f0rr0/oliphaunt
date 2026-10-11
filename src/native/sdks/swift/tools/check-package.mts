@@ -1,27 +1,27 @@
 #!/usr/bin/env bun
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { ROOT, compareText } from '../../../../../tools/release/release-artifact-targets.mts';
 import {
-  PREFIX,
+  bundleJavaScript,
+  releaseJavaScript,
+} from '../../../../../tools/packaging/emit-javascript.mts';
+import {
   directoryNames,
   fail,
   inspectSdkProduct,
   isDirectory,
   isFile,
+  PREFIX,
   readZipEntries,
   rejectSdkRuntimePayload,
   rel,
 } from '../../../../../tools/packaging/release-carrier.mts';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { compareText, ROOT } from '../../../../../tools/release/release-artifact-targets.mts';
+import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
 import {
   validateSelectionNeutralSwiftSourceCarrierFile,
   validateSwiftSourceReleaseContract,
 } from './swift-source-carrier-contract.mts';
-import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
-import {
-  bundleJavaScript,
-  releaseJavaScript,
-} from '../../../../../tools/packaging/emit-javascript.mts';
 
 const SWIFT_SOURCE_FIXTURE_REPOSITORY_ROOT = path.join(
   ROOT,
@@ -80,7 +80,7 @@ export function validateSwiftSourceFixtureEntries(artifact, entries) {
   return new Set(expectedNames);
 }
 
-export async function checkSwiftPackage(root) {
+export async function checkSwiftPackage(root, { nativeSourceBasis = undefined } = {}) {
   const product = 'oliphaunt-swift';
   let checked = false;
 
@@ -129,6 +129,7 @@ export async function checkSwiftPackage(root) {
       const carrier = validateSelectionNeutralSwiftSourceCarrierFile(
         sourceCarrier,
         rel(sourceCarrier),
+        { sourceBasis: nativeSourceBasis },
       );
       validateSwiftSourceReleaseContract({
         carrier,
@@ -139,6 +140,7 @@ export async function checkSwiftPackage(root) {
         ),
         label: `${product} staged source release`,
         manifestText: text,
+        sourceBasis: nativeSourceBasis,
       });
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));

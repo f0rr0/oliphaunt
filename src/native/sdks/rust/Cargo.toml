@@ -9,6 +9,7 @@ repository.workspace = true
 homepage.workspace = true
 license = "MIT"
 exclude = [
+  "BUILD.bazel",
   ".gitignore",
   "crates/oliphaunt-build/**",
   "moon.yml",

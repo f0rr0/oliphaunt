@@ -1,0 +1,33 @@
+load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["shipping.cquery.bzl", "shipping-coverage.mts"])
+
+bun_test(
+    name = "shipping_coverage_test",
+    size = "small",
+    entry_point = "tests/shipping-coverage.test.mts",
+    data = [
+        "shipping-coverage.mts",
+        "//tools/release:bazel-shipping-inputs.mts",
+    ],
+)
+
+bun_test(
+    name = "execution_log_test",
+    entry_point = "tests/execution-log.test.mts",
+    data = ["tests/execution-log.mts"],
+)
+
+bun_binary(
+    name = "conformance",
+    entry_point = "tests/conformance.mts",
+    data = [
+        "tests/execution-log.mts",
+        "//:tools/packaging/portable-archive.mts",
+        "//tools/release:bazel-shipping-inputs.mts",
+        "//tools/bazel/tests/fixtures/action-graph:fixture_sources",
+    ],
+    tags = ["manual"],
+)

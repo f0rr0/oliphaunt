@@ -62,6 +62,7 @@ function androidElfContract(architecture, machine) {
       ...ELF64_LITTLE_ENDIAN,
       machine,
       androidApiLevel: 24,
+      minimumLoadSegmentAlignment: 16_384,
       forbiddenRequiredVersionFamilies: FORBIDDEN_ANDROID_VERSION_FAMILIES,
     }),
   });
@@ -138,6 +139,13 @@ export function renderPublicPlatformCompatibilityTable() {
   if (androidArm64 !== androidX64) {
     throw new Error('published Android targets disagree on the minimum API level');
   }
+  const androidAlignment =
+    PLATFORM_COMPATIBILITY_POLICY['android-arm64-v8a'].elf.minimumLoadSegmentAlignment;
+  if (
+    androidAlignment !==
+    PLATFORM_COMPATIBILITY_POLICY['android-x86_64'].elf.minimumLoadSegmentAlignment
+  )
+    throw new Error('published Android targets disagree on the ELF page alignment');
   const directMacos = PLATFORM_COMPATIBILITY_POLICY['macos-arm64'].apple.platforms.macos;
   const xcframework = PLATFORM_COMPATIBILITY_POLICY['ios-xcframework'].apple.platforms;
   return [
@@ -145,7 +153,7 @@ export function renderPublicPlatformCompatibilityTable() {
     '| --- | --- |',
     `| Linux x64/arm64 GNU | Provides binaries requiring at most \`GLIBC_${displayVersion(linuxX64.GLIBC)}\` or \`GLIBCXX_${displayVersion(linuxX64.GLIBCXX)}\`. |`,
     `| Direct macOS arm64 runtime | Requires macOS ${displayVersion(directMacos.maximumMinimumOs)}. |`,
-    `| Android \`arm64-v8a\` and \`x86_64\` | Minimum Android API level is ${androidArm64}. |`,
+    `| Android \`arm64-v8a\` and \`x86_64\` | Minimum Android API level is ${androidArm64}; ELF load segments support ${androidAlignment / 1024} KiB pages. |`,
     `| Apple XCFramework | Contains macOS arm64, iOS device arm64, and iOS Simulator arm64 slices; minimum targets are macOS ${displayVersion(xcframework.macos.maximumMinimumOs)}, iOS ${displayVersion(xcframework.ios.maximumMinimumOs)}, and iOS Simulator ${displayVersion(xcframework.iosSimulator.maximumMinimumOs)}. |`,
     '| Windows x64 MSVC | Ships with its required Visual C++ runtime libraries. Windows ARM64 is unavailable. |',
   ].join('\n');

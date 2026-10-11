@@ -1,0 +1,15 @@
+load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_package_env", "napi_artifact")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["Cargo.toml"])
+
+PATH_DEPS = {
+    "oliphaunt-pgwire-server": "//src/wasix/pgwire-server:napi_lib",
+    "liboliphaunt-wasix-portable": "//src/wasix/runtime/crates/assets:lib",
+    "oliphaunt-wasix": "//src/wasix/sdks/rust:napi_lib",
+}
+
+cargo_package_env()
+cargo_generator(path_dependencies = PATH_DEPS, proc_macro_names = ["napi-derive"])
+cargo_library(name = "addon_library", kind = "cdylib", path_dependencies = PATH_DEPS, proc_macro_names = ["napi-derive"], build_script = ":build_script")
+napi_artifact(name = "addon", library = ":addon_library", out = "oliphaunt_wasix_napi.node")

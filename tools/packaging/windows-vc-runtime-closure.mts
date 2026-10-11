@@ -451,6 +451,13 @@ function receiptText(required) {
     .join('');
 }
 
+/** Seed a private declared SDK projection for the retained import-derived stager. */
+export function renderWindowsVcRuntimeSourceReceipt({ sourceDirectory, profile }) {
+  const names = windowsVcRuntimeProfileNames(profile);
+  if (names.length === 0) throw failure('declared VC runtime source requires a nonempty profile');
+  return receiptText(closureFromSource(new Set(names), path.resolve(sourceDirectory)));
+}
+
 export function parseWindowsVcRuntimeReceipt(input, label = WINDOWS_VC_RUNTIME_RECEIPT) {
   const text = Buffer.isBuffer(input) ? input.toString('utf8') : String(input);
   const values = new Map();

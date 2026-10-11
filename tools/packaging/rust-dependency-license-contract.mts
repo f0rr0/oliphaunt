@@ -20,8 +20,11 @@ export function createRustDependencyLicenseContract({
   payloadLicense,
   noticeProfile = 'source-sdk',
   targets,
+  sourceRoot = undefined as string | undefined,
 }) {
-  const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  if (sourceRoot !== undefined && (!sourceRoot || !path.isAbsolute(sourceRoot)))
+    throw new Error('Rust dependency license source root must be an absolute directory');
+  const ROOT = sourceRoot ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
   const TOOL = `${product} dependency licenses`;
   const CONTRACT_PATH = path.join(ROOT, owner, 'dependency-licenses.json');
   const BLOB_ROOT = path.join(ROOT, owner, 'dependency-license-blobs');
@@ -890,6 +893,7 @@ export function createRustDependencyLicenseContract({
     }
     assertReleaseNoticesInEntries(entries, {
       profile: noticeProfile,
+      ...(sourceRoot === undefined ? {} : { sourceRoot }),
       prefix: archivePrefix,
       exact: false,
       label,

@@ -1,0 +1,324 @@
+module(name = "oliphaunt")
+
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "apple_support", version = "2.9.1")
+bazel_dep(name = "rules_cc", version = "0.2.26")
+bazel_dep(name = "rules_rust", version = "0.74.0")
+# The generated Rust toolchain BUILD files use this mapping from our extension.
+bazel_dep(name = "rules_shell", version = "0.8.0")
+bazel_dep(name = "aspect_rules_js", version = "3.5.1")
+bazel_dep(name = "aspect_rules_ts", version = "3.10.1")
+bazel_dep(name = "rules_nodejs", version = "6.7.6")
+bazel_dep(name = "rules_pkg", version = "1.3.0")
+bazel_dep(name = "hermetic_cc_toolchain", version = "4.3.0")
+bazel_dep(name = "rules_apple", version = "5.2.0")
+bazel_dep(name = "rules_swift", version = "4.2.1")
+bazel_dep(name = "rules_bison", version = "0.4.bcr.1")
+bazel_dep(name = "rules_flex", version = "0.4.1")
+bazel_dep(name = "rules_m4", version = "0.3.bcr.1")
+bazel_dep(name = "rules_perl", version = "1.2.0")
+bazel_dep(name = "rules_android_ndk", version = "0.1.5")
+bazel_dep(name = "rules_java", version = "8.14.0")
+bazel_dep(name = "rules_kotlin", version = "2.2.2")
+bazel_dep(name = "rules_android", version = "0.6.6")
+bazel_dep(name = "rules_jvm_external", version = "6.10")
+bazel_dep(name = "rules_cc_autoconf", version = "0.24.0")
+
+single_version_override(
+    module_name = "rules_rust",
+    version = "0.74.0",
+    patches = ["//build_defs/wasix/browser:crate-source-metadata.patch"],
+    patch_strip = 1,
+)
+single_version_override(
+    module_name = "rules_cc_autoconf",
+    version = "0.24.0",
+    patches = ["//build_defs/native:patches/rules-cc-autoconf-native-process.patch"],
+    patch_strip = 1,
+)
+
+native_hosts = use_extension("//build_defs/host:repositories.bzl", "native_host_toolchains")
+use_repo(native_hosts, "native_host_toolchains", "native_apple_sdk", "native_msvc_sdk")
+register_toolchains("@native_host_toolchains//:all")
+
+zig_toolchains = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolchains")
+use_repo(zig_toolchains, "zig_sdk")
+register_toolchains(
+    "@zig_sdk//libc_aware/toolchain:linux_amd64_gnu.2.28",
+    "@zig_sdk//libc_aware/toolchain:linux_arm64_gnu.2.28",
+)
+
+bun_runtime = use_repo_rule("//build_defs/foundation:repositories.bzl", "bun_runtime_repository")
+bun_runtime(name = "bun_runtime")
+
+bun_execution = use_extension("//build_defs/foundation:repositories.bzl", "bun_toolchains")
+use_repo(bun_execution, "bun_toolchains")
+register_toolchains("@bun_toolchains//:all")
+
+wasix_toolchain = use_repo_rule("//build_defs/wasix:repositories.bzl", "wasix_toolchain_repository")
+wasix_toolchain(name = "wasix_toolchain")
+register_toolchains("//build_defs/wasix:cc_toolchain")
+
+wasix_tool_metadata = use_repo_rule("//build_defs/wasix:repositories.bzl", "wasix_tool_metadata")
+wasix_tool_metadata(name = "wasix_tool_metadata", bun = "@bun_runtime//:bun")
+
+wasmer_llvm_repository = use_repo_rule("//build_defs/wasix:repositories.bzl", "wasmer_llvm_repository")
+wasmer_llvm_repository(name = "wasmer_llvm_linux_x64", host = "linux-x64-gnu")
+wasmer_llvm_repository(name = "wasmer_llvm_linux_arm64", host = "linux-arm64-gnu")
+wasmer_llvm_repository(name = "wasmer_llvm_macos_arm64", host = "macos-arm64")
+wasmer_llvm_repository(name = "wasmer_llvm_windows_x64", host = "windows-x64-msvc")
+
+toolchain_metadata = use_repo_rule("//build_defs/foundation:repositories.bzl", "toolchain_metadata_repository")
+toolchain_metadata(name = "oliphaunt_toolchain_metadata")
+
+languages = use_extension("//build_defs/foundation:extensions.bzl", "languages")
+languages.configure(metadata = "@oliphaunt_toolchain_metadata//:toolchains.json")
+use_repo(languages, "rust_toolchains", "query_types_node", "query_undici_types")
+register_toolchains("@rust_toolchains//:all")
+
+native_cargo_metadata = use_repo_rule("//build_defs/languages:repositories.bzl", "cargo_metadata_repository")
+native_cargo_metadata(
+    name = "native_cargo_metadata",
+    roots = [],
+)
+
+cargo_crates = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+cargo_crates.from_cargo(
+    name = "cargo_crates",
+    cargo_lockfile = "@native_cargo_metadata//:Cargo.lock",
+    manifests = ["@native_cargo_metadata//:Cargo.toml"],
+    skip_cargo_lockfile_overwrite = True,
+    supported_platform_triples = [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "aarch64-apple-ios",
+        "aarch64-apple-ios-sim",
+        "aarch64-linux-android",
+        "x86_64-linux-android",
+    ],
+)
+use_repo(cargo_crates, "cargo_crates")
+
+node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node")
+node.toolchain(node_version_from_nvmrc = "@oliphaunt_toolchain_metadata//:node-version")
+use_repo(node, "nodejs_toolchains")
+register_toolchains("@nodejs_toolchains//:all")
+
+typescript = use_extension("@aspect_rules_ts//ts:extensions.bzl", "typescript")
+typescript.deps(version_from = "@oliphaunt_toolchain_metadata//:typescript.json")
+use_repo(typescript, "npm_typescript")
+
+postgres = use_repo_rule("//build_defs/native:repositories.bzl", "postgres_repository")
+postgres(name = "postgres")
+
+# Local qualification declares the current host's generator binaries and data.
+# This is an explicit development lane, not a hermetic release toolchain.
+native_exec_tools = use_repo_rule("//build_defs/native:repositories.bzl", "native_exec_tools_repository")
+native_exec_tools(name = "native_exec_tools")
+
+icu = use_repo_rule("//build_defs/native:repositories.bzl", "icu_repository")
+icu(name = "icu")
+
+icu_data = use_repo_rule("//build_defs/native:icu_data.bzl", "icu_data_repository")
+icu_data(name = "icu_data")
+
+domain_metadata = use_repo_rule("//build_defs/release:repositories.bzl", "domain_metadata")
+domain_metadata(name = "oliphaunt_metadata", bun = "@bun_runtime//:bun")
+
+extension_sources = use_extension("//build_defs/extensions:repositories.bzl", "extension_sources")
+use_repo(extension_sources, "pgtap", "pgvector", "pg_hashids", "pg_uuidv7", "pg_ivm", "pg_textsearch")
+
+# Append new acquisition contexts to keep existing repository identities stable.
+postgres(
+    name = "postgres_wasix",
+    patch_series = "//src/wasix/runtime:postgres/series",
+    build_file = "//build_defs/wasix:postgres.BUILD.bazel",
+)
+
+javascript_metadata = use_repo_rule("//build_defs/languages/ts:repositories.bzl", "javascript_metadata_repository")
+javascript_metadata(
+    name = "oliphaunt_javascript_metadata",
+    manifests = [
+        "//src/native/sdks/ts:package.json",
+        "//src/query/ts:package.json",
+        "//src/wasix/sdks/ts:package.json",
+    ],
+    consumer_tools = {"@oliphaunt/wasix-ts": ["vite"]},
+)
+javascript_packages = use_extension("//build_defs/languages/ts:repositories.bzl", "javascript_packages")
+javascript_packages.configure(
+    metadata = "@oliphaunt_javascript_metadata//:acquisition.json",
+    consumer_metadata = "@oliphaunt_javascript_metadata//:consumer-tools.json",
+)
+use_repo(javascript_packages, "javascript_packages", "javascript_consumer_packages")
+
+icu(name = "icu_wasix", build_file = "//build_defs/wasix:icu.BUILD.bazel")
+
+mobile_cargo_metadata = use_repo_rule("//build_defs/languages:repositories.bzl", "cargo_metadata_repository")
+mobile_cargo_metadata(
+    name = "mobile_bindgen_cargo_metadata",
+    activations = {"src/native/mobile-bindings": ["bindgen"]},
+)
+cargo_crates.from_cargo(
+    name = "mobile_bindgen_crates",
+    cargo_lockfile = "@mobile_bindgen_cargo_metadata//:Cargo.lock",
+    manifests = ["@mobile_bindgen_cargo_metadata//:Cargo.toml"],
+    skip_cargo_lockfile_overwrite = True,
+    supported_platform_triples = [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+    ],
+)
+use_repo(cargo_crates, "mobile_bindgen_crates")
+
+openssl = use_repo_rule("//build_defs/native:openssl_repository.bzl", "openssl_repository")
+openssl(name = "openssl")
+
+use_repo(extension_sources, "postgis", "postgis_geos", "postgis_proj", "postgis_sqlite", "postgis_json_c", "postgis_libxml2", "postgis_libiconv")
+
+native_cargo_metadata(
+    name = "aot_serializer_cargo_metadata",
+    activations = {"src/wasix/runtime/tools/xtask": ["aot-serializer"]},
+)
+cargo_crates.from_cargo(
+    name = "aot_serializer_crates",
+    cargo_lockfile = "@aot_serializer_cargo_metadata//:Cargo.lock",
+    manifests = ["@aot_serializer_cargo_metadata//:Cargo.toml"],
+    skip_cargo_lockfile_overwrite = True,
+    supported_platform_triples = [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+    ],
+)
+use_repo(cargo_crates, "aot_serializer_crates")
+
+browser_sources = use_repo_rule("//build_defs/wasix/browser:repositories.bzl", "browser_sources_repository")
+browser_sources(name = "browser_sources")
+browser_compilers = use_extension("//build_defs/wasix/browser:repositories.bzl", "browser_compilers")
+browser_compilers.configure(metadata = "@browser_sources//:metadata.json")
+use_repo(browser_compilers, "browser_npm", "browser_wasm_bindgen_linux_x64", "browser_binaryen_linux_x64")
+
+android_ndk = use_repo_rule("//build_defs/android:repositories.bzl", "android_ndk_repository")
+android_ndk(name = "android_ndk")
+register_toolchains("//build_defs/android:toolchain_arm64", "//build_defs/android:toolchain_x86_64")
+
+gradle_api = use_repo_rule("//build_defs/languages/jvm:repositories.bzl", "gradle_api_repository")
+gradle_api(name = "oliphaunt_gradle_api")
+
+browser_cargo = use_extension("//build_defs/wasix/browser:cargo-extension.bzl", "crate")
+browser_cargo.from_cargo(
+    name = "browser_cargo",
+    cargo_lockfile = "@browser_sources//:cargo/Cargo.lock",
+    source_metadata = "@browser_sources//:cargo-sources.json",
+    host_tools = "@browser_rust_std//:_metadata_tools/host-tools",
+    cargo_config = "@browser_sources//:wasmer-js/.cargo/config.toml",
+    manifests = ["@browser_sources//:cargo/Cargo.toml"],
+    skip_cargo_lockfile_overwrite = True,
+    supported_platform_triples = ["wasm32-unknown-unknown", "x86_64-unknown-linux-gnu"],
+)
+use_repo(browser_cargo, "browser_cargo")
+
+postgis_gpp = use_extension("//build_defs/extensions/postgis:gpp_repositories.bzl", "postgis_gpp")
+use_repo(postgis_gpp, "postgis_gpp")
+
+browser_std = use_repo_rule("//build_defs/wasix/browser/std:repositories.bzl", "browser_std_repository")
+browser_std(name = "browser_rust_std")
+register_toolchains("//build_defs/wasix/browser/std:host_toolchain", "//build_defs/wasix/browser/std:wasm_toolchain")
+
+cargo_crates.annotation(
+    crate = "llvm-sys",
+    repositories = ["aot_serializer_crates"],
+    build_script_data = ["@oliphaunt//build_defs/wasix:wasmer_llvm_files"],
+    build_script_env_files = ["@oliphaunt//build_defs/wasix:wasmer_llvm_env"],
+    label_injections = {"//build_defs/wasix:wasmer_llvm_files": "@oliphaunt"},
+)
+
+kotlin_sdk_metadata = use_repo_rule("//build_defs/languages/jvm:kotlin-sdk-repository.bzl", "kotlin_sdk_metadata_repository")
+kotlin_sdk_metadata(name = "oliphaunt_kotlin_manifest")
+register_toolchains("//build_defs/languages/jvm:sdk_toolchain")
+
+kotlin_maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+kotlin_maven.from_toml(
+    name = "oliphaunt_kotlin_maven",
+    libs_versions_toml = "//src/native/sdks/kotlin:gradle/libs.versions.toml",
+)
+kotlin_maven.install(
+    name = "oliphaunt_kotlin_maven",
+    lock_file = "//src/native/sdks/kotlin:maven_install.json",
+    repositories = ["https://repo.maven.apache.org/maven2"],
+)
+use_repo(kotlin_maven, "oliphaunt_kotlin_maven")
+
+android_sdk_archive = use_repo_rule("//build_defs/languages/jvm:android-sdk-repository.bzl", "android_sdk_archive_repository")
+android_sdk_archive(name = "oliphaunt_android_sdk_archive")
+android_sdk_hub = use_repo_rule("//build_defs/languages/jvm:android-sdk-repository.bzl", "android_sdk_hub_repository")
+android_sdk_hub(name = "oliphaunt_android_sdk", archive = "oliphaunt_android_sdk_archive")
+android_sdk = use_extension("@rules_android//rules/android_sdk_repository:rule.bzl", "android_sdk_repository_extension")
+override_repo(android_sdk, androidsdk = "oliphaunt_android_sdk")
+
+frozen_native_carrier = use_repo_rule("//build_defs/release:frozen-native-carrier.bzl", "frozen_native_carrier_repository")
+frozen_native_carrier(
+    name = "swift_frozen_native",
+    source = "//build_defs/release:swift-0.8.2-source.json",
+    compatibility = "//src/native/sdks/swift:LIBOLIPHAUNT_VERSION",
+    native_releases = "//build_defs/release:native-0.3.3-releases.json",
+    native_completion = "//build_defs/release:native-0.3.3-completed-publication.json",
+    source_publication = "//build_defs/release:swift-0.8.2-publication-source.json",
+)
+
+frozen_native_runtime = use_repo_rule("//build_defs/release:frozen-native-runtime.bzl", "frozen_native_runtime_repository")
+frozen_native_runtime(
+    name = "held_native",
+    releases = "//build_defs/release:native-0.3.2-releases.json",
+    completion = "//build_defs/release:native-0.3.2-completed-publication.json",
+    descriptor = "//src/native/sdks/rust:release.toml",
+    compatibility = "//src/native/sdks/rust:Cargo.toml",
+    compatibility_path = "src/native/sdks/rust/Cargo.toml",
+    targets = ["linux-x64-gnu"],
+)
+
+frozen_native_runtime(
+    name = "kotlin_frozen_native",
+    releases = "//build_defs/release:native-0.3.3-releases.json",
+    completion = "//build_defs/release:native-0.3.3-completed-publication.json",
+    descriptor = "//src/native/sdks/kotlin:release.toml",
+    compatibility = "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:src/main/resources/dev/oliphaunt/android/liboliphaunt.version",
+    compatibility_path = "src/native/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/liboliphaunt.version",
+    targets = ["linux-x64-gnu"],
+)
+
+frozen_native_runtime(
+    name = "extension_frozen_native",
+    releases = "//build_defs/release:native-0.3.3-releases.json",
+    completion = "//build_defs/release:native-0.3.3-completed-publication.json",
+    descriptor = "//src/extensions/external/postgis:release.toml",
+    compatibility = "//src/extensions/external/postgis:release.toml",
+    compatibility_path = "src/extensions/external/postgis/release.toml",
+    targets = ["linux-x64-gnu"],
+)
+
+installed_cargo_inputs = use_repo_rule("//build_defs/languages/installed:repositories.bzl", "installed_cargo_repository")
+installed_cargo_inputs(name = "installed_cargo_inputs", bun = "@bun_runtime//:bun")
+
+compiler_rt_repository = use_repo_rule("//build_defs/extensions/compiler_rt:repositories.bzl", "compiler_rt_repository")
+compiler_rt_repository(name = "pgvector_compiler_rt", source = "//build_defs/extensions/compiler_rt:source.json")
+
+frozen_native_npm = use_repo_rule("//build_defs/release:frozen-native-npm.bzl", "frozen_native_npm_repository")
+frozen_native_npm(
+    name = "node_frozen_native",
+    metadata = "//build_defs/release:native-0.3.2-npm-linux-x64-gnu.json",
+    attestations = "//build_defs/release:native-0.3.2-npm-linux-x64-gnu-attestations.json",
+    releases = "//build_defs/release:native-0.3.2-releases.json",
+    completion = "//build_defs/release:native-0.3.2-completed-publication.json",
+    descriptor = "//src/native/sdks/ts:release.toml",
+    compatibility = "//src/native/sdks/ts:package.json",
+    compatibility_path = "src/native/sdks/ts/package.json",
+    target = "linux-x64-gnu",
+)

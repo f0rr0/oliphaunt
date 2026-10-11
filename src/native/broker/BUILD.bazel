@@ -1,0 +1,17 @@
+load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("//build_defs/languages:source.bzl", "cargo_source_package")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["Cargo.toml"])
+
+PATH_DEPS = {
+    "liboliphaunt-native-bindings": "//src/native/rust-bindings:lib",
+    "oliphaunt-query": "//src/query/rust:oliphaunt_query",
+}
+
+cargo_package_env()
+cargo_library(path_dependencies = PATH_DEPS)
+cargo_binary(name = "broker", source = "src/main.rs", path_dependencies = PATH_DEPS, library = ":lib")
+cargo_library_test()
+cargo_library_test(name = "binary_test", crate = ":broker")
+cargo_source_package(product = "oliphaunt-broker")

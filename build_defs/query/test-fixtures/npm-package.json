@@ -1,0 +1,16 @@
+{
+  "name": "@oliphaunt/ts-query",
+  "version": "0.0.0",
+  "exports": {
+    "./protocol": {
+      "import": {
+        "types": "./dist/module/protocol.d.ts",
+        "default": "./dist/module/protocol.js"
+      },
+      "require": {
+        "types": "./dist/commonjs/protocol.d.ts",
+        "default": "./dist/commonjs/protocol.js"
+      }
+    }
+  }
+}

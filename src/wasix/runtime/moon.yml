@@ -30,14 +30,6 @@ project:
   release:
     component: liboliphaunt-wasix
     packagePath: src/wasix/runtime
-    artifactTargets:
-      preset: liboliphaunt-wasix
-      targets:
-        - portable
-        - linux-arm64-gnu
-        - linux-x64-gnu
-        - macos-arm64
-        - windows-x64-msvc
 owners:
   defaultOwner: "@oliphaunt/wasix"
   paths:

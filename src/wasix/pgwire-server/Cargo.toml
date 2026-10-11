@@ -8,7 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 description = "PostgreSQL socket server and CLI for embedded Oliphaunt databases."
 readme = "README.md"
-exclude = ["moon.yml", "release.toml", "tools"]
+exclude = ["BUILD.bazel", "moon.yml", "release.toml", "tools"]
 
 [features]
 default = ["wasix"]

@@ -1,0 +1,109 @@
+load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load(":extensions.bzl", "extension_default_version", "extension_perl_runtime")
+load(":smoke.bzl", "native_extension_sql_test")
+load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "EXTENSION_COMPATIBILITY")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["contrib.bzl", "extensions.bzl", "repositories.bzl", "uuid_config.h", "pgtap_upstream_parity_test.mts", "validate_member_payload.mts"])
+exports_files(["native_extension_all_sql_test.sh"])
+
+ARCHIVE_HELPERS = ["//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts"]
+
+bun_binary(name = "pgtap_sql", entry_point = "pgtap_sql.mts")
+extension_perl_runtime(name = "perl_runtime")
+filegroup(name = "perl", srcs = [":perl_runtime"], output_group = "interpreter")
+filegroup(name = "perl_options", srcs = [":perl_runtime"], output_group = "options")
+bun_binary(name = "smoke_plan", entry_point = "smoke_plan.mts")
+bun_binary(name = "member_payload", entry_point = "member_payload.mts", data = ARCHIVE_HELPERS)
+bun_binary(name = "validate_member_payload", entry_point = "validate_member_payload.mts", data = ["//:tools/packaging/portable-archive.mts"])
+bun_binary(
+    name = "sdk_projections",
+    entry_point = "sdk_projections.mts",
+    data = [
+        "//src/extensions/tools:extension-projections.mts",
+        "//src/extensions/tools:native-component-contract.mts",
+        "//src/extensions/contracts:extension-target-profiles.mts",
+    ],
+)
+
+bun_test(
+    name = "pgtap_sql_test",
+    entry_point = "pgtap_sql.test.mts",
+    data = ["pgtap_sql.mts"],
+    size = "small",
+)
+
+native_extension_sql_test(
+    name = "native_built_extension_sql_test",
+    members = ["//src/extensions/contrib:" + member["id"] + "_native_payload" for member in CONTRIB_MEMBERS] +
+              ["//src/extensions/external/" + name + ":native_payload" for name in ["pg_hashids", "pg_uuidv7", "pg_ivm", "pg_textsearch", "pgtap", "vector", "postgis"]],
+)
+
+native_extension_sql_test(
+    name = "native_postgis_sql_test",
+    members = ["//src/extensions/external/postgis:native_payload"],
+)
+
+native_extension_sql_test(
+    name = "native_frozen_postgis_sql_test",
+    members = ["//src/extensions/external/postgis:native_payload"],
+    runtime = "@extension_frozen_native//:archive_linux_x64_gnu",
+    consumer = ":native_frozen_extension_smoke",
+    host_version = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_version"],
+    host_product = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_product"],
+    runtime_prefix = "runtime",
+    library_prefix = "lib",
+)
+
+native_extension_sql_test(
+    name = "native_frozen_extension_sql_test",
+    members = ["//src/extensions/external/" + name + ":native_payload" for name in ["pg_hashids", "pg_uuidv7", "pg_ivm", "pg_textsearch", "pgtap", "vector", "postgis"]],
+    runtime = "@extension_frozen_native//:archive_linux_x64_gnu",
+    consumer = ":native_frozen_extension_smoke",
+    host_version = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_version"],
+    host_product = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_product"],
+    runtime_prefix = "runtime",
+    library_prefix = "lib",
+)
+
+cc_binary(
+    name = "native_extension_smoke",
+    srcs = ["native_extension_smoke.c"],
+    deps = ["//src/native/runtime:liboliphaunt"],
+    copts = ["-std=c11", "-Wall", "-Wextra", "-Werror"],
+    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+)
+
+cc_binary(
+    name = "native_frozen_extension_smoke",
+    srcs = ["native_extension_smoke.c"],
+    deps = ["@extension_frozen_native//:cc_linux_x64_gnu"],
+    copts = ["-std=c11", "-Wall", "-Wextra", "-Werror"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+filegroup(name = "pgtap_archive", srcs = ["//src/extensions/external/pgtap:native_payload"], output_group = "archive")
+filegroup(name = "pg_trgm_archive", srcs = ["//src/extensions/contrib:pg_trgm_native_payload"], output_group = "archive")
+filegroup(name = "vector_archive", srcs = ["//src/extensions/external/vector:native_payload"], output_group = "archive")
+
+sh_test(
+    name = "native_extension_sql_test",
+    srcs = ["native_extension_sql_test.sh"],
+    args = ["$(location //src/native/runtime:runtime_payload)", "$(location :native_extension_smoke)",
+            extension_default_version("pg_trgm"), extension_default_version("vector"), extension_default_version("pgtap"),
+            "$(location :pgtap_archive)", "$(location :pg_trgm_archive)", "$(location :vector_archive)"],
+    data = ["//src/native/runtime:runtime_payload", ":native_extension_smoke", ":pgtap_archive", ":pg_trgm_archive", ":vector_archive"],
+    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+    size = "medium",
+)
+
+bun_test(
+    name = "member_payload_test",
+    entry_point = "member_payload.test.mts",
+    data = ["member_payload.mts", "validate_member_payload.mts"] + ARCHIVE_HELPERS,
+    size = "small",
+)

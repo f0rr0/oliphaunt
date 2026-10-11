@@ -1,0 +1,21 @@
+load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_package_env", "napi_artifact")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["Cargo.toml"])
+
+cargo_package_env()
+PATH_DEPS = {"liboliphaunt-native-bindings": "//src/native/rust-bindings:lib"}
+cargo_generator(path_dependencies = PATH_DEPS, proc_macro_names = ["napi-derive"])
+cargo_library(
+    name = "addon_library",
+    kind = "cdylib",
+    build_script = ":build_script",
+    proc_macro_names = ["napi-derive"],
+    path_dependencies = PATH_DEPS,
+)
+
+napi_artifact(
+    name = "addon",
+    library = ":addon_library",
+    out = "oliphaunt_node.node",
+)

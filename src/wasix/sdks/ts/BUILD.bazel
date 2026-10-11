@@ -1,0 +1,106 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
+load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
+load("@javascript_packages//:defs.bzl", "javascript_type_links", RUNTIME_PACKAGES = "PACKAGES")
+load("@javascript_consumer_packages//:defs.bzl", CONSUMER_PACKAGES = "PACKAGES")
+load("@javascript_consumer_packages//:roots.bzl", "CONSUMER_TOOLS")
+load("//build_defs/languages/ts:defs.bzl", "npm_archive_package", "source_sdk_publish_files")
+load("//build_defs/query:defs.bzl", "query_envelope")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/wasix/browser:defs.bzl", "browser_host_assets", "browser_sql_consumer", "browser_sql_lifecycle")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["package.json", "tools/package.mts", "tools/frozen-browser-consumer.mts", "tools/browser-cdp.mts"])
+
+SDK = JAVASCRIPT["@oliphaunt/wasix-ts"]
+QUERY = JAVASCRIPT["@oliphaunt/ts-query"]
+SDK_SRCS = glob(["src/**/*.ts"], exclude = ["src/__tests__/**"])
+
+javascript_type_links(SDK["types"] | SDK["packages"])
+
+npm_archive_package(
+    name = "query_package",
+    archive = "//src/query/ts:npm",
+    package_name = QUERY["name"],
+    version = QUERY["version"],
+)
+npm_link_package(name = "node_modules/@oliphaunt/ts-query", src = ":query_package")
+js_library(name = "package_metadata", srcs = ["package.json"])
+
+ts_project(
+    name = "module",
+    srcs = SDK_SRCS,
+    tsconfig = "tsconfig.build.json",
+    extends = "tsconfig.json",
+    declaration = True,
+    declaration_map = False,
+    out_dir = "lib",
+    root_dir = "src",
+    transpiler = "tsc",
+    supports_workers = 0,
+    deps = [":package_metadata", ":node_modules/@oliphaunt/ts-query", "//src/wasix/sdks/ts/src/host:declaration"] + [":node_modules/" + name for name in SDK["types"] | SDK["packages"]],
+)
+
+filegroup(name = "module_outputs", srcs = [":module"])
+source_sdk_publish_files(name = "publish_files", manifest = "package.json", profile = "wasix-ts")
+filegroup(name = "publish_manifest", srcs = [":publish_files"], output_group = "manifest")
+filegroup(name = "license", srcs = [":publish_files"], output_group = "license")
+filegroup(name = "notices", srcs = [":publish_files"], output_group = "notices")
+browser_host_assets(name = "host_assets", host = "//src/wasix/browser-host:host")
+
+query_envelope(
+    name = "npm",
+    format = "npm",
+    manifest = ":publish_manifest",
+    entries = {
+        ":module_outputs": "lib/",
+        ":module_types": "lib/",
+        ":host_assets": "lib/",
+        ":publish_manifest": "package.json",
+        ":license": "LICENSE",
+        ":notices": "THIRD_PARTY_NOTICES.md",
+        "README.md": "README.md",
+        "ARCHITECTURE.md": "ARCHITECTURE.md",
+        "CHANGELOG.md": "CHANGELOG.md",
+    },
+    out = "oliphaunt-wasix-ts.tgz",
+)
+
+shipping_package(
+    name = "shipping_package",
+    owner = "@oliphaunt_metadata//:product_oliphaunt-wasix-ts",
+    artifacts = [":npm"],
+    ecosystem = "npm",
+    package_name = SDK["name"],
+    configuration = "portable",
+)
+
+shipping_export(name = "shipping_export", packages = [":shipping_package"])
+
+browser_sql_consumer(
+    name = "browser_sql_consumer",
+    sdk = ":npm",
+    query = "//src/query/ts:npm",
+    runtime = "//src/wasix/runtime:npm",
+    manifest = ":publish_manifest",
+    fixture = "tools/frozen-browser-consumer.mts",
+    cdp = "tools/browser-cdp.mts",
+    packages = {"@javascript_packages//:" + key: key for key in RUNTIME_PACKAGES} | {"@javascript_consumer_packages//:" + key: key for key in CONSUMER_PACKAGES},
+    roots = CONSUMER_TOOLS[SDK["name"]],
+    runtime_packages = SDK["packages"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+# Local qualification can consume byte-identified outputs from separate producer bases.
+# Unified CI uses browser_sql_consumer and its declared archive dependencies above.
+browser_sql_lifecycle(
+    name = "browser_sql_lifecycle",
+    manifest = ":publish_manifest",
+    fixture = "tools/frozen-browser-consumer.mts",
+    cdp = "tools/browser-cdp.mts",
+    packages = {"@javascript_packages//:" + key: key for key in RUNTIME_PACKAGES} | {"@javascript_consumer_packages//:" + key: key for key in CONSUMER_PACKAGES},
+    roots = CONSUMER_TOOLS[SDK["name"]],
+    runtime_packages = SDK["packages"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)

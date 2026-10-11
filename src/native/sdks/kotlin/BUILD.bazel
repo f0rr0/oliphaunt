@@ -1,0 +1,162 @@
+load("//build_defs/languages/jvm:bindings.bzl", "uniffi_kotlin")
+load("//build_defs/languages/jvm:maven.bzl", "kotlin_maven_package")
+load("//build_defs/android:toolchain.bzl", "android_artifact")
+load("//build_defs/release:shipping.bzl", "shipping_export")
+load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_projections")
+load("@oliphaunt_kotlin_manifest//:metadata.bzl", "KOTLIN")
+load("@rules_kotlin//kotlin:jvm.bzl", "kt_jvm_library", "kt_jvm_test")
+load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
+load("@rules_android//android:rules.bzl", "aar_import", "android_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "VERSION",
+    "release.toml",
+    "gradle.properties",
+    "oliphaunt/build.gradle.kts",
+    "gradle/libs.versions.toml",
+    "gradle/wrapper/gradle-wrapper.properties",
+    "tools/kotlin-maven-staging.mts",
+    "maven_install.json",
+])
+
+uniffi_kotlin(
+    name = "generated_bindings",
+    generator = "//src/native/mobile-bindings:bindgen",
+    library = "//src/native/mobile-bindings:shared",
+    configuration = "//src/native/mobile-bindings:uniffi.toml",
+)
+
+sdk_extension_projections(
+    name = "generated_extensions",
+    sdk = "kotlin",
+    generated = "generated/GeneratedExtensions.kt",
+    descriptors = "generated/OliphauntExtension.kt",
+)
+
+COMMON_SOURCES = glob(["oliphaunt/src/commonMain/kotlin/**/*.kt"], exclude = ["oliphaunt/src/commonMain/kotlin/**/GeneratedExtensions.kt", "oliphaunt/src/commonMain/kotlin/**/OliphauntExtension.kt"]) + [":generated_extensions"]
+LINUX_EXECUTION = ["@platforms//os:linux", "@platforms//cpu:x86_64"]
+
+kt_jvm_library(
+    name = "common",
+    srcs = COMMON_SOURCES,
+    deps = ["@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core"],
+    target_compatible_with = LINUX_EXECUTION,
+)
+
+kt_jvm_library(
+    name = "common_test_support",
+    testonly = True,
+    srcs = glob(["oliphaunt/src/commonTest/kotlin/**/*.kt", "oliphaunt/src/jvmTest/kotlin/**/*.kt"]),
+    associates = [":common"],
+    deps = ["@oliphaunt_kotlin_maven//:org_jetbrains_kotlin_kotlin_test_junit", "@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_test", "@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_serialization_json"],
+    target_compatible_with = LINUX_EXECUTION,
+)
+
+[kt_jvm_test(
+    name = name,
+    deps = [":common_test_support"],
+    test_class = "dev.oliphaunt." + test_class,
+    target_compatible_with = LINUX_EXECUTION,
+) for name, test_class in [("database_test", "OliphauntDatabaseTest"), ("broker_test", "BrokerFacadeTest")]]
+
+kt_jvm_test(
+    name = "shared_protocol_test",
+    deps = [":common_test_support"],
+    test_class = "dev.oliphaunt.SharedProtocolFixtureTest",
+    data = ["//src/test-fixtures:protocol/query-response-cases.json", "//src/test-fixtures:protocol/structured-sql-cases.json"],
+    target_compatible_with = LINUX_EXECUTION,
+)
+
+test_suite(name = "common_test", tests = [":database_test", ":broker_test", ":shared_protocol_test"])
+
+android_library(
+    name = "broker_aidl",
+    idl_srcs = glob(["oliphaunt/src/androidMain/aidl/**/*.aidl"]),
+    idl_import_root = "oliphaunt/src/androidMain/aidl",
+    target_compatible_with = LINUX_EXECUTION,
+)
+
+kt_android_library(
+    name = "android_classes",
+    srcs = COMMON_SOURCES + glob(["oliphaunt/src/androidMain/kotlin/**/*.kt"]) + [":generated_bindings"],
+    manifest = "oliphaunt/src/androidMain/AndroidManifest.xml",
+    custom_package = KOTLIN["namespace"],
+    proguard_specs = ["oliphaunt/consumer-rules.pro"],
+    deps = [":broker_aidl", "@oliphaunt_kotlin_maven//:net_java_dev_jna_jna", "@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core"],
+    target_compatible_with = LINUX_EXECUTION,
+)
+
+kt_jvm_library(
+    name = "android_test_support",
+    testonly = True,
+    srcs = glob(["oliphaunt/src/androidUnitTest/kotlin/**/*.kt"]),
+    associates = [":android_classes"],
+    deps = ["@oliphaunt_kotlin_maven//:org_jetbrains_kotlin_kotlin_test_junit", "@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core", "@oliphaunt_kotlin_maven//:org_json_json"],
+    target_compatible_with = LINUX_EXECUTION,
+)
+
+[kt_jvm_test(
+    name = name,
+    deps = [":android_test_support"],
+    test_class = "dev.oliphaunt." + test_class,
+    data = ["//src/test-fixtures:rust_fixtures"],
+    target_compatible_with = LINUX_EXECUTION,
+) for name, test_class in [("android_configuration_test", "OliphauntAndroidTest"), ("android_java_test", "OliphauntJavaTest"), ("android_runtime_assets_test", "OliphauntAndroidRuntimeAssetsTest")]]
+
+kt_jvm_test(
+    name = "native_bindings_test",
+    deps = [":android_test_support"],
+    test_class = "dev.oliphaunt.NativeBindingsTest",
+    data = ["//src/test-fixtures:rust_fixtures", "//src/native/mobile-bindings:shared", "@kotlin_frozen_native//:inputs.json", "@kotlin_frozen_native//:runtime_linux_x64_gnu"],
+    jvm_flags = ["-Doliphaunt.native.facts=$(rootpath @kotlin_frozen_native//:inputs.json)", "-Doliphaunt.native.bindings=$(rootpath //src/native/mobile-bindings:shared)"],
+    target_compatible_with = LINUX_EXECUTION,
+    size = "medium",
+)
+
+test_suite(name = "android_test", tests = [":android_configuration_test", ":android_java_test", ":android_runtime_assets_test", ":native_bindings_test"])
+
+[android_artifact(
+    name = "mobile_" + abi,
+    artifact = "//src/native/mobile-bindings:shared",
+    platform = "//build_defs/android:android_" + abi,
+    output = "mobile-" + abi + "/liboliphaunt_mobile_bindings.so",
+) for abi in ["arm64", "x86_64"]]
+
+kotlin_maven_package(
+    name = "android_maven",
+    coordinate = "dev.oliphaunt:oliphaunt-android",
+    packaging = "aar",
+    classes = [":android_classes", ":broker_aidl"],
+    android_aar = ":android_classes.aar",
+    native_libraries = {":mobile_arm64": "arm64-v8a", ":mobile_x86_64": "x86_64"},
+    sources = COMMON_SOURCES + glob(["oliphaunt/src/androidMain/kotlin/**/*.kt", "oliphaunt/src/androidMain/aidl/**/*.aidl"]) + [":generated_bindings"],
+    legal_sources = ["//:LICENSE", "//:THIRD_PARTY_NOTICES.md", "//:Cargo.lock", "//src/native/mobile-bindings:license_inputs"],
+    coroutines_jvm = "@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core_jvm",
+    target_compatible_with = LINUX_EXECUTION,
+)
+
+# Consumer compilers see the actual final AAR, including merged AIDL classes,
+# rather than the producing source/library targets.
+aar_import(
+    name = "installed_android",
+    aar = ":android_maven_archive",
+    package = KOTLIN["namespace"],
+    deps = ["@oliphaunt_kotlin_maven//:net_java_dev_jna_jna", "@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core"],
+    target_compatible_with = LINUX_EXECUTION,
+)
+
+kt_android_library(
+    name = "installed_public_api_consumer",
+    srcs = glob(["tests/public-api-consumer/src/main/kotlin/**/*.kt", "tests/public-api-consumer/src/main/java/**/*.java"]),
+    manifest = "oliphaunt/src/androidMain/AndroidManifest.xml",
+    custom_package = "dev.oliphaunt.consumer",
+    deps = [":installed_android", "@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core"],
+    target_compatible_with = LINUX_EXECUTION,
+)
+
+shipping_export(
+    name = "shipping_export",
+    packages = [":android_maven_shipping", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:plugin_maven_shipping", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:marker_maven_shipping"],
+)

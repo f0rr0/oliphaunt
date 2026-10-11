@@ -1,0 +1,5 @@
+load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_metadata")
+
+package(default_visibility = ["//visibility:public"])
+
+sdk_extension_metadata(name = "metadata", out = "extensions.json")

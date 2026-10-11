@@ -19,6 +19,7 @@ import {
 import { currentVersion } from './product-version.mts';
 import { assertPublicationLockSource, loadPublicationLock } from './publication-lock.mts';
 import {
+  artifactTargetConfig,
   contribCarrierDescriptor,
   expectedAssets as expectedDesktopAssets,
   extensionArtifactProductRoot,
@@ -26,7 +27,6 @@ import {
   extensionReleaseProduct,
   extensionSourceIdentity,
   extensionSqlNames,
-  releaseMetadata,
 } from './release-artifact-targets.mts';
 
 export { requestBoundedGithubJson, requestGithubJsonWithRetry } from './github-read.mts';
@@ -272,21 +272,10 @@ function repository() {
 }
 
 function productTargets(product, preset) {
-  const release = releaseMetadata(product, PREFIX);
-  if (!release) {
-    fail(`Moon release metadata does not include ${product}`);
-  }
-  const artifactTargets = release.artifactTargets;
-  if (
-    artifactTargets === null ||
-    typeof artifactTargets !== 'object' ||
-    artifactTargets.preset !== preset
-  ) {
-    fail(`Moon release metadata for ${product} must use artifactTargets preset ${preset}`);
-  }
+  const artifactTargets = artifactTargetConfig(product, preset, PREFIX);
   const targets = artifactTargets.targets;
   if (!Array.isArray(targets) || !targets.every((target) => typeof target === 'string' && target)) {
-    fail(`Moon release metadata for ${product} must declare artifactTargets.targets`);
+    fail(`${product} release.toml must declare artifact_targets.targets`);
   }
   return [...targets].sort(compareText);
 }
@@ -2643,7 +2632,6 @@ function parseLegacyArgs(argv) {
     } else if (value === '--head-ref') {
       index += 1;
     } else if (value.startsWith('--head-ref=')) {
-      continue;
     } else if (value === '--help' || value === '-h') {
       console.log(
         'usage: bash tools/release/verify-github-release-attestations.sh [--product ID...] [--products-json JSON] [--head-ref REF]',

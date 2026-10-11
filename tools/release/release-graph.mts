@@ -5,6 +5,7 @@ import {
   CONTRIB_CARRIERS_PATH,
   loadContribCarriers,
 } from '../../src/extensions/artifacts/packages/tools/contrib-carriers.mts';
+import { compatibilityVersionFromText as parseCompatibilityVersionFromText } from './compatibility-version-parser.mts';
 import {
   historyAncestor,
   historyChanges,
@@ -647,41 +648,7 @@ export function compatibilityVersionFromText(
   text,
   { prefix = 'release-graph', missingValue = undefined } = {},
 ) {
-  if (entry.parser === 'raw') return text.trim();
-  if (entry.parser.startsWith('rust-const:')) {
-    const name = entry.parser.slice('rust-const:'.length);
-    if (!/^[A-Z][A-Z0-9_]*$/u.test(name)) {
-      fail(prefix, `${entry.id} has an invalid Rust constant parser`);
-    }
-    const matches = [
-      ...text.matchAll(
-        new RegExp(`(?:pub\\s+)?const\\s+${name}\\s*:[^=]+?=\\s*"([^"]+)"\\s*;`, 'gu'),
-      ),
-    ];
-    if (matches.length !== 1) {
-      if (matches.length === 0 && missingValue !== undefined) return missingValue;
-      fail(prefix, `${entry.id} must name exactly one Rust string constant`);
-    }
-    return matches[0][1];
-  }
-  const separator = entry.parser.indexOf(':');
-  const type = entry.parser.slice(0, separator);
-  if (type !== 'json' && type !== 'toml') {
-    fail(prefix, `${entry.id} uses unsupported compatibility parser ${entry.parser}`);
-  }
-  const parts = entry.parser.slice(separator + 1).split('.');
-  let data;
-  try {
-    data = type === 'json' ? JSON.parse(text) : type === 'toml' ? Bun.TOML.parse(text) : null;
-  } catch (cause) {
-    fail(prefix, `${entry.path} is not valid ${type.toUpperCase()}: ${cause.message}`);
-  }
-  const value = valueAtPath(data, parts);
-  if (typeof value !== 'string' || value.length === 0) {
-    if (value === undefined && missingValue !== undefined) return missingValue;
-    fail(prefix, `${entry.id} parser ${entry.parser} must resolve to a non-empty string`);
-  }
-  return value;
+  return parseCompatibilityVersionFromText(entry, text, { prefix, missingValue, fail });
 }
 
 export function productCompatibilityVersion(
@@ -1430,35 +1397,12 @@ function releaseProductsForSourceProjects(products, projects, projectIds, prefix
   return selected;
 }
 
-export function releaseOrder(products, _projects, selected, prefix = 'release-graph') {
-  const selectedSet = new Set(selected);
-  const ordered = [];
-  const remaining = new Set(selectedSet);
-  while (remaining.size > 0) {
-    const ready = [];
-    for (const product of [...remaining].sort(compareText)) {
-      const deps = new Set(
-        Object.values(products[product]?.compatibility_versions ?? {})
-          .map((dependency) => dependency?.source_product)
-          .filter((dependency) => typeof dependency === 'string' && dependency !== product),
-      );
-      const selectedDeps = [...deps].filter((dependency) => selectedSet.has(dependency));
-      if (selectedDeps.every((dependency) => ordered.includes(dependency))) {
-        ready.push(product);
-      }
-    }
-    if (ready.length === 0) {
-      fail(
-        prefix,
-        `release compatibility graph has a dependency cycle: ${JSON.stringify([...remaining].sort(compareText))}`,
-      );
-    }
-    for (const product of ready) {
-      ordered.push(product);
-      remaining.delete(product);
-    }
-  }
-  return ordered;
+export function releaseOrder(_products, _projects, selected, _prefix = 'release-graph') {
+  // Installed compatibility may refer to an older published version, and one
+  // product can own unrelated Cargo and npm packages. Collapsing those facts
+  // into product edges invents cycles. Frozen, version-matched package edges
+  // determine the actual registry mutation order.
+  return [...new Set(selected)].sort(compareText);
 }
 
 export function buildPlan(graph, files, prefix = 'release-graph') {

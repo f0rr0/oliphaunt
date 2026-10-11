@@ -1,0 +1,94 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
+load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
+load("@javascript_packages//:defs.bzl", "PACKAGES", "javascript_type_links")
+load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_projections")
+load("//build_defs/languages/ts:defs.bzl", "npm_archive_package", "source_sdk_consumer_test", "source_sdk_publish_files")
+load("//build_defs/query:defs.bzl", "query_envelope")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["package.json", "release.toml"])
+
+SDK = JAVASCRIPT["@oliphaunt/ts"]
+QUERY = JAVASCRIPT["@oliphaunt/ts-query"]
+
+SDK_SRCS = glob(["src/**/*.ts"], exclude = ["src/__tests__/**", "src/extensions.ts", "src/generated/extensions.ts"])
+
+javascript_type_links(SDK["types"])
+
+npm_archive_package(
+    name = "query_package",
+    archive = "//src/query/ts:npm",
+    package_name = QUERY["name"],
+    version = QUERY["version"],
+)
+
+npm_link_package(
+    name = "node_modules/@oliphaunt/ts-query",
+    src = ":query_package",
+)
+
+js_library(name = "package_metadata", srcs = ["package.json"])
+
+sdk_extension_projections(name = "extension_projections", sdk = "ts")
+
+ts_project(
+    name = "module",
+    srcs = SDK_SRCS + [":extension_projections"],
+    tsconfig = "tsconfig.build.json",
+    extends = "tsconfig.json",
+    declaration = True,
+    declaration_map = True,
+    out_dir = "lib",
+    root_dir = "src",
+    transpiler = "tsc",
+    supports_workers = 0,
+    deps = [":package_metadata", ":node_modules/@oliphaunt/ts-query"] + [":node_modules/" + name for name in SDK["types"]],
+)
+
+source_sdk_publish_files(name = "publish_files", manifest = "package.json")
+
+filegroup(name = "publish_manifest", srcs = [":publish_files"], output_group = "manifest")
+filegroup(name = "license", srcs = [":publish_files"], output_group = "license")
+filegroup(name = "notices", srcs = [":publish_files"], output_group = "notices")
+
+query_envelope(
+    name = "npm",
+    format = "npm",
+    manifest = ":publish_manifest",
+    entries = {file: file for file in SDK_SRCS} | {
+        ":module": "lib/",
+        ":extension_projections": "src/",
+        ":publish_manifest": "package.json",
+        ":license": "LICENSE",
+        ":notices": "THIRD_PARTY_NOTICES.md",
+        "README.md": "README.md",
+        "ARCHITECTURE.md": "ARCHITECTURE.md",
+        "CHANGELOG.md": "CHANGELOG.md",
+    },
+    out = "oliphaunt-ts.tgz",
+)
+
+shipping_package(
+    name = "shipping_package",
+    owner = "@oliphaunt_metadata//:product_oliphaunt-js",
+    artifacts = [":npm"],
+    ecosystem = "npm",
+    package_name = SDK["name"],
+    configuration = "portable",
+)
+
+shipping_export(name = "shipping_export", packages = [":shipping_package"])
+
+source_sdk_consumer_test(
+    name = "consumer_test",
+    size = "small",
+    archive = ":npm",
+    query = "//src/query/ts:npm",
+    consumer = "tools/entrypoint-consumer.mts",
+    type_packages = {"@javascript_packages//:" + key: key for key in PACKAGES},
+    types = SDK["types"],
+)

@@ -1,0 +1,82 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@oliphaunt//build_defs/native:platform_config.bzl", "NATIVE_C_COMPATIBLE", "NATIVE_LINKOPTS")
+load("@oliphaunt//build_defs/native:icu_windows.bzl", "icu_windows_targets")
+load(
+    ":icu_sources.bzl",
+    "ICU_COMMON_HEADERS",
+    "ICU_COMMON_SOURCES",
+    "ICU_I18N_HEADERS",
+    "ICU_I18N_SOURCES",
+    "ICU_STUBDATA_HEADERS",
+    "ICU_STUBDATA_SOURCES",
+)
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["common/unicode/uvernum.h", "common/unicode/utypes.h"])
+
+# ICU's source platform/uconfig headers select the target defaults; there is no
+# configure-generated header or legacy build-system action. Each ABI profile
+# still requires its actual linked/runtime qualification.
+_COMPATIBLE = NATIVE_C_COMPATIBLE
+
+_CXXFLAGS = [
+    "-std=c++17",
+    "-fPIC",
+    "-pthread",
+]
+
+# The header boundary keeps the stub data library independent of common's
+# implementation. Windows consumers use the actual shared DLL ABI.
+cc_library(
+    name = "common_headers",
+    hdrs = ICU_COMMON_HEADERS,
+    defines = select({"@platforms//os:windows": [], "//conditions:default": ["U_STATIC_IMPLEMENTATION"]}),
+    includes = ["common"],
+    target_compatible_with = _COMPATIBLE,
+)
+
+# ICU's checked-in empty TOC preserves the normal versioned icudt76_dat
+# entrypoint. It does not embed or generate the managed icudt76l.dat resource.
+cc_library(
+    name = "data_stub",
+    srcs = ICU_STUBDATA_SOURCES,
+    hdrs = ICU_STUBDATA_HEADERS,
+    copts = _CXXFLAGS,
+    linkstatic = True,
+    target_compatible_with = _COMPATIBLE + select({"@platforms//os:windows": ["@platforms//:incompatible"], "//conditions:default": []}),
+    deps = [":common_headers"],
+)
+
+cc_library(
+    name = "common",
+    srcs = select({"@platforms//os:windows": [], "//conditions:default": ICU_COMMON_SOURCES}),
+    copts = select({"@platforms//os:windows": [], "//conditions:default": _CXXFLAGS}),
+    linkopts = NATIVE_LINKOPTS,
+    linkstatic = True,
+    local_defines = select({"@platforms//os:windows": [], "//conditions:default": ["U_COMMON_IMPLEMENTATION"]}),
+    target_compatible_with = _COMPATIBLE,
+    deps = [
+        ":common_headers",
+    ] + select({"@platforms//os:windows": [":icuuc76.dll_import"], "//conditions:default": [":data_stub"]}),
+)
+
+cc_library(
+    name = "i18n_headers",
+    hdrs = ICU_I18N_HEADERS,
+    includes = ["i18n"],
+    deps = [":common_headers"],
+    target_compatible_with = _COMPATIBLE,
+)
+
+cc_library(
+    name = "i18n",
+    srcs = select({"@platforms//os:windows": [], "//conditions:default": ICU_I18N_SOURCES}),
+    copts = select({"@platforms//os:windows": [], "//conditions:default": _CXXFLAGS}),
+    linkstatic = True,
+    local_defines = select({"@platforms//os:windows": [], "//conditions:default": ["U_I18N_IMPLEMENTATION"]}),
+    target_compatible_with = _COMPATIBLE,
+    deps = [":common", ":i18n_headers"] + select({"@platforms//os:windows": [":icuin76.dll_import"], "//conditions:default": []}),
+)
+
+icu_windows_targets(common_sources = ICU_COMMON_SOURCES, i18n_sources = ICU_I18N_SOURCES)

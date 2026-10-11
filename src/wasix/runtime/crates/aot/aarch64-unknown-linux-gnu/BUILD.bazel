@@ -1,0 +1,6 @@
+load("//build_defs/languages:wasix.bzl", "wasix_runtime_carrier")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["Cargo.toml"])
+
+wasix_runtime_carrier(payload = "//src/wasix/runtime:aot_linux_arm64_gnu_payload")

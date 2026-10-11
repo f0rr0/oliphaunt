@@ -5,33 +5,33 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { pathToFileURL } from 'node:url';
 import path from 'node:path';
-
-import { ROOT, compareText, tagPrefix } from '../../../../../tools/release/release-graph.mts';
+import { pathToFileURL } from 'node:url';
+import { readPortableArchiveEntries } from '../../../../../tools/packaging/portable-archive.mts';
+import {
+  releaseNoticeRows,
+  releaseProfilePackageLicense,
+} from '../../../../../tools/packaging/release-notices.mts';
 import {
   currentProductVersionSync,
   extensionProductForSqlName,
   extensionReleaseProductForSqlName,
   extensionSqlNames,
 } from '../../../../../tools/release/release-artifact-targets.mts';
+import { compareText, ROOT, tagPrefix } from '../../../../../tools/release/release-graph.mts';
 import {
   extensionCarrierLegalContract,
   extensionUpstreamLicenseRow,
 } from '../../../../extensions/tools/extension-upstream-licenses.mts';
-import { readPortableArchiveEntries } from '../../../../../tools/packaging/portable-archive.mts';
-import {
-  releaseNoticeRows,
-  releaseProfilePackageLicense,
-} from '../../../../../tools/packaging/release-notices.mts';
+import { nativeBaseLegalForSource } from './native-legal-source-basis.mts';
+import { IOS_CARRIER_FILENAME, IOS_CARRIER_SCHEMA } from './swift-native-carrier-contract.mts';
 
-export const IOS_CARRIER_SCHEMA = 'oliphaunt-react-native-ios-carrier-v1';
-export const IOS_CARRIER_FILENAME = 'oliphaunt-react-native-ios-carriers.json';
+export { IOS_CARRIER_FILENAME, IOS_CARRIER_SCHEMA };
 export const SWIFT_EXTENSION_CARRIER_SCHEMA = 'oliphaunt-swift-extension-carrier-v1';
 export const DEFAULT_IOS_CARRIER = path.join(
   ROOT,
@@ -429,9 +429,13 @@ function extensionLegalGroup({ archiveCache, file, format, product, sqlName }) {
   );
 }
 
-function validateFrozenBaseLegalMetadata(value, label) {
+function validateFrozenBaseLegalMetadata(value, label, base, sourceBasis) {
   if (!Array.isArray(value)) throw error(`${label} must be an array`);
-  const expected = iosBaseLegalMetadata();
+  const expected = nativeBaseLegalForSource({
+    base,
+    sourceBasis,
+    currentLegal: iosBaseLegalMetadata,
+  });
   if (JSON.stringify(stable(value)) !== JSON.stringify(stable(expected))) {
     throw error(`${label} does not match the canonical native Apple legal locators`);
   }
@@ -478,6 +482,7 @@ function baseCarrier({
   localUrls,
   verifyMembers,
   archiveCache,
+  sourceBasis,
 }) {
   const product = 'liboliphaunt-native';
   const version = stableVersion(baseRuntimeVersion, 'base runtime version');
@@ -505,7 +510,12 @@ function baseCarrier({
       archiveCache,
     }),
   );
-  const legal = iosBaseLegalMetadata().map((group) => {
+  const base = { product, version, tag, assets };
+  const legal = nativeBaseLegalForSource({
+    base,
+    sourceBasis,
+    currentLegal: iosBaseLegalMetadata,
+  }).map((group) => {
     const selected = rows.find(({ role }) => role === group.assetRole);
     if (selected === undefined)
       throw error(`base legal group references unknown asset role ${group.assetRole}`);
@@ -518,12 +528,12 @@ function baseCarrier({
     );
   });
   return {
-    base: { product, version, tag, assets },
+    base,
     legal,
   };
 }
 
-function frozenBaseCarrier(file, baseRuntimeVersion) {
+function frozenBaseCarrier(file, baseRuntimeVersion, sourceBasis) {
   let manifest;
   try {
     manifest = JSON.parse(
@@ -571,7 +581,7 @@ function frozenBaseCarrier(file, baseRuntimeVersion) {
   }
   return {
     base: stable(base),
-    legal: validateFrozenBaseLegalMetadata(legal, `${file} base legal metadata`),
+    legal: validateFrozenBaseLegalMetadata(legal, `${file} base legal metadata`, base, sourceBasis),
   };
 }
 
@@ -1132,6 +1142,7 @@ export function buildIosCarrierManifest({
   repository = DEFAULT_REPOSITORY,
   localUrls = false,
   verifyMembers = true,
+  baseSourceBasis = undefined,
 } = {}) {
   validateRepository(repository);
   const archiveCache = new Map();
@@ -1144,8 +1155,9 @@ export function buildIosCarrierManifest({
           repository,
           localUrls,
           verifyMembers,
+          sourceBasis: baseSourceBasis,
         })
-      : frozenBaseCarrier(baseCarrierManifest, baseRuntimeVersion);
+      : frozenBaseCarrier(baseCarrierManifest, baseRuntimeVersion, baseSourceBasis);
   const { base, legal: baseLegal } = frozenBase;
   const documents = extensionManifests.map((file) => {
     const document = extensionCarriers(path.resolve(file), {

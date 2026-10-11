@@ -1,0 +1,11 @@
+# Keep local executions independent from hosted cache or execution configuration.
+startup --max_idle_secs=300
+startup --shutdown_on_low_sys_mem
+startup --host_jvm_args=-Xmx2048m
+common --repo_env=DO_NOT_TRACK=1
+common --lockfile_mode=error
+build --incompatible_strict_action_env
+test --test_output=errors
+
+# Cross-platform runtime tests need manifest or directory runfiles.
+build --enable_runfiles

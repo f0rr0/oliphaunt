@@ -1,0 +1,11 @@
+load("//build_defs/languages:rust.bzl", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("//build_defs/languages:source.bzl", "cargo_source_package")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["Cargo.toml"])
+
+cargo_package_env()
+cargo_library()
+cargo_library(name = "packaging_lib", features = ["internal-native-packaging"])
+cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"], isolated_cache = True)
+cargo_source_package(product = "liboliphaunt-native-bindings", fixtures = "testdata/")

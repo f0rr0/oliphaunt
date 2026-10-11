@@ -5,14 +5,17 @@ import { GitHub, Manifest, registerChangelogNotes } from 'release-please';
 import { DefaultChangelogNotes } from 'release-please/build/src/changelog-notes/default.js';
 import { parseConventionalCommits } from 'release-please/build/src/commit.js';
 import { ManifestPlugin } from 'release-please/build/src/plugin.js';
-import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
+import { appendDependenciesSectionToChangelog } from 'release-please/build/src/plugins/workspace.js';
 import { Changelog } from 'release-please/build/src/updaters/changelog.js';
+import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
 import { GenericJson } from 'release-please/build/src/updaters/generic-json.js';
 import { ReleasePleaseManifest } from 'release-please/build/src/updaters/release-please-manifest.js';
-import { appendDependenciesSectionToChangelog } from 'release-please/build/src/plugins/workspace.js';
+import { TagName } from 'release-please/build/src/util/tag-name.js';
 import { Version } from 'release-please/build/src/version.js';
+import { readCommitHistory, readCommitPaths } from './commit-paths.mts';
+import { createCompletedPublicationChecker } from './completed-release-publication.mts';
 import { defaultExtensionReleasePlan } from './default-extension-release-plan.mts';
-import { syncTomlStringPath } from './sync-release-pr.mts';
+import { requestGithubRepositoryJson } from './github-read.mts';
 import {
   buildBoundCompatibilityProducts,
   releaseDependencyPlan,
@@ -23,6 +26,7 @@ import {
   loadGraph,
   productCompatibilityVersion,
 } from './release-graph.mts';
+import { syncTomlStringPath } from './sync-release-pr.mts';
 
 // Supply source ownership and public host support intent. Release Please
 // owns version policy, changelog text and ecosystem updaters in both cases.
@@ -31,13 +35,82 @@ export function includeOwnedSourceCommits(
   github,
   graph,
   readCompatibility = productCompatibilityVersion,
+  {
+    readCommitFiles,
+    commitHistory,
+    assertCompletedPublication = createCompletedPublicationChecker({
+      repository: `${github.repository.owner}/${github.repository.repo}`,
+    }),
+  } = {},
 ) {
   const observed = [];
+  const published = new Map();
+  const selectedHistory = new Map();
+  const releases = github.releaseIterator.bind(github);
+  github.releaseIterator = async function* (options = {}) {
+    published.clear();
+    for await (const release of releases({ ...options, maxResults: Number.MAX_SAFE_INTEGER })) {
+      if (release.draft) continue;
+      published.set(release.tagName, release.sha);
+      yield release;
+    }
+  };
   const iterate = github.mergeCommitIterator.bind(github);
-  github.mergeCommitIterator = async function* (...args) {
-    for await (const commit of iterate(...args)) {
-      observed.push(commit);
-      yield commit;
+  github.mergeCommitIterator = async function* (branch, options = {}) {
+    observed.length = 0;
+    selectedHistory.clear();
+    const required = new Set();
+    if (commitHistory) {
+      for (const [ownerPath, config] of Object.entries(manifest.repositoryConfig)) {
+        const version = manifest.releasedVersions[ownerPath]?.toString();
+        const matches = [...published].filter(([name]) => {
+          const tag = TagName.parse(name);
+          return tag?.component === config.component && tag.version.toString() === version;
+        });
+        if (version !== '0.0.0' && matches.length !== 1)
+          throw new Error(
+            `prepare-release-candidate: ${config.component}@${version} has no unique published release boundary`,
+          );
+        const boundary = version === '0.0.0' ? manifest.bootstrapSha : matches[0][1];
+        const selected = commitHistory.after(boundary);
+        selectedHistory.set(ownerPath, { boundary, selected });
+        for (const sha of selected) required.add(sha);
+        if (boundary) required.add(boundary);
+      }
+    }
+    const seen = new Set();
+    // Buffer the exact local ancestry interval before Manifest can stop at a
+    // delivered release SHA. API history order does not define publication scope.
+    for await (const commit of iterate(branch, {
+      ...options,
+      maxResults: commitHistory?.commits.size ?? Number.MAX_SAFE_INTEGER,
+      backfillFiles: readCommitFiles ? false : options.backfillFiles,
+    })) {
+      if (commitHistory && !commitHistory.commits.has(commit.sha))
+        throw new Error(
+          `prepare-release-candidate: history commit ${commit.sha} is outside the captured source`,
+        );
+      if (seen.has(commit.sha))
+        throw new Error(`prepare-release-candidate: duplicate history commit ${commit.sha}`);
+      seen.add(commit.sha);
+      const captured = readCommitFiles
+        ? { ...commit, files: await readCommitFiles(commit.sha) }
+        : commit;
+      observed.push(captured);
+      if (!commitHistory) yield captured;
+      else {
+        required.delete(commit.sha);
+        if (!required.size) break;
+      }
+    }
+    if (commitHistory) {
+      if (required.size)
+        throw new Error(
+          `prepare-release-candidate: API history did not cover captured source commits ${[...required].join(', ')}`,
+        );
+      const order = new Map([...commitHistory.commits].map((sha, index) => [sha, index]));
+      observed.sort((left, right) => order.get(left.sha) - order.get(right.sha));
+      yield* observed;
     }
   };
   manifest.plugins.push(
@@ -48,6 +121,21 @@ export function includeOwnedSourceCommits(
       async preconfigure(strategies, commitsByPath, releasesByPath) {
         this.strategies = strategies;
         this.releasesByPath = releasesByPath;
+        const seen = new Set();
+        for (const commit of observed) {
+          if (seen.has(commit.sha))
+            throw new Error(`prepare-release-candidate: duplicate history commit ${commit.sha}`);
+          if (!Array.isArray(commit.files))
+            throw new Error(`prepare-release-candidate: missing changed files for ${commit.sha}`);
+          seen.add(commit.sha);
+        }
+        const needsBootstrap = Object.keys(manifest.repositoryConfig).some(
+          (ownerPath) => manifest.releasedVersions[ownerPath]?.toString() === '0.0.0',
+        );
+        if (needsBootstrap && manifest.bootstrapSha && !seen.has(manifest.bootstrapSha))
+          throw new Error(
+            `prepare-release-candidate: history did not reach bootstrap boundary ${manifest.bootstrapSha}`,
+          );
         const owners = new Map(
           observed.map((commit) => [
             commit.sha,
@@ -57,15 +145,43 @@ export function includeOwnedSourceCommits(
           ]),
         );
         for (const [ownerPath, config] of Object.entries(manifest.repositoryConfig)) {
-          const boundary = releasesByPath[ownerPath]?.sha;
-          const selected = new Map(
-            (commitsByPath[ownerPath] ?? []).map((commit) => [commit.sha, commit]),
-          );
+          const release = releasesByPath[ownerPath];
+          const version = manifest.releasedVersions[ownerPath]?.toString();
+          if (!version)
+            throw new Error(`prepare-release-candidate: missing product version for ${ownerPath}`);
+          if (
+            version !== '0.0.0' &&
+            (!release?.sha || published.get(release.tag.toString()) !== release.sha)
+          )
+            throw new Error(
+              `prepare-release-candidate: ${config.component}@${version} has no published release boundary`,
+            );
+          if (version !== '0.0.0')
+            await assertCompletedPublication({
+              product: config.component,
+              version,
+              publicationSha: release.sha,
+              tagName: release.tag.toString(),
+            });
+          const boundary = release?.sha || (needsBootstrap ? manifest.bootstrapSha : undefined);
+          const local = selectedHistory.get(ownerPath);
+          if (local && local.boundary !== boundary)
+            throw new Error(
+              `prepare-release-candidate: ${config.component} release boundary changed during capture`,
+            );
+          if (boundary && !seen.has(boundary))
+            throw new Error(
+              `prepare-release-candidate: history did not reach ${config.component} boundary ${boundary}`,
+            );
+          const selected = [];
           for (const commit of observed) {
-            if (commit.sha === boundary) break;
-            if (owners.get(commit.sha).has(config.component)) selected.set(commit.sha, commit);
+            if (local ? !local.selected.has(commit.sha) : commit.sha === boundary) {
+              if (local) continue;
+              break;
+            }
+            if (owners.get(commit.sha).has(config.component)) selected.push(commit);
           }
-          commitsByPath[ownerPath] = observed.filter((commit) => selected.has(commit.sha));
+          commitsByPath[ownerPath] = selected;
         }
         const entries = compatibilityVersionEntries(graph.products, { requireSourceProduct: true });
         const hasReleaseIntent = (ownerPath, config) => {
@@ -78,10 +194,6 @@ export function includeOwnedSourceCommits(
             (commit) => commit.notes?.length || releaseTypes.has(commit.type),
           );
         };
-        const workspaceIntent = Object.entries(manifest.repositoryConfig).some(
-          ([ownerPath, config]) =>
-            config.releaseType === 'rust' && hasReleaseIntent(ownerPath, config),
-        );
         const plannedProducts = structuredClone(graph.products);
         const compiled = buildBoundCompatibilityProducts(graph.products);
         // Only these source-selected producers determine public exact host retargets.
@@ -105,7 +217,7 @@ export function includeOwnedSourceCommits(
           const runtimeChanged = ['liboliphaunt-native', 'liboliphaunt-wasix'].some(
             (runtime) => plannedProducts[runtime]?.version !== graph.products[runtime]?.version,
           );
-          if (!releaseIntent && !runtimeChanged && !workspaceIntent) continue;
+          if (!releaseIntent && !runtimeChanged) continue;
           const plan = releaseDependencyPlan(plannedProducts, [product], {
             entries: entries.filter((entry) => entry.product === product && entry.publicSupport),
             buildBound: compiled,
@@ -269,6 +381,26 @@ export function useSourceDate(sourceDate) {
   );
 }
 
+export function bindReleaseSourceHistory(
+  github,
+  commitHistory,
+  sha,
+  readSource = () =>
+    requestGithubRepositoryJson(
+      `repos/${github.repository.owner}/${github.repository.repo}/git/ref/heads/main`,
+    ),
+) {
+  if (commitHistory.head !== sha)
+    throw new Error('captured Git history does not match the release source');
+  const iterate = github.mergeCommitIterator.bind(github);
+  github.mergeCommitIterator = async function* (...args) {
+    const source = await readSource();
+    if (source.object?.sha !== sha)
+      throw new Error('main changed before Release Please history capture');
+    yield* iterate(...args);
+  };
+}
+
 export function applyCandidate(root, candidate) {
   const changed = [];
   for (const update of mergeUpdates(candidate.updates)) {
@@ -312,19 +444,13 @@ async function main() {
   // File reads use the exact source even if main advances during API pagination.
   const getFile = github.getFileContentsOnBranch.bind(github);
   github.getFileContentsOnBranch = (file) => getFile(file, sha);
-  const iterate = github.mergeCommitIterator.bind(github);
-  github.mergeCommitIterator = async function* (...args) {
-    let first = true;
-    for await (const commit of iterate(...args)) {
-      if (first && commit.sha !== sha)
-        throw new Error('main changed before Release Please history capture');
-      first = false;
-      yield commit;
-    }
-    if (first) throw new Error('Release Please returned no source history');
-  };
+  const commitHistory = readCommitHistory();
+  bindReleaseSourceHistory(github, commitHistory, sha);
   const manifest = await Manifest.fromManifest(github, 'main');
-  includeOwnedSourceCommits(manifest, github, loadGraph('prepare-release-candidate'));
+  includeOwnedSourceCommits(manifest, github, loadGraph('prepare-release-candidate'), undefined, {
+    readCommitFiles: readCommitPaths,
+    commitHistory,
+  });
   const candidates = await manifest.buildPullRequests();
   if (candidates.length > 1) throw new Error('expected one grouped Release Please candidate');
   mkdirSync(destination, { recursive: true });

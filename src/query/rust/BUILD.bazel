@@ -1,0 +1,67 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@oliphaunt_toolchain_metadata//:query-rust.bzl", "QUERY_RUST_CRATE_NAME", "QUERY_RUST_EDITION", "QUERY_RUST_ENV", "QUERY_RUST_VERSION")
+load("//build_defs/query:defs.bzl", "cargo_consumer_test", "query_envelope")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Cargo.toml"])
+
+QUERY_SRCS = glob(["src/**/*.rs"])
+QUERY_DATA = glob(["src/**/*"], exclude = ["src/**/*.rs"], allow_empty = True)
+
+rust_library(
+    name = "oliphaunt_query",
+    srcs = QUERY_SRCS,
+    crate_name = QUERY_RUST_CRATE_NAME,
+    crate_root = "src/lib.rs",
+    edition = QUERY_RUST_EDITION,
+    version = QUERY_RUST_VERSION,
+    rustc_env = QUERY_RUST_ENV,
+    compile_data = ["README.md"] + QUERY_DATA,
+)
+
+rust_test(
+    name = "unit_test",
+    size = "small",
+    crate = ":oliphaunt_query",
+    version = QUERY_RUST_VERSION,
+    rustc_env = QUERY_RUST_ENV,
+)
+
+query_envelope(
+    name = "crate",
+    format = "crate",
+    manifest = "Cargo.toml",
+    workspace_manifest = "//:Cargo.toml",
+    entries = {file: file for file in QUERY_SRCS + QUERY_DATA} | {
+        "Cargo.toml": "Cargo.toml",
+        "CHANGELOG.md": "CHANGELOG.md",
+        "README.md": "README.md",
+        "//:LICENSE": "LICENSE",
+    },
+    out = "oliphaunt-query.crate",
+)
+
+shipping_package(
+    name = "shipping_package",
+    owner = "@oliphaunt_metadata//:product_oliphaunt-query",
+    artifacts = [":crate"],
+    ecosystem = "cargo",
+    role = "facade",
+    package_name = QUERY_RUST_ENV["CARGO_PKG_NAME"],
+    configuration = "source",
+)
+
+shipping_export(
+    name = "shipping_export",
+    packages = [":shipping_package"],
+)
+
+cargo_consumer_test(
+    name = "consumer_test",
+    size = "small",
+    archive = ":crate",
+    manifest = "//build_defs/query:consumer/Cargo.toml",
+    source = "//build_defs/query:consumer/main.rs",
+)

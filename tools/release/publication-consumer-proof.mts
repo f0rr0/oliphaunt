@@ -30,6 +30,7 @@ export const CONSUMER_CONFIGURATION_FILES = [
   'rust-toolchain.toml',
   '.github/workflows/release.yml',
   'tools/packaging/portable-archive.mts',
+  'tools/packaging/frozen-cargo.mts',
   'tools/release/public-consumer-smoke.mts',
   'src/native/sdks/swift/tools/prepare-swift-release-consumer.mts',
   'src/native/sdks/kotlin/gradle/libs.versions.toml',

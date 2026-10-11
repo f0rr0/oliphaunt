@@ -1101,10 +1101,7 @@ class OliphauntAndroidRuntimeAssetsTest {
 }
 
 private fun databaseRootFixture(): JSONObject {
-    val directory =
-        checkNotNull(System.getProperty("oliphaunt.sharedFixturesDir")?.takeIf(String::isNotBlank)) {
-            "Run fixture tests through Gradle to configure oliphaunt.sharedFixturesDir"
-        }
+    val directory = sharedFixtureDirectory()
     return JSONObject(Path.of(directory, "storage", "database-root.json").toFile().readText())
 }
 

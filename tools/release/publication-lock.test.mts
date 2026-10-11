@@ -17,12 +17,12 @@ import {
   extensionCarrierLegalContract,
   stageExtensionUpstreamLicenses,
 } from '../../src/extensions/tools/extension-upstream-licenses.mts';
-import { extensionDependencyRequirement } from '../../src/wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
 import {
   buildSwiftExtensionCarrierManifest,
   iosBaseLegalMetadata,
   swiftExtensionCarrierAssetName,
 } from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
+import { extensionDependencyRequirement } from '../../src/wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
 import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import { canonicalGzipSync } from '../packaging/portable-archive.mts';
@@ -36,6 +36,7 @@ import {
   buildPublicationCandidate,
   discoverProductArtifacts,
   discoverPublicationArtifacts,
+  expectedProductArtifactRows,
   freezePublicationCandidate,
   lockedCarrierFile,
   lockedPublicationFiles,
@@ -56,6 +57,47 @@ import {
 import { productCompatibilityVersion, ROOT } from './release-graph.mts';
 
 const temporaryDirectories = [];
+
+function assertExpectedArtifactInventory(artifacts, products) {
+  const versions = new Map(products.map(({ id, version }) => [id, version]));
+  expect(
+    artifacts.map(({ product, id, role, kind, target, identity, name }) => ({
+      product,
+      version: versions.get(product),
+      id,
+      role,
+      kind,
+      target,
+      identity,
+      name,
+    })),
+  ).toEqual(expectedProductArtifactRows(products));
+}
+
+test('native publication inventory requires no Moon metadata and preserves runtime carrier ownership', () => {
+  const script = `
+    Bun.YAML.parse = () => { throw new Error('Moon metadata must not be read'); };
+    const { loadPublicationCatalog } = await import('./tools/release/publication-catalog.mts');
+    const { expectedProductArtifactRows } = await import('./tools/release/publication-lock.mts');
+    const catalog = loadPublicationCatalog('native-inventory-test');
+    const rows = expectedProductArtifactRows(catalog.products);
+    const versions = new Map(catalog.products.map(({ id, version }) => [id, version]));
+    if (rows.some(row => row.version !== versions.get(row.product))) throw new Error('Wrong release owner version');
+    if (new Set(rows.map(row => row.product + ':' + row.id)).size !== rows.length) throw new Error('Duplicate artifact identity');
+    const contrib = rows.filter(row => row.name.startsWith('oliphaunt-extension-contrib-pg18-'));
+    if (!contrib.some(row => row.product === 'liboliphaunt-native' && row.identity === 'native')) throw new Error('Missing native contrib envelope');
+    if (!contrib.some(row => row.product === 'liboliphaunt-wasix' && row.identity === 'wasix')) throw new Error('Missing WASIX contrib envelope');
+    if (contrib.some(row => row.product === 'oliphaunt-extension-contrib-pg18')) throw new Error('Contrib has no independent release version');
+    const swiftOnly = loadPublicationCatalog('native-inventory-swift', { products: ['oliphaunt-swift'] });
+    if (expectedProductArtifactRows(swiftOnly.products).some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Unselected extension fixture');
+    if (!rows.some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Missing selected extension fixture');
+  `;
+  const result = Bun.spawnSync([process.execPath, '-e', script], {
+    cwd: ROOT,
+    env: { ...process.env, OLIPHAUNT_MOON_PROJECTS_FILE: '/missing-moon-projects.json' },
+  });
+  expect(result.exitCode, result.stderr.toString()).toBe(0);
+});
 
 if (['prepare-handoff', 'prepare-npm-preflight'].includes(process.argv[2])) {
   const root = process.argv[3];
@@ -776,9 +818,9 @@ afterEach(() => {
 describe('canonical publication catalog', () => {
   test('projects repeated package dependencies to one sorted internal carrier edge', () => {
     const carriers = [
-      { id: 'npm:@oliphaunt/zeta' },
-      { id: 'cargo:oliphaunt-tools' },
-      { id: 'cargo:oliphaunt' },
+      { id: 'npm:@oliphaunt/zeta', version: '0.1.0' },
+      { id: 'cargo:oliphaunt-tools', version: '0.1.0' },
+      { id: 'cargo:oliphaunt', version: '0.1.0' },
     ];
     const packageDependencies = [
       { ecosystem: 'cargo', name: 'oliphaunt-tools', requirement: '=0.1.0', scope: 'runtime' },
@@ -791,6 +833,59 @@ describe('canonical publication catalog', () => {
       'cargo:oliphaunt-tools',
       'npm:@oliphaunt/zeta',
     ]);
+  });
+
+  test('projects only matching selected versions and package-manager publication scopes', () => {
+    const carriers = [
+      { id: 'cargo:tools', version: '0.3.1' },
+      { id: 'npm:tools', version: '0.3.1' },
+      { id: 'maven:example:tools', version: '0.3.1' },
+    ];
+    const edge = (ecosystem, name, requirement, scope = 'runtime') => ({
+      ecosystem,
+      name,
+      requirement,
+      scope,
+    });
+    expect(
+      projectInternalDependencyIds(carriers, [
+        edge('cargo', 'tools', '=0.2.4'),
+        edge('npm', 'tools', '0.2.4'),
+        edge('maven', 'example:tools', '0.2.4'),
+        edge('cargo', 'tools', '=0.3.1', 'development'),
+        edge('maven', 'example:tools', '0.3.1', 'test'),
+      ]),
+    ).toEqual([]);
+    expect(
+      projectInternalDependencyIds(carriers, [
+        edge('cargo', 'tools', '0.3.0', 'build'),
+        edge('cargo', 'tools', '>=0.3.0,<0.4.0'),
+        edge('npm', 'tools', '^0.3.0', 'optional'),
+        edge('maven', 'example:tools', '0.3.1', 'compile'),
+      ]),
+    ).toEqual(['cargo:tools', 'maven:example:tools', 'npm:tools']);
+    expect(projectInternalDependencyIds(carriers, [edge('npm', 'tools', '0.3.0')])).toEqual([]);
+    expect(projectInternalDependencyIds(carriers, [edge('cargo', 'tools', '0.2.4')])).toEqual([]);
+  });
+
+  test('Cargo bare prerelease and build versions retain implicit caret semantics', () => {
+    const carriers = [
+      { id: 'cargo:tools', version: '1.0.1' },
+      { id: 'npm:tools', version: '1.0.1' },
+    ];
+    for (const requirement of ['1.0.0-rc.1', '1.0.0+build', ' 1.0.0-rc.1+build ']) {
+      expect(
+        projectInternalDependencyIds(carriers, [
+          { ecosystem: 'cargo', name: 'tools', requirement, scope: 'runtime' },
+          { ecosystem: 'npm', name: 'tools', requirement, scope: 'runtime' },
+        ]),
+      ).toEqual(['cargo:tools']);
+    }
+    expect(
+      projectInternalDependencyIds(carriers, [
+        { ecosystem: 'cargo', name: 'tools', requirement: '=1.0.0-rc.1', scope: 'runtime' },
+      ]),
+    ).toEqual([]);
   });
 
   test('permits only Cargo part identities as dynamic carriers', () => {
@@ -865,6 +960,31 @@ describe('canonical publication catalog', () => {
 });
 
 describe('publication artifact discovery and freezing', () => {
+  test('freezes a held-version package cycle and rejects a selected new package cycle', () => {
+    const version = currentProductVersionSync('oliphaunt-rust');
+    const fixture = (requirement, scope = 'dependencies') => {
+      const root = temporaryDirectory();
+      cargoFixture(root, 'oliphaunt-build', version, {
+        manifestSuffix: `\n${scope === 'dependencies' ? '' : `[${scope}]\n`}oliphaunt = "${requirement}"\n`,
+      });
+      cargoFixture(root, 'oliphaunt', version, {
+        manifestSuffix: `\noliphaunt-build = "=${version}"\n`,
+      });
+      return () =>
+        buildPublicationCandidate({ products: ['oliphaunt-rust'], artifactRoots: [root] });
+    };
+    const held = fixture('=0.0.0')();
+    expect(held.carriers.find(({ id }) => id === 'cargo:oliphaunt-build').dependencies).toEqual([]);
+    expect(held.carriers.find(({ id }) => id === 'cargo:oliphaunt').dependencies).toEqual([
+      'cargo:oliphaunt-build',
+    ]);
+    expect(() => validatePublicationLock(freezePublicationCandidate(held))).not.toThrow();
+    expect(() =>
+      freezePublicationCandidate(fixture(`=${version}`, 'dev-dependencies')()),
+    ).not.toThrow();
+    expect(fixture(`=${version}`)).toThrow('carrier dependency cycle');
+  });
+
   test('publish resolution rejects regenerated paths and mutations', () => {
     const root = mkdtempSync(path.join(import.meta.dir, '../../target/publication-lock-publish-'));
     temporaryDirectories.push(root);
@@ -1138,6 +1258,7 @@ describe('publication artifact discovery and freezing', () => {
     const { checksum, directory, rows } = githubReleaseFixture(root, product);
     const artifacts = discoverProductArtifacts([root], [product]);
     expect(artifacts).toHaveLength(rows.length);
+    assertExpectedArtifactInventory(artifacts, [product]);
     expect(
       artifacts.every(
         (artifact) => artifact.role === 'github-release-asset' && artifact.sha256.length === 64,
@@ -1170,6 +1291,7 @@ describe('publication artifact discovery and freezing', () => {
       product,
     );
     const artifacts = discoverProductArtifacts([root], [product]);
+    assertExpectedArtifactInventory(artifacts, [product]);
     expect(artifacts).toHaveLength(assets.length + 4);
     expect(
       new Set(
@@ -1255,6 +1377,7 @@ describe('publication artifact discovery and freezing', () => {
     const { assets, manifestPath } = extensionGithubReleaseFixture(root, product, fixtureOptions);
     const artifacts = discoverProductArtifacts([root], [product]);
     expect(artifacts).toHaveLength(runtimeAssets.length + assets.length + 4);
+    assertExpectedArtifactInventory(artifacts, [product]);
     expect(assets.every(({ name }) => /^oliphaunt-extension-contrib-pg18-[^-]+/u.test(name))).toBe(
       true,
     );

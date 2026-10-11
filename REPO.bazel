@@ -1,0 +1,2 @@
+# Package discovery must not walk package-manager installations in workspaces.
+ignore_directories(["**/node_modules"])

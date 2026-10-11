@@ -3,6 +3,7 @@ import { loadPublicationCatalog } from './publication-catalog.mts';
 import { extensionSqlNames } from './release-artifact-targets.mts';
 import { buildPlan, loadGraph } from './release-graph.mts';
 import { normalPublicationPlan } from './normal-publication-plan.mts';
+import { projectInternalDependencyIds } from './publication-lock.mts';
 
 function carrier({ id, product, publishOrder, dependencies = [] }) {
   const separator = id.indexOf(':');
@@ -189,6 +190,49 @@ describe('normal publication plan', () => {
       carrier({ id: 'npm:b', product: 'b', publishOrder: 1, dependencies: ['npm:a'] }),
     ]);
     expect(() => normalPublicationPlan(value, ['a', 'b'])).toThrow(/dependency cycle/u);
+  });
+
+  test('orders actual packages when current cross-ecosystem relations form a product cycle', () => {
+    const rows = [
+      carrier({ id: 'npm:tools', product: 'tools', publishOrder: 0 }),
+      carrier({ id: 'cargo:sdk', product: 'sdk', publishOrder: 1 }),
+      carrier({ id: 'npm:sdk', product: 'sdk', publishOrder: 2 }),
+      carrier({ id: 'cargo:tools', product: 'tools', publishOrder: 3 }),
+    ];
+    const requirements = {
+      'npm:tools': [{ ecosystem: 'npm', name: 'sdk', requirement: '1.0.0', scope: 'runtime' }],
+      'cargo:sdk': [{ ecosystem: 'cargo', name: 'tools', requirement: '=1.0.0', scope: 'build' }],
+    };
+    for (const row of rows) {
+      row.dependencies = projectInternalDependencyIds(rows, requirements[row.id] ?? []);
+    }
+    expect(
+      normalPublicationPlan(lock(rows), ['sdk', 'tools']).operations.map(
+        ({ carrierId }) => carrierId,
+      ),
+    ).toEqual(['npm:sdk', 'npm:tools', 'cargo:tools', 'cargo:sdk']);
+  });
+
+  test('a held package requirement does not depend on a newly selected same-name carrier', () => {
+    const rows = [
+      carrier({ id: 'npm:tools', product: 'tools', publishOrder: 0 }),
+      carrier({ id: 'npm:sdk', product: 'sdk', publishOrder: 1 }),
+    ];
+    const requirements = {
+      'npm:tools': [{ ecosystem: 'npm', name: 'sdk', requirement: '1.0.0', scope: 'runtime' }],
+      'npm:sdk': [{ ecosystem: 'npm', name: 'tools', requirement: '0.2.4', scope: 'optional' }],
+    };
+    const project = () => {
+      for (const row of rows)
+        row.dependencies = projectInternalDependencyIds(rows, requirements[row.id]);
+      return normalPublicationPlan(lock(rows), ['sdk', 'tools']);
+    };
+    expect(project().operations.map(({ carrierId }) => carrierId)).toEqual([
+      'npm:sdk',
+      'npm:tools',
+    ]);
+    requirements['npm:sdk'][0].requirement = '1.0.0';
+    expect(project).toThrow(/publication unit dependency cycle/u);
   });
 
   test('real release selections include exact embedded consumers without unrelated products', () => {

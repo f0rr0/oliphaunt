@@ -19,10 +19,14 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { stageCargoCarrierInputs } from '../packaging/frozen-cargo.mts';
 import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
 } from '../packaging/portable-archive.mts';
+
+export { stageCargoCarrierInputs } from '../packaging/frozen-cargo.mts';
+
 import { boundedResponseBytes } from './github-read.mts';
 import { publicCargoEnvironment, sanitizedPublicEnvironment } from './public-consumer-smoke.mts';
 import { loadPublicationCatalog } from './publication-catalog.mts';
@@ -701,23 +705,20 @@ function verifyFrozenFiles(lock) {
 }
 
 export function stageFrozenCargo(lock, directory) {
-  const patches = [];
-  for (const carrier of lock.carriers.filter((carrier) => carrier.ecosystem === 'cargo')) {
-    const { file: archive } = lockedCarrierFile(lock, 'cargo', carrier.name);
-    const destination = path.join(directory, 'crates', `${carrier.name}-${carrier.version}`);
-    extractPortableArchiveTree(archive, destination, `${carrier.name}-${carrier.version}`);
-    const manifest = Bun.TOML.parse(readFileSync(path.join(destination, 'Cargo.toml'), 'utf8'));
-    if (
-      manifest.package?.name !== carrier.name ||
-      manifest.package?.version !== carrier.version ||
-      Object.hasOwn(manifest.package?.metadata?.oliphaunt ?? {}, 'qualificationOnly')
-    )
-      throw new Error(`frozen Cargo identity differs: ${carrier.id}`);
-    patches.push(`${JSON.stringify(carrier.name)} = { path = ${JSON.stringify(destination)} }`);
-  }
-  const config = path.join(directory, 'cargo-config.toml');
-  writeFileSync(config, `[patch.crates-io]\n${patches.join('\n')}\n`);
-  return config;
+  return stageCargoCarrierInputs(
+    lock.carriers
+      .filter((carrier) => carrier.ecosystem === 'cargo')
+      .map((carrier) => {
+        const { file, carrier: verified } = lockedCarrierFile(lock, 'cargo', carrier.name);
+        return {
+          file,
+          name: carrier.name,
+          version: carrier.version,
+          sha256: verified.artifacts[0].sha256,
+        };
+      }),
+    directory,
+  );
 }
 
 async function npmConsumer(

@@ -1,0 +1,144 @@
+name: Native Bazel qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bazel-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  portable:
+    name: Portable packages (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-24.04
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+          - platform: macos-arm64
+            runner: macos-26
+          - platform: windows-x64
+            runner: windows-2025-vs2026
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      # Cold, credential-free requests prove tool acquisition and real packages.
+      # Existing Required/Qualified publication gates remain authoritative.
+      - name: Check Bazel acquisition
+        run: bash tools/dev/bazel-bootstrap.test.sh
+
+      - name: Select declared Apple SDK
+        if: matrix.platform == 'macos-arm64'
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
+
+      - name: Select declared MSVC SDK
+        if: matrix.platform == 'windows-x64'
+        uses: ./.github/actions/setup-msvc
+
+      - name: Qualify packages and native host behavior
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+        run: |
+          host_tests=()
+          case "$TARGET_PLATFORM" in
+            linux-x64) profile=//build_defs/native:linux_x86_64_glibc_2_28 ;;
+            linux-arm64) profile=//build_defs/native:linux_aarch64_glibc_2_28 ;;
+            macos-arm64) profile=//build_defs/host:native_macos_arm64 ;;
+            windows-x64) profile=//build_defs/host:native_windows_x64 ;;
+          esac
+          case "$TARGET_PLATFORM" in
+            macos-arm64|windows-x64)
+              host_tests=(
+                //build_defs/host:host_c_smoke
+                //build_defs/native:compiler_probe_test
+                //build_defs/native:probe_process_test
+                //src/native/runtime:abi_conformance_test
+                //src/native/runtime:runtime_sql_test
+                //src/native/runtime:native_tools_sql_test
+              )
+              ;;
+          esac
+          if [[ "$TARGET_PLATFORM" == windows-x64 ]]; then
+            host_tests+=(@icu//:windows_icu_smoke_test)
+          fi
+          bash tools/dev/bazel.sh test //:portable_tests "${host_tests[@]}" \
+            --platforms="$profile" --host_platform="$profile" --jobs=2
+
+      - name: Qualify declared macOS Swift SDK
+        if: matrix.platform == 'macos-arm64'
+        run: >-
+          bash tools/dev/bazel.sh test //build_defs/host:host_swift_smoke
+          //src/native/sdks/swift:installed_consumer_test
+          --platforms=//build_defs/host:apple_package_macos_arm64 --jobs=2
+
+      - name: Check execution tool selection for foreign targets
+        if: matrix.platform == 'linux-x64'
+        run: >-
+          bash tools/dev/bazel.sh test
+          //build_defs/foundation:bun_toolchain_test
+          --platforms=//build_defs/foundation:windows_x86_64
+          --extra_execution_platforms=//build_defs/foundation:linux_x86_64
+          --nocache_test_results --jobs=2
+
+      - name: Exercise cold, incremental and coverage scenarios
+        if: matrix.platform == 'linux-x64'
+        run: bash tools/dev/bun.sh tools/bazel/tests/conformance.mts
+
+  linux:
+    name: Linux runtime (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x86_64
+            runner: ubuntu-24.04
+          - platform: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      # One invocation shares PostgreSQL/ICU/generators across real consumers.
+      - name: Qualify runtime, frontends, crypto and extension SQL
+        env:
+          TARGET_CPU: ${{ matrix.platform }}
+        run: |
+          profile="//build_defs/native:linux_${TARGET_CPU}_glibc_2_28"
+          bash tools/dev/bazel.sh test //:native_linux_tests \
+            --platforms="$profile" --host_platform="$profile" \
+            --java_runtime_version=remotejdk_17 --tool_java_runtime_version=remotejdk_17 --jobs=2
+
+      - name: Qualify Android cross-compiled runtime and ABI
+        if: matrix.platform == 'x86_64'
+        run: >-
+          bash tools/dev/bazel.sh test //build_defs/android:abi_test
+          //build_defs/native:android_runtime_abi_test
+          --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2

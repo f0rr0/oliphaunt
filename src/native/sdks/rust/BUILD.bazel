@@ -1,0 +1,22 @@
+load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("//build_defs/languages:source.bzl", "cargo_source_package")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["Cargo.toml", "release.toml"])
+
+PATH_DEPS = {
+    "oliphaunt-broker": "//src/native/broker:lib",
+    "liboliphaunt-native-bindings": "//src/native/rust-bindings:lib",
+    "oliphaunt-query": "//src/query/rust:oliphaunt_query",
+}
+
+cargo_package_env()
+BUILD_SCRIPT_DEPS = PATH_DEPS | {"oliphaunt-build": "//src/native/sdks/rust/crates/oliphaunt-build:lib"}
+cargo_generator(path_dependencies = BUILD_SCRIPT_DEPS)
+cargo_generator(name = "mobile_build_script", path_dependencies = BUILD_SCRIPT_DEPS, features = ["mobile-bindings"], default_features = False)
+cargo_generator(name = "minimal_build_script", path_dependencies = BUILD_SCRIPT_DEPS, default_features = False)
+cargo_library(path_dependencies = PATH_DEPS, build_script = ":build_script")
+cargo_library(name = "mobile_lib", path_dependencies = PATH_DEPS, build_script = ":mobile_build_script", features = ["mobile-bindings"], default_features = False)
+cargo_library(name = "minimal_lib", path_dependencies = PATH_DEPS, build_script = ":minimal_build_script", default_features = False)
+cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"])
+cargo_source_package(product = "oliphaunt-rust", fixtures = "testdata/", native_sdk = True)

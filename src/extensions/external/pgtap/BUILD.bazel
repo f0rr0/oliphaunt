@@ -1,0 +1,37 @@
+load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "extension_identity", "extension_member_payload", "extension_member_validation_test", "pgtap_sql")
+load("//build_defs/release:shipping.bzl", "shipping_package")
+load("//build_defs/foundation:bun.bzl", "bun_script_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["upstream-license-data.json"])
+
+pgtap_sql(name = "sql", inputs = ["@pgtap//:sql_inputs"], control = "@pgtap//:pgtap.control")
+
+extension_member_payload(
+    name = "native_payload",
+    sql_name = "pgtap",
+    owner = extension_identity("pgtap"),
+    resources = [":sql"],
+)
+
+shipping_package(
+    name = "native_member",
+    owner = extension_identity("pgtap"),
+    artifacts = [":native_payload"],
+    ecosystem = "internal",
+    package_name = "pgtap",
+    configuration = NATIVE_EXTENSION_CONFIGURATION,
+    role = "extension-member",
+)
+
+extension_member_validation_test(name = "native_payload_test", payload = ":native_payload", sql_name = "pgtap")
+
+bun_script_test(
+    name = "upstream_sql_parity_test",
+    entry_point = "//build_defs/extensions:pgtap_upstream_parity_test.mts",
+    args = ["--control", "$(location @pgtap//:pgtap.control)", "--installed", "$(location :sql)",
+            "--perl", "$(location //build_defs/extensions:perl)", "--perl-options", "$(location //build_defs/extensions:perl_options)", "--patch", "$(location @native_exec_tools//:patch)"],
+    data = ["@pgtap//:sql_inputs", "@pgtap//:pgtap.control", ":sql", "//build_defs/extensions:perl", "//build_defs/extensions:perl_runtime", "//build_defs/extensions:perl_options", "@native_exec_tools//:patch"],
+    size = "small",
+)

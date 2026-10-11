@@ -1,0 +1,32 @@
+{
+  "publication": {
+    "product": "oliphaunt-swift",
+    "version": "0.8.2",
+    "tagName": "oliphaunt-swift-v0.8.2",
+    "publicationSha": "cd68c6c9655f53c50a3a98d4db36cfc256d26a3c",
+    "publicationTree": "f15802598bf4570742a6e420de722af0ef6be457",
+    "releaseSha": "126bc0264f2ca21f3c79f3d532ce8a1ca6674211"
+  },
+  "reference": {
+    "ref": "refs/tags/0.8.2",
+    "object": {
+      "type": "commit",
+      "sha": "1c9f3420da157854bbb9786c54e822ed983ad4eb"
+    }
+  },
+  "commit": {
+    "sha": "1c9f3420da157854bbb9786c54e822ed983ad4eb",
+    "tree": {
+      "sha": "4780a4b5fbff58287842e49622c25e8fe0c1cce6"
+    },
+    "parents": [
+      {
+        "sha": "cd68c6c9655f53c50a3a98d4db36cfc256d26a3c"
+      }
+    ]
+  },
+  "member": {
+    "path": "src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json",
+    "sha": "328255dbe362b6b1228126d96115e2ae44cad3b1"
+  }
+}
