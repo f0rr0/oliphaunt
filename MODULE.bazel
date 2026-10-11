@@ -520,6 +520,16 @@ postmaster_crates.from_cargo(
 )
 use_repo(postmaster_crates, "postmaster_executor_crates", "postmaster_compiler_crates", "postmaster_sealing_crates")
 
+# Detect the actual hidden, statically linked LLVM unwinder on native ELF hosts.
+postmaster_crates.annotation(
+    crate = "wasmer-compiler",
+    version = "=7.2.0-alpha.2",
+    repositories = ["postmaster_executor_crates", "postmaster_compiler_crates"],
+    rustc_flags = ["--cfg=oliphaunt_linked_libunwind"],
+    link_deps = ["@oliphaunt//build_defs/wasix/postmaster:linked_unwinder"],
+    label_injections = {"//build_defs/wasix/postmaster:linked_unwinder": "@oliphaunt"},
+)
+
 # Core Cargo consumers use source construction on Linux or exact final-file inputs.
 wasix_runtime_carriers = use_repo_rule("//build_defs/wasix:carriers-repository.bzl", "wasix_runtime_carriers_repository")
 wasix_runtime_carriers(name = "wasix_runtime_carriers", bun = "@bun_runtime//:bun")

@@ -1,12 +1,36 @@
 load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
 load(":postgres-overlay-test.bzl", "postgres_overlay_tests")
+load(":runtime-probe.bzl", "postmaster_runtime_probes")
 load("@postmaster_compile_metadata//:cargo.bzl", "POSTMASTER_CARGO")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(glob(["*.bzl", "*.mts", "*.patch"]))
 
 exports_files(["postgres.BUILD.bazel", "libc.BUILD.bazel", "postgres-abi.c"])
+exports_files(["runtime-probe.rs"])
+
+cc_library(name = "linked_unwinder", srcs = ["unwinder.c"], linkstatic = True, alwayslink = True)
+
+cc_test(
+    name = "linked_unwinder_present_test",
+    srcs = ["unwinder-test.c"],
+    defines = ["TEST_LINKED_LIBUNWIND"],
+    deps = [":linked_unwinder"],
+    target_compatible_with = ["@platforms//os:linux"],
+    size = "small",
+)
+
+cc_test(
+    name = "linked_unwinder_absent_test",
+    srcs = ["unwinder-test.c"],
+    deps = [":linked_unwinder"],
+    target_compatible_with = ["@platforms//os:linux"],
+    size = "small",
+)
+
+postmaster_runtime_probes()
 
 bun_test(name = "native_receipts_test", entry_point = "native-receipts.test.mts", data = ["native-receipts.mts"], size = "small")
 

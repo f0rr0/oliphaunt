@@ -10,6 +10,7 @@ load(":postgres-config.bzl", "POSTMASTER_PG_CONFIG")
 load(":sealing.bzl", "postmaster_seal_modules", "postmaster_sealed_profile_test")
 load(":aot.bzl", "postmaster_aot")
 load(":carrier.bzl", "postmaster_carrier")
+load(":runtime-test.bzl", "postmaster_runtime_test")
 load("@postmaster_postgres//:patches.bzl", "POSTGRES_PATCHES")
 
 _COMPATIBLE = ["@platforms//cpu:wasm32", "@platforms//os:wasi"]
@@ -125,4 +126,13 @@ def postgres_postmaster_targets(version):
         },
         target_compatible_with = _COMPATIBLE,
         exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
+    )
+    postmaster_runtime_test(
+        name = "runtime_test",
+        carrier = ":native_carrier",
+        target_compatible_with = _COMPATIBLE,
+        exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
+        tags = ["manual"],
+        size = "medium",
+        timeout = "long",
     )

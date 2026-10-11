@@ -1,17 +1,68 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { hashRegular, verify } from '../../../src/wasix/postmaster/lib/verify-sealed-carrier.mts';
+import { extractPortableArchiveTree } from '../../../tools/packaging/portable-archive.mts';
 import { nativeWasmerReceipt, runtimeAbiFacts } from './native-receipts.mts';
 
-const [carrierArg, psqlArg, workArg] = Bun.argv.slice(2);
-assert(carrierArg && psqlArg, 'usage: runtime-test.mts CARRIER PSQL [WORK]');
-const carrier = resolve(carrierArg),
-  psql = resolve(psqlArg);
-const work = workArg ? resolve(workArg) : mkdtempSync(join(tmpdir(), 'postmaster-native-runtime-'));
+const arguments_ = Bun.argv.slice(2);
+const archiveInput = arguments_[0] === '--archive';
+if (archiveInput) arguments_.shift();
+const [carrierArg, psqlArg, libraryOrWork, archiveWork] = arguments_;
+assert(
+  carrierArg &&
+    psqlArg &&
+    (archiveInput ? libraryOrWork && arguments_.length <= 4 : arguments_.length <= 3),
+  'usage: runtime-test.mts CARRIER PSQL [WORK] | --archive CARRIER PSQL LIBPQ [WORK]',
+);
+const psqlSource = realpathSync(resolve(psqlArg));
+const workArg = archiveInput ? archiveWork : libraryOrWork;
+const work = workArg
+  ? resolve(workArg)
+  : process.env.TEST_UNDECLARED_OUTPUTS_DIR
+    ? join(process.env.TEST_UNDECLARED_OUTPUTS_DIR, 'postmaster-runtime')
+    : mkdtempSync(join(tmpdir(), 'postmaster-native-runtime-'));
 mkdirSync(work, { recursive: true });
+let psql = psqlSource;
+const libpq = archiveInput && libraryOrWork ? realpathSync(resolve(libraryOrWork)) : undefined;
+if (libpq) {
+  psql = join(work, 'client/bin/psql');
+  const library = join(work, 'client/lib/libpq.so.5');
+  // Match the actual native psql $ORIGIN/../lib and libpq.so.5 SONAME contract.
+  for (const [source, destination] of [
+    [psqlSource, psql],
+    [libpq, library],
+  ]) {
+    mkdirSync(join(destination, '..'), { recursive: true });
+    writeFileSync(destination, readFileSync(source), { flag: 'wx' });
+    chmodSync(destination, lstatSync(source).mode & 0o555);
+    assert.deepEqual(hashRegular(destination), hashRegular(source));
+  }
+}
+const carrier = archiveInput ? join(work, 'carrier') : resolve(carrierArg);
+const archive = archiveInput ? realpathSync(resolve(carrierArg)) : undefined;
+if (archive) {
+  extractPortableArchiveTree(archive, carrier, '', { format: 'tar.gz' });
+  // The portable archive writer normalizes writable modes; seal the installed carrier again.
+  const readonly = (file: string) => {
+    const stat = lstatSync(file);
+    assert(stat.isDirectory() || stat.isFile(), 'Installed carrier contains a special entry');
+    if (stat.isDirectory()) for (const name of readdirSync(file)) readonly(join(file, name));
+    chmodSync(file, stat.mode & 0o555);
+  };
+  readonly(carrier);
+}
 const wasmer = JSON.parse(readFileSync(join(carrier, 'wasmer-build.receipt'), 'utf8'));
 nativeWasmerReceipt(wasmer);
 const facts = runtimeAbiFacts(wasmer.runtime_abi);
@@ -181,14 +232,35 @@ try {
   active = undefined;
   active = await start('restart');
   assert.equal(await sql('SELECT sum(value) FROM native_carrier_probe'), '42');
-  active.kill('SIGTERM');
+  await sql('INSERT INTO native_carrier_probe VALUES (8)');
+  assert.equal(await sql('SELECT sum(value) FROM native_carrier_probe'), '50');
+  // Match the canonical immediate-recovery gate: the host signal must reach
+  // PostgreSQL, clean up shared objects, and leave WAL recovery for the restart.
+  // Hard host SIGKILL remains the canonical fail-closed shared-object liveness
+  // limitation; this test never deletes shared objects to admit a restart.
+  active.kill('SIGQUIT');
   await exited(active, 'restart');
+  assert.match(
+    readFileSync(join(work, 'restart.stderr'), 'utf8'),
+    /received immediate shutdown request/,
+  );
+  assert.deepEqual(readdirSync(shm), [], 'Shared objects survived immediate guest shutdown');
+  active = undefined;
+  active = await start('recovery');
+  assert.equal(await sql('SELECT sum(value) FROM native_carrier_probe'), '50');
+  const recoveryLog = readFileSync(join(work, 'recovery.stderr'), 'utf8');
+  assert.match(recoveryLog, /database system was interrupted/);
+  assert.match(recoveryLog, /redo starts at/);
+  active.kill('SIGTERM');
+  await exited(active, 'recovery');
   active = undefined;
   writeFileSync(
     join(work, 'runtime-result.json'),
-    `${JSON.stringify({ carrier_manifest: hashRegular(join(carrier, 'manifest.json')), executor: hashRegular(executor), psql: hashRegular(psql), commands, sql: { answer: 42, concurrent_backend_pids: pids, reopen: 42 } }, null, 2)}\n`,
+    `${JSON.stringify({ ...(archive ? { archive: hashRegular(archive) } : {}), ...(libpq ? { libpq: hashRegular(libpq) } : {}), carrier_manifest: hashRegular(join(carrier, 'manifest.json')), executor: hashRegular(executor), psql: hashRegular(psql), commands, sql: { answer: 42, concurrent_backend_pids: pids, reopen: 42, recovered: 50 }, immediate_shutdown: { signal: 'SIGQUIT', exit_code: 0, shared_objects_empty: true, redo: true } }, null, 2)}\n`,
   );
-  console.log(`Native postmaster initdb/start/concurrent SQL/reopen PASS: ${work}`);
+  console.log(
+    `Native postmaster initdb/start/concurrent SQL/reopen/immediate WAL recovery PASS: ${work}`,
+  );
 } finally {
   if (active && active.exitCode === null) {
     active.kill('SIGKILL');

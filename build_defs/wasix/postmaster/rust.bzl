@@ -42,6 +42,21 @@ def postmaster_rust_targets(library_sources):
         root_sources = library_sources + ["executor/" + facts["source"] for facts in POSTMASTER_CARGO["roles"].values()],
     )
     native.filegroup(name = "runtime_abi_contract", srcs = [":runtime_abi"], output_group = "contract")
+    # Diagnostic only: compile the production runtime source unchanged, with
+    # the executor's genuine role dependencies and a one-probe immutable cache.
+    rust_binary(
+        name = "runtime_probe",
+        srcs = ["//build_defs/wasix/postmaster:runtime-probe.rs", "executor/src/runtime.rs"],
+        crate_root = "//build_defs/wasix/postmaster:runtime-probe.rs",
+        edition = POSTMASTER_CARGO["edition"],
+        version = POSTMASTER_CARGO["version"],
+        crate_features = POSTMASTER_CARGO["roles"]["executor"]["features"],
+        deps = [":executor_library"] + executor_deps(normal = True, package_name = ""),
+        proc_macro_deps = executor_deps(proc_macro = True, package_name = ""),
+        aliases = executor_aliases(package_name = ""),
+        rustc_env_files = [":cargo_env", ":runtime_abi"],
+        tags = ["manual"],
+    )
     for role, dependencies, aliases in [
         ("executor", executor_deps, executor_aliases),
         ("compiler", compiler_deps, compiler_aliases),

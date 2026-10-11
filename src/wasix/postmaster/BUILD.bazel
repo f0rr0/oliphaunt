@@ -7,13 +7,14 @@ exports_files([
     "executor/Cargo.toml",
     "executor/Cargo.lock",
     "executor/src/sealed.rs",
+    "executor/src/runtime.rs",
     "sources/wasmer.toml",
     "sources/wasmer-napi.toml",
     "sources/wasix-libc.toml",
     "wasmer/patches/wasmer/0001-postgres-wasix-blockers.patch",
     "wasmer/patches/wasix-libc/0001-postgres-wasix-blockers.patch",
     "lib/common.sh",
-] + glob(["postgres/**", "wasmer/policies/*", "lib/*.mts", "wasmer/bin/*.mts"]))
+] + glob(["postgres/**", "wasmer/policies/*", "wasmer/probes/*.c", "lib/*.mts", "wasmer/bin/*.mts"]))
 
 filegroup(
     name = "executor_sources",
