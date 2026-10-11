@@ -2,12 +2,13 @@ import { expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { kotlinSdkMetadata } from './kotlin-sdk-metadata.mts';
-import { packageKotlinMaven } from './maven-package.mts';
+import { validateKotlinMavenStagingClosure } from '../../../src/native/sdks/kotlin/tools/kotlin-maven-staging.mts';
 import { createDeterministicZip } from '../../../tools/packaging/archive-directory.mts';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
 import { elfFixture } from '../../../tools/packaging/testdata/release-fixture-utils.mts';
-import { validateKotlinMavenStagingClosure } from '../../../src/native/sdks/kotlin/tools/kotlin-maven-staging.mts';
+import { zipArchive } from '../../../tools/packaging/testdata/zip-fixture.mts';
+import { kotlinSdkMetadata } from './kotlin-sdk-metadata.mts';
+import { packageKotlinMaven } from './maven-package.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../../..');
 const read = (member: string) => readFileSync(path.join(ROOT, member), 'utf8');
@@ -43,13 +44,33 @@ async function fixture(scratch: string) {
     'META-INF/gradle-plugins/dev.oliphaunt.android.properties':
       'implementation-class=dev.oliphaunt.android.OliphauntAndroidPlugin\n',
   });
-  const androidAar = await zip('base.aar', {
-    'AndroidManifest.xml':
-      '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.oliphaunt"><application /></manifest>',
-    'R.txt': '',
-  });
+  const androidAar = path.join(scratch, 'base.aar');
+  const androidManifest = `<?xml version="1.0" encoding="utf-8"?>\n<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.oliphaunt">\n    <uses-sdk android:minSdkVersion="${kotlin.minSdk}" android:targetSdkVersion="${kotlin.compileSdk}" />\n    <application />\n</manifest>\n`;
+  // Maintained Android construction emits FAT attributes=0, deflated entries
+  // with signed data descriptors, including an empty res/ directory.
+  writeFileSync(
+    androidAar,
+    zipArchive(
+      [
+        {
+          name: 'AndroidManifest.xml',
+          data: androidManifest,
+        },
+        { name: 'classes.jar', data: readFileSync(compiled) },
+        { name: 'res/', data: '' },
+        { name: 'R.txt', data: '' },
+        { name: 'proguard.txt', data: '-keep class dev.oliphaunt.** { *; }\n' },
+      ].map((entry) => ({
+        ...entry,
+        versionMadeBy: 0x0014,
+        externalAttributes: 0,
+        method: 8,
+        descriptor: 'signed',
+      })),
+    ),
+  );
   const coroutinesJvm = await zip(
-    `kotlinx-coroutines-core-jvm-${kotlin.libraries['kotlinx-coroutines-core'].version}.jar`,
+    `processed_kotlinx-coroutines-core-jvm-${kotlin.libraries['kotlinx-coroutines-core'].version}.jar`,
     { 'kotlinx/coroutines/Job.class': 'dependency fixture' },
   );
   const nativeLibraries = {};
@@ -82,7 +103,9 @@ async function fixture(scratch: string) {
     plugin,
     nativeLibraries,
     androidAar,
+    androidManifest,
     coroutinesJvm,
+    coroutinesCoordinates: `${kotlin.libraries['kotlinx-coroutines-core'].module}-jvm:${kotlin.libraries['kotlinx-coroutines-core'].version}`,
     sources: { 'generated/Source.kt': source },
     javadoc: { 'index.html': html },
     legalSources: Object.fromEntries(members.map((member) => [member, path.join(ROOT, member)])),
@@ -92,6 +115,9 @@ test('three native envelopes preserve the exact existing ten-file Maven closure'
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-native-maven-'));
   try {
     const values = await fixture(scratch);
+    expect(() => readPortableArchiveEntries(values.androidAar, { format: 'zip' })).toThrow(
+      'inconsistent FAT directory metadata',
+    );
     const output = path.join(scratch, 'maven');
     for (const coordinate of REGISTRY)
       await packageKotlinMaven(output, {
@@ -108,8 +134,10 @@ test('three native envelopes preserve the exact existing ten-file Maven closure'
       publication.publicationFiles.find((name) => name.endsWith('.aar'))!,
     );
     const entries = readPortableArchiveEntries(aar, { format: 'zip' });
-    expect(entries.get('AndroidManifest.xml')!.data().toString()).toContain(
-      'android:minSdkVersion="24"',
+    expect(entries.get('AndroidManifest.xml')?.data().toString()).toBe(values.androidManifest);
+    expect(entries.get('R.txt')?.data()).toHaveLength(0);
+    expect(entries.get('proguard.txt')?.data().toString()).toBe(
+      '-keep class dev.oliphaunt.** { *; }\n',
     );
     expect(entries.has('jni/arm64-v8a/liboliphaunt_mobile_bindings.so')).toBeTrue();
     expect(entries.has('jni/x86_64/liboliphaunt_mobile_bindings.so')).toBeTrue();
@@ -121,6 +149,89 @@ test('three native envelopes preserve the exact existing ten-file Maven closure'
     const before = readFileSync(aar);
     await packageKotlinMaven(output, { ...values, coordinate: REGISTRY[0] });
     expect(readFileSync(aar).equals(before)).toBeTrue();
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+test('compiler AAR input keeps directory, link and native payload checks', async () => {
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-native-maven-aar-bad-'));
+  try {
+    const values = await fixture(scratch);
+    for (const [entry, message] of [
+      [
+        { name: 'res/', data: 'payload', versionMadeBy: 0x0014, externalAttributes: 0 },
+        'non-empty ZIP directory',
+      ],
+      [
+        { name: 'res/link', data: '../escape', externalAttributes: 0o120777 << 16 },
+        'link or special',
+      ],
+      [{ name: 'jni/arm64-v8a/undeclared.so', data: 'payload' }, 'smuggle native runtime'],
+    ] as const) {
+      writeFileSync(values.androidAar, zipArchive([entry]));
+      await expect(
+        packageKotlinMaven(path.join(scratch, 'maven'), {
+          ...values,
+          coordinate: REGISTRY[0],
+        }),
+      ).rejects.toThrow(message);
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+test('requires one self-closing uses-sdk with exactly the canonical Android attributes', async () => {
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-native-maven-manifest-bad-'));
+  try {
+    const values = await fixture(scratch);
+    const sdk = values.androidManifest.match(/<uses-sdk\b[^>]*>/u)?.[0];
+    if (!sdk) throw new Error('Fixture must declare uses-sdk');
+    for (const [manifest, message] of [
+      [values.androidManifest.replace(sdk, ''), 'exactly one uses-sdk'],
+      [values.androidManifest.replace(sdk, `${sdk}\n${sdk}`), 'exactly one uses-sdk'],
+      [values.androidManifest.replace(sdk, sdk.replace('/>', '>')), 'self-closing'],
+      [
+        values.androidManifest.replace('android:minSdkVersion="24"', 'android:minSdkVersion="23"'),
+        'canonical Android SDK attributes',
+      ],
+      [
+        values.androidManifest.replace(
+          'android:targetSdkVersion="36"',
+          'android:targetSdkVersion="35"',
+        ),
+        'canonical Android SDK attributes',
+      ],
+      [
+        values.androidManifest.replace(sdk, sdk.replace('/>', 'android:maxSdkVersion="36" />')),
+        'canonical Android SDK attributes',
+      ],
+      [
+        values.androidManifest.replace(sdk, sdk.replace('android:minSdkVersion', 'minSdkVersion')),
+        'canonical Android SDK attributes',
+      ],
+      [
+        values.androidManifest.replace(sdk, sdk.replace('/>', 'android:minSdkVersion="24" />')),
+        'canonical Android SDK attributes',
+      ],
+      [
+        values.androidManifest.replace(
+          'http://schemas.android.com/apk/res/android',
+          'https://example.com',
+        ),
+        'canonical Android namespace',
+      ],
+    ]) {
+      writeFileSync(
+        values.androidAar,
+        zipArchive([{ name: 'AndroidManifest.xml', data: manifest }]),
+      );
+      await expect(
+        packageKotlinMaven(path.join(scratch, 'maven'), {
+          ...values,
+          coordinate: REGISTRY[0],
+        }),
+      ).rejects.toThrow(message);
+    }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -156,7 +267,22 @@ test('rejects unowned coordinates, incomplete ABI inputs, wrong resolved depende
         coordinate: REGISTRY[0],
         coroutinesJvm: values.classJars[0],
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('actual JVM library');
+    for (const coroutinesCoordinates of [
+      values.coroutinesCoordinates.replace(
+        'kotlinx-coroutines-core-jvm',
+        'kotlinx-coroutines-core',
+      ),
+      values.coroutinesCoordinates.replace(/:[^:]+$/u, ':0.0.0'),
+      undefined,
+    ])
+      await expect(
+        packageKotlinMaven(output, {
+          ...values,
+          coordinate: REGISTRY[0],
+          coroutinesCoordinates,
+        }),
+      ).rejects.toThrow('canonical JVM Maven coordinates');
     await expect(
       packageKotlinMaven(output, {
         ...values,

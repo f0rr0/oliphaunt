@@ -127,6 +127,70 @@ test('coherent public version and package metadata edits do not change acquisiti
   expect(after.facts.core.version).toBe('0.2.1');
 });
 
+test('an independently released workspace library does not retarget an SDK registry requirement', () => {
+  const { workspace, manifests, lock } = fixture();
+  manifests['sdk/Cargo.toml'].dependencies.core = { version: '=0.2.0' };
+  for (const item of lock.package)
+    if (item.name === 'sdk')
+      item.dependencies = [
+        'core 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)',
+        'libc',
+      ];
+  lock.package.push({
+    name: 'core',
+    version: '0.2.0',
+    source: 'registry+https://github.com/rust-lang/crates.io-index',
+    checksum: 'held-core-sha256',
+  });
+  const project = () =>
+    projectCargoWorkspace(
+      workspace,
+      lock,
+      [],
+      (relative) => manifests[relative],
+      (relative) => relative.endsWith('/src/lib.rs') || relative === 'sdk/build.rs',
+    );
+  const before = project();
+  manifests['core/Cargo.toml'].package.version = '1.0.0';
+  for (const item of lock.package) if (item.name === 'core' && !item.source) item.version = '1.0.0';
+  const after = project();
+  expect(after.files).toEqual(before.files);
+  expect(after.facts.core.version).toBe('1.0.0');
+  expect(Bun.TOML.parse(after.files['sdk/Cargo.toml']).dependencies.core).toEqual({
+    version: '=0.2.0',
+  });
+  expect(
+    Bun.TOML.parse(after.files['Cargo.lock']).package.filter((item) => item.name === 'core'),
+  ).toEqual([
+    { name: 'core', version: '0.0.0', dependencies: ['serde'] },
+    {
+      name: 'core',
+      version: '0.2.0',
+      source: 'registry+https://github.com/rust-lang/crates.io-index',
+      checksum: 'held-core-sha256',
+    },
+  ]);
+});
+
+test('same-version local and registry lock identities retain their distinct sources', () => {
+  const { project, lock } = fixture();
+  for (const item of lock.package)
+    if (item.name === 'sdk') item.dependencies = ['core 0.2.0', 'libc'];
+  lock.package.push({
+    name: 'core',
+    version: '0.2.0',
+    source: 'registry+https://github.com/rust-lang/crates.io-index',
+    checksum: 'unused-registry-core-sha256',
+  });
+  const selected = Bun.TOML.parse(project().files['Cargo.lock']).package;
+  expect(selected.find((item) => item.name === 'core')).toEqual({
+    name: 'core',
+    version: '0.0.0',
+    dependencies: ['serde'],
+  });
+  expect(selected.filter((item) => item.name === 'core')).toHaveLength(1);
+});
+
 test('dependency features and compiler minimum change their acquisition contract', () => {
   const { project, manifests, workspace } = fixture();
   const before = project();

@@ -11,6 +11,7 @@ load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_DEPENDENCIES")
 load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
 load(":libraries.bzl", "postgis_source_headers")
+load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 
 _CORE = "alter analyze attach auth backup bitvec btmutex btree build callback carray complete date dbpage dbstat delete expr fault fkey func global hash insert json legacy loadext main malloc mem0 mem1 mem2 mem3 mem5 memdb memjournal mutex mutex_noop mutex_unix mutex_w32 notify os os_kv os_unix os_win pager pcache pcache1 pragma prepare printf random resolve rowset select status table threads tokenize treeview trigger update upsert utf util vacuum vdbe vdbeapi vdbeaux vdbeblob vdbemem vdbesort vdbetrace vdbevtab vtab wal walker where wherecode whereexpr window".split(" ")
 _FTS3 = "fts3 fts3_aux fts3_expr fts3_hash fts3_icu fts3_porter fts3_snippet fts3_tokenizer fts3_tokenizer1 fts3_tokenize_vtab fts3_unicode fts3_unicode2 fts3_write".split(" ")
@@ -23,8 +24,8 @@ def _generate_impl(ctx):
     args.add("--output", outputs[0].dirname)
     for name in ["jim", "lemon", "mksourceid", "mkkeywordhash"]:
         args.add("--" + name, getattr(ctx.executable, name))
-    ctx.actions.run(
-        executable = ctx.attr._generator[DefaultInfo].files_to_run,
+    bun_action(
+        ctx, ctx.attr._generator,
         inputs = ctx.files.inputs + [ctx.file.version],
         tools = [getattr(ctx.attr, name)[DefaultInfo].files_to_run for name in ["jim", "lemon", "mksourceid", "mkkeywordhash"]],
         outputs = outputs,
@@ -46,9 +47,15 @@ _sqlite_generate = rule(
         "lemon": attr.label(executable = True, cfg = "exec", mandatory = True),
         "mksourceid": attr.label(executable = True, cfg = "exec", mandatory = True),
         "mkkeywordhash": attr.label(executable = True, cfg = "exec", mandatory = True),
-        "_generator": attr.label(default = "//build_defs/extensions/postgis:sqlite_generate", executable = True, cfg = "exec"),
+        "_generator": attr.label(default = "//build_defs/extensions/postgis:sqlite_generate", providers = [BunScriptInfo], cfg = "exec"),
     },
 )
+
+# The same upstream object/generator inventory also serves the WASI producer;
+# its target feature profile is declared separately from this native library.
+SQLITE_CORE_SOURCES = _CORE
+SQLITE_FTS3_SOURCES = _FTS3
+sqlite_generate = _sqlite_generate
 
 def postgis_sqlite(name):
     if EXTENSION_DEPENDENCIES["postgis"]["sqlite"]["commit"] != "ccd445d76a9362c63add000354fac84ba9022176":

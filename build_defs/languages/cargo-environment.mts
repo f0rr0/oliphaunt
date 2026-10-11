@@ -34,6 +34,14 @@ export function cargoLinkEnvironment(configuration: CargoLinkConfiguration, runf
     ...(configuration.ar ? { AR: relocate(configuration.ar) } : {}),
     ...(configuration.cflags ? { CFLAGS: configuration.cflags.map(quote).join(' ') } : {}),
     ...(configuration.cxxflags ? { CXXFLAGS: configuration.cxxflags.map(quote).join(' ') } : {}),
+    ...(configuration.cflags || configuration.cxxflags
+      ? {
+          // cc-rs otherwise splits quotes literally and guesses a new target
+          // profile. These flags already come from the declared C/C++ provider.
+          CC_SHELL_ESCAPED_FLAGS: '1',
+          CRATE_CC_NO_DEFAULTS: '1',
+        }
+      : {}),
     CARGO_ENCODED_RUSTFLAGS: [
       `-Clinker=${relocate(configuration.linker)}`,
       ...configuration.args.map((argument) => `-Clink-arg=${relocate(argument)}`),

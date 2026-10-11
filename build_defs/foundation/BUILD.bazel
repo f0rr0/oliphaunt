@@ -1,9 +1,31 @@
-load(":bun.bzl", "bun_test", "bun_toolchain_test")
+load(":bun.bzl", "bun_binary", "bun_source_output", "bun_test", "bun_toolchain_test")
+load(":native-entry-test.bzl", "native_entry_test")
 
 package(default_visibility = ["//visibility:public"])
 
 toolchain_type(name = "bun_toolchain_type")
 bun_toolchain_test(name = "bun_toolchain_test", size = "small")
+
+bun_binary(
+    name = "native_entry_generator",
+    entry_point = "native-entry-generator.mts",
+    data = ["native-entry-helper.mts"],
+)
+
+bun_source_output(
+    name = "native_entry_fixture",
+    source = "native-entry-fixture.txt",
+    tool = ":native_entry_generator",
+    out = "native-entry-fixture.json",
+)
+
+native_entry_test(
+    name = "native_entry_test",
+    source = "native-entry-fixture.txt",
+    generated = ":native_entry_fixture",
+    args = ["forwarded"],
+    size = "small",
+)
 
 bun_test(
     name = "toolchain_metadata_test",
@@ -14,6 +36,7 @@ bun_test(
 
 exports_files([
     "bun.bzl",
+    "bun-test-entrypoint.mts.tpl",
     "bun-toolchain.bzl",
     "bun-toolchain-test.mts",
     "extensions.bzl",

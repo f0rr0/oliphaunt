@@ -30,7 +30,7 @@ shipping_package = rule(
         "ecosystem": attr.string(values = ["cargo", "npm", "maven", "github", "swift", "internal"], mandatory = True),
         "package_name": attr.string(mandatory = True),
         "configuration": attr.string(mandatory = True),
-        "role": attr.string(default = "package"),
+        "role": attr.string(mandatory = True),
     },
 )
 

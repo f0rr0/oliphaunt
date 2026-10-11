@@ -182,7 +182,39 @@ test('rejects malformed or repeated JAR magic fields in either ZIP header', (t) 
         { name: 'Example.class', [location]: extra },
       ]));
       assert.throws(() => readJavaArchiveEntries(file), pattern);
-    }
+  }
+});
+
+test('accepts Java-input compressed directories only with verified empty data and descriptors', (t) => {
+  const directory = { name: 'res/', data: '', method: 8, flags: 0x0800,
+    versionMadeBy: 0x0014, externalAttributes: 0 };
+  for (const descriptor of ['signed', 'unsigned']) {
+    const { file } = fixtureFile(t, `java-directory-${descriptor}.zip`, zipArchive([
+      { ...directory, descriptor },
+    ]));
+    const entry = readJavaArchiveEntries(file).get('res');
+    assert.equal(entry.isDirectory, true);
+    assert.equal(entry.size, 0);
+    assert.deepEqual(entry.data(), Buffer.alloc(0));
+    for (const read of [readPortableArchiveEntries, readSourceArchiveEntries, readAndroidApkEntries])
+      assert.throws(() => read(file), /inconsistent FAT directory metadata/u);
+  }
+  const badDescriptor = fixtureFile(t, 'java-directory-descriptor.jar', zipArchive([
+    { ...directory, descriptor: 'signed', descriptorCrc: 1 },
+  ])).file;
+  assert.throws(() => readJavaArchiveEntries(badDescriptor), /descriptor that disagrees/u);
+
+  const nonempty = zipArchive([{ ...directory, data: 'x', descriptor: 'signed', declaredSize: 0, crc: 0 }]);
+  nonempty.writeUInt32LE(0, 22);
+  const central = nonempty.readUInt32LE(nonempty.length - 22 + 16);
+  nonempty.writeUInt32LE(0, central - 4);
+  const disguised = fixtureFile(t, 'java-directory-nonempty.jar', nonempty).file;
+  assert.throws(() => readJavaArchiveEntries(disguised), /expanded ZIP size/u);
+
+  const invalid = zipArchive([{ ...directory, descriptor: 'signed' }]);
+  invalid.fill(0xff, 30 + directory.name.length, 30 + directory.name.length + 2);
+  const corrupt = fixtureFile(t, 'java-directory-deflate.jar', invalid).file;
+  assert.throws(() => readJavaArchiveEntries(corrupt), /invalid or oversized deflate data/u);
 });
 
 test('retains ZIP safety and limits in the Java input profile', (t) => {
@@ -195,7 +227,6 @@ test('retains ZIP safety and limits in the Java input profile', (t) => {
     ['unknown', { name: 'Example.class', centralExtra: Buffer.from('efbe0000', 'hex') }, /unsupported ZIP central/u],
     ['directory-attributes', { name: 'dev/', data: '', versionMadeBy: 0x0014, externalAttributes: 0x20 }, /inconsistent FAT directory metadata/u],
     ['directory-payload', { name: 'dev/', data: 'x', versionMadeBy: 0x0014, externalAttributes: 0 }, /non-empty ZIP directory/u],
-    ['directory-compressed', { name: 'dev/', data: '', method: 8, versionMadeBy: 0x0014, externalAttributes: 0 }, /non-empty ZIP directory/u],
   ]) {
     const { file } = fixtureFile(t, `${label}.jar`, zipArchive([
       { localExtra: magic, centralExtra: magic, ...row },

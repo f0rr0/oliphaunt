@@ -4,7 +4,7 @@ load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "CONTRIB_OWNERS", 
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
-load("//build_defs/foundation:bun.bzl", "bun_script_test")
+load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
 load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", _native_configuration = "NATIVE_EXTENSION_CONFIGURATION")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 
@@ -72,8 +72,8 @@ def _pgtap_sql_impl(ctx):
     args.add("--perl", perl.interpreter)
     for option in perl.perlopt:
         args.add("--perl-option=" + option)
-    ctx.actions.run(
-        executable = ctx.attr._generator[DefaultInfo].files_to_run,
+    bun_action(
+        ctx, ctx.attr._generator,
         inputs = depset(ctx.files.inputs + [ctx.file.control], transitive = [perl.runtime]),
         outputs = [directory],
         arguments = [args],
@@ -87,7 +87,7 @@ _pgtap_sql = rule(
     attrs = dict(_PLATFORM_ATTRS, **{
         "inputs": attr.label_list(allow_files = True, mandatory = True),
         "control": attr.label(allow_single_file = True, mandatory = True),
-        "_generator": attr.label(default = "//build_defs/extensions:pgtap_sql", executable = True, cfg = "exec"),
+        "_generator": attr.label(default = "//build_defs/extensions:pgtap_sql", providers = [BunScriptInfo], cfg = "exec"),
     }),
     toolchains = ["@rules_perl//perl:exec_toolchain_type"],
 )
@@ -213,8 +213,8 @@ def _payload_impl(ctx):
     args.add("--spec", spec)
     args.add("--output", archive)
     args.add("--inventory", inventory)
-    ctx.actions.run(
-        executable = ctx.attr._assembler[DefaultInfo].files_to_run,
+    bun_action(
+        ctx, ctx.attr._assembler,
         inputs = depset([spec] + ctx.files.resources + ctx.files.main_sql + ctx.files.server_module + ctx.files.embedded_module + ctx.files.dependency_modules + data_inputs),
         outputs = [archive, inventory],
         arguments = [args],
@@ -238,7 +238,7 @@ _extension_member_payload = rule(
         "dependency_modules": attr.label_list(allow_files = True),
         "data_resources": attr.label_keyed_string_dict(allow_files = True),
         "construction_licenses": attr.label_keyed_string_dict(allow_files = True),
-        "_assembler": attr.label(default = "//build_defs/extensions:member_payload", executable = True, cfg = "exec"),
+        "_assembler": attr.label(default = "//build_defs/extensions:member_payload", providers = [BunScriptInfo], cfg = "exec"),
     }),
 )
 

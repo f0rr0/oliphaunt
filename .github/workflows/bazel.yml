@@ -132,13 +132,57 @@ jobs:
           TARGET_CPU: ${{ matrix.platform }}
         run: |
           profile="//build_defs/native:linux_${TARGET_CPU}_glibc_2_28"
-          bash tools/dev/bazel.sh test //:native_linux_tests \
+          bash tools/dev/bazel.sh test -c opt //:native_linux_tests \
             --platforms="$profile" --host_platform="$profile" \
             --java_runtime_version=remotejdk_17 --tool_java_runtime_version=remotejdk_17 --jobs=2
 
       - name: Qualify Android cross-compiled runtime and ABI
         if: matrix.platform == 'x86_64'
         run: >-
-          bash tools/dev/bazel.sh test //build_defs/android:abi_test
+          bash tools/dev/bazel.sh test -c opt //build_defs/android:abi_test
           //build_defs/native:android_runtime_abi_test
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
+
+      - name: Qualify installed Rust, Node and Android packages
+        if: matrix.platform == 'x86_64'
+        run: >-
+          bash tools/dev/bazel.sh test -c opt
+          //build_defs/languages/installed:consumer_test
+          //build_defs/languages/carriers:installed_sql_test
+          //src/native/sdks/kotlin:android_maven
+          //src/native/sdks/kotlin:installed_public_api_consumer
+          //src/native/sdks/kotlin:android_test
+          //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:plugin_maven
+          //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:marker_maven
+          --platforms=//build_defs/native:linux_x86_64_glibc_2_28
+          --host_platform=//build_defs/native:linux_x86_64_glibc_2_28
+          --java_runtime_version=remotejdk_17 --tool_java_runtime_version=remotejdk_17 --jobs=2
+
+  wasix:
+    name: Linux WASIX and installed browser
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Qualify bridge and initdb shim ABI
+        run: >-
+          bash tools/dev/bazel.sh test //build_defs/wasix:bridge_abi_test
+          //build_defs/wasix:initdb_shim_abi_test
+          --platforms=//build_defs/native:linux_x86_64_glibc_2_28
+          --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
+
+      # One Linux producer base supplies the real portable runtime and SDK
+      # archives consumed by both browser exports. Chrome is a host input.
+      - name: Qualify installed browser SQL
+        run: |
+          chrome_binary="$(bash tools/dev/bun.sh build_defs/wasix/browser/chrome-receipt.mts "$RUNNER_TEMP/chrome-host.json" "$ImageOS" "$ImageVersion")"
+          bash tools/dev/bazel.sh run //src/wasix/sdks/ts:browser_sql_consumer \
+            --platforms=//build_defs/native:linux_x86_64_glibc_2_28 \
+            --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2 \
+            -- "$chrome_binary" "$RUNNER_TEMP/chrome-host.json"

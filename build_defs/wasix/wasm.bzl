@@ -2,7 +2,10 @@
 
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 
-WasmModuleInfo = provider(fields = {"module": "The optimized portable module."})
+WasmModuleInfo = provider(fields = {
+    "module": "The optimized portable module.",
+    "archives": "Static archives owned by this module and its dynamic dependencies.",
+})
 WasmExportPolicyInfo = provider(fields = {"exports": "Sorted LF export list.", "response": "Linker export response file."})
 
 def _link_resources(_os, _input_count):
@@ -92,6 +95,14 @@ wasix_export_policy = rule(
 
 def _module_impl(ctx):
     archives = _archives(ctx.attr.deps)
+    dynamic_modules = [dependency[WasmModuleInfo] for dependency in ctx.attr.dynamic_deps]
+    dynamic_archives = {}
+    for dependency in dynamic_modules:
+        for archive in dependency.archives.to_list():
+            if archive.path in dynamic_archives:
+                fail("WASIX dynamic dependencies have overlapping archive ownership: " + archive.path)
+            dynamic_archives[archive.path] = True
+    archives = [archive for archive in archives if archive.path not in dynamic_archives]
     raw = ctx.actions.declare_file(ctx.label.name + "/" + ctx.attr.output_name + ".unoptimized")
     output = ctx.actions.declare_file(ctx.label.name + "/" + ctx.attr.output_name)
     # These flags are the pinned wasixcc dynamic-linking ABI. Invoke its LLVM
@@ -114,8 +125,10 @@ def _module_impl(ctx):
         "--export-if-defined=__wasm_apply_tls_relocs",
         "-L" + sysroot + "/lib", "-L" + sysroot + "/lib/wasm32-wasi",
     ])
-    inputs = archives + ctx.files.srcs
+    inputs = archives + ctx.files.srcs + [dependency.module for dependency in dynamic_modules]
     is_command = bool(ctx.attr.export_policy) or ctx.attr.kind == "command"
+    if is_command and (ctx.attr.cxx_runtime or dynamic_modules):
+        fail("WASIX cxx_runtime/dynamic_deps apply only to side modules")
     if is_command:
         arguments.add_all([
             "--export-if-defined=__stack_pointer", "--export-if-defined=__heap_base",
@@ -139,7 +152,15 @@ def _module_impl(ctx):
         arguments.add("--whole-archive")
         arguments.add_all(ctx.files.srcs)
         arguments.add_all(archives)
+        if ctx.attr.cxx_runtime:
+            arguments.add_all([sysroot + "/lib/wasm32-wasi/" + library for library in ["libc++.a", "libc++abi.a", "libunwind.a"]])
         arguments.add("--no-whole-archive")
+        if ctx.attr.cxx_runtime:
+            arguments.add_all(["-lm", "-lc"])
+        if dynamic_modules:
+            arguments.add("--Bdynamic")
+            arguments.add_all([dependency.module for dependency in dynamic_modules])
+            arguments.add_all(["-rpath", "$ORIGIN"])
         arguments.add("-lclang_rt.builtins-wasm32")
         arguments.add(sysroot + "/lib/wasm32-wasi/scrt1.o")
     arguments.add_all(ctx.attr.linkopts)
@@ -175,7 +196,11 @@ def _module_impl(ctx):
         progress_message = "Optimize portable WASIX module %{label}",
         resource_set = _link_resources,
     )
-    return [DefaultInfo(files = depset([output])), WasmModuleInfo(module = output), OutputGroupInfo(unoptimized = depset([raw]))]
+    return [
+        DefaultInfo(files = depset([output])),
+        WasmModuleInfo(module = output, archives = depset(archives, transitive = [dependency.archives for dependency in dynamic_modules])),
+        OutputGroupInfo(unoptimized = depset([raw])),
+    ]
 
 wasix_module = rule(
     implementation = _module_impl,
@@ -183,6 +208,8 @@ wasix_module = rule(
         "output_name": attr.string(mandatory = True),
         "kind": attr.string(default = "side", values = ["side", "command"]),
         "deps": attr.label_list(providers = [CcInfo]),
+        "dynamic_deps": attr.label_list(providers = [WasmModuleInfo]),
+        "cxx_runtime": attr.bool(default = False),
         "srcs": attr.label_list(allow_files = [".o"]),
         "export_policy": attr.label(providers = [WasmExportPolicyInfo]),
         "linkopts": attr.string_list(),

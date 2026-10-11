@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const [expectedPlatform, expectedDigest] = process.argv.slice(2);
+const expectedPlatform = process.env.OLIPHAUNT_BUN_RUNTIME_PLATFORM;
+const expectedDigest = process.env.OLIPHAUNT_BUN_BINARY_SHA256;
 const os = process.platform === 'win32' ? 'windows' : process.platform;
 const arch = process.arch === 'arm64' ? 'aarch64' : process.arch;
 assert.equal(`${os}-${arch}`, expectedPlatform);

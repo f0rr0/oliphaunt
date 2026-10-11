@@ -43,6 +43,7 @@ release_identity(name = "gamma_identity", product_id = "fixture-gamma", version 
     ecosystem = "github",
     package_name = "fixture-" + product,
     configuration = "fixture-host",
+    role = "package",
 ) for product in ["alpha", "beta", "gamma"]]
 
 shipping_export(name = "export", packages = [":alpha_ship", ":beta_ship", ":gamma_ship"])

@@ -5,7 +5,6 @@ package(default_visibility = ["//visibility:public"])
 exports_files(["Cargo.toml"])
 
 PATH_DEPS = {
-    "oliphaunt-query": "//src/query/rust:oliphaunt_query",
     "oliphaunt-wasix": "//src/wasix/sdks/rust:lib",
 }
 

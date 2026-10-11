@@ -1,12 +1,14 @@
 load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_library", "cargo_library_test", "cargo_package_env")
 load("//build_defs/languages:source.bzl", "cargo_source_package")
+load("//build_defs/languages/carriers:defs.bzl", "native_helper_carriers")
 
 package(default_visibility = ["//visibility:public"])
-exports_files(["Cargo.toml"])
+exports_files(["Cargo.toml", "tools/broker-dependency-license-contract.mts"])
+filegroup(name = "carrier_legal_sources", srcs = ["dependency-licenses.json"] + glob(["dependency-license-blobs/*.base64"]))
+filegroup(name = "carrier_template_sources", srcs = glob(["packages/*/package.json", "packages/*/README.md", "crates/*/Cargo.toml", "crates/*/build.rs", "crates/*/src/lib.rs", "crates/*/README.md"]))
 
 PATH_DEPS = {
     "liboliphaunt-native-bindings": "//src/native/rust-bindings:lib",
-    "oliphaunt-query": "//src/query/rust:oliphaunt_query",
 }
 
 cargo_package_env()
@@ -15,3 +17,4 @@ cargo_binary(name = "broker", source = "src/main.rs", path_dependencies = PATH_D
 cargo_library_test()
 cargo_library_test(name = "binary_test", crate = ":broker")
 cargo_source_package(product = "oliphaunt-broker")
+native_helper_carriers(product = "oliphaunt-broker", binary = ":broker")

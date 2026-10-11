@@ -342,7 +342,9 @@ function realQueryShipping(name: string, allowedTargets: string[], expectedEnvel
   if (expectedEnvelopes !== undefined) {
     assert.equal(spawns.length, expectedEnvelopes, `${name}: exact packaging work`);
     assert.ok(
-      spawns.every((spawn) => spawn.mnemonic === 'QueryEnvelope'),
+      spawns.every((spawn) =>
+        ['QueryEnvelope', 'CargoSourceEnvelope'].includes(spawn.mnemonic ?? ''),
+      ),
       `${name}: package-only work must not compile, extract dependencies, or run tests`,
     );
   }
@@ -472,13 +474,21 @@ function realQueryShipping(name: string, allowedTargets: string[], expectedEnvel
     );
     if (rust) {
       assert.ok(
-        actions.every((action) => ['FileWrite', 'QueryEnvelope'].includes(action.mnemonic)),
+        actions.every((action) =>
+          ['FileWrite', 'ExecutableSymlink', 'CargoSourceEnvelope'].includes(action.mnemonic),
+        ),
         'a source crate requires packaging without compilation',
       );
       assert.ok(
-        !info.inputs.some((input) => /rust_(?:linux|toolchain)|nodejs_|npm_typescript/.test(input)),
-        'source crates must not consume language compilers',
+        !info.inputs.some((input) =>
+          /(?:^|\/)(?:rustc|rustdoc)(?:\.exe)?$|\/lib\/rustlib\/|nodejs_|npm_typescript/.test(
+            input,
+          ),
+        ),
+        'Cargo source inventory must not consume compilers or target sysroots',
       );
+      assert.ok(entries.has(`${manifest.name}-${manifest.version}/THIRD_PARTY_NOTICES.md`));
+      assert.ok(!entries.has(`${manifest.name}-${manifest.version}/BUILD.bazel`));
     } else {
       for (const target of ['module', 'commonjs']) {
         assert.ok(
@@ -736,7 +746,7 @@ try {
 
   const mirrorBuild =
     originalBuild +
-    '\nshipping_package(name = "alpha_mirror_ship", owner = ":alpha_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-alpha-mirror", configuration = "fixture-host")\nshipping_export(name = "mirror_export", packages = [":alpha_ship", ":alpha_mirror_ship", ":beta_ship", ":gamma_ship"])\n';
+    '\nshipping_package(name = "alpha_mirror_ship", owner = ":alpha_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-alpha-mirror", configuration = "fixture-host", role = "package")\nshipping_export(name = "mirror_export", packages = [":alpha_ship", ":alpha_mirror_ship", ":beta_ship", ":gamma_ship"])\n';
   writeFileSync(build, mirrorBuild);
   scenario('two carriers share one product identity', [], [], 'mirror_export');
   const sharedOwnerBefore = shippingState('mirror_export');
@@ -809,25 +819,25 @@ try {
   const badCases = [
     {
       name: 'missing_owner',
-      body: `shipping_package(name = "bad_ship", owner = ":shared", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "bad", configuration = "fixture-host")`,
+      body: `shipping_package(name = "bad_ship", owner = ":shared", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "bad", configuration = "fixture-host", role = "package")`,
       target: 'bad_ship',
       message: 'ReleaseIdentityInfo',
     },
     {
       name: 'empty_payload',
-      body: `shipping_package(name = "bad_ship", owner = ":alpha_identity", artifacts = [], ecosystem = "github", package_name = "bad", configuration = "fixture-host")`,
+      body: `shipping_package(name = "bad_ship", owner = ":alpha_identity", artifacts = [], ecosystem = "github", package_name = "bad", configuration = "fixture-host", role = "package")`,
       target: 'bad_ship',
       message: 'actual output files',
     },
     {
       name: 'duplicate_identity',
-      body: `shipping_package(name = "bad_ship", owner = ":alpha_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-alpha", configuration = "fixture-host")\nshipping_export(name = "bad_export", packages = [":alpha_ship", ":bad_ship"])`,
+      body: `shipping_package(name = "bad_ship", owner = ":alpha_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-alpha", configuration = "fixture-host", role = "package")\nshipping_export(name = "bad_export", packages = [":alpha_ship", ":bad_ship"])`,
       target: 'bad_export',
       message: 'duplicate shipping identity',
     },
     {
       name: 'conflicting_product_versions',
-      body: `release_identity(name = "bad_identity", product_id = "fixture-alpha", version = "9.0.0")\nshipping_package(name = "bad_ship", owner = ":bad_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-alpha-other", configuration = "fixture-host")\nshipping_export(name = "bad_export", packages = [":alpha_ship", ":bad_ship"])`,
+      body: `release_identity(name = "bad_identity", product_id = "fixture-alpha", version = "9.0.0")\nshipping_package(name = "bad_ship", owner = ":bad_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-alpha-other", configuration = "fixture-host", role = "package")\nshipping_export(name = "bad_export", packages = [":alpha_ship", ":bad_ship"])`,
       target: 'bad_export',
       message: 'inconsistent shipping version',
     },
@@ -848,7 +858,7 @@ try {
   writeFileSync(
     build,
     renamedBuild +
-      '\nshipping_package(name = "forged_ship", owner = ":beta_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-forged", configuration = "fixture-host")\nshipping_export(name = "forged_export", packages = [":forged_ship"])\n',
+      '\nshipping_package(name = "forged_ship", owner = ":beta_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-forged", configuration = "fixture-host", role = "package")\nshipping_export(name = "forged_export", packages = [":forged_ship"])\n',
   );
   bazel('build', [`${label}:forged_export`, '--noshow_progress']);
   const forged = shippingState('forged_export');
@@ -986,9 +996,27 @@ try {
   const versionSource = readFileSync(versionsFile, 'utf8');
   const cargoFile = path.join(workspace, 'src/query/rust/Cargo.toml');
   const cargoSource = readFileSync(cargoFile, 'utf8');
-  const cargoVersion = Bun.TOML.parse(cargoSource).package.version as string;
-  const [major, minor, patch] = cargoVersion.split('.').map(Number);
-  const nextVersion = `${major}.${minor}.${patch + 1}`;
+  const cargoPackage = Bun.TOML.parse(cargoSource).package;
+  const nextVersion = `${Number(cargoPackage.version.split('.')[0]) + 1}.0.0`;
+  const cargoLockFile = path.join(workspace, 'Cargo.lock');
+  const cargoLockSource = readFileSync(cargoLockFile, 'utf8');
+  const registryQueryRecords = Bun.TOML.parse(cargoLockSource).package.filter(
+    (record: { name: string; source?: string }) =>
+      record.name === cargoPackage.name && record.source,
+  );
+  assert.ok(registryQueryRecords.length, 'consumers require a separately resolved registry query');
+  let localQueryRecords = 0;
+  const bumpedCargoLock = cargoLockSource
+    .split(/(?=^\[\[package\]\]$)/m)
+    .map((block) => {
+      const record = Bun.TOML.parse(block).package?.[0];
+      if (record?.name !== cargoPackage.name || record.source) return block;
+      localQueryRecords++;
+      assert.equal(record.version, cargoPackage.version, 'local Cargo lock must match its source');
+      return block.replace(/^version = .*$/m, `version = "${nextVersion}"`);
+    })
+    .join('');
+  assert.equal(localQueryRecords, 1, 'change only the uniquely resolved local query version');
   const lockedLanguages = () =>
     bazel('query', [
       'set(//src/query/rust:oliphaunt_query @rust_toolchains//:all)',
@@ -1009,6 +1037,49 @@ try {
   lockedLanguages();
   const acquisitionBefore = toolchainProjection('toolchains.json');
   const typedRustBefore = toolchainProjection('query-rust.bzl');
+  const cargoAcquisition = () => {
+    const expected = ['Cargo.toml', 'Cargo.lock', 'src/query/rust/Cargo.toml'];
+    const files = bazel('cquery', [
+      `set(${expected.map((file) => `@native_cargo_metadata//:${file}`).join(' ')})`,
+      '--output=files',
+      '--noshow_progress',
+    ])
+      .stdout.trim()
+      .split('\n');
+    assert.equal(files.length, expected.length);
+    const projection = Object.fromEntries(
+      files.map((file) => {
+        assert.ok(file.startsWith('external/'));
+        const relative = file.split('/').slice(2).join('/');
+        assert.ok(expected.includes(relative), `unexpected Cargo acquisition input ${file}`);
+        return [relative, readFileSync(path.join(outputBase, file), 'utf8')];
+      }),
+    );
+    assert.equal(Object.keys(projection).length, expected.length);
+    return projection;
+  };
+  const cargoAcquisitionBefore = cargoAcquisition();
+  const heldQueryDependencyGraph = () => {
+    const graph = bazel('cquery', [
+      'filter("oliphaunt_query", deps(set(//src/native/sdks/rust:lib //src/wasix/sdks/rust:lib //src/native/broker:lib //src/wasix/pgwire-server:lib)))',
+      '--output=label',
+      '--platforms=//build_defs/native:linux_x86_64_glibc_2_28',
+      '--host_platform=//build_defs/native:linux_x86_64_glibc_2_28',
+      '--noshow_progress',
+    ]).stdout.trim();
+    assert.ok(graph, 'configured SDK/helper consumers must resolve the held registry query');
+    assert.ok(!graph.includes('//src/query/rust:'), 'held consumers must exclude the local query');
+    for (const line of graph.split('\n')) {
+      assert.ok(
+        registryQueryRecords.some((record: { version: string }) =>
+          line.includes(`oliphaunt-query-${record.version}//`),
+        ),
+        `query dependency must be a genuine held Cargo registry record: ${line}`,
+      );
+    }
+    return graph;
+  };
+  const heldQueryGraphBefore = heldQueryDependencyGraph();
   const queryBefore = realQueryShipping('cold-real-query-packages', [
     '//src/query/rust:crate',
     '//src/query/ts:npm',
@@ -1023,6 +1094,15 @@ try {
   versions['src/query/rust'] = nextVersion;
   writeFileSync(versionsFile, JSON.stringify(versions));
   writeFileSync(cargoFile, cargoSource.replace(/^version = .*$/m, `version = "${nextVersion}"`));
+  writeFileSync(cargoLockFile, bumpedCargoLock);
+  assert.deepEqual(
+    Bun.TOML.parse(bumpedCargoLock).package.filter(
+      (record: { name: string; source?: string }) =>
+        record.name === cargoPackage.name && record.source,
+    ),
+    registryQueryRecords,
+    'a local major version bump must preserve the genuine held registry query identity',
+  );
   assert.ok(
     domain().includes(`"version": "${nextVersion}"`),
     'domain import must observe the conventional Cargo version mirror',
@@ -1032,6 +1112,16 @@ try {
     toolchainProjection('toolchains.json'),
     acquisitionBefore,
     'Cargo product versions are not language acquisition facts',
+  );
+  assert.deepEqual(
+    cargoAcquisition(),
+    cargoAcquisitionBefore,
+    'a coherent local major version bump must preserve Cargo acquisition inputs',
+  );
+  assert.equal(
+    heldQueryDependencyGraph(),
+    heldQueryGraphBefore,
+    'independently versioned SDK/helper consumers retain their configured held query dependency',
   );
   const typedRustAfter = toolchainProjection('query-rust.bzl');
   assert.notEqual(typedRustAfter, typedRustBefore);
@@ -1048,7 +1138,7 @@ try {
   const actualDeltas = Object.fromEntries(
     Object.keys(queryBefore.products).map((product) => [
       product,
-      ['src/query/rust/Cargo.toml', '.release-please-manifest.json'],
+      ['src/query/rust/Cargo.toml', 'Cargo.lock', '.release-please-manifest.json'],
     ]),
   );
   const querySelection = selectShippingChanges(queryBefore.products, queryAfter, actualDeltas);
@@ -1057,7 +1147,10 @@ try {
     [rustProduct],
     'one Cargo product version must not release the independently versioned npm package',
   );
-  assert.deepEqual(querySelection.unclassifiedPaths, ['.release-please-manifest.json']);
+  assert.deepEqual(querySelection.unclassifiedPaths, [
+    '.release-please-manifest.json',
+    'Cargo.lock',
+  ]);
   lockedAcquisition();
   assert.equal(
     readFileSync(path.join(workspace, 'MODULE.bazel.lock'), 'utf8'),
@@ -1066,9 +1159,12 @@ try {
   );
   writeFileSync(versionsFile, versionSource);
   writeFileSync(cargoFile, cargoSource);
+  writeFileSync(cargoLockFile, cargoLockSource);
   lockedLanguages();
   assert.equal(toolchainProjection('toolchains.json'), acquisitionBefore);
   assert.equal(toolchainProjection('query-rust.bzl'), typedRustBefore);
+  assert.deepEqual(cargoAcquisition(), cargoAcquisitionBefore);
+  assert.equal(heldQueryDependencyGraph(), heldQueryGraphBefore);
   realQueryShipping('restore-real-cargo-package-version', ['//src/query/rust:crate'], 1);
   const carriersFile = path.join(workspace, 'src/extensions/contrib/carriers.toml');
   const ownerSource = readFileSync(carriersFile, 'utf8');
@@ -1076,12 +1172,10 @@ try {
     carriersFile,
     ownerSource.replace('native_owner = "liboliphaunt-native"', 'native_owner = "oliphaunt-query"'),
   );
-  assert.match(domain(), /CONTRIB_OWNERS = \{"native": "oliphaunt-query"/);
-  lockedAcquisition();
-  assert.equal(
-    readFileSync(path.join(workspace, 'MODULE.bazel.lock'), 'utf8'),
-    moduleLock,
-    'publication ownership must not rewrite source-acquisition locks',
+  assert.match(
+    bazel('build', ['@oliphaunt_metadata//:metadata.bzl', '--noshow_progress'], true).stderr,
+    /oliphaunt-query release\.toml must declare artifact_targets/,
+    'a publication owner without the supported carrier targets is invalid',
   );
   writeFileSync(carriersFile, ownerSource);
   assert.equal(
@@ -1089,6 +1183,13 @@ try {
     domainBefore,
     'restoring version and owner sources restores the exact domain projection',
   );
+  lockedAcquisition();
+  assert.equal(
+    readFileSync(path.join(workspace, 'MODULE.bazel.lock'), 'utf8'),
+    moduleLock,
+    'rejected publication ownership must not rewrite source-acquisition locks',
+  );
+  scenario('rejected publication owner keeps unrelated consumers cached', [], []);
   const extensionSourceFile = path.join(workspace, 'src/extensions/external/vector/source.toml');
   const extensionSource = readFileSync(extensionSourceFile, 'utf8');
   writeFileSync(

@@ -229,6 +229,38 @@ test('shared producers require the same ordered physical inputs', () => {
   expect(() => buildShippingInputView(exported, graph)).toThrow('ambiguous artifact producers');
 });
 
+test('repeated native Symlink records preserve one complete producer and exact ownership', () => {
+  // Minimized from Bazel 8.8.1 rules_rust toolchain aquery: the same Symlink
+  // record occurs twice with one artifact ID when Cargo is used for inventory.
+  const { exported, graph } = fixture();
+  const action = graph.actions[0];
+  action.mnemonic = 'Symlink';
+  action.actionKey = '7a39b61d5744a8903119e17b3ddc7e56e330f240d2bead98c3ba081a81b5c9ac';
+  Reflect.deleteProperty(action, 'arguments');
+  Reflect.set(action, 'executionPlatform', '@@platforms//host:host');
+  const before = buildShippingInputView(exported, graph);
+  graph.actions.push(structuredClone(action));
+  expect(buildShippingInputView(exported, graph)).toEqual(before);
+  for (const field of ['actionKey', 'configurationId', 'primaryOutputId']) {
+    const malformed = structuredClone(graph);
+    Reflect.deleteProperty(malformed.actions[0], field);
+    Reflect.deleteProperty(malformed.actions[2], field);
+    expect(() => buildShippingInputView(exported, malformed)).toThrow();
+  }
+  for (const [field, value] of [
+    ['arguments', ['different-command']],
+    ['environmentVariables', [{ key: 'CHANGED', value: '1' }]],
+    ['executionPlatform', '//:different-platform'],
+    ['targetId', 2],
+  ] as const) {
+    const conflicting = structuredClone(graph);
+    Reflect.set(conflicting.actions[2], field, value);
+    expect(() => buildShippingInputView(exported, conflicting)).toThrow('multiple producers');
+  }
+  exported.packages[0].outputs[0].owner = '//:other';
+  expect(() => buildShippingInputView(exported, graph)).toThrow('owner disagrees');
+});
+
 test('partial, substituted or cyclic graphs fail closed', () => {
   let { exported, graph } = fixture();
   exported.packages[0].outputs[0].owner = '//:other';
@@ -243,7 +275,7 @@ test('partial, substituted or cyclic graphs fail closed', () => {
   graph.actions[0].inputDepSetIds = [2];
   expect(() => buildShippingInputView(exported, graph)).toThrow('cycle in aquery producers');
   ({ exported, graph } = fixture());
-  graph.actions.push({ ...graph.actions[1] });
+  graph.actions.push({ ...graph.actions[1], actionKey: 'conflicting-package-action' });
   expect(() => buildShippingInputView(exported, graph)).toThrow('multiple producers');
   ({ exported, graph } = fixture());
   graph.actions.shift();

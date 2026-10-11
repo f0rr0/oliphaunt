@@ -24,6 +24,8 @@ bazel_dep(name = "rules_kotlin", version = "2.2.2")
 bazel_dep(name = "rules_android", version = "0.6.6")
 bazel_dep(name = "rules_jvm_external", version = "6.10")
 bazel_dep(name = "rules_cc_autoconf", version = "0.24.0")
+bazel_dep(name = "gcc_toolchain", version = "0.12.0")
+bazel_dep(name = "protobuf", version = "34.0.bcr.1")
 
 single_version_override(
     module_name = "rules_rust",
@@ -37,6 +39,18 @@ single_version_override(
     patches = ["//build_defs/native:patches/rules-cc-autoconf-native-process.patch"],
     patch_strip = 1,
 )
+single_version_override(
+    module_name = "rules_android",
+    version = "0.6.6",
+    patches = ["//build_defs/languages/jvm:aar-import-android-bootclasspath.patch"],
+    patch_strip = 1,
+)
+single_version_override(
+    module_name = "hermetic_cc_toolchain",
+    version = "4.3.0",
+    patches = ["//build_defs/wasix:hermetic-cc-fused-colon.patch"],
+    patch_strip = 1,
+)
 
 native_hosts = use_extension("//build_defs/host:repositories.bzl", "native_host_toolchains")
 use_repo(native_hosts, "native_host_toolchains", "native_apple_sdk", "native_msvc_sdk")
@@ -47,6 +61,7 @@ use_repo(zig_toolchains, "zig_sdk")
 register_toolchains(
     "@zig_sdk//libc_aware/toolchain:linux_amd64_gnu.2.28",
     "@zig_sdk//libc_aware/toolchain:linux_arm64_gnu.2.28",
+    "@zig_sdk//libc_aware/toolchain:linux_amd64_gnu.2.34",
 )
 
 bun_runtime = use_repo_rule("//build_defs/foundation:repositories.bzl", "bun_runtime_repository")
@@ -237,7 +252,32 @@ cargo_crates.annotation(
     repositories = ["aot_serializer_crates"],
     build_script_data = ["@oliphaunt//build_defs/wasix:wasmer_llvm_files"],
     build_script_env_files = ["@oliphaunt//build_defs/wasix:wasmer_llvm_env"],
-    label_injections = {"//build_defs/wasix:wasmer_llvm_files": "@oliphaunt"},
+    patches = ["//build_defs/wasix:llvm-sys-declared-prefix.patch"],
+    patch_args = ["-p1"],
+    link_deps = ["@aot_serializer_crates//:zstd"],
+    label_injections = {
+        "//build_defs/wasix:wasmer_llvm_files": "@oliphaunt",
+        "//build_defs/wasix:wasmer_llvm_gnu_link": "@oliphaunt",
+        "//build_defs/wasix:wasmer_llvm_gnu_files": "@oliphaunt",
+        "@aot_serializer_crates//:zstd": "@aot_serializer_crates",
+    },
+)
+cargo_crates.annotation_select(
+    crate = "llvm-sys",
+    repositories = ["aot_serializer_crates"],
+    triples = ["aarch64-unknown-linux-gnu"],
+    link_deps = ["@oliphaunt//build_defs/extensions/postgis:libxml2"],
+)
+cargo_crates.annotation_select(
+    crate = "llvm-sys",
+    repositories = ["aot_serializer_crates"],
+    triples = ["x86_64-unknown-linux-gnu"],
+    link_deps = [
+        "@oliphaunt//build_defs/extensions/postgis:libxml2",
+        "@oliphaunt//build_defs/wasix:wasmer_llvm_gnu_link",
+    ],
+    build_script_data = ["@oliphaunt//build_defs/wasix:wasmer_llvm_gnu_files"],
+    build_script_env_files = ["@oliphaunt//build_defs/wasix:wasmer_llvm_gnu_env"],
 )
 
 kotlin_sdk_metadata = use_repo_rule("//build_defs/languages/jvm:kotlin-sdk-repository.bzl", "kotlin_sdk_metadata_repository")
@@ -253,6 +293,16 @@ kotlin_maven.install(
     name = "oliphaunt_kotlin_maven",
     lock_file = "//src/native/sdks/kotlin:maven_install.json",
     repositories = ["https://repo.maven.apache.org/maven2"],
+)
+kotlin_maven.override(
+    name = "rules_android_maven",
+    coordinates = "com.google.protobuf:protobuf-java",
+    target = "@protobuf//java/core:core",
+)
+kotlin_maven.override(
+    name = "android_ide_common_30_1_3",
+    coordinates = "com.google.protobuf:protobuf-java",
+    target = "@protobuf//java/core:core",
 )
 use_repo(kotlin_maven, "oliphaunt_kotlin_maven")
 
@@ -321,4 +371,15 @@ frozen_native_npm(
     compatibility = "//src/native/sdks/ts:package.json",
     compatibility_path = "src/native/sdks/ts/package.json",
     target = "linux-x64-gnu",
+)
+
+# LLVM's GNU C++ ABI and helper runtime use this maintained pinned provider;
+# target compilation remains on the registered Zig glibc 2.28 toolchain.
+llvm_gnu_runtime = use_repo_rule("@gcc_toolchain//toolchain:defs.bzl", "gcc_toolchain")
+llvm_gnu_runtime(
+    name = "llvm_gnu_runtime",
+    target_arch = "x86_64",
+    gcc_version = "12.5.0",
+    binary_prefix = "auto",
+    enable_fortran = False,
 )

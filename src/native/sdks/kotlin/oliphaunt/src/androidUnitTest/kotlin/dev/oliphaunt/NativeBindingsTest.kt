@@ -23,11 +23,7 @@ class NativeBindingsTest {
         assumeTrue("requires a prepared native database", pgdata != null)
         val descriptor = File(File(requireNotNull(pgdata)).parentFile, ".oliphaunt.json")
         if (!descriptor.exists()) {
-            val fixture = JSONObject(File(sharedFixtureDirectory(), "storage/database-root.json").readText())
-            val descriptors = fixture.getJSONArray("validDescriptors")
-            val native = (0 until descriptors.length()).map(descriptors::getJSONObject)
-                .first { it.getString("engineFamily") == "native" }
-            descriptor.writeText("$native\n")
+            descriptor.writeText("${nativeDatabaseDescriptor()}\n")
         }
         val library = System.getenv("LIBOLIPHAUNT_PATH") ?: declared?.library
         System.setProperty("jna.library.path", System.getenv("OLIPHAUNT_MOBILE_BINDINGS_DIR") ?: declared?.bindings)
@@ -91,6 +87,13 @@ private data class NativeFixture(
     val bindings: String,
 )
 
+private fun nativeDatabaseDescriptor(): JSONObject {
+    val fixture = JSONObject(File(sharedFixtureDirectory(), "storage/database-root.json").readText())
+    val descriptors = fixture.getJSONArray("validDescriptors")
+    return (0 until descriptors.length()).map(descriptors::getJSONObject)
+        .first { it.getString("engineFamily") == "native" }
+}
+
 private fun declaredNativeFixture(): NativeFixture? {
     val supplied = System.getProperty("oliphaunt.native.facts") ?: return null
     val facts = File(supplied).absoluteFile
@@ -102,20 +105,23 @@ private fun declaredNativeFixture(): NativeFixture? {
     val bindings = File(checkNotNull(System.getProperty("oliphaunt.native.bindings"))).absoluteFile
     check(library.isFile && bindings.isFile) { "Native test requires both declared shared libraries" }
     val temporary = Files.createTempDirectory(File(checkNotNull(System.getenv("TEST_TMPDIR"))).toPath(), "native-bindings-").toFile()
-    val pgdata = File(temporary, "data")
+    val pgdata = File(temporary, nativeDatabaseDescriptor().getString("pgdata"))
     val process = ProcessBuilder(
         File(runtime, "bin/initdb").absolutePath,
         "-D", pgdata.absolutePath,
         "-L", File(runtime, "share/postgresql").absolutePath,
-        "--no-sync", "-U", "postgres", "--locale=C", "-E", "UTF8",
+        "--no-sync", "-U", "postgres", "--locale-provider=libc", "--locale=C", "-E", "UTF8",
     ).redirectErrorStream(true)
     process.environment().apply {
         clear()
         put("LANG", "C")
         put("LD_LIBRARY_PATH", listOf(File(root, "lib"), File(runtime, "lib")).joinToString(File.pathSeparator) { it.absolutePath })
+        // The default published runtime has no optional ICU data carrier.
+        put("OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY", "1")
+        put("OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY", "1")
     }
     val initialized = process.start()
     val output = initialized.inputStream.bufferedReader().readText()
     check(initialized.waitFor() == 0) { "Declared runtime initdb failed: $output" }
-    return NativeFixture(pgdata.absolutePath, library.absolutePath, runtime.absolutePath, File(runtime, "lib").absolutePath, bindings.parentFile.absolutePath)
+    return NativeFixture(pgdata.absolutePath, library.absolutePath, runtime.absolutePath, File(runtime, "lib").absolutePath, checkNotNull(bindings.parentFile).absolutePath)
 }

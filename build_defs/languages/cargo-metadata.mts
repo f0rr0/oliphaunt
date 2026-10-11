@@ -129,10 +129,15 @@ export function projectCargoWorkspace(
   for (const item of lock.package)
     candidates.set(item.name, [...(candidates.get(item.name) ?? []), item]);
   function lockedDependency(text: string): Table {
-    const [name, version] = text.split(' ');
-    const matches = (candidates.get(name) ?? []).filter(
-      (item) => !version || item.version === version,
+    const identity = /^([^ ]+)(?: ([^ ]+)(?: \(([^)]+)\))?)?$/u.exec(text);
+    if (!identity) throw new Error(`Invalid canonical Cargo lock dependency: ${text}`);
+    const [, name, version, source] = identity;
+    let matches = (candidates.get(name) ?? []).filter(
+      (item) => (!version || item.version === version) && (!source || item.source === source),
     );
+    // Cargo includes a source qualifier for registry identities when a local
+    // package has the same name and version; the unqualified identity is local.
+    if (!source && version && matches.length > 1) matches = matches.filter((item) => !item.source);
     if (matches.length !== 1)
       throw new Error(`Missing or ambiguous canonical Cargo lock dependency: ${text}`);
     return matches[0];

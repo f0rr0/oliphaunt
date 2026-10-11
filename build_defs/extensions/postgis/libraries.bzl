@@ -5,6 +5,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 
 def _headers_impl(ctx):
     outputs = [ctx.actions.declare_file(ctx.label.name + "/" + path) for path in ctx.attr.outs]
@@ -23,7 +24,7 @@ def _headers_impl(ctx):
                                               "dependencies": EXTENSION_DEPENDENCIES["postgis"]}))
         args.add("--identity", identity)
         inputs.append(identity)
-    ctx.actions.run(executable = ctx.attr._generator[DefaultInfo].files_to_run,
+    bun_action(ctx, ctx.attr._generator,
                     inputs = inputs, outputs = outputs,
                     arguments = [args], mnemonic = "PostgisDependencyConfig")
     return [DefaultInfo(files = depset(outputs)),
@@ -37,7 +38,7 @@ _headers = rule(
         "kind": attr.string(mandatory = True), "root": attr.label(allow_single_file = True, mandatory = True),
         "inputs": attr.label_list(allow_files = True), "outs": attr.string_list(mandatory = True),
         "include_dirs": attr.string_list(default = [""]),
-        "_generator": attr.label(default = "//build_defs/extensions/postgis:configure_headers", executable = True, cfg = "exec"),
+        "_generator": attr.label(default = "//build_defs/extensions/postgis:configure_headers", providers = [BunScriptInfo], cfg = "exec"),
     },
 )
 

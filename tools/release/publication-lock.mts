@@ -1870,7 +1870,7 @@ export function discoverProductArtifacts(roots, products, options = {}) {
   return discoverProductArtifactsForSelection(roots, products, products, options);
 }
 
-function sourceIdentity(headRef) {
+export function sourceIdentity(headRef) {
   const snapshot = JSON.parse(process.env.OLIPHAUNT_GIT_SOURCE_JSON || '{}');
   if (
     ![snapshot.commit, snapshot.tree, snapshot.checkout].every((value) =>
@@ -2210,6 +2210,11 @@ function withoutDigest(value) {
 
 export function freezePublicationCandidate(candidate) {
   validatePublicationCandidate(candidate);
+  if (candidate.scope !== undefined) {
+    throw error(
+      'native construction candidate lacks qualified producer and completed-baseline evidence; cannot freeze',
+    );
+  }
   if (candidate.missing.length > 0) {
     throw error(`cannot freeze candidate with missing carriers: ${candidate.missing.join(', ')}`);
   }
@@ -2747,6 +2752,9 @@ export function validatePublicationCandidate(candidate) {
 
 export function validatePublicationLock(lock) {
   requireObject(lock, 'publication lock');
+  if (lock.scope !== undefined) {
+    throw error('construction evidence cannot authorize a publication lock');
+  }
   if (lock.schema !== PUBLICATION_LOCK_SCHEMA) {
     throw error(`publication lock schema must be ${PUBLICATION_LOCK_SCHEMA}`);
   }
@@ -3083,7 +3091,7 @@ function parseArgs(argv) {
     if (value === undefined) {
       throw error(`--${key} requires a value`);
     }
-    if (key === 'artifact-root') {
+    if (key === 'artifact-root' || key === 'native-cohort') {
       repeated.set(key, [...(repeated.get(key) ?? []), value]);
     } else {
       values.set(key, value);
@@ -3113,15 +3121,31 @@ function writeJson(file, value) {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function main(argv) {
+async function main(argv) {
   const { command, values, repeated, booleans } = parseArgs([...argv]);
+  const nativeCohorts = repeated.get('native-cohort') ?? [];
+  if (
+    nativeCohorts.length &&
+    (command !== 'candidate' || repeated.has('artifact-root') || booleans.has('allow-missing'))
+  ) {
+    throw error(
+      '--native-cohort supports only exhaustive construction candidates; cannot create, mix artifact roots or allow missing carriers',
+    );
+  }
   if (command === 'candidate' || command === 'create') {
-    const candidate = buildPublicationCandidate({
+    const options = {
       products: productsFlag(values),
       artifactRoots: repeated.get('artifact-root') ?? [],
       headRef: values.get('head-ref') ?? 'HEAD',
       allowMissing: command === 'candidate' && booleans.has('allow-missing'),
-    });
+    };
+    const candidate = nativeCohorts.length
+      ? (await import('./native-publication-candidate.mts')).buildNativePublicationCandidate({
+          products: options.products,
+          headRef: options.headRef,
+          cohorts: nativeCohorts.map((file) => JSON.parse(readFileSync(file, 'utf8'))),
+        })
+      : buildPublicationCandidate(options);
     const output = path.resolve(
       ROOT,
       values.get('output') ??
@@ -3158,14 +3182,14 @@ function main(argv) {
     return;
   }
   console.log(
-    'usage: tools/release/publication-lock.mts <candidate|create|freeze|verify> [--products-json JSON] [--artifact-root PATH ...] [--head-ref REF] [--output PATH] [--allow-missing]',
+    'usage: tools/release/publication-lock.mts <candidate|create|freeze|verify> [--products-json JSON] [--artifact-root PATH ... | --native-cohort FILE ...] [--head-ref REF] [--output PATH] [--allow-missing]',
   );
   process.exit(command === '-h' || command === '--help' ? 0 : 2);
 }
 
 if (import.meta.main) {
   try {
-    main(Bun.argv.slice(2));
+    await main(Bun.argv.slice(2));
   } catch (cause) {
     console.error(cause instanceof Error ? cause.message : String(cause));
     process.exit(1);

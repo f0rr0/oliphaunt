@@ -1,7 +1,7 @@
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 load("@oliphaunt_toolchain_metadata//:query-rust.bzl", "QUERY_RUST_CRATE_NAME", "QUERY_RUST_EDITION", "QUERY_RUST_ENV", "QUERY_RUST_VERSION")
-load("//build_defs/query:defs.bzl", "cargo_consumer_test", "query_envelope")
-load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/query:defs.bzl", "cargo_consumer_test")
+load("//build_defs/languages:source.bzl", "cargo_source_package")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -29,34 +29,7 @@ rust_test(
     rustc_env = QUERY_RUST_ENV,
 )
 
-query_envelope(
-    name = "crate",
-    format = "crate",
-    manifest = "Cargo.toml",
-    workspace_manifest = "//:Cargo.toml",
-    entries = {file: file for file in QUERY_SRCS + QUERY_DATA} | {
-        "Cargo.toml": "Cargo.toml",
-        "CHANGELOG.md": "CHANGELOG.md",
-        "README.md": "README.md",
-        "//:LICENSE": "LICENSE",
-    },
-    out = "oliphaunt-query.crate",
-)
-
-shipping_package(
-    name = "shipping_package",
-    owner = "@oliphaunt_metadata//:product_oliphaunt-query",
-    artifacts = [":crate"],
-    ecosystem = "cargo",
-    role = "facade",
-    package_name = QUERY_RUST_ENV["CARGO_PKG_NAME"],
-    configuration = "source",
-)
-
-shipping_export(
-    name = "shipping_export",
-    packages = [":shipping_package"],
-)
+cargo_source_package(product = "oliphaunt-query")
 
 cargo_consumer_test(
     name = "consumer_test",

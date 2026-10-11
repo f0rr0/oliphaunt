@@ -4,3 +4,8 @@ exports_files([
     "VERSION",
     "seeds/carrier-identities.mts",
 ])
+
+filegroup(
+    name = "cluster_seed_contract_fixtures",
+    srcs = glob(["contracts/fixtures/*.properties"]),
+)

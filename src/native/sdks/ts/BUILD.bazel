@@ -2,6 +2,7 @@ load("@aspect_rules_js//js:defs.bzl", "js_library")
 load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
+load("@oliphaunt_metadata//:metadata.bzl", "PUBLICATION_CARRIERS")
 load("@javascript_packages//:defs.bzl", "PACKAGES", "javascript_type_links")
 load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_projections")
 load("//build_defs/languages/ts:defs.bzl", "npm_archive_package", "source_sdk_consumer_test", "source_sdk_publish_files")
@@ -79,6 +80,7 @@ shipping_package(
     ecosystem = "npm",
     package_name = SDK["name"],
     configuration = "portable",
+    role = [carrier["role"] for carrier in PUBLICATION_CARRIERS if carrier["product"] == "oliphaunt-js" and carrier["ecosystem"] == "npm" and carrier["name"] == SDK["name"]][0],
 )
 
 shipping_export(name = "shipping_export", packages = [":shipping_package"])

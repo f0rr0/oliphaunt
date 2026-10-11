@@ -17,6 +17,7 @@ exports_files([
     "tools/packaging/emit-javascript.mts",
     "tools/packaging/maven-central-contract.mts",
     "tools/packaging/testdata/release-fixture-utils.mts",
+    "tools/packaging/testdata/zip-fixture.mts",
     "tools/packaging/portable-archive.mts",
     "tools/packaging/source-only-sdk-package.mts",
     "tools/packaging/release-notices.mts",
@@ -38,6 +39,7 @@ test_suite(
     name = "portable_tests",
     tests = [
         "//build_defs/foundation:bun_toolchain_test",
+        "//build_defs/foundation:native_entry_test",
         "//build_defs/foundation:toolchain_metadata_test",
         "//build_defs/host:host_sdk_test",
         "//build_defs/host:profile_analysis_test",

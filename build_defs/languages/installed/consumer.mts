@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { stageCargoCarrierInputs } from '../../../tools/packaging/frozen-cargo.mts';
 import { readFileOnlyTarGzipEntries } from '../../../tools/packaging/portable-archive.mts';
@@ -12,7 +12,7 @@ export function cargoCandidate(file: string) {
   assert.equal(manifests.length, 1, 'candidate envelope must have one conventional manifest');
   const entry = manifests[0];
   assert(entry);
-  const manifest = Bun.TOML.parse(entry[1].toString('utf8'));
+  const manifest = Bun.TOML.parse(Buffer.from(entry[1].data()).toString('utf8'));
   assert.equal(typeof manifest.package?.name, 'string');
   assert.equal(typeof manifest.package?.version, 'string');
   return {
@@ -37,7 +37,7 @@ export function candidateConsumerManifest(
     assert(expression.test(text), `missing fixture candidate requirement: ${candidate.name}`);
     text = text.replace(expression, `${candidate.name} = "=${candidate.version}"`);
   }
-  const runtime = sdk.manifest.package.metadata.oliphaunt['runtime-version'];
+  const runtime = sdk.manifest.package.metadata.oliphaunt['native-version'];
   assert.equal(typeof runtime, 'string');
   text = text.replace(
     /^liboliphaunt-native-linux-x64-gnu\s*=\s*"[^"]*"/mu,
@@ -61,7 +61,15 @@ async function main(args: string[]) {
     mkdirSync(path.dirname(output), { recursive: true });
     copyFileSync(file(input), output);
   }
-  const candidates = spec.archives.map((archive: string) => cargoCandidate(file(archive)));
+  const archiveDirectory = path.join(root, 'archives');
+  mkdirSync(archiveDirectory);
+  const candidates = spec.archives.map((archive: string, index: number) => {
+    // Runfiles are declared projections; strict archive validation operates on
+    // ordinary private copies, preserving its non-symlink filesystem contract.
+    const copied = path.join(archiveDirectory, `${index}-${path.basename(archive)}`);
+    copyFileSync(file(archive), copied);
+    return cargoCandidate(copied);
+  });
   const config = stageCargoCarrierInputs(candidates, root);
   writeFileSync(
     path.join(consumer, 'Cargo.toml'),
@@ -70,6 +78,7 @@ async function main(args: string[]) {
   copyFileSync(file(spec.lock), path.join(consumer, 'Cargo.lock'));
   copyFileSync(file(spec.source), path.join(consumer, 'src/main.rs'));
   copyFileSync(file(spec.buildScript), path.join(consumer, 'build.rs'));
+  const storage = path.join(root, 'database-storage');
   const env: Record<string, string> = {
     ...cargoLinkEnvironment(
       JSON.parse(readFileSync(file(spec.compiler), 'utf8')) as CargoLinkConfiguration,
@@ -83,6 +92,7 @@ async function main(args: string[]) {
     PATH: path.dirname(file(spec.rustc)),
     HOME: root,
     TMPDIR: root,
+    OLIPHAUNT_INSTALLED_STORAGE: storage,
   };
   const cargo = (command: string[]) => {
     const result = Bun.spawnSync(
@@ -115,6 +125,7 @@ async function main(args: string[]) {
       );
   }
   cargo(['run', '--locked', '--jobs', '2']);
+  rmSync(storage, { recursive: true });
   writeFileSync(
     path.join(root, 'qualification.json'),
     `${JSON.stringify(

@@ -7,7 +7,6 @@ exports_files(["Cargo.toml", "release.toml"])
 PATH_DEPS = {
     "oliphaunt-broker": "//src/native/broker:lib",
     "liboliphaunt-native-bindings": "//src/native/rust-bindings:lib",
-    "oliphaunt-query": "//src/query/rust:oliphaunt_query",
 }
 
 cargo_package_env()

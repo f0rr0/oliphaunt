@@ -1,5 +1,7 @@
 """Lazy native-host SDK profiles; incompatible client hosts fail acquisition."""
 
+load(":sdk-tree.bzl", "watch_sdk_directory")
+
 def _host_sdk_impl(ctx):
     expected_os = "mac os x" if ctx.attr.family == "apple" else "windows"
     if not ctx.os.name.lower().startswith(expected_os):
@@ -11,12 +13,21 @@ def _host_sdk_impl(ctx):
     if result.return_code:
         fail("Cannot declare the selected host SDK: " + result.stderr)
     sdk = json.decode(result.stdout)
+    if ctx.attr.family == "apple":
+        # Retain the pinned standard drivers' argument/response-file behavior,
+        # while executing the exact tools in this declared SDK projection.
+        for name, source in [("wrapped_clang.cc", ctx.attr._wrapped_clang), ("libtool.cc", ctx.attr._libtool)]:
+            ctx.file(name, ctx.read(source))
+        ctx.read(ctx.attr._driver_patch)
+        ctx.patch(ctx.attr._driver_patch, strip = 1)
+    component_files = {}
     for component in sdk["components"]:
         source = ctx.path(component["path"])
         if component["directory"]:
-            ctx.watch_tree(source)
+            component_files[component["name"]] = [component["name"] + "/" + relative for relative in watch_sdk_directory(ctx, source)]
         else:
             ctx.watch(source)
+            component_files[component["name"]] = [component["name"]]
         ctx.symlink(source, component["name"])
     ctx.file("receipt.json", json.encode_indent(sdk))
     ctx.file("sdk.bzl", "HOST_SDK = " + repr(sdk) + "\n")
@@ -29,7 +40,8 @@ def _host_sdk_impl(ctx):
         'exports_files(["receipt.json", "unsupported.bat", "unsupported.sh"])',
     ]
     for component in sdk["components"]:
-        sources = "glob([%s])" % repr(component["name"] + "/**") if component["directory"] else repr([component["name"]])
+        # glob exclusions are applied after traversal and cannot stop SDK cycles.
+        sources = repr(component_files[component["name"]])
         lines.append("filegroup(name = %s, srcs = %s)" % (repr(component["name"] + "_files"), sources))
     if ctx.attr.family == "msvc":
         lines.append("exports_files(%s)" % repr([sdk["tools"]["dumpbin"], sdk["tools"]["rc"]]))
@@ -57,8 +69,11 @@ _host_sdk_repository = repository_rule(
         "swift_profile": attr.label(default = Label("//build_defs/host:swift-profile.bzl"), allow_single_file = True),
         "_vc_runtime_contract": attr.label(default = Label("//:tools/packaging/windows-vc-runtime-closure.mts"), allow_single_file = True),
         "_vc_runtime_policy": attr.label(default = Label("//:tools/packaging/windows-vc-runtime-policy.json"), allow_single_file = True),
+        "_wrapped_clang": attr.label(default = Label("@apple_support//crosstool:wrapped_clang.cc"), allow_single_file = True),
+        "_libtool": attr.label(default = Label("@apple_support//crosstool:libtool.cc"), allow_single_file = True),
+        "_driver_patch": attr.label(default = Label("//build_defs/host:declared-apple-drivers.patch"), allow_single_file = True),
     },
-    environ = ["DEVELOPER_DIR", "VSCMD_VER", "VSCMD_ARG_HOST_ARCH", "VSCMD_ARG_TGT_ARCH", "VCToolsInstallDir", "VCToolsVersion", "VCToolsRedistDir", "WindowsSdkDir", "WindowsSDKVersion", "TEMP", "TMP", "ImageOS", "ImageVersion"],
+    environ = ["DEVELOPER_DIR", "TOOLCHAINS", "VSCMD_VER", "VSCMD_ARG_HOST_ARCH", "VSCMD_ARG_TGT_ARCH", "VCToolsInstallDir", "VCToolsVersion", "VCToolsRedistDir", "WindowsSdkDir", "WindowsSDKVersion", "TEMP", "TMP", "ImageOS", "ImageVersion"],
 )
 
 def _host_toolchains_impl(ctx):

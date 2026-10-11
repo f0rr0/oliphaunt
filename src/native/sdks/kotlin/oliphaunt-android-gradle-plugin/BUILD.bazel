@@ -1,17 +1,17 @@
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@rules_java//java:defs.bzl", "java_library", "java_test")
 load("//build_defs/languages/jvm:maven.bzl", "java_javadoc", "kotlin_maven_package")
+load("//build_defs/foundation:bun.bzl", "bun_source_output")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["build.gradle.kts", "src/main/resources/dev/oliphaunt/android/liboliphaunt.version"])
 
-genrule(
+bun_source_output(
     name = "plugin_descriptor",
-    srcs = ["build.gradle.kts"],
-    tools = ["//build_defs/languages/jvm:plugin_descriptor"],
-    outs = ["src/main/resources/META-INF/gradle-plugins/dev.oliphaunt.android.properties"],
-    cmd = "$(location //build_defs/languages/jvm:plugin_descriptor) $(location build.gradle.kts) $@",
+    source = "build.gradle.kts",
+    tool = "//build_defs/languages/jvm:plugin_descriptor",
+    out = "src/main/resources/META-INF/gradle-plugins/dev.oliphaunt.android.properties",
 )
 
 copy_file(name = "database_version", src = "//src/database-resources:VERSION", out = "src/main/resources/dev/oliphaunt/android/database-resources.version")

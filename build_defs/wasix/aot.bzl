@@ -31,7 +31,7 @@ def _aot_impl(ctx):
     arguments.add("--target", target)
     arguments.add_all(["--threads", "2"])
     ctx.actions.run(
-        executable = ctx.executable._serializer,
+        executable = ctx.attr._serializer[DefaultInfo].files_to_run,
         arguments = [arguments],
         inputs = [module],
         outputs = [output],
@@ -126,6 +126,7 @@ def wasix_runtime_aot_targets():
                 output_name = image,
                 tags = ["manual"],
                 target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
             )
         wasix_aot_payload(
             name = prefix + "payload",

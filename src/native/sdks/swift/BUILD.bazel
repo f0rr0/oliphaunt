@@ -14,7 +14,7 @@ exports_files(["Package.swift", "VERSION", "LIBOLIPHAUNT_VERSION", "tools/swift-
 uniffi_swift(
     name = "generated_bindings",
     generator = "//src/native/mobile-bindings:bindgen",
-    library = "//src/native/mobile-bindings:shared",
+    library = "//src/native/mobile-bindings:lib",
     configuration = "//src/native/mobile-bindings:uniffi.toml",
 )
 uniffi_output(name = "generated_swift", bindings = ":generated_bindings", group = "swift")

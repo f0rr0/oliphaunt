@@ -28,6 +28,7 @@ export interface HostPolicy {
 export interface Component {
   name: string;
   path: string;
+  resolvedPath: string;
   directory: boolean;
   roles: ('compile' | 'link' | 'swift')[];
 }
@@ -119,7 +120,14 @@ function component(
 ): Component {
   const physical = realpathSync(input);
   assert.equal(statSync(physical).isDirectory(), directory, `${input} has the wrong file type`);
-  return { name, path: physical.replaceAll('\\', '/'), directory, roles };
+  return {
+    name,
+    // Preserve logical SDK aliases so a retarget is observed by file/dir watches.
+    path: path.resolve(input).replaceAll('\\', '/'),
+    resolvedPath: physical.replaceAll('\\', '/'),
+    directory,
+    roles,
+  };
 }
 
 function digest(file: string): string {
@@ -215,6 +223,11 @@ function captureWindows(policy: HostPolicy, env: NodeJS.ProcessEnv): HostSdk {
 
 function captureApple(policy: HostPolicy, env: NodeJS.ProcessEnv): HostSdk {
   assert.equal(
+    env.TOOLCHAINS,
+    undefined,
+    'the declared Apple profile does not support TOOLCHAINS overrides',
+  );
+  assert.equal(
     env.DEVELOPER_DIR,
     policy.apple.developer_dir,
     'DEVELOPER_DIR must select the supported Xcode bundle',
@@ -229,26 +242,31 @@ function captureApple(policy: HostPolicy, env: NodeJS.ProcessEnv): HostSdk {
   const developer = realpathSync(policy.apple.developer_dir);
   const toolchain = path.join(developer, 'Toolchains', 'XcodeDefault.xctoolchain', 'usr');
   const components = [component('toolchain', toolchain, true, ['compile', 'link', 'swift'])];
-  const platformDeveloper = path.join(developer, 'Platforms', 'MacOSX.platform', 'Developer');
-  components.push(
-    component('platform_macosx/Library', path.join(platformDeveloper, 'Library'), true, [
-      'compile',
-      'link',
-      'swift',
-    ]),
-    component('platform_macosx/usr/lib', path.join(platformDeveloper, 'usr', 'lib'), true, [
-      'compile',
-      'link',
-      'swift',
-    ]),
-  );
   const observations: Record<string, string> = {
     xcode,
     os_build: run('/usr/bin/sw_vers', ['-buildVersion']),
     ImageOS: env.ImageOS ?? '',
     ImageVersion: env.ImageVersion ?? '',
   };
-  for (const sdk of ['macosx', 'iphoneos', 'iphonesimulator']) {
+  for (const [sdk, platform] of [
+    ['macosx', 'MacOSX'],
+    ['iphoneos', 'iPhoneOS'],
+    ['iphonesimulator', 'iPhoneSimulator'],
+  ]) {
+    const platformDeveloper = path.join(
+      developer,
+      'Platforms',
+      `${platform}.platform`,
+      'Developer',
+    );
+    for (const directory of ['Library', 'usr/lib'])
+      components.push(
+        component(`platform_${sdk}/${directory}`, path.join(platformDeveloper, directory), true, [
+          'compile',
+          'link',
+          'swift',
+        ]),
+      );
     const sdkPath = run('/usr/bin/xcrun', ['--sdk', sdk, '--show-sdk-path'], env);
     assert.ok(
       realpathSync(sdkPath).startsWith(`${developer}/`),
@@ -270,6 +288,7 @@ function captureApple(policy: HostPolicy, env: NodeJS.ProcessEnv): HostSdk {
     'ld',
     'nm',
     'strip',
+    'dsymutil',
     'swiftc',
     'swift-symbolgraph-extract',
     'swift-synthesize-interface',

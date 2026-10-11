@@ -20,7 +20,7 @@ def _uniffi_kotlin_impl(ctx):
 uniffi_kotlin = rule(
     implementation = _uniffi_kotlin_impl,
     attrs = {
-        "library": attr.label(mandatory = True, allow_single_file = [".so", ".dylib"], cfg = "exec"),
+        "library": attr.label(mandatory = True, allow_single_file = [".so", ".dylib", ".rlib"], cfg = "exec"),
         "generator": attr.label(mandatory = True, executable = True, cfg = "exec"),
         "configuration": attr.label(mandatory = True, allow_single_file = [".toml"]),
         "driver": attr.label(default = Label("//build_defs/languages/jvm:generate-kotlin.mts"), allow_single_file = True),

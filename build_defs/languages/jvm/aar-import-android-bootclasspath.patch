@@ -1,0 +1,12 @@
+--- a/rules/aar_import/impl.bzl
++++ b/rules/aar_import/impl.bzl
+@@ -326,8 +326,8 @@
+ 
+     if enable_desugar_java8:
+         bootclasspath = depset(transitive = [
+-            desugar_java8_extra_bootclasspath,
+             bootclasspath,
++            desugar_java8_extra_bootclasspath,
+         ])
+ 
+     merged_java_info = java_common.merge(java_infos + r_java_info)

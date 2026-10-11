@@ -36,7 +36,7 @@ native-version = "0.3.2"
 [dependencies]
 oliphaunt-broker = { path = "../../broker", version = "0.3.1", optional = true }
 liboliphaunt-native-bindings = { version = "0.2.0", path = "../../rust-bindings" }
-oliphaunt-query = { version = "0.1.1", path = "../../../query/rust" }
+oliphaunt-query = { version = "0.1.1" }
 getrandom = { version = "0.3", optional = true }
 libc = { version = "0.2", optional = true }
 

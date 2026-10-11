@@ -17,6 +17,13 @@ cargo_binary(
     features = ["aot-serializer"],
     proc_macro_names = ["async-trait"],
     crate_dependencies = serializer_crate_deps,
+    # Preserve typed native archive/runtime linking through cc_common.link.
+    experimental_use_cc_common_link = 1,
+    target_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+        "@zig_sdk//libc:gnu.2.34",
+    ],
 )
 
 rust_test(
@@ -29,6 +36,8 @@ rust_test(
 rust_test(
     name = "aot_target_test",
     crate = ":aot_serializer",
+    crate_features = ["aot-serializer"],
     args = ["target"],
     size = "small",
+    experimental_use_cc_common_link = 1,
 )

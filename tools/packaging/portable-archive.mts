@@ -544,7 +544,7 @@ function zipEntryType(versionMadeBy, externalAttributes, rawName, file, javaArch
     if (unixType !== 0) {
       throw archiveError(file, `has conflicting FAT/Unix type metadata for ${rawName}`);
     }
-    // JarOutputStream leaves FAT attributes at zero, including directories.
+    // Java archive writers leave FAT attributes at zero, including directories.
     if (pathDirectory !== dosDirectory && !(javaArchive && pathDirectory && externalAttributes === 0)) {
       throw archiveError(file, `has inconsistent FAT directory metadata for ${rawName}`);
     }
@@ -822,8 +822,7 @@ function readZipEntries(file, archiveLimits, { source = false, javaArchive = fal
     });
     const { mode, type } = zipEntryType(versionMadeBy, externalAttributes, rawName, file, javaArchive);
     const name = portableMemberName(rawName, type, file);
-    if (type === 'directory' && (size !== 0 || expectedCrc !== 0 ||
-        (javaArchive && (versionMadeBy >>> 8) === 0 && externalAttributes === 0 && compressedSize !== 0))) {
+    if (type === 'directory' && (size !== 0 || expectedCrc !== 0)) {
       throw archiveError(file, `has a non-empty ZIP directory member ${rawName}`);
     }
     if (method === 0 && compressedSize !== size) {

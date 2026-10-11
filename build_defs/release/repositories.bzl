@@ -31,7 +31,11 @@ def _domain_metadata_impl(ctx):
     for relative, observed in directories.items():
         source = root.get_child(relative)
         ctx.watch(source)
-        current = sorted([entry.basename for entry in source.readdir(watch = "yes")]) if source.exists else None
+        # The authored metadata owner remains when its optional dependency
+        # directory is removed. Watching the removable directory's listing or
+        # tree in Bazel 8 can retain an input rooted at a now-missing directory.
+        ctx.watch_tree(source.dirname)
+        current = sorted([entry.basename for entry in source.readdir(watch = "no")]) if source.exists else None
         if current != observed:
             fail("release metadata directory changed during import: " + relative)
 

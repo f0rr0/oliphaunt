@@ -8,8 +8,17 @@ import { iosBaseLegalMetadata } from '../../src/native/sdks/swift/tools/ios-carr
 import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import { readNativePublicationArtifacts } from './native-publication-artifacts.mts';
+import { buildNativePublicationCandidate } from './native-publication-candidate.mts';
 import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
-import { expectedProductArtifactRows } from './publication-lock.mts';
+import {
+  expectedProductArtifactRows,
+  freezePublicationCandidate,
+  PUBLICATION_CANDIDATE_SCHEMA,
+  PUBLICATION_LOCK_SCHEMA,
+  sourceIdentity,
+  validatePublicationCandidate,
+  validatePublicationLock,
+} from './publication-lock.mts';
 import { productCompatibilityVersion } from './release-graph.mts';
 
 function fixture(run) {
@@ -112,6 +121,55 @@ test('reads native package bytes without granting release authority or full cove
     expect(result.unverified).toContain(
       'frozen source and completed-publication construction equivalence',
     );
+  });
+});
+
+test('physical native roots enter the existing candidate and cannot freeze as publication evidence', () => {
+  fixture(({ carrier, cohort, archive }) => {
+    const candidate = buildNativePublicationCandidate({
+      products: [carrier.product],
+      cohorts: [{ ...cohort, source: sourceIdentity('HEAD') }],
+    });
+    expect(candidate.schema).toBe(PUBLICATION_CANDIDATE_SCHEMA);
+    expect(candidate.scope).toBe('construction');
+    expect(candidate.source).toEqual(sourceIdentity('HEAD'));
+    expect(candidate.missing).toEqual([]);
+    expect(candidate.carriers).toHaveLength(1);
+    expect(candidate.carriers[0].artifacts[0].sha256).toBe(
+      createHash('sha256').update(readFileSync(archive)).digest('hex'),
+    );
+    expect(candidate.carriers[0].artifacts[0].path).toMatch(/^target\/n\//u);
+    expect(
+      buildNativePublicationCandidate({
+        products: [carrier.product],
+        cohorts: [{ ...cohort, source: sourceIdentity('HEAD') }],
+      }).packageEnvelopeDigest,
+    ).toBe(candidate.packageEnvelopeDigest);
+    expect(validatePublicationCandidate(candidate)).toBe(candidate);
+    expect(() => freezePublicationCandidate(candidate)).toThrow('cannot freeze');
+    expect(() =>
+      validatePublicationLock({ ...candidate, schema: PUBLICATION_LOCK_SCHEMA }),
+    ).toThrow('construction evidence cannot authorize');
+  });
+});
+
+test('native candidate rejects foreign frozen sources, missing cohort outputs and incomplete inventory', () => {
+  fixture(({ carrier, cohort }) => {
+    const source = sourceIdentity('HEAD');
+    const run = (value, products = [carrier.product]) =>
+      buildNativePublicationCandidate({ products, cohorts: [value] });
+    expect(() => run({ ...cohort })).toThrow('exact frozen candidate source');
+    expect(() => run({ ...cohort, source: { ...source, commit: '0'.repeat(40) } })).toThrow(
+      'exact frozen candidate source',
+    );
+    expect(() => run({ ...cohort, source: { ...source, tree: '0'.repeat(40) } })).toThrow(
+      'exact frozen candidate source',
+    );
+    expect(() => run({ ...cohort, source, roots: [] })).toThrow();
+    expect(() => run({ ...cohort, source }, ['oliphaunt-query', carrier.product])).toThrow();
+    expect(() =>
+      run({ ...cohort, source, executionRoot: path.dirname(cohort.executionRoot) }),
+    ).toThrow();
   });
 });
 
@@ -281,13 +339,22 @@ test('validates the frozen Swift manifest and source tree as actual native outpu
           ...row,
           ecosystem: 'github',
           configuration: row.target,
-          outputs: [{ path: paths[index], owner: '//fixture:producer' }],
+          outputs: [
+            {
+              path: paths[index],
+              owner:
+                row.role === 'github-release-asset' ? '//fixture:bindings' : '//fixture:producer',
+            },
+          ],
         },
       })),
       aquery: {
         pathFragments,
         artifacts,
-        targets: [{ id: 1, label: '//fixture:producer' }],
+        targets: [
+          { id: 1, label: '//fixture:producer' },
+          { id: 2, label: '//fixture:bindings' },
+        ],
         depSetOfFiles: [],
         configuration: [{ id: 1 }],
         actions: [
@@ -297,9 +364,27 @@ test('validates the frozen Swift manifest and source tree as actual native outpu
             actionKey: 'fixture',
             mnemonic: 'Package',
             inputDepSetIds: [],
-            outputIds: artifacts.map(({ id }) => id),
-            primaryOutputId: 1,
+            outputIds: artifacts
+              .filter((_, index) => rows[index].role !== 'github-release-asset')
+              .map(({ id }) => id),
+            primaryOutputId: artifacts.find(
+              (_, index) => rows[index].role !== 'github-release-asset',
+            ).id,
             arguments: ['fixture'],
+          },
+          {
+            targetId: 2,
+            configurationId: 1,
+            actionKey: 'bindings',
+            mnemonic: 'Package',
+            inputDepSetIds: [],
+            outputIds: artifacts
+              .filter((_, index) => rows[index].role === 'github-release-asset')
+              .map(({ id }) => id),
+            primaryOutputId: artifacts.find(
+              (_, index) => rows[index].role === 'github-release-asset',
+            ).id,
+            arguments: ['bindings'],
           },
         ],
       },
@@ -317,6 +402,19 @@ test('validates the frozen Swift manifest and source tree as actual native outpu
     expect(
       result.productArtifacts.find(({ kind }) => kind === 'swiftpm-release-tree').sha256,
     ).toMatch(/^[0-9a-f]{64}$/);
+    const candidate = buildNativePublicationCandidate({
+      products: [product.id],
+      cohorts: [{ ...cohort, source: sourceIdentity('HEAD') }],
+    });
+    const before = result.productArtifacts.filter(({ role }) => role === 'github-release-asset');
+    const after = candidate.productArtifacts.filter(({ role }) => role === 'github-release-asset');
+    expect(after.map(({ name, sha256 }) => ({ name, sha256 }))).toEqual(
+      before.map(({ name, sha256 }) => ({ name, sha256 })),
+    );
+    for (const artifact of after)
+      expect(path.basename(path.dirname(artifact.path))).toBe('release-assets');
+    expect(candidate.scope).toBe('construction');
+    expect(() => freezePublicationCandidate(candidate)).toThrow('cannot freeze');
     carrier.extensions.push({ sqlName: 'pgtap' });
     write('oliphaunt-react-native-ios-carriers.json', JSON.stringify(carrier));
     expect(read).toThrow('selection-neutral');

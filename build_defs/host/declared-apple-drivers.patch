@@ -1,0 +1,83 @@
+--- a/wrapped_clang.cc
++++ b/wrapped_clang.cc
+@@ -393,6 +393,14 @@
+     FindAndReplace("__BAZEL_EXECUTION_ROOT_CANONICAL__", canonical_cwd,
+                    &new_arg);
+   }
++  FindAndReplace("__BAZEL_XCODE_DEVELOPER_DIR__/Toolchains/XcodeDefault.xctoolchain/usr",
++                 developer_dir + "/toolchain", &new_arg);
++  FindAndReplace("__BAZEL_XCODE_DEVELOPER_DIR__/Platforms/MacOSX.platform/Developer",
++                 developer_dir + "/platform_macosx", &new_arg);
++  FindAndReplace("__BAZEL_XCODE_DEVELOPER_DIR__/Platforms/iPhoneOS.platform/Developer",
++                 developer_dir + "/platform_iphoneos", &new_arg);
++  FindAndReplace("__BAZEL_XCODE_DEVELOPER_DIR__/Platforms/iPhoneSimulator.platform/Developer",
++                 developer_dir + "/platform_iphonesimulator", &new_arg);
+   FindAndReplace("__BAZEL_XCODE_DEVELOPER_DIR__", developer_dir, &new_arg);
+   FindAndReplace("__BAZEL_XCODE_SDKROOT__", sdk_root, &new_arg);
+   if (!toolchain_path.empty()) {
+@@ -439,7 +447,8 @@
+   const char* toolchain_id = getenv("TOOLCHAINS");
+   std::string toolchain_path = "";
+   if (toolchain_id != nullptr) {
+-    toolchain_path = GetToolchainPath(toolchain_id);
++    std::cerr << "The declared Apple profile does not support TOOLCHAINS overrides\n";
++    return EXIT_FAILURE;
+   }
+ 
+   std::string developer_dir = GetMandatoryEnvVar("DEVELOPER_DIR");
+@@ -453,7 +462,8 @@
+     canonical_cwd = GetCanonicalPath(cwd);
+   }
+ 
+-  std::vector<std::string> invocation_args = {"/usr/bin/xcrun", tool_name};
++  std::vector<std::string> invocation_args = {
++      GetMandatoryEnvVar("OLIPHAUNT_APPLE_TOOL_DIRECTORY") + "/" + tool_name};
+   std::vector<std::string> processed_args = {};
+ 
+   auto consumer = [&](const std::string& arg) {
+@@ -514,7 +524,7 @@
+                      dsym_path.length() - bundle_suffix.length();
+ 
+     std::vector<std::string> dsymutil_args = {
+-        "/usr/bin/xcrun", "dsymutil",
++        GetMandatoryEnvVar("OLIPHAUNT_APPLE_TOOL_DIRECTORY") + "/dsymutil",
+         linked_binary,    "-o",
+         dsym_path,        "--no-swiftmodule-timestamp"};
+     if (!is_bundle) {
+@@ -530,8 +540,9 @@
+   // When stripping is requested, we should still strip the binary
+   // before returning
+   if (strip_debug_symbols) {
+-    std::vector<std::string> strip_args = {"/usr/bin/xcrun", "strip", "-S",
+-                                           linked_binary};
++    std::vector<std::string> strip_args = {
++        GetMandatoryEnvVar("OLIPHAUNT_APPLE_TOOL_DIRECTORY") + "/strip", "-S",
++        linked_binary};
+     if (!RunSubProcess(strip_args)) {
+       return 2;
+     }
+--- a/libtool.cc
++++ b/libtool.cc
+@@ -184,6 +184,14 @@
+ std::string rewriteArg(const std::string arg, const std::string developer_dir,
+                        const std::string sdk_root) {
+   auto new_arg = arg;
++  findAndReplace("__BAZEL_XCODE_DEVELOPER_DIR__/Toolchains/XcodeDefault.xctoolchain/usr",
++                 developer_dir + "/toolchain", &new_arg);
++  findAndReplace("__BAZEL_XCODE_DEVELOPER_DIR__/Platforms/MacOSX.platform/Developer",
++                 developer_dir + "/platform_macosx", &new_arg);
++  findAndReplace("__BAZEL_XCODE_DEVELOPER_DIR__/Platforms/iPhoneOS.platform/Developer",
++                 developer_dir + "/platform_iphoneos", &new_arg);
++  findAndReplace("__BAZEL_XCODE_DEVELOPER_DIR__/Platforms/iPhoneSimulator.platform/Developer",
++                 developer_dir + "/platform_iphonesimulator", &new_arg);
+   findAndReplace("__BAZEL_XCODE_DEVELOPER_DIR__", developer_dir, &new_arg);
+   findAndReplace("__BAZEL_XCODE_SDKROOT__", sdk_root, &new_arg);
+   return new_arg;
+@@ -311,6 +319,5 @@
+ 
+   std::vector<std::string> invocation_args = {
+-      "/usr/bin/xcrun",
+-      "libtool",
++      getMandatoryEnvVar("OLIPHAUNT_APPLE_TOOL_DIRECTORY") + "/libtool",
+       "@" + response_file.u8string(),
+   };

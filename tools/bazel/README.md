@@ -18,9 +18,10 @@ Failed cases preserve their scratch directory and seed. Identical reruns must
 execute no compiler, package or test actions.
 
 The same isolated run constructs the real query archives and checks their
-manifests and combined action graph. A conventional Cargo version bump selects
-only the Rust product and runs one archive action; an identical request runs no
-processes. Package versions, carrier ownership and extension control metadata
+manifests and combined action graph. A major Cargo query version bump leaves
+the four SDK/helper consumers on their held registry query dependency and runs
+one archive action; an identical request runs no processes. Package versions,
+carrier ownership and extension control metadata
 must leave source and language acquisition locks unchanged.
 
 The query consumer tests unpack the actual crate/npm archives into temporary
@@ -33,7 +34,7 @@ plugin contract together:
 
 ```sh
 profile=//build_defs/native:linux_x86_64_glibc_2_28
-bash tools/dev/bazel.sh test //:native_linux_tests \
+bash tools/dev/bazel.sh test -c opt //:native_linux_tests \
   --platforms="$profile" --host_platform="$profile" \
   --java_runtime_version=remotejdk_17 --tool_java_runtime_version=remotejdk_17 --jobs=2
 ```
@@ -44,6 +45,32 @@ SQL, persistence, backup/recovery, managed ICU and separate embedded/server
 extension modules. Linux ARM64 and Android have separate configured targets.
 Cross-compilation proves construction and binary contracts; runtime behavior
 still requires the actual host or device.
+
+Run CI's installed Rust, Node and Android package cohort locally with the same
+Linux profile and optimized package construction:
+
+```sh
+profile=//build_defs/native:linux_x86_64_glibc_2_28
+bash tools/dev/bazel.sh test -c opt \
+  //build_defs/languages/installed:consumer_test \
+  //build_defs/languages/carriers:installed_sql_test \
+  //src/native/sdks/kotlin:android_maven \
+  //src/native/sdks/kotlin:installed_public_api_consumer \
+  //src/native/sdks/kotlin:android_test \
+  //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:plugin_maven \
+  //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:marker_maven \
+  --platforms="$profile" --host_platform="$profile" \
+  --java_runtime_version=remotejdk_17 --tool_java_runtime_version=remotejdk_17 --jobs=2
+```
+
+These tests consume the constructed archives, verify direct and broker SQL and
+reopening, and check the actual installed dependency versions. Packaging-only
+edits reuse the compiler outputs; unchanged requests execute zero actions.
+
+WASIX AOT construction uses `--config=wasix-aot` to declare the Linux LLVM
+execution platform. Its build tools require glibc 2.34; public native Linux
+packages retain their glibc 2.28 target profile. Cross-target AOT construction
+still needs deserialization and runtime checks on each supported host.
 
 The `Native Bazel qualification` workflow uses the same Linux commands and
 declared profiles, alongside native macOS/Windows SDK and installed package

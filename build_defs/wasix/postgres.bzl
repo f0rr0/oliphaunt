@@ -48,9 +48,9 @@ def postgres_wasix_targets(version):
     cc_library(name = "main", srcs = POSTGRES_MAIN_SOURCES, deps = [":server_headers"], local_defines = ["OLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS"], copts = WASIX_COPTS, target_compatible_with = _COMPATIBLE)
     cc_library(name = "plpgsql", srcs = POSTGRES_PLPGSQL_SOURCES + POSTGRES_PLPGSQL_GENERATED_SOURCES, deps = [":server_headers"], copts = WASIX_COPTS, alwayslink = True, target_compatible_with = _COMPATIBLE)
     cc_library(name = "snowball", srcs = POSTGRES_SNOWBALL_SOURCES, deps = [":server_headers"], copts = WASIX_COPTS, alwayslink = True, target_compatible_with = _COMPATIBLE)
-    cc_library(name = "common_frontend_shlib", srcs = common + POSTGRES_COMMON_FRONTEND_SHARED_ADDITIONAL_SOURCES,
-               deps = [":frontend_headers"], local_defines = ["FRONTEND", "JSONAPI_USE_PQEXPBUFFER"] + _INITDB_IDENTITY_DEFINES, copts = WASIX_COPTS, target_compatible_with = _COMPATIBLE)
-    cc_library(name = "libpq", srcs = POSTGRES_LIBPQ_SOURCES, deps = [":frontend_headers", ":common_frontend_shlib", ":port_frontend"],
+    # This command-private libpq uses initdb's encoding/identity profile.
+    # Keep the public libpq-facing tools closure independent below.
+    cc_library(name = "libpq", srcs = POSTGRES_LIBPQ_SOURCES, deps = [":frontend_headers", ":common_frontend", ":port_frontend"],
                local_defines = ["FRONTEND", "SO_MAJOR_VERSION=5", "USE_PRIVATE_ENCODING_FUNCS"] + _INITDB_IDENTITY_DEFINES, copts = WASIX_COPTS, target_compatible_with = _COMPATIBLE)
     initdb_utils = ["src/fe_utils/option_utils.c", "src/fe_utils/string_utils.c"]
     cc_library(name = "initdb_frontend_utils", srcs = initdb_utils,
@@ -64,15 +64,19 @@ def postgres_wasix_targets(version):
     # its shared archives separate from initdb's release objects, with one
     # compiled instance per source/profile and shared maintained headers.
     tools_copts = [option for option in WASIX_COPTS if option != "-flto=thin"]
-    cc_library(name = "common_tools", srcs = common + POSTGRES_COMMON_FRONTEND_SHARED_ADDITIONAL_SOURCES + POSTGRES_COMMON_FRONTEND_STATIC_ADDITIONAL_SOURCES,
-               local_defines = ["FRONTEND", "USE_PRIVATE_ENCODING_FUNCS"], deps = [":frontend_headers"], copts = tools_copts, target_compatible_with = _COMPATIBLE)
-    cc_library(name = "port_tools", srcs = port, local_defines = ["FRONTEND", "USE_PRIVATE_ENCODING_FUNCS"], deps = [":frontend_headers"], copts = tools_copts, target_compatible_with = _COMPATIBLE)
-    cc_library(name = "common_tools_shlib", srcs = common + POSTGRES_COMMON_FRONTEND_SHARED_ADDITIONAL_SOURCES,
-               deps = [":frontend_headers"], local_defines = ["FRONTEND", "JSONAPI_USE_PQEXPBUFFER"], copts = tools_copts, target_compatible_with = _COMPATIBLE)
-    cc_library(name = "libpq_tools", srcs = POSTGRES_LIBPQ_SOURCES, deps = [":frontend_headers", ":common_tools_shlib", ":port_tools"],
-               local_defines = ["FRONTEND", "SO_MAJOR_VERSION=5", "USE_PRIVATE_ENCODING_FUNCS"], copts = tools_copts, target_compatible_with = _COMPATIBLE)
+    # Standalone tools use libpq's public encoding names. Project its shared
+    # common profile plus the static-only memory/logging files once, rather
+    # than linking both encnames variants with duplicated global tables.
+    # PostgreSQL applies PQExpBuffer only to jsonapi_shlib.o.
+    cc_library(name = "common_tools_json", srcs = ["src/common/jsonapi.c"],
+               local_defines = ["FRONTEND", "JSONAPI_USE_PQEXPBUFFER"], deps = [":frontend_headers"], copts = tools_copts, target_compatible_with = _COMPATIBLE)
+    cc_library(name = "common_tools", srcs = [source for source in common if source != "src/common/jsonapi.c"] + POSTGRES_COMMON_FRONTEND_SHARED_ADDITIONAL_SOURCES + POSTGRES_COMMON_FRONTEND_STATIC_ADDITIONAL_SOURCES,
+               local_defines = ["FRONTEND"], deps = [":frontend_headers", ":common_tools_json"], copts = tools_copts, target_compatible_with = _COMPATIBLE)
+    cc_library(name = "port_tools", srcs = port, local_defines = ["FRONTEND"], deps = [":frontend_headers"], copts = tools_copts, target_compatible_with = _COMPATIBLE)
+    cc_library(name = "libpq_tools", srcs = POSTGRES_LIBPQ_SOURCES, deps = [":frontend_headers", ":common_tools", ":port_tools"],
+               local_defines = ["FRONTEND", "SO_MAJOR_VERSION=5"], copts = tools_copts, target_compatible_with = _COMPATIBLE)
     cc_library(name = "frontend_utils_tools", srcs = POSTGRES_FRONTEND_UTIL_SOURCES + ["src/fe_utils/psqlscan.c"],
-               deps = [":frontend_headers", ":common_tools", ":port_tools", ":libpq_tools"], local_defines = ["FRONTEND", "USE_PRIVATE_ENCODING_FUNCS"], copts = tools_copts, target_compatible_with = _COMPATIBLE)
+               deps = [":frontend_headers", ":common_tools", ":port_tools", ":libpq_tools"], local_defines = ["FRONTEND"], copts = tools_copts, target_compatible_with = _COMPATIBLE)
     frontend_deps = [":frontend_headers", ":common_tools", ":port_tools", ":libpq_tools", ":frontend_utils_tools", ":tools_headers"]
     # Patch 0025's no-fork stub uses SINGLE_USER. Scope it to parallel.c,
     # which has no UID/pwd/SysV calls, rather than changing every frontend ABI.

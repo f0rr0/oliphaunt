@@ -3,6 +3,7 @@
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_SOURCES", "POSTGRES_SOURCE")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 
 def _preprocess_impl(ctx):
     contexts = [dep[CcInfo].compilation_context for dep in ctx.attr.headers]
@@ -40,17 +41,17 @@ def _sql_impl(ctx):
     args.add("--perl", perl.interpreter)
     for option in perl.perlopt:
         args.add("--perl-option=" + option)
-    ctx.actions.run(executable = ctx.attr._generator[DefaultInfo].files_to_run,
+    bun_action(ctx, ctx.attr._generator,
                     inputs = depset([spec, ctx.file.root] + ctx.files.inputs + ctx.files.preprocessed, transitive = [perl.runtime]),
                     outputs = [extension, data], arguments = [args], mnemonic = "PostgisUpstreamSql")
     return [DefaultInfo(files = depset([extension, data])), OutputGroupInfo(extension_sql = depset([extension]), data_sql = depset([data]))]
 
 _sql = rule(implementation = _sql_impl,
     attrs = {"root": attr.label(allow_single_file = True), "inputs": attr.label_list(allow_files = True), "preprocessed": attr.label_list(allow_files = True),
-             "_generator": attr.label(default = "//build_defs/extensions/postgis:sql", executable = True, cfg = "exec")},
+             "_generator": attr.label(default = "//build_defs/extensions/postgis:sql", providers = [BunScriptInfo], cfg = "exec")},
     toolchains = ["@rules_perl//perl:exec_toolchain_type"])
 
-def postgis_sql(name, configuration, headers):
+def postgis_sql(name, configuration, headers, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE):
     prefix = "@postgis//:"
     inputs = [prefix + "postgis_sql_inputs", prefix + "spatial_ref_sys.sql"]
     preprocessed = name + "_preprocessed"
@@ -58,5 +59,5 @@ def postgis_sql(name, configuration, headers):
                 srcs = [prefix + "postgis/" + source + ".sql.in" for source in ["postgis", "legacy", "legacy_minimal", "legacy_gist"]] +
                        [prefix + "raster/rt_pg/" + source + ".sql.in" for source in ["rtpostgis", "rtpostgis_drop", "rtpostgis_upgrade_cleanup"]] +
                        [prefix + "extensions/postgis_extension_helper.sql.in"],
-                inputs = inputs, headers = [configuration, headers], target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
-    _sql(name = name, root = prefix + "Version.config", inputs = inputs, preprocessed = [":" + preprocessed], target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+                inputs = inputs, headers = [configuration, headers], target_compatible_with = target_compatible_with)
+    _sql(name = name, root = prefix + "Version.config", inputs = inputs, preprocessed = [":" + preprocessed], target_compatible_with = target_compatible_with)

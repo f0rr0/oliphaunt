@@ -88,6 +88,9 @@ def _openssl_repository_impl(ctx):
     crypto_sources = '[source for source in COMMON_CRYPTO_SRCS if not source.startswith("crypto/engine/") and not source.startswith("engines/")]'
     build = _replace_once(build, "srcs = COMMON_CRYPTO_SRCS + select({", "srcs = " + crypto_sources + " + " + repr(_LEGACY_SOURCES) + " + select({")
     build = _replace_once(build, "COMMON_DEFINES = select({", 'COMMON_DEFINES = ["STATIC_LEGACY", "OPENSSL_NO_MODULE", "OPENSSL_NO_ENGINE"] + select({')
+    ctx.file("configdata/wasix/configdata.pm", ctx.read(Label("//build_defs/wasix/dependencies:openssl-configdata.pm")))
+    ctx.file("util/wasix_batch_dofile.pl", ctx.read("bazel/batch_dofile.pl"))
+    build += '\nload("@oliphaunt//build_defs/wasix/dependencies:openssl.bzl", "wasix_openssl")\nwasix_openssl(name = "wasix_crypto")\n'
     ctx.file("BUILD.bazel", build)
     ctx.file("BAZEL_RECIPE_ORIGIN", _RECIPE_BASE + "\n")
 

@@ -14,7 +14,7 @@ bun_test(
 bun_test(
     name = "candidate_context_test",
     entry_point = "consumer.test.mts",
-    data = ["consumer.mts", "fixture/Cargo.toml", "//build_defs/languages:cargo-environment.mts", "//:tools/packaging/frozen-cargo.mts", "//:tools/packaging/portable-archive.mts"],
+    data = ["consumer.mts", "fixture/Cargo.toml", "//src/native/sdks/rust:Cargo.toml", "//build_defs/query:package.mts", "//build_defs/languages:cargo-environment.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/frozen-cargo.mts", "//:tools/packaging/portable-archive.mts"],
 )
 
 installed_cargo_test(

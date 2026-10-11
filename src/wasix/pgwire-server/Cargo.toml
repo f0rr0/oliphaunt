@@ -58,7 +58,7 @@ extension-vector = ["extensions", "oliphaunt-wasix/extension-vector"]
 
 [dependencies]
 anyhow = "1"
-oliphaunt-query = { path = "../../query/rust", version = "0.1.1" }
+oliphaunt-query = { version = "0.1.1" }
 oliphaunt-wasix = { path = "../sdks/rust", version = "0.3.2", optional = true }
 tempfile = { version = "3", optional = true }
 tokio = { version = "1", features = ["sync"], optional = true }

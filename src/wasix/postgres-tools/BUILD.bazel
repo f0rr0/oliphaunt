@@ -1,0 +1,16 @@
+load("@postgres_wasix//:patches.bzl", "POSTGRES_PATCHES")
+load("//build_defs/wasix:package.bzl", "postgres_patch_inputs")
+load("//build_defs/wasix:platform.bzl", "wasix_artifact")
+load("//build_defs/wasix:tools.bzl", "wasix_tools_payload")
+
+package(default_visibility = ["//visibility:public"])
+
+wasix_tools_payload(
+    name = "portable_payload_files",
+    pg_dump = "//src/wasix/runtime:pg_dump",
+    psql = "//src/wasix/runtime:psql",
+    patches = postgres_patch_inputs(POSTGRES_PATCHES),
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+wasix_artifact(name = "portable_payload", artifact = ":portable_payload_files")

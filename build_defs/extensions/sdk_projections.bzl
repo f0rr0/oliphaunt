@@ -1,6 +1,7 @@
 """SDK metadata generation from the canonical, explicitly imported inputs."""
 
 load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "EXTENSIONS", "EXTENSION_PROFILES", "EXTENSION_RECIPES", "EXTENSION_RELEASE_METADATA")
+load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 
 def _spec(ctx):
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
@@ -22,8 +23,8 @@ def _sdk_extension_projections_impl(ctx):
     args.add("--sdk", ctx.attr.sdk)
     args.add("--generated", ctx.outputs.generated)
     args.add("--descriptors", ctx.outputs.descriptors)
-    ctx.actions.run(
-        executable = ctx.attr._generator[DefaultInfo].files_to_run,
+    bun_action(
+        ctx, ctx.attr._generator,
         arguments = [args],
         inputs = depset([spec, ctx.file._components]),
         outputs = [ctx.outputs.generated, ctx.outputs.descriptors],
@@ -42,7 +43,7 @@ _sdk_extension_projections = rule(
         "generated": attr.output(mandatory = True),
         "descriptors": attr.output(mandatory = True),
         "_components": attr.label(default = "//src/extensions/catalog:native-components.toml", allow_single_file = True),
-        "_generator": attr.label(default = "//build_defs/extensions:sdk_projections", executable = True, cfg = "exec"),
+        "_generator": attr.label(default = "//build_defs/extensions:sdk_projections", providers = [BunScriptInfo], cfg = "exec"),
     },
 )
 
@@ -55,8 +56,8 @@ def _metadata_impl(ctx):
     args.add("--spec", spec)
     args.add("--components", ctx.file._components)
     args.add("--metadata", ctx.outputs.out)
-    ctx.actions.run(
-        executable = ctx.attr._generator[DefaultInfo].files_to_run,
+    bun_action(
+        ctx, ctx.attr._generator,
         arguments = [args],
         inputs = depset([spec, ctx.file._components]),
         outputs = [ctx.outputs.out],
@@ -69,6 +70,6 @@ sdk_extension_metadata = rule(
     attrs = {
         "out": attr.output(mandatory = True),
         "_components": attr.label(default = "//src/extensions/catalog:native-components.toml", allow_single_file = True),
-        "_generator": attr.label(default = "//build_defs/extensions:sdk_projections", executable = True, cfg = "exec"),
+        "_generator": attr.label(default = "//build_defs/extensions:sdk_projections", providers = [BunScriptInfo], cfg = "exec"),
     },
 )

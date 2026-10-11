@@ -340,17 +340,27 @@ existing blanket symlink rejection must distinguish them from unsafe symlinks
 inside delivered archives. Reuse format/security algorithms with explicit
 materialization or validated input mappings.
 
-Require repeatable bytes for cacheable production actions under the same
-declared configuration, including compiled payloads and package encoding.
-Normalize output-affecting time, randomness, paths, locale and linker metadata
-explicitly; different platform/toolchain configurations can legitimately differ.
-Native `initdb` can introduce changing PGDATA/system-identifier bytes; archive
-normalization does not fix that. Investigate and prove deterministic seed
-generation, with an explicit initialization time/randomness/identifier policy
-and any necessary source changes qualified through actual open/reopen/restore
-consumers. Do not patch control/WAL bytes without preserving their consistency.
-During transition, qualify and freeze the original produced seed honestly;
-unresolved repeatability prevents declaring the ideal migration complete.
+Require repeatable bytes for compilers, generators and package encoding under
+the same declared inputs and configuration. Normalize incidental timestamps,
+paths, locale and linker metadata; different configurations can differ.
+
+PostgreSQL initialization intentionally consumes the clock, process identity and
+secure randomness. Its PGDATA system identifier, WAL/control records and
+authentication nonce can differ between equivalent initializations. Archive
+normalization cannot make these databases identical. Treat initialization as
+an explicit state-producing boundary: declare its real producer, resources,
+recipe, configuration and ABI/compatibility facts, qualify one produced tree,
+then freeze its exact bytes in the existing publication capsule. Reopen and
+restore probes operate on disposable copies. Do not normalize WAL/control
+records or replace secure randomness to manufacture byte equality.
+
+Seed release selection compares consumed inputs against the completed baseline,
+not fresh PGDATA hashes or volatile probe fields. Package hashes establish
+integrity of the frozen result. Exact runtime-version and WASIX-module admission
+remain required compatibility facts. Recovery reuses completed frozen bytes;
+missing bytes cannot justify regenerating an already published version. Seed
+acceptance must prove those selection, compatibility, freeze and recovery
+contracts rather than promise identical independent database initialization.
 
 ### Native PostgreSQL, libraries, extensions, and seeds
 
@@ -663,7 +673,7 @@ command in a checkout and in `.github/workflows/bazel.yml`:
 
 ```sh
 profile=//build_defs/native:linux_x86_64_glibc_2_28
-bash tools/dev/bazel.sh test //:native_linux_tests \
+bash tools/dev/bazel.sh test -c opt //:native_linux_tests \
   --platforms="$profile" --host_platform="$profile" \
   --java_runtime_version=remotejdk_17 --tool_java_runtime_version=remotejdk_17 --jobs=2
 ```
@@ -982,7 +992,7 @@ Use scoped PRs around these gates rather than one unreviewable rewrite.
 | 0. Stabilize current delivery | Correct completed-history bounding, exact-runtime/default-recipe checks, frozen-consumer skip topology and publisher reconciliation/preflight; capture actual baseline inventories and performance | Independent failing scenarios now pass through the real preparation/consumer/controller entrypoints. Do not wait for Bazel to repair unrelated release bugs |
 | 1. Establish the foundation | Pin Bazel/rules; acquire upstream source inventories; register native and cross-compilation toolchains; define small shipping/domain exports, manifest imports and the historical bridge | Clean Linux construction plus native macOS/Windows SDK probes pass. Cross-built packages run on their real hosts. No cutover with unavailable execution capability or unknown historical ownership |
 | 2. Prove hard construction slices | Native PG configured headers/generators and ordinary/embedded/frontends; one representative compiled extension, SQL-only pgTAP, portable WASIX plus host AOT; query/package tools as fast test infrastructure | Clean sandboxed production works with no existing target tree or foreign producer. ABI/provider/SQL/package tests and declared-action inspection match the supported contract. Compare legacy behavior, diagnose differences, then delete slice-specific producer/cache/handoff bodies |
-| 3. Complete runtime/dependency families | All native platforms, ICU/crypto/PostGIS and its generators, contrib/external targets, seeds/mobile ABI, complete WASIX/tools/AOT/postmaster/browser production | Full declared support and actual content/ABI/feature/lifecycle coverage; stale dependency and interface-change cases pass. Prove repeatable production, including seed generation, before declaring this workstream complete. Remove all broad C/WASIX producer engines |
+| 3. Complete runtime/dependency families | All native platforms, ICU/crypto/PostGIS and its generators, contrib/external targets, seeds/mobile ABI, complete WASIX/tools/AOT/postmaster/browser production | Full declared support and actual content/ABI/feature/lifecycle coverage; stale dependency and interface-change cases pass. Prove repeatable compilation/encoding and explicit seed initialization, compatibility, freeze and recovery contracts. Remove all broad C/WASIX producer engines |
 | 4. Complete SDK/application/dev surfaces | Rust/TS/NAPI/UniFFI/Swift/Kotlin/RN native targets and exact envelopes; all examples, docs, benchmark checks, security/hooks/developer commands; JS resolution cutover | Real installed Cargo/npm/SwiftPM/Gradle/RN consumers, browser and app proofs pass. Preserve public integration manifests; remove internal Cargo/Gradle/SwiftPM/Bun task dispatch and duplicate lock/bootstrap authority |
 | 5. Switch CI and release | Platform cohort workflow, BEP/expected-coverage gate, native delivery selection plus historical bridge, bounded RP/adoption adapter, freeze integration and capsule compatibility | Zero/few/many/all-product simulation, exact merged qualification, skipped ancestor, recovery and fake registries pass. Evidence-reuse negative cases and the warm-run work budget pass; required fresh observations remain. One real credential-free hosted topology probe passes. Remove reusable construction workflows and every Moon closure/capability/transfer bypass |
 | 6. Complete the authority cutover | All inventory rows have native owners; current docs/skills/local commands route to them; retire legacy baselines product by product and capsule readers by recovery policy | No ordinary path requires Moon/Proto, a mutable producer tree, foreign producer engine, handwritten shared-source graph or hidden latest fetch. Delete `.moon/`, obsolete project task files/pins/actions and implementation-shape tests. Record remaining external facilities explicitly |
@@ -1047,6 +1057,10 @@ standard library built from source, and both complete Android runtime ABI
 outputs. Kotlin's native common-source compilation and tests also pass. Actual Linux runtime
 tests cover the embedded C ABI, persisted SQL, ordinary server frontends,
 dump/restore and physical-backup reopen. Warm runs reuse completed actions.
+The real installed browser SDK/query/runtime archives execute SQL through both
+default and worker exports in Chrome. The native browser host and portable
+runtime are constructed on Linux; Chrome's observed executable and host identity
+are explicit consumer inputs.
 Physical conformance fixtures cover seeded edit subsets, independent release
 baselines, malformed ownership and cached reuse. These construction results do
 not admit all products or replace real installed compatibility qualification.
@@ -1056,7 +1070,12 @@ actual published runtime and broker versions. WASIX's optional tools and ICU
 requirements are now explicit held Cargo metadata, verified against its
 published crate. Current source construction does not replace those installed
 contracts. The macOS and Windows native runtime and Swift package targets are
-authored; their real host qualification remains a separate gate.
+authored; their real host qualification remains a separate gate. Draft PR #295
+has passed hosted native runtime, frontend, crypto and extension qualification
+on Linux x64 and ARM, plus Android cross-compilation and ABI checks on Linux
+x64. Local regression tests cover the initial macOS SDK symlink cycles,
+Windows script-launch failure and incremental metadata-directory deletion.
+The corresponding hosted platform results remain required at the revised SHA.
 
 Completed-history preparation now uses exact captured Git ancestry and verified
 publication boundaries, with real merge/clock-skew regressions. Existing
@@ -1064,5 +1083,5 @@ qualification and frozen publication remain active. The hosted native workflow
 qualifies an exact source commit; its platform results are required before the
 corresponding cutover. No registry mutation or release cutover was performed. Complete declared
 toolchain and execution identity, remaining runtime/extension profiles,
-Android/Apple package rules, final carriers, seed reproducibility and release-hook
+Android/Apple package rules, final carriers, seed freeze/compatibility and release-hook
 integration remain concrete acceptance work.

@@ -88,17 +88,6 @@ export function buildShippingInputView(
   for (const [key, artifact] of artifacts)
     artifactPaths.set(key, fragmentPath(id(artifact.pathFragmentId)));
   const producers = new Map<string, Row>();
-  for (const value of array(graph.actions ?? [])) {
-    const action = row(value);
-    required(targets, id(action.targetId));
-    for (const output of array(action.outputIds ?? [])) {
-      const key = id(output);
-      required(artifactPaths, key);
-      if (producers.has(key))
-        throw new Error(`multiple producers for ${required(artifactPaths, key)}`);
-      producers.set(key, action);
-    }
-  }
   const inputsOf = (action: Row): Set<string> => {
     const result = new Set<string>();
     const visited = new Set<string>();
@@ -142,6 +131,36 @@ export function buildShippingInputView(
       ? {}
       : { primaryOutput: required(artifactPaths, id(action.primaryOutputId)) }),
   });
+  const sharedActionDefinition = (action: Row, artifactPath: string) => {
+    text(action.actionKey);
+    required(configurations, id(action.configurationId));
+    const outputs = array(action.outputIds).map(id);
+    const primary = id(action.primaryOutputId);
+    if (!outputs.includes(primary))
+      throw new Error(`primary output is missing from outputs for ${artifactPath}`);
+    return canonical({
+      ...describeAction(action),
+      configurationId: action.configurationId,
+      inputs: [...inputsOf(action)].map((input) => required(artifactPaths, input)),
+      outputs: outputs.map((output) => required(artifactPaths, output)),
+    });
+  };
+  for (const value of array(graph.actions ?? [])) {
+    const action = row(value);
+    required(targets, id(action.targetId));
+    for (const output of array(action.outputIds ?? [])) {
+      const key = id(output);
+      const artifactPath = required(artifactPaths, key);
+      const previous = producers.get(key);
+      if (previous) {
+        // Bazel can repeat the same complete action record for one artifact ID.
+        // Ingest it idempotently without changing its producer or owner.
+        if (canonical(previous) !== canonical(action))
+          throw new Error(`multiple producers for ${artifactPath}`);
+        sharedActionDefinition(action, artifactPath);
+      } else producers.set(key, action);
+    }
+  }
   const byPath = new Map<string, string[]>();
   for (const [key, artifactPath] of artifactPaths)
     byPath.set(artifactPath, [...(byPath.get(artifactPath) ?? []), key]);
@@ -153,18 +172,7 @@ export function buildShippingInputView(
     const definitions = keys.map((key) => {
       const action = producers.get(key);
       if (!action) return 'source';
-      text(action.actionKey);
-      required(configurations, id(action.configurationId));
-      const outputs = array(action.outputIds).map(id);
-      const primary = id(action.primaryOutputId);
-      if (!outputs.includes(primary))
-        throw new Error(`primary output is missing from outputs for ${artifactPath}`);
-      return canonical({
-        ...describeAction(action),
-        configurationId: action.configurationId,
-        inputs: [...inputsOf(action)].map((input) => required(artifactPaths, input)),
-        outputs: outputs.map((output) => required(artifactPaths, output)),
-      });
+      return sharedActionDefinition(action, artifactPath);
     });
     if (new Set(definitions).size !== 1)
       throw new Error(`ambiguous artifact producers for ${artifactPath}`);

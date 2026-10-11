@@ -1,7 +1,10 @@
 load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_package_env", "napi_artifact")
+load("//build_defs/languages/carriers:defs.bzl", "native_helper_carriers")
 
 package(default_visibility = ["//visibility:public"])
-exports_files(["Cargo.toml"])
+exports_files(["Cargo.toml", "tools/dependency-license-contract.mts"])
+filegroup(name = "carrier_legal_sources", srcs = ["dependency-licenses.json"] + glob(["dependency-license-blobs/*.base64"]))
+filegroup(name = "carrier_template_sources", srcs = glob(["packages/*/package.json", "packages/*/README.md"]))
 
 cargo_package_env()
 PATH_DEPS = {"liboliphaunt-native-bindings": "//src/native/rust-bindings:lib"}
@@ -19,3 +22,5 @@ napi_artifact(
     library = ":addon_library",
     out = "oliphaunt_node.node",
 )
+
+native_helper_carriers(product = "oliphaunt-node-direct", binary = ":addon")

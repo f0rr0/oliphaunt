@@ -4,12 +4,12 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import path from 'node:path';
 import { kotlinMavenCentralCoordinates } from '../../../src/native/sdks/kotlin/tools/kotlin-maven-staging.mts';
 import { createDeterministicZip } from '../../../tools/packaging/archive-directory.mts';
+import { validateMavenCentralPublication } from '../../../tools/packaging/maven-central-contract.mts';
+import { inspectPlatformBinaryBuffer } from '../../../tools/packaging/platform-binary-contract.mts';
 import {
   readJavaArchiveEntries,
   readPortableArchiveEntries,
 } from '../../../tools/packaging/portable-archive.mts';
-import { inspectPlatformBinaryBuffer } from '../../../tools/packaging/platform-binary-contract.mts';
-import { validateMavenCentralPublication } from '../../../tools/packaging/maven-central-contract.mts';
 import { stageReleaseNotices } from '../../../tools/packaging/release-notices.mts';
 import { stageMobileLegalSources } from '../mobile-legal.mts';
 import { mavenPom } from './maven-pom.mts';
@@ -62,15 +62,46 @@ function sourceMember(member: string, bytes: Buffer) {
   }
   return member;
 }
+function validateAndroidManifest(manifest: string, kotlin) {
+  const root = manifest.match(/<manifest\b[^>]*>/u);
+  assert.ok(root, 'Compiler manifest must declare its manifest root');
+  const namespaces = [...root[0].matchAll(/\sxmlns:android\s*=\s*(["'])([^"']*)\1/gu)];
+  assert.deepEqual(
+    namespaces.map((match) => match[2]),
+    ['http://schemas.android.com/apk/res/android'],
+    'Compiler manifest must bind the canonical Android namespace',
+  );
+  const sdkTags = [...manifest.matchAll(/<\/?uses-sdk\b[^>]*>/gu)];
+  assert.equal(sdkTags.length, 1, 'Compiler manifest must declare exactly one uses-sdk');
+  const sdk = sdkTags[0][0].match(/^<uses-sdk\b([\s\S]*?)\/>$/u);
+  assert.ok(sdk, 'Compiler uses-sdk must be self-closing');
+  assert.match(
+    sdk[1],
+    /^(?:\s+[A-Za-z_:][\w:.-]*\s*=\s*(?:"[^"]*"|'[^']*'))*\s*$/u,
+    'Compiler uses-sdk must contain canonical Android SDK attributes',
+  );
+  const attributes = [...sdk[1].matchAll(/([A-Za-z_:][\w:.-]*)\s*=\s*(["'])([^"']*)\2/gu)]
+    .map((match) => [match[1], match[3]])
+    .sort(([left], [right]) => left.localeCompare(right));
+  assert.deepEqual(
+    attributes,
+    [
+      ['android:minSdkVersion', String(kotlin.minSdk)],
+      ['android:targetSdkVersion', String(kotlin.compileSdk)],
+    ],
+    'Compiler uses-sdk must contain canonical Android SDK attributes',
+  );
+}
 function sdkDependencies(specification) {
   const libraries = specification.kotlin.libraries;
   const coroutines = libraries['kotlinx-coroutines-core'];
   const [group, artifact] = coroutines.module.split(':');
-  // The real locked JVM artifact supplies the Android variant of the authored
-  // multiplatform coordinate; its filename and bytes are declared action inputs.
+  // MavenInfo identifies the locked JVM variant; maintained Java processing
+  // may change its declared JAR filename without changing that identity.
   assert.equal(
-    path.basename(specification.coroutinesJvm),
-    `${artifact}-jvm-${coroutines.version}.jar`,
+    specification.coroutinesCoordinates,
+    `${group}:${artifact}-jvm:${coroutines.version}`,
+    'Resolved coroutine dependency must have the canonical JVM Maven coordinates',
   );
   assert.ok(
     archiveFiles(specification.coroutinesJvm, { javaArchive: true }).has(
@@ -132,7 +163,9 @@ export async function packageKotlinMaven(output: string, specification) {
           'AAR must consume both exact declared Android ABI outputs',
         );
         const aar = path.join(scratch, 'aar');
-        for (const [member, bytes] of archiveFiles(specification.androidAar))
+        // Android's compiler creates a Java ZIP container; final publication
+        // bytes below still pass the strict portable archive reader.
+        for (const [member, bytes] of archiveFiles(specification.androidAar, { javaArchive: true }))
           if (member !== 'classes.jar') {
             assert.ok(
               !member.startsWith('jni/') && !member.startsWith('assets/oliphaunt'),
@@ -141,19 +174,7 @@ export async function packageKotlinMaven(output: string, specification) {
             put(aar, member, bytes);
           }
         const manifest = readFileSync(path.join(aar, 'AndroidManifest.xml'), 'utf8');
-        assert.match(manifest, /<manifest\b/u);
-        assert.ok(
-          !/<uses-sdk\b/u.test(manifest),
-          'Compiler manifest must not duplicate conventional SDK defaults',
-        );
-        put(
-          aar,
-          'AndroidManifest.xml',
-          manifest.replace(
-            /(<manifest\b[^>]*>)/u,
-            `$1\n    <uses-sdk android:minSdkVersion="${specification.kotlin.minSdk}" android:targetSdkVersion="${specification.kotlin.compileSdk}" />`,
-          ),
-        );
+        validateAndroidManifest(manifest, specification.kotlin);
         await mergeClasses(
           specification.classJars,
           path.join(scratch, 'classes'),

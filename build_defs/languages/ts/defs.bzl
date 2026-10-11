@@ -1,6 +1,7 @@
 """Native SDK manifest projection and consumers of actual npm envelopes."""
 
 load("@aspect_rules_js//npm:providers.bzl", "NpmPackageInfo")
+load("//build_defs/foundation:bun.bzl", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
 
 _NODE_TOOLCHAIN = "@rules_nodejs//nodejs:toolchain_type"
@@ -66,7 +67,6 @@ def _consumer_impl(ctx):
     node = ctx.toolchains[_NODE_TOOLCHAIN].nodeinfo.node
     if not node:
         fail("SDK consumers require the pinned Node toolchain")
-    bun = ctx.toolchains[BUN_TOOLCHAIN_TYPE].bun
     type_files = []
     packages = {}
     for key, target in ctx.attr.type_packages.items():
@@ -75,24 +75,15 @@ def _consumer_impl(ctx):
         packages[target] = _runfile(ctx, source)
     specification = ctx.actions.declare_file(ctx.label.name + ".types.json")
     ctx.actions.write(specification, json.encode({"packages": packages, "types": ctx.attr.types}))
-    files = [ctx.file.archive, ctx.file.query, ctx.file.consumer, ctx.file._runner, ctx.file.acquisition, ctx.file.typescript, specification, bun, node] + type_files
-    launcher = ctx.actions.declare_file(ctx.label.name + ".sh")
-    arguments = ['"$runfiles_dir/%s"' % _runfile(ctx, file) for file in [ctx.file._runner, ctx.file.archive, ctx.file.query, ctx.file.consumer, node, ctx.file.typescript, ctx.file.acquisition, specification]]
-    ctx.actions.write(launcher, """#!/usr/bin/env bash
-set -euo pipefail
-runfiles_dir="$(cd "${RUNFILES_DIR:-${TEST_SRCDIR:-$0.runfiles}}" && pwd)"
-cd "$runfiles_dir/%s"
-export OLIPHAUNT_BAZEL_RUNFILES="$runfiles_dir"
-exec "$runfiles_dir/%s" %s
-""" % (ctx.workspace_name, _runfile(ctx, bun), " ".join(arguments)), is_executable = True)
-    runfiles = ctx.runfiles(files = files)
-    return [DefaultInfo(executable = launcher, runfiles = runfiles)]
+    files = [ctx.file.archive, ctx.file.query, ctx.file.consumer, ctx.file._runner, ctx.file.acquisition, ctx.file.typescript, specification, node] + type_files
+    arguments = [ctx.file.archive, ctx.file.query, ctx.file.consumer, node, ctx.file.typescript, ctx.file.acquisition, specification]
+    return bun_test_entrypoint(ctx, ctx.file._runner, arguments, files, runfiles_environment = ["OLIPHAUNT_BAZEL_RUNFILES"])
 
-source_sdk_consumer_test = rule(
+_source_sdk_consumer_test = rule(
     implementation = _consumer_impl,
     test = True,
     toolchains = [BUN_TOOLCHAIN_TYPE, _NODE_TOOLCHAIN],
-    attrs = {
+    attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
         "archive": attr.label(mandatory = True, allow_single_file = [".tgz"]),
         "query": attr.label(mandatory = True, allow_single_file = [".tgz"]),
         "consumer": attr.label(mandatory = True, allow_single_file = True),
@@ -101,5 +92,8 @@ source_sdk_consumer_test = rule(
         "type_packages": attr.label_keyed_string_dict(providers = [NpmPackageInfo]),
         "types": attr.string_dict(mandatory = True),
         "_runner": attr.label(default = "//build_defs/languages/ts:consumer-test.mts", allow_single_file = True),
-    },
+    }),
 )
+
+def source_sdk_consumer_test(name, args = [], **kwargs):
+    _source_sdk_consumer_test(name = name, args = bun_test_entrypoint_args(name) + args, **kwargs)

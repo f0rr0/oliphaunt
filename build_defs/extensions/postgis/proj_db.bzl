@@ -1,6 +1,7 @@
 """Build PROJ's canonical data SQL with the source-built execution SQLite."""
 
 load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 
 def _impl(ctx):
     output = ctx.actions.declare_file(ctx.label.name + "/proj.db")
@@ -8,7 +9,7 @@ def _impl(ctx):
     args.add("--source", ctx.file.root.dirname)
     args.add("--output", output)
     args.add("--sqlite", ctx.executable.sqlite)
-    ctx.actions.run(executable = ctx.attr._generator[DefaultInfo].files_to_run,
+    bun_action(ctx, ctx.attr._generator,
                     tools = [ctx.attr.sqlite[DefaultInfo].files_to_run],
                     inputs = ctx.files.inputs + [ctx.file.root], outputs = [output],
                     arguments = [args], mnemonic = "ProjDatabase")
@@ -20,7 +21,7 @@ _proj_database = rule(
         "root": attr.label(allow_single_file = True, mandatory = True),
         "inputs": attr.label_list(allow_files = True),
         "sqlite": attr.label(executable = True, cfg = "exec", mandatory = True),
-        "_generator": attr.label(default = "//build_defs/extensions/postgis:proj_db", executable = True, cfg = "exec"),
+        "_generator": attr.label(default = "//build_defs/extensions/postgis:proj_db", providers = [BunScriptInfo], cfg = "exec"),
     },
 )
 

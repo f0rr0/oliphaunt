@@ -18,19 +18,20 @@ export interface PhysicalShippingCohort extends ConfiguredShippingCohort {
   executionRoot: string;
 }
 
-type NativeRoot = {
+export type NativeRoot = {
   label: string;
   package: {
     product: string;
     version: string;
     ecosystem: string;
     name: string;
+    configuration: string;
     role: string;
-    outputs: { path: string }[];
+    outputs: { path: string; owner: string }[];
   };
 };
 
-function outputPath(executionRoot: string, relative: unknown) {
+export function nativeOutputPath(executionRoot: string, relative: unknown) {
   if (
     typeof relative !== 'string' ||
     !relative.startsWith('bazel-out/') ||
@@ -82,7 +83,7 @@ export function readNativePublicationArtifacts(
       return [
         {
           ...root,
-          paths: root.package.outputs.map((output) => outputPath(executionRoot, output.path)),
+          paths: root.package.outputs.map((output) => nativeOutputPath(executionRoot, output.path)),
         },
       ];
     });
@@ -172,6 +173,7 @@ export function readNativePublicationArtifacts(
   }
   return {
     ...coverage,
+    artifactRoots: [...new Set(roots.flatMap(({ paths }) => paths))].sort(),
     registryArtifacts,
     productArtifacts,
     unverified: [

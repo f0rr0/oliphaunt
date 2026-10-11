@@ -1,11 +1,11 @@
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library", "cc_test")
 load("//build_defs/foundation:bun.bzl", "bun_test")
-load(":llvm.bzl", "exec_files")
+load(":llvm.bzl", "exec_files", "llvm_helper_runtime")
 load(":npm.bzl", "RUNTIME_NPM_HELPERS", "RUNTIME_NPM_NOTICES")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(glob(["*.bzl", "*.bazel", "*.mts"]))
+exports_files(glob(["*.bzl", "*.bazel", "*.mts", "*.patch"]))
 
 
 bun_test(
@@ -29,6 +29,18 @@ bun_test(
 platform(
     name = "portable",
     constraint_values = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+# Canonical LLVM22's helper and archives require glibc 2.34 for construction.
+# This internal execution profile does not set the native product ABI floor.
+platform(
+    name = "llvm_serializer_linux_x86_64",
+    flags = ["--@rules_rust//rust/settings:experimental_use_allocator_libraries_with_mangled_symbols=true"],
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+        "@zig_sdk//libc:gnu.2.34",
+    ],
 )
 
 # These source selectors avoid acquiring foreign LLVM archives during a native
@@ -60,6 +72,36 @@ filegroup(
 
 exec_files(name = "wasmer_llvm_files", srcs = [":llvm_files_for_host"])
 exec_files(name = "wasmer_llvm_env", srcs = [":llvm_env_for_host"])
+
+# LLVM22's GNU C++ ABI and its llvm-config helper use this maintained runtime.
+# Import the ELF SONAME file, rather than libgcc_s.so's linker script.
+cc_import(
+    name = "wasmer_gnu_unwind",
+    shared_library = "@llvm_gnu_runtime//:lib64/libgcc_s.so.1",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+cc_library(
+    name = "wasmer_llvm_gnu_link",
+    deps = ["@llvm_gnu_runtime//:libstdcxx", ":wasmer_gnu_unwind"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+llvm_helper_runtime(
+    name = "wasmer_llvm_gnu_env",
+    libraries = [
+        "@llvm_gnu_runtime//:lib64/libstdc++.so.6",
+        "@llvm_gnu_runtime//:lib64/libstdc++.so.6.0.30",
+        "@llvm_gnu_runtime//:lib64/libgcc_s.so.1",
+    ],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+filegroup(
+    name = "wasmer_llvm_gnu_files",
+    srcs = [":wasmer_llvm_gnu_env"],
+    output_group = "runtime_files",
+)
 
 # Resolution reads only these constraints; acquire the compiler payload only
 # when a configured wasm32/WASI target selects its implementation.

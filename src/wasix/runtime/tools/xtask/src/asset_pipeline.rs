@@ -886,8 +886,12 @@ fn declared_manifest_args(args: &[String]) -> Result<(PathBuf, PathBuf)> {
     Ok((spec, output))
 }
 
-fn declared_runtime_manifest(spec: DeclaredRuntimeManifestSpec) -> Result<AssetManifestOut> {
-    let fingerprint = spec.source_fingerprint.split(':').collect::<Vec<_>>();
+fn validate_declared_source_facts(
+    source_fingerprint: &str,
+    postgres_version: &str,
+    sources: &[SourcePin],
+) -> Result<()> {
+    let fingerprint = source_fingerprint.split(':').collect::<Vec<_>>();
     let is_digest = |value: &str| {
         value.len() == 64
             && value
@@ -899,21 +903,19 @@ fn declared_runtime_manifest(spec: DeclaredRuntimeManifestSpec) -> Result<AssetM
         "invalid declared PostgreSQL source fingerprint"
     );
     ensure_eq(
-        &spec.postgres_version,
+        postgres_version,
         &format!("{}-wasix-oliphaunt", fingerprint[0]),
         "declared PostgreSQL version",
     )?;
-    let names = spec
-        .sources
+    let names = sources
         .iter()
         .map(|source| source.name.as_str())
         .collect::<BTreeSet<_>>();
     ensure!(
-        names.len() == spec.sources.len(),
+        names.len() == sources.len(),
         "duplicate declared source pin"
     );
-    let postgres = spec
-        .sources
+    let postgres = sources
         .iter()
         .find(|source| source.name == "postgresql")
         .context("declared sources require PostgreSQL")?;
@@ -927,8 +929,7 @@ fn declared_runtime_manifest(spec: DeclaredRuntimeManifestSpec) -> Result<AssetM
         fingerprint[1],
         "declared PostgreSQL source digest",
     )?;
-    let patches = spec
-        .sources
+    let patches = sources
         .iter()
         .find(|source| source.name == "oliphaunt-wasix-stable-patches")
         .context("declared sources require WASIX patches")?;
@@ -941,6 +942,15 @@ fn declared_runtime_manifest(spec: DeclaredRuntimeManifestSpec) -> Result<AssetM
         &patches.url,
         POSTGRES_PATCH_SERIES_PATH,
         "declared PostgreSQL patch source",
+    )?;
+    Ok(())
+}
+
+fn declared_runtime_manifest(spec: DeclaredRuntimeManifestSpec) -> Result<AssetManifestOut> {
+    validate_declared_source_facts(
+        &spec.source_fingerprint,
+        &spec.postgres_version,
+        &spec.sources,
     )?;
 
     let runtime_link = read_wasm_link_metadata(&spec.runtime)?;
@@ -1069,6 +1079,98 @@ pub(crate) fn generate_declared_wasix_manifest(args: &[String]) -> Result<()> {
         "manifest output must differ from all declared inputs"
     );
     let manifest = declared_runtime_manifest(spec)?;
+    fs::write(
+        &output,
+        format!("{}\n", serde_json::to_string_pretty(&manifest)?),
+    )
+    .with_context(|| format!("write {}", output.display()))?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredToolsManifestSpec {
+    pg_dump: PathBuf,
+    psql: PathBuf,
+    version: String,
+    runtime_version: String,
+    source_fingerprint: String,
+    postgres_version: String,
+    sources: Vec<SourcePin>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredToolsManifest {
+    schema: &'static str,
+    version: String,
+    runtime_version: String,
+    source_fingerprint: String,
+    pg_dump: DeclaredToolIdentity,
+    psql: DeclaredToolIdentity,
+}
+
+#[derive(serde::Serialize)]
+struct DeclaredToolIdentity {
+    name: &'static str,
+    path: String,
+    sha256: String,
+    size: u64,
+}
+
+fn declared_tool_identity(name: &'static str, module: &Path) -> Result<DeclaredToolIdentity> {
+    let link = read_wasm_link_metadata(module)?;
+    validate_module_link_metadata(&BuildModuleManifestOut {
+        name: format!("tool:{name}"),
+        kind: "tool".to_owned(),
+        path: String::new(),
+        sha256: String::new(),
+        link: link.clone(),
+    })?;
+    ensure!(
+        link.dylink_needed.is_empty() && has_wasm_export(&link, "_start"),
+        "declared {name} must be a standalone WASIX command"
+    );
+    Ok(DeclaredToolIdentity {
+        name,
+        path: format!("bin/{name}.wasix.wasm"),
+        sha256: sha256_file(module)?,
+        size: fs::metadata(module)?.len(),
+    })
+}
+
+/// Package identity for the two physical commands, without requiring the core runtime.
+pub(crate) fn generate_declared_tools_manifest(args: &[String]) -> Result<()> {
+    let (input, output) = declared_manifest_args(args)?;
+    let spec: DeclaredToolsManifestSpec = serde_json::from_slice(&fs::read(&input)?)
+        .context("parse declared tools manifest specification")?;
+    ensure!(
+        output != spec.pg_dump && output != spec.psql,
+        "tools manifest output must differ from all declared inputs"
+    );
+    validate_declared_source_facts(
+        &spec.source_fingerprint,
+        &spec.postgres_version,
+        &spec.sources,
+    )?;
+    for version in [&spec.version, &spec.runtime_version] {
+        let parts = version.split('.').collect::<Vec<_>>();
+        ensure!(
+            parts.len() == 3
+                && parts.iter().all(|part| !part.is_empty()
+                    && (part.len() == 1 || !part.starts_with('0'))
+                    && part.bytes().all(|byte| byte.is_ascii_digit())),
+            "declared tools require stable semantic product/runtime versions"
+        );
+    }
+    let manifest = DeclaredToolsManifest {
+        schema: "postgres-tools-wasix-portable-v1",
+        pg_dump: declared_tool_identity("pg_dump", &spec.pg_dump)?,
+        psql: declared_tool_identity("psql", &spec.psql)?,
+        version: spec.version,
+        runtime_version: spec.runtime_version,
+        source_fingerprint: spec.source_fingerprint,
+    };
     fs::write(
         &output,
         format!("{}\n", serde_json::to_string_pretty(&manifest)?),
@@ -3308,6 +3410,89 @@ mod tests {
         assert!(generate_declared_wasix_manifest(&args).is_err());
         fs::write(&runtime, b"invalid WASM").unwrap();
         assert!(generate_declared_wasix_manifest(&args).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn declared_tools_manifest_checks_physical_commands_and_independent_versions() {
+        let root =
+            std::env::temp_dir().join(format!("oliphaunt-declared-tools-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let pg_dump = root.join("pg_dump.wasm");
+        let psql = root.join("psql.wasm");
+        // Independent WASM fixture: one empty function exported as _start.
+        let command = b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0\x07\x0a\x01\x06_start\0\0\x0a\x04\x01\x02\0\x0b";
+        fs::write(&pg_dump, command).unwrap();
+        fs::write(&psql, command).unwrap();
+        let source_hash = "a".repeat(64);
+        let patch_hash = "b".repeat(64);
+        let spec = serde_json::json!({
+            "pg_dump": pg_dump, "psql": psql, "version": "2.3.4", "runtime_version": "7.8.9",
+            "source_fingerprint": format!("42.8:{source_hash}:{patch_hash}"), "postgres_version": "42.8-wasix-oliphaunt",
+            "sources": [
+                {"name": "postgresql", "url": "https://source.test/pg.tar.bz2", "branch": "v42.8", "commit": source_hash},
+                {"name": "oliphaunt-wasix-stable-patches", "url": POSTGRES_PATCH_SERIES_PATH, "branch": "series", "commit": patch_hash},
+            ],
+        });
+        let input = root.join("spec.json");
+        let output = root.join("manifest.json");
+        let args = [
+            "--spec".to_owned(),
+            input.to_str().unwrap().to_owned(),
+            "--output".to_owned(),
+            output.to_str().unwrap().to_owned(),
+        ];
+        fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+        generate_declared_tools_manifest(&args).unwrap();
+        let bytes = fs::read(&output).unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(manifest["schema"], "postgres-tools-wasix-portable-v1");
+        assert_eq!(manifest["version"], "2.3.4");
+        assert_eq!(manifest["runtimeVersion"], "7.8.9");
+        assert_eq!(manifest["pgDump"]["path"], "bin/pg_dump.wasix.wasm");
+        assert_eq!(manifest["psql"]["size"], command.len());
+        assert_eq!(
+            manifest["pgDump"]["sha256"],
+            format!("{:x}", Sha256::digest(command))
+        );
+        generate_declared_tools_manifest(&args).unwrap();
+        assert_eq!(bytes, fs::read(&output).unwrap());
+        for mutate in [
+            "unknown",
+            "version",
+            "runtime-version",
+            "source-digest",
+            "missing-input",
+        ] {
+            let mut invalid = spec.clone();
+            match mutate {
+                "unknown" => invalid["undeclared"] = serde_json::json!(true),
+                "version" => invalid["version"] = serde_json::json!("2.3"),
+                "runtime-version" => invalid["runtime_version"] = serde_json::json!("07.8.9"),
+                "source-digest" => {
+                    invalid["sources"][0]["commit"] = serde_json::json!("c".repeat(64))
+                }
+                "missing-input" => invalid["psql"] = serde_json::json!(root.join("missing.wasm")),
+                _ => unreachable!(),
+            }
+            fs::write(&input, serde_json::to_vec(&invalid).unwrap()).unwrap();
+            assert!(generate_declared_tools_manifest(&args).is_err(), "{mutate}");
+        }
+        fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+        let mut no_start = command.to_vec();
+        let position = no_start
+            .windows(6)
+            .position(|name| name == b"_start")
+            .unwrap();
+        no_start[position..position + 6].copy_from_slice(b"other!");
+        fs::write(&psql, no_start).unwrap();
+        assert!(generate_declared_tools_manifest(&args).is_err());
+        fs::write(&psql, b"invalid WASM").unwrap();
+        assert!(generate_declared_tools_manifest(&args).is_err());
+        fs::write(&psql, command).unwrap();
+        let mut collision = args.clone();
+        collision[3] = psql.to_str().unwrap().to_owned();
+        assert!(generate_declared_tools_manifest(&collision).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 

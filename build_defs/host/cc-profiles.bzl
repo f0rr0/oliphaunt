@@ -109,12 +109,12 @@ def host_cc_profiles(sdk):
                 unfiltered_compile_flags = ["-Wno-overriding-option"],
                 supports_start_end_lib = False,
             )
-            _compiler("cc_" + name, ":configuration_" + name, sdk, ["sdk_iphoneos", "sdk_iphonesimulator"])
+            _compiler("cc_" + name, ":configuration_" + name, sdk, [component for other in ["iphoneos", "iphonesimulator"] for component in ["sdk_" + other, "platform_" + other + "/Library", "platform_" + other + "/usr/lib"]])
         # Build the pinned standard Apple drivers with the declared native
         # compiler. Upstream's universal_exec_tool uses an ambient shell compiler.
-        cc_binary(name = "wrapped_clang", srcs = [Label("@apple_support//crosstool:wrapped_clang.cc")], copts = ["-std=c++17"])
+        cc_binary(name = "wrapped_clang", srcs = ["wrapped_clang.cc"], copts = ["-std=c++17"])
         _driver_alias(name = "wrapped_clang_pp", binary = ":wrapped_clang")
-        cc_binary(name = "libtool", srcs = [Label("@apple_support//crosstool:libtool.cc")], copts = ["-std=c++17"])
+        cc_binary(name = "libtool", srcs = ["libtool.cc"], copts = ["-std=c++17"])
         for driver in ["wrapped_clang", "wrapped_clang_pp", "libtool"]:
             force_exec(name = "exec_" + driver, target = ":" + driver)
         for name, cpu, selected_sdk in [
@@ -130,7 +130,7 @@ def host_cc_profiles(sdk):
                 libtool = ":exec_libtool",
                 c_flags = ["-resource-dir", prefix + sdk["resourceDirectory"]],
                 cxx_builtin_include_directories = [prefix + sdk["resourceDirectory"] + "/include", prefix + "sdk_" + selected_sdk + "/usr/include", prefix + "sdk_" + selected_sdk + "/System/Library/Frameworks", prefix + "toolchain/include/c++/v1"],
-                extra_env = {"DEVELOPER_DIR": sdk["developerDirectory"], "SDKROOT": prefix + "sdk_" + selected_sdk},
+                extra_env = {"DEVELOPER_DIR": prefix.removesuffix("/"), "SDKROOT": prefix + "sdk_" + selected_sdk, "OLIPHAUNT_APPLE_TOOL_DIRECTORY": prefix + "tools"},
                 tool_paths_overrides = {"cpp": prefix + sdk["tools"]["clang"], "ld": prefix + sdk["tools"]["ld"], "nm": prefix + sdk["tools"]["nm"], "strip": prefix + sdk["tools"]["strip"], "gcov": prefix + "unsupported.sh", "objdump": prefix + "unsupported.sh"},
             )
             _configuration(
@@ -139,7 +139,7 @@ def host_cc_profiles(sdk):
                 macos_floor = sdk["deploymentTargets"]["package_macos"],
                 ios_floor = sdk["deploymentTargets"]["ios"],
             )
-            _compiler("cc_" + name, ":configuration_" + name, sdk, ["sdk_" + other for other in ["macosx", "iphoneos", "iphonesimulator"] if other != selected_sdk], drivers = True)
+            _compiler("cc_" + name, ":configuration_" + name, sdk, [component for other in ["macosx", "iphoneos", "iphonesimulator"] if other != selected_sdk for component in ["sdk_" + other, "platform_" + other + "/Library", "platform_" + other + "/usr/lib"]], drivers = True)
 
 def _compiler(name, configuration, sdk, exclude, drivers = False):
     components = [component for component in sdk["components"] if component["name"] not in exclude]

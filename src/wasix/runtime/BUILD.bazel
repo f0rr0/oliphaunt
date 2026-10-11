@@ -49,7 +49,10 @@ wasix_module(
     target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
 )
 
-_EXTENSION_MODULES = wasix_contrib_modules() + wasix_external_c_modules()
+_EXTENSION_MODULES = wasix_contrib_modules(crypto = "@openssl//:wasix_crypto") + wasix_external_c_modules() + [
+    "//build_defs/wasix/dependencies:postgis",
+    "//build_defs/wasix/dependencies:postgis_dependency_module",
+]
 
 # Every policy symbol comes from the admitted compiled side-module closure.
 wasix_export_policy(

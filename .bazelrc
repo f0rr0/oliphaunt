@@ -9,3 +9,6 @@ test --test_output=errors
 
 # Cross-platform runtime tests need manifest or directory runfiles.
 build --enable_runfiles
+
+# The LLVM serializer runs on Linux; serialized product targets remain separate.
+build:wasix-aot --extra_execution_platforms=//build_defs/wasix:llvm_serializer_linux_x86_64

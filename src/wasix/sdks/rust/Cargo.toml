@@ -85,7 +85,7 @@ extension-vector = ["extensions", "liboliphaunt-wasix-portable/extension-vector"
 icu = ["dep:oliphaunt-icu"]
 
 [dependencies]
-oliphaunt-query = { version = "=0.1.1", path = "../../../query/rust" }
+oliphaunt-query = { version = "=0.1.1" }
 anyhow = "1"
 async-trait = "0.1"
 cap-fs-ext = "4"

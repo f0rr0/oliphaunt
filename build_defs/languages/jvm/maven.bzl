@@ -1,8 +1,10 @@
 """Maven envelopes over real maintained Java/Kotlin/Android construction outputs."""
 
-load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS")
+load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("@oliphaunt_kotlin_manifest//:metadata.bzl", "KOTLIN")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
+load("@rules_jvm_external//:providers.bzl", "MavenInfo")
+load("@rules_jvm_external//private/rules:has_maven_deps.bzl", "has_maven_deps")
 load("//build_defs/foundation:bun-toolchain.bzl", "BUN_TOOLCHAIN_TYPE")
 load("//build_defs/release:shipping.bzl", "shipping_package")
 
@@ -70,8 +72,19 @@ def _maven_package_impl(ctx):
             fail("Each unique Android ABI must bind one declared mobile library")
         native[abi] = physical[0].path
         inputs.extend(physical)
-    if ctx.file.coroutines_jvm:
-        inputs.append(ctx.file.coroutines_jvm)
+    coroutines_jar = None
+    coroutines_coordinates = None
+    if ctx.attr.coroutines_jvm:
+        coroutines = ctx.attr.coroutines_jvm
+        library = KOTLIN["libraries"]["kotlinx-coroutines-core"]
+        coroutines_coordinates = coroutines[MavenInfo].coordinates
+        if coroutines_coordinates != library["module"] + "-jvm:" + library["version"]:
+            fail("Declared JVM coroutine dependency differs from canonical Kotlin coordinates")
+        jars = coroutines[JavaInfo].runtime_output_jars
+        if len(jars) != 1:
+            fail("Declared JVM coroutine dependency must provide exactly one runtime JAR")
+        coroutines_jar = jars[0]
+        inputs.append(coroutines_jar)
     if ctx.file.javadoc:
         inputs.append(ctx.file.javadoc)
     spec = ctx.actions.declare_file(ctx.label.name + ".json")
@@ -80,7 +93,8 @@ def _maven_package_impl(ctx):
         "kotlin": KOTLIN, "sources": sources, "legalSources": legal,
         "classJars": [file.path for file in class_jars], "nativeLibraries": native,
         "androidAar": ctx.file.android_aar.path if ctx.file.android_aar else None,
-        "coroutinesJvm": ctx.file.coroutines_jvm.path if ctx.file.coroutines_jvm else None,
+        "coroutinesJvm": coroutines_jar.path if coroutines_jar else None,
+        "coroutinesCoordinates": coroutines_coordinates,
         "javadocArchive": ctx.file.javadoc.path if ctx.file.javadoc else None,
     }))
     ctx.actions.run(
@@ -104,7 +118,7 @@ _maven_package = rule(
         "classes": attr.label_list(providers = [JavaInfo]),
         "android_aar": attr.label(allow_single_file = [".aar"]),
         "native_libraries": attr.label_keyed_string_dict(allow_files = True),
-        "coroutines_jvm": attr.label(allow_single_file = [".jar"]),
+        "coroutines_jvm": attr.label(providers = [JavaInfo], aspects = [has_maven_deps]),
         "javadoc": attr.label(allow_single_file = True),
         "_packager": attr.label(default = Label("//build_defs/languages/jvm:maven-package.mts"), allow_single_file = True),
         "_helpers": attr.label_list(default = [
@@ -118,11 +132,14 @@ _maven_package = rule(
 )
 
 def kotlin_maven_package(name, coordinate, packaging, **kwargs):
+    carriers = [row for row in PUBLICATION_CARRIERS if row["product"] == "oliphaunt-kotlin" and row["ecosystem"] == "maven" and row["name"] == coordinate and row["target"] == None]
+    if len(carriers) != 1:
+        fail("Canonical Maven package identity is not unique: " + coordinate)
     _maven_package(name = name, coordinate = coordinate, packaging = packaging, **kwargs)
     if packaging != "pom":
         native.filegroup(name = name + "_archive", srcs = [":" + name], output_group = "archive")
     shipping_package(
         name = name + "_shipping",
         owner = "@oliphaunt_metadata//:product_oliphaunt-kotlin",
-        artifacts = [":" + name], ecosystem = "maven", package_name = coordinate, configuration = "portable",
+        artifacts = [":" + name], ecosystem = "maven", package_name = coordinate, configuration = "portable", role = carriers[0]["role"],
     )

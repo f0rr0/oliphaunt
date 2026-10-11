@@ -74,31 +74,6 @@ function assertExpectedArtifactInventory(artifacts, products) {
   ).toEqual(expectedProductArtifactRows(products));
 }
 
-test('native publication inventory requires no Moon metadata and preserves runtime carrier ownership', () => {
-  const script = `
-    Bun.YAML.parse = () => { throw new Error('Moon metadata must not be read'); };
-    const { loadPublicationCatalog } = await import('./tools/release/publication-catalog.mts');
-    const { expectedProductArtifactRows } = await import('./tools/release/publication-lock.mts');
-    const catalog = loadPublicationCatalog('native-inventory-test');
-    const rows = expectedProductArtifactRows(catalog.products);
-    const versions = new Map(catalog.products.map(({ id, version }) => [id, version]));
-    if (rows.some(row => row.version !== versions.get(row.product))) throw new Error('Wrong release owner version');
-    if (new Set(rows.map(row => row.product + ':' + row.id)).size !== rows.length) throw new Error('Duplicate artifact identity');
-    const contrib = rows.filter(row => row.name.startsWith('oliphaunt-extension-contrib-pg18-'));
-    if (!contrib.some(row => row.product === 'liboliphaunt-native' && row.identity === 'native')) throw new Error('Missing native contrib envelope');
-    if (!contrib.some(row => row.product === 'liboliphaunt-wasix' && row.identity === 'wasix')) throw new Error('Missing WASIX contrib envelope');
-    if (contrib.some(row => row.product === 'oliphaunt-extension-contrib-pg18')) throw new Error('Contrib has no independent release version');
-    const swiftOnly = loadPublicationCatalog('native-inventory-swift', { products: ['oliphaunt-swift'] });
-    if (expectedProductArtifactRows(swiftOnly.products).some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Unselected extension fixture');
-    if (!rows.some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Missing selected extension fixture');
-  `;
-  const result = Bun.spawnSync([process.execPath, '-e', script], {
-    cwd: ROOT,
-    env: { ...process.env, OLIPHAUNT_MOON_PROJECTS_FILE: '/missing-moon-projects.json' },
-  });
-  expect(result.exitCode, result.stderr.toString()).toBe(0);
-});
-
 if (['prepare-handoff', 'prepare-npm-preflight'].includes(process.argv[2])) {
   const root = process.argv[3];
   const catalog = loadPublicationCatalog('publication-lock.test', { products: ['oliphaunt-js'] });
@@ -134,6 +109,31 @@ if (process.argv[2] === 'assert-source') {
   }
   process.exit(0);
 }
+
+test('native publication inventory requires no Moon metadata and preserves runtime carrier ownership', () => {
+  const script = `
+    Bun.YAML.parse = () => { throw new Error('Moon metadata must not be read'); };
+    const { loadPublicationCatalog } = await import('./tools/release/publication-catalog.mts');
+    const { expectedProductArtifactRows } = await import('./tools/release/publication-lock.mts');
+    const catalog = loadPublicationCatalog('native-inventory-test');
+    const rows = expectedProductArtifactRows(catalog.products);
+    const versions = new Map(catalog.products.map(({ id, version }) => [id, version]));
+    if (rows.some(row => row.version !== versions.get(row.product))) throw new Error('Wrong release owner version');
+    if (new Set(rows.map(row => row.product + ':' + row.id)).size !== rows.length) throw new Error('Duplicate artifact identity');
+    const contrib = rows.filter(row => row.name.startsWith('oliphaunt-extension-contrib-pg18-'));
+    if (!contrib.some(row => row.product === 'liboliphaunt-native' && row.identity === 'native')) throw new Error('Missing native contrib envelope');
+    if (!contrib.some(row => row.product === 'liboliphaunt-wasix' && row.identity === 'wasix')) throw new Error('Missing WASIX contrib envelope');
+    if (contrib.some(row => row.product === 'oliphaunt-extension-contrib-pg18')) throw new Error('Contrib has no independent release version');
+    const swiftOnly = loadPublicationCatalog('native-inventory-swift', { products: ['oliphaunt-swift'] });
+    if (expectedProductArtifactRows(swiftOnly.products).some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Unselected extension fixture');
+    if (!rows.some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Missing selected extension fixture');
+  `;
+  const result = Bun.spawnSync([process.execPath, '-e', script], {
+    cwd: ROOT,
+    env: { ...process.env, OLIPHAUNT_MOON_PROJECTS_FILE: '/missing-moon-projects.json' },
+  });
+  expect(result.exitCode, result.stderr.toString()).toBe(0);
+});
 
 test('frozen Cargo bytes reject a changed archive header with unchanged package identity', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-frozen-cargo-'));

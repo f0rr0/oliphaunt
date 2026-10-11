@@ -4,6 +4,7 @@ load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILIT
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_default_version")
+load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 
 def _smoke_plan_impl(ctx):
     fixtures = {file.basename[:-4]: file for file in ctx.files.fixtures}
@@ -52,8 +53,8 @@ def _smoke_plan_impl(ctx):
     args.add("--startup", startup)
     args.add("--environment", environment)
     args.add("--dependencies", dependencies)
-    ctx.actions.run(
-        executable = ctx.attr._generator[DefaultInfo].files_to_run,
+    bun_action(
+        ctx, ctx.attr._generator,
         inputs = depset([spec] + [fixtures[row["sql_name"]] for row in members]),
         outputs = [install, smoke, startup, environment, dependencies],
         arguments = [args],
@@ -72,7 +73,7 @@ extension_smoke_plan = rule(
         "fixtures": attr.label_list(mandatory = True, allow_files = [".sql"]),
         "host_version": attr.string(),
         "host_product": attr.string(),
-        "_generator": attr.label(default = "//build_defs/extensions:smoke_plan", executable = True, cfg = "exec"),
+        "_generator": attr.label(default = "//build_defs/extensions:smoke_plan", providers = [BunScriptInfo], cfg = "exec"),
     },
 )
 

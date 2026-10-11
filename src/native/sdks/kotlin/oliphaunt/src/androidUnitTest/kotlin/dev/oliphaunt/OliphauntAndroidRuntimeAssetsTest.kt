@@ -1254,12 +1254,7 @@ private fun retargetNativeClusterSeedFixture(
     target: String,
     icuDataTreeSha256: String? = null,
 ): String {
-    val fixtureRoot =
-        System
-            .getProperty("oliphaunt.clusterSeedFixturesDir")
-            ?.takeIf(String::isNotBlank)
-            ?.let(Path::of)
-            ?: error("oliphaunt.clusterSeedFixturesDir is not configured")
+    val fixtureRoot = clusterSeedFixtureDirectory()
     val overrides =
         buildMap {
             put("target", target)
