@@ -9,8 +9,8 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_DEPENDENCIES")
-load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE")
-load(":libraries.bzl", "postgis_source_headers")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load(":libraries.bzl", "POSTGIS_NATIVE_COPTS", "POSTGIS_THREAD_LINKOPTS", "postgis_source_headers")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 
 _CORE = "alter analyze attach auth backup bitvec btmutex btree build callback carray complete date dbpage dbstat delete expr fault fkey func global hash insert json legacy loadext main malloc mem0 mem1 mem2 mem3 mem5 memdb memjournal mutex mutex_noop mutex_unix mutex_w32 notify os os_kv os_unix os_win pager pcache pcache1 pragma prepare printf random resolve rowset select status table threads tokenize treeview trigger update upsert utf util vacuum vdbe vdbeapi vdbeaux vdbeblob vdbemem vdbesort vdbetrace vdbevtab vtab wal walker where wherecode whereexpr window".split(" ")
@@ -66,8 +66,9 @@ def postgis_sqlite(name):
         cc_binary(
             name = name + "_" + tool,
             srcs = [prefix + source],
-            defines = ["HAVE_REALPATH"] if tool == "jim" else [],
-            linkopts = ["-lm", "-ldl"] if tool == "jim" else [],
+            defines = select({"//build_defs/native:windows_x64": ["HAVE__FULLPATH"], "//conditions:default": ["HAVE_REALPATH"]}) if tool == "jim" else [],
+            copts = POSTGIS_NATIVE_COPTS,
+            linkopts = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": [], "//conditions:default": ["-lm", "-ldl"]}) if tool == "jim" else [],
             target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
         )
     generated = name + "_generated"
@@ -91,7 +92,8 @@ def postgis_sqlite(name):
         local_defines = ["SQLITE_CORE"],
         defines = ["SQLITE_THREADSAFE=1", "SQLITE_OMIT_LOAD_EXTENSION", "SQLITE_ENABLE_RTREE", "SQLITE_ENABLE_COLUMN_METADATA"],
         includes = [],
-        linkopts = ["-lm", "-pthread"],
+        copts = POSTGIS_NATIVE_COPTS,
+        linkopts = POSTGIS_THREAD_LINKOPTS,
         target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
     )
     cc_binary(name = name + "_cli", srcs = [":" + name + "_shell_source"], deps = [":" + name],

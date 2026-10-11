@@ -46,7 +46,10 @@ try {
   // mksqlite3h.tcl executes this explicitly named helper from its working dir.
   // All pinned source files are declared inputs because mksourceid verifies the
   // Fossil manifest's individual source hashes when calculating SQLITE_SOURCE_ID.
-  copyFileSync(tools.mksourceid, join(work, 'mksourceid'));
+  copyFileSync(
+    tools.mksourceid,
+    join(work, /\.exe$/iu.test(tools.mksourceid) ? 'mksourceid.exe' : 'mksourceid'),
+  );
   run(tools.jim, [join(source, 'tool/mksqlite3h.tcl'), source, '-o', join(output, 'sqlite3.h')]);
   copyFileSync(join(source, 'src/parse.y'), join(work, 'parse.y'));
   run(tools.lemon, ['-S', `-T${join(source, 'tool/lempar.c')}`, 'parse.y']);

@@ -148,3 +148,28 @@ test('empty, PostGIS, and mobile plans fail before claiming host construction co
     /membership/,
   );
 });
+
+test('explicit complete desktop selection includes PostGIS and rejects an incomplete or ambiguous plan', async () => {
+  const sql = member();
+  const postgis = member('postgis', true);
+  const files = [await archive(sql), await archive(postgis)];
+  const complete = { ...plan([sql, postgis]), include_postgis: true, excluded: [] };
+  expect(validateDesktopConstruction(complete, files)).toEqual({
+    configuration: 'linux-x64-gnu',
+    members: ['pgtap', 'postgis'],
+    compiled: 1,
+    sqlOnly: 1,
+  });
+  expect(() => validateDesktopConstruction({ ...complete, members: [sql] }, [files[0]])).toThrow(
+    /explicit PostGIS selection/,
+  );
+  expect(() => validateDesktopConstruction({ ...complete, excluded: ['postgis'] }, files)).toThrow(
+    /membership/,
+  );
+  expect(() =>
+    validateDesktopConstruction({ ...complete, include_postgis: 'true' }, files),
+  ).toThrow(/membership/);
+  expect(() => validateDesktopConstruction({ ...complete, include_postgis: false }, files)).toThrow(
+    /membership/,
+  );
+});

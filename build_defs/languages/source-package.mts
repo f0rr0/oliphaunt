@@ -2,15 +2,18 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
+  renderCargoToml as renderToml,
+  resolveCargoWorkspaceInheritance,
+} from '../../tools/packaging/cargo-manifest.mts';
+import {
+  cargoPackageRelativePathParts,
+  packageGeneratedCargoSource,
+} from '../../tools/packaging/cargo-source-package.mts';
+import {
   assertSameNativeTargetSet,
   renderUnsupportedNativeTargetGuard,
   rustNativeTargetCfg,
 } from '../../tools/packaging/rust-native-targets.mts';
-import { archive } from '../query/package.mts';
-import {
-  renderCargoToml as renderToml,
-  resolveCargoWorkspaceInheritance,
-} from '../../tools/packaging/cargo-manifest.mts';
 
 type Table = Record<string, any>;
 export type SourceMetadata = {
@@ -87,7 +90,7 @@ export function sourceManifest(
     Bun.TOML.parse(original),
     Bun.TOML.parse(workspaceText).workspace ?? {},
   );
-  if (manifest.package.version !== metadata.version)
+  if (!manifest.package || manifest.package.version !== metadata.version)
     throw new Error(`Source package version disagrees with ${metadata.product} owner`);
   for (const table of [manifest, ...Object.values(manifest.target ?? {})] as Table[]) {
     for (const section of ['dependencies', 'dev-dependencies', 'build-dependencies']) {
@@ -148,31 +151,42 @@ export async function sourceEnvelope(
   if (!/^[\w.-]+$/.test(prefix)) throw new Error('Invalid Cargo source package identity');
   let sources: Record<string, Uint8Array> = {};
   for (const [destination, source] of Object.entries(mapping)) {
-    if (
-      !destination ||
-      destination.startsWith('/') ||
-      destination.includes('\\') ||
-      destination.split('/').some((part) => !part || part === '.' || part === '..')
-    )
+    try {
+      cargoPackageRelativePathParts(destination);
+    } catch {
       throw new Error(`Unsafe Cargo source entry ${destination}`);
+    }
     sources[destination] = await readFile(source);
   }
+  if (!sources['Cargo.toml']) throw new Error('Missing public Cargo source entry Cargo.toml');
   sources['Cargo.toml'] = Buffer.from(renderToml(manifest));
   if (cargo) sources = await conventionalSourceEntries(cargo, sources);
-  for (const required of ['Cargo.toml', 'LICENSE', 'README.md'])
+  for (const required of ['Cargo.toml', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'README.md'])
     if (!sources[required]) throw new Error(`Missing public Cargo source entry ${required}`);
-  const entries = Object.fromEntries(
-    Object.entries(sources).map(([name, bytes]) => [`${prefix}/${name}`, bytes]),
-  );
-  entries[`${prefix}/Cargo.toml.orig`] = Buffer.from(original);
+  sources['Cargo.toml.orig'] = Buffer.from(original);
   if (metadata.nativeArtifacts) {
-    const root = `${prefix}/src/lib.rs`;
-    if (!entries[root]) throw new Error('Rust SDK source package is missing its library');
-    entries[root] = Buffer.from(
-      `${Buffer.from(entries[root]).toString('utf8')}\n${renderUnsupportedNativeTargetGuard({ product: manifest.package.name, nativeTargets: metadata.nativeArtifacts.map((row) => row.target), nativeCfgs: metadata.nativeArtifacts.map((row) => rustNativeTargetCfg(row.target)), guidance: 'use the separately versioned oliphaunt-wasix crate for WASIX environments.' })}\n`,
+    if (!sources['src/lib.rs']) throw new Error('Rust SDK source package is missing its library');
+    sources['src/lib.rs'] = Buffer.from(
+      `${Buffer.from(sources['src/lib.rs']).toString('utf8')}\n${renderUnsupportedNativeTargetGuard({ product: manifest.package.name, nativeTargets: metadata.nativeArtifacts.map((row) => row.target), nativeCfgs: metadata.nativeArtifacts.map((row) => rustNativeTargetCfg(row.target)), guidance: 'use the separately versioned oliphaunt-wasix crate for WASIX environments.' })}\n`,
     );
   }
-  return archive(entries);
+  const directory = await mkdtemp(join(tmpdir(), 'oliphaunt-source-envelope-'));
+  try {
+    const source = join(directory, 'source');
+    for (const [member, bytes] of Object.entries(sources)) {
+      const destination = join(source, member);
+      await mkdir(dirname(destination), { recursive: true });
+      await writeFile(destination, bytes, { mode: 0o644 });
+    }
+    const crate = packageGeneratedCargoSource(join(source, 'Cargo.toml'), directory, {
+      noticeProfile: 'source-sdk',
+      noticeSourceRoot: source,
+      fixedFileMode: 0o644,
+    });
+    return await readFile(crate);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 if (import.meta.main) {

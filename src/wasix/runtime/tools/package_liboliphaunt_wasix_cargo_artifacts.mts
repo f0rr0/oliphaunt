@@ -48,6 +48,10 @@ import {
   extensionRegistryLicense,
   stageExtensionUpstreamLicenses,
 } from '../../../extensions/tools/extension-upstream-licenses.mts';
+import {
+  assertWasixExtensionArchiveInstall,
+  WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
+} from '../../../extensions/contracts/wasix-extension-install.mts';
 import { assertWasixAotArtifactPayloads } from './check-release-assets.mts';
 import {
   assertCanonicalWasixAotManifest,
@@ -1547,6 +1551,71 @@ function packageExtensionSource(source, { outputDir, cargoTargetDir }) {
     dependencyRequirement: source.spec.dependencyRequirement,
   });
   return packages;
+}
+
+/** Package one declared SQL-only leaf without rediscovering workspace release owners. */
+export function packageSqlOnlyWasixExtensionCargo(
+  spec: {
+    product: string;
+    version: string;
+    runtimeProduct: string;
+    runtimeVersion: string;
+    member: {
+      sqlName: string;
+      dependencies: string[];
+      archive: string;
+      sha256: string;
+      size: number;
+      install: Record<string, unknown>;
+    };
+  },
+  { outputDir, workDir }: { outputDir: string; workDir: string },
+) {
+  const { member } = spec;
+  if (spec.product !== `oliphaunt-extension-${member.sqlName}`) {
+    fail('SQL-only WASIX Cargo leaf must bind its external member to its release owner');
+  }
+  if (spec.runtimeProduct !== PRODUCT)
+    fail('SQL-only WASIX Cargo leaf has the wrong runtime owner');
+  extensionDependencyRequirement(spec.runtimeVersion, 'runtime-bound');
+  const { install } = assertWasixExtensionArchiveInstall(readFileSync(member.archive), {
+    schema: WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
+    sqlName: member.sqlName,
+    archive: `extensions/${member.sqlName}.tar.zst`,
+    sha256: member.sha256,
+    size: member.size,
+    install: member.install,
+  });
+  if (
+    install.nativeModule !== null ||
+    install.nativeModules.length !== 0 ||
+    install.coreExportsRequired.length !== 0 ||
+    install.unresolvedImports.length !== 0
+  ) {
+    fail('SQL-only WASIX Cargo leaf cannot package a compiled member without its AOT closure');
+  }
+  if (member.size > DEFAULT_EXTENSION_PART_BYTES) {
+    fail('SQL-only WASIX Cargo leaf exceeds the declared single-crate payload boundary');
+  }
+  const sourceRoot = path.join(workDir, 'cargo-package-sources');
+  mkdirSync(sourceRoot, { recursive: true });
+  mkdirSync(outputDir, { recursive: true });
+  const source = writeExtensionCargoSource(
+    {
+      ...spec,
+      name: wasixExtensionPackageName(spec.product),
+      members: [{ ...member, nativeModuleStem: null, requiresAot: false }],
+      versioning: 'upstream-bound',
+      dependencyRequirement: extensionDependencyRequirement(spec.version, 'upstream-bound'),
+      aotTargets: [],
+    },
+    sourceRoot,
+    DEFAULT_EXTENSION_PART_BYTES,
+  );
+  return packageExtensionSource(source, {
+    outputDir,
+    cargoTargetDir: path.join(workDir, 'cargo-package-target'),
+  });
 }
 
 function packageExtensionAotSource(source, { outputDir, cargoTargetDir }) {

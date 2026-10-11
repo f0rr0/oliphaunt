@@ -5,6 +5,7 @@ import { linkSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node
 import path from 'node:path';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import { buildShippingInputView, canonicalShippingLabel } from './bazel-shipping-inputs.mts';
+import { writeNativeBuildFinalFiles } from './native-build-files.mts';
 import {
   type NativeBuildEvidence,
   type NativeBuildGithub,
@@ -288,6 +289,7 @@ export function writeNativeBuildEvidence(
   const parent = requireSafeDirectoryChain(directory, { create: true, label: 'native evidence' });
   const temporary = mkdtempSync(path.join(parent, '.native-evidence-'));
   const output = path.join(parent, 'native-build-evidence.json');
+  let copiedFiles = false;
   try {
     captured.assertUnchanged();
     const file = path.join(temporary, 'evidence.json');
@@ -298,10 +300,17 @@ export function writeNativeBuildEvidence(
         buildEvents: retainedBuildEvents(captured.evidence, cohort.buildEvents),
       })),
     };
+    // The evidence remains the only inventory. Public regular leaves are copied
+    // before its immutable completion marker is installed; internal trees stay local.
+    writeNativeBuildFinalFiles(evidence, parent);
+    copiedFiles = true;
     writeFileSync(file, `${JSON.stringify(evidence)}\n`, { flag: 'wx', mode: 0o600 });
     captured.assertUnchanged();
     linkSync(file, output);
     return output;
+  } catch (error) {
+    if (copiedFiles) rmSync(path.join(parent, 'files'), { recursive: true, force: true });
+    throw error;
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

@@ -5,6 +5,64 @@ load("@javascript_compiler_packages//:roots.bzl", "COMPILER_PACKAGES", "COMPILER
 load("@bazel_lib//lib:copy_file.bzl", "COPY_FILE_TOOLCHAINS", "copy_file_action")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 
+_PACKAGE_HELPERS = [
+    ":tools/native-package.mts", ":tools/native-carrier-package.mts",
+    "//build_defs/release:frozen-native-carrier.mts", "//build_defs/query:package.mts",
+    "//src/native/sdks/swift:tools/native-legal-source-basis.mts",
+    "//src/native/sdks/swift:tools/swift-native-carrier-contract.mts",
+    "//:tools/packaging/source-only-sdk-package.mts", "//:tools/packaging/archive-directory.mts",
+    "//:tools/packaging/portable-archive.mts", "//:tools/packaging/release-notices.mts",
+    "//:tools/packaging/release-directory-safety.mts", "//:LICENSE", "//:THIRD_PARTY_NOTICES.md",
+]
+
+_PACKAGE_ATTRS = {
+    "source_archive": attr.label(mandatory = True, allow_single_file = [".tgz"]),
+    "manifest": attr.label(mandatory = True, allow_single_file = [".json"]),
+    "carrier": attr.label(default = "@swift_frozen_native//:carrier", allow_single_file = True),
+    "carrier_source": attr.label(default = "//build_defs/release:swift-0.8.2-source.json", allow_single_file = True),
+    "native_version": attr.label(default = "//src/native/sdks/swift:LIBOLIPHAUNT_VERSION", allow_single_file = True),
+    "native_releases": attr.label(default = "//build_defs/release:native-0.3.3-releases.json", allow_single_file = True),
+    "native_completion": attr.label(default = "//build_defs/release:native-0.3.3-completed-publication.json", allow_single_file = True),
+    "swift_source": attr.label(default = "//build_defs/release:swift-0.8.2-publication-source.json", allow_single_file = True),
+    "xcframework": attr.label(default = "@swift_frozen_native//:xcframework_archive", allow_single_file = True),
+    "ios_static_dependencies": attr.label(default = "//src/extensions/generated/sdk:ios-static-dependencies.json", allow_single_file = True),
+    "_helpers": attr.label_list(default = _PACKAGE_HELPERS, allow_files = True),
+}
+
+def _package_spec(ctx, runfiles = False):
+    fields = {"sourceArchive": "source_archive", "authoredManifest": "manifest", "carrier": "carrier", "carrierSource": "carrier_source", "nativeVersion": "native_version", "nativeReleases": "native_releases", "nativeCompletion": "native_completion", "swiftSource": "swift_source", "xcframework": "xcframework", "iosStaticDependencies": "ios_static_dependencies"}
+    files = [getattr(ctx.file, field) for field in fields.values()]
+    return {name: _runfile(ctx, getattr(ctx.file, field)) if runfiles else getattr(ctx.file, field).path for name, field in fields.items()}, files
+
+def _package_impl(ctx):
+    inputs, files = _package_spec(ctx)
+    spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
+    ctx.actions.write(spec, json.encode(inputs))
+    output = ctx.actions.declare_file(ctx.attr.out)
+    bun_file_action(ctx, entry_point = ctx.file._writer, arguments = [spec.path, output.path], inputs = files + [spec] + ctx.files._helpers, source_files = ctx.files._helpers, outputs = [output], mnemonic = "ReactNativeNpmPackage")
+    return [DefaultInfo(files = depset([output]))]
+
+react_native_npm = rule(
+    implementation = _package_impl,
+    toolchains = BUN_SOURCE_TOOLCHAINS,
+    attrs = dict(_PACKAGE_ATTRS, **{"out": attr.string(mandatory = True), "_writer": attr.label(default = ":tools/native-package.mts", allow_single_file = True)}),
+)
+
+def _package_test_impl(ctx):
+    inputs, files = _package_spec(ctx, runfiles = True)
+    spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
+    ctx.actions.write(spec, json.encode(inputs))
+    return bun_test_entrypoint(ctx, ctx.file._runner, [spec, ctx.file.archive], files + [spec, ctx.file.archive, ctx.file._runner] + ctx.files._helpers, source_files = [ctx.file._runner] + ctx.files._helpers, runfiles_environment = ["OLIPHAUNT_BAZEL_RUNFILES"])
+
+_react_native_package_test = rule(
+    implementation = _package_test_impl, test = True,
+    toolchains = BUN_SOURCE_TOOLCHAINS,
+    attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **dict(_PACKAGE_ATTRS, **{"archive": attr.label(mandatory = True, allow_single_file = [".tgz"]), "_runner": attr.label(default = ":tools/native-package.test.mts", allow_single_file = True)})),
+)
+
+def react_native_package_test(name, args = [], **kwargs):
+    _react_native_package_test(name = name, args = bun_test_entrypoint_args(name) + args, **kwargs)
+
 def _manifest_impl(ctx):
     outputs = [ctx.actions.declare_file(ctx.label.name + "/" + name) for name in ["package.json", "LICENSE", "THIRD_PARTY_NOTICES.md"]]
     bun_file_action(
@@ -118,14 +176,15 @@ def _consumer_impl(ctx):
         row["version"] = target[NpmPackageInfo].version
         packages[key] = row
     specification = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
-    ctx.actions.write(specification, json.encode({"name": ctx.attr.package_name, "version": ctx.attr.version, "packages": packages, "roots": ctx.attr.roots}))
+    carrier_inputs, carrier_files = _package_spec(ctx, runfiles = True) if ctx.attr.final_package else (None, [])
+    ctx.actions.write(specification, json.encode({"name": ctx.attr.package_name, "version": ctx.attr.version, "packages": packages, "roots": ctx.attr.roots, "carrierInputs": carrier_inputs, "runtimeResources": _runfile(ctx, ctx.file.runtime_resources) if ctx.attr.final_package else None}))
     arguments = [ctx.file.archive, ctx.file.query, ctx.file.manifest, node, ctx.file.typescript, specification]
-    return bun_test_entrypoint(ctx, ctx.file._runner, arguments, files + arguments + [ctx.file._runner, ctx.file._archive, ctx.file._shipping_archive], source_files = [ctx.file._runner, ctx.file._archive, ctx.file._shipping_archive], runfiles_environment = ["OLIPHAUNT_BAZEL_RUNFILES"])
+    return bun_test_entrypoint(ctx, ctx.file._runner, arguments, files + arguments + carrier_files + ([ctx.file.runtime_resources] if ctx.attr.final_package else []) + [ctx.file._runner, ctx.file._archive, ctx.file._shipping_archive] + ctx.files._helpers, source_files = [ctx.file._runner, ctx.file._archive, ctx.file._shipping_archive] + ctx.files._helpers, runfiles_environment = ["OLIPHAUNT_BAZEL_RUNFILES"])
 
 _react_native_consumer_test = rule(
     implementation = _consumer_impl, test = True,
     toolchains = BUN_SOURCE_TOOLCHAINS + ["@rules_nodejs//nodejs:toolchain_type"],
-    attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
+    attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **dict(_PACKAGE_ATTRS, **{
         "archive": attr.label(mandatory = True, allow_single_file = [".tgz"]),
         "query": attr.label(mandatory = True, allow_single_file = [".tgz"]),
         "manifest": attr.label(mandatory = True, allow_single_file = [".json"]),
@@ -133,10 +192,21 @@ _react_native_consumer_test = rule(
         "inputs": attr.label_keyed_string_dict(providers = [NpmPackageInfo]),
         "packages": attr.string_dict(mandatory = True), "roots": attr.string_dict(mandatory = True),
         "package_name": attr.string(mandatory = True), "version": attr.string(mandatory = True),
+        "final_package": attr.bool(default = False),
+        "source_archive": attr.label(allow_single_file = [".tgz"]),
+        "carrier": attr.label(allow_single_file = True),
+        "carrier_source": attr.label(allow_single_file = True),
+        "native_version": attr.label(allow_single_file = True),
+        "native_releases": attr.label(allow_single_file = True),
+        "native_completion": attr.label(allow_single_file = True),
+        "swift_source": attr.label(allow_single_file = True),
+        "xcframework": attr.label(allow_single_file = True),
+        "ios_static_dependencies": attr.label(allow_single_file = True),
+        "runtime_resources": attr.label(allow_single_file = True),
         "_runner": attr.label(default = ":tools/native-consumer.mts", allow_single_file = True),
         "_archive": attr.label(default = "//build_defs/wasix/browser:npm-archives.mts", allow_single_file = True),
         "_shipping_archive": attr.label(default = "//:tools/packaging/portable-archive.mts", allow_single_file = True),
-    }),
+    })),
 )
 
 def react_native_consumer_test(name, args = [], **kwargs):

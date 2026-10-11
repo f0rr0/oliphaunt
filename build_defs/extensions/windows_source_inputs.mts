@@ -10,7 +10,7 @@ export interface WindowsSourceInputs {
 }
 
 export function prepareWindowsSources(spec: WindowsSourceInputs): void {
-  if (spec.extension !== 'pg_uuidv7' && spec.extension !== 'pg_textsearch') {
+  if (!['pg_uuidv7', 'pg_textsearch', 'postgis'].includes(spec.extension)) {
     throw new Error('Windows source preparation requires an existing pinned source adaptation');
   }
   const generated = windowsExtensionHeaders(spec.extension);

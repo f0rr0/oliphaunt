@@ -164,8 +164,19 @@ try {
   if (values['published-runtime']) extractPortableArchiveTree(realpathSync(payload), carrier);
   else await extractNativePayload(payload, carrier);
   const selectedFiles = new Set<string>();
+  const memberDependencies = new Map<string, string>();
   for (const archive of archives) {
-    for (const [name, entry] of readPortableArchiveEntries(archive, { format: 'tar.gz' })) {
+    const entries = readPortableArchiveEntries(archive, { format: 'tar.gz' });
+    // validateDesktopConstruction has already checked these descriptors, every
+    // recorded byte digest, both module ABIs, and the full resource inventory.
+    const descriptorEntry = entries.get('extension.json');
+    assert(descriptorEntry);
+    const descriptor = JSON.parse(descriptorEntry.data().toString('utf8'));
+    for (const name of descriptor.dependency_modules ?? []) {
+      assert(!memberDependencies.has(name), 'candidate members repeat a dependency module');
+      memberDependencies.set(name, descriptor.sql_name);
+    }
+    for (const [name, entry] of entries) {
       if (name === 'extension.json') continue;
       assert(
         entry.isFile && !selectedFiles.has(name),
@@ -187,10 +198,11 @@ try {
     assert(name && path && required && statSync(join(runtime, path, required)).isFile());
     env[name] = join(runtime, path);
   }
-  assert.equal(
-    text(dependencies),
-    '',
-    'this desktop slice excludes the platform-specific PostGIS dependency recipe',
+  const dependencyNames = text(dependencies).split('\n').filter(Boolean);
+  assert.deepEqual(
+    dependencyNames,
+    [...memberDependencies.keys()].sort(),
+    'canonical dependency plan must equal the actual candidate member inventories',
   );
 
   const baseline = Bun.spawnSync([consumer], { env, cwd: root, stdout: 'pipe', stderr: 'pipe' });
@@ -207,6 +219,33 @@ try {
     );
   } finally {
     renameSync(`${library}.disabled`, library);
+  }
+
+  for (const name of dependencyNames) {
+    const owner = memberDependencies.get(name);
+    assert(owner);
+    for (const profile of ['modules', 'postgresql']) {
+      assert(selectedFiles.has(`lib/${profile}/${name}`));
+      const module = join(profile === 'modules' ? carrier : runtime, 'lib', profile, name);
+      const pgdata = initialize(`missing-dependency-${profile}-${name}`);
+      renameSync(module, `${module}.disabled`);
+      try {
+        const result = profile === 'modules' ? embedded(pgdata) : server(pgdata);
+        const response = result.stderr.toString() + result.stdout.toString();
+        // LoadLibrary reports the owning module when an imported DLL is absent;
+        // POSIX loaders also identify the missing dependency itself.
+        assert(
+          response.includes(name) || (windows && response.includes(owner)),
+          'missing candidate dependency must fail by its dependency or Windows owner identity',
+        );
+        if (profile === 'modules')
+          assert.notEqual(result.exitCode, 0, 'embedded consumer accepted a missing dependency');
+        else
+          assert(/ERROR:|FATAL:/u.test(response), 'server consumer accepted a missing dependency');
+      } finally {
+        renameSync(`${module}.disabled`, module);
+      }
+    }
   }
 
   const missingMember = plan.members.find((member: { module_file: string }) => member.module_file);
@@ -256,7 +295,7 @@ try {
     response,
   );
   console.log(
-    `${construction.members.length} candidate desktop members: embedded reopen, server SQL and missing candidate loader/module probes PASS`,
+    `${construction.members.length} candidate desktop members: embedded reopen, server SQL and missing candidate loader/module/dependency probes PASS`,
   );
 } finally {
   rmSync(root, { recursive: true, force: true });

@@ -56,7 +56,7 @@ for (const row of order) {
   const lifecycle = row.lifecycle;
   for (const path of row.dependency_modules ?? []) {
     assert(
-      /^lib\/postgresql\/[A-Za-z0-9_.-]+\.so$/.test(path),
+      /^lib\/postgresql\/[A-Za-z0-9_.-]+\.(?:so|dylib|dll)$/u.test(path),
       `invalid native dependency module for ${row.sql_name}`,
     );
     dependencies.add(path.slice('lib/postgresql/'.length));

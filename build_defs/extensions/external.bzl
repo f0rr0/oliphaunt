@@ -39,6 +39,8 @@ def _windows_sources_impl(ctx):
     source_paths = {file.path: True for file in ctx.files.srcs}
     sources = []
     headers = []
+    compatibility = []
+    companion_inputs = []
     rows = []
     seen = {}
     for file in ctx.files.srcs + ctx.files.hdrs:
@@ -56,7 +58,15 @@ def _windows_sources_impl(ctx):
             sources.append(output)
         else:
             headers.append(output)
-    compatibility = []
+    for target, relative in ctx.attr.companions.items():
+        files = target[DefaultInfo].files.to_list()
+        if len(files) != 1 or files[0].is_directory or not relative or any([part in ["", ".", ".."] for part in relative.split("/")]):
+            fail("Windows companion header requires one regular file and a safe declared destination")
+        output = ctx.actions.declare_file(ctx.label.name + "/" + relative)
+        rows.append({"name": relative, "source": files[0].path, "output": output.path})
+        headers.append(output)
+        compatibility.append(output)
+        companion_inputs.append(files[0])
     generated = []
     if ctx.attr.sql_name == "pg_textsearch":
         for relative in ["src/oliphaunt_windows_compat.h", "src/unistd.h"]:
@@ -69,12 +79,18 @@ def _windows_sources_impl(ctx):
     ctx.actions.write(spec, json.encode({"extension": ctx.attr.sql_name, "files": rows, "headers": generated}))
     args = ctx.actions.args()
     args.add(spec)
-    bun_action(ctx, ctx.attr._generator, arguments = [args], inputs = depset([spec] + ctx.files.srcs + ctx.files.hdrs), outputs = sources + headers, mnemonic = "WindowsExtensionSources")
+    bun_action(ctx, ctx.attr._generator, arguments = [args], inputs = depset([spec] + ctx.files.srcs + ctx.files.hdrs + companion_inputs), outputs = sources + headers, mnemonic = "WindowsExtensionSources")
     output_root = (sources + headers)[0].path[:-len(rows[0]["name"])]
+    groups = {"compatibility_header": depset(compatibility), "source_spec": depset([spec])}
+    for directory in ctx.attr.source_groups:
+        group = directory.split("/")[-1] + "_sources"
+        if group in groups or any([part in ["", ".", ".."] for part in directory.split("/")]):
+            fail("Windows source group requires a unique safe source directory")
+        groups[group] = depset([file for file in sources if file.path.startswith(output_root + directory + "/")])
     return [
         DefaultInfo(files = depset(sources)),
         CcInfo(compilation_context = cc_common.create_compilation_context(headers = depset(headers), includes = depset([output_root + directory for directory in ctx.attr.include_dirs]))),
-        OutputGroupInfo(compatibility_header = depset(compatibility)),
+        OutputGroupInfo(**groups),
     ]
 
 _windows_sources = rule(
@@ -83,12 +99,17 @@ _windows_sources = rule(
         "sql_name": attr.string(mandatory = True),
         "srcs": attr.label_list(allow_files = True, mandatory = True),
         "hdrs": attr.label_list(allow_files = True),
+        "companions": attr.label_keyed_string_dict(allow_files = True),
+        "source_groups": attr.string_list(),
         "anchor": attr.label(allow_single_file = True, mandatory = True),
         "anchor_name": attr.string(mandatory = True),
         "include_dirs": attr.string_list(),
         "_generator": attr.label(default = "//build_defs/extensions:windows_source_inputs", providers = [BunScriptInfo], cfg = "exec"),
     },
 )
+
+# The PostGIS recipe uses the same declared projection and pure source transforms.
+windows_extension_sources = _windows_sources
 
 def external_extension_inputs(name, sql_name):
     """C source inputs only; callers supply their actual host/profile headers."""

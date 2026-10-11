@@ -1,9 +1,10 @@
-/** Bounded Linux LP64 configuration applied to canonical upstream templates. */
+/** Canonical upstream templates, with declared compiler facts for foreign hosts. */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 type Values = Record<string, string>;
+const targets = new Set(['linux-x64-gnu', 'linux-arm64-gnu', 'macos-arm64', 'windows-x64-msvc']);
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 function read(path: string): string {
   return utf8.decode(readFileSync(path));
@@ -42,6 +43,78 @@ function enabled(names: string): Values {
   );
 }
 
+/** Only the maintained checker's explicit defines become template substitutions. */
+export function compilerFacts(header: string): Values {
+  const result: Values = {};
+  for (const line of header.split(/\r?\n/u)) {
+    const match = /^#define ([A-Z][A-Z_0-9]*) (.+)$/u.exec(line);
+    if (!match) continue;
+    if (Object.hasOwn(result, match[1])) throw new Error(`duplicate compiler fact ${match[1]}`);
+    result[match[1]] = match[2];
+  }
+  return result;
+}
+
+export function targetSubstitutions(original: Values, target: string, facts?: Values): Values {
+  if (!targets.has(target)) throw new Error(`unsupported PostGIS configuration target ${target}`);
+  if (target.startsWith('linux-')) {
+    if (facts) throw new Error('the qualified Linux profile does not consume foreign facts');
+    return original;
+  }
+  if (
+    !facts ||
+    facts.HAVE_POSTGIS_COMPILER_SANITY !== '1' ||
+    !facts.SIZEOF_LONG ||
+    !facts.SIZEOF_SIZE_T ||
+    !facts.SIZEOF_VOID_P
+  )
+    throw new Error('foreign PostGIS configuration requires declared compiler facts');
+  const expectedLong = target === 'windows-x64-msvc' ? '4' : '8';
+  if (
+    facts.SIZEOF_LONG !== expectedLong ||
+    facts.SIZEOF_SIZE_T !== '8' ||
+    facts.SIZEOF_VOID_P !== '8'
+  )
+    throw new Error(`compiler facts disagree with ${target} ABI`);
+  const result = { ...original };
+  for (const key of Object.keys(result)) {
+    if (key.startsWith('HAVE_') || key.startsWith('SIZEOF_')) delete result[key];
+  }
+  Object.assign(result, facts);
+  if (Object.hasOwn(original, 'JSON_C_HAVE_INTTYPES_H'))
+    result.JSON_C_HAVE_INTTYPES_H = facts.HAVE_INTTYPES_H ?? '0';
+  if (Object.hasOwn(original, 'JSON_C_HAVE_STDINT_H'))
+    result.JSON_C_HAVE_STDINT_H = facts.HAVE_STDINT_H ?? '0';
+  // These facts describe the declared dependency graph, rather than libc probes.
+  for (const key of Object.keys(original)) {
+    if (
+      /^HAVE_(?:ICONV(?:CTL)?|LIB(?:GEOS_C|ICONVCTL|JSON|PROJ|XML2|XML_(?:PARSER|TREE|XPATHINTERNALS|XPATH)_H))$/u.test(
+        key,
+      )
+    )
+      result[key] = original[key];
+  }
+  if (Object.hasOwn(result, 'SPEC___THREAD')) {
+    result.SPEC___THREAD = facts.HAVE___THREAD ? '__thread' : '__declspec(thread)';
+    if (!facts.HAVE___THREAD && !facts.HAVE_DECLSPEC_THREAD) delete result.SPEC___THREAD;
+  }
+  if (Object.hasOwn(result, 'EILSEQ')) {
+    if (!facts.EILSEQ) throw new Error('libiconv requires compiler-derived EILSEQ');
+    result.EILSEQ = facts.EILSEQ;
+    result.USE_MBSTATE_T = facts.HAVE_MBSTATE_T ? '1' : '0';
+    if (!facts.HAVE_INLINE) {
+      if (!facts.HAVE___INLINE) throw new Error('libiconv requires a supported inline spelling');
+      result.inline = '__inline';
+    }
+    if (!facts.HAVE_MODE_T) result.mode_t = 'int';
+    // srcm4/ssize_t.m4 uses long long for the selected _WIN64 profile.
+    if (!facts.HAVE_SSIZE_T) result.ssize_t = 'long long';
+  }
+  if (Object.hasOwn(result, 'MODULE_EXTENSION'))
+    result.MODULE_EXTENSION = target === 'macos-arm64' ? '.dylib' : '.dll';
+  return result;
+}
+
 if (import.meta.main) {
   const { values } = parseArgs({
     options: {
@@ -49,16 +122,25 @@ if (import.meta.main) {
       source: { type: 'string' },
       output: { type: 'string' },
       identity: { type: 'string' },
+      target: { type: 'string', default: 'linux-x64-gnu' },
+      facts: { type: 'string' },
     },
   });
   if (!values.kind || !values.source || !values.output)
     throw new Error('expected --kind --source --output');
   const source = resolve(values.source);
   const output = resolve(values.output);
+  const facts = values.facts ? compilerFacts(read(values.facts)) : undefined;
   const emit = (input: string, path: string, substitutions: Values): void => {
     const destination = join(output, path);
     mkdirSync(dirname(destination), { recursive: true });
-    writeFileSync(destination, configure(read(join(source, input)), substitutions));
+    writeFileSync(
+      destination,
+      configure(
+        read(join(source, input)),
+        targetSubstitutions(substitutions, values.target, facts),
+      ),
+    );
   };
   if (values.kind === 'geos') {
     const version = Object.fromEntries(

@@ -119,6 +119,9 @@ def host_cc_profiles(sdk):
         cc_binary(name = "libtool", srcs = ["libtool.cc"], copts = ["-std=c++17"])
         for driver in ["wrapped_clang", "wrapped_clang_pp", "libtool"]:
             force_exec(name = "exec_" + driver, target = ":" + driver)
+        # Match apple_support's disabled-layering configuration: a label whose
+        # DefaultInfo contains no module map, rather than an absent label.
+        native.filegroup(name = "modulemap", srcs = [])
         for name, cpu, selected_sdk in [
             ("package", "darwin_arm64", "macosx"),
             ("ios", "ios_arm64", "iphoneos"),
@@ -130,6 +133,7 @@ def host_cc_profiles(sdk):
                 wrapped_clang = ":exec_wrapped_clang",
                 wrapped_clang_pp = ":exec_wrapped_clang_pp",
                 libtool = ":exec_libtool",
+                module_map = ":modulemap",
                 c_flags = ["-resource-dir", prefix + sdk["resourceDirectory"]],
                 cxx_builtin_include_directories = [prefix + sdk["resourceDirectory"] + "/include", prefix + "sdk_" + selected_sdk + "/usr/include", prefix + "sdk_" + selected_sdk + "/System/Library/Frameworks", prefix + "toolchain/include/c++/v1"],
                 extra_env = {"DEVELOPER_DIR": prefix.removesuffix("/"), "SDKROOT": prefix + "sdk_" + selected_sdk, "OLIPHAUNT_APPLE_TOOL_DIRECTORY": prefix + "tools"},

@@ -132,6 +132,11 @@ export type NativeOutputMember =
   | { path: string; type: 'directory'; mode: number }
   | { path: string; type: 'file'; mode: number; size: number; sha256: string };
 
+/** Copy one declared regular output through the same bounded reader as candidate staging. */
+export function copyNativeOutputFile(executionRoot: string, output: string, destination: string) {
+  return fileIdentity(nativeOutputPath(executionRoot, safeRelative(output)), destination);
+}
+
 function captureMembers(absolute: string, assertPath: () => void) {
   requireSafeDirectoryChain(path.dirname(absolute), { label: 'native output' });
   const outputs = [{ key: 'payload', relative: 'root', absolute }];
@@ -174,6 +179,19 @@ export function captureNativeInputMembers(executionRoot: string, input: string) 
     if (realpathSync(declared) !== absolute)
       throw new Error('native input path changed after capture');
   });
+}
+
+/** Copy an exact declared input with the bounded reader, retaining its captured link identity. */
+export function copyNativeInputFile(executionRoot: string, input: string, destination: string) {
+  if (!path.isAbsolute(executionRoot ?? ''))
+    throw new Error('native input requires the captured absolute executionRoot');
+  const root = realpathSync(executionRoot);
+  const declared = path.join(root, safeRelative(input));
+  const physical = realpathSync(declared);
+  const identity = fileIdentity(physical, destination);
+  if (realpathSync(declared) !== physical)
+    throw new Error('native input path changed while being copied');
+  return identity;
 }
 
 /**

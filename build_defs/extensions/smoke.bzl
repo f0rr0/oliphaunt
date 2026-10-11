@@ -3,7 +3,7 @@
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILITY", "EXTENSION_RECIPES", "PRODUCTS")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE", _desktop_compatible = "NATIVE_EXTENSION_COMPATIBLE")
-load(":extensions.bzl", "ExtensionMemberInfo", "extension_default_version")
+load(":extensions.bzl", "ExtensionMemberInfo", "extension_default_version", "extension_native_dependency_modules")
 load(":construction.bzl", "desktop_member_payloads")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
 
@@ -38,7 +38,7 @@ def _smoke_plan_impl(ctx):
             "lifecycle": descriptor["lifecycle"],
             "fixture": fixtures[name].path,
             "runtime_environment": EXTENSION_RECIPES.get(name, {}).get("runtime_environment", []),
-            "dependency_modules": EXTENSION_RECIPES.get(name, {}).get("artifacts", {}).get("native_dependency_modules", []),
+            "dependency_modules": ["lib/postgresql/" + basename for basename in extension_native_dependency_modules(EXTENSION_RECIPES.get(name, {}).get("artifacts", {}).get("native_dependency_modules", []), member.configuration)],
         })
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(spec, json.encode({"schema": "oliphaunt-native-extension-smoke-plan-v1", "members": members}))
@@ -108,7 +108,7 @@ def native_extension_sql_test(name, members, runtime = "//src/native/runtime:run
         target_compatible_with = target_compatible_with,
     )
 
-def desktop_members_sql_test(name, runtime = "//src/native/runtime:runtime_payload", consumer = "//build_defs/extensions:native_extension_smoke", host_version = "", host_product = "", runtime_prefix = ".", library_prefix = None, published_runtime = False, target_compatible_with = _desktop_compatible):
+def desktop_members_sql_test(name, runtime = "//src/native/runtime:runtime_payload", consumer = "//build_defs/extensions:native_extension_smoke", host_version = "", host_product = "", runtime_prefix = ".", library_prefix = None, published_runtime = False, include_postgis = False, target_compatible_with = _desktop_compatible):
     """Use the maintained SQL plan and consumer on each native desktop host."""
     if bool(host_version) != bool(host_product) or published_runtime != bool(host_version):
         fail("published desktop host tests require the canonical host product and version")
@@ -116,7 +116,7 @@ def desktop_members_sql_test(name, runtime = "//src/native/runtime:runtime_paylo
         if prefix != "." and any([not part or part in [".", ".."] or "\\" in part or ":" in part for part in prefix.split("/")]):
             fail("desktop host layout must use a safe carrier-relative directory")
     library_args = select({"//build_defs/native:windows_x64": ["--library-prefix=bin"], "//conditions:default": ["--library-prefix=lib"]}) if library_prefix == None else ["--library-prefix=" + library_prefix]
-    members = desktop_member_payloads()
+    members = desktop_member_payloads(include_postgis)
     plan = name + "_plan"
     extension_smoke_plan(name = plan, members = members, fixtures = ["//src/test-fixtures/extensions:sql"], host_version = host_version, host_product = host_product)
     plans = []
@@ -129,7 +129,8 @@ def desktop_members_sql_test(name, runtime = "//src/native/runtime:runtime_paylo
         label = name + "_archive_" + str(index)
         native.filegroup(name = label, srcs = [member], output_group = "archive")
         archives.append(":" + label)
-    inputs = [runtime, consumer] + plans + ["//build_defs/extensions:desktop_members_construction_inventory"] + archives
+    inventory = "//build_defs/extensions:desktop_all_members_construction_inventory" if include_postgis else "//build_defs/extensions:desktop_members_construction_inventory"
+    inputs = [runtime, consumer] + plans + [inventory] + archives
     bun_script_test(
         name = name,
         entry_point = "//build_defs/extensions:desktop_sql.test.mts",

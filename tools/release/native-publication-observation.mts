@@ -2,10 +2,15 @@
 
 import path from 'node:path';
 import { type CoverageAuthority, checkShippingCoverage } from '../bazel/shipping-coverage.mts';
-import { authenticateNativeBuildEvidence } from './authenticate-native-build-evidence.mts';
+import {
+  assureReviewedNativeBuildProducer,
+  authenticateNativeBuildEvidence,
+  reviewedNativeProducerUnknowns,
+} from './authenticate-native-build-evidence.mts';
 import { buildShippingInputView } from './bazel-shipping-inputs.mts';
 import {
   type NativeBuildEvidence,
+  type NativeBuildSource,
   type NativeRequiredTest,
   validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
@@ -40,12 +45,15 @@ export async function observeNativePublicationConstruction(
     repository,
     bazelVersion,
     builds: requestedBuilds,
+    reviewedSource,
   }: {
     envelope: Row;
     files: NativePublicationFile[];
     repository: string;
     bazelVersion: string;
     builds: NativePublicationBuild[];
+    /** Explicit controller opt-in; PR/legacy observations do not assert producer discipline. */
+    reviewedSource?: NativeBuildSource;
   },
   { authenticate = authenticateNativeBuildEvidence } = {},
 ) {
@@ -54,17 +62,39 @@ export async function observeNativePublicationConstruction(
   for (const build of requestedBuilds) {
     equal(build.expected.source, lock.source, 'native build/frozen source');
     equal(build.expected.github.repository, repository, 'native build repository');
-    const origin = await authenticate(build.evidenceRoot, build.expected);
-    const qualification = validateNativeBuildEvidence(origin.evidence, {
-      source: lock.source,
-      github: build.expected.github,
-      bazelVersion,
-      requiredTests: build.requiredTests,
-    });
+    const reviewed =
+      reviewedSource === undefined
+        ? undefined
+        : await assureReviewedNativeBuildProducer(
+            build.evidenceRoot,
+            {
+              expected: build.expected,
+              reviewedSource,
+              bazelVersion,
+              requiredTests: build.requiredTests,
+            },
+            { authenticate },
+          );
+    const origin = reviewed?.origin ?? (await authenticate(build.evidenceRoot, build.expected));
+    const qualification =
+      reviewed?.qualification ??
+      validateNativeBuildEvidence(origin.evidence, {
+        source: lock.source,
+        github: build.expected.github,
+        bazelVersion,
+        requiredTests: build.requiredTests,
+      });
     if (qualification.testQualification !== 'passed')
       throw new Error('completed native observations require successful configured tests');
     equal(origin.github, qualification.github, 'authenticated native build origin');
-    authenticated.push({ origin, qualification, evidence: origin.evidence as NativeBuildEvidence });
+    authenticated.push({
+      origin,
+      qualification: reviewed
+        ? { ...qualification, unverified: reviewedNativeProducerUnknowns(qualification.unverified) }
+        : qualification,
+      evidence: origin.evidence as NativeBuildEvidence,
+      ...(reviewed ? { producerAssurance: reviewed.assurance } : {}),
+    });
   }
   const cohorts = authenticated.flatMap(({ evidence }) => evidence.cohorts);
   const authority: CoverageAuthority = {

@@ -39,6 +39,7 @@ exports_files([
     "tools/packaging/release-directory-safety.mts",
     "tools/packaging/package-archive.mts",
     "tools/packaging/cargo-source-package.mts",
+    "tools/packaging/cargo-dependencies.mts",
     "tools/packaging/cargo-manifest.mts",
     "tools/packaging/frozen-cargo.mts",
     "tools/packaging/npm-trusted-publishing.mts",

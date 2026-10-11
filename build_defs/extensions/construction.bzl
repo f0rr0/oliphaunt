@@ -5,11 +5,12 @@ load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRY
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_default_version")
 load(":platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_CONFIGURATION")
 
-def _desktop_members():
-    # PostGIS still needs its platform-specific dependency/header recipe.
-    descriptors = {row["sql-name"]: row for row in EXTENSIONS.values() if row["sql-name"] != "postgis"}
-    if len(descriptors) != len(EXTENSIONS) - 1 or "postgis" not in EXTENSION_SOURCES:
-        fail("desktop construction requires unique canonical members and the explicit PostGIS exclusion")
+def _desktop_members(include_postgis = False):
+    # The independently selected PostGIS dependency recipe requires its own
+    # complete host qualification; the existing bounded cohort stays unchanged.
+    descriptors = {row["sql-name"]: row for row in EXTENSIONS.values() if include_postgis or row["sql-name"] != "postgis"}
+    if len(descriptors) != len(EXTENSIONS) - (0 if include_postgis else 1) or "postgis" not in EXTENSION_SOURCES:
+        fail("desktop construction requires unique canonical members and explicit PostGIS selection")
     result = []
     for name in sorted(descriptors.keys()):
         descriptor = descriptors[name]
@@ -26,7 +27,7 @@ def _desktop_members():
     return result
 
 def _construction_test_impl(ctx):
-    expected = _desktop_members()
+    expected = _desktop_members(ctx.attr.include_postgis)
     selected = {}
     for target in ctx.attr.members:
         member = target[ExtensionMemberInfo]
@@ -61,12 +62,15 @@ def _construction_test_impl(ctx):
         })
         archives.append(member.archive)
     inventory = ctx.actions.declare_file(ctx.label.name + ".inventory.json")
-    ctx.actions.write(inventory, json.encode({
+    plan = {
         "schema": "oliphaunt-desktop-extension-construction-v1",
         "configuration": ctx.attr.configuration,
-        "excluded": ["postgis"],
+        "excluded": [] if ctx.attr.include_postgis else ["postgis"],
         "members": rows,
-    }))
+    }
+    if ctx.attr.include_postgis:
+        plan["include_postgis"] = True
+    ctx.actions.write(inventory, json.encode(plan))
     sources = [ctx.file._runner] + ctx.files._helpers
     return bun_test_entrypoint(ctx, ctx.file._runner, [inventory] + archives, [inventory] + archives + sources, source_files = sources) + [OutputGroupInfo(inventory = depset([inventory]))]
 
@@ -76,6 +80,7 @@ _desktop_members_construction_test = rule(
     toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
         "members": attr.label_list(mandatory = True, providers = [ExtensionMemberInfo]),
+        "include_postgis": attr.bool(),
         "configuration": attr.string(mandatory = True, values = ["linux-x64-gnu", "linux-arm64-gnu", "macos-arm64", "windows-x64-msvc"]),
         "_runner": attr.label(default = "//build_defs/extensions:construction.mts", allow_single_file = True),
         "_helpers": attr.label_list(default = [
@@ -90,21 +95,22 @@ _desktop_members_construction_test = rule(
     }),
 )
 
-def desktop_members_construction_test(name, **kwargs):
+def desktop_members_construction_test(name, include_postgis = False, **kwargs):
     """One test fails if any supported member is absent or invalid."""
     _desktop_members_construction_test(
         name = name,
-        members = desktop_member_payloads(),
+        members = desktop_member_payloads(include_postgis),
+        include_postgis = include_postgis,
         configuration = NATIVE_EXTENSION_CONFIGURATION,
         args = bun_test_entrypoint_args(name),
         target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
         **kwargs
     )
 
-def desktop_member_payloads():
+def desktop_member_payloads(include_postgis = False):
     """Actual archive roots for the canonical desktop construction slice."""
-    return [row.label for row in _desktop_members()]
+    return [row.label for row in _desktop_members(include_postgis)]
 
-def desktop_member_inventory():
+def desktop_member_inventory(include_postgis = False):
     """Canonical identities shared by member and final-carrier qualification."""
-    return _desktop_members()
+    return _desktop_members(include_postgis)

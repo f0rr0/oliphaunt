@@ -3,10 +3,12 @@
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//build_defs/extensions:contrib.bzl", "contrib_generated_sources")
 load("//build_defs/extensions:extensions.bzl", "native_extension_modules")
-load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE")
-load("//build_defs/native:platform_config.bzl", "NATIVE_RELEASE_LINKOPTS")
-load(":libraries.bzl", "postgis_configuration", "postgis_source_headers")
+load("//build_defs/extensions:external.bzl", "windows_extension_sources")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load("//build_defs/native:platform_config.bzl", "NATIVE_RELEASE_LINKOPTS", "NATIVE_WINDOWS_COMPATIBLE")
+load(":libraries.bzl", "POSTGIS_MATH_LINKOPTS", "POSTGIS_NATIVE_COPTS", "POSTGIS_NATIVE_CXX_COPTS", "postgis_configuration", "postgis_source_headers")
 load(":generators.bzl", "postgis_flex")
+load(":windows_sources_test.bzl", "postgis_windows_sources_test")
 
 # liblwgeom/Makefile.in SA_OBJS and NM_OBJS, with optional SFCGAL disabled.
 _LWGEOM = "stringbuffer optionlist stringlist bytebuffer measures measures3d ptarray lookup3 lwgeom_api lwgeom lwpoint lwline lwpoly lwtriangle lwmpoint lwmline lwmpoly lwboundingcircle lwcollection lwcircstring lwcompound lwcurvepoly lwmcurve lwmsurface lwpsurface lwtin lwout_wkb lwin_geojson lwin_wkb lwin_twkb lwiterator lwgeom_median lwout_wkt lwout_twkb lwin_wkt lwin_encoded_polyline lwutil lwhomogenize intervaltree lwalgorithm lwstroke lwlinearreferencing lwprint gbox gserialized gserialized1 gserialized2 lwgeodetic lwgeodetic_measures lwgeodetic_tree lwrandom lwtree lwout_gml lwout_kml lwout_geojson lwout_svg lwout_x3d lwout_encoded_polyline lwgeom_debug lwgeom_geos lwgeom_geos_clean lwgeom_geos_cluster lwgeom_geos_node lwgeom_geos_split topo/lwgeom_topo topo/lwgeom_topo_polygonizer topo/lwt_edgeend topo/lwt_edgeend_star topo/lwt_node_edges lwgeom_transform lwgeom_wrapx lwunionfind effectivearea lwchaikins lwmval lwkmeans varint lwgeom_remove_irrelevant_points_for_view lwspheroid".split(" ")
@@ -21,6 +23,22 @@ POSTGIS_PG_SOURCES = ["postgis/" + source + ".c" for source in _PG] + ["libpgcom
 
 def postgis_standalone(name):
     prefix = "@postgis//:"
+    flatgeobuf_sources = ["deps/flatgeobuf/" + source + ".cpp" for source in ["flatgeobuf_c", "geometrywriter", "geometryreader", "packedrtree"]]
+    windows_srcs = [prefix + source for source in POSTGIS_LWGEOM_SOURCES + POSTGIS_PG_SOURCES + flatgeobuf_sources]
+    windows_hdrs = [prefix + "postgis_headers"]
+    windows_companions = {"//src/extensions/external/postgis:tools/windows/postgis-compat.h": "oliphaunt_postgis_windows_compat.h", "//src/extensions/external/postgis:tools/windows/flatgeobuf-compat.h": "oliphaunt_flatgeobuf_windows_compat.h"}
+    windows_extension_sources(
+        name = name + "_windows_sources", sql_name = "postgis",
+        srcs = windows_srcs, hdrs = windows_hdrs, anchor = prefix + "Version.config", anchor_name = "Version.config",
+        companions = windows_companions,
+        include_dirs = ["liblwgeom", "libpgcommon", "postgis", "deps", "deps/flatgeobuf", "deps/flatgeobuf/include", ""],
+        source_groups = ["liblwgeom", "postgis", "libpgcommon", "deps/flatgeobuf"], target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
+    )
+    postgis_windows_sources_test(name = name + "_windows_sources_test", prepared = ":" + name + "_windows_sources",
+                                srcs = windows_srcs, hdrs = windows_hdrs, anchor = prefix + "Version.config", anchor_name = "Version.config", companions = windows_companions)
+    for group in ["liblwgeom", "postgis", "libpgcommon", "flatgeobuf"]:
+        native.filegroup(name = name + "_windows_" + group, srcs = [":" + name + "_windows_sources"], output_group = group + "_sources")
+    native.filegroup(name = name + "_windows_pg_sources", srcs = [":" + name + "_windows_postgis", ":" + name + "_windows_libpgcommon"])
     postgis_configuration(name = name + "_config")
     postgis_source_headers(name = name + "_headers", root = prefix + "Version.config",
                            headers = [prefix + "postgis_headers"],
@@ -29,30 +47,37 @@ def postgis_standalone(name):
                                scanner = prefix + "liblwgeom/lwin_wkt_lex.l",
                                grammar_options = ["-d", "-p", "wkt_yy"], scanner_options = ["-i"], scanner_rule = postgis_flex)
     cc_library(name = name + "_ryu", srcs = [prefix + "deps/ryu/d2s.c"],
-               deps = [":" + name + "_headers"], defines = ["RYU_NO_TRAILING_ZEROS"],
+               deps = [":" + name + "_headers"], defines = ["RYU_NO_TRAILING_ZEROS"], copts = POSTGIS_NATIVE_COPTS,
                target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
     cc_library(name = name + "_lwgeom",
-               srcs = [prefix + source for source in POSTGIS_LWGEOM_SOURCES] + [":" + name + "_wkt"],
-               deps = [":" + name + "_config", ":" + name + "_headers", ":" + name + "_wkt", ":" + name + "_ryu",
+               srcs = select({"//build_defs/native:windows_x64": [":" + name + "_windows_liblwgeom"], "//conditions:default": [prefix + source for source in POSTGIS_LWGEOM_SOURCES]}) + [":" + name + "_wkt"],
+               deps = [":" + name + "_config"] + select({"//build_defs/native:windows_x64": [":" + name + "_windows_sources"], "//conditions:default": [":" + name + "_headers"]}) + [":" + name + "_wkt", ":" + name + "_ryu",
                        "//build_defs/extensions/postgis:geos", "//build_defs/extensions/postgis:proj", "//build_defs/extensions/postgis:json_c"],
-               linkopts = ["-lm"], target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+               copts = POSTGIS_NATIVE_COPTS + select({"//build_defs/native:windows_x64": ["/FI$(location //src/extensions/external/postgis:tools/windows/postgis-compat.h)"], "//conditions:default": []}),
+               local_defines = select({"//build_defs/native:windows_x64": ["YY_NO_UNISTD_H"], "//conditions:default": []}),
+               additional_compiler_inputs = select({"//build_defs/native:windows_x64": ["//src/extensions/external/postgis:tools/windows/postgis-compat.h"], "//conditions:default": []}),
+               linkopts = POSTGIS_MATH_LINKOPTS, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
     cc_library(name = name + "_flatgeobuf",
-               srcs = [prefix + "deps/flatgeobuf/" + source + ".cpp" for source in ["flatgeobuf_c", "geometrywriter", "geometryreader", "packedrtree"]],
-               deps = [":" + name + "_config", ":" + name + "_headers", "//build_defs/extensions/postgis:proj"],
-               copts = ["-std=c++17"], defines = ["flatbuffers=postgis_flatbuffers"],
+               srcs = select({"//build_defs/native:windows_x64": [":" + name + "_windows_flatgeobuf"], "//conditions:default": [prefix + source for source in flatgeobuf_sources]}),
+               deps = [":" + name + "_config"] + select({"//build_defs/native:windows_x64": [":" + name + "_windows_sources"], "//conditions:default": [":" + name + "_headers"]}) + ["//build_defs/extensions/postgis:proj"],
+               copts = POSTGIS_NATIVE_CXX_COPTS + select({"//build_defs/native:windows_x64": ["/FI$(location //src/extensions/external/postgis:tools/windows/flatgeobuf-compat.h)"], "//conditions:default": []}),
+               additional_compiler_inputs = select({"//build_defs/native:windows_x64": ["//src/extensions/external/postgis:tools/windows/flatgeobuf-compat.h"], "//conditions:default": []}),
+               defines = ["flatbuffers=postgis_flatbuffers"],
                target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
 
 def postgis_dependency_module(name):
     # A maintained direct shared-library rule whole-archives the six real roots;
     # module consumers use dynamic_deps to prevent a second static dependency copy.
-    cc_shared_library(name = name, shared_lib_name = "liboliphaunt_postgis_deps.so",
+    cc_shared_library(name = name, shared_lib_name = select({"//build_defs/native:windows_x64": "liboliphaunt_postgis_deps.dll", "//build_defs/native:macos_arm64": "liboliphaunt_postgis_deps.dylib", "//conditions:default": "liboliphaunt_postgis_deps.so"}),
                       deps = ["//build_defs/extensions/postgis:" + library for library in ["geos", "proj", "json_c", "libxml2", "iconv", "sqlite"]],
-                      user_link_flags = ["-Wl,-z,defs"] + NATIVE_RELEASE_LINKOPTS, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+                      features = select({"//build_defs/native:windows_x64": ["windows_export_all_symbols"], "//conditions:default": []}),
+                      user_link_flags = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": ["-Wl,-install_name,@rpath/liboliphaunt_postgis_deps.dylib"], "//conditions:default": ["-Wl,-z,defs"]}) + NATIVE_RELEASE_LINKOPTS, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
 
 def native_postgis_modules(name, standalone, dependency_module):
     prefix = "@postgis//:"
     native_extension_modules(name = name,
-                             srcs = [prefix + source for source in POSTGIS_PG_SOURCES],
-                             deps = [standalone + "_config", standalone + "_headers", standalone + "_lwgeom", standalone + "_flatgeobuf",
-                                     "//build_defs/extensions/postgis:libxml2"],
-                             dynamic_deps = [dependency_module], linkopts = ["-Wl,-rpath,$$ORIGIN"], linux_only = True)
+                             srcs = select({"//build_defs/native:windows_x64": [standalone + "_windows_pg_sources"], "//conditions:default": [prefix + source for source in POSTGIS_PG_SOURCES]}),
+                             deps = [standalone + "_config"] + select({"//build_defs/native:windows_x64": [standalone + "_windows_sources"], "//conditions:default": [standalone + "_headers"]}) + [standalone + "_lwgeom", standalone + "_flatgeobuf", "//build_defs/extensions/postgis:libxml2"],
+                             copts = select({"//build_defs/native:windows_x64": ["/D_USE_MATH_DEFINES", "/FI$(location //src/extensions/external/postgis:tools/windows/postgis-compat.h)"], "//conditions:default": []}),
+                             hdrs = select({"//build_defs/native:windows_x64": ["//src/extensions/external/postgis:tools/windows/postgis-compat.h"], "//conditions:default": []}),
+                             dynamic_deps = [dependency_module], linkopts = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": ["-Wl,-rpath,@loader_path"], "//conditions:default": ["-Wl,-rpath,$$ORIGIN"]}))

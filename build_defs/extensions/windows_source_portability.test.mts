@@ -150,3 +150,36 @@ test('only textsearch declares the exact legacy compatibility companions', () =>
   modified['src/unistd.h'] = 'changed';
   assert.notEqual(windowsExtensionHeaders('pg_textsearch')['src/unistd.h'], 'changed');
 });
+
+test('PostGIS preserves the existing DLL export and POINT4D source adaptations', () => {
+  const declaration =
+    '/* π */\r\n  Datum one(PG_FUNCTION_ARGS);\r\nextern PGDLLEXPORT Datum done(PG_FUNCTION_ARGS);\r\nextern Datum unrelated(void);\r\n';
+  for (const directory of ['postgis', 'libpgcommon', 'liblwgeom']) {
+    assert.equal(
+      windowsExtensionSource('postgis', `${directory}/unit.h`, declaration),
+      '/* π */\r\nextern PGDLLEXPORT Datum one(PG_FUNCTION_ARGS);\nextern PGDLLEXPORT Datum done(PG_FUNCTION_ARGS);\r\nextern Datum unrelated(void);\r\n',
+    );
+  }
+  const legacy = '\tDatum funcname(PG_FUNCTION_ARGS); \\\r\n';
+  assert.equal(
+    windowsExtensionSource('postgis', 'postgis/postgis_legacy.c', legacy),
+    '\textern PGDLLEXPORT Datum funcname(PG_FUNCTION_ARGS); \\\n',
+  );
+  const geometry = 'pt = (POINT4D) { x, y, z, m };\npt = (POINT4D) { xv, yv, zv, mv };\n';
+  assert.equal(
+    windowsExtensionSource('postgis', 'deps/flatgeobuf/geometryreader.cpp', geometry),
+    'pt.x = x;\npt.y = y;\npt.z = z;\npt.m = m;\npt.x = xv;\npt.y = yv;\npt.z = zv;\npt.m = mv;\n',
+  );
+  assert.equal(windowsExtensionSource('postgis', 'deps/unrelated.h', declaration), declaration);
+  for (const invalid of ['', geometry + geometry])
+    assert.throws(
+      () => windowsExtensionSource('postgis', 'deps/flatgeobuf/geometryreader.cpp', invalid),
+      /anchor/u,
+    );
+  for (const invalid of ['', legacy + legacy])
+    assert.throws(
+      () => windowsExtensionSource('postgis', 'postgis/postgis_legacy.c', invalid),
+      /anchor/u,
+    );
+  assert.deepEqual(windowsExtensionHeaders('postgis'), {});
+});

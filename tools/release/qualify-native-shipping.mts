@@ -274,7 +274,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
   } catch (error) {
     // The collector completed, so this file belongs to this invocation. Keep
     // raw diagnostics, but remove a packet captured across a source change.
-    rmSync(evidence);
+    rmSync(path.dirname(evidence), { recursive: true, force: true });
     throw error;
   }
   return evidence;

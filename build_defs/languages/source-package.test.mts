@@ -115,12 +115,16 @@ test('admits exactly Cargo-listed declared bytes and rejects undeclared source o
     });
   }
   expect(() => selectedSourceEntries('Cargo.toml\n../ambient.rs\n', entries)).toThrow('undeclared');
-  expect(() => selectedSourceEntries('Cargo.toml\n..\\ambient.rs\n', entries)).toThrow('undeclared');
-  expect(() => selectedSourceEntries('Cargo.toml\nC:\\ambient.rs\n', entries)).toThrow('undeclared');
+  expect(() => selectedSourceEntries('Cargo.toml\n..\\ambient.rs\n', entries)).toThrow(
+    'undeclared',
+  );
+  expect(() => selectedSourceEntries('Cargo.toml\nC:\\ambient.rs\n', entries)).toThrow(
+    'undeclared',
+  );
   expect(() => selectedSourceEntries('Cargo.toml\nCargo.toml\n', entries)).toThrow('repeated');
-  expect(() =>
-    selectedSourceEntries('Cargo.toml\nsrc/lib.rs\nsrc\\lib.rs\n', entries),
-  ).toThrow('repeated');
+  expect(() => selectedSourceEntries('Cargo.toml\nsrc/lib.rs\nsrc\\lib.rs\n', entries)).toThrow(
+    'repeated',
+  );
   expect(() => selectedSourceEntries('src/lib.rs\n', entries)).toThrow('omitted');
 });
 
@@ -131,11 +135,18 @@ test('native source envelopes are deterministic, retain manifests and reject und
     const root = join(directory, 'workspace.toml');
     const readme = join(directory, 'README.md');
     const license = join(directory, 'LICENSE');
+    const notices = join(directory, 'THIRD_PARTY_NOTICES.md');
     await writeFile(manifest, original);
     await writeFile(root, workspace);
     await writeFile(readme, 'SDK');
     await writeFile(license, 'MIT');
-    const entries = { 'Cargo.toml': manifest, 'README.md': readme, LICENSE: license };
+    await writeFile(notices, 'source notices');
+    const entries = {
+      'Cargo.toml': manifest,
+      'README.md': readme,
+      LICENSE: license,
+      'THIRD_PARTY_NOTICES.md': notices,
+    };
     const first = await sourceEnvelope(manifest, root, entries, metadata);
     expect(await sourceEnvelope(manifest, root, entries, metadata)).toEqual(first);
     const files = await new Bun.Archive(first).files();
@@ -152,6 +163,9 @@ test('native source envelopes are deterministic, retain manifests and reject und
     await expect(
       sourceEnvelope(manifest, root, { 'Cargo.toml': manifest }, metadata),
     ).rejects.toThrow('Missing public');
+    await expect(sourceEnvelope(manifest, root, { LICENSE: license }, metadata)).rejects.toThrow(
+      'Cargo.toml',
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

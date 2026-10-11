@@ -11,7 +11,7 @@ load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_metadata", "s
 load("//build_defs/languages/ts:defs.bzl", "npm_archive_package")
 load("//build_defs/query:defs.bzl", "query_envelope")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
-load(":native-package.bzl", "react_native_bundle", "react_native_consumer_test", "react_native_manifest", "react_native_templates")
+load(":native-package.bzl", "react_native_bundle", "react_native_consumer_test", "react_native_manifest", "react_native_npm", "react_native_package_test", "react_native_templates")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -65,8 +65,7 @@ filegroup(name = "publish_manifest", srcs = [":publish_files"], output_group = "
 filegroup(name = "license", srcs = [":publish_files"], output_group = "license")
 filegroup(name = "notices", srcs = [":publish_files"], output_group = "notices")
 
-# This source envelope is a compiler/consumer input. Public npm admission also
-# requires the exact iOS carrier metadata from qualified canonical macOS outputs.
+# This source envelope remains an independent compiler/consumer input.
 query_envelope(
     name = "source_npm", format = "npm", manifest = ":publish_manifest", out = "oliphaunt-react-native-source.tgz",
     entries = {file: file for file in SOURCE_FILES + SDK_SRCS} | {
@@ -81,17 +80,39 @@ query_envelope(
 )
 
 shipping_package(name = "construction", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":source_npm"], ecosystem = "internal", package_name = SDK["name"], configuration = "portable", role = "construction")
-shipping_export(name = "shipping_export", packages = [":construction"])
+
+# Published RN0.3.2 intentionally consumes Swift0.8.2/native0.3.3. The held
+# source carrier supplies its historical legal metadata and exact native bytes.
+react_native_npm(name = "npm", out = "oliphaunt-react-native-" + SDK["version"] + ".tgz", source_archive = ":source_npm", manifest = "package.json")
+react_native_package_test(name = "package_test", archive = ":npm", source_archive = ":source_npm", manifest = "package.json", size = "small")
+shipping_package(name = "package", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":npm"], ecosystem = "npm", package_name = SDK["name"], configuration = "portable", role = "source-sdk")
+shipping_export(name = "shipping_export", packages = [":construction", ":package"])
 
 CONSUMER_COMPILER_IDS = [key for root in COMPILER_INPUTS[SDK["name"]].values() for key in COMPILER_CLOSURES[root]]
 CONSUMER_COMPILER_PACKAGES = {key: row for key, row in COMPILER_PACKAGES.items() if key in CONSUMER_COMPILER_IDS}
 
+CONSUMER_PACKAGES = {key: json.encode({"dependencies": row["dependencies"]}) for key, row in PACKAGES.items()} | {key: json.encode({"dependencies": row["dependencies"]}) for key, row in CONSUMER_COMPILER_PACKAGES.items()}
+CONSUMER_ARCHIVES = {"@javascript_packages//:" + key: key for key in PACKAGES} | {"@javascript_compiler_packages//:" + key: key for key in CONSUMER_COMPILER_PACKAGES if key not in PACKAGES}
+CONSUMER_ROOTS = SDK["types"] | COMPILER_INPUTS[SDK["name"]]
+
 react_native_consumer_test(
     name = "source_consumer_test", archive = ":source_npm", query = "//src/query/ts:npm", manifest = "package.json",
     package_name = SDK["name"], version = SDK["version"],
-    packages = {key: json.encode({"dependencies": row["dependencies"]}) for key, row in PACKAGES.items()} | {key: json.encode({"dependencies": row["dependencies"]}) for key, row in CONSUMER_COMPILER_PACKAGES.items()},
-    inputs = {"@javascript_packages//:" + key: key for key in PACKAGES} | {"@javascript_compiler_packages//:" + key: key for key in CONSUMER_COMPILER_PACKAGES if key not in PACKAGES},
-    roots = SDK["types"] | COMPILER_INPUTS[SDK["name"]], size = "medium",
+    packages = CONSUMER_PACKAGES, inputs = CONSUMER_ARCHIVES, roots = CONSUMER_ROOTS, size = "medium",
+)
+react_native_consumer_test(
+    name = "installed_consumer_test", archive = ":npm", final_package = True,
+    runtime_resources = "@swift_frozen_native//:runtime_resources_archive", size = "medium",
+    query = "//src/query/ts:npm", manifest = "package.json", source_archive = ":source_npm",
+    package_name = SDK["name"], version = SDK["version"],
+    packages = CONSUMER_PACKAGES, inputs = CONSUMER_ARCHIVES, roots = CONSUMER_ROOTS,
+    carrier = "@swift_frozen_native//:carrier", carrier_source = "//build_defs/release:swift-0.8.2-source.json",
+    native_version = "//src/native/sdks/swift:LIBOLIPHAUNT_VERSION",
+    native_releases = "//build_defs/release:native-0.3.3-releases.json",
+    native_completion = "//build_defs/release:native-0.3.3-completed-publication.json",
+    swift_source = "//build_defs/release:swift-0.8.2-publication-source.json",
+    xcframework = "@swift_frozen_native//:xcframework_archive",
+    ios_static_dependencies = "//src/extensions/generated/sdk:ios-static-dependencies.json",
 )
 
 cc_test(

@@ -9,9 +9,15 @@ exports_files(["configure.ac", "src/Makefile.am", "COPYING", "COPYING.LESSER"])
 cc_binary(
     name = "gpp",
     srcs = ["src/gpp.c"],
-    # configure.ac probes used in gpp.c, qualified for Linux execution hosts.
-    defines = ["HAVE_FNMATCH_H=1", "HAVE_STRDUP=1", "HAVE_STRCASECMP=1", "'PACKAGE_STRING=\\\"GPP 2.28\\\"'"],
-    target_compatible_with = ["@platforms//os:linux"],
+    # gpp.c's upstream WIN_NT branch owns CRT aliases and its fnmatch fallback.
+    defines = select({
+        "@platforms//os:windows": ["WIN_NT", "PACKAGE_STRING=\\\"GPP 2.28\\\""],
+        "//conditions:default": ["HAVE_FNMATCH_H=1", "HAVE_STRDUP=1", "HAVE_STRCASECMP=1", "'PACKAGE_STRING=\\\"GPP 2.28\\\"'"],
+    }),
+    target_compatible_with = select({
+        "@platforms//os:linux": [], "@platforms//os:macos": [], "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
 )
 """
 

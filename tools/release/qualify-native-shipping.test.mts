@@ -265,6 +265,15 @@ for (const selection of ['explicit', 'export'])
       expect(evidence.cohorts[0].producerCapture.aqueryFile).toBe(
         path.join(f.outputDirectory, 'aquery.json'),
       );
+      const transferred = path.join(
+        f.outputDirectory,
+        'evidence/files/0',
+        evidence.cohorts[0].outputs[0].path,
+      );
+      expect(readFileSync(transferred)).toEqual(Buffer.from('final archive'));
+      expect(existsSync(path.join(f.outputDirectory, 'evidence/files/0/src/input.mts'))).toBe(
+        false,
+      );
     } finally {
       f.cleanup();
     }
@@ -280,6 +289,7 @@ test('complete-family validation rejects bytes changed after successful evidence
     expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
       false,
     );
+    expect(existsSync(path.join(f.outputDirectory, 'evidence/files'))).toBe(false);
     expect(f.calls().map((call) => call[0])).toEqual(['test', 'info']);
   } finally {
     f.cleanup();

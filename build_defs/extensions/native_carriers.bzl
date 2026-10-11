@@ -116,8 +116,8 @@ _native_extension_carriers = rule(implementation = _carriers_impl, toolchains = 
 
 def native_external_extension_carriers(sql_name, member = ":native_payload"):
     # PostGIS's foreign dependency recipes are not inherited from generic desktop modules.
-    targets = _LINUX_TARGETS if sql_name == "postgis" else _TARGETS
-    compatible = NATIVE_EXTENSION_LINUX_COMPATIBLE if sql_name == "postgis" else NATIVE_EXTENSION_COMPATIBLE
+    targets = _TARGETS
+    compatible = NATIVE_EXTENSION_COMPATIBLE
     _native_extension_carriers(name = "native_carriers", member = member, legal = native_extension_carrier_legal(sql_name), target_compatible_with = compatible)
     metadata = {condition: native_external_carrier_metadata(sql_name, target) for condition, target in targets.items()}
     packages = []

@@ -16,6 +16,7 @@ RUNTIME_CARGO_HELPERS = [
     "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
     "//src/wasix/runtime:tools/wasix-runtime-npm-contract.mts",
     "//src/extensions/tools:extension-upstream-licenses.mts",
+    "//src/extensions/contracts:wasix-extension-install.mts",
     "//:tools/packaging/wasix-cargo-payload.mts",
     "//:tools/packaging/cargo-source-package.mts",
     "//:tools/packaging/cargo-manifest.mts",

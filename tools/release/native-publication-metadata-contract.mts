@@ -1,5 +1,6 @@
 /** Canonical controller metadata; it is never a shipping payload or admission. */
 import { deepStrictEqual } from 'node:assert';
+import { validateReviewedNativeProducerAssurance } from './authenticate-native-build-evidence.mts';
 
 export const NATIVE_PUBLICATION_METADATA_SCHEMA = 'oliphaunt-native-publication-metadata-v1';
 export const NATIVE_PUBLICATION_METADATA_KIND = 'native-baseline';
@@ -109,6 +110,7 @@ export function validateNativePublicationMetadata(
         'unverified',
         'testQualification',
         'requiredTests',
+        ...(Object.hasOwn(build, 'producerAssurance') ? ['producerAssurance'] : []),
       ],
       'native metadata build',
     );
@@ -127,6 +129,14 @@ export function validateNativePublicationMetadata(
       !build.unverified.length
     )
       throw new Error('native metadata must preserve construction qualification limitations');
+    if (Object.hasOwn(build, 'producerAssurance'))
+      validateReviewedNativeProducerAssurance(build.producerAssurance, {
+        source: value.source,
+        github: build.github,
+        artifact: build.artifact,
+        evidenceDigest: build.evidenceDigest,
+        requiredTests: build.requiredTests,
+      });
   }
   for (const row of [...value.carriers, ...value.productArtifacts]) {
     if (

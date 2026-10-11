@@ -101,7 +101,7 @@ jobs:
               # job on one short base, including maintained Rust build tools.
               startup=(--output_base="$RUNNER_TEMP/b")
             fi
-            bash tools/dev/bazel.sh "${startup[@]}" test //:portable_tests "${host_tests[@]}" \
+            bash tools/dev/bazel.sh "${startup[@]}" test -c opt //:portable_tests "${host_tests[@]}" \
               --platforms="$profile" --host_platform="$profile" --jobs=2
             exit
           fi
@@ -109,9 +109,27 @@ jobs:
           diagnostic_root="$RUNNER_TEMP/native-bazel-diagnostics"
           qualifier_output_base="$RUNNER_TEMP/native-bazel"
           mkdir -p "$diagnostic_root"
+          capture_jvm_snapshot() {
+            local destination="$1" java_pid java_command
+            local java_pid_file="$qualifier_output_base/server/server.pid.txt"
+            if [[ -r "$java_pid_file" ]]; then
+              java_pid="$(cat "$java_pid_file")"
+              if [[ "$java_pid" =~ ^[0-9]+$ ]]; then
+                java_command="$(ps -p "$java_pid" -o comm= || true)"
+                case "$java_command" in
+                  java|*/java|bazel\(*\))
+                    if kill -QUIT "$java_pid" 2>/dev/null; then
+                      sleep 2
+                      cp "$diagnostic_root/server-jvm.out" "$diagnostic_root/$destination" || true
+                    fi
+                    ;;
+                esac
+              fi
+            fi
+          }
           bash tools/dev/bazel.sh --output_base="$qualifier_output_base" --host_jvm_args=-Xmx3g \
             --server_jvm_out="$diagnostic_root/server-jvm.out" test \
-            //:portable_tests "${host_tests[@]}" \
+            -c opt //:portable_tests "${host_tests[@]}" \
             --config=macos-sandbox --platforms="$profile" --host_platform="$profile" --jobs=2 \
             --profile="$diagnostic_root/qualification.json.gz" \
             --starlark_cpu_profile="$diagnostic_root/starlark.pprof" &
@@ -125,20 +143,7 @@ jobs:
             wait "$diagnostic_delay_pid"
             if kill -0 "$qualifier_pid" 2>/dev/null; then
               ps -axo pid,ppid,state,etime,%cpu,%mem,comm > "$diagnostic_root/processes.txt"
-              java_pid_file="$qualifier_output_base/server/server.pid.txt"
-              if [[ -r "$java_pid_file" ]]; then
-                java_pid="$(cat "$java_pid_file")"
-                if [[ "$java_pid" =~ ^[0-9]+$ ]]; then
-                  java_command="$(ps -p "$java_pid" -o comm= || true)"
-                  case "$java_command" in
-                    java|*/java|bazel\(*\))
-                      kill -QUIT "$java_pid" 2>/dev/null || true
-                      sleep 2
-                      cp "$diagnostic_root/server-jvm.out" "$diagnostic_root/jvm-8min.out" || true
-                      ;;
-                  esac
-                fi
-              fi
+              capture_jvm_snapshot jvm-8min.out
             fi
           ) &
           diagnostic_pid=$!
@@ -148,9 +153,7 @@ jobs:
           kill "$diagnostic_pid" 2>/dev/null || true
           wait "$diagnostic_pid" || true
           trap - EXIT
-          if [[ -f "$diagnostic_root/server-jvm.out" ]]; then
-            cp "$diagnostic_root/server-jvm.out" "$diagnostic_root/jvm-final.out" || true
-          fi
+          capture_jvm_snapshot jvm-final.out
           exit "$qualifier_status"
 
       - name: Qualify installed desktop extension family
@@ -171,16 +174,16 @@ jobs:
               configuration=()
               ;;
           esac
-          bash tools/dev/bazel.sh "${startup[@]}" test \
-            //build_defs/extensions:desktop_members_frozen_sql_test \
-            //build_defs/extensions:desktop_final_contract_test \
+          bash tools/dev/bazel.sh "${startup[@]}" test -c opt \
+            //build_defs/extensions:desktop_all_members_frozen_sql_test \
+            //build_defs/extensions:desktop_all_final_contract_test \
             "${configuration[@]}" --platforms="$profile" --host_platform="$profile" --jobs=2
 
       - name: Qualify declared macOS Swift SDK
         if: matrix.platform == 'macos-arm64'
         run: >-
           bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel" --host_jvm_args=-Xmx3g
-          --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" test //build_defs/host:host_swift_smoke
+          --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" test -c opt //build_defs/host:host_swift_smoke
           //src/native/sdks/swift:installed_consumer_test
           //src/native/sdks/swift:native_candidate_consumer_test
           //src/database-resources:swift_seed_archive
@@ -269,10 +272,14 @@ jobs:
         run: >-
           bash tools/dev/bazel.sh test -c opt
           //build_defs/languages/installed:consumer_test
+          //build_defs/languages:sdk_source_package_test
+          //build_defs/languages:source_contract_test
           //build_defs/extensions:native_frozen_extension_sql_test
           //src/native/rust-bindings:unit_test
           //build_defs/native/carriers:package_test
           //build_defs/extensions:native_carriers_test
+          //build_defs/extensions:wasix_sql_carriers_test
+          //src/extensions/external/pgtap:wasix_carriers_test
           //build_defs/extensions:contrib_carriers_test
           //src/extensions/contrib:native_carriers_test
           //build_defs/native/apple:framework_contract_test
@@ -286,7 +293,8 @@ jobs:
           //build_defs/resources:resource_contract_test
           //src/database-resources:android_datum64_standard_carriers
           //src/database-resources:android_datum64_icu_carriers
-          //src/native/sdks/react-native:source_consumer_test
+          //src/native/sdks/react-native:package_test
+          //src/native/sdks/react-native:installed_consumer_test
           //src/native/sdks/react-native:lifecycle_test
           //src/native/sdks/kotlin:android_maven
           //src/native/sdks/kotlin:installed_public_api_consumer
@@ -338,7 +346,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: native-build-evidence-${{ matrix.platform }}
-          path: ${{ runner.temp }}/native-build-capture/evidence/native-build-evidence.json
+          path: ${{ runner.temp }}/native-build-capture/evidence/
           if-no-files-found: error
           retention-days: 7
 
@@ -418,7 +426,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: native-build-evidence-wasix-tools
-          path: ${{ runner.temp }}/wasix-tools-build-capture/evidence/native-build-evidence.json
+          path: ${{ runner.temp }}/wasix-tools-build-capture/evidence/
           if-no-files-found: error
           retention-days: 7
 

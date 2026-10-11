@@ -15,7 +15,7 @@ const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 export const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
 const configuration = 'c'.repeat(64);
 
-export async function fixture(run) {
+export async function fixture(run, { producerCapture = false } = {}) {
   // These products/transport responses are synthetic. Real packed files and
   // the actual collector, BEP validator and registry verifier exercise the seam.
   mkdirSync(path.join(ROOT, 'target'), { recursive: true });
@@ -45,14 +45,20 @@ export async function fixture(run) {
     }
     return index;
   };
-  const action = (label: string, outputs: number[], inputs: number[], cfg = 1) => {
+  const action = (
+    label: string,
+    outputs: number[],
+    inputs: number[],
+    cfg = 1,
+    mnemonic = 'FixturePackage',
+  ) => {
     const id = targets.length + 1;
     targets.push({ id, label });
     depSetOfFiles.push({ id, directArtifactIds: inputs });
     actions.push({
       targetId: id,
       configurationId: cfg,
-      mnemonic: 'FixturePackage',
+      mnemonic,
       actionKey: `declaration-${id}`,
       inputDepSetIds: [id],
       outputIds: outputs,
@@ -175,6 +181,17 @@ export async function fixture(run) {
       size: githubArtifact.size,
     });
   }
+  const manifests = new Map();
+  const aqueryFile = path.join(directory, 'aquery.json');
+  if (producerCapture) {
+    for (const [index, root] of roots.entries()) {
+      const file = `bazel-out/k8-opt/bin/fixture/shipping-${index}.json`;
+      const contents = `${JSON.stringify(root)}\n`;
+      const id = addFile(file, contents);
+      action(root.label, [id], [], 1, 'FileWrite');
+      manifests.set(root.label, { file, contents });
+    }
+  }
   const github = {
     repository: 'f0rr0/oliphaunt',
     workflow: 'Native Bazel qualification',
@@ -193,6 +210,30 @@ export async function fixture(run) {
     { id: { configuration: { id: configuration } }, configuration: { mnemonic: 'k8-opt' } },
     { id: { buildMetadata: {} }, buildMetadata: { metadata: nativeBuildMetadata(source, github) } },
   ];
+  if (producerCapture)
+    events.push({
+      id: { structuredCommandLine: { commandLineLabel: 'canonical' } },
+      structuredCommandLine: {
+        commandLineLabel: 'canonical',
+        sections: [
+          {
+            optionList: {
+              option: [
+                {
+                  optionName: 'experimental_aquery_dump_after_build_format',
+                  optionValue: 'jsonproto',
+                },
+                {
+                  optionName: 'experimental_aquery_dump_after_build_output_file',
+                  optionValue: aqueryFile,
+                },
+                { optionName: 'output_groups', optionValue: '+shipping_manifest' },
+              ],
+            },
+          },
+        ],
+      },
+    });
   for (const [index, root] of roots.entries()) {
     const output = root.package.outputs[0].path;
     const members = captureNativeOutputMembers(executionRoot, output).members;
@@ -208,11 +249,30 @@ export async function fixture(run) {
           })),
       },
     });
+    const manifest = manifests.get(root.label);
+    if (manifest)
+      events.push({
+        id: { namedSet: { id: `manifest-${index}` } },
+        namedSetOfFiles: {
+          files: [
+            {
+              name: manifest.file,
+              digest: hash(Buffer.from(manifest.contents)),
+              length: String(Buffer.byteLength(manifest.contents)),
+            },
+          ],
+        },
+      });
     events.push({
       id: { targetCompleted: { label: root.label, configuration: { id: configuration } } },
       completed: {
         success: true,
-        outputGroup: [{ name: 'default', fileSets: [{ id: `output-${index}` }] }],
+        outputGroup: [
+          { name: 'default', fileSets: [{ id: `output-${index}` }] },
+          ...(manifest
+            ? [{ name: 'shipping_manifest', fileSets: [{ id: `manifest-${index}` }] }]
+            : []),
+        ],
       },
     });
   }
@@ -262,16 +322,20 @@ export async function fixture(run) {
     cohorts: [
       {
         executionRoot,
-        roots,
+        ...(producerCapture
+          ? { shippingRoots: roots.map((root) => root.label), aqueryFile }
+          : {
+              roots,
+              cquery: {
+                results: roots.map((root) => ({
+                  target: { rule: { name: root.label } },
+                  configurationId: 11,
+                })),
+                configurations: [{ id: 11, checksum: configuration }],
+              },
+            }),
         aquery,
         buildEvents: events,
-        cquery: {
-          results: roots.map((root) => ({
-            target: { rule: { name: root.label } },
-            configurationId: 11,
-          })),
-          configurations: [{ id: 11, checksum: configuration }],
-        },
       },
     ],
   });
@@ -364,7 +428,7 @@ export async function fixture(run) {
     readGithubReleases: async () => releases,
   };
   try {
-    await run({ input, transports, origin, releases, directory, requests, rehash });
+    await run({ input, transports, origin, releases, directory, requests, rehash, capture });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

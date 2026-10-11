@@ -7,6 +7,7 @@ import {
   IOS_CARRIER_FILENAME,
 } from '../../swift/tools/ios-carrier-manifest.mts';
 import { pinnedNativeCarrierDirectory } from '../../swift/tools/pinned-native-carrier.mts';
+import { attachReactNativeCarrierManifest } from './native-carrier-package.mts';
 
 export async function stageArtifacts(
   artifactRoot,
@@ -48,16 +49,9 @@ export async function stageArtifacts(
     'utf8',
   );
   const packageJsonFile = path.join(releasePackageDir, 'package.json');
-  const packageJson = JSON.parse(readFileSync(packageJsonFile, 'utf8'));
-  packageJson.oliphaunt = {
-    ...(packageJson.oliphaunt ?? {}),
-    iosCarrierManifest: `./${IOS_CARRIER_FILENAME}`,
-  };
-  packageJson.files = [...new Set([...(packageJson.files ?? []), IOS_CARRIER_FILENAME])];
-  packageJson.exports = {
-    ...(packageJson.exports ?? {}),
-    './ios-carriers': `./${IOS_CARRIER_FILENAME}`,
-  };
+  const packageJson = attachReactNativeCarrierManifest(
+    JSON.parse(readFileSync(packageJsonFile, 'utf8')),
+  );
   writeFileSync(packageJsonFile, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
   const carrierEvidence = path.join(artifactRoot, 'ios-carriers', IOS_CARRIER_FILENAME);
   mkdirSync(path.dirname(carrierEvidence), { recursive: true });

@@ -1,6 +1,6 @@
 """Build PROJ's canonical data SQL with the source-built execution SQLite."""
 
-load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 
 def _impl(ctx):

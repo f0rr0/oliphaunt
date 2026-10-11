@@ -3,14 +3,17 @@ import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { stageCargoCarrierInputs } from '../../../tools/packaging/frozen-cargo.mts';
-import {
-  readFileOnlyTarGzipEntries,
-  readPortableArchiveEntries,
-} from '../../../tools/packaging/portable-archive.mts';
+import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
 import { type CargoLinkConfiguration, cargoLinkEnvironment } from '../cargo-environment.mts';
 
 export function cargoCandidate(file: string) {
-  return cargoArchiveIdentity(file, readFileOnlyTarGzipEntries(file));
+  const entries = readPortableArchiveEntries(file);
+  for (const entry of entries.values())
+    assert(
+      (entry.isFile && entry.mode === 0o644) || (entry.isDirectory && entry.mode === 0o755),
+      `candidate member ${entry.name} must be a regular 0644 file or 0755 directory`,
+    );
+  return cargoArchiveIdentity(file, entries);
 }
 
 function cargoArchiveIdentity(
@@ -20,10 +23,16 @@ function cargoArchiveIdentity(
   const manifests = [...entries].filter(([name]) => name.endsWith('/Cargo.toml'));
   assert.equal(manifests.length, 1, 'candidate envelope must have one conventional manifest');
   const entry = manifests[0];
-  assert(entry && entry[1].isFile, 'Cargo manifest must be a regular archive member');
+  assert(entry?.[1].isFile, 'Cargo manifest must be a regular archive member');
   const manifest = Bun.TOML.parse(Buffer.from(entry[1].data()).toString('utf8'));
   assert.equal(typeof manifest.package?.name, 'string');
   assert.equal(typeof manifest.package?.version, 'string');
+  const root = `${manifest.package.name}-${manifest.package.version}`;
+  for (const [name, entry] of entries)
+    assert(
+      (name === root && entry.isDirectory) || name.startsWith(`${root}/`),
+      `Cargo archive member ${name} is outside declared package ${root}`,
+    );
   return {
     file,
     name: manifest.package.name,
@@ -77,8 +86,8 @@ export function resolvedSdkRuntime(
       'registry/cache/index.crates.io-1949cf8c6b5b557f',
       `oliphaunt-${sdk.version}.crate`,
     );
-    // Genuine Cargo registry archives may include explicit directory entries.
-    // Candidate output envelopes keep their stricter canonical file-only format.
+    // Genuine registry and canonical candidate archives both permit safe
+    // directory entries inside their conventional package root.
     archive = cargoArchiveIdentity(file, readPortableArchiveEntries(file));
     assert.equal(archive.sha256, sdk.checksum, 'held SDK archive differs from genuine Cargo lock');
   } else {

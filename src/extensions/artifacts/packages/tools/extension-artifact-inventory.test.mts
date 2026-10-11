@@ -22,9 +22,43 @@ import {
 } from '../../../tools/extension-upstream-licenses.mts';
 import {
   EXTENSION_ARTIFACT_PROPERTY_KEYS,
+  nativeDependencyModuleBasenames,
   parseExtensionArtifactProperties,
   validateExtensionArtifactArchive,
 } from './extension-artifact-inventory.mts';
+
+test('canonical native dependency stems project only into declared desktop module suffixes', async () => {
+  const recipe = Bun.TOML.parse(
+    await fs.readFile(
+      path.resolve(import.meta.dirname, '../../../external/postgis/recipe.toml'),
+      'utf8',
+    ),
+  );
+  const paths = recipe.artifacts.native_dependency_modules;
+  for (const [target, suffix] of [
+    ['linux-x64-gnu', '.so'],
+    ['linux-arm64-gnu', '.so'],
+    ['macos-arm64', '.dylib'],
+    ['windows-x64-msvc', '.dll'],
+  ]) {
+    assert.deepEqual(
+      nativeDependencyModuleBasenames(paths, target),
+      paths.map((file) => path.posix.basename(file).replace(/\.so$/u, suffix)).sort(),
+    );
+  }
+  for (const invalid of [
+    ['lib/modules/wrong.so'],
+    ['lib/postgresql/nested/wrong.so'],
+    ['lib/postgresql/../wrong.so'],
+    ['lib/postgresql/wrong.txt'],
+  ])
+    assert.throws(
+      () => nativeDependencyModuleBasenames(invalid, 'windows-x64-msvc'),
+      /canonical recipe/u,
+    );
+  assert.throws(() => nativeDependencyModuleBasenames(paths, 'ios-xcframework'), /no desktop/u);
+  assert.deepEqual(nativeDependencyModuleBasenames([], 'ios-xcframework'), []);
+});
 
 function writeString(buffer, offset, length, value) {
   const bytes = Buffer.from(value);

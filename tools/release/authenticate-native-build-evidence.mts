@@ -1,10 +1,13 @@
 /** Authenticate construction evidence through the existing Actions artifact transport. */
+
+import { deepStrictEqual } from 'node:assert';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs, promisify } from 'node:util';
+import { readNativeBuildFinalFiles } from './native-build-files.mts';
 import {
   assertNativeBuildGithub,
   type NativeBuildGithub,
@@ -20,6 +23,92 @@ const reviewedProducerArtifacts: ReadonlyMap<string, string> = new Map([
   ['Linux runtime (aarch64)', 'native-build-evidence-aarch64'],
   ['Linux WASIX and installed browser', 'native-build-evidence-wasix-tools'],
 ]);
+const acceptedExecutionAssumptions = [
+  'producer inputs remained immutable through capture in the reviewed isolated job',
+  'the reviewed coordinator retained the native after-build dump from its producer invocation',
+];
+
+/** Shape validation does not authenticate JSON; its public use requires the signed metadata origin. */
+export function validateReviewedNativeProducerAssurance(
+  value: any,
+  expected: {
+    source: NativeBuildSource;
+    github?: NativeBuildGithub;
+    artifact?: unknown;
+    evidenceDigest?: string;
+    requiredTests?: unknown;
+  },
+) {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('reviewed native producer assurance must be an object');
+  deepStrictEqual(
+    Object.keys(value).sort(),
+    [
+      'acceptedExecutionAssumptions',
+      'artifact',
+      'event',
+      'evidenceDigest',
+      'github',
+      'ref',
+      'requiredTests',
+      'reviewedSource',
+      'scope',
+      'shippingAnalysis',
+      'testQualification',
+    ].sort(),
+    'reviewed native producer assurance fields',
+  );
+  nativeBuildMetadata(value.reviewedSource, value.github);
+  deepStrictEqual(value.reviewedSource, expected.source, 'reviewed native producer source');
+  if (
+    value.scope !== 'reviewed-producer-assurance' ||
+    !['push', 'workflow_dispatch'].includes(value.event) ||
+    value.ref !== 'refs/heads/main' ||
+    value.github.repository !== 'f0rr0/oliphaunt' ||
+    value.github.workflow !== 'Native Bazel qualification' ||
+    value.github.workflowPath !== '.github/workflows/bazel.yml' ||
+    reviewedProducerArtifacts.get(value.github.job) !== value.artifact?.name ||
+    value.shippingAnalysis !== 'bound' ||
+    value.testQualification !== 'passed' ||
+    !Array.isArray(value.requiredTests) ||
+    !value.requiredTests.length ||
+    !Number.isSafeInteger(value.artifact?.id) ||
+    value.artifact.id < 1 ||
+    !Number.isSafeInteger(value.artifact?.size) ||
+    value.artifact.size < 1 ||
+    !/^sha256:[0-9a-f]{64}$/u.test(value.artifact?.digest) ||
+    !/^sha256:[0-9a-f]{64}$/u.test(value.evidenceDigest)
+  )
+    throw new Error('reviewed native producer assurance identity is invalid');
+  for (const test of value.requiredTests)
+    if (
+      typeof test.label !== 'string' ||
+      !test.label.startsWith('//') ||
+      !/^[0-9a-f]{64}$/u.test(test.configuration)
+    )
+      throw new Error('reviewed native producer assurance requires exact configured tests');
+  deepStrictEqual(
+    value.acceptedExecutionAssumptions,
+    acceptedExecutionAssumptions,
+    'reviewed native producer execution assumptions',
+  );
+  for (const key of ['github', 'artifact', 'evidenceDigest', 'requiredTests'] as const)
+    if (expected[key] !== undefined)
+      deepStrictEqual(value[key], expected[key], `reviewed native producer ${key}`);
+  return value;
+}
+
+/** Only an authenticated reviewed producer closes these execution premises. */
+export function reviewedNativeProducerUnknowns(unverified: string[]) {
+  return unverified.filter(
+    (check) =>
+      ![
+        'authenticated producing workflow, attempt, job and immutable artifact',
+        'immutable input lifetime from the producing build through content capture',
+        'native action-graph dump bytes authenticated by the producing invocation',
+      ].includes(check),
+  );
+}
 
 /** Caller expectations are constraints; only the downloader's GitHub API reads supply origin metadata. */
 export async function authenticateNativeBuildEvidence(
@@ -108,6 +197,31 @@ export async function authenticateNativeBuildEvidence(
       (row) => row.name === expected.artifactName && row.expired === false,
     );
     const job = snapshot.jobs.find((row) => row.name === expected.github.job);
+    const evidence = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    const hasFiles = (directory: string) => existsSync(path.join(directory, 'files'));
+    if (hasFiles(evidenceRoot) !== hasFiles(downloaded))
+      throw new Error('local and authenticated native final file transport differ');
+    // Transport uses the authenticated producing packet's protocol version.
+    // Qualification callers still supply their independently expected source pin.
+    const producingBazelVersion = evidence.cohorts?.[0]?.buildEvents?.find(
+      (event) => event.started !== undefined,
+    )?.started?.buildToolVersion;
+    const finalFiles = hasFiles(downloaded)
+      ? readNativeBuildFinalFiles(evidenceRoot, evidence, {
+          source: expected.source,
+          github: expected.github,
+          bazelVersion: producingBazelVersion,
+        })
+      : undefined;
+    if (finalFiles) {
+      const downloadedFiles = readNativeBuildFinalFiles(downloaded, evidence, {
+        source: expected.source,
+        github: expected.github,
+        bazelVersion: producingBazelVersion,
+      });
+      deepStrictEqual(finalFiles.files, downloadedFiles.files, 'authenticated native final files');
+      finalFiles.assertUnchanged?.();
+    }
     return {
       github: {
         repository: snapshot.repo,
@@ -125,7 +239,8 @@ export async function authenticateNativeBuildEvidence(
       },
       evidenceDigest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
       // Parsing transports the authenticated bytes; the content validator still owns qualification.
-      evidence: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown,
+      evidence: evidence as unknown,
+      ...(finalFiles === undefined ? {} : { finalFiles }),
     };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -188,22 +303,22 @@ export async function assureReviewedNativeBuildProducer(
   return {
     origin,
     qualification,
-    assurance: {
-      scope: 'reviewed-producer-assurance' as const,
-      reviewedSource: structuredClone(reviewedSource),
-      event: expected.event,
-      ref: expected.ref,
-      github: structuredClone(origin.github),
-      artifact: structuredClone(origin.artifact),
-      evidenceDigest: origin.evidenceDigest,
-      shippingAnalysis: qualification.shippingAnalysis,
-      testQualification: qualification.testQualification,
-      requiredTests: qualification.requiredTests,
-      acceptedExecutionAssumptions: [
-        'producer inputs remained immutable through capture in the reviewed isolated job',
-        'the reviewed coordinator retained the native after-build dump from its producer invocation',
-      ],
-    },
+    assurance: validateReviewedNativeProducerAssurance(
+      {
+        scope: 'reviewed-producer-assurance' as const,
+        reviewedSource: structuredClone(reviewedSource),
+        event: expected.event,
+        ref: expected.ref,
+        github: structuredClone(origin.github),
+        artifact: structuredClone(origin.artifact),
+        evidenceDigest: origin.evidenceDigest,
+        shippingAnalysis: qualification.shippingAnalysis,
+        testQualification: qualification.testQualification,
+        requiredTests: qualification.requiredTests,
+        acceptedExecutionAssumptions: [...acceptedExecutionAssumptions],
+      },
+      { source: reviewedSource },
+    ),
   };
 }
 

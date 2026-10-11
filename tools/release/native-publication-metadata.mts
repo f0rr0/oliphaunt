@@ -1,12 +1,13 @@
 /** Prepared observations become authenticated public origins, never native admission. */
 import { deepStrictEqual } from 'node:assert';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { promisify } from 'node:util';
+import { parseArgs, promisify } from 'node:util';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
+import { reviewedNativeProducerUnknowns } from './authenticate-native-build-evidence.mts';
 import {
   type CompletedPublication,
   createCompletedPublicationChecker,
@@ -21,6 +22,12 @@ import {
 } from './native-publication-metadata-contract.mts';
 import { observeNativePublicationConstruction } from './native-publication-observation.mts';
 import { captureNativeInputMembers } from './native-publication-staging.mts';
+import {
+  assertPublicationLockSource,
+  loadPublicationLock,
+  lockedPublicationFiles,
+  sourceIdentity,
+} from './publication-lock.mts';
 import { ROOT } from './release-graph.mts';
 import {
   prepareBundleVerification,
@@ -60,7 +67,7 @@ export async function prepareNativePublicationMetadata(
       productArtifacts: product.productArtifacts.filter(
         (artifact) => !['checksums', NATIVE_PUBLICATION_METADATA_KIND].includes(artifact.kind),
       ),
-      builds: observation.authenticated.map(({ origin, qualification }) => ({
+      builds: observation.authenticated.map(({ origin, qualification, producerAssurance }) => ({
         github: origin.github,
         artifact: origin.artifact,
         evidenceDigest: origin.evidenceDigest,
@@ -68,9 +75,12 @@ export async function prepareNativePublicationMetadata(
         unverified: qualification.unverified,
         testQualification: qualification.testQualification,
         requiredTests: qualification.requiredTests,
+        ...(producerAssurance ? { producerAssurance } : {}),
       })),
       releaseDecision: 'unverified',
-      unverified: limitations,
+      unverified: observation.authenticated.every((build) => build.producerAssurance)
+        ? reviewedNativeProducerUnknowns(limitations)
+        : limitations,
     }),
   );
 }
@@ -82,6 +92,13 @@ export async function writePreparedNativePublicationMetadata(
   transports: Parameters<typeof prepareNativePublicationMetadata>[1] = {},
 ) {
   const records = await prepareNativePublicationMetadata(input, transports);
+  return writeMetadataRecords(directory, records);
+}
+
+async function writeMetadataRecords(
+  directory: string,
+  records: ReturnType<typeof validateNativePublicationMetadata>[],
+) {
   for (const record of records) {
     const size = Buffer.byteLength(`${JSON.stringify(record, null, 2)}\n`);
     if (size > NATIVE_PUBLICATION_METADATA_MAX_BYTES)
@@ -104,6 +121,76 @@ export async function writePreparedNativePublicationMetadata(
     artifacts.push({ ...row, path: file, sha256: hash(bytes), size: bytes.length });
   }
   return artifacts;
+}
+
+/** The executable controller opts in only at an exact, clean frozen-lock checkout. */
+export async function runNativePublicationMetadataController(args = process.argv.slice(2)) {
+  const { values } = parseArgs({
+    args,
+    allowPositionals: false,
+    options: {
+      lock: { type: 'string' },
+      builds: { type: 'string' },
+      repository: { type: 'string' },
+      'bazel-version': { type: 'string' },
+      'output-directory': { type: 'string' },
+      'head-ref': { type: 'string', default: 'HEAD' },
+      'reviewed-source-ref': { type: 'string' },
+    },
+  });
+  const required = (name: string) => {
+    const value = values[name];
+    if (!value) throw new Error(`native metadata controller requires --${name}`);
+    return value;
+  };
+  const source = sourceIdentity(values['head-ref']);
+  const assertCheckout = () => {
+    try {
+      execFileSync(
+        'bash',
+        [
+          path.join(ROOT, 'tools/release/qualified-release-replay.sh'),
+          source.commit,
+          source.commit,
+        ],
+        { cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'] },
+      );
+    } catch (cause) {
+      throw new Error('native metadata controller requires a frozen clean exact source checkout', {
+        cause,
+      });
+    }
+  };
+  assertCheckout();
+  const lockFile = required('lock');
+  const lock = loadPublicationLock(lockFile);
+  assertPublicationLockSource(lock, source.commit);
+  const files = lockedPublicationFiles(lock);
+  const reviewedSource =
+    values['reviewed-source-ref'] === undefined
+      ? undefined
+      : sourceIdentity(values['reviewed-source-ref']);
+  const records = await prepareNativePublicationMetadata({
+    envelope: lock,
+    files,
+    repository: required('repository'),
+    bazelVersion: required('bazel-version'),
+    builds: JSON.parse(readFileSync(required('builds'), 'utf8')),
+    ...(reviewedSource ? { reviewedSource } : {}),
+  });
+  const assertFrozen = () => {
+    assertCheckout();
+    deepStrictEqual(loadPublicationLock(lockFile), lock, 'native metadata frozen lock changed');
+    deepStrictEqual(lockedPublicationFiles(lock), files, 'native metadata frozen files changed');
+  };
+  assertFrozen();
+  const artifacts = await writeMetadataRecords(required('output-directory'), records);
+  assertFrozen();
+  return {
+    artifacts,
+    producerPolicy: reviewedSource ? 'reviewed-main' : 'observed',
+    releaseDecision: 'unverified',
+  };
 }
 
 async function authenticatePublicMetadataAttestation({
@@ -260,4 +347,13 @@ export async function readCompletedNativePublicBaseline(
     baselineAdmission: 'unknown' as const,
     releaseDecision: 'unverified' as const,
   };
+}
+
+if (import.meta.main) {
+  try {
+    process.stdout.write(`${JSON.stringify(await runNativePublicationMetadataController())}\n`);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

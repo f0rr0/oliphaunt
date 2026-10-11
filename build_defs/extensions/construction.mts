@@ -12,14 +12,17 @@ function record(value: unknown): Record<string, unknown> {
 export function validateDesktopConstruction(inventory: unknown, archives: readonly string[]) {
   const plan = record(inventory);
   const configuration = plan.configuration;
+  const includePostgis = plan.include_postgis ?? false;
   if (
     plan.schema !== 'oliphaunt-desktop-extension-construction-v1' ||
     !['linux-x64-gnu', 'linux-arm64-gnu', 'macos-arm64', 'windows-x64-msvc'].includes(
       configuration as string,
     ) ||
     !Array.isArray(plan.excluded) ||
-    plan.excluded.length !== 1 ||
-    plan.excluded[0] !== 'postgis' ||
+    typeof includePostgis !== 'boolean' ||
+    (includePostgis
+      ? plan.excluded.length !== 0
+      : plan.excluded.length !== 1 || plan.excluded[0] !== 'postgis') ||
     !Array.isArray(plan.members) ||
     plan.members.length === 0
   ) {
@@ -36,7 +39,7 @@ export function validateDesktopConstruction(inventory: unknown, archives: readon
     if (
       typeof name !== 'string' ||
       !/^[a-z][a-z0-9_-]*$/u.test(name) ||
-      name === 'postgis' ||
+      (name === 'postgis' && !includePostgis) ||
       selected.has(name) ||
       typeof member.owner !== 'string' ||
       !member.owner ||
@@ -69,6 +72,8 @@ export function validateDesktopConstruction(inventory: unknown, archives: readon
     }
     if (member.module_file) compiled += 1;
   }
+  if (selected.has('postgis') !== includePostgis)
+    throw new Error('desktop construction differs from explicit PostGIS selection');
   return { configuration, members: [...selected], compiled, sqlOnly: selected.size - compiled };
 }
 

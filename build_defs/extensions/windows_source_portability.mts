@@ -38,6 +38,38 @@ export function windowsExtensionHeaders(extension: string): Record<string, strin
 
 /** Transform only the reviewed named files; retain every other source byte. */
 export function windowsExtensionSource(extension: string, file: string, text: string): string {
+  if (extension === 'postgis') {
+    if (/^(?:postgis|libpgcommon|liblwgeom)\/.*\.[ch]$/u.test(file)) {
+      text = text.replace(
+        /^[ \t]*(?!(?:extern\s+)?PGDLLEXPORT\s+)(?:extern\s+)?Datum\s+(\w+)\s*\(PG_FUNCTION_ARGS\);\r?$/gm,
+        'extern PGDLLEXPORT Datum $1(PG_FUNCTION_ARGS);',
+      );
+    }
+    if (file === 'postgis/postgis_legacy.c') {
+      text = replaceOne(
+        text,
+        /^([ \t]*)Datum[ \t]+funcname[ \t]*\(PG_FUNCTION_ARGS\);[ \t]*\\\r?$/gm,
+        '$1extern PGDLLEXPORT Datum funcname(PG_FUNCTION_ARGS); \\',
+        file,
+      );
+    }
+    if (file === 'deps/flatgeobuf/geometryreader.cpp') {
+      for (const variables of [
+        ['x', 'y', 'z', 'm'],
+        ['xv', 'yv', 'zv', 'mv'],
+      ]) {
+        text = replaceOne(
+          text,
+          `pt = (POINT4D) { ${variables.join(', ')} };`,
+          ['x', 'y', 'z', 'm']
+            .map((field, index) => `pt.${field} = ${variables[index]};`)
+            .join('\n'),
+          file,
+        );
+      }
+    }
+    return text;
+  }
   if (extension === 'pg_uuidv7' && file === 'pg_uuidv7.c') {
     assert(!text.includes('oliphaunt_pg_uuidv7_clock_gettime'), `${file} is already adapted`);
     return replaceOne(text, uuidEpoch, uuidClock, file);

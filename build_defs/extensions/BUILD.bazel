@@ -10,6 +10,7 @@ load("//build_defs/foundation:bun.bzl", "bun_script_test")
 load(":contrib_carriers.bzl", "native_contrib_carrier_legal", "native_contrib_carrier_unit_inputs")
 load(":owner_carriers.bzl", "native_extension_final_collection", "native_extension_final_contract_test", "native_extension_final_import", "native_extension_final_receipt_fixture", "native_owner_carrier_helpers", "native_owner_carrier_legal")
 load(":construction.bzl", "desktop_member_payloads", "desktop_members_construction_test")
+load(":wasix_carriers.bzl", "wasix_sql_carrier_helpers", "wasix_sql_carrier_unit_inputs")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -19,6 +20,17 @@ exports_files(["native_carriers.bzl", "native_carriers.mts", "native_carriers_in
 exports_files(["contrib_carriers.bzl", "contrib_carriers.mts", "contrib_carriers_installed.test.mts"])
 exports_files(["native_carrier_install_helpers.mts"])
 exports_files(["final_leaf.bzl", "owner_carriers.bzl", "owner_carriers.mts", "final_receipt_fixture.mts", "final_contract.test.mts"])
+exports_files(["wasix_carriers.bzl", "wasix_carriers.mts", "wasix_carriers.test.mts"])
+
+wasix_sql_carrier_unit_inputs(name = "wasix_sql_carrier_unit_inputs")
+bun_script_test(
+    name = "wasix_sql_carriers_test",
+    entry_point = "wasix_carriers.test.mts",
+    args = ["$(location :wasix_sql_carrier_unit_inputs)"],
+    data = [":wasix_sql_carrier_unit_inputs", "wasix_carriers.mts"] + wasix_sql_carrier_helpers() + native_extension_carrier_legal("pgtap"),
+    target_compatible_with = ["@platforms//os:linux"],
+    size = "small",
+)
 
 native_extension_final_contract_test(
     name = "native_final_contract_test",
@@ -28,6 +40,13 @@ native_extension_final_contract_test(
 native_extension_final_contract_test(
     name = "desktop_final_contract_test",
     desktop = True,
+    target_compatible_with = NATIVE_EXTENSION_DESKTOP_COMPATIBLE,
+    size = "medium",
+)
+native_extension_final_contract_test(
+    name = "desktop_all_final_contract_test",
+    desktop = True,
+    include_postgis = True,
     target_compatible_with = NATIVE_EXTENSION_DESKTOP_COMPATIBLE,
     size = "medium",
 )
@@ -78,6 +97,7 @@ ARCHIVE_HELPERS = ["//:tools/packaging/archive-directory.mts", "//:tools/packagi
 BINARY_HELPERS = ["//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json", "//tools/release:platform-compatibility-policy.mts", "//:src/extensions/artifacts/native/tools/stage-windows-binary-contract.mts"]
 
 desktop_members_construction_test(name = "desktop_members_construction_test", size = "medium")
+desktop_members_construction_test(name = "desktop_all_members_construction_test", include_postgis = True, size = "medium")
 desktop_members_sql_test(name = "desktop_members_sql_test")
 FROZEN_DESKTOP_HOST_COMPATIBLE = select({
     "//build_defs/native:linux_x86_64": [],
@@ -105,7 +125,19 @@ desktop_members_sql_test(
     published_runtime = True,
     target_compatible_with = FROZEN_DESKTOP_HOST_COMPATIBLE,
 )
+desktop_members_sql_test(
+    name = "desktop_all_members_frozen_sql_test",
+    include_postgis = True,
+    runtime = ":desktop_frozen_runtime_archive",
+    consumer = ":native_frozen_extension_smoke",
+    host_version = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_version"],
+    host_product = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_product"],
+    runtime_prefix = "runtime",
+    published_runtime = True,
+    target_compatible_with = FROZEN_DESKTOP_HOST_COMPATIBLE,
+)
 filegroup(name = "desktop_members_construction_inventory", srcs = [":desktop_members_construction_test"], output_group = "inventory", testonly = True)
+filegroup(name = "desktop_all_members_construction_inventory", srcs = [":desktop_all_members_construction_test"], output_group = "inventory", testonly = True)
 bun_test(
     name = "desktop_construction_test",
     entry_point = "construction.test.mts",

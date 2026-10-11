@@ -19,7 +19,11 @@ import {
   nativeAssetNameForRow,
   writeReleaseControls,
 } from '../../src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts';
-import { validateExtensionArtifactArchive } from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
+import {
+  isDesktopNativeTarget,
+  nativeDependencyModuleBasenames,
+  validateExtensionArtifactArchive,
+} from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
 import {
   expectedExtensionRoles,
   projectNativeRuntimeAssetMember,
@@ -207,9 +211,9 @@ function expectedMember(spec: NativeCarrierSpec, target: string) {
           : [],
       )
       .sort(),
-    nativeDependencyModules: sorted(
-      target.startsWith('linux-') ? artifact.native_dependency_modules : [],
-    ).map((file) => path.posix.basename(file)),
+    nativeDependencyModules: isDesktopNativeTarget(target)
+      ? nativeDependencyModuleBasenames(artifact.native_dependency_modules, target)
+      : [],
     nativeConstructionLicenseFiles:
       (spec.sqlName === 'vector' && target === 'linux-x64-gnu') ||
       (spec.contrib &&

@@ -2,14 +2,20 @@
 
 load("@native_cargo_metadata//:cargo.bzl", "CARGO")
 load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS", "PUBLICATION_CARRIERS")
-load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 
 _RUST_TOOLCHAIN = "@rules_rust//rust:toolchain"
+CargoSourceInfo = provider(fields = ["archive", "manifest", "workspace_manifest", "entries", "metadata"])
+_SOURCE_HELPERS = [Label("//:tools/packaging/cargo-manifest.mts"), Label("//:tools/packaging/cargo-source-package.mts"), Label("//:tools/packaging/package-archive.mts"), Label("//:tools/packaging/archive-directory.mts"), Label("//:tools/packaging/portable-archive.mts"), Label("//:tools/packaging/release-notices.mts"), Label("//:tools/packaging/release-directory-safety.mts"), Label("//:tools/packaging/rust-native-targets.mts")]
+
+def _runfile(ctx, file):
+    return file.short_path[3:] if file.short_path.startswith("../") else ctx.workspace_name + "/" + file.short_path
 
 def _source_impl(ctx):
     inputs = [ctx.file.manifest, ctx.file.workspace_manifest, ctx.file._packager] + ctx.files._helpers
     entries = {}
+    entry_files = {}
     for target, destination in ctx.attr.entries.items():
         for file in target[DefaultInfo].files.to_list():
             entry = destination
@@ -21,6 +27,7 @@ def _source_impl(ctx):
             if entry in entries:
                 fail("duplicate source archive entry " + entry)
             entries[entry] = file.path
+            entry_files[entry] = file
             inputs.append(file)
     specification = ctx.actions.declare_file(ctx.label.name + ".entries.json")
     metadata = ctx.actions.declare_file(ctx.label.name + ".metadata.json")
@@ -35,7 +42,41 @@ def _source_impl(ctx):
     # Enumeration needs only Cargo itself, not a compiled target sysroot. It is
     # offline metadata; all archive construction remains this bounded action.
     bun_file_action(ctx, entry_point = ctx.file._packager, arguments = [args], inputs = depset(inputs + [specification, metadata, cargo]), source_files = [ctx.file._packager] + ctx.files._helpers, outputs = [output], mnemonic = "CargoSourceEnvelope")
-    return [DefaultInfo(files = depset([output]))]
+    return [DefaultInfo(files = depset([output])), CargoSourceInfo(archive = output, manifest = ctx.file.manifest, workspace_manifest = ctx.file.workspace_manifest, entries = entry_files, metadata = metadata)]
+
+def _source_contract_impl(ctx):
+    rust = ctx.toolchains[_RUST_TOOLCHAIN]
+    if not rust.cargo:
+        fail("Source consumer metadata requires the pinned Cargo toolchain")
+    packages = []
+    files = rust.all_files.to_list() + [ctx.file._runner] + ctx.files._helpers
+    for target in ctx.attr.packages:
+        source = target[CargoSourceInfo]
+        packages.append({
+            "archive": _runfile(ctx, source.archive),
+            "manifest": _runfile(ctx, source.manifest),
+            "workspace": _runfile(ctx, source.workspace_manifest),
+            "metadata": _runfile(ctx, source.metadata),
+            "entries": {name: _runfile(ctx, file) for name, file in source.entries.items()},
+        })
+        files += [source.archive, source.manifest, source.workspace_manifest, source.metadata] + source.entries.values()
+    specification = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
+    ctx.actions.write(specification, json.encode({"packages": packages, "cargo": _runfile(ctx, rust.cargo), "rustc": _runfile(ctx, rust.rustc)}))
+    return bun_test_entrypoint(ctx, ctx.file._runner, [specification], files + [specification], source_files = [ctx.file._runner] + ctx.files._helpers, runfiles_argument = True)
+
+_cargo_source_contract_test = rule(
+    implementation = _source_contract_impl,
+    test = True,
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_RUST_TOOLCHAIN],
+    attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
+        "packages": attr.label_list(providers = [CargoSourceInfo], mandatory = True),
+        "_runner": attr.label(default = Label("//build_defs/languages:source-contract.mts"), allow_single_file = True),
+        "_helpers": attr.label_list(default = _SOURCE_HELPERS + [Label("//build_defs/languages:source-package.mts"), Label("//:tools/packaging/cargo-dependencies.mts")], allow_files = True),
+    }),
+)
+
+def cargo_source_contract_test(name, **kwargs):
+    _cargo_source_contract_test(name = name, args = bun_test_entrypoint_args(name), **kwargs)
 
 _cargo_source = rule(
     implementation = _source_impl,
@@ -47,7 +88,7 @@ _cargo_source = rule(
         "metadata": attr.string(mandatory = True),
         "out": attr.string(mandatory = True),
         "_packager": attr.label(default = Label("//build_defs/languages:source-package.mts"), allow_single_file = True),
-        "_helpers": attr.label_list(default = [Label("//:tools/packaging/cargo-manifest.mts"), Label("//build_defs/query:package.mts"), Label("//:tools/packaging/archive-directory.mts"), Label("//:tools/packaging/portable-archive.mts"), Label("//:tools/packaging/rust-native-targets.mts")], allow_files = True),
+        "_helpers": attr.label_list(default = _SOURCE_HELPERS, allow_files = True),
     },
 )
 
@@ -82,8 +123,10 @@ def cargo_source_package(product, fixtures = "", native_sdk = False, cargo_facts
     sources = native.glob(["**"], exclude = [fixtures + "**"] if fixtures else [], allow_empty = True)
     entries = {file: file for file in sources}
     for name in ["LICENSE", "THIRD_PARTY_NOTICES.md"]:
-        if name not in entries:
-            entries["//:" + name] = name
+        # Source SDKs carry the repository's source notice. A package-local
+        # runtime notice belongs to compiled carriers, not this source crate.
+        entries.pop(name, None)
+        entries["//:" + name] = name
     if fixtures:
         entries["//src/test-fixtures:rust_fixtures"] = fixtures
     _cargo_source(name = "crate", manifest = "Cargo.toml", workspace_manifest = workspace_manifest, entries = entries, metadata = json.encode(metadata), out = facts["name"] + ".crate")

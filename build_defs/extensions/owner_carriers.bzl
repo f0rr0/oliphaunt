@@ -210,13 +210,15 @@ _native_extension_final_contract_test = rule(implementation = _final_contract_te
         "_helpers": attr.label_list(default = native_owner_carrier_helpers() + ["//build_defs/extensions:owner_carriers.mts"], allow_files = True),
     }))
 
-def native_extension_final_contract_test(name, products = None, desktop = False, **kwargs):
+def native_extension_final_contract_test(name, products = None, desktop = False, include_postgis = False, **kwargs):
     """Validate genuine final packages on the execution host, without target SQL."""
+    if include_postgis and not desktop:
+        fail("explicit PostGIS cohort selection requires the canonical desktop inventory")
     members, excluded = [], []
     if desktop:
         if products != None:
             fail("desktop final contract uses the existing complete desktop construction inventory")
-        members = [row.name for row in desktop_member_inventory()]
+        members = [row.name for row in desktop_member_inventory(include_postgis)]
         selected = sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in members}.keys())
         excluded = sorted([row["sql-name"] for row in EXTENSIONS.values() if row["sql-name"] not in members])
     else:

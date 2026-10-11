@@ -654,3 +654,118 @@ postmaster_wasix_libc(name = "postmaster_wasix_libc")
 winflexbison = use_repo_rule("//build_defs/native:windows-generators.bzl", "windows_generators_repository")
 winflexbison(name = "winflexbison")
 register_toolchains("@winflexbison//:flex_toolchain", "@winflexbison//:bison_toolchain")
+
+# Resolve the conventional addon release feature separately from primitive adapters.
+native_cargo_metadata(
+    name = "wasix_release_cargo_metadata",
+    workspace = "//src/wasix/node-addon:Cargo.toml",
+    lockfile = "//src/wasix/node-addon:Cargo.lock",
+    workspace_prefix = "src/wasix/node-addon",
+    activations = {"src/wasix/node-addon": ["release"]},
+)
+wasix_release_crates = use_extension("//build_defs/languages:release-cargo-extension.bzl", "crate")
+wasix_release_crates.from_cargo(
+    name = "wasix_release_crates",
+    host_tools = "@rust_host_tools//:BUILD.bazel",
+    cargo_lockfile = "@wasix_release_cargo_metadata//:Cargo.lock",
+    manifests = ["@wasix_release_cargo_metadata//:Cargo.toml"],
+    skip_cargo_lockfile_overwrite = True,
+    supported_platform_triples = [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+    ],
+)
+use_repo(
+    wasix_release_crates,
+    "wasix_release_crates",
+    "wasix_release_crates__oliphaunt-wasix-0.3.2",
+    "wasix_release_crates__liboliphaunt-wasix-portable-0.3.2",
+    "wasix_release_crates__liboliphaunt-wasix-aot-aarch64-apple-darwin-0.3.2",
+    "wasix_release_crates__liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu-0.3.2",
+    "wasix_release_crates__liboliphaunt-wasix-aot-x86_64-pc-windows-msvc-0.3.2",
+    "wasix_release_crates__liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu-0.3.2",
+    "wasix_release_crates__oliphaunt-extension-contrib-pg18-wasix-0.3.2",
+    "wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-linux-arm64-0.3.2",
+    "wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-linux-x64-0.3.2",
+    "wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-macos-arm64-0.3.2",
+    "wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-windows-x64-0.3.2",
+)
+
+wasix_release_crates.annotation(
+    crate = "oliphaunt-wasix",
+    version = "=0.3.2",
+    repositories = ["wasix_release_crates"],
+    additive_build_file_content = "filegroup(name = \"payload_files\", srcs = [\"Cargo.toml\"], visibility = [\"//visibility:public\"])\n",
+)
+
+wasix_release_crates.annotation(
+    crate = "liboliphaunt-wasix-portable",
+    version = "=0.3.2",
+    repositories = ["wasix_release_crates"],
+    additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+)
+
+wasix_release_crates.annotation(
+    crate = "liboliphaunt-wasix-aot-aarch64-apple-darwin",
+    version = "=0.3.2",
+    repositories = ["wasix_release_crates"],
+    additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+)
+
+wasix_release_crates.annotation(
+    crate = "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+    version = "=0.3.2",
+    repositories = ["wasix_release_crates"],
+    additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+)
+
+wasix_release_crates.annotation(
+    crate = "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+    version = "=0.3.2",
+    repositories = ["wasix_release_crates"],
+    additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+)
+
+wasix_release_crates.annotation(
+    crate = "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+    version = "=0.3.2",
+    repositories = ["wasix_release_crates"],
+    additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+)
+
+wasix_release_crates.annotation(
+    crate = "oliphaunt-extension-contrib-pg18-wasix",
+    version = "=0.3.2",
+    repositories = ["wasix_release_crates"],
+    additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+)
+
+wasix_release_crates.annotation(
+    crate = "oliphaunt-extension-contrib-pg18-aot-linux-arm64",
+    version = "=0.3.2",
+    repositories = ["wasix_release_crates"],
+    additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+)
+
+wasix_release_crates.annotation(
+    crate = "oliphaunt-extension-contrib-pg18-aot-linux-x64",
+    version = "=0.3.2",
+    repositories = ["wasix_release_crates"],
+    additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+)
+
+wasix_release_crates.annotation(
+    crate = "oliphaunt-extension-contrib-pg18-aot-macos-arm64",
+    version = "=0.3.2",
+    repositories = ["wasix_release_crates"],
+    additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+)
+
+wasix_release_crates.annotation(
+    crate = "oliphaunt-extension-contrib-pg18-aot-windows-x64",
+    version = "=0.3.2",
+    repositories = ["wasix_release_crates"],
+    additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+)

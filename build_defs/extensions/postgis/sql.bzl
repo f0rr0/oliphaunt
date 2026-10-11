@@ -2,7 +2,7 @@
 
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_SOURCES", "POSTGRES_SOURCE")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
-load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 
 def _preprocess_impl(ctx):

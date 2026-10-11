@@ -1,15 +1,29 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { extractNpmPackage } from '../../../../../build_defs/wasix/browser/npm-archives.mts';
 import { readPortableArchiveEntries } from '../../../../../tools/packaging/portable-archive.mts';
+import { IOS_CARRIER_FILENAME } from '../../swift/tools/swift-native-carrier-contract.mts';
+import { attachReactNativeCarrierManifest } from './native-carrier-package.mts';
+import { type ReactNativePackageInputs, validateReactNativeNpm } from './native-package.mts';
 
 const [archive, query, sourceManifest, node, typescript, specificationFile] = Bun.argv.slice(2);
 assert(archive && query && sourceManifest && node && typescript && specificationFile);
 assert(process.env.TEST_TMPDIR && process.env.OLIPHAUNT_BAZEL_RUNFILES);
+const runfilesRoot = process.env.OLIPHAUNT_BAZEL_RUNFILES;
 const root = join(process.env.TEST_TMPDIR, 'react-native-installed-consumer');
 const specification = JSON.parse(await readFile(specificationFile, 'utf8'));
 const canonical = JSON.parse(await readFile(sourceManifest, 'utf8'));
+const carrierInputs =
+  specification.carrierInputs &&
+  (Object.fromEntries(
+    Object.entries(specification.carrierInputs).map(([name, file]) => [
+      name,
+      join(runfilesRoot, file as string),
+    ]),
+  ) as ReactNativePackageInputs | undefined);
+const carrier = carrierInputs && validateReactNativeNpm(archive, carrierInputs);
 const installed = join(root, 'node_modules/@oliphaunt/react-native');
 await mkdir(root, { recursive: true });
 const installedArchive = join(root, 'react-native.tgz');
@@ -25,7 +39,10 @@ await extractNpmPackage(query, join(root, 'node_modules/@oliphaunt/ts-query'));
 const manifest = JSON.parse(await readFile(join(installed, 'package.json'), 'utf8'));
 assert.equal(manifest.name, specification.name);
 assert.equal(manifest.version, specification.version);
-assert.deepEqual(manifest.oliphaunt, canonical.oliphaunt);
+assert.deepEqual(
+  manifest.oliphaunt,
+  (carrier ? attachReactNativeCarrierManifest(canonical) : canonical).oliphaunt,
+);
 assert.deepEqual(manifest.dependencies, canonical.dependencies);
 assert.deepEqual(manifest.peerDependencies, canonical.peerDependencies);
 assert.deepEqual(manifest.scripts, {
@@ -59,13 +76,16 @@ for (const [name, id] of Object.entries(specification.roots) as [string, string]
   await mkdir(dirname(link), { recursive: true });
   await symlink(stores[id], link, 'dir');
 }
-function run(script: string, args: string[], cwd = root) {
-  const execution = Bun.spawnSync([node, script, ...args], {
-    cwd,
-    env: { ...process.env, PATH: '', NODE_PATH: '', NODE_OPTIONS: '' },
-    stdout: 'inherit',
-    stderr: 'inherit',
-  });
+function run(script: string, args: string[], cwd = root, preload?: string) {
+  const execution = Bun.spawnSync(
+    [node, ...(preload ? ['--require', preload] : []), script, ...args],
+    {
+      cwd,
+      env: { ...process.env, PATH: '', NODE_PATH: '', NODE_OPTIONS: '' },
+      stdout: 'inherit',
+      stderr: 'inherit',
+    },
+  );
   assert.equal(execution.exitCode, 0, `Installed consumer failed: ${script}`);
 }
 const consumer = join(root, 'consumer.ts');
@@ -114,6 +134,45 @@ assert.equal(typeof require('./node_modules/@oliphaunt/react-native/react-native
 run(javascript, []);
 run(join(installed, 'tools/verify-ios-package.mjs'), ['--package-dir', installed]);
 run(join(installed, 'tools/stage-ios-app.mjs'), ['--help']);
+if (carrier && carrierInputs) {
+  assert.deepEqual(
+    await readFile(join(installed, IOS_CARRIER_FILENAME)),
+    await readFile(carrierInputs.carrier),
+  );
+  const cache = join(root, 'ios-cache');
+  await mkdir(join(cache, 'objects'), { recursive: true });
+  for (const asset of carrier.base.assets) {
+    const file =
+      asset.role === 'base-xcframework'
+        ? carrierInputs.xcframework
+        : join(process.env.OLIPHAUNT_BAZEL_RUNFILES, specification.runtimeResources);
+    const bytes = await readFile(file);
+    assert.equal(bytes.length, asset.bytes);
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), asset.sha256);
+    await writeFile(join(cache, 'objects', `${asset.sha256}-${asset.name}`), bytes);
+  }
+  // Real published HTTPS identities remain intact. Any cache miss fails before network use.
+  const offline = join(root, 'offline.cjs');
+  await writeFile(
+    offline,
+    "globalThis.fetch = () => { throw new Error('Installed consumer attempted undeclared network input'); };\n",
+  );
+  const payload = join(root, 'app/ios/oliphaunt');
+  run(
+    join(installed, 'tools/stage-ios-app.mjs'),
+    [
+      '--carrier',
+      join(installed, IOS_CARRIER_FILENAME),
+      '--output-dir',
+      payload,
+      '--cache-dir',
+      cache,
+    ],
+    root,
+    offline,
+  );
+  run(join(installed, 'tools/verify-ios-package.mjs'), ['--payload-dir', payload]);
+}
 const schema = join(root, 'schema.json');
 run(
   join(installed, 'tools/codegen-check.cjs'),
@@ -124,5 +183,7 @@ const generated = JSON.parse(await readFile(schema, 'utf8'));
 assert.equal(Object.keys(generated.modules).length, 1);
 assert.equal(Object.values(generated.modules)[0].type, 'NativeModule');
 console.log(
-  'Installed React Native source package: public types, CommonJS helpers, iOS verifier/stager and real codegen passed; native TurboModule execution requires installed mobile app',
+  carrier
+    ? 'Installed React Native public npm: public types, CommonJS helpers, real codegen and authenticated iOS carrier staging/verification passed; native TurboModule execution requires installed mobile app'
+    : 'Installed React Native source package: public types, CommonJS helpers, iOS verifier/stager and real codegen passed; native TurboModule execution requires installed mobile app',
 );

@@ -8,7 +8,11 @@ import {
   assureReviewedNativeBuildProducer,
   authenticateNativeBuildEvidence,
 } from './authenticate-native-build-evidence.mts';
-import { type NativeBuildEvidence, nativeBuildMetadata } from './native-build-qualification.mts';
+import {
+  type NativeBuildEvidence,
+  nativeBuildMetadata,
+  validateNativeBuildEvidence,
+} from './native-build-qualification.mts';
 
 const expected = {
   source: { commit: 'a'.repeat(40), tree: 'b'.repeat(40) },
@@ -613,5 +617,90 @@ test('native origin rejects tampered downloaded archives and local evidence byte
     await expect(
       authenticateNativeBuildEvidence(path.join(root, 'evidence'), expected),
     ).rejects.toThrow(/bytes differ/);
+  });
+});
+
+test('controller authenticates transported final bytes from the exact artifact and rejects local or supplier substitution', async () => {
+  await fixture(async (root) => {
+    const f = syntheticReviewedProducer();
+    const evidenceRoot = path.join(root, 'evidence');
+    const output = f.origin.evidence.cohorts[0].outputs[0].path;
+    const transported = path.join(evidenceRoot, 'files/0', output);
+    mkdirSync(path.dirname(transported), { recursive: true });
+    writeFileSync(transported, 'synthetic public archive');
+    writeFileSync(
+      path.join(evidenceRoot, 'native-build-evidence.json'),
+      JSON.stringify(f.origin.evidence),
+    );
+    const archive = () => {
+      rmSync(path.join(root, 'artifact.zip'));
+      execFileSync(
+        'zip',
+        ['-qr', path.join(root, 'artifact.zip'), 'native-build-evidence.json', 'files'],
+        { cwd: evidenceRoot },
+      );
+    };
+    archive();
+    const origin = await authenticateNativeBuildEvidence(evidenceRoot, expected);
+    expect(origin.finalFiles?.scope).toBe('construction');
+    expect(origin.finalFiles?.files).toEqual([
+      {
+        cohort: 0,
+        path: output,
+        size: Buffer.byteLength('synthetic public archive'),
+        sha256: createHash('sha256').update('synthetic public archive').digest('hex'),
+      },
+    ]);
+    expect(origin.finalFiles?.artifactRoots).toEqual([transported]);
+    writeFileSync(transported, 'local substitution');
+    await expect(authenticateNativeBuildEvidence(evidenceRoot, expected)).rejects.toThrow(
+      'native final transport bytes',
+    );
+    // Authenticating the ZIP does not authorize bytes that contradict its evidence.
+    archive();
+    await expect(authenticateNativeBuildEvidence(evidenceRoot, expected)).rejects.toThrow(
+      'native final transport bytes',
+    );
+    writeFileSync(transported, 'synthetic public archive');
+    archive();
+    rmSync(path.join(evidenceRoot, 'files'), { recursive: true });
+    await expect(authenticateNativeBuildEvidence(evidenceRoot, expected)).rejects.toThrow(
+      'final file transport differ',
+    );
+  });
+});
+
+test('historical producer transport uses its authenticated version while current qualification retains its explicit pin', async () => {
+  await fixture(async (root) => {
+    const f = syntheticReviewedProducer();
+    const current = readFileSync(new URL('../../.bazelversion', import.meta.url), 'utf8').trim();
+    const historical = current === '8.7.0' ? '8.6.0' : '8.7.0';
+    const started = f.origin.evidence.cohorts[0].buildEvents.find(
+      (event: any) => event.started,
+    ) as any;
+    started.started.buildToolVersion = historical;
+    const directory = path.join(root, 'evidence');
+    const output = f.origin.evidence.cohorts[0].outputs[0].path;
+    const file = path.join(directory, 'files/0', output);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, 'synthetic public archive');
+    writeFileSync(
+      path.join(directory, 'native-build-evidence.json'),
+      JSON.stringify(f.origin.evidence),
+    );
+    rmSync(path.join(root, 'artifact.zip'));
+    execFileSync(
+      'zip',
+      ['-qr', path.join(root, 'artifact.zip'), 'native-build-evidence.json', 'files'],
+      { cwd: directory },
+    );
+    const origin = await authenticateNativeBuildEvidence(directory, expected);
+    expect(origin.finalFiles?.artifactRoots).toEqual([file]);
+    expect(() =>
+      validateNativeBuildEvidence(origin.evidence, { ...expected, bazelVersion: historical }),
+    ).not.toThrow();
+    expect(() =>
+      validateNativeBuildEvidence(origin.evidence, { ...expected, bazelVersion: current }),
+    ).toThrow('native BEP Bazel version mismatch');
   });
 });

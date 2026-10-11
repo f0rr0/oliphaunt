@@ -501,6 +501,32 @@ export function moduleSuffix(target) {
   return '.so';
 }
 
+export function isDesktopNativeTarget(target) {
+  return DESKTOP_NATIVE_TARGETS.has(target);
+}
+
+/** Project the canonical recipe's module stems into an existing desktop profile. */
+export function nativeDependencyModuleBasenames(files = [], target) {
+  if (!isDesktopNativeTarget(target)) {
+    if (files.length === 0) return [];
+    throw inventoryError(
+      'native dependency modules',
+      `target ${target} has no desktop module contract`,
+    );
+  }
+  return files
+    .map((file) => {
+      const match = /^lib\/postgresql\/([A-Za-z0-9_-]+)\.(?:so|dylib|dll)$/u.exec(file);
+      if (!match)
+        throw inventoryError(
+          'native dependency modules',
+          'canonical recipe requires a portable PostgreSQL module destination',
+        );
+      return match[1] + moduleSuffix(target);
+    })
+    .sort(compareText);
+}
+
 function sqlFileOwned(fileName, metadata) {
   return (
     (metadata.createsExtension && fileName === `${metadata.sqlName}.control`) ||
@@ -780,20 +806,10 @@ export function validateExtensionArtifactEntries({
     if (!existsSync(recipePath))
       throw inventoryError(label, 'native dependency modules require their canonical recipe');
     const recipe = Bun.TOML.parse(readFileSync(recipePath, 'utf8'));
-    const declared = (recipe.artifacts?.native_dependency_modules ?? [])
-      .map((file) => {
-        if (
-          !file.startsWith('lib/postgresql/') ||
-          file.slice('lib/postgresql/'.length).includes('/')
-        ) {
-          throw inventoryError(
-            label,
-            'canonical native dependency module has a noncanonical destination',
-          );
-        }
-        return file.slice('lib/postgresql/'.length);
-      })
-      .sort(compareText);
+    const declared = nativeDependencyModuleBasenames(
+      recipe.artifacts?.native_dependency_modules,
+      target,
+    );
     if (JSON.stringify(declared) !== JSON.stringify(metadata.nativeDependencyModules)) {
       throw inventoryError(label, 'native dependency modules differ from the canonical recipe');
     }

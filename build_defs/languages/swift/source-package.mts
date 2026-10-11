@@ -99,6 +99,15 @@ export async function packageSwiftSource(
   outputRoot = path.resolve(outputRoot);
   assert.match(spec.version, SEMVER, 'Swift owner version must be stable SemVer');
   assert.match(spec.nativeVersion, SEMVER, 'Swift compatibility version must be stable SemVer');
+  for (const member of [
+    'Package.swift',
+    'VERSION',
+    'LIBOLIPHAUNT_VERSION',
+    'LICENSE',
+    'THIRD_PARTY_NOTICES.md',
+    'README.md',
+  ])
+    assert(Object.hasOwn(spec.sources, member), `Swift source inputs omitted ${member}`);
   const carrier = verifyFrozenNativeArchives(spec);
   await validateAppleXcframeworkAsset(realpathSync(spec.xcframework));
   await validateAppleXcframeworkAsset(
@@ -151,7 +160,10 @@ export async function packageSwiftSource(
       copy(source, path.join(sourcePackage, member));
       if (member === 'LICENSE' || member === 'THIRD_PARTY_NOTICES.md')
         copy(source, path.join(sourceRoot, member));
-      if (/^(Sources|Templates)\//u.test(member))
+      if (
+        /^(Sources|Templates)\//u.test(member) ||
+        ['VERSION', 'LIBOLIPHAUNT_VERSION'].includes(member)
+      )
         copy(source, path.join(tree, 'src/sdks/swift', member));
     }
     assert.equal(
@@ -177,6 +189,9 @@ export async function packageSwiftSource(
     copy(spec.publicHeader, path.join(sourcePackage, publicHeader));
     copy(spec.publicHeader, path.join(tree, 'src/sdks/swift', publicHeader));
     writeFileSync(path.join(outputRoot, 'Package.swift.release'), manifest, { mode: 0o644 });
+    // The declared tree is a complete source tag. The separately named
+    // manifest stays available to the existing frozen publication adapter.
+    writeFileSync(path.join(tree, 'Package.swift'), manifest, { mode: 0o644 });
     writeFileSync(
       path.join(sourcePackage, 'Package.swift'),
       manifest.replaceAll('"src/sdks/swift/Sources/', '"Sources/'),

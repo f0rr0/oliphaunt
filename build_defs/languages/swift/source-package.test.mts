@@ -77,6 +77,7 @@ async function fixture(scratch: string, legalMode = 0o644): Promise<SwiftSourceS
     VERSION: '9.8.7\n',
     LIBOLIPHAUNT_VERSION: '0.3.3\n',
     'Package.swift': '// development package\n',
+    'README.md': 'Swift SDK\n',
     'Sources/Oliphaunt/Oliphaunt.swift': '// source fixture\n',
     'Templates/OliphauntBroker/Info.plist': 'fixture\n',
     'Tests/test.swift': '// test fixture\n',
@@ -139,6 +140,16 @@ test('final source envelope preserves held native version, exact source-tag path
     const manifest = readFileSync(path.join(first, 'Package.swift.release'), 'utf8');
     expect(manifest).toContain('liboliphaunt-native-v0.3.3');
     expect(manifest).toContain('oliphaunt-swift-v9.8.7');
+    expect(readFileSync(path.join(first, 'release-tree/Package.swift'), 'utf8')).toBe(manifest);
+    expect(
+      readFileSync(path.join(first, 'release-tree/src/sdks/swift/VERSION'), 'utf8').trim(),
+    ).toBe(spec.version);
+    expect(
+      readFileSync(
+        path.join(first, 'release-tree/src/sdks/swift/LIBOLIPHAUNT_VERSION'),
+        'utf8',
+      ).trim(),
+    ).toBe(spec.nativeVersion);
     expect(
       readFileSync(
         path.join(
@@ -183,6 +194,20 @@ test('final source envelope preserves held native version, exact source-tag path
         sources: { ...spec.sources, '../escape': spec.generatedSwift },
       }),
     ).rejects.toThrow('Unsafe Swift source');
+    for (const member of [
+      'Package.swift',
+      'VERSION',
+      'LIBOLIPHAUNT_VERSION',
+      'LICENSE',
+      'THIRD_PARTY_NOTICES.md',
+      'README.md',
+    ]) {
+      const sources = { ...spec.sources };
+      delete sources[member];
+      await expect(
+        packageSwiftSource(path.join(scratch, `missing-${member}`), { ...spec, sources }),
+      ).rejects.toThrow(`omitted ${member}`);
+    }
     const corrupted = path.join(scratch, 'corrupt.zip');
     writeFileSync(corrupted, 'corrupt\n');
     expect(() => verifyFrozenNativeArchives({ ...spec, xcframework: corrupted })).toThrow(

@@ -2,12 +2,14 @@ load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION",
 load("//build_defs/release:shipping.bzl", "shipping_package")
 load("//build_defs/foundation:bun.bzl", "bun_script_test")
 load("//build_defs/extensions:native_carriers.bzl", "native_external_extension_carriers")
+load("//build_defs/extensions:wasix_carriers.bzl", "wasix_sql_extension_carriers")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["upstream-license-data.json", "release.toml", "source.toml", "recipe.toml"])
 
 native_external_extension_carriers(sql_name = "pgtap")
+wasix_sql_extension_carriers(sql_name = "pgtap")
 
 pgtap_sql(name = "sql", inputs = ["@pgtap//:sql_inputs"], control = "@pgtap//:pgtap.control")
 

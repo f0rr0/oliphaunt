@@ -1,7 +1,9 @@
 import { expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { createDeterministicTar } from '../../../tools/packaging/archive-directory.mts';
+import { canonicalGzipSync } from '../../../tools/packaging/portable-archive.mts';
 import { archive } from '../../query/package.mts';
 import { candidateConsumerManifest, cargoCandidate, resolvedSdkRuntime } from './consumer.mts';
 
@@ -38,6 +40,49 @@ test('candidate identity comes from the final archive manifest bytes', () => {
     expect(candidate.name).toBe(sdkManifest.package.name);
     expect(candidate.version).toBe(sdkManifest.package.version);
     expect(candidate.manifest.package.metadata.oliphaunt['native-version']).toBe(heldRuntime);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('canonical Cargo directories are accepted while mode and package boundaries stay strict', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'oliphaunt-cargo-directories-'));
+  try {
+    const root = join(directory, `${sdkManifest.package.name}-${sdkManifest.package.version}`);
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(
+      join(root, 'Cargo.toml'),
+      readFileSync(new URL('../../../src/native/sdks/rust/Cargo.toml', import.meta.url)),
+    );
+    writeFileSync(join(root, 'src/lib.rs'), 'pub fn source() {}\n', { mode: 0o644 });
+    const file = join(directory, 'canonical.crate');
+    writeFileSync(
+      file,
+      canonicalGzipSync(await createDeterministicTar(root, { keepParent: true })),
+    );
+    expect(cargoCandidate(file).name).toBe(sdkManifest.package.name);
+    writeFileSync(
+      file,
+      archive({
+        [`${sdkManifest.package.name}-${sdkManifest.package.version}/Cargo.toml`]: readFileSync(
+          join(root, 'Cargo.toml'),
+        ),
+        'outside.rs': Buffer.from('outside'),
+      }),
+    );
+    expect(() => cargoCandidate(file)).toThrow('outside declared package');
+    const executable = join(root, 'src/executable.rs');
+    writeFileSync(executable, 'pub fn source() {}\n', { mode: 0o755 });
+    writeFileSync(
+      file,
+      canonicalGzipSync(
+        await createDeterministicTar(root, {
+          keepParent: true,
+          modes: { [`${basename(root)}/src/executable.rs`]: 0o755 },
+        }),
+      ),
+    );
+    expect(() => cargoCandidate(file)).toThrow('0644');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

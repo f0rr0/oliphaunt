@@ -14,6 +14,21 @@ load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 ExtensionMemberInfo = provider(fields = ["sql_name", "configuration", "owner", "inventory", "archive"])
 NATIVE_EXTENSION_CONFIGURATION = _native_configuration
 
+def _module_suffix(configuration):
+    return {"macos-arm64": ".dylib", "windows-x64-msvc": ".dll"}.get(configuration, ".so")
+
+def extension_native_dependency_modules(paths, configuration):
+    """Project the canonical recipe stems into the selected desktop profile."""
+    result = []
+    for path in paths:
+        if not path.startswith("lib/postgresql/") or "/" in path[len("lib/postgresql/"):]:
+            fail("native dependency module requires its canonical PostgreSQL destination")
+        basename = path.split("/")[-1]
+        if not basename.endswith(".so"):
+            fail("canonical native dependency module must declare its .so stem")
+        result.append(basename[:-3] + _module_suffix(configuration))
+    return result
+
 def _descriptor(sql_name):
     for descriptor in EXTENSIONS.values():
         if descriptor["sql-name"] == sql_name:
@@ -182,7 +197,7 @@ def _payload_impl(ctx):
     module_file = descriptor.get("native-module-file", "")
     module_stem = module_file[:-3] if module_file.endswith(".so") else ""
     if module_stem:
-        module_file = module_stem + {"macos-arm64": ".dylib", "windows-x64-msvc": ".dll"}.get(configuration, ".so")
+        module_file = module_stem + _module_suffix(configuration)
     if ctx.files.server_module and ctx.files.server_module == ctx.files.embedded_module:
         fail("server and embedded ABI profiles require independently produced module files")
     if ctx.file.main_sql:
@@ -199,7 +214,8 @@ def _payload_impl(ctx):
     if module_stem and profiles != ["postgresql", "modules"]:
         fail("compiled member payload requires independently built server and embedded modules")
     dependency_paths = recipe_artifacts.get("native_dependency_modules", [])
-    if sorted([file.basename for file in ctx.files.dependency_modules]) != sorted([path.split("/")[-1] for path in dependency_paths]):
+    dependency_basenames = extension_native_dependency_modules(dependency_paths, configuration)
+    if sorted([file.basename for file in ctx.files.dependency_modules]) != sorted(dependency_basenames):
         fail("native dependency modules differ from the canonical extension recipe")
     for file in ctx.files.dependency_modules:
         for profile in profiles:
@@ -219,7 +235,7 @@ def _payload_impl(ctx):
         "dependencies": descriptor.get("dependencies", []),
         "module_profiles": profiles,
         "module_file": module_file,
-        "dependency_modules": [path.split("/")[-1] for path in dependency_paths],
+        "dependency_modules": dependency_basenames,
         "data_files": data_files,
         "sql_prefixes": recipe_artifacts.get("extension_sql_file_prefixes", []),
         "sql_files": recipe_artifacts.get("extension_sql_file_names", []),
@@ -266,8 +282,7 @@ _extension_member_payload = rule(
 )
 
 def extension_member_payload(name, **kwargs):
-    compatible = NATIVE_EXTENSION_LINUX_COMPATIBLE if kwargs["sql_name"] == "postgis" else NATIVE_EXTENSION_COMPATIBLE
-    _extension_member_payload(name = name, target_compatible_with = compatible, **kwargs)
+    _extension_member_payload(name = name, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE, **kwargs)
 
 def extension_member_validation_test(name, payload, sql_name):
     """Validate the actual archive with a reader independent of its assembler."""
@@ -329,6 +344,7 @@ def native_extension_modules(name, srcs, hdrs = [], copts = [], deps = [], inclu
                 deps = [":" + name + "_" + variant + "_objects"] + runtime_deps,
                 linkshared = True,
                 linkstatic = True,
+                dynamic_deps = dynamic_deps,
                 linkopts = linkopts + module_linkopts,
                 target_compatible_with = NATIVE_MACOS_COMPATIBLE,
             )
@@ -339,6 +355,7 @@ def native_extension_modules(name, srcs, hdrs = [], copts = [], deps = [], inclu
                 deps = [":" + name + "_" + variant + "_objects"] + runtime_deps,
                 linkshared = True,
                 linkstatic = True,
+                dynamic_deps = dynamic_deps,
                 win_def_file = ":" + exports,
                 features = ["no_windows_export_all_symbols"],
                 linkopts = linkopts,

@@ -16,6 +16,7 @@ import path from 'node:path';
 import {
   EXTENSION_ARTIFACT_PROPERTY_KEYS,
   moduleSuffix,
+  nativeDependencyModuleBasenames,
   validateExtensionArtifactArchive,
 } from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
 import {
@@ -116,8 +117,9 @@ export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<strin
   );
   const stem = canonicalModule ? canonicalModule.slice(0, -3) : null;
   assert.equal(actual.module_file, stem === null ? '' : stem + moduleSuffix(spec.target));
-  const nativeDependencyModules = canonical(artifact.native_dependency_modules).map((file) =>
-    path.posix.basename(file),
+  const nativeDependencyModules = nativeDependencyModuleBasenames(
+    artifact.native_dependency_modules,
+    spec.target,
   );
   assert.deepEqual(
     actual.dependency_modules,
