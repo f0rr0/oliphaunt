@@ -10,6 +10,10 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import {
+  windowsExtensionHeaders,
+  windowsExtensionSource,
+} from '../../../../../build_defs/extensions/windows_source_portability.mts';
 import { preprocessSql } from '../../../external/postgis/tools/preprocess-sql.mts';
 
 const read = (file: string) => readFileSync(file, 'utf8');
@@ -69,41 +73,17 @@ export function pgxsSources(root: string) {
 }
 
 export function patchTextsearch(root: string) {
-  write(
-    path.join(root, 'src/oliphaunt_windows_compat.h'),
-    '#ifdef _MSC_VER\n#ifndef __attribute__\n#define __attribute__(x)\n#endif\n#endif\n',
-  );
-  write(
-    path.join(root, 'src/unistd.h'),
-    '#ifndef OLIPHAUNT_WINDOWS_UNISTD_H\n#define OLIPHAUNT_WINDOWS_UNISTD_H\n#endif\n',
-  );
-  for (const [file, name, attribute, pack, size, alignment] of [
-    ['segment/segment.h', 'TpDictEntryV3', 'aligned(4)', 4, 12, 4],
-    ['segment/segment.h', 'TpDictEntry', 'aligned(8)', 8, 16, 8],
-    ['segment/segment.h', 'TpSegmentPosting', 'packed', 1, 14, 1],
-    ['segment/segment.h', 'TpSkipEntryV3', 'packed', 1, 16, 1],
-    ['segment/segment.h', 'TpSkipEntry', 'packed', 1, 20, 1],
-    ['segment/segment.h', 'TpCtidMapEntry', 'packed', 1, 6, 1],
-    ['memtable/expull.h', 'TpExpullEntry', 'packed', 1, 7, 1],
-  ] as const) {
-    const target = path.join(root, 'src', file);
-    replace(
-      target,
-      new RegExp(`typedef struct ${name}\\b`),
-      `#ifdef _MSC_VER\n#pragma pack(push, ${pack})\n#endif\ntypedef struct ${name}`,
-    );
-    replace(
-      target,
-      `} __attribute__((${attribute})) ${name};`,
-      `} ${name};\n#ifdef _MSC_VER\n#pragma pack(pop)\nStaticAssertDecl(sizeof(${name}) == ${size}, "${name} size");\nStaticAssertDecl(__alignof(${name}) == ${alignment}, "${name} alignment");\n#endif`,
-    );
-  }
-  for (const file of ['src/am/am.h', 'src/types/vector.h', 'src/types/query.h']) {
-    replace(
-      path.join(root, file),
-      /^Datum (\w+)\(PG_FUNCTION_ARGS\);/gm,
-      'extern PGDLLEXPORT Datum $1(PG_FUNCTION_ARGS);',
-    );
+  for (const [file, text] of Object.entries(windowsExtensionHeaders('pg_textsearch')))
+    write(path.join(root, file), text);
+  for (const file of [
+    'src/segment/segment.h',
+    'src/memtable/expull.h',
+    'src/am/am.h',
+    'src/types/vector.h',
+    'src/types/query.h',
+  ]) {
+    const target = path.join(root, file);
+    write(target, windowsExtensionSource('pg_textsearch', file, read(target)));
   }
 }
 
@@ -195,11 +175,8 @@ export function prepareSimple(config: Config, extension: string) {
       includes.push('src');
     }
     if (extension === 'pg_uuidv7') {
-      replace(
-        path.join(destination, 'pg_uuidv7.c'),
-        '#define EPOCH_DIFF_USECS ((POSTGRES_EPOCH_JDATE - UNIX_EPOCH_JDATE) * USECS_PER_DAY)',
-        `#define EPOCH_DIFF_USECS ((POSTGRES_EPOCH_JDATE - UNIX_EPOCH_JDATE) * USECS_PER_DAY)\n#ifdef _WIN32\n#ifndef CLOCK_REALTIME\n#define CLOCK_REALTIME 0\n#endif\nstatic int oliphaunt_pg_uuidv7_clock_gettime(int clock_id, struct timespec *ts) {\n  TimestampTz unix_usecs;\n  if (clock_id != CLOCK_REALTIME || ts == NULL) return -1;\n  unix_usecs = GetCurrentTimestamp() + EPOCH_DIFF_USECS;\n  ts->tv_sec = (time_t) (unix_usecs / USECS_PER_SEC);\n  ts->tv_nsec = (long) ((unix_usecs % USECS_PER_SEC) * 1000);\n  return 0;\n}\n#define clock_gettime oliphaunt_pg_uuidv7_clock_gettime\n#endif`,
-      );
+      const target = path.join(destination, 'pg_uuidv7.c');
+      write(target, windowsExtensionSource(extension, 'pg_uuidv7.c', read(target)));
     }
   }
   for (const file of [...sources, ...data])

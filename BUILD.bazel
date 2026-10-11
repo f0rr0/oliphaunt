@@ -2,6 +2,9 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts",
+    "src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts",
+    "src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts",
+    "src/extensions/artifacts/native/tools/stage-windows-binary-contract.mts",
     ".prototools",
     "Cargo.toml",
     "Cargo.lock",
@@ -121,5 +124,7 @@ test_suite(
         "//build_defs/native:probe_process_test",
         "//build_defs/extensions:native_built_extension_sql_test",
         "//build_defs/extensions:native_final_carriers_tests",
+        "//build_defs/extensions:native_final_contract_test",
+        "//build_defs/extensions:native_final_composition_test",
     ],
 )

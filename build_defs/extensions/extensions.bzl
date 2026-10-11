@@ -1,12 +1,14 @@
 """Native member construction; publication ownership stays in imported metadata."""
 
-load("//build_defs/native:platform_config.bzl", "NATIVE_RELEASE_LINKOPTS")
+load("//build_defs/native:platform_config.bzl", "NATIVE_EMBEDDED_MODULE_LINKOPTS", "NATIVE_MACOS_COMPATIBLE", "NATIVE_MODULE_LINKOPTS", "NATIVE_RELEASE_LINKOPTS", "NATIVE_WINDOWS_COMPATIBLE")
+load("//build_defs/native:windows_config.bzl", "WINDOWS_COPTS")
+load("//build_defs/native:windows_link.bzl", "postgres_windows_exports")
 load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "CONTRIB_OWNERS", "EXTENSIONS", "EXTENSION_PROFILES", "EXTENSION_RECIPES", "EXTENSION_SOURCES", "POSTGRES_SOURCE")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
-load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", _native_configuration = "NATIVE_EXTENSION_CONFIGURATION")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_LINUX_COMPATIBLE", _native_configuration = "NATIVE_EXTENSION_CONFIGURATION")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 
 ExtensionMemberInfo = provider(fields = ["sql_name", "configuration", "owner", "inventory", "archive"])
@@ -39,14 +41,21 @@ def extension_default_version(sql_name):
     return EXTENSION_SOURCES[sql_name]["extension-control"]["default-version"]
 
 def _require_native_profile(ctx):
-    if not ctx.target_platform_has_constraint(ctx.attr._linux[platform_common.ConstraintValueInfo]):
-        fail("this native construction slice requires a qualified Linux platform")
-    if ctx.target_platform_has_constraint(ctx.attr._x86_64[platform_common.ConstraintValueInfo]):
+    linux = ctx.target_platform_has_constraint(ctx.attr._linux[platform_common.ConstraintValueInfo])
+    macos = ctx.target_platform_has_constraint(ctx.attr._macos[platform_common.ConstraintValueInfo])
+    windows = ctx.target_platform_has_constraint(ctx.attr._windows[platform_common.ConstraintValueInfo])
+    x64 = ctx.target_platform_has_constraint(ctx.attr._x86_64[platform_common.ConstraintValueInfo])
+    arm64 = ctx.target_platform_has_constraint(ctx.attr._aarch64[platform_common.ConstraintValueInfo])
+    if linux and x64:
         configuration = "linux-x64-gnu"
-    elif ctx.target_platform_has_constraint(ctx.attr._aarch64[platform_common.ConstraintValueInfo]):
+    elif linux and arm64:
         configuration = "linux-arm64-gnu"
+    elif macos and arm64:
+        configuration = "macos-arm64"
+    elif windows and x64:
+        configuration = "windows-x64-msvc"
     else:
-        fail("this native construction slice has no qualified configuration for this CPU")
+        fail("this native dynamic extension recipe requires a declared desktop OS/CPU; mobile static registries use their own producer")
     if POSTGRES_SOURCE["postgresql"]["version"].split(".")[0] != "18":
         fail("this native extension construction slice supports PostgreSQL 18 only")
     declared = [target for profile in EXTENSION_PROFILES["profiles"] for target in profile["targets"]
@@ -57,6 +66,8 @@ def _require_native_profile(ctx):
 
 _PLATFORM_ATTRS = {
     "_linux": attr.label(default = "@platforms//os:linux"),
+    "_macos": attr.label(default = "@platforms//os:macos"),
+    "_windows": attr.label(default = "@platforms//os:windows"),
     "_x86_64": attr.label(default = "@platforms//cpu:x86_64"),
     "_aarch64": attr.label(default = "@platforms//cpu:aarch64"),
 }
@@ -67,7 +78,7 @@ def _pgtap_sql_impl(ctx):
     args = ctx.actions.args()
     args.add("--source", ctx.file.control.dirname)
     args.add("--output", directory.path)
-    args.add("--os", "linux")
+    args.add("--os", {"macos-arm64": "darwin", "windows-x64-msvc": "MSWin32"}.get(configuration, "linux"))
     args.add("--version", extension_default_version("pgtap"))
     perl = ctx.toolchains["@rules_perl//perl:exec_toolchain_type"].perl_runtime
     args.add("--perl", perl.interpreter)
@@ -161,6 +172,8 @@ def _payload_impl(ctx):
         data_inputs.append(file)
     module_file = descriptor.get("native-module-file", "")
     module_stem = module_file[:-3] if module_file.endswith(".so") else ""
+    if module_stem:
+        module_file = module_stem + {"macos-arm64": ".dylib", "windows-x64-msvc": ".dll"}.get(configuration, ".so")
     if ctx.files.server_module and ctx.files.server_module == ctx.files.embedded_module:
         fail("server and embedded ABI profiles require independently produced module files")
     if ctx.file.main_sql:
@@ -173,7 +186,7 @@ def _payload_impl(ctx):
             if len(files) != 1 or not module_stem:
                 fail("native module must provide exactly one file for a compiled catalog member")
             profiles.append(profile)
-            mappings.append({"source": files[0].path, "destination": "lib/%s/%s.so" % (profile, module_stem)})
+            mappings.append({"source": files[0].path, "destination": "lib/%s/%s" % (profile, module_file)})
     if module_stem and profiles != ["postgresql", "modules"]:
         fail("compiled member payload requires independently built server and embedded modules")
     dependency_paths = recipe_artifacts.get("native_dependency_modules", [])
@@ -244,7 +257,8 @@ _extension_member_payload = rule(
 )
 
 def extension_member_payload(name, **kwargs):
-    _extension_member_payload(name = name, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE, **kwargs)
+    compatible = NATIVE_EXTENSION_LINUX_COMPATIBLE if kwargs["sql_name"] == "postgis" else NATIVE_EXTENSION_COMPATIBLE
+    _extension_member_payload(name = name, target_compatible_with = compatible, **kwargs)
 
 def extension_member_validation_test(name, payload, sql_name):
     """Validate the actual archive with a reader independent of its assembler."""
@@ -255,7 +269,7 @@ def extension_member_validation_test(name, payload, sql_name):
         entry_point = "//build_defs/extensions:validate_member_payload.mts",
         args = ["$(location :%s)" % archive, "--sql-name", sql_name,
                 "--owner", _extension_product(sql_name)],
-        data = [":" + archive, "//:tools/packaging/portable-archive.mts"],
+        data = [":" + archive, "//:tools/packaging/portable-archive.mts", "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json", "//tools/release:platform-compatibility-policy.mts", "//:src/extensions/artifacts/native/tools/stage-windows-binary-contract.mts"],
         size = "small",
     )
 
@@ -273,10 +287,10 @@ extension_source_headers = rule(
     },
 )
 
-def native_extension_modules(name, srcs, hdrs = [], copts = [], deps = [], includes = [], defines = [], linkopts = [], dynamic_deps = []):
+def native_extension_modules(name, srcs, hdrs = [], copts = [], deps = [], includes = [], defines = [], linkopts = [], dynamic_deps = [], linux_only = False):
     """Compile separate PostgreSQL-server and embedded ABI variants directly."""
     for variant, headers, runtime_deps in [
-        ("server", "//src/native/runtime:postgres_server_headers", []),
+        ("server", "//src/native/runtime:postgres_server_headers", select({"//build_defs/native:windows_x64": ["@postgres//:server_import_library"], "//conditions:default": []})),
         ("embedded", "//src/native/runtime:postgres_embedded_headers", ["//src/native/runtime:liboliphaunt"]),
     ]:
         cc_library(
@@ -284,11 +298,11 @@ def native_extension_modules(name, srcs, hdrs = [], copts = [], deps = [], inclu
             srcs = srcs,
             hdrs = hdrs,
             deps = [headers] + deps,
-            copts = copts,
+            copts = copts + select({"//build_defs/native:windows_x64": WINDOWS_COPTS, "//conditions:default": []}),
             includes = includes,
             defines = defines,
             alwayslink = True,
-            target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+            target_compatible_with = NATIVE_EXTENSION_LINUX_COMPATIBLE if linux_only else NATIVE_EXTENSION_COMPATIBLE,
         )
         cc_binary(
             name = name + "_" + variant + ".so",
@@ -297,5 +311,32 @@ def native_extension_modules(name, srcs, hdrs = [], copts = [], deps = [], inclu
             linkstatic = True,
             dynamic_deps = dynamic_deps,
             linkopts = linkopts + NATIVE_RELEASE_LINKOPTS + (["-Wl,-z,defs"] if variant == "embedded" else []),
-            target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+            target_compatible_with = NATIVE_EXTENSION_LINUX_COMPATIBLE,
         )
+        if not linux_only:
+            module_linkopts = NATIVE_MODULE_LINKOPTS if variant == "server" else NATIVE_EMBEDDED_MODULE_LINKOPTS
+            cc_binary(
+                name = name + "_" + variant + ".dylib",
+                deps = [":" + name + "_" + variant + "_objects"] + runtime_deps,
+                linkshared = True,
+                linkstatic = True,
+                linkopts = linkopts + module_linkopts,
+                target_compatible_with = NATIVE_MACOS_COMPATIBLE,
+            )
+            exports = name + "_" + variant + "_windows_exports"
+            postgres_windows_exports(name = exports, roots = [":" + name + "_" + variant + "_objects"], target_compatible_with = NATIVE_WINDOWS_COMPATIBLE)
+            cc_binary(
+                name = name + "_" + variant + ".dll",
+                deps = [":" + name + "_" + variant + "_objects"] + runtime_deps,
+                linkshared = True,
+                linkstatic = True,
+                win_def_file = ":" + exports,
+                features = ["no_windows_export_all_symbols"],
+                linkopts = linkopts,
+                target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
+            )
+            native.alias(name = name + "_" + variant + "_module", actual = select({
+                "//build_defs/native:macos_arm64": ":" + name + "_" + variant + ".dylib",
+                "//build_defs/native:windows_x64": ":" + name + "_" + variant + ".dll",
+                "//conditions:default": ":" + name + "_" + variant + ".so",
+            }))

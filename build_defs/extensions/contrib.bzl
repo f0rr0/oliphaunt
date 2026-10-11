@@ -140,7 +140,7 @@ def native_contrib_members(crypto = None):
             includes.append("portable-uuid/include")
             # pg_config.h undefines optional UUID macros. Select this module's
             # explicit provider after that header, without changing the host.
-            copts += ["-include", "build_defs/extensions/uuid_config.h"]
+            copts += select({"//build_defs/native:windows_x64": ["/FI$(location //build_defs/extensions:uuid_config.h)"], "//conditions:default": ["-include", "build_defs/extensions/uuid_config.h"]})
         elif name == "pgcrypto":
             deps.append(crypto)
         native_extension_modules(
@@ -151,7 +151,7 @@ def native_contrib_members(crypto = None):
             defines = defines,
             includes = includes,
             copts = copts,
-            linkopts = ["-lm"] if name in ["btree_gist", "cube", "earthdistance", "tsm_system_time"] else [],
+            linkopts = select({"//build_defs/native:windows_x64": [], "//conditions:default": ["-lm"]}) if name in ["btree_gist", "cube", "earthdistance", "tsm_system_time"] else [],
         )
         resources = name + "_sql_resources"
         native.filegroup(
@@ -167,8 +167,8 @@ def native_contrib_members(crypto = None):
             sql_name = member["sql-name"],
             owner = extension_identity(member["sql-name"]),
             resources = [":" + resources],
-            server_module = ":" + name + "_server.so",
-            embedded_module = ":" + name + "_embedded.so",
+            server_module = ":" + name + "_server_module",
+            embedded_module = ":" + name + "_embedded_module",
             construction_licenses = construction_licenses,
         )
         shipping_package(

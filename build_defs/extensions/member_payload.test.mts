@@ -406,6 +406,111 @@ test('validator checks AArch64 modules against the archive target identity', asy
   expect(() => inspect(archive)).toThrow('configuration');
 });
 
+function desktopImage(configuration: string, provider = 'KERNEL32.dll'): Buffer {
+  if (configuration === 'macos-arm64') {
+    const data = Buffer.alloc(56);
+    data.writeUInt32LE(0xfeedfacf, 0);
+    data.writeUInt32LE(0x0100000c, 4);
+    data.writeUInt32LE(6, 12);
+    data.writeUInt32LE(1, 16);
+    data.writeUInt32LE(24, 20);
+    data.writeUInt32LE(0x32, 32);
+    data.writeUInt32LE(24, 36);
+    data.writeUInt32LE(1, 40);
+    data.writeUInt32LE(11 << 16, 44);
+    return data;
+  }
+  const data = Buffer.alloc(1024);
+  data.write('MZ');
+  data.writeUInt32LE(0x80, 0x3c);
+  data.write('PE\0\0', 0x80);
+  const coff = 0x84;
+  data.writeUInt16LE(0x8664, coff);
+  data.writeUInt16LE(1, coff + 2);
+  data.writeUInt16LE(240, coff + 16);
+  data.writeUInt16LE(0x2022, coff + 18);
+  const optional = coff + 20;
+  data.writeUInt16LE(0x20b, optional);
+  data.writeUInt32LE(512, optional + 60);
+  data.writeUInt32LE(16, optional + 108);
+  data.writeUInt32LE(0x1000, optional + 120);
+  data.writeUInt32LE(40, optional + 124);
+  const section = optional + 240;
+  data.write('.rdata', section);
+  data.writeUInt32LE(512, section + 8);
+  data.writeUInt32LE(0x1000, section + 12);
+  data.writeUInt32LE(512, section + 16);
+  data.writeUInt32LE(512, section + 20);
+  data.writeUInt32LE(0x1080, 512 + 12);
+  data.write(`${provider}\0`, 640);
+  return data;
+}
+
+test('desktop member archives validate actual Mach-O and PE profiles with the shared binary policy', async () => {
+  const archive = join(temporary(), 'desktop.tar.gz');
+  for (const configuration of ['macos-arm64', 'windows-x64-msvc']) {
+    const module = configuration === 'macos-arm64' ? 'fixture.dylib' : 'fixture.dll';
+    const facts = descriptor({
+      configuration,
+      module_file: module,
+      module_profiles: ['postgresql', 'modules'],
+    });
+    const files = sqlFiles();
+    files.set(`lib/postgresql/${module}`, desktopImage(configuration, 'postgres.exe'));
+    files.set(`lib/modules/${module}`, desktopImage(configuration, 'oliphaunt.dll'));
+    await writeArchive(archive, files, facts);
+    expect(inspect(archive).configuration).toBe(configuration);
+    const invalid = desktopImage(configuration);
+    if (configuration === 'macos-arm64') invalid.writeUInt32LE(0x01000007, 4);
+    else invalid.writeUInt16LE(0xaa64, 0x84);
+    files.set(`lib/modules/${module}`, invalid);
+    await writeArchive(archive, files, facts);
+    expect(() => inspect(archive)).toThrow();
+    const object = desktopImage(configuration);
+    if (configuration === 'macos-arm64') object.writeUInt32LE(1, 12);
+    else object.writeUInt16LE(0x22, 0x84 + 18);
+    files.set(`lib/modules/${module}`, object);
+    await writeArchive(archive, files, facts);
+    expect(() => inspect(archive)).toThrow(
+      configuration === 'macos-arm64' ? 'dylib or bundle' : 'DLL',
+    );
+    await writeArchive(archive, files, { ...facts, module_file: 'fixture.so' });
+    expect(() => inspect(archive)).toThrow('module file');
+  }
+});
+
+test('desktop module validation rejects provider swaps, high deployment floors and mobile substitution', async () => {
+  const archive = join(temporary(), 'desktop.tar.gz');
+  const files = sqlFiles();
+  for (const profile of ['postgresql', 'modules'])
+    files.set(`lib/${profile}/fixture.dll`, desktopImage('windows-x64-msvc', 'oliphaunt.dll'));
+  const facts = descriptor({
+    configuration: 'windows-x64-msvc',
+    module_file: 'fixture.dll',
+    module_profiles: ['postgresql', 'modules'],
+  });
+  await writeArchive(archive, files, facts);
+  expect(() => inspect(archive)).toThrow('standalone PostgreSQL');
+  files.set('lib/postgresql/fixture.dll', desktopImage('windows-x64-msvc', 'postgres.exe'));
+  files.set('lib/modules/fixture.dll', desktopImage('windows-x64-msvc', 'postgres.exe'));
+  await writeArchive(archive, files, facts);
+  expect(() => inspect(archive)).toThrow('embedded extension');
+  const macho = desktopImage('macos-arm64');
+  for (const profile of ['postgresql', 'modules']) files.set(`lib/${profile}/fixture.dylib`, macho);
+  files.delete('lib/postgresql/fixture.dll');
+  files.delete('lib/modules/fixture.dll');
+  const macFacts = { ...facts, configuration: 'macos-arm64', module_file: 'fixture.dylib' };
+  macho.writeUInt32LE(14 << 16, 44);
+  await writeArchive(archive, files, macFacts);
+  expect(() => inspect(archive)).toThrow('exceeds');
+  macho.writeUInt32LE(11 << 16, 44);
+  macho.writeUInt32LE(2, 40);
+  await writeArchive(archive, files, macFacts);
+  expect(() => inspect(archive)).toThrow('unsupported iOS');
+  await writeArchive(archive, files, { ...macFacts, configuration: 'ios-xcframework' });
+  expect(() => inspect(archive)).toThrow('configuration');
+});
+
 test('validator requires dependency ELF bytes in both ABI layouts and exact data resources', async () => {
   const archive = join(temporary(), 'payload.tar.gz');
   const facts = descriptor({

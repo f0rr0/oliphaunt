@@ -3,6 +3,11 @@ import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import {
+  validateWindowsEmbeddedModuleImports,
+  validateWindowsServerModuleImports,
+} from '../../src/extensions/artifacts/native/tools/stage-windows-binary-contract.mts';
+import { inspectPlatformBinaryBuffer } from '../../tools/packaging/platform-binary-contract.mts';
+import {
   DEFAULT_PORTABLE_ARCHIVE_LIMITS,
   readPortableArchiveEntries,
   strictGunzip,
@@ -24,6 +29,59 @@ function strings(value: unknown): string[] {
 
 function fullMatch(pattern: RegExp, value: unknown): value is string {
   return typeof value === 'string' && pattern.exec(value)?.[0] === value;
+}
+
+/** Shared dynamic-member policy for internal archives and imported final leaves. */
+export function validateNativeMemberModule(
+  data: Buffer,
+  configuration: string,
+  module: string,
+): void {
+  const architecture =
+    configuration === 'linux-x64-gnu'
+      ? { machine: 62, name: 'x86_64' }
+      : configuration === 'linux-arm64-gnu'
+        ? { machine: 183, name: 'aarch64' }
+        : undefined;
+  const suffix =
+    configuration === 'macos-arm64'
+      ? 'dylib'
+      : configuration === 'windows-x64-msvc'
+        ? 'dll'
+        : architecture
+          ? 'so'
+          : undefined;
+  if (
+    !suffix ||
+    !fullMatch(
+      new RegExp(`^lib/(?:postgresql|modules)/[a-z_][a-z0-9_-]*\\.${suffix}$`, 'u'),
+      module,
+    )
+  ) {
+    throw new Error('native member module has an unsupported configuration or layout');
+  }
+  if (configuration === 'macos-arm64') {
+    inspectPlatformBinaryBuffer(data, { target: configuration, label: module });
+    const little = data.length >= 16 && data.readUInt32LE(0) === 0xfeedfacf;
+    const big = data.length >= 16 && data.readUInt32BE(0) === 0xfeedfacf;
+    const type = little ? data.readUInt32LE(12) : big ? data.readUInt32BE(12) : 0;
+    if (type !== 6 && type !== 8)
+      throw new Error('native module must be a thin Mach-O arm64 dylib or bundle');
+  } else if (configuration === 'windows-x64-msvc') {
+    if (module.startsWith('lib/postgresql/')) validateWindowsServerModuleImports(data, module);
+    else validateWindowsEmbeddedModuleImports(data, module);
+    // The shared parser has already bounded the PE/COFF header.
+    const coff = data.readUInt32LE(0x3c) + 4;
+    if ((data.readUInt16LE(coff + 18) & 0x2000) === 0)
+      throw new Error('native module must be a PE x64 DLL');
+  } else if (
+    data.length < 64 ||
+    !data.subarray(0, 6).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1])) ||
+    data.readUInt16LE(16) !== 3 ||
+    data.readUInt16LE(18) !== architecture?.machine
+  ) {
+    throw new Error(`native module must be an ELF ${architecture?.name} shared object`);
+  }
 }
 
 // The portable reader permits and omits tar's conventional root directory
@@ -97,7 +155,9 @@ export function inspect(
       : descriptor.configuration === 'linux-arm64-gnu'
         ? { machine: 183, name: 'aarch64' }
         : undefined;
-  if (!architecture || descriptor.family !== 'native') {
+  const desktop =
+    descriptor.configuration === 'macos-arm64' || descriptor.configuration === 'windows-x64-msvc';
+  if ((!architecture && !desktop) || descriptor.family !== 'native') {
     throw new Error('member payload configuration is unsupported by this native slice');
   }
   const name = descriptor.sql_name;
@@ -133,7 +193,13 @@ export function inspect(
     throw new Error('member archive has an unsupported ABI profile declaration');
   }
   const moduleFile = descriptor.module_file ?? '';
-  if (profiles.length && !fullMatch(/^[a-z_][a-z0-9_-]*\.so$/u, moduleFile)) {
+  const modulePattern =
+    descriptor.configuration === 'macos-arm64'
+      ? /^[a-z_][a-z0-9_-]*\.dylib$/u
+      : descriptor.configuration === 'windows-x64-msvc'
+        ? /^[a-z_][a-z0-9_-]*\.dll$/u
+        : /^[a-z_][a-z0-9_-]*\.so$/u;
+  if (profiles.length && !fullMatch(modulePattern, moduleFile)) {
     throw new Error('compiled member has an invalid module file declaration');
   }
   if (Boolean(moduleFile) !== Boolean(profiles.length)) {
@@ -145,7 +211,7 @@ export function inspect(
     dependencyModules.length &&
     (!profiles.length ||
       new Set(dependencyModules).size !== dependencyModules.length ||
-      dependencyModules.some((module) => !fullMatch(/^[a-z_][a-z0-9_-]*\.so$/u, module)))
+      dependencyModules.some((module) => !fullMatch(modulePattern, module)))
   ) {
     throw new Error('member archive has invalid native dependency modules');
   }
@@ -209,15 +275,8 @@ export function inspect(
   }
   for (const module of modules) {
     const data = files.get(module);
-    if (
-      !data ||
-      data.length < 64 ||
-      !data.subarray(0, 6).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1])) ||
-      data.readUInt16LE(16) !== 3 ||
-      data.readUInt16LE(18) !== architecture.machine
-    ) {
-      throw new Error(`native module must be an ELF ${architecture.name} shared object`);
-    }
+    if (!data) throw new Error('member archive is missing a required ABI profile');
+    validateNativeMemberModule(data, descriptor.configuration as string, module);
   }
   if (typeof descriptor.creates_extension !== 'boolean') {
     throw new Error('member descriptor must declare creates_extension');

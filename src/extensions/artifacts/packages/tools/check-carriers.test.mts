@@ -1,8 +1,86 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { expectedExtensionBundleManifest } from './check-carriers.mts';
-import { extensionReleasePropertiesText } from './build-extension-ci-artifacts.mts';
+import {
+  composeExtensionReleaseDocuments,
+  extensionReleasePropertiesText,
+  writeReleaseControls,
+} from './build-extension-ci-artifacts.mts';
 import { parseUniquePropertiesText } from '../../../../../tools/packaging/release-carrier.mts';
+
+test('explicit external native controls retain their family while combined defaults stay unchanged', () => {
+  const product = 'oliphaunt-extension-pgtap';
+  const inputs = {
+    product,
+    version: '9.1.0',
+    members: [
+      {
+        sqlName: 'pgtap',
+        createsExtension: true,
+        dependencies: [],
+        dataFiles: [],
+        extensionSqlFileNames: [],
+        extensionSqlFilePrefixes: [],
+        nativeModuleStem: null,
+        iosNativeDependencies: [],
+        iosRegistration: null,
+        wasixInstall: null,
+        sharedPreloadLibraries: [],
+        assets: [],
+      },
+    ],
+    directAssets: [],
+    releaseMetadata: {
+      class: 'external',
+      versioning: 'independent',
+      sourceIdentity: { kind: 'git' },
+      compatibility: {},
+    },
+  };
+  const legacy = composeExtensionReleaseDocuments(inputs);
+  for (const document of [legacy.manifest, legacy.releaseData]) {
+    assert.equal(Object.hasOwn(document, 'releaseProduct'), false);
+    assert.equal(Object.hasOwn(document, 'family'), false);
+  }
+  const legacyProperties = parseUniquePropertiesText(
+    extensionReleasePropertiesText({
+      ...inputs,
+      ...legacy,
+    }),
+  );
+  assert.equal(legacyProperties.releaseProduct, undefined);
+  assert.equal(legacyProperties.carrierFamily, undefined);
+
+  const native = composeExtensionReleaseDocuments({ ...inputs, family: 'native' });
+  for (const document of [native.manifest, native.releaseData]) {
+    assert.equal(document.releaseProduct, product);
+    assert.equal(document.family, 'native');
+  }
+  const root = mkdtempSync(path.join(tmpdir(), 'external-native-controls-test-'));
+  try {
+    const productRoot = path.join(root, product);
+    mkdirSync(path.join(productRoot, 'release-assets'), { recursive: true });
+    const controls = writeReleaseControls({
+      ...inputs,
+      ...native,
+      releaseProduct: product,
+      family: 'native',
+      productRoot,
+      root,
+    });
+    const manifest = JSON.parse(readFileSync(controls.releaseManifest, 'utf8'));
+    assert.equal(manifest.releaseProduct, product);
+    assert.equal(manifest.family, 'native');
+    const properties = parseUniquePropertiesText(readFileSync(controls.propertiesManifest, 'utf8'));
+    assert.equal(properties.releaseProduct, product);
+    assert.equal(properties.carrierFamily, 'native');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('derives nested bundle compatibility from the staged bundle data', () => {
   const compatibility = {

@@ -9,7 +9,7 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_DEPENDENCIES")
-load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE")
 load(":libraries.bzl", "postgis_source_headers")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 

@@ -1,10 +1,11 @@
 """Selected Linux extension final envelopes from their typed member producers."""
 
-load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILITY", "EXTENSION_DEPENDENCIES", "EXTENSION_RECIPES", "EXTENSION_SOURCES", "PRODUCTS", "PUBLICATION_CARRIERS")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILITY", "EXTENSION_DEPENDENCIES", "EXTENSION_RECIPES", "EXTENSION_RELEASE_METADATA", "EXTENSION_SOURCES", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action", "bun_script_test")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_identity")
-load(":platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load(":final_leaf.bzl", "ExtensionFinalLeafInfo")
+load(":platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE")
 load(":smoke.bzl", "extension_smoke_plan")
 
 _TARGETS = {"//build_defs/native:linux_x86_64": "linux-x64-gnu", "//build_defs/native:linux_aarch64_gnu_2_28": "linux-arm64-gnu"}
@@ -12,6 +13,7 @@ _TARGETS = {"//build_defs/native:linux_x86_64": "linux-x64-gnu", "//build_defs/n
 def native_extension_carrier_helpers():
     return [
         "//build_defs/extensions:validate_member_payload.mts",
+        "//:src/extensions/artifacts/native/tools/stage-windows-binary-contract.mts",
         "//src/database-resources:seeds/carrier-identities.mts",
         "//:src/extensions/artifacts/packages/tools/contrib-carriers.mts",
         "//:src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts",
@@ -66,12 +68,15 @@ def native_extension_carrier_legal(sql_name):
     inputs += [package + "dependencies/" + name + "/source.toml" for name in EXTENSION_DEPENDENCIES.get(sql_name, {})]
     return inputs
 
-def _metadata(sql_name, target):
+def native_external_carrier_metadata(sql_name, target):
     product = EXTENSION_SOURCES[sql_name]["product"]
+    release = [row for row in EXTENSION_RELEASE_METADATA if row["sqlName"] == sql_name]
+    if len(release) != 1:
+        fail("external final carrier requires exactly one canonical release metadata row")
     return {"product": product, "version": PRODUCTS[product]["version"], "sqlName": sql_name, "target": target, "runtimeVersion": PRODUCTS["liboliphaunt-native"]["version"],
             "descriptor": EXTENSIONS[sql_name], "recipe": EXTENSION_RECIPES.get(sql_name, {}), "source": EXTENSION_SOURCES[sql_name],
             "selectedDependencies": sorted([name for name in EXTENSIONS[sql_name].get("dependencies", []) if name in EXTENSIONS]),
-            "compatibility": EXTENSION_COMPATIBILITY[sql_name], "carriers": [row for row in PUBLICATION_CARRIERS if row["product"] == product]}
+            "compatibility": EXTENSION_COMPATIBILITY[sql_name], "releaseMetadata": release[0], "carriers": [row for row in PUBLICATION_CARRIERS if row["product"] == product]}
 
 def _leaf(spec, ecosystem):
     facades = [row for row in spec["carriers"] if row["ecosystem"] == "npm" and row["target"] == None]
@@ -85,7 +90,7 @@ def _leaf(spec, ecosystem):
 
 def _carriers_impl(ctx):
     member = ctx.attr.member[ExtensionMemberInfo]
-    spec = _metadata(member.sql_name, member.configuration)
+    spec = native_external_carrier_metadata(member.sql_name, member.configuration)
     if spec["product"] != member.owner:
         fail("final extension envelope owner differs from its canonical member producer")
     github = ctx.actions.declare_file(spec["product"] + "-" + spec["version"] + "-native-" + member.configuration + "-runtime.tar.gz")
@@ -99,7 +104,9 @@ def _carriers_impl(ctx):
     bun_file_action(ctx, ctx.file._tool, arguments = [inputs.path], inputs = [member.archive, member.inventory, inputs] + ctx.files.legal,
                     source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal,
                     outputs = [github, npm, cargo, manifest, frozen], mnemonic = "NativeExtensionEnvelopes")
-    return [DefaultInfo(files = depset([github, npm, cargo, manifest, frozen])), OutputGroupInfo(github = depset([github]), npm = depset([npm]), cargo = depset([cargo]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([inputs]))]
+    return [DefaultInfo(files = depset([github, npm, cargo, manifest, frozen])),
+            ExtensionFinalLeafInfo(product = spec["product"], owner = member.owner, version = spec["version"], family = "native", target = member.configuration, metadata = spec, github = [github], npm = [npm], cargo = [cargo], manifest = manifest, frozen = frozen, spec = inputs, validation = None, receipt = None, origin = None),
+            OutputGroupInfo(github = depset([github]), npm = depset([npm]), cargo = depset([cargo]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([inputs]))]
 
 _native_extension_carriers = rule(implementation = _carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {"member": attr.label(mandatory = True, providers = [ExtensionMemberInfo]), "legal": attr.label_list(allow_files = True),
@@ -108,7 +115,7 @@ _native_extension_carriers = rule(implementation = _carriers_impl, toolchains = 
 
 def native_external_extension_carriers(sql_name, member = ":native_payload"):
     _native_extension_carriers(name = "native_carriers", member = member, legal = native_extension_carrier_legal(sql_name), target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
-    metadata = {condition: _metadata(sql_name, target) for condition, target in _TARGETS.items()}
+    metadata = {condition: native_external_carrier_metadata(sql_name, target) for condition, target in _TARGETS.items()}
     packages = []
     for ecosystem in ["github", "npm", "cargo"]:
         name = "native_" + ecosystem + "_shipping"
@@ -148,7 +155,7 @@ def native_external_extension_carriers(sql_name, member = ":native_payload"):
 
 def _unit_inputs_impl(ctx):
     output = ctx.actions.declare_file(ctx.label.name + ".json")
-    ctx.actions.write(output, json.encode(_metadata("pgtap", "linux-x64-gnu")))
+    ctx.actions.write(output, json.encode(native_external_carrier_metadata("pgtap", "linux-x64-gnu")))
     return [DefaultInfo(files = depset([output]))]
 
 native_extension_carrier_unit_inputs = rule(implementation = _unit_inputs_impl)

@@ -300,6 +300,67 @@ function findFile(root, basename) {
 }
 
 describe('exact extension Cargo facade', () => {
+  test('packages supplied metadata without consulting the product graph', () => {
+    const output = mkdtempSync(path.join(tmpdir(), 'declared-extension-facade-test-'));
+    directories.push(output);
+    const product = 'oliphaunt-extension-declared-fixture';
+    const metadata = {
+      nativeOwner: product,
+      wasixOwner: product,
+      version: '9.1.0',
+      sqlNames: ['fixture'],
+      targets: {
+        nativeCargoTargets: ['linux-arm64-gnu', 'linux-x64-gnu', 'macos-arm64', 'windows-x64-msvc'],
+        includeWasixAot: true,
+      },
+      sdkVersion: '8.1.0',
+      bindingVersion: '8.2.0',
+      wasixSdkVersion: '8.3.0',
+      compatibility: { nativeRuntimeVersion: '7.1.0', wasixRuntimeVersion: '7.2.0' },
+    };
+    const [pkg] = packageExtensionCargoFacades([product], output, {
+      metadataByProduct: { [product]: metadata },
+    });
+    const manifest = Bun.TOML.parse(readFileSync(pkg.manifestPath, 'utf8'));
+    expect(pkg.version).toBe(metadata.version);
+    expect(Object.keys(manifest.target)).toHaveLength(4);
+    expect(manifest.dependencies['liboliphaunt-native-bindings'].version).toBe('^8.2.0');
+    expect(manifest['build-dependencies']['oliphaunt-build'].version).toBe('^8.1.0');
+    expect(manifest.dependencies['oliphaunt-wasix'].version).toBe('^8.3.0');
+    expect(manifest.features.wasix).toContain(`dep:${product}-wasix`);
+    expect(manifest.features.wasix).toHaveLength(6);
+    const source = readFileSync(path.join(path.dirname(pkg.manifestPath), 'src/lib.rs'), 'utf8');
+    expect(source).toContain('runtime_version: "7.1.0"');
+    expect(source).toContain('PRODUCT, VERSION, "7.2.0"');
+
+    metadata.wasixOwner = 'liboliphaunt-wasix';
+    const native = writeFacadeSource(product, output, { metadata });
+    const nativeManifest = Bun.TOML.parse(
+      readFileSync(path.join(native.sourceDir, 'Cargo.toml'), 'utf8'),
+    );
+    expect(nativeManifest.features.wasix).toBeUndefined();
+    expect(nativeManifest.dependencies['oliphaunt-wasix']).toBeUndefined();
+    metadata.targets.nativeCargoTargets = ['ios-xcframework'];
+    expect(() => writeFacadeSource(product, output, { metadata })).toThrow(
+      'unsupported native Cargo target',
+    );
+  });
+
+  test('supplied metadata cannot silently fall back to missing product facts', () => {
+    const output = mkdtempSync(path.join(tmpdir(), 'declared-extension-facade-missing-test-'));
+    directories.push(output);
+    expect(() =>
+      packageExtensionCargoFacades(['oliphaunt-extension-pgtap'], output, {
+        metadataByProduct: {},
+      }),
+    ).toThrow('exactly match the selected products');
+    expect(() =>
+      packageExtensionCargoFacades(['oliphaunt-extension-pgtap'], output, {
+        metadataByProduct: { 'oliphaunt-extension-pgtap': undefined },
+      }),
+    ).toThrow('exactly match the selected products');
+  });
+
   test('packages explicit native and WASIX feature selections', () => {
     const output = mkdtempSync(path.join(tmpdir(), 'extension-facade-test-'));
     directories.push(output);

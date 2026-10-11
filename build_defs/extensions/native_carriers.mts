@@ -57,6 +57,7 @@ export interface NativeCarrierSpec {
   selectedDependencies: string[];
   compatibility: Record<string, string>;
   carriers: Carrier[];
+  releaseMetadata?: Record<string, any>;
   archive: string;
   outputs: { github: string; npm: string; cargo: string; manifest: string; frozen: string };
 }
@@ -370,7 +371,9 @@ export function packageNativeCarriers(spec: NativeCarrierSpec) {
         schema: 'oliphaunt-extension-release-manifest-v1',
         product: spec.product,
         version: spec.version,
+        extensionClass: spec.releaseMetadata?.class ?? 'external',
         versioning: 'upstream-bound',
+        ...(spec.releaseMetadata ? { sourceIdentity: spec.releaseMetadata.sourceIdentity } : {}),
         compatibility,
         ...member,
       },

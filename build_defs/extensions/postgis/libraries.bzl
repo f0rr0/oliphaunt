@@ -4,7 +4,7 @@ load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_DEPENDENCIES", "EXTENSION_
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
-load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 
 def _headers_impl(ctx):

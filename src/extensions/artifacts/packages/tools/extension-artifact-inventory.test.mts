@@ -244,6 +244,58 @@ async function main() {
       nativeRuntimeVersion: '1.2.3',
       label: 'legitimate',
     });
+    for (const target of ['ios-xcframework', 'android-arm64-v8a', 'android-x86_64']) {
+      const mobileEntries = new Map(legitimate);
+      mobileEntries.set('manifest.properties', manifest({ nativeTarget: target }));
+      const file = await writeArchive(root, `${target}-metadata-fixture.tar.gz`, mobileEntries);
+      const mobileContract = {
+        target,
+        archives: [],
+        dependencies: [],
+        symbolPrefix: '',
+        symbolAliases: [],
+      };
+      const mobile = validateExtensionArtifactArchive({
+        file,
+        metadata: pgtapMetadata,
+        target,
+        nativeRuntimeVersion: '1.2.3',
+        mobileContract,
+      });
+      assert.deepEqual(mobile.runtimeFiles, validated.runtimeFiles);
+      assert.throws(
+        () =>
+          validateExtensionArtifactArchive({
+            file,
+            metadata: pgtapMetadata,
+            target,
+            nativeRuntimeVersion: '1.2.3',
+          }),
+        /declared mobile inventory contract/u,
+      );
+      assert.throws(
+        () =>
+          validateExtensionArtifactArchive({
+            file,
+            metadata: pgtapMetadata,
+            target,
+            nativeRuntimeVersion: '1.2.3',
+            mobileContract: { ...mobileContract, target: 'wrong-target' },
+          }),
+        /declared mobile inventory contract/u,
+      );
+      assert.throws(
+        () =>
+          validateExtensionArtifactArchive({
+            file,
+            metadata: pgtapMetadata,
+            target,
+            nativeRuntimeVersion: '1.2.3',
+            mobileContract: { ...mobileContract, dependencies: ['unselected:dependency:wrong.a'] },
+          }),
+        /mobile inventory contract/u,
+      );
+    }
     assert.deepEqual(
       validated.legalFiles.map(({ path: member }) => member),
       [...pgtapLegal.keys()].sort(),

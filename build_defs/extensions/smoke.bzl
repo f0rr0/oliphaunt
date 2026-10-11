@@ -2,9 +2,10 @@
 
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILITY", "EXTENSION_RECIPES", "PRODUCTS")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE", _desktop_compatible = "NATIVE_EXTENSION_COMPATIBLE")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_default_version")
-load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
+load(":construction.bzl", "desktop_member_payloads")
+load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
 
 def _smoke_plan_impl(ctx):
     fixtures = {file.basename[:-4]: file for file in ctx.files.fixtures}
@@ -105,4 +106,35 @@ def native_extension_sql_test(name, members, runtime = "//src/native/runtime:run
         data = data,
         size = "medium",
         target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+    )
+
+def desktop_members_sql_test(name):
+    """Use the maintained SQL plan and consumer on each native desktop host."""
+    members = desktop_member_payloads()
+    plan = name + "_plan"
+    extension_smoke_plan(name = plan, members = members, fixtures = ["//src/test-fixtures/extensions:sql"])
+    plans = []
+    for group in ["install", "smoke", "startup", "environment", "dependencies"]:
+        label = name + "_" + group
+        native.filegroup(name = label, srcs = [":" + plan], output_group = group)
+        plans.append(":" + label)
+    archives = []
+    for index, member in enumerate(members):
+        label = name + "_archive_" + str(index)
+        native.filegroup(name = label, srcs = [member], output_group = "archive")
+        archives.append(":" + label)
+    inputs = ["//src/native/runtime:runtime_payload", "//build_defs/extensions:native_extension_smoke"] + plans + ["//build_defs/extensions:desktop_members_construction_inventory"] + archives
+    bun_script_test(
+        name = name,
+        entry_point = "//build_defs/extensions:desktop_sql.test.mts",
+        args = ["$(location %s)" % label for label in inputs],
+        data = inputs + [
+            "//build_defs/extensions:construction.mts", "//build_defs/extensions:validate_member_payload.mts",
+            "//build_defs/native:host-runtime-test-helpers.mts", "//:tools/packaging/portable-archive.mts",
+            "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts",
+            "//:tools/packaging/windows-vc-runtime-policy.json", "//tools/release:platform-compatibility-policy.mts",
+            "//:src/extensions/artifacts/native/tools/stage-windows-binary-contract.mts",
+        ],
+        size = "medium",
+        target_compatible_with = _desktop_compatible,
     )

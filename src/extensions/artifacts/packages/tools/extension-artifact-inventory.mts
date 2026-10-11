@@ -747,11 +747,13 @@ export function validateExtensionArtifactEntries({
   nativeRuntimeVersion,
   product,
   label,
+  mobileContract,
 }) {
-  if (!DESKTOP_NATIVE_TARGETS.has(target)) {
+  const desktop = DESKTOP_NATIVE_TARGETS.has(target);
+  if (!desktop && mobileContract?.target !== target) {
     throw inventoryError(
       label,
-      `native target ${JSON.stringify(target)} is not a canonical desktop target`,
+      `native target ${JSON.stringify(target)} requires its declared mobile inventory contract`,
     );
   }
   if (
@@ -832,6 +834,23 @@ export function validateExtensionArtifactEntries({
     throw inventoryError(label, 'manifest mobilePrebuilt must be yes or no');
   }
   validateStaticLinkage(properties, metadata, target, label);
+  if (!desktop) {
+    const expectedMobile = new Map([
+      ['mobilePrebuilt', metadata.nativeModuleStem === null ? 'no' : 'yes'],
+      ['mobileStaticArchives', mobileContract.archives.join(',')],
+      ['mobileStaticDependencyArchives', mobileContract.dependencies.join(',')],
+      ['staticSymbolPrefix', mobileContract.symbolPrefix],
+    ]);
+    if (mobileContract.symbolAliases !== undefined)
+      expectedMobile.set('staticSymbolAliases', mobileContract.symbolAliases.join(','));
+    for (const [key, expected] of expectedMobile) {
+      if (properties.get(key) !== expected)
+        throw inventoryError(
+          label,
+          `manifest ${key} differs from its declared mobile inventory contract`,
+        );
+    }
+  }
 
   const allowed = new Set(['manifest.properties']);
   for (const [member, expected] of legal.members) {

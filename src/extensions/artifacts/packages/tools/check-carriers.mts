@@ -2,10 +2,6 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import {
-  buildSwiftExtensionCarrierManifest,
-  swiftExtensionCarrierAssetName,
-} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
-import {
   portableMemberName,
   readFileOnlyTarGzipEntries,
 } from '../../../../../tools/packaging/portable-archive.mts';
@@ -36,12 +32,21 @@ import {
   extensionSqlNames,
   ROOT,
 } from '../../../../../tools/release/release-artifact-targets.mts';
+import {
+  buildSwiftExtensionCarrierManifest,
+  swiftExtensionCarrierAssetName,
+} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { assertWasixExtensionMemberInstall } from '../../../contracts/wasix-extension-install.mts';
 import {
   assertExtensionUpstreamLicensesInArchive,
   extensionCarrierLegalContract,
 } from '../../../tools/extension-upstream-licenses.mts';
-import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
+import {
+  expectedExtensionRoles,
+  extensionRuntimeAssetContract,
+  projectNativeRuntimeAssetMember,
+} from './extension-runtime-asset-contract.mts';
+import { frozenExtensionMemberInventory } from './package-extension-release-carriers.mts';
 
 export const EXTENSION_ROOT = path.resolve(
   ROOT,
@@ -250,6 +255,22 @@ function requireExactKeys(value, expected, context) {
   }
 }
 
+function requireRuntimeAssetKeys(asset, expected, member, context, product, version) {
+  const optional = ['nativeDependencyModules', 'nativeConstructionLicenseFiles'].filter((key) =>
+    Object.hasOwn(asset, key),
+  );
+  requireExactKeys(asset, new Set([...expected, ...optional]), context);
+  if (optional.length > 0) {
+    if (asset.family !== 'native' || asset.kind !== 'runtime')
+      fail(`${context} construction inventory requires a native runtime asset`);
+    try {
+      frozenExtensionMemberInventory(member, { product, version, target: asset.target, asset });
+    } catch (error) {
+      fail(`${context}: ${error.message}`);
+    }
+  }
+}
+
 function requireSortedUniqueStrings(value, context) {
   if (
     !Array.isArray(value) ||
@@ -284,7 +305,13 @@ export function expectedExtensionBundleManifest({ product, version, data, carrie
   const legal = extensionCarrierLegalContract(
     product,
     [...new Set(rows.map(({ member }) => member.sqlName))].sort(compareText),
-    { family: carrier.family, target: carrier.target },
+    {
+      family: carrier.family,
+      target: carrier.target,
+      memberContracts: rows.map(({ member, asset }) =>
+        projectNativeRuntimeAssetMember(member, asset),
+      ),
+    },
   );
   return {
     schema: 'oliphaunt-extension-bundle-v1',
@@ -304,28 +331,6 @@ export function expectedExtensionBundleManifest({ product, version, data, carrie
       bytes: asset.bytes,
     })),
   };
-}
-
-function expectedExtensionRoles(member, targets) {
-  const roles = [];
-  const nativeStem =
-    typeof member.nativeModuleStem === 'string' && member.nativeModuleStem
-      ? member.nativeModuleStem
-      : null;
-  for (const target of [...targets].sort(compareText)) {
-    if (target === 'wasix-portable') {
-      roles.push(`wasix:${target}:wasix-runtime:`);
-      continue;
-    }
-    roles.push(`native:${target}:runtime:`);
-    if (target === 'ios-xcframework' && nativeStem !== null) {
-      roles.push(`native:${target}:ios-xcframework:${nativeStem}`);
-      for (const dependency of member.iosNativeDependencies) {
-        roles.push(`native:${target}:ios-dependency-xcframework:${dependency}`);
-      }
-    }
-  }
-  return roles.sort(compareText);
 }
 
 function validateBundleMemberMetadata(member, manifest, stagedTargets) {
@@ -418,7 +423,7 @@ async function checkExtensionBundleProduct(
   { family, requireFullTargets },
 ) {
   const releaseProduct = extensionReleaseProduct(product, family ?? 'native', PREFIX);
-  const ownership = releaseProduct === product ? {} : { releaseProduct, family };
+  const ownership = releaseProduct === product && family === null ? {} : { releaseProduct, family };
   requireExactKeys(
     data,
     new Set([...INTERNAL_EXTENSION_BUNDLE_ROOT_KEYS, ...Object.keys(ownership)]),
@@ -521,7 +526,18 @@ async function checkExtensionBundleProduct(
         `${rel(manifest)} aggregate carrier ${name} is missing or does not match its outer size/digest`,
       );
     }
-    const legal = extensionCarrierLegalContract(product, expectedSqlNames, { family, target });
+    const legal = extensionCarrierLegalContract(product, expectedSqlNames, {
+      family,
+      target,
+      memberContracts: data.extensions.map((member) => {
+        const asset = member.assets.find(
+          (row) => row.family === family && row.target === target && row.kind === 'runtime',
+        );
+        return asset
+          ? frozenExtensionMemberInventory(member, { product, version, target, asset })
+          : member;
+      }),
+    });
     const carrierRoot = name.replace(/\.tar\.gz$/u, '');
     assertReleaseNoticesInArchive(carrierPath, {
       prefix: carrierRoot,
@@ -553,10 +569,13 @@ async function checkExtensionBundleProduct(
     const roles = new Set();
     const memberTargets = new Set();
     for (const asset of member.assets) {
-      requireExactKeys(
+      requireRuntimeAssetKeys(
         asset,
         INTERNAL_EXTENSION_BUNDLE_MEMBER_ASSET_KEYS,
+        member,
         `${rel(manifest)} member ${member.sqlName} asset ${JSON.stringify(asset?.name)}`,
+        product,
+        version,
       );
       const {
         name,
@@ -782,10 +801,13 @@ async function checkExtensionBundleProduct(
       `${rel(releaseManifest)} member ${member?.sqlName}`,
     );
     for (const asset of member.assets) {
-      requireExactKeys(
+      requireRuntimeAssetKeys(
         asset,
         PUBLIC_EXTENSION_BUNDLE_MEMBER_ASSET_KEYS,
+        member,
         `${rel(releaseManifest)} member ${member.sqlName} asset ${asset?.name}`,
+        product,
+        version,
       );
     }
   }
@@ -838,7 +860,9 @@ async function checkExtensionBundleProduct(
   const expectedProperties = {
     schema: 'oliphaunt-extension-release-manifest-v2',
     product,
-    ...(releaseProduct === product ? {} : { releaseProduct, carrierFamily: family }),
+    ...(releaseProduct === product && family === null
+      ? {}
+      : { releaseProduct, carrierFamily: family }),
     version: String(version),
     extensionClass: String(releaseData.extensionClass),
     versioning: String(releaseData.versioning),
@@ -911,7 +935,7 @@ async function checkExtensionProductVariant(
     });
   }
   const releaseProduct = extensionReleaseProduct(product, family ?? 'native', PREFIX);
-  const ownership = releaseProduct === product ? {} : { releaseProduct, family };
+  const ownership = releaseProduct === product && family === null ? {} : { releaseProduct, family };
   const expected = {
     schema: 'oliphaunt-extension-ci-artifacts-v1',
     product,
@@ -1156,11 +1180,14 @@ async function checkExtensionProductVariant(
     if (asset === null || Array.isArray(asset) || typeof asset !== 'object') {
       fail(`${rel(releaseManifest)} contains a non-object public asset row`);
     }
-    if (!setEquals(new Set(Object.keys(asset)), PUBLIC_EXTENSION_RELEASE_ASSET_KEYS)) {
-      fail(
-        `${rel(releaseManifest)} public asset ${JSON.stringify(asset.name)} keys must be ${JSON.stringify([...PUBLIC_EXTENSION_RELEASE_ASSET_KEYS].sort(compareText))}, got ${JSON.stringify(Object.keys(asset).sort(compareText))}`,
-      );
-    }
+    requireRuntimeAssetKeys(
+      asset,
+      PUBLIC_EXTENSION_RELEASE_ASSET_KEYS,
+      releaseData,
+      `${rel(releaseManifest)} public asset ${JSON.stringify(asset.name)}`,
+      product,
+      expected.version,
+    );
   }
   const propertiesManifest = path.join(
     root,
@@ -1174,7 +1201,9 @@ async function checkExtensionProductVariant(
   const expectedProperties = {
     schema: 'oliphaunt-extension-release-manifest-v1',
     product,
-    ...(releaseProduct === product ? {} : { releaseProduct, carrierFamily: family }),
+    ...(releaseProduct === product && family === null
+      ? {}
+      : { releaseProduct, carrierFamily: family }),
     version: String(expected.version),
     sqlName: String(expectedSqlName),
     extensionClass: String(releaseData.extensionClass),

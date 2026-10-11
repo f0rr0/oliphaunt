@@ -3,7 +3,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//build_defs/extensions:contrib.bzl", "contrib_generated_sources")
 load("//build_defs/extensions:extensions.bzl", "native_extension_modules")
-load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE")
 load("//build_defs/native:platform_config.bzl", "NATIVE_RELEASE_LINKOPTS")
 load(":libraries.bzl", "postgis_configuration", "postgis_source_headers")
 load(":generators.bzl", "postgis_flex")
@@ -55,4 +55,4 @@ def native_postgis_modules(name, standalone, dependency_module):
                              srcs = [prefix + source for source in POSTGIS_PG_SOURCES],
                              deps = [standalone + "_config", standalone + "_headers", standalone + "_lwgeom", standalone + "_flatgeobuf",
                                      "//build_defs/extensions/postgis:libxml2"],
-                             dynamic_deps = [dependency_module], linkopts = ["-Wl,-rpath,$$ORIGIN"])
+                             dynamic_deps = [dependency_module], linkopts = ["-Wl,-rpath,$$ORIGIN"], linux_only = True)

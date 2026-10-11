@@ -4,8 +4,9 @@ load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "CONTRIB_OWNERS", 
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action", "bun_script_test")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_identity")
+load(":final_leaf.bzl", "ExtensionFinalLeafInfo")
 load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extension_carrier_legal")
-load(":platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load(":platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE")
 load(":smoke.bzl", "extension_smoke_plan")
 
 _TARGETS = {"//build_defs/native:linux_x86_64": "linux-x64-gnu", "//build_defs/native:linux_aarch64_gnu_2_28": "linux-arm64-gnu"}
@@ -13,7 +14,7 @@ _TARGETS = {"//build_defs/native:linux_x86_64": "linux-x64-gnu", "//build_defs/n
 def native_contrib_carrier_legal():
     return ["//:LICENSE", "//:THIRD_PARTY_NOTICES.md", "//src/third-party/postgres:COPYRIGHT", "//src/third-party/postgres:source.toml", "//src/third-party/openssl:LICENSE.txt", "//src/third-party/openssl:source.toml"]
 
-def _metadata(target):
+def native_contrib_carrier_metadata(target):
     rows = [row for row in EXTENSION_RELEASE_METADATA if row["class"] == "contrib"]
     expected = sorted([member["sql-name"] for member in CONTRIB_MEMBERS])
     if sorted([row["sqlName"] for row in rows]) != expected:
@@ -52,7 +53,7 @@ def _carriers_impl(ctx):
     typed = [target[ExtensionMemberInfo] for target in ctx.attr.members]
     if not typed:
         fail("contrib final carrier requires all canonical typed member producers")
-    spec = _metadata(typed[0].configuration)
+    spec = native_contrib_carrier_metadata(typed[0].configuration)
     actual = {member.sql_name: member for member in typed}
     if len(actual) != len(typed) or sorted(actual.keys()) != spec["expectedMembers"]:
         fail("contrib final carrier must consume every canonical member exactly once")
@@ -74,7 +75,9 @@ def _carriers_impl(ctx):
     bun_file_action(ctx, ctx.file._tool, arguments = [inputs.path], inputs = member_inputs + [inputs] + ctx.files.legal,
                     source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal,
                     outputs = [github, npm, cargo, manifest, frozen], mnemonic = "NativeContribEnvelopes")
-    return [DefaultInfo(files = depset([github, npm, cargo, manifest, frozen])), OutputGroupInfo(github = depset([github]), npm = depset([npm]), cargo = depset([cargo]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([inputs]))]
+    return [DefaultInfo(files = depset([github, npm, cargo, manifest, frozen])),
+            ExtensionFinalLeafInfo(product = spec["product"], owner = spec["owner"], version = spec["version"], family = "native", target = spec["target"], metadata = spec, github = [github], npm = [npm], cargo = [cargo], manifest = manifest, frozen = frozen, spec = inputs, validation = None, receipt = None, origin = None),
+            OutputGroupInfo(github = depset([github]), npm = depset([npm]), cargo = depset([cargo]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([inputs]))]
 
 _native_contrib_carriers = rule(implementation = _carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {"members": attr.label_list(mandatory = True, providers = [ExtensionMemberInfo]), "legal": attr.label_list(allow_files = True),
@@ -84,7 +87,7 @@ _native_contrib_carriers = rule(implementation = _carriers_impl, toolchains = BU
 def native_contrib_carriers():
     members = [":" + member["id"] + "_native_payload" for member in CONTRIB_MEMBERS]
     _native_contrib_carriers(name = "native_carriers", members = members, legal = native_contrib_carrier_legal(), target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
-    metadata = {condition: _metadata(target) for condition, target in _TARGETS.items()}
+    metadata = {condition: native_contrib_carrier_metadata(target) for condition, target in _TARGETS.items()}
     owner = extension_identity(CONTRIB_MEMBERS[0]["sql-name"])
     packages = []
     for ecosystem in ["github", "npm", "cargo"]:
@@ -123,7 +126,7 @@ def native_contrib_carriers():
 
 def _unit_inputs_impl(ctx):
     output = ctx.actions.declare_file(ctx.label.name + ".json")
-    ctx.actions.write(output, json.encode(_metadata("linux-x64-gnu")))
+    ctx.actions.write(output, json.encode(native_contrib_carrier_metadata("linux-x64-gnu")))
     return [DefaultInfo(files = depset([output]))]
 
 native_contrib_carrier_unit_inputs = rule(implementation = _unit_inputs_impl)

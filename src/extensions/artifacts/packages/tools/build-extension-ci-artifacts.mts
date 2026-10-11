@@ -492,7 +492,7 @@ function nativeAssetName(product, version, target, kind, source) {
   fail(`unsupported native extension artifact target ${target} for ${path.basename(source)}`);
 }
 
-function nativeAssetNameForRow(product, version, row) {
+export function nativeAssetNameForRow(product, version, row) {
   if (row.kind === 'ios-dependency-xcframework') {
     return `${product}-${version}-native-ios-dependency-${row.identity}-xcframework${archiveSuffix(row.asset)}`;
   }
@@ -721,7 +721,7 @@ export function extensionReleasePropertiesText({
   const propertiesLines = [
     `schema=${releaseData.schema}\n`,
     `product=${product}\n`,
-    ...(releaseProduct === product
+    ...(releaseProduct === product && family === null
       ? []
       : [`releaseProduct=${releaseProduct}\n`, `carrierFamily=${family ?? 'combined'}\n`]),
     `version=${version}\n`,
@@ -787,7 +787,91 @@ export function extensionReleasePropertiesText({
   return propertiesLines.join('');
 }
 
-function writeReleaseControls({
+/** Compose the canonical release documents from explicitly supplied final members. */
+export function composeExtensionReleaseDocuments({
+  product,
+  releaseProduct = product,
+  family = null,
+  version,
+  members,
+  directAssets,
+  releaseMetadata,
+  sourceIdentity = releaseMetadata.sourceIdentity,
+}) {
+  const ownership =
+    releaseProduct === product && family === null
+      ? {}
+      : { releaseProduct, family: family ?? 'combined' };
+  if (members.length > 1) {
+    return {
+      manifest: {
+        schema: 'oliphaunt-extension-ci-artifacts-v2',
+        product,
+        ...ownership,
+        version,
+        compatibility: releaseMetadata.compatibility,
+        extensions: members,
+        carrierAssets: directAssets,
+      },
+      releaseData: {
+        schema: 'oliphaunt-extension-release-manifest-v2',
+        product,
+        ...ownership,
+        version,
+        extensionClass: releaseMetadata.class,
+        versioning: releaseMetadata.versioning,
+        sourceIdentity,
+        compatibility: releaseMetadata.compatibility,
+        extensions: members.map((member) => ({
+          ...member,
+          assets: member.assets.map(publicMemberAsset),
+        })),
+        assets: directAssets.map(publicExtensionReleaseAsset),
+      },
+    };
+  }
+  const member = members[0];
+  return {
+    manifest: {
+      schema: 'oliphaunt-extension-ci-artifacts-v1',
+      product,
+      ...ownership,
+      version,
+      compatibility: releaseMetadata.compatibility,
+      ...member,
+    },
+    releaseData: {
+      schema: 'oliphaunt-extension-release-manifest-v1',
+      product,
+      ...ownership,
+      version,
+      sqlName: member.sqlName,
+      extensionClass: releaseMetadata.class,
+      versioning: releaseMetadata.versioning,
+      sourceIdentity,
+      compatibility: releaseMetadata.compatibility,
+      dependencies: member.dependencies,
+      dataFiles: member.dataFiles,
+      extensionSqlFileNames: member.extensionSqlFileNames,
+      extensionSqlFilePrefixes: member.extensionSqlFilePrefixes,
+      createsExtension: member.createsExtension,
+      nativeModuleStem: member.nativeModuleStem,
+      ...(member.nativeDependencyModules === undefined
+        ? {}
+        : { nativeDependencyModules: member.nativeDependencyModules }),
+      ...(member.nativeConstructionLicenseFiles === undefined
+        ? {}
+        : { nativeConstructionLicenseFiles: member.nativeConstructionLicenseFiles }),
+      iosNativeDependencies: member.iosNativeDependencies,
+      iosRegistration: member.iosRegistration,
+      wasixInstall: member.wasixInstall,
+      sharedPreloadLibraries: member.sharedPreloadLibraries,
+      assets: member.assets.map(publicExtensionReleaseAsset),
+    },
+  };
+}
+
+export function writeReleaseControls({
   product,
   releaseProduct,
   family,
@@ -797,7 +881,10 @@ function writeReleaseControls({
   releaseData,
   releaseMetadata,
   directAssets,
+  root = ROOT,
+  swiftOptions = {},
 }) {
+  const relative = (file) => path.relative(root, file).split(path.sep).join('/');
   const assetDir = path.join(productRoot, 'release-assets');
   const extensionManifest = path.join(productRoot, 'extension-artifacts.json');
   writeFileSync(extensionManifest, `${JSON.stringify(sortValue(manifest), null, 2)}\n`, 'utf8');
@@ -810,6 +897,7 @@ function writeReleaseControls({
     writeSwiftExtensionCarrierManifest(swiftCarrier, {
       extensionManifest,
       nativeRuntimeVersion: releaseMetadata.compatibility.nativeRuntimeVersion,
+      ...swiftOptions,
     });
   }
   const releaseManifest = path.join(assetDir, `${product}-${version}-manifest.json`);
@@ -839,10 +927,10 @@ function writeReleaseControls({
   writeFileSync(checksumManifest, checksumLines.join(''), 'utf8');
   const payloadPaths = Object.freeze(directAssets.map((asset) => asset.path));
   const controlPaths = Object.freeze([
-    rel(releaseManifest),
-    rel(propertiesManifest),
-    ...(swiftCarrier === null ? [] : [rel(swiftCarrier)]),
-    rel(checksumManifest),
+    relative(releaseManifest),
+    relative(propertiesManifest),
+    ...(swiftCarrier === null ? [] : [relative(swiftCarrier)]),
+    relative(checksumManifest),
   ]);
   const artifactPaths = [...new Set([...payloadPaths, ...controlPaths])];
   writeFileSync(
@@ -865,8 +953,6 @@ function stageProductVariant(
   }
   const families = new Set(family === null ? ['native', 'wasix'] : [family]);
   const releaseProduct = extensionReleaseProduct(product, family ?? 'native', PREFIX);
-  const ownership =
-    releaseProduct === product ? {} : { releaseProduct, family: family ?? 'combined' };
   const sqlNames = extensionSqlNames(product, PREFIX);
   const version = extensionReleaseVersion(product, family ?? 'native', PREFIX);
   const productRoot = extensionArtifactProductRoot(product, family ?? 'native', outputRoot, PREFIX);
@@ -885,75 +971,19 @@ function stageProductVariant(
     }),
   );
   const releaseMetadata = extensionMetadata(product, PREFIX);
-  let manifest;
-  let releaseData;
-  let directAssets;
-  if (bundle) {
-    directAssets = bundleCarrierAssets(
-      product,
-      version,
-      productRoot,
-      members,
-      releaseMetadata.compatibility,
-    );
-    manifest = {
-      schema: 'oliphaunt-extension-ci-artifacts-v2',
-      product,
-      ...ownership,
-      version,
-      compatibility: releaseMetadata.compatibility,
-      extensions: members,
-      carrierAssets: directAssets,
-    };
-    releaseData = {
-      schema: 'oliphaunt-extension-release-manifest-v2',
-      product,
-      ...ownership,
-      version,
-      extensionClass: releaseMetadata.class,
-      versioning: releaseMetadata.versioning,
-      sourceIdentity: extensionSourceIdentity(product, PREFIX),
-      compatibility: releaseMetadata.compatibility,
-      extensions: members.map((member) => ({
-        ...member,
-        assets: member.assets.map(publicMemberAsset),
-      })),
-      assets: directAssets.map(publicExtensionReleaseAsset),
-    };
-  } else {
-    const member = members[0];
-    directAssets = member.assets;
-    manifest = {
-      schema: 'oliphaunt-extension-ci-artifacts-v1',
-      product,
-      ...ownership,
-      version,
-      compatibility: releaseMetadata.compatibility,
-      ...member,
-    };
-    releaseData = {
-      schema: 'oliphaunt-extension-release-manifest-v1',
-      product,
-      ...ownership,
-      version,
-      sqlName: member.sqlName,
-      extensionClass: releaseMetadata.class,
-      versioning: releaseMetadata.versioning,
-      sourceIdentity: extensionSourceIdentity(product, PREFIX),
-      compatibility: releaseMetadata.compatibility,
-      dependencies: member.dependencies,
-      dataFiles: member.dataFiles,
-      extensionSqlFileNames: member.extensionSqlFileNames,
-      extensionSqlFilePrefixes: member.extensionSqlFilePrefixes,
-      createsExtension: member.createsExtension,
-      nativeModuleStem: member.nativeModuleStem,
-      iosNativeDependencies: member.iosNativeDependencies,
-      iosRegistration: member.iosRegistration,
-      wasixInstall: member.wasixInstall,
-      sharedPreloadLibraries: member.sharedPreloadLibraries,
-      assets: member.assets.map(publicExtensionReleaseAsset),
-    };
-  }
+  const directAssets = bundle
+    ? bundleCarrierAssets(product, version, productRoot, members, releaseMetadata.compatibility)
+    : members[0].assets;
+  const { manifest, releaseData } = composeExtensionReleaseDocuments({
+    product,
+    releaseProduct,
+    family,
+    version,
+    members,
+    directAssets,
+    releaseMetadata,
+    sourceIdentity: extensionSourceIdentity(product, PREFIX),
+  });
   writeReleaseControls({
     product,
     releaseProduct,

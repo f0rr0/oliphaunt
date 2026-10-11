@@ -17,8 +17,8 @@ extension_member_payload(
     sql_name = "pg_hashids",
     owner = extension_identity("pg_hashids"),
     resources = ["@pg_hashids//:sql_resources"],
-    server_module = ":pg_hashids_server.so",
-    embedded_module = ":pg_hashids_embedded.so",
+    server_module = ":pg_hashids_server_module",
+    embedded_module = ":pg_hashids_embedded_module",
 )
 
 shipping_package(name = "native_member", owner = extension_identity("pg_hashids"), artifacts = [":native_payload"], ecosystem = "internal", package_name = "pg_hashids", configuration = NATIVE_EXTENSION_CONFIGURATION, role = "extension-member")

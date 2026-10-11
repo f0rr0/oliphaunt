@@ -36,6 +36,7 @@ tasks:
       - /src/extensions/artifacts/native/tools/run-observed-phase.sh
       - /src/extensions/artifacts/native/tools/run-observed-phase.test.sh
       - /src/extensions/artifacts/native/tools/*.{mts,sh}
+      - /build_defs/extensions/windows_source_portability.mts
       - /src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts
       - /src/extensions/artifacts/native/tools/extension-artifact-packager.mts
       - "@group(legal-files)"
@@ -87,6 +88,7 @@ tasks:
         group: sources
       - /src/native/runtime/sources/*.toml
       - /src/extensions/artifacts/native/tools/**/*
+      - /build_defs/extensions/windows_source_portability.mts
       - "!/src/extensions/artifacts/native/tools/**/*.test.*"
       - /tools/packaging/check-linux-consumer-baseline.sh
       - /src/third-party/tools/source-fetch-core.mts

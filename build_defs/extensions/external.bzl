@@ -1,6 +1,10 @@
 """Reviewed external C units, shared by explicit platform construction profiles."""
 
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_SOURCES")
+load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
+load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
+load("//build_defs/native:platform_config.bzl", "NATIVE_WINDOWS_COMPATIBLE")
 load(":extensions.bzl", "extension_default_version", "extension_source_headers", "native_extension_modules")
 
 EXTERNAL_C_SOURCES = {
@@ -29,6 +33,63 @@ EXTERNAL_HEADERS = {
 
 VECTOR_COPTS = ["-ftree-vectorize", "-fassociative-math", "-fno-signed-zeros", "-fno-trapping-math"]
 
+def _windows_sources_impl(ctx):
+    anchor = ctx.file.anchor
+    root = anchor.path[:-len(ctx.attr.anchor_name)]
+    source_paths = {file.path: True for file in ctx.files.srcs}
+    sources = []
+    headers = []
+    rows = []
+    seen = {}
+    for file in ctx.files.srcs + ctx.files.hdrs:
+        if file.path in seen:
+            continue
+        seen[file.path] = True
+        if file.is_directory or not file.path.startswith(root):
+            fail("Windows source preparation requires declared regular files in the pinned source repository")
+        relative = file.path[len(root):]
+        if not relative or any([part in ["", ".", ".."] for part in relative.split("/")]):
+            fail("Windows source input escapes its pinned repository root")
+        output = ctx.actions.declare_file(ctx.label.name + "/" + relative)
+        rows.append({"name": relative, "source": file.path, "output": output.path})
+        if file.path in source_paths:
+            sources.append(output)
+        else:
+            headers.append(output)
+    compatibility = []
+    generated = []
+    if ctx.attr.sql_name == "pg_textsearch":
+        for relative in ["src/oliphaunt_windows_compat.h", "src/unistd.h"]:
+            output = ctx.actions.declare_file(ctx.label.name + "/" + relative)
+            headers.append(output)
+            generated.append({"name": relative, "output": output.path})
+            if relative.endswith("oliphaunt_windows_compat.h"):
+                compatibility.append(output)
+    spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
+    ctx.actions.write(spec, json.encode({"extension": ctx.attr.sql_name, "files": rows, "headers": generated}))
+    args = ctx.actions.args()
+    args.add(spec)
+    bun_action(ctx, ctx.attr._generator, arguments = [args], inputs = depset([spec] + ctx.files.srcs + ctx.files.hdrs), outputs = sources + headers, mnemonic = "WindowsExtensionSources")
+    output_root = (sources + headers)[0].path[:-len(rows[0]["name"])]
+    return [
+        DefaultInfo(files = depset(sources)),
+        CcInfo(compilation_context = cc_common.create_compilation_context(headers = depset(headers), includes = depset([output_root + directory for directory in ctx.attr.include_dirs]))),
+        OutputGroupInfo(compatibility_header = depset(compatibility)),
+    ]
+
+_windows_sources = rule(
+    implementation = _windows_sources_impl,
+    attrs = {
+        "sql_name": attr.string(mandatory = True),
+        "srcs": attr.label_list(allow_files = True, mandatory = True),
+        "hdrs": attr.label_list(allow_files = True),
+        "anchor": attr.label(allow_single_file = True, mandatory = True),
+        "anchor_name": attr.string(mandatory = True),
+        "include_dirs": attr.string_list(),
+        "_generator": attr.label(default = "//build_defs/extensions:windows_source_inputs", providers = [BunScriptInfo], cfg = "exec"),
+    },
+)
+
 def external_extension_inputs(name, sql_name):
     """C source inputs only; callers supply their actual host/profile headers."""
     if sql_name not in EXTERNAL_C_SOURCES:
@@ -50,10 +111,23 @@ def external_extension_inputs(name, sql_name):
 def native_external_extension_modules(name, sql_name = None):
     sql_name = sql_name or name
     attrs = external_extension_inputs(name = name, sql_name = sql_name)
+    if sql_name in ["pg_uuidv7", "pg_textsearch"]:
+        prepared = name + "_windows_sources"
+        prefix = "@" + EXTENSION_SOURCES[sql_name]["name"] + "//:"
+        anchor = "src/constants.h" if sql_name == "pg_textsearch" else "pg_uuidv7.c"
+        _windows_sources(name = prepared, sql_name = sql_name, srcs = attrs["srcs"], hdrs = [prefix + "headers"] if sql_name == "pg_textsearch" else [], anchor = prefix + anchor, anchor_name = anchor, include_dirs = ["src"] if sql_name == "pg_textsearch" else [""], target_compatible_with = NATIVE_WINDOWS_COMPATIBLE)
+        attrs["srcs"] = select({"//build_defs/native:windows_x64": [":" + prepared], "//conditions:default": attrs["srcs"]})
+        attrs["hdrs"] = select({"//build_defs/native:windows_x64": [], "//conditions:default": attrs.get("hdrs", [])})
+        attrs["deps"] = select({"//build_defs/native:windows_x64": [":" + prepared], "//conditions:default": attrs.get("deps", [])})
+        if sql_name == "pg_textsearch":
+            compatibility = prepared + "_compatibility"
+            native.filegroup(name = compatibility, srcs = [":" + prepared], output_group = "compatibility_header", target_compatible_with = NATIVE_WINDOWS_COMPATIBLE)
+            attrs["hdrs"] = attrs["hdrs"] + select({"//build_defs/native:windows_x64": [":" + compatibility], "//conditions:default": []})
+            attrs["copts"] = select({"//build_defs/native:windows_x64": ["/FI$(location :%s)" % compatibility, '/DPG_TEXTSEARCH_VERSION="%s"' % extension_default_version(sql_name)], "//conditions:default": attrs["copts"]})
     if sql_name == "vector":
         # Clang's EVEX width permission preserves upstream's optional AVX512
         # dispatch without enabling AVX instructions in baseline functions.
-        attrs["copts"] = VECTOR_COPTS + ["-fPIC"] + select({
+        attrs["copts"] = select({"//build_defs/native:windows_x64": ["/fp:fast"], "//conditions:default": VECTOR_COPTS + ["-fPIC"]}) + select({
             "//build_defs/native:linux_x86_64_gnu_2_28": ["-mevex512"],
             "//conditions:default": [],
         })
@@ -62,5 +136,5 @@ def native_external_extension_modules(name, sql_name = None):
             "//conditions:default": [],
         })
     elif sql_name == "pg_hashids":
-        attrs["linkopts"] = ["-lm"]
+        attrs["linkopts"] = select({"//build_defs/native:windows_x64": [], "//conditions:default": ["-lm"]})
     native_extension_modules(name = name, **attrs)

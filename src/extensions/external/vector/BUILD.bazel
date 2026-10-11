@@ -18,8 +18,8 @@ extension_member_payload(
     owner = extension_identity("vector"),
     resources = ["@pgvector//:sql_resources"],
     main_sql = "@pgvector//:sql/vector.sql",
-    server_module = ":vector_server.so",
-    embedded_module = ":vector_embedded.so",
+    server_module = ":vector_server_module",
+    embedded_module = ":vector_embedded_module",
     construction_licenses = select({
         "//build_defs/native:linux_x86_64_gnu_2_28": {
             "@pgvector_compiler_rt//:LICENSE.TXT": "share/licenses/llvm-compiler-rt/LICENSE.TXT",
