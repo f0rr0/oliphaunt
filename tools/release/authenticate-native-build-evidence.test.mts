@@ -1,9 +1,14 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { authenticateNativeBuildEvidence } from './authenticate-native-build-evidence.mts';
+import {
+  assureReviewedNativeBuildProducer,
+  authenticateNativeBuildEvidence,
+} from './authenticate-native-build-evidence.mts';
+import { type NativeBuildEvidence, nativeBuildMetadata } from './native-build-qualification.mts';
 
 const expected = {
   source: { commit: 'a'.repeat(40), tree: 'b'.repeat(40) },
@@ -19,6 +24,182 @@ const expected = {
   ref: 'refs/heads/main',
   artifactName: 'native-build-evidence-x86_64',
 };
+
+/** Synthetic protocol/transport data tests assurance policy; it does not qualify a real builder. */
+function syntheticReviewedProducer(
+  job = expected.github.job,
+  artifactName = expected.artifactName,
+) {
+  const request: Parameters<typeof assureReviewedNativeBuildProducer>[1] = {
+    expected: structuredClone(expected),
+    reviewedSource: structuredClone(expected.source),
+    bazelVersion: '8.8.1',
+    requiredTests: [{ label: '//fixture:installed', configuration: 'c'.repeat(64) }],
+  };
+  request.expected.github.job = job;
+  request.expected.artifactName = artifactName;
+  const configuration = request.requiredTests[0].configuration;
+  const output = 'bazel-out/k8-opt/bin/fixture/native.tgz';
+  const manifest = 'bazel-out/k8-opt/bin/fixture/shipping.shipping.json';
+  const executionRoot = path.join(tmpdir(), 'native-assurance-synthetic-execroot');
+  const aqueryFile = path.join(tmpdir(), 'native-assurance-synthetic-aquery.json');
+  const root = {
+    label: '//fixture:shipping',
+    package: {
+      product: 'fixture-native',
+      version: '1.0.0',
+      ecosystem: 'github',
+      name: 'native.tgz',
+      configuration: 'linux-x64-gnu',
+      role: 'github-release-asset',
+      outputs: [{ path: output, owner: '//fixture:archive' }],
+    },
+  };
+  const contents = `${JSON.stringify(root)}\n`;
+  const identity = (bytes: string) => ({
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    size: Buffer.byteLength(bytes),
+  });
+  const outputIdentity = identity('synthetic public archive');
+  const named = (id: string, file: string, bytes: string) => ({
+    id: { namedSet: { id } },
+    namedSetOfFiles: {
+      files: [{ name: file, digest: identity(bytes).sha256, length: String(identity(bytes).size) }],
+    },
+  });
+  const evidence: NativeBuildEvidence = {
+    schema: 'oliphaunt-native-build-evidence-v1',
+    source: request.expected.source,
+    github: request.expected.github,
+    cohorts: [
+      {
+        executionRoot,
+        roots: [root],
+        rootConfigurations: [{ label: root.label, configuration }],
+        aquery: {
+          pathFragments: [output, manifest].flatMap((file, index) =>
+            file.split('/').map((label, part) => ({
+              id: `${index}-${part}`,
+              label,
+              ...(part ? { parentId: `${index}-${part - 1}` } : {}),
+            })),
+          ),
+          artifacts: [output, manifest].map((file, index) => ({
+            id: index + 1,
+            pathFragmentId: `${index}-${file.split('/').length - 1}`,
+          })),
+          targets: [
+            { id: 1, label: '//fixture:archive' },
+            { id: 2, label: root.label },
+          ],
+          configuration: [{ id: 1, checksum: configuration }],
+          actions: [1, 2].map((id) => ({
+            targetId: id,
+            configurationId: 1,
+            mnemonic: 'FileWrite',
+            actionKey: `synthetic-file-${id}`,
+            outputIds: [id],
+            primaryOutputId: id,
+          })),
+        },
+        buildEvents: [
+          {
+            id: { started: {} },
+            started: { uuid: 'synthetic-invocation', buildToolVersion: '8.8.1' },
+          },
+          { id: { workspace: {} }, workspaceInfo: { localExecRoot: executionRoot } },
+          { id: { configuration: { id: configuration } }, configuration: { mnemonic: 'k8-opt' } },
+          named('outputs', output, 'synthetic public archive'),
+          named('manifest', manifest, contents),
+          {
+            id: { targetCompleted: { label: root.label, configuration: { id: configuration } } },
+            completed: {
+              success: true,
+              outputGroup: [
+                { name: 'default', fileSets: [{ id: 'outputs' }] },
+                { name: 'shipping_manifest', fileSets: [{ id: 'manifest' }] },
+              ],
+            },
+          },
+          {
+            id: {
+              targetCompleted: {
+                label: '//fixture:installed',
+                configuration: { id: configuration },
+              },
+            },
+            completed: { success: true },
+          },
+          {
+            id: {
+              testResult: {
+                label: '//fixture:installed',
+                configuration: { id: configuration },
+                run: 1,
+                attempt: 1,
+              },
+            },
+            testResult: { status: 'PASSED' },
+          },
+          {
+            id: {
+              testSummary: { label: '//fixture:installed', configuration: { id: configuration } },
+            },
+            testSummary: { overallStatus: 'PASSED', totalRunCount: 1 },
+          },
+          {
+            id: { structuredCommandLine: { commandLineLabel: 'canonical' } },
+            structuredCommandLine: {
+              commandLineLabel: 'canonical',
+              sections: [
+                {
+                  optionList: {
+                    option: [
+                      {
+                        optionName: 'experimental_aquery_dump_after_build_format',
+                        optionValue: 'jsonproto',
+                      },
+                      {
+                        optionName: 'experimental_aquery_dump_after_build_output_file',
+                        optionValue: aqueryFile,
+                      },
+                      { optionName: 'output_groups', optionValue: '+shipping_manifest' },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+          {
+            id: { buildMetadata: {} },
+            buildMetadata: {
+              metadata: nativeBuildMetadata(request.expected.source, request.expected.github),
+            },
+          },
+          { id: { buildFinished: {} }, finished: { exitCode: { name: 'SUCCESS' } } },
+          { id: { buildMetrics: {} }, buildMetrics: {}, lastMessage: true },
+        ],
+        inputs: [],
+        outputs: [
+          { path: output, members: [{ path: '', type: 'file', mode: 0o644, ...outputIdentity }] },
+        ],
+        producerCapture: { aqueryFile, shippingManifests: [{ path: manifest, contents }] },
+      },
+    ],
+  };
+  const origin = {
+    github: structuredClone(request.expected.github),
+    artifact: {
+      id: 101,
+      name: request.expected.artifactName,
+      digest: `sha256:${'d'.repeat(64)}`,
+      size: 1024,
+    },
+    evidenceDigest: `sha256:${identity(JSON.stringify(evidence)).sha256}`,
+    evidence,
+  };
+  return { request, origin, authenticate: async () => origin };
+}
 
 async function fixture(run: (root: string) => Promise<void>, kind = '') {
   const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-native-auth-test-'));
@@ -75,6 +256,253 @@ async function fixture(run: (root: string) => Promise<void>, kind = '') {
     rmSync(root, { recursive: true, force: true });
   }
 }
+
+test('reviewed main producer assurance preserves construction limits and accepts bound mandatory tests', async () => {
+  for (const [job, artifact] of [
+    ['Linux runtime (x86_64)', 'native-build-evidence-x86_64'],
+    ['Linux runtime (aarch64)', 'native-build-evidence-aarch64'],
+    ['Linux WASIX and installed browser', 'native-build-evidence-wasix-tools'],
+  ]) {
+    for (const event of ['push', 'workflow_dispatch'] as const) {
+      const f = syntheticReviewedProducer(job, artifact);
+      f.request.expected.event = event;
+      const result = await assureReviewedNativeBuildProducer('synthetic', f.request, f);
+      expect(result.assurance.scope).toBe('reviewed-producer-assurance');
+      expect(result.assurance.reviewedSource).toEqual(f.request.reviewedSource);
+      expect(result.assurance.event).toBe(f.request.expected.event);
+      expect(result.assurance.ref).toBe('refs/heads/main');
+      expect(result.assurance.artifact).toEqual(f.origin.artifact);
+      expect(result.assurance.shippingAnalysis).toBe('bound');
+      expect(result.assurance.testQualification).toBe('passed');
+      expect(result.assurance.requiredTests).toMatchObject(f.request.requiredTests);
+      expect(result.assurance.acceptedExecutionAssumptions).toHaveLength(2);
+      expect('releaseDecision' in result.assurance).toBe(false);
+      expect('baselineAdmission' in result.assurance).toBe(false);
+      expect(result.qualification.scope).toBe('construction');
+      expect(result.qualification.releaseDecision).toBe('unverified');
+      expect(result.qualification.unverified).toContain(
+        'immutable input lifetime from the producing build through content capture',
+      );
+      expect(result.qualification.unverified).toContain(
+        'native action-graph dump bytes authenticated by the producing invocation',
+      );
+    }
+  }
+});
+
+test('reviewed producer rejects unreviewed sources, PR origins and noncanonical roles before transport', async () => {
+  const cases: [string, (f: ReturnType<typeof syntheticReviewedProducer>) => void][] = [
+    [
+      'repository',
+      (f) => {
+        f.request.expected.github.repository = 'attacker/oliphaunt';
+      },
+    ],
+    [
+      'source commit',
+      (f) => {
+        f.request.reviewedSource.commit = 'e'.repeat(40);
+      },
+    ],
+    [
+      'source tree',
+      (f) => {
+        f.request.reviewedSource.tree = 'e'.repeat(40);
+      },
+    ],
+    [
+      'PR',
+      (f) => {
+        f.request.expected.event = 'pull_request';
+        f.request.expected.ref = 'refs/pull/1/merge';
+      },
+    ],
+    [
+      'branch',
+      (f) => {
+        f.request.expected.ref = 'refs/heads/release';
+      },
+    ],
+    [
+      'workflow',
+      (f) => {
+        f.request.expected.github.workflow = 'Unreviewed builder';
+      },
+    ],
+    [
+      'workflow path',
+      (f) => {
+        f.request.expected.github.workflowPath = '.github/workflows/unreviewed.yml';
+      },
+    ],
+    [
+      'job',
+      (f) => {
+        f.request.expected.github.job = 'Portable packages (windows-x64)';
+      },
+    ],
+    [
+      'artifact',
+      (f) => {
+        f.request.expected.artifactName = 'native-build-evidence-aarch64';
+      },
+    ],
+    [
+      'missing tests',
+      (f) => {
+        Reflect.deleteProperty(f.request, 'requiredTests');
+      },
+    ],
+    [
+      'empty tests',
+      (f) => {
+        f.request.requiredTests = [];
+      },
+    ],
+  ];
+  for (const [name, mutate] of cases) {
+    const f = syntheticReviewedProducer();
+    mutate(f);
+    let calls = 0;
+    await expect(
+      assureReviewedNativeBuildProducer('synthetic', f.request, {
+        authenticate: async () => {
+          calls += 1;
+          return f.origin;
+        },
+      }),
+    ).rejects.toThrow();
+    expect(calls, name).toBe(0);
+  }
+});
+
+test('reviewed producer rejects substituted authenticated origin and immutable artifact identities', async () => {
+  const cases: [string, (f: ReturnType<typeof syntheticReviewedProducer>) => void][] = [
+    [
+      'repository',
+      (f) => {
+        f.origin.github.repository = 'attacker/oliphaunt';
+      },
+    ],
+    [
+      'run',
+      (f) => {
+        f.origin.github.runId += 1;
+      },
+    ],
+    [
+      'attempt',
+      (f) => {
+        f.origin.github.runAttempt += 1;
+      },
+    ],
+    [
+      'job',
+      (f) => {
+        f.origin.github.job = 'Linux runtime (aarch64)';
+      },
+    ],
+    [
+      'artifact name',
+      (f) => {
+        f.origin.artifact.name = 'native-build-evidence-aarch64';
+      },
+    ],
+    [
+      'artifact id',
+      (f) => {
+        f.origin.artifact.id = 0;
+      },
+    ],
+    [
+      'artifact digest',
+      (f) => {
+        f.origin.artifact.digest = 'invalid';
+      },
+    ],
+    [
+      'artifact size',
+      (f) => {
+        f.origin.artifact.size = 0;
+      },
+    ],
+    [
+      'evidence digest',
+      (f) => {
+        f.origin.evidenceDigest = 'invalid';
+      },
+    ],
+  ];
+  for (const [name, mutate] of cases) {
+    const f = syntheticReviewedProducer();
+    mutate(f);
+    await expect(
+      assureReviewedNativeBuildProducer('synthetic', f.request, f),
+      name,
+    ).rejects.toThrow();
+  }
+});
+
+test('reviewed producer requires producing-analysis shipping and complete successful configured tests', async () => {
+  const cases: [string, (f: ReturnType<typeof syntheticReviewedProducer>) => void][] = [
+    [
+      'evidence source',
+      (f) => {
+        f.origin.evidence.source = { ...f.request.reviewedSource, commit: 'e'.repeat(40) };
+      },
+    ],
+    [
+      'legacy analysis',
+      (f) => {
+        delete f.origin.evidence.cohorts[0].producerCapture;
+      },
+    ],
+    [
+      'missing test',
+      (f) => {
+        f.request.requiredTests[0].label = '//fixture:missing';
+      },
+    ],
+    [
+      'wrong configuration',
+      (f) => {
+        f.request.requiredTests[0].configuration = 'e'.repeat(64);
+      },
+    ],
+    [
+      'missing result',
+      (f) => {
+        f.origin.evidence.cohorts[0].buildEvents = f.origin.evidence.cohorts[0].buildEvents.filter(
+          (event) => !event.testResult,
+        );
+      },
+    ],
+    [
+      'failed result',
+      (f) => {
+        const event = f.origin.evidence.cohorts[0].buildEvents.find((event) => event.testResult);
+        if (!event) throw new Error('synthetic fixture requires its test result');
+        event.testResult.status = 'FAILED';
+      },
+    ],
+    [
+      'failed summary',
+      (f) => {
+        const event = f.origin.evidence.cohorts[0].buildEvents.find((event) => event.testSummary);
+        if (!event) throw new Error('synthetic fixture requires its test summary');
+        event.testSummary.overallStatus = 'FAILED';
+      },
+    ],
+  ];
+  for (const [name, mutate] of cases) {
+    const f = syntheticReviewedProducer();
+    mutate(f);
+    await expect(
+      assureReviewedNativeBuildProducer('synthetic', f.request, f),
+      name,
+    ).rejects.toThrow();
+  }
+});
 
 test('native origin uses the existing exact-ID/digest transport and selected successful job, ignoring inherited fixture caches', async () => {
   await fixture(async (root) => {

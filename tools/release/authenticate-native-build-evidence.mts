@@ -9,9 +9,17 @@ import {
   assertNativeBuildGithub,
   type NativeBuildGithub,
   type NativeBuildSource,
+  type NativeRequiredTest,
+  nativeBuildMetadata,
+  validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
 
 const execute = promisify(execFile);
+const reviewedProducerArtifacts: ReadonlyMap<string, string> = new Map([
+  ['Linux runtime (x86_64)', 'native-build-evidence-x86_64'],
+  ['Linux runtime (aarch64)', 'native-build-evidence-aarch64'],
+  ['Linux WASIX and installed browser', 'native-build-evidence-wasix-tools'],
+]);
 
 /** Caller expectations are constraints; only the downloader's GitHub API reads supply origin metadata. */
 export async function authenticateNativeBuildEvidence(
@@ -122,6 +130,81 @@ export async function authenticateNativeBuildEvidence(
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+/** Controller-owned source review accepts the isolated producer's execution discipline. */
+export async function assureReviewedNativeBuildProducer(
+  evidenceRoot: string,
+  {
+    expected,
+    reviewedSource,
+    bazelVersion,
+    requiredTests,
+  }: {
+    expected: Parameters<typeof authenticateNativeBuildEvidence>[1];
+    reviewedSource: NativeBuildSource;
+    bazelVersion: string;
+    requiredTests: NativeRequiredTest[];
+  },
+  // Transport injection is for controlled synthetic fixtures; production uses the authenticated downloader.
+  { authenticate = authenticateNativeBuildEvidence } = {},
+) {
+  const metadata = nativeBuildMetadata(reviewedSource, expected.github);
+  const expectedMetadata = nativeBuildMetadata(expected.source, expected.github);
+  if (JSON.stringify(metadata) !== JSON.stringify(expectedMetadata))
+    throw new Error('reviewed native producer source differs from the frozen build source');
+  if (
+    !['push', 'workflow_dispatch'].includes(expected.event) ||
+    expected.ref !== 'refs/heads/main' ||
+    expected.github.repository !== 'f0rr0/oliphaunt' ||
+    expected.github.workflow !== 'Native Bazel qualification' ||
+    expected.github.workflowPath !== '.github/workflows/bazel.yml'
+  )
+    throw new Error('reviewed native producer requires the canonical main workflow');
+  if (reviewedProducerArtifacts.get(expected.github.job) !== expected.artifactName)
+    throw new Error('reviewed native producer job/artifact role is not canonical');
+  if (!Array.isArray(requiredTests) || !requiredTests.length)
+    throw new Error('reviewed native producer requires controller-owned mandatory tests');
+  const origin = await authenticate(evidenceRoot, expected);
+  if (
+    JSON.stringify(nativeBuildMetadata(reviewedSource, origin.github)) !==
+      JSON.stringify(metadata) ||
+    origin.artifact.name !== expected.artifactName ||
+    !Number.isSafeInteger(origin.artifact.id) ||
+    origin.artifact.id < 1 ||
+    !Number.isSafeInteger(origin.artifact.size) ||
+    origin.artifact.size < 1 ||
+    !/^sha256:[0-9a-f]{64}$/u.test(origin.artifact.digest) ||
+    !/^sha256:[0-9a-f]{64}$/u.test(origin.evidenceDigest)
+  )
+    throw new Error('reviewed native producer authenticated origin is inconsistent');
+  const qualification = validateNativeBuildEvidence(origin.evidence, {
+    source: reviewedSource,
+    github: expected.github,
+    bazelVersion,
+    requiredTests,
+    requireShippingAnalysis: true,
+  });
+  return {
+    origin,
+    qualification,
+    assurance: {
+      scope: 'reviewed-producer-assurance' as const,
+      reviewedSource: structuredClone(reviewedSource),
+      event: expected.event,
+      ref: expected.ref,
+      github: structuredClone(origin.github),
+      artifact: structuredClone(origin.artifact),
+      evidenceDigest: origin.evidenceDigest,
+      shippingAnalysis: qualification.shippingAnalysis,
+      testQualification: qualification.testQualification,
+      requiredTests: qualification.requiredTests,
+      acceptedExecutionAssumptions: [
+        'producer inputs remained immutable through capture in the reviewed isolated job',
+        'the reviewed coordinator retained the native after-build dump from its producer invocation',
+      ],
+    },
+  };
 }
 
 if (import.meta.main) {
