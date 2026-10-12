@@ -445,9 +445,10 @@ export async function packageMobileCarriers(spec: {
         'iOS final member requires each canonical framework role once',
       );
       for (const framework of frameworks) {
-        await validateAppleXcframeworkAsset(framework.file, framework.bundleName);
+        const physicalFramework = realpathSync(framework.file);
+        await validateAppleXcframeworkAsset(physicalFramework, framework.bundleName);
         inspectPlatformBinaryEntries(
-          [...readPortableArchiveEntries(framework.file)].map(([entryName, entry]) => ({
+          [...readPortableArchiveEntries(physicalFramework)].map(([entryName, entry]) => ({
             ...entry,
             name: entryName,
           })),
@@ -463,7 +464,7 @@ export async function packageMobileCarriers(spec: {
           asset: framework.file,
         });
         const output = path.join(directory, frameworkName);
-        copyFileSync(framework.file, output);
+        copyFileSync(physicalFramework, output);
         const bytes = readFileSync(output);
         assets.push({
           name: frameworkName,

@@ -1,8 +1,11 @@
 import { expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { assertNativeSwiftShippingPhase } from './native-build-qualification.mts';
 import {
+  acquireObservedCompletedSuppliers,
   admitNativePublicationCandidate,
   assertAdmittedNativePublicationCandidate,
   assertSelectedNativeEnvelope,
@@ -220,4 +223,182 @@ test('artifact inventory records an explicit consumer input without reading curr
       { swiftExtensionFixture: true },
     ),
   ).toThrow(/source SDK product/);
+});
+
+test('two source cycles reuse the exact prepared Git source and owned binding without a download or current substitution', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'native-freeze-source-suppliers-'));
+  try {
+    const publication = (version) => ({
+      product: 'oliphaunt-swift',
+      version,
+      tagName: `oliphaunt-swift-v${version}`,
+      publicationSha: '1'.repeat(40),
+      publicationTree: '2'.repeat(40),
+      releaseSha: '3'.repeat(40),
+    });
+    const rows = (version) => {
+      const completed = publication(version);
+      const file = (name, bytes) => {
+        const target = path.join(directory, name);
+        writeFileSync(target, bytes);
+        return {
+          path: target,
+          size: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+        };
+      };
+      return [
+        {
+          publication: completed,
+          artifact: `swift-source-tag:${version}`,
+          source: {
+            commit: '4'.repeat(40),
+            tree: '5'.repeat(40),
+            member: 'src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json',
+            blob: '6'.repeat(40),
+          },
+          file: file(
+            `source-${version}.tar.gz`,
+            Buffer.from('controlled retained Git source; replay remains mandatory'),
+          ),
+        },
+        {
+          publication: completed,
+          artifact: `github-release:oliphaunt-swift-${version}-bindings.xcframework.zip`,
+          file: file(
+            `oliphaunt-swift-${version}-bindings.xcframework.zip`,
+            Buffer.from('controlled retained binding; public authentication remains mandatory'),
+          ),
+        },
+      ];
+    };
+    const observation = (origin) => ({
+      authenticated: [
+        { evidence: { cohorts: [{ roots: [{ package: { supplierInputs: [{ origin }] } }] }] } },
+      ],
+    });
+    const origin = (version) => ({
+      kind: 'completed-publication',
+      publication: publication(version),
+      artifact: `swift-source-tag:${version}`,
+    });
+    const first = rows('0.8.2');
+    const held = await acquireObservedCompletedSuppliers(
+      observation(origin('0.8.2')) as any,
+      path.join(directory, 'held'),
+      first,
+    );
+    expect(held).toHaveLength(1);
+    expect(held[0]).toHaveProperty('sourceTags');
+    expect(held[0].files[first[1].artifact]).toBe(first[1].file.path);
+    expect(held[0].sourceTags[0]).toEqual(first[0]);
+    const nextSource = await acquireObservedCompletedSuppliers(
+      observation(origin('0.8.2')) as any,
+      path.join(directory, 'next-source'),
+      first,
+    );
+    expect(nextSource).toEqual(held);
+    expect(
+      await acquireObservedCompletedSuppliers(
+        observation({ kind: 'current-source' }) as any,
+        path.join(directory, 'current'),
+        first,
+      ),
+    ).toEqual([]);
+    const next = rows('0.8.3');
+    const nextHeld = await acquireObservedCompletedSuppliers(
+      observation(origin('0.8.3')) as any,
+      path.join(directory, 'next-held'),
+      [...first, ...next],
+    );
+    expect(nextHeld[0].sourceTags[0]).toEqual(next[0]);
+    await expect(
+      acquireObservedCompletedSuppliers(
+        observation(origin('0.8.3')) as any,
+        path.join(directory, 'missing'),
+        first,
+      ),
+    ).rejects.toThrow('absent from the acquired Prepare inputs');
+    await expect(
+      acquireObservedCompletedSuppliers(
+        observation(origin('0.8.2')) as any,
+        path.join(directory, 'no-binding'),
+        [first[0]],
+      ),
+    ).rejects.toThrow('same-publication binding archive');
+    const wrongBinding = structuredClone(first[1]);
+    wrongBinding.publication.publicationSha = '7'.repeat(40);
+    await expect(
+      acquireObservedCompletedSuppliers(
+        observation(origin('0.8.2')) as any,
+        path.join(directory, 'wrong-binding'),
+        [first[0], wrongBinding],
+      ),
+    ).rejects.toThrow('source differs');
+    writeFileSync(first[0].file.path, 'tampered');
+    await expect(
+      acquireObservedCompletedSuppliers(
+        observation(origin('0.8.2')) as any,
+        path.join(directory, 'wrong-file'),
+        first,
+      ),
+    ).rejects.toThrow('File changed');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Swift preparation proves the source phase but cannot replace selected final installed qualification', () => {
+  const sourceRoot = {
+    label: '//src/native/sdks/swift:shipping_Oliphaunt-source_zip',
+    package: {
+      product: 'oliphaunt-swift',
+      ecosystem: 'github',
+      role: 'release-input',
+      name: 'Oliphaunt-source.zip',
+    },
+  };
+  const make = (owner: string, installed: boolean) => ({
+    cohorts: [
+      {
+        roots: [sourceRoot],
+        qualificationPolicy: {
+          policies: [
+            {
+              owner,
+              roots: [sourceRoot.label],
+              requiredTests: [
+                { label: '//src/native/sdks/swift:unit_test', configuration: 'source' },
+                ...(installed
+                  ? [
+                      {
+                        label: '//src/native/sdks/swift:installed_consumer_test',
+                        configuration: 'installed',
+                      },
+                    ]
+                  : []),
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const preparation = make('//src/native/sdks/swift:preparation_shipping_export', false);
+  const final = make('//src/native/sdks/swift:shipping_export', true);
+  expect(() => assertNativeSwiftShippingPhase(preparation as any, 'pre-version')).not.toThrow();
+  expect(() => assertNativeSwiftShippingPhase(preparation as any, 'final')).toThrow('source-owned');
+  expect(() => assertNativeSwiftShippingPhase(final as any, 'final')).not.toThrow();
+  expect(() => assertNativeSwiftShippingPhase(final as any, 'pre-version')).not.toThrow();
+  expect(() =>
+    assertNativeSwiftShippingPhase(
+      make('//src/native/sdks/swift:shipping_export', false) as any,
+      'final',
+    ),
+  ).toThrow('installed consumer');
+  // A Native-only selection projects no Swift root and needs no final Swift run.
+  expect(() => assertNativeSwiftShippingPhase({ cohorts: [] } as any, 'final')).not.toThrow();
+  const unrelated = structuredClone(final);
+  unrelated.cohorts[0].qualificationPolicy.policies[0].roots = ['//another:root'];
+  expect(() => assertNativeSwiftShippingPhase(unrelated as any, 'final')).toThrow('source-owned');
 });

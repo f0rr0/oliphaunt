@@ -17,7 +17,7 @@ load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extensi
 
 def wasix_sql_carrier_helpers():
     # Both public canonical writers import the shared extension/runtime contracts.
-    return {label: True for label in native_extension_carrier_helpers() + RUNTIME_CARGO_HELPERS + ["//build_defs/wasix:package.mts", "//src/wasix/runtime:toolchain.toml"]}.keys()
+    return {label: True for label in native_extension_carrier_helpers() + RUNTIME_CARGO_HELPERS + ["//build_defs/wasix:package.mts", "//src/wasix/runtime:toolchain.toml", "//tools/release:cargo-payload-part-contract.mts", "//tools/release:publication-catalog.mts"]}.keys()
 
 def _metadata(sql_name):
     if sql_name != "pgtap":
@@ -162,19 +162,27 @@ def _compiled_carriers_impl(ctx):
         row = matches[0]
         images.append({"target": image.target, "image": image.image.path, "module": image.module.path, "name": "extension:" + ctx.attr.sql_name + (":" + row["name"] if row["name"] != ctx.attr.sql_name else "")})
     outputs = {"npm": [], "cargo": []}
+    cargo_parts = {}
     carrier_groups = {}
     for index, row in enumerate(spec["carriers"]):
         suffix = ".tgz" if row["ecosystem"] == "npm" else ".crate"
         filename = row["name"].replace("@", "").replace("/", "-") + "-" + spec["version"] + suffix
         file = ctx.actions.declare_file(ctx.label.name + "/" + row["ecosystem"] + "/" + filename)
         outputs[row["ecosystem"]].append(file)
-        carrier_groups["carrier_" + str(index)] = depset([file])
+        group = [file]
+        if row["ecosystem"] == "cargo":
+            parts = ctx.actions.declare_directory(ctx.label.name + "/cargo-parts/" + row["name"])
+            cargo_parts[row["name"]] = parts
+            group.append(parts)
+        carrier_groups["carrier_" + str(index)] = depset(group)
     outputs["github"] = [ctx.actions.declare_file(ctx.label.name + "/release-assets/" + spec["product"] + "-" + spec["version"] + "-wasix-portable.tar.zst")]
     outputs["manifest"] = [ctx.actions.declare_file(ctx.label.name + "/" + spec["product"] + "-" + spec["version"] + "-manifest.json")]
     outputs["frozen"] = [ctx.actions.declare_file(ctx.label.name + "/extension-artifacts.json")]
-    output_files = [file for files in outputs.values() for file in files]
+    output_files = [file for files in outputs.values() for file in files] + cargo_parts.values()
     spec.update({"operation": "compiled", "modules": module_rows, "resources": resources, "link": link.path, "aot": images, "toolchain": ctx.file.toolchain.path,
         "outputs": {name: files[0].dirname if name in ["github", "npm", "cargo"] else files[0].path for name, files in outputs.items()}})
+    if cargo_parts:
+        spec["outputs"]["cargoParts"] = {name: file.path for name, file in cargo_parts.items()}
     inputs = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(inputs, json.encode(spec))
     leaves = ctx.actions.args()
@@ -185,8 +193,8 @@ def _compiled_carriers_impl(ctx):
                     source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal, outputs = output_files, mnemonic = "WasixCompiledExtensionEnvelopes")
     supplier = ctx.attr.host[ShippingSupplierInfo] if ShippingSupplierInfo in ctx.attr.host else ShippingSupplierInfo(suppliers = None, files = depset([host.module, host.manifest]))
     return [DefaultInfo(files = depset(output_files)), supplier, host, ExtensionFinalLeafInfo(product = spec["product"], owner = owner.id, version = owner.version, family = "wasix", target = "wasix-portable", metadata = spec,
-        github = outputs["github"], npm = outputs["npm"], cargo = outputs["cargo"], manifest = outputs["manifest"][0], frozen = outputs["frozen"][0], spec = inputs, validation = link, receipt = None, origin = None),
-        OutputGroupInfo(**{name: depset(files) for name, files in outputs.items()} | carrier_groups | {"spec": depset([inputs]), "link": depset([link])})]
+        github = outputs["github"], npm = outputs["npm"], cargo = outputs["cargo"] + cargo_parts.values(), manifest = outputs["manifest"][0], frozen = outputs["frozen"][0], spec = inputs, validation = link, receipt = None, origin = None),
+        OutputGroupInfo(**{name: depset(files + (cargo_parts.values() if name == "cargo" else [])) for name, files in outputs.items()} | carrier_groups | {"spec": depset([inputs]), "link": depset([link])})]
 
 _wasix_compiled_carriers = rule(implementation = _compiled_carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {"sql_name": attr.string(mandatory = True), "module": attr.label(mandatory = True, cfg = WASIX_PORTABLE_TRANSITION),
@@ -330,7 +338,8 @@ def _compiled_installed_impl(ctx):
     if len(fixtures) != 1:
         fail("compiled WASIX installed test requires its canonical source-owned SQL fixture")
     files = leaf.github + leaf.npm + leaf.cargo + [leaf.manifest, leaf.frozen, leaf.spec, addon, node, ctx.file._runner, ctx.file._consumer, host.module, host.manifest, napi_input, ctx.file.addon_template] + ([ctx.file.addon_facade] if ctx.file.addon_facade else []) + ([module, leaf.validation] if module else []) + fixtures + ctx.files._helpers
-    return bun_test_entrypoint(ctx, ctx.file._runner, [leaf.spec, leaf.github[0], leaf.npm[0], leaf.cargo[0], leaf.frozen, module or "-", addon, node, ctx.file._consumer, leaf.validation or "-", fixtures[0], host.module, host.manifest, napi_input, ctx.file.addon_facade or "-", ctx.file.addon_template], files, source_files = [ctx.file._runner, ctx.file._consumer] + ctx.files._helpers)
+    parts = [file for file in leaf.cargo if file.is_directory]
+    return bun_test_entrypoint(ctx, ctx.file._runner, [leaf.spec, leaf.github[0], leaf.npm[0], leaf.cargo[0], leaf.frozen, module or "-", addon, node, ctx.file._consumer, leaf.validation or "-", fixtures[0], host.module, host.manifest, napi_input, ctx.file.addon_facade or "-", ctx.file.addon_template] + parts, files, source_files = [ctx.file._runner, ctx.file._consumer] + ctx.files._helpers)
 
 _compiled_installed_test = rule(implementation = _compiled_installed_impl, test = True, toolchains = BUN_SOURCE_TOOLCHAINS + ["@rules_nodejs//nodejs:toolchain_type"], attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
     "leaf": attr.label(mandatory = True, providers = [ExtensionFinalLeafInfo]), "module": attr.label(cfg = WASIX_PORTABLE_TRANSITION),
@@ -341,7 +350,7 @@ _compiled_installed_test = rule(implementation = _compiled_installed_impl, test 
     "_runner": attr.label(default = "//build_defs/extensions/wasix:compiled_carriers.test.mts", allow_single_file = True),
     "_consumer": attr.label(default = "//build_defs/extensions/wasix:installed_consumer.mts", allow_single_file = True),
     "_fixtures": attr.label_list(default = ["//src/test-fixtures/extensions:sql"], allow_files = True),
-    "_helpers": attr.label_list(default = wasix_sql_carrier_helpers() + ["//src/wasix/sdks/ts:tools/pgwire-client.mts", "//src/wasix/node-addon:tools/carrier-contract.mts"], allow_files = True),
+    "_helpers": attr.label_list(default = wasix_sql_carrier_helpers() + ["//src/wasix/sdks/ts:tools/pgwire-client.mts", "//src/wasix/node-addon:tools/carrier-contract.mts", "//build_defs/extensions:wasix_carriers.mts"], allow_files = True),
     "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist")}))
 
 def wasix_compiled_extension_installed_test(name, sql_name, **kwargs):
@@ -377,5 +386,5 @@ def wasix_compiled_extension_qualification(name, sql_name, module):
         target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"], size = "large", timeout = "long", tags = ["manual", "installed-consumer"])
     wasix_compiled_extension_shipping(name = name, sql_name = sql_name, carriers = ":" + name, qualification = [
         ":" + name + "_installed_test", ":link_inputs_test", ":invalid_link_profile_test", ":unhandled_linkopts_test",
-        ":resource_inputs_test", "//src/wasix/runtime/tools/xtask:export_policy_test",
+        ":resource_inputs_test", ":cargo_parts_test", "//src/wasix/runtime/tools/xtask:export_policy_test",
     ])

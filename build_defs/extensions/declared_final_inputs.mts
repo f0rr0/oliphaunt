@@ -50,13 +50,35 @@ export function validateDeclaredNativeAppleBase(
 
 /** Construct from retained completed-publication Files when no original
  * document exists. The original document, if supplied, must match those bytes. */
-export function declaredNativeAppleBaseManifest(input, version, archives = {}) {
-  if (input?.owner) validateDeclaredNativeAppleBase(input, version);
+export function declaredNativeAppleBaseManifest(
+  input,
+  version,
+  archives = {},
+  localCurrent = false,
+) {
+  if (localCurrent) {
+    assert.equal(input.owner, 'liboliphaunt-native');
+    assert.equal(input.version, version);
+    assert.deepEqual(Object.keys(archives).sort(), ['base-xcframework', 'runtime-resources']);
+    archives = Object.fromEntries(
+      Object.entries(archives).map(([role, file]) => [
+        role,
+        { ...fileIdentity(realpathSync(file.path)), path: realpathSync(file.path) },
+      ]),
+    );
+  } else if (input && Object.keys(input).length) validateDeclaredNativeAppleBase(input, version);
   if (Object.keys(archives).length) {
     return buildIosCarrierManifest({
       baseRuntimeVersion: version,
-      baseArchiveInputs: archives,
-      baseCarrierManifest: input?.file.path,
+      // The rule supplies declared Files through Bazel's repository aliases.
+      // Preserve expected byte identities; resolve only their outer transport.
+      baseArchiveInputs: Object.fromEntries(
+        Object.entries(archives).map(([role, file]) => [
+          role,
+          { ...file, path: realpathSync(file.path) },
+        ]),
+      ),
+      baseCarrierManifest: input?.file ? realpathSync(input.file.path) : undefined,
       baseTag: `liboliphaunt-native-v${version}`,
       declaredProducts: {},
       extensionManifests: [],
@@ -159,9 +181,16 @@ export function validateDeclaredExtensionFinalInput(
 if (import.meta.main) {
   const [specification, output] = process.argv.slice(2);
   assert.equal(process.argv.length, 4);
-  const { input, archives, canonical } = JSON.parse(readFileSync(specification, 'utf8'));
+  const { input, archives, canonical, localCurrent } = JSON.parse(
+    readFileSync(specification, 'utf8'),
+  );
   if (canonical.kind === 'native-apple-base') {
-    const manifest = declaredNativeAppleBaseManifest(input, canonical.version, archives);
+    const manifest = declaredNativeAppleBaseManifest(
+      input,
+      canonical.version,
+      archives,
+      localCurrent,
+    );
     if (input?.owner && !Object.keys(archives ?? {}).length) copyFileSync(input.file.path, output);
     else writeFileSync(output, JSON.stringify(manifest, null, 2) + '\n');
   } else

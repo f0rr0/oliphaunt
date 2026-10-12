@@ -5,7 +5,7 @@ load(":bun-sources.bzl", "bun_source_directory", "bun_source_path", "bun_source_
 
 BUN_SOURCE_TOOLCHAINS = _BUN_SOURCE_TOOLCHAINS
 
-BunScriptInfo = provider(fields = ["bun", "entry_point", "entry_path", "files"])
+BunScriptInfo = provider(fields = ["bun", "entry_point", "entry_path", "files", "sources"])
 
 BUN_TEST_ENTRYPOINT_ATTRS = {
     "_bun_test_entrypoint_template": attr.label(default = "//build_defs/foundation:bun-test-entrypoint.mts.tpl", allow_single_file = True),
@@ -67,7 +67,7 @@ def _bun_impl(ctx):
         runfiles = runfiles.merge(dep[DefaultInfo].default_runfiles)
     return [
         DefaultInfo(executable = result.executable, runfiles = runfiles),
-        BunScriptInfo(bun = runtime.bun, entry_point = ctx.file.entry_point, entry_path = bun_source_path(ctx, result.sources, ctx.file.entry_point), files = runfiles.files),
+        BunScriptInfo(bun = runtime.bun, entry_point = ctx.file.entry_point, entry_path = bun_source_path(ctx, result.sources, ctx.file.entry_point), files = runfiles.files, sources = result.sources),
     ]
 
 def bun_action(ctx, tool, arguments = [], inputs = [], **kwargs):

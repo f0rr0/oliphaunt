@@ -1,11 +1,23 @@
 import assert from 'node:assert/strict';
-import { lstatSync, mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import {
   canonicalSystemDirectoryPath,
+  removeOwnedDirectory,
   requireSafeDirectoryChain,
 } from './release-directory-safety.mts';
 
@@ -193,4 +205,95 @@ test('accepts the verified Darwin temporary-directory alias', {
   const canonical = realpathSync(raw);
   t.after(() => rmSync(canonical, { recursive: true, force: true }));
   assert.equal(requireSafeDirectoryChain(raw), canonical);
+});
+
+test('removes owned 0500 and 0555 trees without changing source siblings', {
+  skip: process.platform === 'win32',
+}, (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'owned-directory-modes-')));
+  t.after(() => removeOwnedDirectory(root));
+  const source = path.join(root, 'source');
+  mkdirSync(source);
+  const original = path.join(source, 'file');
+  writeFileSync(original, 'original captured bytes');
+  chmodSync(original, 0o444);
+  chmodSync(source, 0o500);
+  const owned = path.join(root, 'stage');
+  const nested = path.join(owned, 'nested');
+  const empty = path.join(nested, 'empty');
+  mkdirSync(empty, { recursive: true });
+  writeFileSync(path.join(nested, 'file'), 'owned staged bytes');
+  chmodSync(path.join(nested, 'file'), 0o444);
+  chmodSync(empty, 0o555);
+  chmodSync(nested, 0o555);
+  chmodSync(owned, 0o500);
+
+  removeOwnedDirectory(owned);
+  assert.equal(existsSync(owned), false);
+  assert.equal(readFileSync(original, 'utf8'), 'original captured bytes');
+  assert.equal(lstatSync(source).mode & 0o777, 0o500);
+  assert.equal(lstatSync(original).mode & 0o777, 0o444);
+});
+
+test('rejects root and ancestor aliases before mutating their target', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'owned-directory-alias-')));
+  t.after(() => removeOwnedDirectory(root));
+  const outside = path.join(root, 'outside');
+  const directory = path.join(outside, 'retained');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(path.join(directory, 'file'), 'target bytes');
+  chmodSync(directory, 0o500);
+  const mode = lstatSync(directory).mode & 0o777;
+  const alias = path.join(root, 'alias');
+  symlinkSync(outside, alias, process.platform === 'win32' ? 'junction' : 'dir');
+
+  assert.throws(() => removeOwnedDirectory(alias), /requires a real directory/u);
+  assert.throws(
+    () => removeOwnedDirectory(path.join(alias, 'retained')),
+    /symlink or non-directory ancestor/u,
+  );
+  assert.equal(readFileSync(path.join(directory, 'file'), 'utf8'), 'target bytes');
+  assert.equal(lstatSync(directory).mode & 0o777, mode);
+  assert.equal(lstatSync(alias).isSymbolicLink(), true);
+});
+
+test('unlinks nested aliases while preserving target bytes and permissions', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'owned-directory-child-alias-')));
+  t.after(() => removeOwnedDirectory(root));
+  const outside = path.join(root, 'outside');
+  mkdirSync(outside);
+  const original = path.join(outside, 'file');
+  writeFileSync(original, 'untouched external target');
+  chmodSync(original, 0o444);
+  chmodSync(outside, 0o500);
+  const directoryMode = lstatSync(outside).mode & 0o777;
+  const fileMode = lstatSync(original).mode & 0o777;
+  const owned = path.join(root, 'owned');
+  mkdirSync(owned);
+  symlinkSync(
+    outside,
+    path.join(owned, 'alias'),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+
+  removeOwnedDirectory(owned);
+  assert.equal(existsSync(owned), false);
+  assert.equal(readFileSync(original, 'utf8'), 'untouched external target');
+  assert.equal(lstatSync(outside).mode & 0o777, directoryMode);
+  assert.equal(lstatSync(original).mode & 0o777, fileMode);
+});
+
+test('missing leaves are harmless and filesystem roots and regular files are rejected', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'owned-directory-boundary-')));
+  t.after(() => removeOwnedDirectory(root));
+  assert.doesNotThrow(() => removeOwnedDirectory(path.join(root, 'missing')));
+  assert.throws(() => removeOwnedDirectory(path.parse(root).root), /filesystem root/u);
+  const file = path.join(root, 'file');
+  writeFileSync(file, 'retained file');
+  assert.throws(() => removeOwnedDirectory(file), /requires a real directory/u);
+  assert.equal(readFileSync(file, 'utf8'), 'retained file');
+  assert.throws(
+    () => removeOwnedDirectory(path.join(root, 'missing', 'child')),
+    /cannot be inspected/u,
+  );
 });

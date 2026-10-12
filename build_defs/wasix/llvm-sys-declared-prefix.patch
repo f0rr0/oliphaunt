@@ -24,3 +24,19 @@
              Ok(stdout)
          } else {
              Err(anyhow::anyhow!(
+@@ -718,7 +735,14 @@
+ 
+     // Build the extra wrapper functions.
+     if !cfg!(feature = "disable-alltargets-init") {
+-        std::env::set_var("CFLAGS", get_llvm_cflags(&llvm_config_path));
++        // LLVM include paths and macros must retain the selected C toolchain
++        // target and SDK flags. Caller flags take precedence over LLVM flags.
++        let cflags = format!(
++            "{} {}",
++            get_llvm_cflags(&llvm_config_path),
++            env::var("CFLAGS").unwrap_or_default()
++        );
++        std::env::set_var("CFLAGS", cflags);
+         cc::Build::new()
+             .file("wrappers/target.c")
+             .compile("targetwrappers");

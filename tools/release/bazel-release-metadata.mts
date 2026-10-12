@@ -1,6 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
+import { wasixSeedConsumerDeclaration } from '../../src/database-resources/seeds/wasix/consumer-contract.mts';
 import { staticMemberAliases } from '../../src/extensions/artifacts/native/tools/ios-extension-registration.mts';
 import { loadContribCarriers } from '../../src/extensions/artifacts/packages/tools/contrib-carriers.mts';
 import { validateExtensionTargetProfiles } from '../../src/extensions/contracts/extension-target-profiles.mts';
@@ -33,6 +34,7 @@ import {
   nativeHelperArtifactRows,
   nativeRuntimeArtifactRows,
   runtimeExtensionTargetRowsFromConfigs,
+  swiftArtifactRows,
   validateExtensionCatalogRows,
   wasixArtifactRows,
 } from './release-artifact-targets.mts';
@@ -86,6 +88,7 @@ export interface ReleaseMetadata {
   nativeRuntimeArtifacts: Record<string, unknown>[];
   wasixArtifacts: Record<string, unknown>[];
   databaseResourceContract: Record<string, unknown> | null;
+  databaseResourceWasixConsumer: ReturnType<typeof wasixSeedConsumerDeclaration> | null;
   databaseResourceArtifacts: Record<string, unknown>[];
   databaseSeedCarriers: ReturnType<typeof seedCarrierIdentities>;
   inputs: Record<string, string | null>;
@@ -552,6 +555,13 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
   const databaseResourceContract = products['database-resources']
     ? json('src/database-resources/contracts/contract.json')
     : null;
+  const databaseResourceWasixConsumer = databaseResourceContract
+    ? wasixSeedConsumerDeclaration(
+        toml('src/database-resources/seeds/wasix/Cargo.toml'),
+        products['database-resources'].compatibility_versions['liboliphaunt-wasix'],
+        products['liboliphaunt-wasix'].version,
+      )
+    : null;
   const databaseResourceArtifacts = databaseResourceContract
     ? databaseResourceArtifactRows(databaseResourceContract)
     : [];
@@ -692,6 +702,7 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
     nativeRuntimeArtifacts,
     wasixArtifacts,
     databaseResourceContract,
+    databaseResourceWasixConsumer,
     databaseResourceArtifacts,
     databaseSeedCarriers,
     inputs,
@@ -711,6 +722,45 @@ function starlark(value: unknown): string {
   }
   if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('nonfinite metadata');
   return JSON.stringify(value);
+}
+
+/** Complete public GitHub declarations from the supplied source snapshot.
+ * This view reuses the same owner/version renderers as the carrier graph. */
+export function nativeSupplierGithubArtifactDeclarations(metadata: ReleaseMetadata) {
+  const declared = (product: string) =>
+    metadata.products[product]?.publish_targets.some(
+      (target) => target === 'github-release' || target === 'github-release-assets',
+    );
+  const base = [
+    ...metadata.nativeRuntimeArtifacts,
+    ...metadata.nativeHelperArtifacts,
+    ...metadata.wasixArtifacts,
+    ...metadata.databaseResourceArtifacts,
+    ...swiftArtifactRows(),
+  ].flatMap((row) =>
+    typeof row.product === 'string' &&
+    typeof row.asset === 'string' &&
+    Array.isArray(row.surfaces) &&
+    row.surfaces.includes('github-release') &&
+    declared(row.product)
+      ? [{ product: row.product, asset: row.asset }]
+      : [],
+  );
+  const extensions = metadata.extensionGithubArtifacts
+    .map((row) => {
+      const product = string(row.product, 'extension GitHub supplier owner');
+      const version = string(row.version, 'extension GitHub supplier version');
+      if (metadata.products[product]?.version !== version)
+        throw new Error('extension GitHub supplier version differs from its declared owner');
+      const name = string(row.name, 'extension GitHub supplier filename');
+      return { product, asset: name.replaceAll(version, '{version}') };
+    })
+    .filter(({ product }) => declared(product));
+  return [
+    ...new Map(
+      [...base, ...extensions].map((row) => [row.product + '\0' + row.asset, row]),
+    ).values(),
+  ];
 }
 
 export function nativePublicationInputProjection(value: unknown, metadata?: ReleaseMetadata) {
@@ -766,16 +816,10 @@ export function nativePublicationInputProjection(value: unknown, metadata?: Rele
     snapshot.supplierArtifacts === undefined ? [] : snapshot.supplierArtifacts,
     metadata && {
       publicationCarriers: metadata.publicationCarriers,
-      githubArtifacts: [
-        ...metadata.nativeRuntimeArtifacts,
-        ...metadata.nativeHelperArtifacts,
-        ...metadata.wasixArtifacts,
-        ...metadata.databaseResourceArtifacts,
-      ].flatMap((row) =>
-        typeof row.product === 'string' && typeof row.asset === 'string'
-          ? [{ product: row.product, asset: row.asset }]
-          : [],
-      ),
+      sourceTagProducts: Object.values(metadata.products)
+        .filter((product) => product.publish_targets.includes('swift-package-source-tag'))
+        .map((product) => product.id),
+      githubArtifacts: nativeSupplierGithubArtifactDeclarations(metadata),
     },
   );
   for (const { publication } of Object.values(suppliers.artifacts)) {
@@ -851,6 +895,7 @@ export function renderReleaseMetadata(
     NATIVE_RUNTIME_ARTIFACTS: metadata.nativeRuntimeArtifacts,
     WASIX_ARTIFACTS: metadata.wasixArtifacts,
     DATABASE_RESOURCE_CONTRACT: metadata.databaseResourceContract,
+    DATABASE_WASIX_SEED_CONSUMER: metadata.databaseResourceWasixConsumer,
     DATABASE_RESOURCE_ARTIFACTS: metadata.databaseResourceArtifacts,
     DATABASE_SEED_CARRIERS: metadata.databaseSeedCarriers,
     COMPLETED_SUPPLIER_PUBLICATIONS: publicationInputs.supplierPublications,
@@ -867,7 +912,7 @@ export function renderReleaseMetadata(
   const build = [
     `load(${JSON.stringify(identityRule)}, "release_identity")`,
     'package(default_visibility = ["//visibility:public"])',
-    'exports_files(["metadata.bzl", "extension-sources.bzl", "completed-supplier-artifacts.json"])',
+    'exports_files(["metadata.bzl", "extension-sources.bzl", "completed-supplier-artifacts.json", "native-swift-source-input.json", "native-apple-base-input.json", "prepared-selected-products.json"])',
     ...(publicationInputs.files.length
       ? [`exports_files(${starlark(publicationInputs.files.map(({ path }) => path))})`]
       : []),
@@ -896,6 +941,9 @@ export function renderReleaseMetadata(
     bzl,
     extensionSourcesBzl,
     completedSupplierArtifacts: `${JSON.stringify(publicationInputs.supplierArtifacts)}\n`,
+    nativeSwiftSourceInput: `${JSON.stringify(publicationInputs.nativeSwiftSource)}\n`,
+    nativeAppleBaseInput: `${JSON.stringify(publicationInputs.nativeAppleBase)}\n`,
+    preparedSelectedProducts: `${JSON.stringify(publicationInputs.selectedProducts)}\n`,
     build: `${build}\n`,
   };
 }
@@ -957,6 +1005,15 @@ if (import.meta.main) {
   writeFileSync(
     path.join(args[3], 'completed-supplier-artifacts.json'),
     rendered.completedSupplierArtifacts,
+  );
+  writeFileSync(
+    path.join(args[3], 'native-swift-source-input.json'),
+    rendered.nativeSwiftSourceInput,
+  );
+  writeFileSync(path.join(args[3], 'native-apple-base-input.json'), rendered.nativeAppleBaseInput);
+  writeFileSync(
+    path.join(args[3], 'prepared-selected-products.json'),
+    rendered.preparedSelectedProducts,
   );
   writeFileSync(path.join(args[3], 'BUILD.bazel'), rendered.build);
   writeFileSync(

@@ -1,5 +1,5 @@
 load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
-load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_library_test", "cargo_package_env", "napi_artifact")
+load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_napi_library", "cargo_library_test", "cargo_package_env", "napi_artifact")
 load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
 load("@wasix_adapter_cargo_metadata//:cargo.bzl", "CARGO")
 load("@wasix_adapter_crates//:defs.bzl", "all_crate_deps", "crate_deps")
@@ -19,7 +19,7 @@ PATH_DEPS = {
 
 cargo_package_env(workspace_manifest = ":Cargo.toml")
 cargo_generator(path_dependencies = PATH_DEPS, proc_macro_names = ["napi-derive"], cargo_facts = CARGO, crate_dependencies = crate_deps)
-cargo_library(name = "addon_library", kind = "cdylib", path_dependencies = PATH_DEPS, proc_macro_names = ["napi-derive"], build_script = ":build_script", cargo_facts = CARGO, crate_dependencies = crate_deps)
+cargo_napi_library(name = "addon_library", path_dependencies = PATH_DEPS, proc_macro_names = ["napi-derive"], build_script = ":build_script", cargo_facts = CARGO, crate_dependencies = crate_deps)
 napi_artifact(name = "addon", library = ":addon_library", out = "oliphaunt_wasix_napi.node")
 cargo_library_test(crate = ":addon_library", cargo_facts = CARGO, all_dependencies = all_crate_deps, tags = ["manual"])
 rust_clippy_test(name = "clippy_test", targets = [":addon_library", ":unit_test", ":build_script_"], transitive = False, size = "small")
@@ -53,7 +53,7 @@ cargo_generator(name = "release_build_script", path_dependencies = _RELEASE_PATH
     "OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT": "$(execpath :release_inputs)/registry",
     "OLIPHAUNT_WASIX_NAPI_BUILD_INPUTS": "$(execpath :release_inputs)/build-inputs.json",
 })
-cargo_library(name = "release_addon_library", kind = "cdylib", path_dependencies = _RELEASE_PATH_DEPS, proc_macro_names = ["napi-derive"], features = ["release"],
+cargo_napi_library(name = "release_addon_library", path_dependencies = _RELEASE_PATH_DEPS, proc_macro_names = ["napi-derive"], features = ["release"],
               build_script = ":release_build_script", cargo_facts = RELEASE_CARGO, crate_dependencies = release_crate_deps)
 wasix_napi_release(name = "release_addon", library = ":release_addon_library", inputs = ":release_inputs")
 wasix_napi_carriers(producer = ":release_addon", qualification = [":release_installed_test"])
@@ -62,3 +62,8 @@ wasix_napi_installed_test(name = "release_installed_test", producer = ":release_
 source_quality_files()
 
 rust_quality_files()
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "tools/carrier-contract.mts",
+], visibility = ["//visibility:public"])

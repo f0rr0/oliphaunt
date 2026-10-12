@@ -1,4 +1,4 @@
-/** Transport the existing seed snapshot through the reviewed Prepare producer. */
+/** Transport the existing constructor snapshot through the reviewed Prepare producer. */
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -20,6 +20,15 @@ import { requireSafeDirectoryChain } from '../packaging/release-directory-safety
 import type { CompletedPublication } from './completed-release-publication.mts';
 import { requestGithubPages, requestGithubRepositoryJson } from './github-read.mts';
 import type { NativeBuildSource } from './native-build-qualification.mts';
+import {
+  type ExtensionFinalInput,
+  type ExtensionFinalInputFile,
+  type NativeAppleBaseInput,
+  type NativeSwiftSourceInput,
+  projectNativeAppleBaseInput,
+  projectNativeExtensionFinalInputs,
+  projectNativeSwiftSourceInput,
+} from './native-extension-final-inputs.mts';
 import { fileIdentity } from './native-file-identity.mts';
 import { type NativeSeedInputControl, projectNativeSeedInputs } from './native-seed-inputs.mts';
 import {
@@ -68,6 +77,7 @@ export function assertAcquiredPreparedNativeReleaseInputs(value: unknown) {
   const snapshot = readJson(result.snapshotFile);
   projectNativeSeedInputs(snapshot.seedControls, snapshot.source);
   assertSupplierFiles(snapshot.supplierArtifacts ?? [], snapshot.supplierPublications);
+  assertFinalInputFiles(snapshot);
   return result;
 }
 const repository = 'f0rr0/oliphaunt';
@@ -78,6 +88,15 @@ export type NativeReleaseInputRecord = {
   preparedSource: NativeBuildSource;
   buildBound: [string, string[]][];
 };
+export type NativeReleaseFinalInputs = {
+  extensionFinalInputs?: ExtensionFinalInput[];
+  nativeAppleBase?: NativeAppleBaseInput;
+  nativeSwiftSource?: NativeSwiftSourceInput;
+};
+const finalInputFields = (value: NativeReleaseFinalInputs) =>
+  ['extensionFinalInputs', 'nativeAppleBase', 'nativeSwiftSource'].filter((name) =>
+    Object.hasOwn(value, name),
+  );
 const fields = (value: unknown, names: string[]) => {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value));
   assert.deepEqual(
@@ -291,6 +310,54 @@ function assertSupplierFiles(value: unknown, publications: CompletedPublication[
   return rows;
 }
 
+function assertFinalInputFiles(inputs: NativeReleaseFinalInputs) {
+  if (inputs.extensionFinalInputs !== undefined)
+    projectNativeExtensionFinalInputs(inputs.extensionFinalInputs);
+  if (inputs.nativeAppleBase !== undefined) projectNativeAppleBaseInput(inputs.nativeAppleBase);
+  if (inputs.nativeSwiftSource !== undefined)
+    projectNativeSwiftSourceInput(inputs.nativeSwiftSource);
+}
+function mapFinalInputFiles(
+  inputs: NativeReleaseFinalInputs,
+  map: (file: ExtensionFinalInputFile) => ExtensionFinalInputFile,
+): NativeReleaseFinalInputs {
+  return {
+    ...(inputs.extensionFinalInputs === undefined
+      ? {}
+      : {
+          extensionFinalInputs: inputs.extensionFinalInputs.map((row) => ({
+            ...row,
+            github: row.github.map(map),
+            npm: row.npm.map(map),
+            cargo: row.cargo.map(map),
+            manifest: map(row.manifest),
+            frozen: map(row.frozen),
+          })),
+        }),
+    ...(inputs.nativeAppleBase === undefined
+      ? {}
+      : {
+          nativeAppleBase: {
+            ...inputs.nativeAppleBase,
+            file: map(inputs.nativeAppleBase.file),
+            framework: map(inputs.nativeAppleBase.framework),
+            resources: map(inputs.nativeAppleBase.resources),
+          },
+        }),
+    ...(inputs.nativeSwiftSource === undefined
+      ? {}
+      : {
+          nativeSwiftSource: {
+            ...inputs.nativeSwiftSource,
+            archive: map(inputs.nativeSwiftSource.archive),
+            carrier: map(inputs.nativeSwiftSource.carrier),
+            ownerCatalog: map(inputs.nativeSwiftSource.ownerCatalog),
+            bindingsArchive: map(inputs.nativeSwiftSource.bindingsArchive),
+          },
+        }),
+  };
+}
+
 /** Public input snapshots transport facts, never current producer or version authority. */
 function publicInputSnapshot(file: string, currentSource: NativeBuildSource) {
   const snapshot = readJson(file);
@@ -299,6 +366,8 @@ function publicInputSnapshot(file: string, currentSource: NativeBuildSource) {
     'seedControls',
     'supplierPublications',
     ...(Object.hasOwn(snapshot, 'supplierArtifacts') ? ['supplierArtifacts'] : []),
+    ...(Object.hasOwn(snapshot, 'selectedProducts') ? ['selectedProducts'] : []),
+    ...finalInputFields(snapshot),
   ]);
   source(snapshot.source);
   assert.deepEqual(snapshot.source, currentSource, 'public native inputs source differs');
@@ -308,6 +377,11 @@ function publicInputSnapshot(file: string, currentSource: NativeBuildSource) {
     'public native inputs cannot promote a current construction',
   );
   const products = loadProducts();
+  if (Object.hasOwn(snapshot, 'selectedProducts')) {
+    assert.ok(Array.isArray(snapshot.selectedProducts));
+    assert.deepEqual(snapshot.selectedProducts, [...new Set(snapshot.selectedProducts)].sort());
+    for (const product of snapshot.selectedProducts) assert.ok(Object.hasOwn(products, product));
+  }
   const seen = new Set<string>();
   for (const publication of snapshot.supplierPublications as CompletedPublication[]) {
     fields(publication, [
@@ -348,6 +422,7 @@ export function transportPublicNativePublicationInputs(
     snapshot.supplierArtifacts ?? [],
     snapshot.supplierPublications,
   );
+  assertFinalInputFiles(snapshot);
   const destination = path.resolve(directory);
   requireSafeDirectoryChain(path.dirname(destination), {
     create: true,
@@ -360,12 +435,18 @@ export function transportPublicNativePublicationInputs(
     const supplierArtifacts = mapSupplierFiles(suppliers, (file) =>
       copyInputFile(file, destination),
     );
+    const finalInputs = mapFinalInputFiles(snapshot, (file) => ({
+      ...file,
+      ...copyInputFile(file, destination),
+    }));
     projectNativeSeedInputs(seedControls, currentSource);
+    assertFinalInputFiles(finalInputs);
     const result = path.join(destination, 'native-publication-inputs.json');
     writeJson(result, {
       ...snapshot,
       seedControls,
       ...(Object.hasOwn(snapshot, 'supplierArtifacts') ? { supplierArtifacts } : {}),
+      ...finalInputs,
     });
     return result;
   } catch (error) {
@@ -394,11 +475,17 @@ export function importPublicNativePublicationInputs(
     path: path.join(path.resolve(directory), relativeFile(file)),
   }));
   assertSupplierFiles(supplierArtifacts, snapshot.supplierPublications);
+  const finalInputs = mapFinalInputFiles(snapshot, (file) => ({
+    ...file,
+    path: path.join(path.resolve(directory), relativeFile(file)),
+  }));
+  assertFinalInputFiles(finalInputs);
   const output = path.join(directory, 'native-publication-inputs-current.json');
   writeJson(output, {
     ...snapshot,
     seedControls,
     ...(Object.hasOwn(snapshot, 'supplierArtifacts') ? { supplierArtifacts } : {}),
+    ...finalInputs,
   });
   return output;
 }
@@ -414,17 +501,20 @@ function assertPromotedReceipt(row: NativeSeedInputControl) {
   assert.equal(receipt.intent.profile, row.profile);
 }
 
-/** Called while the authenticated pre-version objects still live in the coordinator. */
+/** Retain original source-specific Files while their authenticated origins still live in the coordinator. */
 export function writeNativeReleaseInputs(
   directory: string,
   record: NativeReleaseInputRecord,
   seedControls: NativeSeedInputControl[],
   supplierPublications: CompletedPublication[],
   supplierArtifacts: NativeSupplierArtifact[] = [],
+  finalInputs: NativeReleaseFinalInputs = {},
 ) {
   parseNativeReleaseInputRecord(record);
   projectNativeSeedInputs(seedControls, record.preparedSource);
   assertSupplierFiles(supplierArtifacts, supplierPublications);
+  fields(finalInputs, finalInputFields(finalInputs));
+  assertFinalInputFiles(finalInputs);
   for (const row of seedControls) {
     assertPromotedReceipt(row);
     assert.deepEqual(row.promotion?.source, record.bridge.source);
@@ -442,13 +532,19 @@ export function writeNativeReleaseInputs(
   mkdirSync(destination);
   try {
     const controls = copySeedFiles(seedControls, destination);
+    const retainedFinalInputs = mapFinalInputFiles(finalInputs, (file) => ({
+      ...file,
+      ...copyInputFile(file, destination),
+    }));
     projectNativeSeedInputs(controls, record.preparedSource);
+    assertFinalInputFiles(retainedFinalInputs);
     writeJson(path.join(destination, 'native-version-source.json'), record);
     writeJson(path.join(destination, 'native-publication-inputs.json'), {
       source: record.preparedSource,
       selectedProducts: record.selectedProducts,
       seedControls: controls,
       supplierPublications,
+      ...retainedFinalInputs,
       ...(supplierArtifacts.length
         ? {
             supplierArtifacts: mapSupplierFiles(supplierArtifacts, (file) =>
@@ -477,6 +573,7 @@ export function relocateNativeReleaseInputs(
     'seedControls',
     'supplierPublications',
     ...(Object.hasOwn(snapshot, 'supplierArtifacts') ? ['supplierArtifacts'] : []),
+    ...finalInputFields(snapshot),
   ]);
   assert.deepEqual(snapshot.source, record.preparedSource, 'prepared importer source differs');
   assert.deepEqual(
@@ -494,6 +591,11 @@ export function relocateNativeReleaseInputs(
     path: path.join(directory, relativeFile(file)),
   }));
   assertSupplierFiles(supplierArtifacts, snapshot.supplierPublications);
+  const finalInputs = mapFinalInputFiles(snapshot, (file) => ({
+    ...file,
+    path: path.join(path.resolve(directory), relativeFile(file)),
+  }));
+  assertFinalInputFiles(finalInputs);
   projectNativeSeedInputs(controls, record.preparedSource);
   for (const row of controls) {
     assertPromotedReceipt(row);
@@ -514,6 +616,7 @@ export function relocateNativeReleaseInputs(
     source: structuredClone(currentSource),
     seedControls: controls,
     ...(Object.hasOwn(snapshot, 'supplierArtifacts') ? { supplierArtifacts } : {}),
+    ...finalInputs,
   };
 }
 

@@ -270,7 +270,6 @@ test('reviewed main producer assurance preserves construction limits and accepts
     ['Linux runtime (x86_64)', 'native-build-evidence-x86_64'],
     ['Linux runtime (aarch64)', 'native-build-evidence-aarch64'],
     ['Linux WASIX and installed browser', 'native-build-evidence-wasix-tools'],
-    ['Linux WASIX and installed browser', 'native-build-evidence-wasix-pg-hashids'],
     ['Linux native postmaster lifecycle', 'native-build-evidence-postmaster-linux'],
     ['Native postmaster lifecycle (linux-arm64)', 'native-build-evidence-postmaster-linux-arm64'],
     ['Native postmaster lifecycle (macos-arm64)', 'native-build-evidence-postmaster-macos-arm64'],
@@ -363,6 +362,13 @@ test('reviewed producer rejects unreviewed sources, PR origins and noncanonical 
       'artifact',
       (f) => {
         f.request.expected.artifactName = 'native-build-evidence-aarch64';
+      },
+    ],
+    [
+      'retired WASIX split producer',
+      (f) => {
+        f.request.expected.github.job = 'Linux WASIX and installed browser';
+        f.request.expected.artifactName = 'native-build-evidence-wasix-pg-hashids';
       },
     ],
     [

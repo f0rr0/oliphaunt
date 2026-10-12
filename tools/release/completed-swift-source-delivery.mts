@@ -1,7 +1,16 @@
 /** The published Swift source tag is a delivered envelope, never an old Bazel graph. */
 import { deepStrictEqual } from 'node:assert';
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync } from 'node:fs';
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   assertSwiftSourceDeliveryParity,
@@ -16,6 +25,9 @@ import {
   validateFrozenNativeCarrierIdentity,
 } from '../../src/native/sdks/swift/tools/swift-native-carrier-contract.mts';
 import { renderSwiftReleaseManifest } from '../../src/native/sdks/swift/tools/swift-release-manifest.mts';
+import { createDeterministicTar } from '../packaging/archive-directory.mts';
+import { canonicalGzipSync, extractPortableArchiveTree } from '../packaging/portable-archive.mts';
+import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import {
   type CompletedPublication,
   createCompletedPublicationChecker,
@@ -23,6 +35,7 @@ import {
 import { requestGithubPages, requestGithubRepositoryJson } from './github-read.mts';
 import { fileIdentity, safeRelative } from './native-file-identity.mts';
 import { lockedPublicationFiles } from './publication-lock.mts';
+import { createRetainedDownload } from './retained-download.mts';
 
 const repository = 'f0rr0/oliphaunt';
 const prefix = 'src/sdks/swift';
@@ -44,11 +57,14 @@ export async function captureCompletedSwiftSourceTag(
     publication,
     descriptor,
     bindings,
+    retainedArchive,
   }: {
     publication: CompletedPublication;
     descriptor: any;
     /** Already authenticated through the completed public-asset reader. */
     bindings: { name: string; sha256: string };
+    /** Reconstructed Git delivery; this File is not a published GitHub asset. */
+    retainedArchive?: string;
   },
   {
     assertCompletedPublication = createCompletedPublicationChecker({ repository }),
@@ -250,13 +266,98 @@ export async function captureCompletedSwiftSourceTag(
     const bytes = bytesByPath.get(`${prefix}/${name}`);
     if (bytes) requireValue(text(bytes).trim() === version, `source tag ${name} differs`);
   }
+  let retained: { path: string; size: number; sha256: string } | undefined;
+  if (retainedArchive !== undefined) {
+    requireValue(
+      path.isAbsolute(retainedArchive),
+      'retained source archive requires an absolute path',
+    );
+    requireSafeDirectoryChain(path.dirname(retainedArchive), {
+      create: true,
+      label: 'retained Swift source tag',
+    });
+    const directory = mkdtempSync(path.join(tmpdir(), 'completed-swift-source-'));
+    const output = await createRetainedDownload(retainedArchive);
+    try {
+      chmodSync(directory, 0o755);
+      for (const member of members.filter(({ type }) => type === 'directory')) {
+        const target = member.path ? path.join(directory, safeRelative(member.path)) : directory;
+        mkdirSync(target, { recursive: true });
+        chmodSync(target, member.mode);
+      }
+      for (const member of members.filter(({ type }) => type === 'file')) {
+        const target = path.join(directory, safeRelative(member.path));
+        writeFileSync(target, bytesByPath.get(member.path), { flag: 'wx', mode: member.mode });
+        chmodSync(target, member.mode);
+      }
+      deepStrictEqual(
+        readSwiftSourceTagMembers(directory).sort((a, b) => a.path.localeCompare(b.path)),
+        [...members].sort((a, b) => a.path.localeCompare(b.path)),
+        'retained source tree differs from authenticated Git members',
+      );
+      await output.write(canonicalGzipSync(await createDeterministicTar(directory)));
+      const file = await output.commit();
+      const identity = fileIdentity(file);
+      retained = { path: file, size: identity.size, sha256: identity.sha256 };
+    } catch (error) {
+      await output.abort();
+      throw error;
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
   return {
     scope: 'construction' as const,
     publication,
     source: basis.source,
     nativePublication: basis.publication,
+    ...(retained ? { file: retained } : {}),
     members: members.sort((a, b) => a.path.localeCompare(b.path)),
   };
+}
+
+/** Reauthenticate reconstructed Git delivery; outer archive hashes alone are not a published asset origin. */
+export async function replayCompletedSwiftSourceArchive(
+  input: Parameters<typeof captureCompletedSwiftSourceTag>[0] & {
+    source: { commit: string; tree: string; member: string; blob: string };
+    file: { path: string; size: number; sha256: string };
+  },
+  options: Parameters<typeof captureCompletedSwiftSourceTag>[1] = {},
+) {
+  const supplied = structuredClone(input);
+  const before = fileIdentity(supplied.file.path);
+  deepStrictEqual(
+    { size: before.size, sha256: before.sha256 },
+    { size: supplied.file.size, sha256: supplied.file.sha256 },
+    'retained completed Swift archive bytes differ',
+  );
+  const captured = await captureCompletedSwiftSourceTag(
+    {
+      publication: supplied.publication,
+      descriptor: supplied.descriptor,
+      bindings: supplied.bindings,
+    },
+    options,
+  );
+  deepStrictEqual(captured.source, supplied.source, 'retained Swift source tag changed');
+  const directory = mkdtempSync(path.join(tmpdir(), 'completed-swift-replay-'));
+  try {
+    const tree = path.join(directory, 'source');
+    extractPortableArchiveTree(supplied.file.path, tree);
+    deepStrictEqual(
+      readSwiftSourceTagMembers(tree).sort((a, b) => a.path.localeCompare(b.path)),
+      captured.members,
+      'retained Swift archive member differs from immutable Git source',
+    );
+    deepStrictEqual(
+      fileIdentity(supplied.file.path),
+      before,
+      'retained Swift archive changed during replay',
+    );
+    return { ...captured, file: supplied.file };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 /** Current physical files remain bound to the existing candidate and installed ZIP parity. */

@@ -122,4 +122,4 @@ def native_android_runtime_targets():
         packages.append(":" + name + "_shipping")
     _assets_test(name = "android_runtime_assets_test", assets = ":android_release_assets", args = bun_test_entrypoint_args("android_runtime_assets_test"),
                  target_compatible_with = _LINUX, size = "small")
-    shipping_export(name = "android_shipping_export", packages = packages, qualification = [":android_runtime_assets_test"], testonly = True, target_compatible_with = _LINUX)
+    shipping_export(name = "android_shipping_export", packages = packages, qualification = [":android_runtime_assets_test", "//src/examples/native/react-native-expo:android_installed_test"], testonly = True, target_compatible_with = _LINUX)

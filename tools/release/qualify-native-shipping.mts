@@ -435,10 +435,23 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
       ],
       file('selected-owner.json'),
     );
-    const selected = json(file('selected-owner.json')) as {
-      roots: unknown;
-      qualification: unknown;
-    };
+    let selected: { roots: unknown; qualification: unknown };
+    try {
+      selected = json(file('selected-owner.json')) as typeof selected;
+    } catch (cause) {
+      // cquery can return success with empty output for an incompatible owner.
+      // Ask Bazel for its dependency diagnostic without executing any actions.
+      try {
+        bazel(['build', owner, ...configuration, '--nobuild']);
+      } catch (analysisError) {
+        throw new Error(`Shipping export ${owner}: Bazel configuration analysis failed`, {
+          cause: new AggregateError([cause, analysisError]),
+        });
+      }
+      throw new Error(`Shipping export ${owner} returned no readable configured export provider`, {
+        cause,
+      });
+    }
     if (
       !selected ||
       typeof selected !== 'object' ||

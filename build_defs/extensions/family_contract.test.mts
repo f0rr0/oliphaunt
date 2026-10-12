@@ -27,7 +27,7 @@ assert.equal(process.argv.length, 5);
 const locations = json(locationsFile);
 const resolve = (value: any): any =>
   typeof value === 'string' && locations[value]
-    ? path.join(runfiles, locations[value])
+    ? realpathSync(path.join(runfiles, locations[value]))
     : Array.isArray(value)
       ? value.map(resolve)
       : value && typeof value === 'object'

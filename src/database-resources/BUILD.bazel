@@ -14,7 +14,7 @@ exports_files([
 
 filegroup(
     name = "cluster_seed_contract_fixtures",
-    srcs = glob(["contracts/fixtures/*.properties"]),
+    srcs = glob(["contracts/fixtures/*.properties", "contracts/fixtures/*.json"]),
 )
 
 # rules_rust stages authored Rust sources beneath bazel-out. These symlinks
@@ -56,3 +56,9 @@ native_resource_test(name = "native_resource_test")
 native_release_checksum_family(product = "database-resources", artifact_rows = DATABASE_RESOURCE_ARTIFACTS)
 
 source_quality_files()
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "contracts/contract.json",
+    "contracts/native-manifest.mts",
+], visibility = ["//visibility:public"])

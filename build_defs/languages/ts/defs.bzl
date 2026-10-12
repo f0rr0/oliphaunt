@@ -1,6 +1,8 @@
 """Native SDK manifest projection and consumers of actual npm envelopes."""
 
 load("@aspect_rules_js//npm:providers.bzl", "NpmPackageInfo")
+load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
+load("//build_defs/release:shipping.bzl", "ShippingInfo")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 
 _NODE_TOOLCHAIN = "@rules_nodejs//nodejs:toolchain_type"
@@ -63,6 +65,73 @@ npm_archive_package = rule(
         "version": attr.string(mandatory = True),
     },
 )
+
+def _dependency_package_impl(ctx):
+    if ctx.attr.source == "unverified":
+        fail("Final npm dependency %s is unresolved: %s" % (ctx.attr.package_name, ctx.attr.reason))
+    if ctx.attr.current:
+        identity = ctx.attr.current[ShippingInfo]
+        if identity.ecosystem != "npm" or identity.name != ctx.attr.package_name or identity.version != ctx.attr.version or (ctx.attr.owner and identity.product != ctx.attr.owner):
+            fail("Current npm dependency differs from its declared source owner/name/version")
+        files = identity.files.to_list()
+        if len(files) != 1 or files[0].is_directory or not files[0].basename.endswith(".tgz"):
+            fail("Current npm dependency needs one actual shipping archive File")
+        archive = files[0]
+    elif ctx.attr.registry:
+        identity = ctx.attr.registry[NpmPackageInfo]
+        if identity.package != ctx.attr.package_name or identity.version != ctx.attr.version:
+            fail("Registry npm dependency name/version differs")
+        archive = identity.src
+    else:
+        archive = ctx.file.archive
+    if not archive:
+        fail("Final npm dependency needs its actual captured archive File")
+    output = ctx.actions.declare_file(ctx.label.name + "/dependency.tgz")
+    arguments = ["--verify-dependency", archive.path, output.path, ctx.attr.package_name, ctx.attr.version, str(ctx.attr.size), ctx.attr.sha256]
+    sources = [ctx.file._validator, ctx.file._archive_reader]
+    bun_file_action(ctx, entry_point = ctx.file._validator, arguments = arguments, inputs = [archive] + sources, source_files = sources, outputs = [output], mnemonic = "VerifyNpmDependency")
+    return [DefaultInfo(files = depset([output])), NpmPackageInfo(package = ctx.attr.package_name, version = ctx.attr.version, src = output, npm_package_store_infos = depset())]
+
+_dependency_package = rule(
+    implementation = _dependency_package_impl,
+    toolchains = BUN_SOURCE_TOOLCHAINS,
+    attrs = {
+        "source": attr.string(mandatory = True),
+        "package_name": attr.string(mandatory = True),
+        "version": attr.string(default = ""),
+        "owner": attr.string(default = ""),
+        "reason": attr.string(default = ""),
+        "size": attr.int(default = -1),
+        "sha256": attr.string(default = ""),
+        "archive": attr.label(allow_single_file = [".tgz"]),
+        "registry": attr.label(providers = [NpmPackageInfo]),
+        "current": attr.label(providers = [ShippingInfo]),
+        "_validator": attr.label(default = "//build_defs/languages/ts:metadata.mts", allow_single_file = True),
+        "_archive_reader": attr.label(default = "//:tools/packaging/portable-archive.mts", allow_single_file = True),
+    },
+)
+
+def workspace_dependency_package(name, workspace, dependency, current, **kwargs):
+    """Use the declared completed/selected source choice for compiler and installed consumers."""
+    choice = workspace["dependencyInputs"][dependency]
+    _dependency_package(
+        name = name,
+        source = choice["source"],
+        package_name = dependency,
+        version = choice.get("version", ""),
+        owner = choice.get("owner", ""),
+        reason = choice.get("reason", ""),
+        size = choice.get("size", -1),
+        sha256 = choice.get("sha256", ""),
+        archive = choice.get("archive"),
+        registry = "@javascript_packages//:" + choice["package"] if choice["source"] == "registry" else None,
+        current = current if choice["source"] == "workspace" else None,
+        **kwargs
+    )
+
+def workspace_dependency_link(name, package, workspace, dependency, **kwargs):
+    choice = workspace["dependencyInputs"][dependency]
+    npm_link_package(name = name, src = package, deps = {":_javascript_" + key: child for child, key in choice.get("packages", {}).items()}, **kwargs)
 
 def _runfile(ctx, file):
     return file.short_path[3:] if file.short_path.startswith("../") else ctx.workspace_name + "/" + file.short_path

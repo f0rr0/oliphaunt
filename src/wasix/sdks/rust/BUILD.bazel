@@ -2,7 +2,7 @@ load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_f
 load("//build_defs/languages:rust.bzl", "cargo_doc_test", "cargo_generator", "cargo_integration_test", "cargo_library", "cargo_library_test", "cargo_package_env")
 load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
 load("//build_defs/languages:source.bzl", "cargo_source_contract_test", "cargo_source_package")
-load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS")
+load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "PRODUCTS")
 load("//build_defs/resources:resources.bzl", "wasix_sdk_resource_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -27,6 +27,9 @@ _CONTRIB_FEATURES = ["extension-" + member["sql-name"].replace("_", "-") for mem
 cargo_generator(name = "extension_carrier_build_script", path_dependencies = PATH_DEPS, features = _CONTRIB_FEATURES, proc_macro_names = ["async-trait"])
 cargo_library(name = "extension_carrier_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":extension_carrier_build_script", features = _CONTRIB_FEATURES)
 cargo_library_test(name = "extension_carrier_unit_test", crate = ":extension_carrier_lib", features = _CONTRIB_FEATURES, rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode([member["sql-name"] for member in CONTRIB_MEMBERS])}, path_dependencies = PATH_DEPS, data = ["//src/test-fixtures:rust_fixtures"], tags = ["manual"])
+_CONTRIB_TOOLS_FEATURES = _CONTRIB_FEATURES + ["tools-execution"]
+cargo_library(name = "extension_carrier_tools_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":extension_carrier_build_script", features = _CONTRIB_TOOLS_FEATURES)
+cargo_library_test(name = "extension_carrier_tools_unit_test", crate = ":extension_carrier_tools_lib", features = _CONTRIB_TOOLS_FEATURES, rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode([member["sql-name"] for member in CONTRIB_MEMBERS]), "OLIPHAUNT_DECLARED_TOOLS_VERSION": PRODUCTS["postgres-tools-wasix"]["version"]}, path_dependencies = PATH_DEPS, data = ["//src/test-fixtures:rust_fixtures"], tags = ["manual"])
 
 _QUALITY_PATH_DEPS = {
     name: "//" + label.split("//", 1)[1].removesuffix(":lib") + ":quality_lib"
@@ -52,6 +55,9 @@ cargo_library(name = "resource_test_lib", path_dependencies = _RESOURCE_PATH_DEP
 cargo_doc_test(crate = ":quality_lib", size = "small")
 cargo_doc_test(name = "tools_doc_test", crate = ":tools_lib", features = ["tools"], size = "small")
 _INTEGRATION_ROOTS = glob(["tests/*.rs"])
+# These roots use the constructed runtime carriers, unlike the source-only
+# quality library/tool generators. Qualify their Clippy targets once with WASIX.
+_CONSTRUCTED_INTEGRATION_ROOTS = ["tests/resources.rs", "tests/runtime_smoke.rs"]
 [
     cargo_integration_test(
         name = "quality_" + source.removeprefix("tests/").removesuffix(".rs") + "_test",
@@ -67,7 +73,13 @@ _INTEGRATION_ROOTS = glob(["tests/*.rs"])
 ]
 rust_clippy_test(
     name = "clippy_test",
-    targets = [":quality_lib", ":quality_unit_test", ":quality_build_script_"] + [":quality_" + source.removeprefix("tests/").removesuffix(".rs") + "_test" for source in _INTEGRATION_ROOTS],
+    targets = [":quality_lib", ":quality_unit_test", ":quality_build_script_"] + [":quality_" + source.removeprefix("tests/").removesuffix(".rs") + "_test" for source in _INTEGRATION_ROOTS if source not in _CONSTRUCTED_INTEGRATION_ROOTS],
+    transitive = False,
+    size = "small",
+)
+rust_clippy_test(
+    name = "constructed_clippy_test",
+    targets = [":quality_" + source.removeprefix("tests/").removesuffix(".rs") + "_test" for source in _CONSTRUCTED_INTEGRATION_ROOTS],
     transitive = False,
     size = "small",
 )
@@ -90,12 +102,14 @@ cargo_source_package(
         ":source_package_test",
         "//build_defs/languages/installed:wasix_sdk_source_compile_test",
         ":quality_unit_test",
+        ":constructed_clippy_test",
         ":quality_public_api_test",
         ":doc_test",
         ":tools_doc_test",
         ":quality_runtime_smoke_test",
         ":postgres_regression_test",
         ":resource_api_test",
+        "//build_defs/extensions/wasix:contrib_incremental_installed_test",
     ],
 )
 cargo_source_contract_test(

@@ -1,13 +1,21 @@
 """The final SwiftPM source carrier, using its declared frozen native pin."""
 
 load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS")
+load("//build_defs/extensions:declared_final_inputs.bzl", "native_declared_apple_base")
+load("//build_defs/extensions:final_leaf.bzl", "NativeAppleBaseInfo")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/foundation:bun-sources.bzl", "bun_source_path", "bun_source_tree")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 
 def _swift_source_impl(ctx):
+    base = ctx.attr.native_base[NativeAppleBaseInfo]
+    if base.version != ctx.attr.native_version or len(base.archive_files) != 2:
+        fail("Swift source must consume its exact conventional native requirement")
+    archives = base.archives
+    framework = [file for file in base.archive_files if file.path == archives["base-xcframework"]["path"]][0]
+    resources = [file for file in base.archive_files if file.path == archives["runtime-resources"]["path"]][0]
     sources = {}
-    inputs = ctx.files.sources + [ctx.file.generated_swift, ctx.file.public_header, ctx.file.bindings_archive, ctx.file.carrier, ctx.file.xcframework, ctx.file.runtime_resources, ctx.file.owner_catalog, ctx.file._packager] + ctx.files._helpers
+    inputs = ctx.files.sources + [ctx.file.generated_swift, ctx.file.bindings_archive, base.file, framework, resources, ctx.file.owner_catalog, ctx.file._packager] + ctx.files._helpers
     prefix = ctx.label.package + "/"
     for file in ctx.files.sources:
         member = file.short_path[len(prefix):] if file.short_path.startswith(prefix) else file.short_path
@@ -25,11 +33,10 @@ def _swift_source_impl(ctx):
         "nativeVersion": ctx.attr.native_version,
         "sources": sources,
         "generatedSwift": ctx.file.generated_swift.path,
-        "publicHeader": ctx.file.public_header.path,
         "bindingsArchive": ctx.file.bindings_archive.path,
-        "carrier": ctx.file.carrier.path,
-        "xcframework": ctx.file.xcframework.path,
-        "runtimeResources": ctx.file.runtime_resources.path,
+        "carrier": base.file.path,
+        "xcframework": framework.path,
+        "runtimeResources": resources.path,
         "generators": generators,
         "ownerCatalog": ctx.file.owner_catalog.path,
     }))
@@ -66,11 +73,8 @@ _swift_source = rule(
         "native_version": attr.string(mandatory = True),
         "sources": attr.label_list(allow_files = True, mandatory = True),
         "generated_swift": attr.label(allow_single_file = [".swift"], mandatory = True),
-        "public_header": attr.label(default = Label("//src/native/runtime:include/oliphaunt.h"), allow_single_file = [".h"]),
         "bindings_archive": attr.label(allow_single_file = [".zip"], mandatory = True),
-        "carrier": attr.label(allow_single_file = True, mandatory = True),
-        "xcframework": attr.label(allow_single_file = [".zip"], mandatory = True),
-        "runtime_resources": attr.label(allow_single_file = [".tar.gz"], mandatory = True),
+        "native_base": attr.label(providers = [NativeAppleBaseInfo], mandatory = True),
         "owner_catalog": attr.label(allow_single_file = [".json"], mandatory = True),
         "generators": attr.label_list(allow_files = [".mts"], mandatory = True),
         "_packager": attr.label(default = Label("//build_defs/languages/swift:source-package.mts"), allow_single_file = True),
@@ -90,6 +94,8 @@ _swift_source = rule(
 def swift_source_package(name, sources, bindings_archive, bindings_release_assets, generated_swift):
     product = "oliphaunt-swift"
     descriptor = PRODUCTS[product]
+    native_requirement = name + "_native_requirement"
+    native_declared_apple_base(name = native_requirement, version = descriptor["compatibility_versions"]["liboliphaunt-native"], local_current = True)
     _swift_source(
         name = name,
         version = descriptor["version"],
@@ -97,9 +103,7 @@ def swift_source_package(name, sources, bindings_archive, bindings_release_asset
         sources = sources,
         generated_swift = generated_swift,
         bindings_archive = bindings_archive,
-        carrier = "@swift_frozen_native//:carrier",
-        xcframework = "@swift_frozen_native//:xcframework_archive",
-        runtime_resources = "@swift_frozen_native//:runtime_resources_archive",
+        native_base = ":" + native_requirement,
         owner_catalog = "//src/extensions/generated/sdk:extensions.json",
         generators = ["tools/extension-resource-inventory.mts", "tools/render-extension-products.mts", "tools/swift-carrier-resolver.mts"],
         target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64"],
@@ -118,7 +122,7 @@ def swift_source_package(name, sources, bindings_archive, bindings_release_asset
         suffix = artifact_name.replace(".", "_")
         native.filegroup(name = "release_input_" + suffix, srcs = [":" + name], output_group = group)
         package = "shipping_" + suffix
-        shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_input_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = "portable", role = "release-input", suppliers = "@swift_frozen_native//:suppliers")
+        shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_input_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = "portable", role = "release-input", suppliers = ":" + native_requirement)
         packages.append(":" + package)
     for group, suffix, artifact_name, configuration in [
         ("archive", "bindings", "oliphaunt-swift-" + descriptor["version"] + "-bindings.xcframework.zip", "apple-xcframework"),
@@ -128,14 +132,16 @@ def swift_source_package(name, sources, bindings_archive, bindings_release_asset
         package = "shipping_" + suffix
         shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_asset_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = configuration, role = "github-release-asset")
         packages.append(":" + package)
+    source_checks = ["//src/native/sdks/swift:unit_test", "//src/native/sdks/swift:public_api_consumer_test", "//src/native/sdks/swift:ios_compile_test"]
+    shipping_export(
+        name = "preparation_shipping_export",
+        packages = packages,
+        qualification = source_checks,
+        testonly = True,
+    )
     shipping_export(
         name = "shipping_export",
         packages = packages,
-        qualification = [
-            "//src/native/sdks/swift:unit_test",
-            "//src/native/sdks/swift:public_api_consumer_test",
-            "//src/native/sdks/swift:installed_consumer_test",
-            "//src/native/sdks/swift:ios_compile_test",
-        ],
+        qualification = source_checks + ["//src/native/sdks/swift:installed_consumer_test"],
         testonly = True,
     )

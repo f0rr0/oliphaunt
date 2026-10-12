@@ -12,12 +12,17 @@ import {
 import {
   captureCompletedSwiftSourceTag,
   currentSwiftSourceTagMembers,
+  replayCompletedSwiftSourceArchive,
 } from './completed-swift-source-delivery.mts';
 import { requestGithubPages, requestGithubRepositoryJson } from './github-read.mts';
 import { fileIdentity } from './native-file-identity.mts';
-import { nativePublicationMetadataArtifactRow } from './native-publication-metadata-contract.mts';
 import { differentNativeDeliveredMembers } from './native-publication-delivery.mts';
+import { nativePublicationMetadataArtifactRow } from './native-publication-metadata-contract.mts';
 import { sourceCarrierMembers } from './native-source-carrier-changes.mts';
+import {
+  type NativeSupplierArtifact,
+  validateNativeSupplierArtifacts,
+} from './native-supplier-artifacts.mts';
 import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
 import {
   discoverPublicationArtifacts,
@@ -534,6 +539,111 @@ export async function captureCompletedNativePublicArtifacts(
     publication,
     archives,
     unknowns,
+  };
+}
+
+/** Reconstructed Git delivery uses the same authenticated completed binding archive.
+ * It is never interpreted as a published GitHub asset or an old Bazel output. */
+export async function captureCompletedNativeSwiftSourceSuppliers(
+  {
+    publication,
+    files,
+    carriers = {},
+    sourceTags,
+  }: {
+    publication: CompletedPublication;
+    files: Record<string, string>;
+    carriers?: Record<string, string[]>;
+    sourceTags: NativeSupplierArtifact[];
+  },
+  {
+    repository = 'f0rr0/oliphaunt',
+    assertCompletedPublication = createCompletedPublicationChecker({ repository }),
+    readJson = requestGithubRepositoryJson,
+    readPages = requestGithubPages,
+    proveAsset = requestReleaseAssetProof,
+    registryOptions = {},
+  } = {},
+) {
+  requireValue(repository === 'f0rr0/oliphaunt', 'unsupported repository');
+  const rows = validateNativeSupplierArtifacts(sourceTags);
+  requireValue(rows.length === 1, 'one completed Swift source-tag input is required');
+  const row = rows[0];
+  requireValue(
+    same(row.publication, publication) &&
+      row.source &&
+      row.artifact === `swift-source-tag:${publication.version}`,
+    'completed Swift source-tag input differs from its publication',
+  );
+  const completions = new Map<string, Promise<CompletedPublication>>();
+  const completed = (value: CompletedPublication) => {
+    const key = stable(value);
+    let result = completions.get(key);
+    if (!result) {
+      result = Promise.resolve(assertCompletedPublication(value));
+      completions.set(key, result);
+    }
+    return result;
+  };
+  const reads = new Map<string, Promise<any>>();
+  const read = (endpoint: string) => {
+    let result = reads.get(endpoint);
+    if (!result) {
+      result = Promise.resolve(readJson(endpoint));
+      reads.set(endpoint, result);
+    }
+    return result;
+  };
+  const options = {
+    repository,
+    assertCompletedPublication: completed,
+    readJson: read,
+    readPages,
+    proveAsset,
+    registryOptions,
+  };
+  const publicOrigin = await captureCompletedNativePublicArtifacts({ publication, files }, options);
+  const binding = publicOrigin.archives.filter(({ kind }) => kind === 'swift-bindings');
+  requireValue(
+    binding.length === 1,
+    'completed Swift source requires its authenticated binding archive',
+  );
+  const product = loadPublicationCatalog('completed Swift supplier source', {
+    products: [publication.product],
+  }).products[0];
+  const { descriptor } = await completedRegistryDeclarations(publication, product.path, options);
+  requireValue(
+    descriptor.publish_targets?.includes('swift-package-source-tag'),
+    'completed owner does not declare a Swift source-tag delivery',
+  );
+  const replayed = await replayCompletedSwiftSourceArchive(
+    {
+      publication,
+      descriptor,
+      bindings: { name: binding[0].name, sha256: binding[0].sha256 },
+      source: row.source!,
+      file: row.file,
+    },
+    options,
+  );
+  const registry = Object.keys(carriers).length
+    ? await captureCompletedNativeRegistryCarriers({ publication, carriers }, options)
+    : undefined;
+  return {
+    ...publicOrigin,
+    archives: [
+      ...publicOrigin.archives,
+      ...(registry?.archives ?? []),
+      {
+        id: row.artifact,
+        name: row.artifact,
+        target: 'portable',
+        size: replayed.file.size,
+        sha256: replayed.file.sha256,
+        members: replayed.members,
+      },
+    ],
+    unknowns: [...publicOrigin.unknowns, ...(registry?.unknowns ?? [])],
   };
 }
 

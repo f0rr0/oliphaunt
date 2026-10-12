@@ -44,7 +44,7 @@ example_dir="${OLIPHAUNT_EXPO_ANDROID_EXAMPLE_DIR:-$scratch_root/src/examples/na
 package_work="$scratch_root/src/native/sdks/react-native"
 crash_storage_suffix="$(printf '%s' "$(basename "$scratch_root")" | LC_ALL=C tr -c 'A-Za-z0-9_.-' '-')"
 [ -n "$crash_storage_suffix" ] || crash_storage_suffix="run"
-pack_dir="$root/target/oliphaunt-rn-expo-pack/android"
+pack_dir="${OLIPHAUNT_EXPO_ANDROID_PACK_DIR:-$root/target/oliphaunt-rn-expo-pack/android}"
 tarball="$pack_dir/$(react_native_package_tarball_name "$rn_dir")"
 local_maven_repo="$scratch_root/maven-local"
 build_type="${OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE:-debug}"
@@ -751,7 +751,6 @@ main() {
   ensure_android_env
   if is_truthy "$e2e_only"; then
     need_cmd node
-    need_cmd unzip
     [ -f "$apk" ] ||
       fail "Android E2E-only mode requires an existing APK at $apk; run mobile-build:android first or set OLIPHAUNT_EXPO_ANDROID_SCRATCH to its scratch root"
     export_mobile_e2e_icu_expectation_from_android_apk "$apk" "Android APK"

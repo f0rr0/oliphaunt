@@ -2,10 +2,45 @@ import { extensionConsumerRequirements } from './consumer-compatibility.mts';
 import { resolveBuildBoundCompatibilityProducts } from './release-dependency-plan.mts';
 import { productCompatibilityVersion } from './release-graph.mts';
 
+// These associations are controller-derived contracts, not a release selector.
+// Authentication and descriptor/module equivalence stay with the acquired observations.
+export function snapshotCurrentExactInputs(products, value = []) {
+  if (!Array.isArray(value))
+    throw new Error('default-extension-release-plan: current exact inputs must be an array');
+  const seen = new Set();
+  return Object.freeze(
+    value.map((row) => {
+      if (
+        !row ||
+        typeof row !== 'object' ||
+        Array.isArray(row) ||
+        Object.keys(row).sort().join(',') !== 'product,sourceProduct' ||
+        typeof row.product !== 'string' ||
+        typeof row.sourceProduct !== 'string' ||
+        !Object.hasOwn(products, row.product) ||
+        !Object.hasOwn(products, row.sourceProduct) ||
+        row.product === row.sourceProduct ||
+        !Object.values(products[row.product].compatibility_versions ?? {}).some(
+          (entry) => entry.source_product === row.sourceProduct,
+        )
+      )
+        throw new Error(
+          'default-extension-release-plan: current exact input lacks its conventional requirement',
+        );
+      const key = `${row.product}:${row.sourceProduct}`;
+      if (seen.has(key))
+        throw new Error('default-extension-release-plan: duplicate current exact input');
+      seen.add(key);
+      return Object.freeze({ product: row.product, sourceProduct: row.sourceProduct });
+    }),
+  );
+}
+
 // Default installs constrain dependency requirements, not product version numbers.
 export function defaultExtensionReleasePlan(products, selectedProducts, options = {}) {
   const { readCompatibility = productCompatibilityVersion } = options;
   const buildBound = resolveBuildBoundCompatibilityProducts(products, options);
+  const currentExactInputs = snapshotCurrentExactInputs(products, options.currentExactInputs);
   const selected = new Set(selectedProducts);
   const required = new Set(selected);
   const requirements = new Map();
@@ -137,6 +172,17 @@ export function defaultExtensionReleasePlan(products, selectedProducts, options 
           : pin(provider, runtime, version);
       if (oldHost !== target) writeRequirement(owner, provider, products[provider].version);
     }
+  }
+  // A byte-qualified exact-module contract follows a new producer only when
+  // both products already have necessary deliveries. ABI reachability alone
+  // never adds a producer or consumer to the release set.
+  for (const { product, sourceProduct } of currentExactInputs) {
+    if (!selected.has(product) || !selected.has(sourceProduct)) continue;
+    const version = products[sourceProduct].version;
+    const previous = requirements.get(`${product}:${sourceProduct}`);
+    if (previous && previous.version !== version)
+      throw new Error('default-extension-release-plan: conflicting current exact requirement');
+    if (pin(product, sourceProduct) !== version) writeRequirement(product, sourceProduct, version);
   }
   return { required, requirements };
 }

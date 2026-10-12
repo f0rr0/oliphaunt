@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
 import { dirname, relative } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -9,6 +10,8 @@ type Manifest = {
   type?: string;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
 };
 type Lock = {
   lockfileVersion: number;
@@ -34,6 +37,49 @@ type Lock = {
     ]
   >;
 };
+type SupplierArchive = {
+  publication: { product: string; version: string; [key: string]: unknown };
+  artifact: string;
+  file: { path: string; size: number; sha256: string };
+  /** Generated repository alias for this same captured File. */
+  archive: string;
+};
+
+/** Check the actual npm File; completion/origin authentication remains the controller's job. */
+export function validateJavascriptDependencyArchive(
+  file: string,
+  name: string,
+  version: string,
+  identity?: { size: number; sha256: string },
+) {
+  const source = realpathSync(file);
+  const before = statSync(source);
+  if (!before.isFile() || (identity && before.size !== identity.size))
+    throw new Error(`JavaScript dependency ${name} File size differs`);
+  if (before.size > 512 * 1024 * 1024)
+    throw new Error('JavaScript dependency archive exceeds 512 MiB');
+  if (
+    identity &&
+    createHash('sha256').update(readFileSync(source)).digest('hex') !== identity.sha256
+  )
+    throw new Error(`JavaScript dependency ${name} File digest differs`);
+  const packed = readPortableArchiveEntries(source).get('package/package.json');
+  if (!packed?.isFile || packed.isSymbolicLink)
+    throw new Error(`JavaScript dependency ${name} has no packed manifest`);
+  const manifest = JSON.parse(packed.data().toString('utf8'));
+  if (manifest.name !== name || manifest.version !== version)
+    throw new Error(`JavaScript dependency ${name} packed identity differs`);
+  const after = statSync(source);
+  if (
+    before.ino !== after.ino ||
+    before.size !== after.size ||
+    before.mtimeMs !== after.mtimeMs ||
+    before.ctimeMs !== after.ctimeMs
+  )
+    throw new Error(`JavaScript dependency ${name} File changed during capture`);
+  return manifest as Manifest;
+}
+
 type CompilerInputs = {
   workspaces?: Record<string, string[]>;
   overrideTools?: string[];
@@ -49,6 +95,15 @@ export function importJavascriptMetadata(
   dependencyManifests: Record<string, Manifest> = {},
   executionWorkspaces: string[] = [],
   graphWorkspaces: string[] = [],
+  {
+    supplierArchives = [],
+    selectedProducts = [],
+    sourceOwners = {},
+  }: {
+    supplierArchives?: SupplierArchive[];
+    selectedProducts?: string[];
+    sourceOwners?: Record<string, { id: string; registry_packages: string[] }>;
+  } = {},
 ) {
   if (lock.lockfileVersion !== 2 || lock.configVersion !== 1)
     throw new Error('Unsupported Bun lockfile schema');
@@ -137,7 +192,10 @@ export function importJavascriptMetadata(
       .filter(
         (name) =>
           !graphs.has(workspace) ||
-          !Object.values(lock.workspaces).some((source) => source.name === name),
+          !Object.values(lock.workspaces).some((source) => source.name === name) ||
+          /^sha512-[A-Za-z0-9+/]+=*$/.test(
+            lock.packages[resolutionKey(name, workspace)]?.[3] ?? '',
+          ),
       )
       .sort();
   }
@@ -191,7 +249,13 @@ export function importJavascriptMetadata(
           );
         const range = catalogRequirement(name, requirement);
         const source = Object.values(lock.workspaces).find((row) => row.name === name);
-        if (source) continue;
+        if (
+          source &&
+          !/^sha512-[A-Za-z0-9+/]+=*$/.test(
+            lock.packages[resolutionKey(name, workspace)]?.[3] ?? '',
+          )
+        )
+          continue;
         visit(name, workspace, range);
       }
     consumerProvided.set(workspace, provided);
@@ -291,6 +355,7 @@ export function importJavascriptMetadata(
       dependencies: Record<string, string>;
       types: Record<string, string>;
       packages?: Record<string, string>;
+      dependencyInputs?: Record<string, Record<string, unknown>>;
     }
   > = {};
   for (const path of Object.keys(dependencyManifests))
@@ -331,25 +396,112 @@ export function importJavascriptMetadata(
     }
     const dependencies = manifest.dependencies ?? {};
     const runtimePackages: Record<string, string> = {};
+    const dependencyInputs: Record<string, Record<string, unknown>> = {};
     for (const [name, requirement] of Object.hasOwn(manifests, path)
       ? Object.entries(dependencies)
       : []) {
       if (workspace.dependencies?.[name] !== requirement)
         throw new Error(`bun.lock has a stale workspace dependency for ${path}/${name}`);
-      const target = Object.values(selectedManifests).find((row) => row.name === name);
+      const target = Object.entries(selectedManifests).find(([, row]) => row.name === name);
       const range = requirement.startsWith('workspace:')
         ? requirement.slice('workspace:'.length)
         : requirement;
-      if (target && !Bun.semver.satisfies(target.version, ['^', '~'].includes(range) ? '*' : range))
+      const current =
+        target && Bun.semver.satisfies(target[1].version, ['^', '~'].includes(range) ? '*' : range);
+      const owner = target && sourceOwners[target[0]];
+      const owns = Boolean(owner?.registry_packages.includes(`npm:${name}`));
+      const selected = Boolean(owns && selectedProducts.includes(owner!.id));
+      if (current && (requirement.startsWith('workspace:') || selected)) {
+        dependencyInputs[name] = {
+          source: 'workspace',
+          workspace: target[0],
+          version: target[1].version,
+          ...(owns ? { owner: owner!.id } : {}),
+        };
+      } else if (requirement.startsWith('workspace:')) {
         throw new Error(
           `Native JavaScript dependency ${name} must match its conventional workspace version`,
         );
-      if (!target) {
-        if (Object.values(lock.workspaces).some((row) => row.name === name))
-          throw new Error(
-            `JavaScript workspace dependency ${name} requires its selected source package`,
+      } else {
+        const captured = supplierArchives.filter(
+          (row) =>
+            row.artifact === `npm:${name}` &&
+            Bun.semver.satisfies(row.publication.version, range) &&
+            (!owns || row.publication.product === owner!.id),
+        );
+        if (captured.length > 1)
+          throw new Error(`Ambiguous completed JavaScript dependency ${name}`);
+        if (captured.length) {
+          const row = captured[0];
+          if (!/^@[A-Za-z0-9_.+-]+\/\/:/.test(row.archive))
+            throw new Error(
+              `Completed JavaScript dependency ${name} needs its captured File alias`,
+            );
+          const packageManifest = validateJavascriptDependencyArchive(
+            row.file.path,
+            name,
+            row.publication.version,
+            row.file,
           );
-        runtimePackages[name] = record(name, manifest.name, requirement);
+          if (
+            Object.keys(packageManifest.optionalDependencies ?? {}).length ||
+            Object.keys(packageManifest.peerDependencies ?? {}).length
+          )
+            throw new Error(
+              `Completed JavaScript dependency ${name} requires an explicit optional/peer closure`,
+            );
+          const children: Record<string, string> = {};
+          for (const [child, childRequirement] of Object.entries(
+            packageManifest.dependencies ?? {},
+          ))
+            children[child] = record(
+              child,
+              resolutionKey(name, manifest.name),
+              childRequirement as string,
+            );
+          dependencyInputs[name] = {
+            source: 'completed',
+            archive: row.archive,
+            version: packageManifest.version,
+            publication: row.publication,
+            artifact: row.artifact,
+            size: row.file.size,
+            sha256: row.file.sha256,
+            packages: children,
+          };
+        } else {
+          const key = resolutionKey(name, manifest.name);
+          const entry = lock.packages[key];
+          if (
+            entry?.[0].startsWith(`${name}@`) &&
+            entry[1] === '' &&
+            /^sha512-[A-Za-z0-9+/]+=*$/.test(entry[3] ?? '')
+          ) {
+            const id = record(name, manifest.name, requirement);
+            if (!target) runtimePackages[name] = id;
+            dependencyInputs[name] = {
+              source: 'registry',
+              package: id,
+              version: packages[id].version,
+              packages: packages[id].dependencies,
+            };
+          } else if (target || Object.values(lock.workspaces).some((row) => row.name === name)) {
+            dependencyInputs[name] = {
+              source: 'unverified',
+              requirement,
+              reason: 'missing completed archive or selected source owner',
+            };
+          } else {
+            const id = record(name, manifest.name, requirement);
+            if (!target) runtimePackages[name] = id;
+            dependencyInputs[name] = {
+              source: 'registry',
+              package: id,
+              version: packages[id].version,
+              packages: packages[id].dependencies,
+            };
+          }
+        }
       }
     }
     if (workspaces[manifest.name])
@@ -360,6 +512,7 @@ export function importJavascriptMetadata(
       type: manifest.type ?? 'commonjs',
       dependencies,
       types,
+      ...(Object.keys(dependencyInputs).length ? { dependencyInputs } : {}),
     };
     if (Object.keys(runtimePackages).length) workspaces[manifest.name].packages = runtimePackages;
   }
@@ -486,8 +639,22 @@ export function importJavascriptMetadata(
   };
 }
 
-if (import.meta.main) {
+if (import.meta.main && Bun.argv[2] === '--verify-dependency') {
+  const [, , , file, output, name, version, size, sha256] = Bun.argv;
+  if (!file || !output || !name || !version)
+    throw new Error('Expected dependency File, output, name and version');
+  const identity = sha256 ? { size: Number(size), sha256 } : undefined;
+  validateJavascriptDependencyArchive(file, name, version, identity);
+  copyFileSync(file, output);
+  validateJavascriptDependencyArchive(output, name, version, identity);
+} else if (import.meta.main) {
   const [rootFile, lockFile, ...parameters] = Bun.argv.slice(2);
+  const dependencyOptions = parameters.filter((value) => value.startsWith('--dependency-inputs='));
+  if (dependencyOptions.length > 1)
+    throw new Error('Expected at most one dependency input projection');
+  const dependencyInputs = dependencyOptions.length
+    ? JSON.parse(readFileSync(dependencyOptions[0].slice('--dependency-inputs='.length), 'utf8'))
+    : {};
   const options = parameters.filter((value) => value.startsWith('--consumer-tools='));
   const executionOptions = parameters.filter((value) => value.startsWith('--consumer-workspace='));
   const graphOptions = parameters.filter((value) =>
@@ -505,7 +672,8 @@ if (import.meta.main) {
       !value.startsWith('--consumer-workspace=') &&
       !value.startsWith('--consumer-graph-workspace=') &&
       !value.startsWith('--compiler-inputs=') &&
-      !value.startsWith('--dependency-manifest='),
+      !value.startsWith('--dependency-manifest=') &&
+      !value.startsWith('--dependency-inputs='),
   );
   const consumerTools = options.length
     ? JSON.parse(readFileSync(options[0].slice('--consumer-tools='.length), 'utf8'))
@@ -536,6 +704,22 @@ if (import.meta.main) {
         readManifests(dependencyFiles),
         executionOptions.map((value) => value.slice('--consumer-workspace='.length)),
         graphOptions.map((value) => value.slice('--consumer-graph-workspace='.length)),
+        {
+          ...dependencyInputs,
+          sourceOwners: Object.fromEntries(
+            [...manifestFiles, ...dependencyFiles].flatMap((file) => {
+              const descriptor = `${dirname(file)}/release.toml`;
+              return existsSync(descriptor)
+                ? [
+                    [
+                      relative(root, dirname(file)).split('\\').join('/'),
+                      Bun.TOML.parse(readFileSync(descriptor, 'utf8')),
+                    ],
+                  ]
+                : [];
+            }),
+          ),
+        },
       ),
     ),
   );

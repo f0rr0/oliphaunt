@@ -32,6 +32,9 @@ export type NpmPackage = {
   source: string;
   dependencies: Record<string, string>;
   local?: boolean;
+  origin?: string;
+  sourceSha256?: string;
+  sourceSize?: number;
 };
 export type NodeInputs = {
   packages: Record<string, NpmPackage>;
@@ -65,6 +68,27 @@ function packageName(name: string) {
 /** Resolve only declared archives; package managers never run in app actions. */
 export function stageNodeInputs(root: string, inputs: NodeInputs) {
   const stores: Record<string, string> = {};
+  const manifests: Record<
+    string,
+    {
+      name: string;
+      version: string;
+      dependencies?: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+    }
+  > = {};
+  function requireVersion(name: string, id: string, requirement: string, parent: string) {
+    assert(stores[id], `Undeclared npm dependency ${name}/${id}`);
+    assert.equal(manifests[id].name, name, `npm dependency identity ${parent}/${name}`);
+    const range = requirement.startsWith('workspace:')
+      ? requirement.slice('workspace:'.length)
+      : requirement;
+    assert(
+      Bun.semver.satisfies(manifests[id].version, ['^', '~'].includes(range) ? '*' : range),
+      `npm dependency ${parent}/${name}@${manifests[id].version} does not satisfy ${requirement}`,
+    );
+  }
   for (const [id, row] of Object.entries(inputs.packages)) {
     assert(/^[a-z0-9_]+$/iu.test(id), `Invalid npm package ID ${id}`);
     assert(
@@ -72,8 +96,24 @@ export function stageNodeInputs(root: string, inputs: NodeInputs) {
       `Missing npm integrity ${id}`,
     );
     const destination = path.join(root, '.packages', id, 'node_modules', packageName(row.package));
-    if (lstatSync(realpathSync(row.source)).isDirectory())
-      cpSync(row.source, destination, { recursive: true });
+    const physical = realpathSync(row.source);
+    if (row.origin === 'completed-supplier')
+      assert(
+        row.sourceSha256 && row.sourceSize !== undefined,
+        `Missing completed npm File identity ${id}`,
+      );
+    if (row.sourceSha256 !== undefined) {
+      assert(lstatSync(physical).isFile(), `Completed npm supplier must be an archive File ${id}`);
+      assert.match(row.sourceSha256, /^[a-f0-9]{64}$/u, `Invalid npm supplier SHA256 ${id}`);
+      const bytes = readFileSync(physical);
+      assert.equal(bytes.length, row.sourceSize, `npm supplier File size ${id}`);
+      assert.equal(
+        createHash('sha256').update(bytes).digest('hex'),
+        row.sourceSha256,
+        `npm supplier File SHA256 ${id}`,
+      );
+    }
+    if (lstatSync(physical).isDirectory()) cpSync(row.source, destination, { recursive: true });
     else {
       const archive = realpathSync(row.source);
       if (!row.local)
@@ -103,6 +143,7 @@ export function stageNodeInputs(root: string, inputs: NodeInputs) {
     assert.equal(manifest.name, row.package, `npm package identity ${id}`);
     assert.equal(manifest.version, row.version, `npm package version ${id}`);
     stores[id] = destination;
+    manifests[id] = manifest;
   }
   function link(directory: string, name: string, id: string) {
     assert(stores[id], `Undeclared npm dependency ${name}/${id}`);
@@ -110,9 +151,26 @@ export function stageNodeInputs(root: string, inputs: NodeInputs) {
     mkdirSync(path.dirname(destination), { recursive: true });
     symlinkSync(path.relative(path.dirname(destination), stores[id]), destination, 'dir');
   }
-  for (const [id, row] of Object.entries(inputs.packages))
-    for (const [name, dependency] of Object.entries(row.dependencies))
+  for (const [id, row] of Object.entries(inputs.packages)) {
+    for (const [name, dependency] of Object.entries(row.dependencies)) {
+      assert(stores[dependency], `Undeclared npm dependency ${name}/${dependency}`);
+      if (row.local) {
+        const requirement =
+          manifests[id].dependencies?.[name] ??
+          manifests[id].optionalDependencies?.[name] ??
+          manifests[id].peerDependencies?.[name];
+        assert(
+          requirement,
+          `npm dependency absent from its conventional manifest ${row.package}/${name}`,
+        );
+        requireVersion(name, dependency, requirement, row.package);
+      }
       link(stores[id], name, dependency);
+    }
+    if (row.local)
+      for (const [name, requirement] of Object.entries(manifests[id].dependencies ?? {}))
+        requireVersion(name, row.dependencies[name], requirement, row.package);
+  }
   for (const [name, id] of Object.entries(inputs.roots)) link(root, name, id);
   const seen = new Set<string>();
   for (const source of inputs.sources) {
@@ -126,9 +184,10 @@ export function stageNodeInputs(root: string, inputs: NodeInputs) {
   if (existsSync(manifestFile)) {
     const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
     for (const [name, id] of Object.entries(inputs.roots)) {
-      if (!inputs.packages[id].local || !manifest.dependencies?.[name]?.startsWith('workspace:'))
-        continue;
-      manifest.dependencies[name] = inputs.packages[id].version;
+      if (!inputs.packages[id].local || !manifest.dependencies?.[name]) continue;
+      requireVersion(name, id, manifest.dependencies[name], manifest.name);
+      if (manifest.dependencies[name].startsWith('workspace:'))
+        manifest.dependencies[name] = inputs.packages[id].version;
     }
     writeFileSync(manifestFile, JSON.stringify(manifest, null, 2) + '\n');
   }
@@ -397,7 +456,7 @@ async function generateAndroidAutolinking(
   invoke(
     spec.node,
     path.join(stores[constantsId], 'scripts/getAppConfig.js'),
-    [root, spec.expoAssets],
+    [root, path.resolve(spec.expoAssets)],
     root,
   );
   function normalized(value: any): any {
@@ -745,6 +804,28 @@ export async function extractAarNative(spec: {
   });
 }
 
+function finalMavenCarriers(root: string, extension: string): { source: string }[] {
+  const result: { source: string }[] = [];
+  const visit = (directory: string) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(file);
+      else {
+        // Bazel expands declared TreeArtifact inputs as directories of File
+        // transport links. Resolve those Files; archive members remain strict.
+        const physical = realpathSync(file);
+        assert(
+          lstatSync(physical).isFile(),
+          'Canonical Maven Tree must contain regular File leaves',
+        );
+        if (entry.name.endsWith(extension)) result.push({ source: physical });
+      }
+    }
+  };
+  visit(root);
+  return result;
+}
+
 export async function extractFinalAar(spec: {
   source: string;
   output: string;
@@ -755,7 +836,7 @@ export async function extractFinalAar(spec: {
   const extension = !spec.kind || spec.kind === 'aar' ? '.aar' : '.tar.gz';
   const source = realpathSync(spec.source);
   const candidates = lstatSync(source).isDirectory()
-    ? files(source, (name) => name.endsWith(extension))
+    ? finalMavenCarriers(source, extension)
     : [{ source }];
   assert.equal(
     candidates.length,
@@ -889,8 +970,56 @@ export function extensionLinkReceipt(spec: {
   );
 }
 
+export async function stageAndroidSelectedResources(spec: any, root: string) {
+  const { stageNativeStaticLeaf } = await import('../native/apple/static-carrier-consumer.mts');
+  const receipt = JSON.parse(readFileSync(spec.receipt, 'utf8'));
+  assert.equal(receipt.abi, spec.abi, 'Selected resource ABI differs from its actual link proof');
+  assert.deepEqual(receipt.selectedExtensions, [...spec.selectedExtensions].sort());
+  const selected = new Map(receipt.members.map((row: any) => [row.sqlName, row]));
+  assert.equal(selected.size, spec.selectedExtensions.length, 'Duplicate selected resource member');
+  const covered = new Set<string>(),
+    archives: string[] = [];
+  for (const [index, leaf] of spec.leaves.entries()) {
+    assert.equal(leaf.target, 'android-' + spec.abi);
+    const staged = stageNativeStaticLeaf(
+      leaf,
+      path.join(root, 'leaf-' + index),
+      spec.version,
+      leaf.target,
+    );
+    const frozen = JSON.parse(readFileSync(staged.output, 'utf8'));
+    for (const row of frozen.extensions ?? [frozen]) {
+      if (!selected.has(row.sqlName)) continue;
+      assert(!covered.has(row.sqlName), 'Repeated selected carrier member');
+      covered.add(row.sqlName);
+      const assets = row.assets.filter((asset: any) => asset.kind === 'runtime');
+      assert.equal(assets.length, 1, 'Selected member must have one exact runtime archive');
+      const entries = readPortableArchiveEntries(realpathSync(assets[0].path));
+      const linked: any = selected.get(row.sqlName);
+      const archive = entries.get(
+        `mobile-static/${leaf.target}/extensions/${linked.nativeModuleStem}/liboliphaunt_extension_${linked.nativeModuleStem}.a`,
+      );
+      assert(archive?.isFile, 'Selected resource carrier lacks its linked static archive');
+      assert.equal(
+        createHash('sha256').update(archive.data()).digest('hex'),
+        linked.archiveSha256,
+        'Selected carrier static archive differs from actual app link',
+      );
+      archives.push(realpathSync(assets[0].path));
+    }
+  }
+  assert.deepEqual(
+    [...covered].sort(),
+    [...spec.selectedExtensions].sort(),
+    'Selected resource carriers differ from the linked cohort',
+  );
+  return archives;
+}
+
 export async function prepareAppRuntimeAssets(spec: {
   payload: string;
+  abi: string;
+  leaves: any[];
   formatter: string;
   version: string;
   selectedExtensions: string[];
@@ -903,6 +1032,7 @@ export async function prepareAppRuntimeAssets(spec: {
     const receipt = JSON.parse(readFileSync(spec.receipt, 'utf8'));
     assert.deepEqual(receipt.selectedExtensions, [...spec.selectedExtensions].sort());
     const stage = path.join(root, 'resources');
+    const archives = await stageAndroidSelectedResources(spec, root);
     const identity = createHash('sha256').update(readFileSync(spec.receipt)).digest('hex');
     execFileSync(
       realpathSync(spec.formatter),
@@ -912,10 +1042,11 @@ export async function prepareAppRuntimeAssets(spec: {
         '--liboliphaunt-native-version',
         spec.version,
         '--extension-target',
-        'android-datum64',
+        'android-' + spec.abi,
         '--runtime-cache-identity',
         `android-app-${identity}`,
         '--require-mobile-static-registry',
+        ...archives.flatMap((archive) => ['--prebuilt-extension', archive]),
         ...spec.selectedExtensions.flatMap((name) => ['--extension', name]),
         ...spec.mobileStaticModules.flatMap((name) => ['--mobile-static-module', name]),
       ],
@@ -1030,6 +1161,13 @@ export function dexDefinedClasses(bytes: Buffer): Set<string> {
   const strings = table(56, 60, 4);
   const types = table(64, 68, 4);
   const definitions = table(96, 100, 32);
+  // AOSP DEX SimpleNameChar includes hyphens and these Unicode ranges.
+  const characters = String.raw`A-Za-z0-9_$\u00a1-\u1fff\u2010-\u2027\u2030-\ud7ff\ue000-\uffef\u{10000}-\u{10ffff}`;
+  const spaces =
+    Number(bytes.subarray(4, 7).toString('ascii')) >= 40
+      ? String.raw`\u0020\u00a0\u2000-\u200a\u202f`
+      : '';
+  const simpleName = new RegExp(`^[${characters}${spaces}-]+$`, 'u');
   function descriptor(type: number) {
     assert(type < types.count, 'DEX definition has invalid type index');
     const string = bytes.readUInt32LE(types.offset + type * 4);
@@ -1037,13 +1175,43 @@ export function dexDefinedClasses(bytes: Buffer): Set<string> {
     let offset = bytes.readUInt32LE(strings.offset + string * 4);
     assert(offset < bytes.length, 'DEX descriptor is outside the file');
     let encodedLength = 0;
+    let utf16Length = 0;
+    let lengthByte = 0;
     do {
-      assert(offset < bytes.length && encodedLength++ < 5, 'Invalid DEX UTF length');
-    } while (bytes[offset++] & 0x80);
+      assert(offset < bytes.length && encodedLength < 5, 'Invalid DEX UTF length');
+      lengthByte = bytes[offset++];
+      utf16Length += (lengthByte & 0x7f) * 2 ** (7 * encodedLength++);
+    } while (lengthByte & 0x80);
+    assert(utf16Length <= 0xffffffff, 'Invalid DEX UTF length');
     const end = bytes.indexOf(0, offset);
     assert(end > offset, 'Invalid DEX class descriptor');
-    const result = bytes.subarray(offset, end).toString('utf8');
-    assert(/^L[A-Za-z0-9_$/]+;$/u.test(result), `Invalid defined DEX class ${result}`);
+    // DEX MUTF-8 encodes supplemental characters as surrogate pairs.
+    let result = '';
+    for (let cursor = offset; cursor < end; ) {
+      let unit = bytes[cursor++];
+      if (unit >= 0x80) {
+        const width = (unit & 0xe0) === 0xc0 ? 1 : (unit & 0xf0) === 0xe0 ? 2 : 0;
+        assert(width && cursor + width <= end, 'Invalid DEX MUTF-8 descriptor');
+        unit &= width === 1 ? 0x1f : 0x0f;
+        for (let index = 0; index < width; index++) {
+          const next = bytes[cursor++];
+          assert((next & 0xc0) === 0x80, 'Invalid DEX MUTF-8 continuation');
+          unit = (unit << 6) | (next & 0x3f);
+        }
+        assert(unit >= (width === 1 ? 0x80 : 0x800), 'Noncanonical DEX MUTF-8 descriptor');
+      }
+      result += String.fromCharCode(unit);
+    }
+    assert.equal(result.length, utf16Length, 'DEX MUTF-8 UTF16 length differs');
+    assert(
+      result.startsWith('L') &&
+        result.endsWith(';') &&
+        result
+          .slice(1, -1)
+          .split('/')
+          .every((name) => simpleName.test(name)),
+      `Invalid defined DEX class ${result}`,
+    );
     return result.slice(1, -1).replaceAll('/', '.');
   }
   const result = new Set<string>();
@@ -1106,12 +1274,12 @@ export function verifyAndroidApk(spec: {
     assert(spec.keystore, 'Release APK must retain the original generated signing key');
     const aligned = spec.apk + '.aligned';
     execFileSync(
-      realpathSync(spec.zipalign),
+      path.resolve(spec.zipalign),
       ['-P', '16', '-f', '4', realpathSync(spec.unsignedApk), aligned],
       { stdio: 'inherit' },
     );
     execFileSync(
-      realpathSync(spec.apksigner),
+      path.resolve(spec.apksigner),
       [
         'sign',
         '--ks',
@@ -1134,7 +1302,7 @@ export function verifyAndroidApk(spec: {
     rmSync(aligned);
   }
   const apk = realpathSync(spec.apk);
-  const badging = execFileSync(realpathSync(spec.aapt), ['dump', 'badging', apk], {
+  const badging = execFileSync(path.resolve(spec.aapt), ['dump', 'badging', apk], {
     encoding: 'utf8',
   });
   assert(
@@ -1149,8 +1317,8 @@ export function verifyAndroidApk(spec: {
     ),
     'Compiled APK omitted its actual launcher',
   );
-  execFileSync(realpathSync(spec.zipalign), ['-c', '-P', '16', '4', apk], { stdio: 'inherit' });
-  execFileSync(realpathSync(spec.apksigner), ['verify', '--verbose', apk], {
+  execFileSync(path.resolve(spec.zipalign), ['-c', '-P', '16', '4', apk], { stdio: 'inherit' });
+  execFileSync(path.resolve(spec.apksigner), ['verify', '--verbose', apk], {
     stdio: 'inherit',
     env: { ...process.env, ...spec.environment },
   });

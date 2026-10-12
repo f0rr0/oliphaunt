@@ -281,3 +281,5 @@ bun_script_test(
 )
 
 source_quality_files()
+
+filegroup(name = "mobile_e2e_sources", srcs = ["bin/build-output.bash", "bin/mobile-static-extensions.sh"])

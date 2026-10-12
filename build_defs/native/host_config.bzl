@@ -167,4 +167,8 @@ def postgres_host_configuration_targets(version):
         # be interpreted as a platform where every optional feature is absent.
         cc_library(name = name + "_admission", deps = [":" + name + "_abi"], data = [":" + name + "_sanity"], target_compatible_with = compatible)
         replacements = WINDOWS_PORT_REPLACEMENT_SOURCES if windows else POSTGRES_PORT_REPLACEMENT_SOURCES
-        autoconf_srcs(name = name + "_replacements", srcs = {source: ("1" if windows and macro in WINDOWS_FORCED_PORT_REPLACEMENTS else "!ac_cv_func_" + macro[len("HAVE_"):].lower()) for macro, source in replacements.items()}, deps = [":" + name + "_facts"], defaults = False, target_compatible_with = compatible)
+        # PG always compiles its MSVC getopt replacements. Only conditions
+        # depending on actual compiler facts need generated autoconf sources.
+        forced = WINDOWS_FORCED_PORT_REPLACEMENTS if windows else []
+        autoconf_srcs(name = name + "_conditional_replacements", srcs = {source: "!ac_cv_func_" + macro[len("HAVE_"):].lower() for macro, source in replacements.items() if macro not in forced}, deps = [":" + name + "_facts"], defaults = False, target_compatible_with = compatible)
+        native.filegroup(name = name + "_replacements", srcs = [source for macro, source in replacements.items() if macro in forced] + [":" + name + "_conditional_replacements"], target_compatible_with = compatible)

@@ -1,13 +1,13 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@aspect_rules_js//js:defs.bzl", "js_library")
-load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@oliphaunt_metadata//:metadata.bzl", "PUBLICATION_CARRIERS")
 load("@javascript_packages//:defs.bzl", "javascript_type_links", RUNTIME_PACKAGES = "PACKAGES")
 load("@javascript_consumer_packages//:roots.bzl", "CONSUMER_ACQUISITIONS", "CONSUMER_CLOSURES", "CONSUMER_TOOLS")
-load("//build_defs/languages/ts:defs.bzl", "npm_archive_package", "source_sdk_publish_files")
+load("//build_defs/languages/ts:defs.bzl", "workspace_dependency_package", "workspace_dependency_link", "source_sdk_publish_files")
 load("//build_defs/query:defs.bzl", "query_envelope")
+load("//build_defs/languages/ts:unit-tests.bzl", "sdk_unit_test")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/wasix/browser:defs.bzl", "browser_host_assets", "browser_sql_consumer", "browser_sql_lifecycle")
 
@@ -29,13 +29,8 @@ BROWSER_PACKAGES = {"@javascript_packages//:" + key: key for key in RUNTIME_PACK
 
 javascript_type_links(SDK["types"] | SDK["packages"])
 
-npm_archive_package(
-    name = "query_package",
-    archive = "//src/query/ts:npm",
-    package_name = QUERY["name"],
-    version = QUERY["version"],
-)
-npm_link_package(name = "node_modules/@oliphaunt/ts-query", src = ":query_package")
+workspace_dependency_package(name = "query_package", workspace = SDK, dependency = QUERY["name"], current = "//src/query/ts:shipping_package")
+workspace_dependency_link(name = "node_modules/@oliphaunt/ts-query", package = ":query_package", workspace = SDK, dependency = QUERY["name"])
 js_library(name = "package_metadata", srcs = ["package.json"])
 ts_config(name = "source_config", src = "tsconfig.json")
 
@@ -108,12 +103,12 @@ shipping_package(
     role = [carrier["role"] for carrier in PUBLICATION_CARRIERS if carrier["product"] == "oliphaunt-wasix-ts" and carrier["ecosystem"] == "npm" and carrier["name"] == SDK["name"]][0],
 )
 
-shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = [":browser_sql_consumer"], testonly = True)
+shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = [":browser_sql_consumer", ":unit_test", ":package_policy_test"], testonly = True)
 
 browser_sql_consumer(
     name = "browser_sql_consumer",
     sdk = ":npm",
-    query = "//src/query/ts:npm",
+    query = ":query_package",
     runtime = "//src/wasix/runtime:npm",
     manifest = ":publish_manifest",
     fixture = "tools/frozen-browser-consumer.mts",
@@ -143,4 +138,51 @@ browser_sql_lifecycle(
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 )
 
+sdk_unit_test(
+    name = "unit_test",
+    manifest = "package.json",
+    configuration = "bunfig.toml",
+    sources = glob(["src/**/*.ts"]) + glob(["src/**/*.mts", "src/**/*.json"], allow_empty = True) + ["//src/wasix/sdks/ts/src/host:declaration"],
+    fixtures = ["//src/test-fixtures:rust_fixtures", "//src/database-resources:cluster_seed_contract_fixtures"],
+    packages = {":query_package": QUERY["name"]} | {"@javascript_packages//:" + identity: name for name, identity in SDK["packages"].items()},
+    size = "small",
+)
+
 source_quality_files()
+
+# Existing operational package policy tests use only this declared source closure.
+sdk_unit_test(
+    name = "package_policy_test",
+    manifest = "package.json",
+    tests = ["tools/wasix-typescript-package.test.mts"],
+    sources = [
+        "//build_defs/wasix/browser:metadata.mts",
+        "//build_defs/wasix/browser:provenance.mts",
+        "//:src/extensions/artifacts/packages/tools/contrib-carriers.mts",
+        "//src/wasix/node-addon:tools/carrier-contract.mts",
+        "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
+        "//src/wasix/sdks/ts:tools/package.mts",
+        "//src/wasix/sdks/ts:tools/wasix-typescript-package.mts",
+        "//:tools/packaging/platform-binary-contract.mts",
+        "//:tools/packaging/portable-archive.mts",
+        "//:tools/packaging/release-directory-safety.mts",
+        "//:tools/packaging/release-notices.mts",
+        "//:tools/packaging/windows-vc-runtime-closure.mts",
+        "//tools/release:compatibility-version-parser.mts",
+        "//tools/release:platform-compatibility-policy.mts",
+        "//tools/release:release-graph.mts",
+        "//tools/release:release-history.mts",
+    ],
+    fixtures = ["//:LICENSE", "//:tools/packaging/windows-vc-runtime-policy.json", "//src/database-resources:contracts/contract.json"],
+    size = "small",
+)
+
+test_suite(
+    name = "source_unit_tests",
+    tests = [":unit_test", ":package_policy_test"],
+)
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "tools/wasix-typescript-package.mts",
+], visibility = ["//visibility:public"])

@@ -27,7 +27,12 @@ import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import { canonicalGzipSync } from '../packaging/portable-archive.mts';
 import { stageReleaseNotices } from '../packaging/release-notices.mts';
-import { extensionGithubArtifactInputs, loadReleaseMetadata } from './bazel-release-metadata.mts';
+import {
+  extensionGithubArtifactInputs,
+  loadReleaseMetadata,
+  nativePublicationInputProjection,
+  nativeSupplierGithubArtifactDeclarations,
+} from './bazel-release-metadata.mts';
 import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
 import {
   assertLockedArtifactSet,
@@ -1938,4 +1943,97 @@ describe('publication artifact discovery and freezing', () => {
       /frozen extension-resource-inventory\.mjs must exactly match/u,
     );
   });
+});
+
+test('completed supplier projection covers the entire canonical GitHub delivery graph and keeps owner identities exact', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'complete-supplier-catalog-'));
+  try {
+    const root = path.resolve(import.meta.dir, '../..');
+    const metadata = loadReleaseMetadata(root);
+    const catalog = loadPublicationCatalog('complete supplier catalog fixture');
+    const expected = expectedProductArtifactRows(catalog.products).filter(
+      (row) => row.role === 'github-release-asset' || row.role === 'github-release-metadata',
+    );
+    const declarations = nativeSupplierGithubArtifactDeclarations(metadata)
+      .map(
+        (row) =>
+          row.product +
+          '/' +
+          row.asset.replaceAll('{version}', metadata.products[row.product].version),
+      )
+      .sort();
+    expect(declarations).toEqual(expected.map((row) => row.product + '/' + row.name).sort());
+    const bytes = Buffer.from('catalog File fixture; no public or runtime qualification');
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const supplierArtifacts = expected.map((row) => {
+      const file = path.join(directory, row.name);
+      writeFileSync(file, bytes);
+      const version = metadata.products[row.product].version;
+      return {
+        publication: {
+          product: row.product,
+          version,
+          tagName: row.product + '-v' + version,
+          publicationSha: 'a'.repeat(40),
+          publicationTree: 'b'.repeat(40),
+          releaseSha: 'c'.repeat(40),
+        },
+        artifact: row.id,
+        file: { path: file, size: bytes.length, sha256 },
+      };
+    });
+    const snapshot = {
+      source: { commit: 'd'.repeat(40), tree: 'e'.repeat(40) },
+      supplierArtifacts,
+    };
+    const result = nativePublicationInputProjection(snapshot, metadata);
+    expect(Object.keys(result.supplierArtifacts)).toHaveLength(expected.length);
+    expect(
+      Object.values(result.supplierArtifacts).some(
+        (row) => row.publication.product === 'oliphaunt-swift',
+      ),
+    ).toBe(true);
+    expect(
+      Object.values(result.supplierArtifacts).some((row) => row.artifact.includes('extension-')),
+    ).toBe(true);
+    expect(() =>
+      nativePublicationInputProjection(
+        {
+          ...snapshot,
+          supplierArtifacts: [
+            { ...supplierArtifacts[0], artifact: 'github-release:invented-private.bin' },
+          ],
+        },
+        metadata,
+      ),
+    ).toThrow('unknown canonical');
+    expect(() =>
+      nativePublicationInputProjection(
+        {
+          ...snapshot,
+          supplierArtifacts: [
+            {
+              ...supplierArtifacts[0],
+              publication: {
+                ...supplierArtifacts[0].publication,
+                product: 'oliphaunt-rust',
+                tagName: 'oliphaunt-rust-v' + supplierArtifacts[0].publication.version,
+              },
+            },
+          ],
+        },
+        metadata,
+      ),
+    ).toThrow('unknown canonical');
+    const subset = structuredClone(metadata);
+    subset.products['oliphaunt-swift'].publish_targets = ['swift-package-source-tag'];
+    const binding = supplierArtifacts.find(
+      (row) => row.publication.product === 'oliphaunt-swift' && row.artifact.endsWith('.zip'),
+    );
+    expect(() =>
+      nativePublicationInputProjection({ ...snapshot, supplierArtifacts: [binding] }, subset),
+    ).toThrow('unknown canonical');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

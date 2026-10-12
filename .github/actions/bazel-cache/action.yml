@@ -1,0 +1,144 @@
+name: Transport bounded Bazel caches
+description: Restore or save standard Bazel action and repository caches for one qualification cohort.
+
+inputs:
+  phase:
+    description: restore before qualification or save after its final Bazel invocation.
+    required: true
+  cohort:
+    description: Stable qualification job identity; operating system and architecture remain separate.
+    required: true
+  output-base:
+    description: Exact output base used by this cohort, if explicitly selected.
+    default: ""
+  jvm-args:
+    description: Exact host JVM argument used by this cohort, if explicitly selected.
+    default: ""
+  server-log:
+    description: Exact server JVM output path used by this cohort, if explicitly selected.
+    default: ""
+  disk-cache-hit:
+    description: Primary action cache hit returned by the restore phase.
+    default: "false"
+  repository-cache-hit:
+    description: Primary repository cache hit returned by the restore phase.
+    default: "false"
+
+outputs:
+  disk-cache-hit:
+    description: Whether the immutable action cache key already exists.
+    value: ${{ steps.disk-restore.outputs.cache-hit }}
+  repository-cache-hit:
+    description: Whether the immutable repository cache key already exists.
+    value: ${{ steps.repository-restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Select canonical cache identity
+      id: identity
+      if: ${{ !cancelled() }}
+      shell: bash
+      env:
+        PHASE: ${{ inputs.phase }}
+        COHORT: ${{ inputs.cohort }}
+      run: |
+        set -euo pipefail
+        case "$PHASE" in restore|save) ;; *) exit 1 ;; esac
+        [[ "$COHORT" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+        version="$(tr -d '\r' < .bazelversion)"
+        [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+        source_commit="$(git rev-parse HEAD)"
+        [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
+        printf 'prefix=bazel-ci-v1-%s-%s-%s-%s\nsource=%s\n' \
+          "$RUNNER_OS" "$RUNNER_ARCH" "$COHORT" "$version" "$source_commit" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Bazel action cache
+      id: disk-restore
+      if: inputs.phase == 'restore'
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.cache/oliphaunt/bazel-ci/disk
+        key: ${{ steps.identity.outputs.prefix }}-disk-${{ steps.identity.outputs.source }}
+        restore-keys: |
+          ${{ steps.identity.outputs.prefix }}-disk-
+
+    - name: Restore Bazel repository downloads
+      id: repository-restore
+      if: inputs.phase == 'restore'
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.cache/oliphaunt/bazel-ci/repositories
+        key: ${{ steps.identity.outputs.prefix }}-repositories-${{ steps.identity.outputs.source }}
+        restore-keys: |
+          ${{ steps.identity.outputs.prefix }}-repositories-
+
+    - name: Configure standard hosted Bazel caches
+      if: inputs.phase == 'restore'
+      shell: bash
+      run: |
+        set -euo pipefail
+        cache_root="$HOME/.cache/oliphaunt/bazel-ci"
+        mkdir -p "$cache_root/disk" "$cache_root/repositories"
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          cache_root="$(cygpath -m "$cache_root")"
+        fi
+        # Hosted user configuration stays outside source and cache transport.
+        printf '\nbuild --config=ci-cache\nbuild --disk_cache="%s/disk"\ncommon --repository_cache="%s/repositories"\n' \
+          "$cache_root" "$cache_root" >> "$HOME/.bazelrc"
+
+    - name: Stop the cohort writer and bound cache transport
+      id: ready
+      if: ${{ !cancelled() && inputs.phase == 'save' && (inputs.disk-cache-hit != 'true' || inputs.repository-cache-hit != 'true') }}
+      continue-on-error: true
+      shell: bash
+      env:
+        OUTPUT_BASE: ${{ inputs.output-base }}
+        JVM_ARGS: ${{ inputs.jvm-args }}
+        SERVER_LOG: ${{ inputs.server-log }}
+        DISK_CACHE_HIT: ${{ inputs.disk-cache-hit }}
+        REPOSITORY_CACHE_HIT: ${{ inputs.repository-cache-hit }}
+      run: |
+        set -euo pipefail
+        startup=(bash tools/dev/bazel.sh)
+        [[ -z "$OUTPUT_BASE" ]] || startup+=("--output_base=$OUTPUT_BASE")
+        [[ -z "$JVM_ARGS" ]] || startup+=("--host_jvm_args=$JVM_ARGS")
+        [[ -z "$SERVER_LOG" ]] || startup+=("--server_jvm_out=$SERVER_LOG")
+        if ! "${startup[@]}" shutdown; then
+          exit 0
+        fi
+        # Repository downloads have no size GC. Bound them independently so
+        # their growth cannot discard an otherwise valid action cache.
+        for family in disk repositories; do
+          if [[ "$family" == disk && "$DISK_CACHE_HIT" == true ]] || \
+             [[ "$family" == repositories && "$REPOSITORY_CACHE_HIT" == true ]]; then
+            continue
+          fi
+          cache_root="$HOME/.cache/oliphaunt/bazel-ci/$family"
+          if [[ -d "$cache_root" ]]; then
+            cache_kib="$(du -sk "$cache_root" | cut -f1)"
+            if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib <= 2097152 )); then
+              printf '%s=true\n' "$family" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+        done
+
+    # GitHub isolates pull_request saves under refs/pull/<number>/merge.
+    # These optional caches contain outputs/downloads, never release authority.
+    - name: Save bounded Bazel action cache
+      if: ${{ !cancelled() && inputs.phase == 'save' && steps.ready.outputs.disk == 'true' }}
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.cache/oliphaunt/bazel-ci/disk
+        key: ${{ steps.identity.outputs.prefix }}-disk-${{ steps.identity.outputs.source }}
+
+    - name: Save bounded Bazel repository downloads
+      if: ${{ !cancelled() && inputs.phase == 'save' && steps.ready.outputs.repositories == 'true' }}
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.cache/oliphaunt/bazel-ci/repositories
+        key: ${{ steps.identity.outputs.prefix }}-repositories-${{ steps.identity.outputs.source }}

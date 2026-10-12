@@ -1,0 +1,382 @@
+{
+  "extraDependencies": [],
+  "coreFeatures": [],
+  "modules": [
+    {
+      "packageName": "@expo/dom-webview",
+      "pods": [
+        {
+          "podName": "ExpoDomWebView",
+          "podspecDir": ".packages/p_02b0918d72d615f3/node_modules/@expo/dom-webview/ios"
+        }
+      ],
+      "swiftModuleNames": ["ExpoDomWebView"],
+      "modules": [
+        {
+          "name": null,
+          "class": "DomWebViewModule"
+        }
+      ],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.6"
+    },
+    {
+      "packageName": "@expo/log-box",
+      "pods": [
+        {
+          "podName": "ExpoLogBox",
+          "podspecDir": ".packages/p_626e089100717ef8/node_modules/@expo/log-box"
+        }
+      ],
+      "swiftModuleNames": ["ExpoLogBox"],
+      "modules": [],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.14"
+    },
+    {
+      "packageName": "expo",
+      "pods": [
+        {
+          "podName": "Expo",
+          "podspecDir": ".packages/p_05dc46537e801f37/node_modules/expo"
+        }
+      ],
+      "swiftModuleNames": ["Expo"],
+      "modules": [
+        {
+          "name": null,
+          "class": "ExpoFetchModule"
+        }
+      ],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.23"
+    },
+    {
+      "packageName": "expo-asset",
+      "pods": [
+        {
+          "podName": "ExpoAsset",
+          "podspecDir": ".packages/p_b1a7c87ee2d0fccf/node_modules/expo-asset/ios"
+        }
+      ],
+      "swiftModuleNames": ["ExpoAsset"],
+      "modules": [
+        {
+          "name": null,
+          "class": "AssetModule"
+        }
+      ],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.25"
+    },
+    {
+      "packageName": "expo-constants",
+      "pods": [
+        {
+          "podName": "EXConstants",
+          "podspecDir": ".packages/p_50f81f1ad14aaf61/node_modules/expo-constants/ios"
+        }
+      ],
+      "swiftModuleNames": ["EXConstants"],
+      "modules": [
+        {
+          "name": null,
+          "class": "ConstantsModule"
+        }
+      ],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.27"
+    },
+    {
+      "packageName": "expo-dev-client",
+      "pods": [
+        {
+          "podName": "expo-dev-client",
+          "podspecDir": ".packages/p_2b0adbd587a11921/node_modules/expo-dev-client/ios"
+        }
+      ],
+      "swiftModuleNames": ["expo_dev_client"],
+      "modules": [],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.27"
+    },
+    {
+      "packageName": "expo-dev-launcher",
+      "pods": [
+        {
+          "podName": "expo-dev-launcher",
+          "podspecDir": ".packages/p_b4f4bd8c4d14525b/node_modules/expo-dev-launcher"
+        }
+      ],
+      "swiftModuleNames": ["EXDevLauncher"],
+      "modules": [
+        {
+          "name": null,
+          "class": "DevLauncherModule"
+        }
+      ],
+      "appDelegateSubscribers": ["ExpoDevLauncherAppDelegateSubscriber"],
+      "reactDelegateHandlers": ["ExpoDevLauncherReactDelegateHandler"],
+      "debugOnly": true,
+      "packageVersion": "56.0.28"
+    },
+    {
+      "packageName": "expo-dev-menu",
+      "pods": [
+        {
+          "podName": "expo-dev-menu",
+          "podspecDir": ".packages/p_d4532a828717181d/node_modules/expo-dev-menu"
+        }
+      ],
+      "swiftModuleNames": ["EXDevMenu"],
+      "modules": [
+        {
+          "name": null,
+          "class": "DevMenuModule"
+        },
+        {
+          "name": null,
+          "class": "DevMenuPreferences"
+        }
+      ],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": true,
+      "packageVersion": "56.0.23"
+    },
+    {
+      "packageName": "expo-dev-menu-interface",
+      "pods": [
+        {
+          "podName": "expo-dev-menu-interface",
+          "podspecDir": ".packages/p_bd960b9594aa4235/node_modules/expo-dev-menu-interface/ios"
+        }
+      ],
+      "swiftModuleNames": ["expo_dev_menu_interface"],
+      "modules": [],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.1"
+    },
+    {
+      "packageName": "expo-file-system",
+      "pods": [
+        {
+          "podName": "ExpoFileSystem",
+          "podspecDir": ".packages/p_9899a5eea7cae290/node_modules/expo-file-system/ios"
+        }
+      ],
+      "swiftModuleNames": ["ExpoFileSystem"],
+      "modules": [
+        {
+          "name": null,
+          "class": "FileSystemModule"
+        },
+        {
+          "name": null,
+          "class": "FileSystemLegacyModule"
+        }
+      ],
+      "appDelegateSubscribers": ["FileSystemBackgroundSessionHandler"],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.11"
+    },
+    {
+      "packageName": "expo-font",
+      "pods": [
+        {
+          "podName": "ExpoFont",
+          "podspecDir": ".packages/p_6403c4eef8623a02/node_modules/expo-font/ios"
+        }
+      ],
+      "swiftModuleNames": ["ExpoFont"],
+      "modules": [
+        {
+          "name": null,
+          "class": "FontLoaderModule"
+        },
+        {
+          "name": null,
+          "class": "FontUtilsModule"
+        }
+      ],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.7"
+    },
+    {
+      "packageName": "expo-json-utils",
+      "pods": [
+        {
+          "podName": "EXJSONUtils",
+          "podspecDir": ".packages/p_245fc051c25ff0dd/node_modules/expo-json-utils/ios"
+        }
+      ],
+      "swiftModuleNames": ["EXJSONUtils"],
+      "modules": [],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.0"
+    },
+    {
+      "packageName": "expo-keep-awake",
+      "pods": [
+        {
+          "podName": "ExpoKeepAwake",
+          "podspecDir": ".packages/p_f48a24ce71dc7f34/node_modules/expo-keep-awake/ios"
+        }
+      ],
+      "swiftModuleNames": ["ExpoKeepAwake"],
+      "modules": [
+        {
+          "name": null,
+          "class": "KeepAwakeModule"
+        }
+      ],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.3"
+    },
+    {
+      "packageName": "expo-manifests",
+      "pods": [
+        {
+          "podName": "EXManifests",
+          "podspecDir": ".packages/p_133ae131d6ea0497/node_modules/expo-manifests/ios"
+        }
+      ],
+      "swiftModuleNames": ["EXManifests"],
+      "modules": [],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.4"
+    },
+    {
+      "packageName": "expo-modules-core",
+      "pods": [
+        {
+          "podName": "ExpoModulesCore",
+          "podspecDir": ".packages/p_0a3cd85a01520463/node_modules/expo-modules-core"
+        },
+        {
+          "podName": "ExpoModulesWorklets",
+          "podspecDir": ".packages/p_0a3cd85a01520463/node_modules/expo-modules-core"
+        }
+      ],
+      "swiftModuleNames": ["ExpoModulesCore", "ExpoModulesWorklets"],
+      "modules": [],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.27"
+    },
+    {
+      "packageName": "expo-modules-jsi",
+      "pods": [
+        {
+          "podName": "ExpoModulesJSI",
+          "podspecDir": ".packages/p_afffe0fa04af4c2d/node_modules/expo-modules-jsi/apple"
+        }
+      ],
+      "swiftModuleNames": ["ExpoModulesJSI"],
+      "modules": [],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.14"
+    },
+    {
+      "packageName": "expo-splash-screen",
+      "pods": [
+        {
+          "podName": "ExpoSplashScreen",
+          "podspecDir": ".packages/p_2485d80995f2dc5d/node_modules/expo-splash-screen/ios"
+        }
+      ],
+      "swiftModuleNames": ["ExpoSplashScreen"],
+      "modules": [
+        {
+          "name": null,
+          "class": "SplashScreenModule"
+        }
+      ],
+      "appDelegateSubscribers": ["SplashScreenAppDelegateSubscriber"],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.15"
+    },
+    {
+      "packageName": "expo-sqlite",
+      "pods": [
+        {
+          "podName": "ExpoSQLite",
+          "podspecDir": ".packages/p_289920bd2cf70733/node_modules/expo-sqlite/ios"
+        }
+      ],
+      "swiftModuleNames": ["ExpoSQLite"],
+      "modules": [
+        {
+          "name": null,
+          "class": "SQLiteModule"
+        }
+      ],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.6"
+    },
+    {
+      "packageName": "expo-system-ui",
+      "pods": [
+        {
+          "podName": "ExpoSystemUI",
+          "podspecDir": ".packages/p_f37028bbc1e5a22c/node_modules/expo-system-ui/ios"
+        }
+      ],
+      "swiftModuleNames": ["ExpoSystemUI"],
+      "modules": [
+        {
+          "name": null,
+          "class": "ExpoSystemUIModule"
+        }
+      ],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.5"
+    },
+    {
+      "packageName": "expo-updates-interface",
+      "pods": [
+        {
+          "podName": "EXUpdatesInterface",
+          "podspecDir": ".packages/p_17b4e767f0c555d5/node_modules/expo-updates-interface/ios"
+        }
+      ],
+      "swiftModuleNames": ["EXUpdatesInterface"],
+      "modules": [],
+      "appDelegateSubscribers": [],
+      "reactDelegateHandlers": [],
+      "debugOnly": false,
+      "packageVersion": "56.0.2"
+    }
+  ]
+}

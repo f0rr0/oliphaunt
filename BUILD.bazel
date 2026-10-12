@@ -112,6 +112,7 @@ filegroup(
     srcs = [
         ":root_quality_sources",
         "//build_defs/android:quality_sources",
+        "//build_defs/apple:quality_sources",
         "//build_defs/extensions:quality_sources",
         "//build_defs/extensions/compiler_rt:quality_sources",
         "//build_defs/extensions/postgis:quality_sources",
@@ -245,6 +246,7 @@ filegroup(
 test_suite(
     name = "portable_tests",
     tests = [
+        "//build_defs/resources:seed_construction_test",
         "//build_defs/foundation:bun_toolchain_test",
         "//build_defs/foundation:native_entry_test",
         "//build_defs/foundation/fixtures/bun_imports:module_boundary_test",
@@ -279,6 +281,7 @@ test_suite(
         "//build_defs/wasix/postmaster:postgres_overlay_backslash_test",
         "//build_defs/wasix/postmaster:postgres_overlay_duplicate_test",
         "//build_defs/android:metadata_test",
+        "//build_defs/android:installed_app_contract_test",
         "//build_defs/languages:cargo_metadata_test",
         "//build_defs/languages:napi_artifact_projection_test",
         "//build_defs/languages:napi_artifact_kind_test",
@@ -351,7 +354,6 @@ shipping_export(
             "//src/native/sdks/rust/crates/oliphaunt-build:shipping_export",
             "//src/native/broker:shipping_export",
             "//src/native/sdks/ts:shipping_export",
-            "//src/native/sdks/react-native:shipping_export",
             "//src/native/sdks/kotlin:shipping_export",
         ],
         "//conditions:default": [],
@@ -377,6 +379,12 @@ shipping_export(
         "//src/native/sdks/swift:shipping_export",
         "//build_defs/extensions/mobile/final:ios_xcframework_shipping_export",
     ],
+)
+
+shipping_export(
+    name = "native_react_native_shipping_export",
+    testonly = True,
+    exports = ["//src/native/sdks/react-native:apple_shipping_export"],
 )
 
 shipping_export(
@@ -421,4 +429,22 @@ shipping_export(
         "//build_defs/extensions:pg_textsearch_family_shipping_export",
         "//build_defs/extensions:postgis_family_shipping_export",
     ] + selected_swift_extension_fixture_exports(),
+)
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "src/examples/tools/example-release-dependencies.mts",
+], visibility = ["//visibility:public"])
+
+# Actual current checkout compilation precedes public installed admission.
+# The Swift package roots and conventional held bytes stay identical.
+shipping_export(
+    name = "native_apple_preparation_export",
+    testonly = True,
+    exports = [
+        "//src/native/runtime:apple_shipping_export",
+        "//src/database-resources:ios_shipping_export",
+        "//src/native/sdks/swift:preparation_shipping_export",
+        "//build_defs/extensions/mobile/final:ios_xcframework_shipping_export",
+    ],
 )

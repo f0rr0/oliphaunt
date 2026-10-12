@@ -15,6 +15,21 @@ async function readZipArchive(file) {
   };
 }
 
+/** The conventional native requirement owns the SDK's delivered ABI header. */
+export function readNativeAppleHeader(file: string): Buffer {
+  const headers = [...readPortableArchiveEntries(file, { format: 'zip' }).values()]
+    .filter(
+      (entry) =>
+        entry.isFile && /^liboliphaunt\.xcframework\/.+\/Headers\/oliphaunt\.h$/u.test(entry.name),
+    )
+    .map((entry) => Buffer.from(entry.data()));
+  if (headers.length < 3 || !headers[0].length)
+    fail('Selected native XCFramework must ship all public C headers');
+  if (headers.some((header) => !header.equals(headers[0])))
+    fail('Selected native XCFramework slices declare different public C headers');
+  return headers[0];
+}
+
 function xmlDecode(value) {
   return value
     .replaceAll('&quot;', '"')

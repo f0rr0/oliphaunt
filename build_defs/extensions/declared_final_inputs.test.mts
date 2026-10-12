@@ -1,20 +1,23 @@
 /** Document/File transport fixtures; these never claim foreign package or runtime qualification. */
 import { afterEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { composeExtensionReleaseDocuments } from '../../src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts';
+import { archiveDirectory } from '../../tools/packaging/archive-directory.mts';
+import { releaseNoticeDeclaration } from '../../tools/packaging/release-notices.mts';
 import type { ExtensionFinalInput } from '../../tools/release/native-extension-final-inputs.mts';
 import { fileIdentity } from '../../tools/release/native-file-identity.mts';
 import {
+  declaredNativeAppleBaseManifest,
   validateDeclaredExtensionFinalInput,
   validateDeclaredNativeAppleBase,
 } from './declared_final_inputs.mts';
 import {
   mergeNativeFinalMembers,
+  type NativeOwnerSpec,
   ownerFamilyCompleteness,
   stageDeclaredFinalLeaf,
-  type NativeOwnerSpec,
 } from './owner_carriers.mts';
 
 const directories: string[] = [];
@@ -321,4 +324,192 @@ test('merge keeps distinct genuine Apple and WASIX contracts and rejects common 
   ).toThrow();
   wasix.member.dependencies = ['different'] as never[];
   expect(() => mergeNativeFinalMembers(native.spec, cohorts)).toThrow('differs across original');
+});
+
+test('completed Apple archive factory accepts its actual empty document record and rejects malformed original documents', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'completed-apple-base-factory-'));
+  directories.push(root);
+  const version = '9.0.0';
+  const archives: Record<string, { path: string; size: number; sha256: string }> = {};
+  for (const [role, name, profile, member] of [
+    [
+      'base-xcframework',
+      'liboliphaunt-' + version + '-apple-spm-xcframework.zip',
+      'native-runtime',
+      'liboliphaunt.xcframework',
+    ],
+    [
+      'runtime-resources',
+      'liboliphaunt-' + version + '-runtime-resources-ios-datum64.tar.gz',
+      'native-runtime-resources',
+      'oliphaunt',
+    ],
+  ]) {
+    const stage = path.join(root, role);
+    const leaf = path.join(stage, member);
+    mkdirSync(leaf, { recursive: true });
+    writeFileSync(
+      path.join(leaf, 'fixture.txt'),
+      'archive contract fixture; no runtime qualification',
+    );
+    const notices = role === 'runtime-resources' ? stage : leaf;
+    for (const member of releaseNoticeDeclaration(profile).members) {
+      const file = path.join(notices, member);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, 'controlled notice fixture: ' + member + '\n');
+    }
+    const file = path.join(root, name);
+    await archiveDirectory(role === 'runtime-resources' ? stage : leaf, file, {
+      keepParent: role === 'base-xcframework',
+    });
+    const { size, sha256 } = fileIdentity(file);
+    archives[role] = { path: file, size, sha256 };
+  }
+  const result = declaredNativeAppleBaseManifest({}, version, archives);
+  expect(result.base.version).toBe(version);
+  for (const role of ['base-xcframework', 'runtime-resources'])
+    expect(result.base.assets.find((row: any) => row.role === role).sha256).toBe(
+      archives[role].sha256,
+    );
+  const aliases = path.join(root, 'declared-inputs');
+  mkdirSync(aliases);
+  const aliasedArchives = Object.fromEntries(
+    Object.entries(archives).map(([role, file]) => {
+      const alias = path.join(aliases, path.basename(file.path));
+      symlinkSync(file.path, alias);
+      return [role, { ...file, path: alias }];
+    }),
+  );
+  expect(declaredNativeAppleBaseManifest({}, version, aliasedArchives)).toEqual(result);
+  expect(
+    declaredNativeAppleBaseManifest(
+      { owner: 'liboliphaunt-native', version },
+      version,
+      aliasedArchives,
+      true,
+    ),
+  ).toEqual(result);
+  const document = path.join(root, 'ios.json');
+  writeFileSync(document, JSON.stringify(result));
+  const documentAlias = path.join(aliases, 'ios.json');
+  symlinkSync(document, documentAlias);
+  const documentIdentity = fileIdentity(document);
+  const original = {
+    owner: 'liboliphaunt-native',
+    version,
+    file: {
+      path: documentAlias,
+      size: documentIdentity.size,
+      sha256: documentIdentity.sha256,
+      producer: {
+        evidenceDigest: 'sha256:' + '1'.repeat(64),
+        invocationId: 'document-fixture',
+        root: '//src/native/runtime:apple_ios_manifest_shipping',
+        configuration: '2'.repeat(64),
+        output: 'bazel-out/config/bin/apple_release_assets/ios.json',
+      },
+    },
+  };
+  expect(declaredNativeAppleBaseManifest(original, version, aliasedArchives)).toEqual(result);
+  expect(() =>
+    declaredNativeAppleBaseManifest(
+      { ...original, file: { ...original.file, sha256: '0'.repeat(64) } },
+      version,
+      aliasedArchives,
+    ),
+  ).toThrow('original File bytes differ');
+  expect(() =>
+    declaredNativeAppleBaseManifest({}, version, {
+      ...aliasedArchives,
+      'runtime-resources': { ...aliasedArchives['runtime-resources'], sha256: '0'.repeat(64) },
+    }),
+  ).toThrow('archive identity differs');
+  expect(() =>
+    declaredNativeAppleBaseManifest({ file: { path: 'invented.json' } }, version, archives),
+  ).toThrow();
+  expect(() =>
+    declaredNativeAppleBaseManifest({ owner: 'liboliphaunt-native', version }, version, archives),
+  ).toThrow();
+  expect(() =>
+    declaredNativeAppleBaseManifest({}, version, {
+      'base-xcframework': archives['base-xcframework'],
+    }),
+  ).toThrow();
+  expect(() =>
+    declaredNativeAppleBaseManifest({}, version, {
+      ...archives,
+      'runtime-resources': { ...archives['runtime-resources'], sha256: '0'.repeat(64) },
+    }),
+  ).toThrow();
+});
+
+test('nested closed bundle follows only its declared outer File alias and retains original identities', async () => {
+  const { root, input, member, spec, leaf } = fixture();
+  const prefix = 'closed-bundle';
+  const nested = readFileSync(input.github[0].path);
+  const members = ['pgtap', 'second-document-fixture'].map((sqlName) => ({
+    ...member,
+    sqlName,
+    assets: member.assets.map((asset) => ({
+      ...asset,
+      carrierAsset: 'closed-bundle.tar.gz',
+      carrierRoot: prefix,
+      memberPath: `${sqlName}/${asset.name}`,
+    })),
+  }));
+  const stage = path.join(root, prefix);
+  for (const member of members) {
+    const file = path.join(stage, member.assets[0].memberPath);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, nested);
+  }
+  const archive = path.join(root, 'closed-bundle.tar.gz');
+  await archiveDirectory(stage, archive, { keepParent: true });
+  const alias = path.join(root, 'runfiles', path.basename(archive));
+  mkdirSync(path.dirname(alias), { recursive: true });
+  symlinkSync(archive, alias);
+  const { size, sha256 } = fileIdentity(archive);
+  input.github = [{ ...input.github[0], path: alias, size, sha256 }];
+  const documents = composeExtensionReleaseDocuments({
+    product,
+    releaseProduct: product,
+    family: 'native',
+    version: input.version,
+    members,
+    directAssets: [{ ...member.assets[0], name: path.basename(alias), bytes: size, sha256 }],
+    releaseMetadata: {
+      class: 'external',
+      versioning: 'upstream-bound',
+      sourceIdentity,
+      compatibility,
+    },
+  });
+  replaceDocument(input, 'manifest', (value) => {
+    for (const key of Object.keys(value)) delete value[key];
+    Object.assign(value, documents.releaseData);
+  });
+  replaceDocument(input, 'frozen', (value) => {
+    for (const key of Object.keys(value)) delete value[key];
+    Object.assign(value, documents.manifest);
+  });
+  leaf.github = [alias];
+  writeFileSync(leaf.originalFiles, JSON.stringify(input));
+  validateDeclaredExtensionFinalInput(input, {
+    ...canonical,
+    sqlNames: members.map((m) => m.sqlName),
+  });
+  const staged = stageDeclaredFinalLeaf(spec, leaf, path.join(root, 'staged-alias'));
+  expect(staged.leaf).toBe(leaf);
+  expect(staged.leaf.github).toEqual([alias]);
+  for (const member of staged.members)
+    expect(
+      readFileSync(path.join(path.dirname(staged.productRoot), member.assets[0].path)),
+    ).toEqual(nested);
+  expect(staged.inventory.find((row) => row.path === 'github/closed-bundle.tar.gz')).toMatchObject({
+    bytes: size,
+    sha256,
+  });
+  expect(() =>
+    stageDeclaredFinalLeaf(spec, { ...leaf, github: [archive] }, path.join(root, 'relabel')),
+  ).toThrow();
 });

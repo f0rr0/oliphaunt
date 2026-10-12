@@ -9,3 +9,8 @@ exports_files([
 ])
 
 source_quality_files()
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "extension-evidence.mts",
+], visibility = ["//visibility:public"])

@@ -174,3 +174,8 @@ sh_test(
 )
 
 source_quality_files()
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "tools/swift-extension-fixture-consumer.mts",
+], visibility = ["//visibility:public"])

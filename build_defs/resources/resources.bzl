@@ -1,7 +1,7 @@
 """Declared resource construction; PostgreSQL seed bytes are intentionally unique."""
 
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "BunScriptInfo", "bun_action", "bun_script_test", "bun_test_entrypoint", "bun_test_entrypoint_args")
-load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS", "DATABASE_RESOURCE_CONTRACT", "DATABASE_SEED_CARRIERS", "NATIVE_RUNTIME_ARTIFACTS", "PRODUCTS", "PUBLICATION_CARRIERS", "SEED_REUSE_CONTROLS", "COMPLETED_SUPPLIER_ARTIFACTS", "WASIX_ARTIFACTS")
+load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS", "DATABASE_RESOURCE_CONTRACT", "DATABASE_WASIX_SEED_CONSUMER", "DATABASE_SEED_CARRIERS", "NATIVE_RUNTIME_ARTIFACTS", "PRODUCTS", "PUBLICATION_CARRIERS", "SEED_REUSE_CONTROLS", "COMPLETED_SUPPLIER_ARTIFACTS", "WASIX_ARTIFACTS")
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@aspect_rules_js//npm:providers.bzl", "NpmPackageInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
@@ -83,6 +83,18 @@ def seed_constructor_inputs(ctx, inputs, logical_roles = {}):
             fail("Seed construction inputs share a logical File name: " + name)
         paths[name] = file.path
     return paths
+
+def seed_constructor_tree_members(ctx):
+    """The Bun provider owns the exact regular Files copied into its code trees."""
+    sources = ctx.attr._tool[BunScriptInfo].sources
+    return {
+        ("external/" + tree.short_path[3:] if tree.short_path.startswith("../") else tree.short_path): {
+            name.removeprefix(repository + "/"): file.path
+            for name, file in sources.members.items()
+            if name.startswith(repository + "/")
+        }
+        for repository, tree in sources.trees.items()
+    }
 
 SEED_REUSE_ATTRS = {
     "completed_archive": attr.label(allow_single_file = True),
@@ -171,6 +183,7 @@ def _native_seed_impl(ctx):
         "output": frozen.path,
         "abiOutput": abi.path,
         "constructionInputs": seed_constructor_inputs(ctx, constructor_inputs),
+        "constructionTreeMembers": seed_constructor_tree_members(ctx),
         "constructionOutput": construction.path,
         "reuse": reuse,
         "promotion": promotion,
@@ -211,6 +224,7 @@ def _wasix_seed_impl(ctx):
         "output": frozen.path,
         "contract": DATABASE_RESOURCE_CONTRACT,
         "constructionInputs": seed_constructor_inputs(ctx, constructor_inputs),
+        "constructionTreeMembers": seed_constructor_tree_members(ctx),
         "constructionOutput": construction.path,
         "reuse": reuse,
         "promotion": promotion,
@@ -351,10 +365,10 @@ def native_seed_envelopes(prefix, target, profile, seed, icu = None, compatible 
     return seed_envelopes(prefix, "native", target, profile, seed, icu, compatible)
 
 def wasix_resource_slice(name, qualification):
-    consumer = _wasix_consumer()
-    file_shipping_supplier(name = "wasix_consumer_supplier", inputs = {consumer["file"]["path"]: ""} if consumer else {},
+    consumer = _wasix_consumer() if DATABASE_WASIX_SEED_CONSUMER["source"] == "completed" else None
+    file_shipping_supplier(name = "wasix_consumer_supplier", inputs = {"//src/wasix/runtime:release_archive_portable": ""} if DATABASE_WASIX_SEED_CONSUMER["source"] == "current" else ({consumer["file"]["path"]: ""} if consumer else {}),
         owner = "@oliphaunt_metadata//:product_liboliphaunt-wasix", configuration = "portable", binding = "abi-contract",
-        origin = json.encode({"kind": "completed-publication", "publication": consumer["publication"], "artifact": consumer["artifact"]}) if consumer else "")
+        origin = json.encode({"kind": "current-source"}) if DATABASE_WASIX_SEED_CONSUMER["source"] == "current" else (json.encode({"kind": "completed-publication", "publication": consumer["publication"], "artifact": consumer["artifact"]}) if consumer else ""))
     packages = []
     for profile in DATABASE_RESOURCE_CONTRACT["profiles"]:
         prefix = "wasix_" + profile

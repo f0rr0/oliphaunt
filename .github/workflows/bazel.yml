@@ -142,6 +142,13 @@ jobs:
           pull-number: ${{ needs.release-inputs.outputs.pull_number }}
           public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
 
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: portable
+
       - name: Set up release controller runtimes
         if: matrix.platform == 'linux-x64'
         uses: ./.github/actions/setup-node-bun
@@ -183,7 +190,6 @@ jobs:
         run: |
           host_tests=(
             //build_defs/languages/carriers:package_test
-            //build_defs/languages/carriers:installed_sql_test
           )
           case "$TARGET_PLATFORM" in
             linux-x64) profile=//build_defs/native:linux_x86_64_glibc_2_28 ;;
@@ -194,6 +200,7 @@ jobs:
           case "$TARGET_PLATFORM" in
             macos-arm64|windows-x64)
               host_tests+=(
+                //build_defs/languages/carriers:installed_sql_test
                 //build_defs/host:host_c_smoke
                 //build_defs/native:compiler_probe_test
                 //build_defs/native:probe_process_test
@@ -426,8 +433,14 @@ jobs:
       - name: Qualify complete Apple runtime, resources, SDK and extension packages
         if: matrix.platform == 'macos-arm64'
         env:
+          NATIVE_PREPARED_INPUTS: ${{ needs.release-inputs.outputs.native_inputs }}
           QUALIFICATION_JOB_NAME: Portable packages (${{ matrix.platform }})
         run: |
+          case "$NATIVE_PREPARED_INPUTS" in
+            true) apple_export=//:native_apple_shipping_export ;;
+            false) apple_export=//:native_apple_preparation_export ;;
+            *) echo 'Apple qualification requires an authenticated release input context' >&2; exit 1 ;;
+          esac
           input_root="$RUNNER_TEMP/ios-extension-build-inputs"
           mkdir -p "$input_root"
           jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
@@ -448,7 +461,7 @@ jobs:
           bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
             --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
             --configuration-json "$input_root/configuration.json" \
-            --shipping-export //:native_apple_shipping_export \
+            --shipping-export "$apple_export" \
             --targets-json "$input_root/targets.json" --output-directory "$RUNNER_TEMP/ios-extension-build-capture"
 
       - name: Upload iOS extension construction evidence
@@ -509,6 +522,19 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
+      - name: Save bounded standard Bazel caches
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: portable
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
+          output-base: ${{ matrix.platform == 'windows-x64' && format('{0}/b', runner.temp) || matrix.platform == 'macos-arm64' && format('{0}/native-bazel', runner.temp) || '' }}
+          jvm-args: ${{ matrix.platform == 'macos-arm64' && '-Xmx3g' || '' }}
+          server-log: ${{ matrix.platform == 'macos-arm64' && format('{0}/native-bazel-diagnostics/server-jvm.out', runner.temp) || '' }}
+
   linux:
     name: Linux runtime (${{ matrix.platform }})
     needs: release-inputs
@@ -538,6 +564,13 @@ jobs:
           pull-number: ${{ needs.release-inputs.outputs.pull_number }}
           public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
 
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: linux
+
       # One invocation shares PostgreSQL/ICU/generators across real consumers.
       - name: Qualify runtime, frontends, crypto and extension SQL
         env:
@@ -556,11 +589,24 @@ jobs:
           --platforms=//build_defs/native:linux_x86_64_glibc_2_28
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
 
-      - name: Qualify complete Android extension and Maven packages
+      - name: Provision KVM for the exact installed Android APK test
+        if: matrix.platform == 'x86_64'
+        run: |
+          test -c /dev/kvm
+          sudo chmod 666 /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+
+      - name: Qualify complete Android extension, Maven packages and release apps
         if: matrix.platform == 'x86_64'
         env:
           QUALIFICATION_JOB_NAME: Linux runtime (${{ matrix.platform }})
         run: |
+          OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT="$(pwd -P)"
+          test "$OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT" = "$(cd "$GITHUB_WORKSPACE" && pwd -P)"
+          OLIPHAUNT_MOBILE_CANDIDATE_SHA="$(git rev-parse HEAD)"
+          OLIPHAUNT_MOBILE_CANDIDATE_TREE="$(git rev-parse 'HEAD^{tree}')"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          export OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT OLIPHAUNT_MOBILE_CANDIDATE_SHA OLIPHAUNT_MOBILE_CANDIDATE_TREE
           input_root="$RUNNER_TEMP/android-extension-build-inputs"
           mkdir -p "$input_root"
           jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
@@ -576,7 +622,9 @@ jobs:
             "//build_defs/extensions/mobile/final:android_x86_64_final_contract_test",
             "//build_defs/extensions/mobile:android_arm64_all_members_consumer",
             "//build_defs/extensions/mobile:android_x86_64_all_members_consumer",
-            "//build_defs/extensions:mobile_maven_test"
+            "//build_defs/extensions:mobile_maven_test",
+            "//src/examples/native/react-native-expo:android_release",
+            "//src/examples/native/react-native-expo:android_installed_test"
           ]' > "$input_root/targets.json"
           bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
             --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
@@ -618,8 +666,6 @@ jobs:
           //build_defs/resources:resource_contract_test
           //src/database-resources:android_datum64_standard_carriers
           //src/database-resources:android_datum64_icu_carriers
-          //src/native/sdks/react-native:package_test
-          //src/native/sdks/react-native:installed_consumer_test
           //src/native/sdks/react-native:lifecycle_test
           //src/native/sdks/kotlin:android_maven
           //src/native/sdks/kotlin:installed_public_api_consumer
@@ -662,6 +708,16 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Save bounded standard Bazel caches
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: linux
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
+
   wasix:
     name: Linux WASIX and installed browser
     needs: release-inputs
@@ -687,22 +743,18 @@ jobs:
           pull-number: ${{ needs.release-inputs.outputs.pull_number }}
           public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
 
-      - name: Restore bounded Bazel action cache
+      - name: Restore bounded standard Bazel caches
         id: bazel-cache
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: ./.github/actions/bazel-cache
         with:
-          path: ~/.cache/oliphaunt/bazel-disk
-          key: bazel-disk-v1-${{ runner.os }}-${{ runner.arch }}-wasix-${{ hashFiles('.bazelversion') }}-${{ github.event.pull_request.head.sha || github.sha }}
-          restore-keys: |
-            bazel-disk-v1-${{ runner.os }}-${{ runner.arch }}-wasix-${{ hashFiles('.bazelversion') }}-
+          phase: restore
+          cohort: wasix
 
       - name: Qualify bridge, initdb shim ABI and source mode handling
         run: >-
           bash tools/dev/bazel.sh test --config=wasix-aot //build_defs/wasix:bridge_abi_test
           //build_defs/wasix:initdb_shim_abi_test
           //build_defs/wasix/postmaster:source_modes_test
-          --config=ci-cache --disk_cache="$HOME/.cache/oliphaunt/bazel-disk"
           --platforms=//build_defs/native:linux_x86_64_glibc_2_28
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
 
@@ -718,11 +770,10 @@ jobs:
             --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
             > "$input_root/github.json"
-          jq -nc --arg cache "$RUNNER_TEMP/wasix-source-sdk-cache" --arg diskCache "$HOME/.cache/oliphaunt/bazel-disk" \
+          jq -nc --arg cache "$RUNNER_TEMP/wasix-source-sdk-cache" \
             --arg chrome "$chrome_binary" --arg chromeReceipt "$RUNNER_TEMP/chrome-host.json" '[
-            "--config=wasix-aot","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
+            "-c","opt","--config=wasix-aot","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
             "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=1","--local_test_jobs=1",
-            "--config=ci-cache","--disk_cache="+$diskCache,
             "--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full","--test_env=XDG_CACHE_HOME="+$cache,"--test_env=RUST_TEST_THREADS=1",
             "--test_env=OLIPHAUNT_BROWSER_CHROME="+$chrome,"--test_env=OLIPHAUNT_BROWSER_CHROME_RECEIPT="+$chromeReceipt
           ]' > "$input_root/configuration.json"
@@ -774,31 +825,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Freeze bounded Bazel cache for transport
-        id: bazel-cache-ready
+      - name: Save bounded standard Bazel caches
+        if: ${{ !cancelled() }}
         continue-on-error: true
-        if: ${{ !cancelled() && steps.bazel-cache.outputs.cache-hit != 'true' }}
-        run: |
-          # Cache transport is optional. Never snapshot a live writer or exceed
-          # the local budget if Bazel's idle garbage collector has not finished.
-          if ! bash tools/dev/bazel.sh shutdown; then
-            exit 0
-          fi
-          cache_root="$HOME/.cache/oliphaunt/bazel-disk"
-          if [[ -d "$cache_root" ]]; then
-            cache_kib="$(du -sk "$cache_root" | cut -f1)"
-            if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib <= 2097152 )); then
-              printf 'ready=true\n' >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
-      - name: Save bounded Bazel action cache
-        continue-on-error: true
-        if: ${{ !cancelled() && steps.bazel-cache-ready.outputs.ready == 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: ./.github/actions/bazel-cache
         with:
-          path: ~/.cache/oliphaunt/bazel-disk
-          key: ${{ steps.bazel-cache.outputs.cache-primary-key }}
+          phase: save
+          cohort: wasix
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
 
   postmaster:
     name: Linux native postmaster lifecycle
@@ -822,6 +857,13 @@ jobs:
           run-id: ${{ needs.release-inputs.outputs.run_id }}
           pull-number: ${{ needs.release-inputs.outputs.pull_number }}
           public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: postmaster
 
       # This owner has a separate compiler/sysroot closure. Keep it parallel to
       # tools/browser construction and share its one base across both profiles.
@@ -893,6 +935,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
+      - name: Save bounded standard Bazel caches
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: postmaster
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
+          output-base: ${{ runner.temp }}/postmaster-native
+          jvm-args: -Xmx3g
+
   postmaster-host:
     name: Native postmaster lifecycle (${{ matrix.platform }})
     needs: [postmaster, release-inputs]
@@ -928,6 +982,13 @@ jobs:
           run-id: ${{ needs.release-inputs.outputs.run_id }}
           pull-number: ${{ needs.release-inputs.outputs.pull_number }}
           public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: postmaster-host
 
       - name: Select declared Apple SDK
         if: matrix.platform == 'macos-arm64'
@@ -1001,9 +1062,111 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Save bounded standard Bazel caches
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: postmaster-host
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
+          output-base: ${{ runner.temp }}/postmaster-native
+          jvm-args: -Xmx3g
+
+  react-native:
+    name: Native React Native consumers
+    needs: [portable, release-inputs]
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: react-native
+
+      - name: Select declared Apple SDK
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
+
+      - name: Authenticate final Apple and Swift consumer inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          input_root="$RUNNER_TEMP/react-native-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc '["oliphaunt-react-native"]' > "$input_root/consumer-products.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts \
+            --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF" \
+            --consumer-products-json "$input_root/consumer-products.json" \
+            --output-directory target/native-react-native-archive-inputs
+
+      - name: Qualify final React Native package and installed iOS consumer
+        run: |
+          OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT="$(pwd -P)"
+          test "$OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT" = "$(cd "$GITHUB_WORKSPACE" && pwd -P)"
+          OLIPHAUNT_MOBILE_CANDIDATE_SHA="$(git rev-parse HEAD)"
+          OLIPHAUNT_MOBILE_CANDIDATE_TREE="$(git rev-parse 'HEAD^{tree}')"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          export OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT OLIPHAUNT_MOBILE_CANDIDATE_SHA OLIPHAUNT_MOBILE_CANDIDATE_TREE
+          input_root="$RUNNER_TEMP/react-native-build-inputs"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job 'Native React Native consumers' \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg base "$RUNNER_TEMP/native-bazel" \
+            '["--output_base="+$base,"--host_jvm_args=-Xmx3g"]' > "$input_root/startup.json"
+          jq -nc '["-c","opt","--config=macos-sandbox",
+            "--platforms=//build_defs/host:apple_package_macos_arm64",
+            "--host_platform=//build_defs/host:native_macos_arm64","--jobs=1","--local_test_jobs=1"]' \
+            > "$input_root/configuration.json"
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:native_react_native_shipping_export \
+            --output-directory "$RUNNER_TEMP/react-native-build-capture"
+
+      - name: Upload React Native construction evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-react-native-macos-arm64
+          path: ${{ runner.temp }}/react-native-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Save bounded standard Bazel caches
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: react-native
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
+          output-base: ${{ runner.temp }}/native-bazel
+          jvm-args: -Xmx3g
+
   release-families:
     name: Native release families
-    needs: [portable, linux, wasix, postmaster, postmaster-host, release-inputs]
+    needs: [portable, linux, wasix, postmaster, postmaster-host, react-native, release-inputs]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -1024,6 +1187,13 @@ jobs:
           run-id: ${{ needs.release-inputs.outputs.run_id }}
           pull-number: ${{ needs.release-inputs.outputs.pull_number }}
           public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: release-families
 
       - name: Authenticate this run's completed archive producers
         env:
@@ -1060,6 +1230,16 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Save bounded standard Bazel caches
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: release-families
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
+
   wasix-host:
     name: WASIX imported runtime (${{ matrix.platform }})
     needs: [wasix, release-inputs]
@@ -1092,6 +1272,13 @@ jobs:
           run-id: ${{ needs.release-inputs.outputs.run_id }}
           pull-number: ${{ needs.release-inputs.outputs.pull_number }}
           public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: wasix-host
 
       - name: Select declared Apple SDK
         if: matrix.platform == 'macos-arm64'
@@ -1136,14 +1323,52 @@ jobs:
             --test_env=XDG_CACHE_HOME="$RUNNER_TEMP/wasix-imported-sdk-cache" \
             --test_env=RUST_TEST_THREADS=1
 
+      - name: Save bounded standard Bazel caches
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: wasix-host
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
+          output-base: ${{ matrix.platform == 'windows-x64' && format('{0}/b', runner.temp) || '' }}
+          jvm-args: ${{ matrix.platform == 'macos-arm64' && '-Xmx3g' || '' }}
+
   required:
     name: Required
-    needs: [release-inputs, portable, linux, wasix, postmaster, postmaster-host, release-families, wasix-host]
+    needs: [release-inputs, portable, linux, wasix, postmaster, postmaster-host, react-native, release-families, wasix-host]
     if: always() && (github.event_name != 'pull_request' || github.event.action != 'closed')
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     steps:
       - name: Require every native qualification job
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: jq -e 'all(.[]; .result == "success")' <<< "$NEEDS_JSON"
+
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up verified Node.js and Bun
+        uses: ./.github/actions/setup-node-bun
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Audit the completed native construction
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh
+          tools/release/audit-native-construction.mts
+          --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF"
+          --output-directory "$RUNNER_TEMP/native-construction-audit"

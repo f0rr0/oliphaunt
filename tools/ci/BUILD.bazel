@@ -20,6 +20,22 @@ bun_script_test(
 )
 
 bun_test(
+    name = "workflow_bazel_cache_test",
+    entry_point = "workflow-bazel-cache.test.mts",
+    data = ["//:workflow_policy_sources"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_test(
+    name = "workflow_native_bazel_test",
+    entry_point = "workflow-native-bazel.test.mts",
+    data = ["//:workflow_policy_sources"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_test(
     name = "ci_gate_test",
     entry_point = "ci-gate.test.mts",
     data = ["//:.github/scripts/check-ci-gate.mts"],
@@ -45,6 +61,8 @@ test_suite(
     tests = [
         ":ci_gate_test",
         ":mobile_e2e_resolver_test",
+        ":workflow_bazel_cache_test",
+        ":workflow_native_bazel_test",
         ":workflow_security_check",
         ":workflow_security_test",
     ],

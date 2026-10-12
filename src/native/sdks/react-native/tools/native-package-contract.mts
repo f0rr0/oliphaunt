@@ -29,7 +29,10 @@ const inputs = Object.fromEntries(
   ]),
 ) as unknown as ReactNativePackageInputs;
 const carrier = validateReactNativeNpm(archive, inputs);
-assert.equal(carrier.base.version, readFileSync(inputs.nativeVersion, 'utf8').trim());
+assert.equal(
+  carrier.base.version,
+  JSON.parse(readFileSync(inputs.carrierSource, 'utf8')).nativeVersion,
+);
 assert.deepEqual(
   packageReactNativeNpm(inputs),
   readFileSync(archive),
@@ -97,7 +100,7 @@ const changedCarrier = join(process.env.TEST_TMPDIR, 'changed-carrier.json');
 writeFileSync(changedCarrier, `${readFileSync(inputs.carrier, 'utf8')} `);
 assert.throws(
   () => packageReactNativeNpm({ ...inputs, carrier: changedCarrier }),
-  /immutable source member/u,
+  /original source member/u,
 );
 console.log(
   'React Native public npm: exact immutable carrier/header, full deterministic envelope and eight negative cases passed',

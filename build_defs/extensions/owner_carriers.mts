@@ -152,8 +152,9 @@ export function stageDeclaredFinalLeaf(spec: NativeOwnerSpec, leaf: FinalLeaf, r
         };
       // Facade metadata needs the closed bundle's original nested archive, not a
       // newly packaged replacement. Parsing this index is part of composition.
-      const outerFile = physical.get(asset.carrierAsset);
-      assert(outerFile, 'nested member lacks its actual closed bundle File');
+      const declaredOuterFile = physical.get(asset.carrierAsset);
+      assert(declaredOuterFile, 'nested member lacks its actual closed bundle File');
+      const outerFile = realpathSync(declaredOuterFile);
       const prefix = safeRelative(asset.carrierRoot);
       const memberPath = safeRelative(asset.memberPath);
       if (!bundles.has(outerFile)) bundles.set(outerFile, readPortableArchiveEntries(outerFile));
@@ -975,8 +976,17 @@ export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
       if (spec.outputs.npm) {
         const iosCarrier = buildIosCarrierManifest({
           assetRoot: outputRoot,
-          baseCarrierManifest: spec.baseCarrierManifest,
-          baseArchiveInputs: spec.baseArchiveInputs ?? undefined,
+          baseCarrierManifest: spec.baseCarrierManifest
+            ? realpathSync(spec.baseCarrierManifest)
+            : undefined,
+          baseArchiveInputs: spec.baseArchiveInputs
+            ? Object.fromEntries(
+                Object.entries(spec.baseArchiveInputs).map(([role, file]) => [
+                  role,
+                  { ...file, path: realpathSync(file.path) },
+                ]),
+              )
+            : undefined,
           baseRuntimeVersion: spec.runtimeVersion,
           extensionManifests: [path.join(productRoot, 'extension-artifacts.json')],
           ...declaredApple(spec),

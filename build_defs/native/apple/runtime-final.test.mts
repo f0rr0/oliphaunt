@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import {
   compareNativeMobileAbiReceipts,
   parseNativeMobileAbiReceipt,
@@ -14,10 +14,13 @@ import { inspectDynamicFrameworkBinary } from './framework-envelope.mts';
 const [archive, swiftpm, resources, checksums, header, iosManifest, ...receipts] =
   process.argv.slice(2);
 assert.equal(receipts.length, 3, 'final Apple resources require all three actual ABI receipts');
-await validateAppleXcframeworkAsset(swiftpm);
-const framework = readPortableArchiveEntries(swiftpm);
-const github = readPortableArchiveEntries(archive);
-const runtimeResources = readPortableArchiveEntries(resources);
+const [physicalArchive, physicalSwiftpm, physicalResources] = [archive, swiftpm, resources].map(
+  (file) => realpathSync(file),
+);
+await validateAppleXcframeworkAsset(physicalSwiftpm);
+const framework = readPortableArchiveEntries(physicalSwiftpm);
+const github = readPortableArchiveEntries(physicalArchive);
+const runtimeResources = readPortableArchiveEntries(physicalResources);
 const manifest = JSON.parse(readFileSync(iosManifest, 'utf8'));
 assert.equal(manifest.base.product, 'liboliphaunt-native');
 assert.equal(manifest.base.tag, `liboliphaunt-native-v${manifest.base.version}`);

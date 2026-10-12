@@ -8,7 +8,10 @@ import {
   nativePublicationInputProjection,
   renderReleaseMetadata,
 } from './bazel-release-metadata.mts';
-import { projectNativeSupplierArtifacts } from './native-supplier-artifacts.mts';
+import {
+  projectNativeSupplierArtifacts,
+  validateNativeSupplierArtifacts,
+} from './native-supplier-artifacts.mts';
 
 const metadata = loadReleaseMetadata(path.resolve(import.meta.dir, '../..'));
 const catalog = {
@@ -151,6 +154,99 @@ test('changed bytes, size, traversal and symlink inputs cannot become File alias
       ).toThrow();
     writeFileSync(row.file.path, 'substituted public bytes');
     expect(() => projectNativeSupplierArtifacts([row], catalog)).toThrow(/bytes differ/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+function sourceTagFixture() {
+  const { directory, row } = fixture();
+  return {
+    directory,
+    row: {
+      ...row,
+      publication: {
+        ...row.publication,
+        product: 'oliphaunt-swift',
+        version: '0.8.2',
+        tagName: 'oliphaunt-swift-v0.8.2',
+      },
+      artifact: 'swift-source-tag:0.8.2',
+      source: {
+        commit: '1'.repeat(40),
+        tree: '2'.repeat(40),
+        member: 'src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json',
+        blob: '3'.repeat(40),
+      },
+    },
+  };
+}
+
+test('retained source-tag Files preserve their distinct Git source and existing snapshot aliases', () => {
+  const { directory, row } = sourceTagFixture();
+  try {
+    const projected = nativePublicationInputProjection(
+      { source: { commit: 'd'.repeat(40), tree: 'e'.repeat(40) }, supplierArtifacts: [row] },
+      metadata,
+    );
+    const key = `${row.publication.product}/${row.publication.version}/${row.artifact}`;
+    const alias = projected.supplierArtifacts[key];
+    expect(alias.publication).toEqual(row.publication);
+    expect(alias.source).toEqual(row.source);
+    expect(alias.source.commit).not.toBe(row.publication.publicationSha);
+    expect(projected.files[0].source).toBe(row.file.path);
+    expect(alias.file.path).toBe(`@oliphaunt_metadata//:${projected.files[0].path}`);
+    const rendered = renderReleaseMetadata(metadata, '@identity//:identity.bzl', projected);
+    expect(JSON.parse(rendered.completedSupplierArtifacts)[key]).toEqual(alias);
+    const originalSource = structuredClone(row.source);
+    row.source.tree = 'f'.repeat(40);
+    expect(alias.source).toEqual(originalSource);
+    expect(() =>
+      projectNativeSupplierArtifacts([row], { ...catalog, sourceTagProducts: [] }),
+    ).toThrow(/canonical/);
+    expect(() => projectNativeSupplierArtifacts([row], catalog)).toThrow(/canonical/);
+    const unpromised = structuredClone(metadata);
+    unpromised.products['oliphaunt-swift'].publish_targets = ['github-release'];
+    expect(() =>
+      nativePublicationInputProjection(
+        { source: { commit: 'd'.repeat(40), tree: 'e'.repeat(40) }, supplierArtifacts: [row] },
+        unpromised,
+      ),
+    ).toThrow(/canonical/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('source-tag references require exact namespace, owner, version and safe immutable Git facts', () => {
+  const { directory, row } = sourceTagFixture();
+  try {
+    const { source: _source, ...missingSource } = row;
+    for (const bad of [
+      missingSource,
+      { ...row, source: undefined },
+      { ...row, source: { ...row.source, authenticated: true } },
+      { ...row, artifact: 'swift-source-tag:0.8.3' },
+      {
+        ...row,
+        publication: {
+          ...row.publication,
+          product: 'liboliphaunt-native',
+          tagName: 'liboliphaunt-native-v0.8.2',
+        },
+      },
+      { ...row, artifact: 'github-release:oliphaunt-swift-0.8.2-bindings.xcframework.zip' },
+      { ...row, source: { ...row.source, commit: 'main' } },
+      { ...row, source: { ...row.source, tree: 'A'.repeat(40) } },
+      { ...row, source: { ...row.source, blob: '0'.repeat(64) } },
+      { ...row, source: { ...row.source, member: '../carrier.json' } },
+      { ...row, source: { ...row.source, member: '/carrier.json' } },
+    ])
+      expect(() => validateNativeSupplierArtifacts([bad])).toThrow();
+    const sourceCatalog = { ...catalog, sourceTagProducts: ['oliphaunt-swift'] };
+    expect(() => projectNativeSupplierArtifacts([row, row], sourceCatalog)).toThrow(/duplicate/);
+    writeFileSync(row.file.path, 'substituted retained source delivery');
+    expect(() => projectNativeSupplierArtifacts([row], sourceCatalog)).toThrow(/bytes differ/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

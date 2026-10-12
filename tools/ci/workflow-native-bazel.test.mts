@@ -1,0 +1,302 @@
+import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+const workflow = Bun.YAML.parse(
+  readFileSync(path.resolve(import.meta.dir, '../../.github/workflows/bazel.yml'), 'utf8'),
+) as { jobs: Record<string, any> };
+const { jobs } = workflow;
+const needs = (id: string): string[] =>
+  jobs[id].needs === undefined
+    ? []
+    : Array.isArray(jobs[id].needs)
+      ? jobs[id].needs
+      : [jobs[id].needs];
+
+function predecessors(id: string, active = new Set<string>()): Set<string> {
+  assert.ok(Object.hasOwn(jobs, id), `Unknown native workflow prerequisite: ${id}`);
+  assert.ok(!active.has(id), `Native workflow dependency cycle: ${id}`);
+  const stack = new Set(active).add(id);
+  return new Set(needs(id).flatMap((parent) => [parent, ...predecessors(parent, stack)]));
+}
+
+test('native package consumers follow their producers and remain required for admission', () => {
+  for (const id of Object.keys(jobs)) predecessors(id);
+  assert.ok(predecessors('react-native').has('portable'));
+  assert.ok(predecessors('react-native').has('release-inputs'));
+  assert.ok(predecessors('release-families').has('react-native'));
+  const required = predecessors('required');
+  for (const [id, job] of Object.entries(jobs)) {
+    if (job.steps.some((step: any) => step.run?.includes('qualify-native-shipping.mts')))
+      assert.ok(required.has(id), `Native shipping producer omitted from admission: ${id}`);
+  }
+  const consumer = jobs['react-native'];
+  assert.equal(consumer.if, undefined);
+  const qualify = consumer.steps.filter((step: any) =>
+    step.run?.includes('qualify-native-shipping.mts'),
+  );
+  assert.equal(qualify.length, 1);
+  assert.equal(qualify[0].if, undefined);
+  assert.equal(qualify[0]['continue-on-error'], undefined);
+  assert.deepEqual(
+    [...qualify[0].run.matchAll(/--shipping-export\s+(\S+)/gu)].map((match) => match[1]),
+    ['//:native_react_native_shipping_export'],
+  );
+  const evidence = consumer.steps.filter(
+    (step: any) => step.with?.name === 'native-build-evidence-react-native-macos-arm64',
+  );
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0].if, undefined);
+  assert.equal(evidence[0].with['if-no-files-found'], 'error');
+  const linux = jobs.linux.steps.map((step: any) => step.run ?? '').join('\n');
+  for (const name of ['package_test', 'installed_consumer_test'])
+    assert.ok(!linux.includes(`//src/native/sdks/react-native:${name}`));
+  assert.ok(linux.includes('//src/native/sdks/react-native:lifecycle_test'));
+});
+
+type FixtureEnvironment = NodeJS.ProcessEnv & {
+  RUNNER_TEMP: string;
+  QUALIFIER_ARGS: string;
+  QUALIFIER_SOURCE: string;
+};
+
+function qualifierFixture(run: (directory: string, env: FixtureEnvironment) => void) {
+  const directory = mkdtempSync(path.join(process.env.TEST_TMPDIR ?? tmpdir(), 'native-workflow-'));
+  const env = {
+    PATH: process.env.PATH,
+    RUNNER_TEMP: path.join(directory, 'runner temp'),
+    GITHUB_WORKSPACE: directory,
+    GITHUB_REPOSITORY: 'f0rr0/oliphaunt',
+    GITHUB_WORKFLOW: 'Native Bazel qualification',
+    GITHUB_RUN_ID: '123',
+    GITHUB_RUN_ATTEMPT: '1',
+    QUALIFICATION_JOB_NAME: 'Portable packages (macos-arm64)',
+    QUALIFIER_ARGS: path.join(directory, 'qualifier-args'),
+    QUALIFIER_SOURCE: path.join(directory, 'qualifier-source'),
+  };
+  mkdirSync(path.join(directory, 'tools/dev'), { recursive: true });
+  writeFileSync(
+    path.join(directory, 'tools/dev/bun.sh'),
+    `#!/usr/bin/env bash
+printf '%s\\0' "$@" > "$QUALIFIER_ARGS"
+printf '%s\\n' "\${OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT-}" "\${OLIPHAUNT_MOBILE_CANDIDATE_SHA-}" "\${OLIPHAUNT_MOBILE_CANDIDATE_TREE-}" > "$QUALIFIER_SOURCE"
+`,
+  );
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: directory, env, stdio: 'pipe' });
+  git('init', '--quiet');
+  git('add', 'tools/dev/bun.sh');
+  git(
+    '-c',
+    'user.name=Workflow fixture',
+    '-c',
+    'user.email=fixture@invalid',
+    'commit',
+    '--quiet',
+    '-m',
+    'fixture',
+  );
+  try {
+    run(directory, env);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test('Apple preparation and final admission use the authenticated input phase', () => {
+  const step = jobs.portable.steps.find(
+    (step: any) =>
+      step.name === 'Qualify complete Apple runtime, resources, SDK and extension packages',
+  );
+  assert.equal(
+    step.env.NATIVE_PREPARED_INPUTS,
+    '$' + '{{ needs.release-inputs.outputs.native_inputs }}',
+  );
+  for (const [input, target] of [
+    ['false', '//:native_apple_preparation_export'],
+    ['true', '//:native_apple_shipping_export'],
+    ['unverified', undefined],
+  ]) {
+    qualifierFixture((directory, env) => {
+      const result = spawnSync('bash', ['-eu', '-c', step.run], {
+        cwd: directory,
+        env: { ...env, NATIVE_PREPARED_INPUTS: input },
+      });
+      if (!target) {
+        assert.notEqual(result.status, 0);
+        return;
+      }
+      assert.equal(result.status, 0, result.stderr.toString());
+      const args = readFileSync(env.QUALIFIER_ARGS, 'utf8').split('\0');
+      assert.equal(args[args.indexOf('--shipping-export') + 1], target);
+    });
+  }
+});
+
+test('Android qualification constructs ARM and installs the exact x64 APK once', () => {
+  const step = jobs.linux.steps.find((step: any) =>
+    step.run?.includes('--shipping-export //:native_android_shipping_export'),
+  );
+  assert.equal(step.if, "matrix.platform == 'x86_64'");
+  assert.equal(step['continue-on-error'], undefined);
+  qualifierFixture((directory, env) => {
+    const result = spawnSync('bash', ['-eu', '-c', step.run], { cwd: directory, env });
+    assert.equal(result.status, 0, result.stderr.toString());
+    const args = readFileSync(env.QUALIFIER_ARGS, 'utf8').split('\0');
+    const targets = JSON.parse(readFileSync(args[args.indexOf('--targets-json') + 1], 'utf8'));
+    for (const label of [
+      '//src/examples/native/react-native-expo:android_release',
+      '//src/examples/native/react-native-expo:android_installed_test',
+    ])
+      assert.equal(targets.filter((target: string) => target === label).length, 1);
+    assert.ok(!targets.includes('//src/examples/native/react-native-expo:android_release_x86_64'));
+    const configuration = JSON.parse(
+      readFileSync(
+        path.join(env.RUNNER_TEMP, 'android-extension-build-inputs/configuration.json'),
+        'utf8',
+      ),
+    );
+    assert.ok(configuration.every((flag: string) => !flag.startsWith('--test_env=')));
+    const git = (...args: string[]) =>
+      execFileSync('git', args, { cwd: directory, env, encoding: 'utf8' }).trim();
+    assert.deepEqual(readFileSync(env.QUALIFIER_SOURCE, 'utf8').trim().split('\n'), [
+      directory,
+      git('rev-parse', 'HEAD'),
+      git('rev-parse', 'HEAD^{tree}'),
+    ]);
+    writeFileSync(path.join(directory, 'tools/dev/bun.sh'), '# tracked mutation\n');
+    assert.notEqual(spawnSync('bash', ['-eu', '-c', step.run], { cwd: directory, env }).status, 0);
+    assert.ok(predecessors('required').has('linux'));
+  });
+});
+
+test('Required audits completed construction only after every producer succeeds', () => {
+  const required = jobs.required;
+  const [guard, checkout, runtime, inputs, audit] = required.steps;
+  assert.equal(required.steps.length, 5);
+  assert.equal(guard.env.NEEDS_JSON, '$' + '{{ toJSON(needs) }}');
+  assert.match(checkout.uses, /^actions\/checkout@[0-9a-f]{40}$/u);
+  assert.equal(checkout.with.ref, '$' + '{{ github.event.pull_request.head.sha || github.sha }}');
+  assert.equal(checkout.with['persist-credentials'], false);
+  assert.equal(runtime.uses, './.github/actions/setup-node-bun');
+  assert.equal(inputs.uses, './.github/actions/native-release-inputs');
+  assert.deepEqual(
+    inputs.with,
+    jobs.linux.steps.find((step: any) => step.uses === inputs.uses).with,
+  );
+  assert.equal(audit.env.GH_TOKEN, '$' + '{{ github.token }}');
+  for (const step of required.steps) {
+    assert.equal(step.if, undefined);
+    assert.equal(step['continue-on-error'], undefined);
+  }
+  qualifierFixture((directory, env) => {
+    const wrapperArgs = path.join(directory, 'wrapper-args');
+    const acquisition = path.join(directory, 'acquisition-started');
+    const snapshot = path.join(directory, 'native-inputs.json');
+    mkdirSync(path.join(directory, 'tools/release'), { recursive: true });
+    writeFileSync(
+      path.join(directory, 'tools/release/with-source.sh'),
+      `#!/usr/bin/env bash
+printf '%s\\0' "$@" > "$AUDIT_WRAPPER_ARGS"
+shift
+exec "$@"
+`,
+    );
+    writeFileSync(
+      path.join(directory, 'tools/dev/bun.sh'),
+      `#!/usr/bin/env bash
+printf '%s\\0' "$@" > "$QUALIFIER_ARGS"
+printf '%s\\n' "$OLIPHAUNT_NATIVE_PUBLICATION_INPUTS" > "$QUALIFIER_SOURCE"
+exit "\${AUDIT_STATUS:-0}"
+`,
+    );
+    const execute = (result: string, status = '0') => {
+      for (const file of [wrapperArgs, acquisition, env.QUALIFIER_ARGS, env.QUALIFIER_SOURCE])
+        rmSync(file, { force: true });
+      return spawnSync(
+        'bash',
+        ['-eu', '-c', `${guard.run}\nprintf acquired > "$AUDIT_ACQUISITION"\n${audit.run}`],
+        {
+          cwd: directory,
+          env: {
+            ...env,
+            NEEDS_JSON: JSON.stringify(
+              Object.fromEntries(
+                needs('required').map((id, index) => [
+                  id,
+                  { result: index === 1 ? result : 'success' },
+                ]),
+              ),
+            ),
+            GITHUB_REF: 'refs/pull/42/merge',
+            OLIPHAUNT_NATIVE_PUBLICATION_INPUTS: snapshot,
+            AUDIT_WRAPPER_ARGS: wrapperArgs,
+            AUDIT_ACQUISITION: acquisition,
+            AUDIT_STATUS: status,
+          },
+        },
+      );
+    };
+    const passed = execute('success');
+    assert.equal(passed.status, 0, passed.stderr.toString());
+    assert.equal(readFileSync(wrapperArgs, 'utf8').split('\0')[0], 'HEAD');
+    assert.deepEqual(readFileSync(env.QUALIFIER_ARGS, 'utf8').split('\0').slice(0, -1), [
+      'tools/release/audit-native-construction.mts',
+      '--run-id',
+      env.GITHUB_RUN_ID,
+      '--ref',
+      'refs/pull/42/merge',
+      '--output-directory',
+      path.join(env.RUNNER_TEMP, 'native-construction-audit'),
+    ]);
+    assert.equal(readFileSync(env.QUALIFIER_SOURCE, 'utf8').trim(), snapshot);
+    for (const result of ['failure', 'cancelled', 'skipped']) {
+      assert.notEqual(execute(result).status, 0);
+      assert.equal(existsSync(acquisition), false);
+      assert.equal(existsSync(wrapperArgs), false);
+    }
+    assert.equal(execute('success', '7').status, 7);
+  });
+});
+
+test('only the installed mobile test receives the actual clean candidate checkout identity', () => {
+  const step = jobs['react-native'].steps.find(
+    (step: any) => step.name === 'Qualify final React Native package and installed iOS consumer',
+  );
+  qualifierFixture((directory, env) => {
+    mkdirSync(path.join(env.RUNNER_TEMP, 'react-native-build-inputs'), { recursive: true });
+    const execute = () => spawnSync('bash', ['-eu', '-c', step.run], { cwd: directory, env });
+    const passed = execute();
+    assert.equal(passed.status, 0, passed.stderr.toString());
+    const git = (...args: string[]) =>
+      execFileSync('git', args, { cwd: directory, env, encoding: 'utf8' }).trim();
+    assert.deepEqual(readFileSync(env.QUALIFIER_SOURCE, 'utf8').trim().split('\n'), [
+      directory,
+      git('rev-parse', 'HEAD'),
+      git('rev-parse', 'HEAD^{tree}'),
+    ]);
+    const configuration = JSON.parse(
+      readFileSync(
+        path.join(env.RUNNER_TEMP, 'react-native-build-inputs/configuration.json'),
+        'utf8',
+      ),
+    );
+    assert.ok(configuration.every((flag: string) => !flag.startsWith('--test_env=')));
+    writeFileSync(path.join(directory, 'tools/dev/bun.sh'), '# tracked mutation\n');
+    assert.notEqual(execute().status, 0);
+  });
+});
+
+test('the Linux installed APK owns its emulator and requires provisioned KVM', () => {
+  const step = jobs.linux.steps.find(
+    (step: any) => step.name === 'Provision KVM for the exact installed Android APK test',
+  );
+  assert.equal(step.if, "matrix.platform == 'x86_64'");
+  assert.equal(step['continue-on-error'], undefined);
+  assert.ok(step.run.includes('test -c /dev/kvm'));
+  assert.ok(step.run.includes('test -r /dev/kvm && test -w /dev/kvm'));
+  assert.ok(!step.run.includes('sdkmanager') && !step.run.includes('emulator -'));
+});

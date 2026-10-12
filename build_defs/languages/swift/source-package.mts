@@ -13,7 +13,10 @@ import {
 import path from 'node:path';
 import { validateFrozenNativeCarrierIdentity } from '../../../src/native/sdks/swift/tools/swift-native-carrier-contract.mts';
 import { renderSwiftReleaseManifest } from '../../../src/native/sdks/swift/tools/swift-release-manifest.mts';
-import { validateAppleXcframeworkAsset } from '../../../src/native/sdks/swift/tools/swift-xcframework-contract.mts';
+import {
+  readNativeAppleHeader,
+  validateAppleXcframeworkAsset,
+} from '../../../src/native/sdks/swift/tools/swift-xcframework-contract.mts';
 import { createDeterministicZip } from '../../../tools/packaging/archive-directory.mts';
 import { bundleJavaScript, emitJavaScript } from '../../../tools/packaging/emit-javascript.mts';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
@@ -31,7 +34,6 @@ export type SwiftSourceSpecification = {
   nativeVersion: string;
   sources: Record<string, string>;
   generatedSwift: string;
-  publicHeader: string;
   bindingsArchive: string;
   carrier: string;
   xcframework: string;
@@ -183,11 +185,17 @@ export async function packageSwiftSource(
     const bindingsDestination = 'Sources/OliphauntNativeBindings/OliphauntNativeBindings.swift';
     copy(spec.generatedSwift, path.join(sourcePackage, bindingsDestination));
     copy(spec.generatedSwift, path.join(tree, 'src/sdks/swift', bindingsDestination));
-    // The checkout header forwards outside this package. Standalone consumers
-    // receive the actual runtime-owned ABI header, matching current staging.
+    // Header bytes come from this package's actual native requirement, even
+    // while the workspace native source advances independently.
     const publicHeader = 'Sources/COliphaunt/include/oliphaunt.h';
-    copy(spec.publicHeader, path.join(sourcePackage, publicHeader));
-    copy(spec.publicHeader, path.join(tree, 'src/sdks/swift', publicHeader));
+    const header = readNativeAppleHeader(realpathSync(spec.xcframework));
+    for (const destination of [
+      path.join(sourcePackage, publicHeader),
+      path.join(tree, 'src/sdks/swift', publicHeader),
+    ]) {
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, header, { mode: 0o644 });
+    }
     writeFileSync(path.join(outputRoot, 'Package.swift.release'), manifest, { mode: 0o644 });
     // The declared tree is a complete source tag. The separately named
     // manifest stays available to the existing frozen publication adapter.

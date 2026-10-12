@@ -19,8 +19,8 @@ import { extractPortableArchiveTree } from '../../tools/packaging/portable-archi
 import { extractNativePayload } from '../native/host-runtime-test-helpers.mts';
 import {
   captureSeedConstructionIntent,
-  captureSeedProducerIdentity,
   captureSeedContentIntent,
+  captureSeedProducerIdentity,
   seedConstructionFileBinding,
   seedConstructionInvocation,
   selectCompletedSeed,
@@ -128,6 +128,7 @@ try {
           },
         },
         specification.constructionInputs,
+        specification.constructionTreeMembers,
       )
     : undefined;
   const contentIntent = intent

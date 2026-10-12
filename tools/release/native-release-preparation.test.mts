@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
 import { tarArchive } from '../packaging/testdata/tar-fixture.mts';
-import { allArtifactTargets } from './release-artifact-targets.mts';
 import { fileIdentity } from './native-file-identity.mts';
 import {
+  acquireNativePublicationBuilds,
   acquireNativePublicationInputs,
   acquireNativeReleaseArchives,
   prepareNativeReleaseDelivery,
@@ -16,6 +16,7 @@ import {
 } from './native-release-preparation.mts';
 import { loadPublicationCatalog } from './publication-catalog.mts';
 import { expectedProductArtifactRows } from './publication-lock.mts';
+import { allArtifactTargets } from './release-artifact-targets.mts';
 import { ROOT } from './release-graph.mts';
 
 const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
@@ -78,6 +79,7 @@ test('WASIX held host lookup uses the actual published facade NAPI pin, independ
       transport,
     );
     expect(acquisitions).toEqual([
+      'npm:@oliphaunt/ts-query@0.1.1',
       `npm:@oliphaunt/wasix-ts@${facade.version}`,
       `npm:${hosts[0].npm_package}@0.2.1`,
     ]);
@@ -85,6 +87,7 @@ test('WASIX held host lookup uses the actual published facade NAPI pin, independ
     expect(
       result.snapshot.supplierArtifacts?.map((row) => [row.artifact, row.publication.version]),
     ).toEqual([
+      ['npm:@oliphaunt/ts-query', '0.1.1'],
       ['npm:@oliphaunt/wasix-ts', facade.version],
       [`npm:${hosts[0].npm_package}`, '0.2.1'],
     ]);
@@ -665,6 +668,157 @@ test('producer seed snapshot adopts all genuine completed slots without claiming
       ),
     ).rejects.toThrow('authenticated exact attestation subject');
     expect(existsSync(path.join(directory, 'unauthenticated-history'))).toBe(false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('declared held Swift source and bindings share one completed-origin acquisition and physical snapshot pool', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'held-swift-inputs-'));
+  const bindings = Buffer.from('controlled owned binding ZIP bytes');
+  const expected = 'oliphaunt-swift-0.8.2-bindings.xcframework.zip';
+  const acquisitions: string[] = [];
+  const captures: any[] = [];
+  try {
+    const result = await acquireNativePublicationInputs(
+      {
+        source,
+        directory: path.join(directory, 'owned'),
+        consumerProducts: ['oliphaunt-react-native'],
+      },
+      {
+        readJson: async (endpoint) => ({
+          id: 82,
+          target_commitish: 'c'.repeat(40),
+          tag_name: decodeURIComponent(endpoint.split('/').at(-1)!),
+        }),
+        readPages: async () => [
+          {
+            id: 1,
+            name: expected,
+            state: 'uploaded',
+            size: bindings.length,
+            url: 'https://api.github.com/repos/f0rr0/oliphaunt/releases/assets/1',
+            digest: 'sha256:' + createHash('sha256').update(bindings).digest('hex'),
+          },
+        ],
+        assertCompleted: async (request) => ({
+          ...request,
+          publicationTree: 'd'.repeat(40),
+          releaseSha: request.publicationSha,
+        }),
+        proveAsset: async (_url, name, size, options) => {
+          acquisitions.push(name);
+          mkdirSync(path.dirname(options.retainedPath), { recursive: true });
+          writeFileSync(options.retainedPath, bindings);
+          return { bytes: size, sha256: createHash('sha256').update(bindings).digest('hex') };
+        },
+        materialize: async (carrier: any, options: any) => {
+          expect(carrier.product).toBe('oliphaunt-query-ts');
+          expect(carrier.id).toBe('npm:@oliphaunt/ts-query');
+          expect(carrier.version).toBe('0.1.1');
+          mkdirSync(options.directory, { recursive: true });
+          const file = path.join(options.directory, carrier.artifacts[0].path);
+          writeFileSync(
+            file,
+            tarArchive([
+              {
+                name: 'package/package.json',
+                data: JSON.stringify({ name: carrier.name, version: carrier.version }),
+              },
+            ]),
+          );
+          const { size, sha256 } = fileIdentity(file);
+          return {
+            carrier: { ...carrier, artifacts: [{ path: file, size, sha256 }] },
+            receipt: {},
+            metadata: {},
+          };
+        },
+        captureSwiftSource: async (input) => {
+          captures.push(input);
+          writeFileSync(input.retainedArchive, Buffer.from('controlled Git delivery bytes'));
+          const { size, sha256 } = fileIdentity(input.retainedArchive);
+          return {
+            scope: 'construction',
+            publication: input.publication,
+            nativePublication: input.publication,
+            members: [],
+            source: {
+              commit: 'e'.repeat(40),
+              tree: 'f'.repeat(40),
+              member: 'src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json',
+              blob: '1'.repeat(40),
+            },
+            file: { path: input.retainedArchive, size, sha256 },
+          };
+        },
+      } as any,
+    );
+    expect(acquisitions).toEqual([expected]);
+    expect(captures).toHaveLength(1);
+    expect(captures[0].bindings.sha256).toBe(createHash('sha256').update(bindings).digest('hex'));
+    expect(result.snapshot.seedControls).toEqual([]);
+    expect(result.snapshot.supplierArtifacts!.map((row) => row.artifact)).toEqual([
+      'npm:@oliphaunt/ts-query',
+      'github-release:' + expected,
+      'swift-source-tag:0.8.2',
+    ]);
+    expect(result.snapshot.supplierArtifacts!.find((row) => row.source)!.source!.commit).not.toBe(
+      result.snapshot.supplierArtifacts!.find((row) => row.source)!.publication.publicationSha,
+    );
+    expect(
+      result.snapshot.supplierArtifacts!.every(
+        (row) => fileIdentity(row.file.path).sha256 === row.file.sha256,
+      ),
+    ).toBe(true);
+    expect(result.snapshot).not.toHaveProperty('ready');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('RN bootstrap acquires only the original Apple role and cannot wait on its own consumer or the checksum job', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'native-rn-bootstrap-'));
+  const requests: string[] = [];
+  try {
+    const options = {
+      source,
+      runId: 77,
+      directory: path.join(directory, 'producers'),
+      requestedArtifactNames: ['native-build-evidence-mobile-ios'],
+      excludeArtifactNames: [
+        'native-build-evidence-release-families',
+        'native-build-evidence-react-native-macos-arm64',
+      ],
+    };
+    const readJson = async () => eligible;
+    const readPages = async () => [
+      { name: 'native-build-evidence-mobile-ios', expired: false },
+      { name: 'native-build-evidence-native-macos-arm64', expired: false },
+      { name: 'native-build-evidence-react-native-macos-arm64', expired: false },
+      { name: 'native-build-evidence-release-families', expired: false },
+    ];
+    const acquire = async (_root: string, expected: any) => {
+      requests.push(expected.artifactName);
+      return { finalFiles: { qualification: { requiredTests: [] } } } as any;
+    };
+    const result = await acquireNativePublicationBuilds(options, { readJson, readPages, acquire });
+    expect(requests).toEqual(['native-build-evidence-mobile-ios']);
+    expect(result.builds).toHaveLength(1);
+    await expect(
+      acquireNativePublicationBuilds(
+        { ...options, directory: path.join(directory, 'missing') },
+        {
+          readJson,
+          readPages: async () => [
+            { name: 'native-build-evidence-native-macos-arm64', expired: false },
+          ],
+          acquire,
+        },
+      ),
+    ).rejects.toThrow('no retained source producer');
+    expect(requests).toHaveLength(1);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

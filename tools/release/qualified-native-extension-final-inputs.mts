@@ -2,7 +2,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { validateReviewedNativeProducerAssurance } from './authenticate-native-build-evidence.mts';
+import {
+  assertAuthenticatedNativeBuildOrigin,
+  validateReviewedNativeProducerAssurance,
+} from './authenticate-native-build-evidence.mts';
 import type { ReleaseMetadata } from './bazel-release-metadata.mts';
 import { canonicalShippingLabel } from './bazel-shipping-inputs.mts';
 import {
@@ -17,24 +20,23 @@ import {
 import { fileIdentity } from './native-file-identity.mts';
 import type { prepareNativeReleaseDelivery } from './native-release-preparation.mts';
 
+type NativeFinalInputPreparation = {
+  observation: Pick<
+    Awaited<ReturnType<typeof prepareNativeReleaseDelivery>>['observation'],
+    'authenticated'
+  >;
+  origins: Awaited<ReturnType<typeof prepareNativeReleaseDelivery>>['origins'];
+};
+
+/** Reviewed-main qualification remains required by release decisions. */
 export function qualifiedNativeFinalInputs(
-  preparation: Pick<
-    Awaited<ReturnType<typeof prepareNativeReleaseDelivery>>,
-    'observation' | 'origins'
-  >,
+  preparation: NativeFinalInputPreparation,
   metadata: ReleaseMetadata,
 ) {
-  const inputs: ExtensionFinalInput[] = [];
-  let nativeAppleBase: NativeAppleBaseInput | undefined;
-  const swift: Partial<NativeSwiftSourceInput> = {};
-  for (const [evidenceRoot, origin] of preparation.origins) {
-    const build = preparation.observation.authenticated.find(
-      (value) =>
-        value.origin.evidenceDigest === origin.evidenceDigest &&
-        value.origin.artifact.id === origin.artifact.id,
-    );
+  for (const origin of preparation.origins.values()) {
+    const build = preparation.observation.authenticated.find((row) => row.origin === origin);
     assert.ok(
-      build?.producerAssurance && origin.finalFiles,
+      build?.producerAssurance,
       'extension imports need the original authenticated reviewed producer',
     );
     validateReviewedNativeProducerAssurance(build.producerAssurance, {
@@ -44,6 +46,52 @@ export function qualifiedNativeFinalInputs(
       evidenceDigest: origin.evidenceDigest,
       requiredTests: build.qualification.requiredTests,
     });
+  }
+  return constructionNativeFinalInputs(preparation, metadata);
+}
+
+/** Same-source construction imports retain actual configured provenance.
+ * PR producers supply construction facts and never reviewed-main assurance. */
+export function constructionNativeFinalInputs(
+  preparation: NativeFinalInputPreparation,
+  metadata: ReleaseMetadata,
+) {
+  const inputs: ExtensionFinalInput[] = [];
+  const apple: Partial<NativeAppleBaseInput> = {};
+  const swift: Partial<NativeSwiftSourceInput> = {};
+  for (const [evidenceRoot, origin] of preparation.origins) {
+    const build = preparation.observation.authenticated.find(
+      (value) =>
+        value.origin.evidenceDigest === origin.evidenceDigest &&
+        value.origin.artifact.id === origin.artifact.id,
+    );
+    assertAuthenticatedNativeBuildOrigin(origin);
+    assert.ok(
+      build && build.origin === origin && origin.finalFiles,
+      'extension imports need the actual acquired original producer',
+    );
+    assert.deepEqual(
+      build.evidence,
+      origin.evidence,
+      'extension import evidence differs from acquired producer',
+    );
+    assert.deepEqual(
+      build.qualification.source,
+      build.evidence.source,
+      'extension import source differs',
+    );
+    assert.deepEqual(
+      build.qualification.github,
+      origin.github,
+      'extension import GitHub context differs',
+    );
+    assert.equal(build.qualification.testQualification, 'passed');
+    assert.equal(build.qualification.shippingAnalysis, 'bound');
+    assert.equal(build.qualification.qualificationPolicy, 'bound');
+    assert.ok(
+      build.qualification.requiredTests.length,
+      'extension imports require actual configured mandatory tests',
+    );
     const finalFiles = origin.finalFiles;
     finalFiles.assertUnchanged?.();
     for (const [cohortIndex, cohort] of build.evidence.cohorts.entries()) {
@@ -89,6 +137,12 @@ export function qualifiedNativeFinalInputs(
                 { size: member.size, sha256: member.sha256 },
               );
               const source = path.join(evidenceRoot, 'files', String(cohortIndex), relative);
+              assert.ok(
+                finalFiles.artifactRoots?.filter(
+                  (file) => path.resolve(file) === path.resolve(source),
+                ).length === 1,
+                'extension source File is not the actual retained original transport',
+              );
               const identity = fileIdentity(source);
               assert.deepEqual(
                 { size: identity.size, sha256: identity.sha256 },
@@ -111,29 +165,58 @@ export function qualifiedNativeFinalInputs(
             });
         });
       };
-      const appleRoots = cohort.roots.filter(
-        (root) => root.package.role === 'apple-base-ios-manifest-input',
-      );
+      const nativeVersion = metadata.products['liboliphaunt-native'].version;
+      const appleNames = {
+        'ios.json': [
+          'file',
+          'internal',
+          'apple-base-ios-manifest-input',
+          'ios-xcframework',
+          '//src/native/runtime:apple_ios_manifest_shipping',
+        ],
+        [`liboliphaunt-${nativeVersion}-apple-spm-xcframework.zip`]: [
+          'framework',
+          'github',
+          'github-release-asset',
+          'apple-spm-xcframework',
+          '//src/native/runtime:apple_swiftpm_shipping',
+        ],
+        [`liboliphaunt-${nativeVersion}-runtime-resources-ios-datum64.tar.gz`]: [
+          'resources',
+          'github',
+          'github-release-asset',
+          'ios-datum64',
+          '//src/native/runtime:apple_resources_shipping',
+        ],
+      } as const;
       const swiftNames = {
         'Oliphaunt-source.zip': 'archive',
         'oliphaunt-react-native-ios-carriers.json': 'carrier',
         'extension-owner-catalog.json': 'ownerCatalog',
+        [`oliphaunt-swift-${metadata.products['oliphaunt-swift'].version}-bindings.xcframework.zip`]:
+          'bindingsArchive',
       } as const;
       for (const root of cohort.roots) {
         if (
           root.package.product !== 'oliphaunt-swift' ||
-          root.package.role !== 'release-input' ||
           !Object.hasOwn(swiftNames, root.package.name)
         )
           continue;
         assert.equal(root.package.ecosystem, 'github');
-        assert.equal(root.package.configuration, 'portable');
+        const group = swiftNames[root.package.name];
+        assert.equal(
+          root.package.role,
+          group === 'bindingsArchive' ? 'github-release-asset' : 'release-input',
+        );
+        assert.equal(
+          root.package.configuration,
+          group === 'bindingsArchive' ? 'apple-xcframework' : 'portable',
+        );
         assert.equal(
           root.package.version,
           metadata.products['oliphaunt-swift'].version,
           'original Swift source version differs from constructor source',
         );
-        const group = swiftNames[root.package.name];
         assert.equal(swift[group], undefined, 'original Swift source File repeats');
         const files = records(root).filter(
           (file) => path.basename(file.path) === root.package.name,
@@ -143,21 +226,25 @@ export function qualifiedNativeFinalInputs(
         swift.owner = 'oliphaunt-swift';
         swift.version = root.package.version;
       }
-      for (const root of appleRoots) {
-        assert.equal(nativeAppleBase, undefined, 'original Apple base constructor repeats');
-        assert.equal(root.package.ecosystem, 'internal');
-        assert.equal(root.package.product, 'liboliphaunt-native');
-        assert.equal(root.package.version, metadata.products['liboliphaunt-native'].version);
-        assert.equal(root.package.configuration, 'ios-xcframework');
-        assert.equal(root.package.name, 'ios.json');
+      for (const root of cohort.roots) {
+        if (
+          root.package.product !== 'liboliphaunt-native' ||
+          !Object.hasOwn(appleNames, root.package.name)
+        )
+          continue;
+        const [group, ecosystem, role, configuration, label] = appleNames[root.package.name];
+        assert.equal(apple[group], undefined, 'original Apple constructor File repeats');
+        assert.equal(root.package.ecosystem, ecosystem);
+        assert.equal(root.package.role, role);
+        assert.equal(root.package.version, nativeVersion);
+        assert.equal(root.package.configuration, configuration);
+        assert.equal(canonicalShippingLabel(root.label), label);
         const files = records(root);
         assert.equal(files.length, 1, 'original Apple base manifest requires its one regular File');
         assert.equal(files[0].member, undefined);
-        nativeAppleBase = {
-          owner: 'liboliphaunt-native',
-          version: root.package.version,
-          file: files[0],
-        };
+        apple[group] = files[0];
+        apple.owner = 'liboliphaunt-native';
+        apple.version = root.package.version;
       }
       const frozenRoots = cohort.roots.filter(
         (root) => root.package.role === 'extension-release-frozen-input',
@@ -266,6 +353,7 @@ export function qualifiedNativeFinalInputs(
     finalFiles.assertUnchanged?.();
   }
   projectNativeExtensionFinalInputs(inputs);
+  const nativeAppleBase = Object.keys(apple).length ? (apple as NativeAppleBaseInput) : undefined;
   if (nativeAppleBase) projectNativeAppleBaseInput(nativeAppleBase);
   const nativeSwiftSource = Object.keys(swift).length
     ? (swift as NativeSwiftSourceInput)

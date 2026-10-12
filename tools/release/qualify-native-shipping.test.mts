@@ -282,7 +282,7 @@ import {execFileSync} from 'node:child_process';
 const state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));
 const invocation=process.argv.slice(2);
 appendFileSync(${JSON.stringify(callsFile)},JSON.stringify(invocation)+'\\n');
-const args=invocation.slice(invocation.findIndex((arg:string)=>['test','cquery','query','info'].includes(arg)));
+const args=invocation.slice(invocation.findIndex((arg:string)=>['test','build','cquery','query','info'].includes(arg)));
 const expression=args[1]?.startsWith('--query_file=')?readFileSync(args[1].slice(13),'utf8'):args[1];
 if(args[0]==='test') {
   if(state.mode==='build-failure') process.exit(1);
@@ -307,6 +307,12 @@ if(args[0]==='test') {
   const canonical={id:{structuredCommandLine:{commandLineLabel:'canonical'}},structuredCommandLine:{commandLineLabel:'canonical',sections:[{sectionLabel:'command options',optionList:{option:options}}]}};
   const events=[...state.events,...state.testEvents,canonical,{id:{buildMetadata:{}},buildMetadata:{metadata}},{id:{buildFinished:{}},finished:{exitCode:{name:'SUCCESS'}}},{id:{buildMetrics:{}},buildMetrics:{},lastMessage:true}];
   writeFileSync(args.find((arg:string)=>arg.startsWith('--build_event_json_file=')).slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
+} else if(args[0]==='build') {
+  if(args.at(-1)!=='--nobuild') throw new Error('failure diagnosis must not construct targets');
+  if(state.mode==='incompatible-owner') {
+    console.error('Target //fixture:shipping_export is incompatible because dependency //fixture:host_library is incompatible');
+    process.exit(1);
+  }
 } else if(args[0]==='info') console.log(state.executionRoot);
 else if(args[0]==='query') {
   if(state.mode==='analysis-failure' || state.mode==='deleted-load') process.exit(1);
@@ -318,6 +324,10 @@ else if(args[0]==='query') {
 }
 else {
   if(state.mode==='discovery-failure') process.exit(1);
+  if(!expression.startsWith('deps(') && !expression.startsWith('set(')) {
+    if(state.mode==='incompatible-owner') process.exit(0);
+    if(state.mode==='malformed-owner') { console.log('{invalid'); process.exit(0); }
+  }
   if(expression.startsWith('deps(')) {
     console.log(JSON.stringify(state.recipeGraph));
   } else if(expression.startsWith('set(')) {
@@ -787,6 +797,28 @@ for (const ruleClass of ['filegroup', 'test_suite'])
         'configured actual test rules',
       );
       expect(f.calls().map((call) => call[0])).toEqual(['cquery', 'cquery']);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+for (const mode of ['incompatible-owner', 'malformed-owner'])
+  test(`diagnoses ${mode} configured export output without construction`, () => {
+    const f = fixture(mode);
+    try {
+      f.request.shipping = { export: '//fixture:shipping_export' };
+      expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
+        mode === 'incompatible-owner'
+          ? 'Bazel configuration analysis failed'
+          : 'readable configured export provider',
+      );
+      const calls = f.calls();
+      expect(calls.map((call) => call[0])).toEqual(['cquery', 'build']);
+      expect(calls[1].at(-1)).toBe('--nobuild');
+      expect(calls[1]).toContain('//fixture:shipping_export');
+      expect(calls[1].slice(2, -1)).toEqual(f.request.configuration ?? []);
+      expect(existsSync(path.join(f.outputDirectory, 'build-events.jsonl'))).toBe(false);
+      expect(existsSync(path.join(f.outputDirectory, 'evidence'))).toBe(false);
     } finally {
       f.cleanup();
     }

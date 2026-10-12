@@ -19,6 +19,7 @@ import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
 } from '../../../tools/packaging/portable-archive.mts';
+import { readWasixCargoCarrierPayload, readWasixCargoCarrierSet } from '../wasix_carriers.mts';
 
 const [
   input,
@@ -38,7 +39,6 @@ const [
   facadeInput,
   addonTemplateInput,
 ] = process.argv.slice(2);
-assert.equal(process.argv.length, 18);
 const napi = JSON.parse(readFileSync(napiInput, 'utf8'));
 const addonTemplate = JSON.parse(readFileSync(addonTemplateInput, 'utf8'));
 const hostManifestBytes = readFileSync(hostManifestInput);
@@ -47,6 +47,18 @@ const githubRoot = path.dirname(githubInput);
 const npmRoot = path.dirname(npmInput);
 const cargoRoot = path.dirname(cargoInput);
 const spec = JSON.parse(readFileSync(input, 'utf8'));
+const partInputs = process.argv.slice(18);
+const partParents = Object.keys(spec.outputs.cargoParts ?? {});
+assert.equal(process.argv.length, 18 + partParents.length);
+if (partParents.length)
+  assert.deepEqual(
+    partParents.sort(),
+    spec.carriers
+      .filter((row: { ecosystem: string }) => row.ecosystem === 'cargo')
+      .map((row: { name: string }) => row.name)
+      .sort(),
+  );
+assert.deepEqual(partInputs.map((file) => path.basename(file)).sort(), partParents.sort());
 const frozen = JSON.parse(readFileSync(frozenInput, 'utf8'));
 const compiled = moduleInput !== '-';
 assert.equal(compiled, frozen.wasixInstall.nativeModules.length > 0);
@@ -173,31 +185,30 @@ try {
     }
   }
   assert.equal(installed.size, compiled ? Object.keys(AOT_TARGET_TRIPLES).length + 1 : 1);
-  const crates = readdirSync(cargoRoot).filter((name) => name.endsWith('.crate'));
-  assert.equal(crates.length, installed.size);
-  for (const filename of crates) {
-    const entries = readPortableArchiveEntries(realpathSync(path.join(cargoRoot, filename)));
-    const prefix = filename.slice(0, -'.crate'.length);
-    const manifest = Bun.TOML.parse(entries.get(`${prefix}/Cargo.toml`)!.data().toString());
-    assert.equal(manifest.package.version, spec.version);
-    if (manifest.package.name.endsWith('-wasix'))
-      assert.deepEqual(
-        entries.get(`${prefix}/payload/files/extensions/${spec.sqlName}/extension.tar.zst`)!.data(),
-        archive,
-      );
-    else {
-      const carrier = spec.carriers.find(
-        (row: { ecosystem: string; name: string }) =>
-          row.ecosystem === 'cargo' && row.name === manifest.package.name,
-      );
-      assert(carrier, 'Cargo AOT has no declared canonical identity');
+  const crates = readdirSync(cargoRoot)
+    .filter((name) => name.endsWith('.crate'))
+    .map((name) => realpathSync(path.join(cargoRoot, name)));
+  const cargo = readWasixCargoCarrierSet(spec.carriers, [...crates, ...partInputs]);
+  assert.equal(cargo.filter((row) => row.declared).length, installed.size);
+  for (const carrier of cargo.filter((row) => row.declared)) {
+    const files = readWasixCargoCarrierPayload(cargo, carrier);
+    if (carrier.name.endsWith('-wasix')) {
+      assert.deepEqual([...files.keys()], [`extensions/${spec.sqlName}/extension.tar.zst`]);
+      assert.deepEqual(files.get(`extensions/${spec.sqlName}/extension.tar.zst`), archive);
+    } else {
       const aot = JSON.parse(
-        entries.get(`${prefix}/manifests/${spec.sqlName}.json`)!.data().toString(),
+        carrier.entries.get(`${carrier.prefix}/manifests/${spec.sqlName}.json`)!.data().toString(),
       );
-      assertMemberAot(aot, carrier.target, (relative) =>
-        Buffer.from(
-          entries.get(`${prefix}/payload/files/extensions/${spec.sqlName}/${relative}`)!.data(),
-        ),
+      assert.deepEqual(
+        [...files.keys()].sort(),
+        aot.artifacts
+          .map((row: { path: string }) => `extensions/${spec.sqlName}/${row.path}`)
+          .sort(),
+      );
+      assertMemberAot(
+        aot,
+        carrier.target,
+        (relative) => files.get(`extensions/${spec.sqlName}/${relative}`)!,
       );
     }
   }

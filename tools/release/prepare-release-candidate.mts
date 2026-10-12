@@ -1,3 +1,6 @@
+import { loadReleaseMetadata } from './bazel-release-metadata.mts';
+import { deriveQualifiedNativeCurrentExactInputs } from './qualified-native-current-exact-inputs.mts';
+import { fileIdentity } from './native-file-identity.mts';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -16,7 +19,10 @@ import { TagName } from 'release-please/build/src/util/tag-name.js';
 import { Version } from 'release-please/build/src/version.js';
 import { readCommitHistory, readCommitPaths } from './commit-paths.mts';
 import { createCompletedPublicationChecker } from './completed-release-publication.mts';
-import { defaultExtensionReleasePlan } from './default-extension-release-plan.mts';
+import {
+  defaultExtensionReleasePlan,
+  snapshotCurrentExactInputs,
+} from './default-extension-release-plan.mts';
 import { requestGithubRepositoryJson } from './github-read.mts';
 import { writeNativeReleaseInputs } from './native-release-inputs.mts';
 import {
@@ -53,6 +59,11 @@ export function includeOwnedSourceCommits(
 ) {
   const buildBound = resolveBuildBoundCompatibilityProducts(graph.products, options);
   const native = Object.hasOwn(options, 'nativeNecessaryProducts');
+  if (!native && Object.hasOwn(options, 'nativeCurrentExactInputs'))
+    throw new Error('current exact inputs require the native necessary decision');
+  const nativeCurrentExactInputs = native
+    ? snapshotCurrentExactInputs(graph.products, options.nativeCurrentExactInputs)
+    : undefined;
   const nativeSelected = new Set<string>();
   const nativeLeaves = new Map<string, Set<string>>();
   let nativePlan;
@@ -455,6 +466,7 @@ export function includeOwnedSourceCommits(
             nativePlan = defaultExtensionReleasePlan(predicted, nativeSelected, {
               readCompatibility,
               buildBound,
+              currentExactInputs: nativeCurrentExactInputs,
             });
             const missing = [...nativePlan.required].filter(
               (product) => !nativeSelected.has(product),
@@ -498,6 +510,7 @@ export function includeOwnedSourceCommits(
             plan = defaultExtensionReleasePlan(products, selected, {
               readCompatibility,
               buildBound,
+              currentExactInputs: nativeCurrentExactInputs,
             });
             if (
               [...plan.required].some((product) => !nativeSelected.has(product)) ||
@@ -689,6 +702,7 @@ async function main() {
   const versionUpdates = collectNativeVersionUpdates();
   let native;
   let nativeFinalProducts: string[] | undefined;
+  let nativeCurrentExactInputs: ReturnType<typeof deriveQualifiedNativeCurrentExactInputs> = [];
   if (nativeRun !== undefined) {
     if (!/^[1-9][0-9]*$/u.test(nativeRun))
       throw new Error('native preparation requires an exact positive qualification run ID');
@@ -703,6 +717,10 @@ async function main() {
       ),
       directory: path.join(destination, 'native'),
     });
+    nativeCurrentExactInputs = deriveQualifiedNativeCurrentExactInputs(
+      native,
+      loadReleaseMetadata(root),
+    );
   }
   includeOwnedSourceCommits(manifest, github, graph, undefined, {
     readCommitFiles: readCommitPaths,
@@ -712,6 +730,7 @@ async function main() {
           buildBound: native.suppliers.buildBound,
           nativeNecessaryProducts: native.decision.selectedProducts,
           nativeObservation: native.observation,
+          nativeCurrentExactInputs,
           observeNativePlan: async ({ selectedProducts, requirements }) => {
             const necessary = new Set(native.decision.selectedProducts);
             if (
@@ -733,6 +752,25 @@ async function main() {
               if (!declaredRetarget && !currentEmbedding)
                 throw new Error(
                   `native ${product} has no explicit default-install or current-embedding adoption`,
+                );
+            }
+            for (const requirement of requirements.values()) {
+              if (
+                requirement.product !== 'database-resources' ||
+                requirement.sourceProduct !== 'liboliphaunt-wasix'
+              )
+                continue;
+              if (
+                !nativeCurrentExactInputs.some(
+                  (pair) =>
+                    pair.product === requirement.product &&
+                    pair.sourceProduct === requirement.sourceProduct,
+                ) ||
+                !selectedProducts.includes(requirement.product) ||
+                !selectedProducts.includes(requirement.sourceProduct)
+              )
+                throw new Error(
+                  'native current exact requirement lacks its authenticated two-profile consumer contract',
                 );
             }
             const selected = [...selectedProducts].sort();
@@ -795,6 +833,47 @@ async function main() {
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([consumer, suppliers]) => [consumer, [...suppliers].sort()] as [string, string[]]),
     };
+    const supplierArtifacts = [...(native.publicationInputs.snapshot.supplierArtifacts ?? [])];
+    const finalConsumer = loadReleaseMetadata(root).databaseResourceWasixConsumer;
+    if (nativeCurrentExactInputs.length && finalConsumer?.source === 'completed') {
+      // An independent core-only release leaves the resource's old exact request
+      // held. Its genuine baseline archive was already acquired and proved.
+      const baseline = native.baselines.find(
+        ({ publication }) =>
+          publication.product === 'liboliphaunt-wasix' &&
+          publication.version === finalConsumer.version,
+      );
+      const rows = native.candidate.productArtifacts.filter(
+        (artifact) =>
+          artifact.product === 'liboliphaunt-wasix' &&
+          artifact.kind === 'wasix-runtime' &&
+          artifact.target === 'portable',
+      );
+      if (!baseline || rows.length !== 1)
+        throw new Error('native held WASIX consumer has no exact completed baseline');
+      const artifact = rows[0];
+      const original = native.completedPublicFiles.filter(
+        (file) => file.path === baseline.productArtifacts?.[artifact.id],
+      );
+      if (original.length !== 1)
+        throw new Error('native held WASIX archive is absent from its original public transport');
+      const actual = fileIdentity(original[0].path);
+      if (actual.size !== original[0].size || actual.sha256 !== original[0].sha256)
+        throw new Error('native held WASIX archive changed after public authentication');
+      if (
+        !supplierArtifacts.some(
+          (row) =>
+            row.publication.product === baseline.publication.product &&
+            row.publication.version === baseline.publication.version &&
+            row.artifact === artifact.id,
+        )
+      )
+        supplierArtifacts.push({
+          publication: baseline.publication,
+          artifact: artifact.id,
+          file: { path: original[0].path, size: actual.size, sha256: actual.sha256 },
+        });
+    }
     writeNativeReleaseInputs(
       path.join(destination, 'native-release-inputs'),
       record,
@@ -807,7 +886,7 @@ async function main() {
           ].map((publication) => [`${publication.product}@${publication.version}`, publication]),
         ).values(),
       ],
-      native.publicationInputs.snapshot.supplierArtifacts ?? [],
+      supplierArtifacts,
     );
     writeFileSync(
       path.join(destination, 'native-version-source.json'),

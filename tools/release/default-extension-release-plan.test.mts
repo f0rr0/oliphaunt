@@ -1,6 +1,10 @@
 import { expect, test } from 'bun:test';
 import { validateReleaseConsumerCompatibility } from './consumer-compatibility.mts';
-import { defaultExtensionReleasePlan } from './default-extension-release-plan.mts';
+import {
+  defaultExtensionReleasePlan,
+  snapshotCurrentExactInputs,
+} from './default-extension-release-plan.mts';
+import { loadProducts } from './release-graph.mts';
 import { fixture } from './testdata/extension-release-fixture.mts';
 
 const native = 'liboliphaunt-native';
@@ -262,3 +266,69 @@ test('500 seeded sparse and broad releases close compatible defaults and preserv
     }
   }
 }, 30_000);
+
+// Physical module/descriptor authentication is the controller precondition;
+// these tests exercise only the one frozen requirements/RP seam.
+test('verified exact-module contracts retarget only necessary selected consumers and producers', () => {
+  const products = loadProducts('exact current requirement test');
+  const product = 'database-resources',
+    sourceProduct = 'liboliphaunt-wasix';
+  const buildBound = new Map(Object.keys(products).map((id) => [id, new Set<string>()]));
+  const readCompatibility = () => '0.3.2';
+  products[sourceProduct].version = '0.3.4';
+  const currentExactInputs = [{ product, sourceProduct }];
+  const before = structuredClone(products);
+  for (const selected of [[], [sourceProduct], [product]]) {
+    const plan = defaultExtensionReleasePlan(products, selected, {
+      buildBound,
+      readCompatibility,
+      currentExactInputs,
+    });
+    expect([...plan.required]).toEqual(selected);
+    expect(plan.requirements.size).toBe(0);
+  }
+  const selected = [sourceProduct, product];
+  const planned = defaultExtensionReleasePlan(products, selected, {
+    buildBound,
+    readCompatibility,
+    currentExactInputs,
+  });
+  expect([...planned.required]).toEqual(selected);
+  expect([...planned.requirements.values()]).toEqual([
+    { product, sourceProduct, version: '0.3.4' },
+  ]);
+  expect(buildBound.get(product).size).toBe(0);
+  expect(products).toEqual(before);
+  const same = defaultExtensionReleasePlan(products, selected, {
+    buildBound,
+    readCompatibility: () => '0.3.4',
+    currentExactInputs,
+  });
+  expect(same.requirements.size).toBe(0);
+});
+
+test('current exact associations are immutable, conventional, unique and cannot select releases', () => {
+  const products = loadProducts('exact current requirement negative');
+  const pair = { product: 'database-resources', sourceProduct: 'liboliphaunt-wasix' };
+  const input = [pair];
+  const snapshot = snapshotCurrentExactInputs(products, input);
+  pair.sourceProduct = 'liboliphaunt-native';
+  input.push({ product: 'foreign', sourceProduct: 'foreign' });
+  expect(snapshot).toEqual([
+    { product: 'database-resources', sourceProduct: 'liboliphaunt-wasix' },
+  ]);
+  expect(Object.isFrozen(snapshot)).toBe(true);
+  expect(Object.isFrozen(snapshot[0])).toBe(true);
+  for (const invalid of [
+    null,
+    {},
+    [null],
+    [{ ...snapshot[0], version: '0.3.4' }],
+    [{ product: 'foreign', sourceProduct: 'liboliphaunt-wasix' }],
+    [{ product: 'database-resources', sourceProduct: 'database-resources' }],
+    [{ product: 'database-resources', sourceProduct: 'oliphaunt-query' }],
+    [...snapshot, ...snapshot],
+  ]) {
+    expect(() => snapshotCurrentExactInputs(products, invalid)).toThrow();
+  }
+});

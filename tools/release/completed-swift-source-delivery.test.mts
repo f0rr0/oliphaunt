@@ -24,8 +24,12 @@ import { extractPortableArchiveTree } from '../packaging/portable-archive.mts';
 import {
   captureCompletedSwiftSourceTag,
   currentSwiftSourceTagMembers,
+  replayCompletedSwiftSourceArchive,
 } from './completed-swift-source-delivery.mts';
-import { compareNativeCompletedPhysicalDelivery } from './native-completed-delivery.mts';
+import {
+  captureCompletedNativeSwiftSourceSuppliers,
+  compareNativeCompletedPhysicalDelivery,
+} from './native-completed-delivery.mts';
 import { differentNativeDeliveredMembers } from './native-publication-delivery.mts';
 import { buildPublicationCandidate, expectedProductArtifactRows } from './publication-lock.mts';
 import { ROOT } from './release-graph.mts';
@@ -511,4 +515,170 @@ test('authentic Git symlink and changed delivered members cannot be erased by so
     await expect(captureCompletedSwiftSourceTag(f.input, options)).rejects.toThrow(
       'regular member',
     );
+  }));
+
+test('retained completed Swift source archive preserves every immutable Git member and contains no invented version files', async () => {
+  const { input, options } = genuine();
+  const directory = mkdtempSync('/tmp/swift-completed-retention-');
+  try {
+    const file = path.join(directory, 'swift-source-tag-0.8.2.tar.gz');
+    const result = await captureCompletedSwiftSourceTag(
+      { ...input, retainedArchive: file },
+      options,
+    );
+    expect(result.file?.path).toBe(file);
+    const extracted = path.join(directory, 'source');
+    extractPortableArchiveTree(file, extracted);
+    const actual = readSwiftSourceTagMembers(extracted).sort((a, b) =>
+      a.path.localeCompare(b.path),
+    );
+    expect(actual).toEqual(result.members);
+    expect(actual.filter(({ type }) => type === 'file')).toHaveLength(29);
+    expect(actual.some(({ path }) => path === 'src/sdks/swift/LIBOLIPHAUNT_VERSION')).toBe(false);
+    expect(result.file?.sha256).toBe(hash(readFileSync(file)));
+    await expect(
+      captureCompletedSwiftSourceTag({ ...input, retainedArchive: file }, options),
+    ).rejects.toThrow('refusing to replace');
+    expect(result.scope).toBe('construction');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+test('failed immutable Swift source proof retains no archive', async () => {
+  const { input, options } = genuine();
+  const directory = mkdtempSync('/tmp/swift-completed-retention-');
+  try {
+    const file = path.join(directory, 'swift-source-tag-0.8.2.tar.gz');
+    await expect(
+      captureCompletedSwiftSourceTag(
+        {
+          ...input,
+          bindings: { ...input.bindings, sha256: 'f'.repeat(64) },
+          retainedArchive: file,
+        },
+        options,
+      ),
+    ).rejects.toThrow('manifest differs');
+    expect(() => readFileSync(file)).toThrow();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('completed source replay rechecks the entire Git-delivered archive and exact source reference', async () => {
+  const { input, options } = genuine();
+  const directory = mkdtempSync('/tmp/swift-completed-replay-');
+  try {
+    const result = await captureCompletedSwiftSourceTag(
+      { ...input, retainedArchive: path.join(directory, 'source.tar.gz') },
+      options,
+    );
+    const replay = await replayCompletedSwiftSourceArchive(
+      { ...input, source: result.source, file: result.file! },
+      options,
+    );
+    expect(replay.members).toEqual(result.members);
+    await expect(
+      replayCompletedSwiftSourceArchive(
+        { ...input, source: { ...result.source, tree: 'f'.repeat(40) }, file: result.file! },
+        options,
+      ),
+    ).rejects.toThrow('source tag changed');
+    const tree = path.join(directory, 'tree');
+    extractPortableArchiveTree(result.file!.path, tree);
+    writeFileSync(path.join(tree, 'invented.txt'), 'extra');
+    const { archiveDirectory } = await import('../packaging/archive-directory.mts');
+    const extra = path.join(directory, 'extra.tar.gz');
+    await archiveDirectory(tree, extra);
+    const { fileIdentity } = await import('./native-file-identity.mts');
+    const identity = fileIdentity(extra);
+    await expect(
+      replayCompletedSwiftSourceArchive(
+        {
+          ...input,
+          source: result.source,
+          file: { path: extra, size: identity.size, sha256: identity.sha256 },
+        },
+        options,
+      ),
+    ).rejects.toThrow('archive member differs');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('completed supplier source replay shares the actual public binding and validates full Git members', async () =>
+  writerFixture(async (f) => {
+    const capturedSource = await captureCompletedSwiftSourceTag(
+      {
+        ...f.input,
+        retainedArchive: path.join(f.directory, 'source.tar.gz'),
+      },
+      f.options,
+    );
+    const binding = path.join(f.directory, 'release-assets', f.input.bindings.name);
+    const file = {
+      path: capturedSource.file!.path,
+      size: capturedSource.file!.size,
+      sha256: capturedSource.file!.sha256,
+    };
+    const sourceRow = {
+      publication: f.input.publication,
+      artifact: `swift-source-tag:${f.input.publication.version}`,
+      source: capturedSource.source,
+      file,
+    };
+    const product = f.candidate().products[0];
+    const publicRows = expectedProductArtifactRows([product]).filter(
+      ({ role }) => role === 'github-release-asset' || role === 'github-release-metadata',
+    );
+    const bindingRow = publicRows.find(({ kind }) => kind === 'swift-bindings')!;
+    let bindingReads = 0;
+    const originalPages = f.options.readPages;
+    const options = {
+      ...f.options,
+      readPages: async (endpoint) => {
+        if (endpoint !== `${repository}/releases/82/assets`) return originalPages(endpoint);
+        bindingReads++;
+        return publicRows.map((row, index) => ({
+          id: index + 1,
+          name: row.name,
+          state: 'uploaded',
+          url: `https://api.github.com/repos/f0rr0/oliphaunt/releases/assets/${index + 1}`,
+          size: row.id === bindingRow.id ? readFileSync(binding).length : 1,
+          digest: `sha256:${row.id === bindingRow.id ? hash(readFileSync(binding)) : '1'.repeat(64)}`,
+        }));
+      },
+    };
+    const input = {
+      publication: f.input.publication,
+      files: { [bindingRow.id]: binding },
+      sourceTags: [sourceRow],
+    };
+    const result = await captureCompletedNativeSwiftSourceSuppliers(input, options);
+    const sourceArchive = result.archives.find(({ id }) => id === sourceRow.artifact)!;
+    expect(sourceArchive.members).toEqual(capturedSource.members);
+    expect(sourceArchive.target).toBe('portable');
+    expect(sourceArchive.size).toBe(file.size);
+    expect(sourceArchive.sha256).toBe(file.sha256);
+    expect(bindingReads).toBe(1);
+    expect(result.scope).toBe('construction');
+    await expect(
+      captureCompletedNativeSwiftSourceSuppliers({ ...input, files: {} }, options),
+    ).rejects.toThrow('authenticated binding archive');
+    await expect(
+      captureCompletedNativeSwiftSourceSuppliers(
+        {
+          ...input,
+          sourceTags: [{ ...sourceRow, source: { ...sourceRow.source, commit: 'f'.repeat(40) } }],
+        },
+        options,
+      ),
+    ).rejects.toThrow('source tag changed');
+    await expect(
+      captureCompletedNativeSwiftSourceSuppliers(
+        { ...input, sourceTags: [{ ...sourceRow, file: { ...file, sha256: '0'.repeat(64) } }] },
+        options,
+      ),
+    ).rejects.toThrow('archive bytes differ');
   }));

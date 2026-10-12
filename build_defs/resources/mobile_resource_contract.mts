@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { createReadStream, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import {
+  createReadStream,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from 'node:fs';
 import path from 'node:path';
 import { validateNativeIcuDataManifest } from '../../src/database-resources/contracts/icu-data.mts';
 import {
@@ -96,6 +103,19 @@ export async function verifyMobileResourceFiles({
   assert(['android-datum64', 'ios-datum64'].includes(target));
   assert.deepEqual(seeds.map(({ profile }) => profile).sort(), ['icu', 'standard']);
   assert.equal(Boolean(swift), target === 'ios-datum64');
+  // Bazel's declared outer Files may be runfiles aliases. Archive members retain
+  // the strict parser's regular-file, path, mode and complete-tree checks.
+  icu = realpathSync(icu);
+  swift = swift ? realpathSync(swift) : undefined;
+  seeds = seeds.map((seed) => ({
+    ...seed,
+    frozen: realpathSync(seed.frozen),
+    archive: realpathSync(seed.archive),
+    manifest: realpathSync(seed.manifest),
+    npm: realpathSync(seed.npm),
+    cargo: realpathSync(seed.cargo),
+    ...(seed.maven ? { maven: realpathSync(seed.maven) } : {}),
+  }));
   const icuRoot = path.join(root, 'icu');
   extractPortableArchiveTree(icu, icuRoot);
   const icuData = path.join(icuRoot, 'share/icu');
@@ -203,7 +223,9 @@ export async function verifyMobileResourceFiles({
         pomText: readFileSync(path.join(coordinate, `${identity.cargo}-${version}.pom`), 'utf8'),
       });
       validateMobile(
-        readPortableArchiveEntries(path.join(coordinate, `${identity.cargo}-${version}.tar.gz`)),
+        readPortableArchiveEntries(
+          realpathSync(path.join(coordinate, `${identity.cargo}-${version}.tar.gz`)),
+        ),
         resource,
       );
     } else {

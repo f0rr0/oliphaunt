@@ -1,6 +1,7 @@
 /** The actual pre-version controller composes existing authentication and delivery readers. */
 import assert from 'node:assert/strict';
 import {
+  appendFileSync,
   chmodSync,
   copyFileSync,
   existsSync,
@@ -17,20 +18,32 @@ import {
   selectCompletedSeed,
   validateSeedConstructionReceipt,
 } from '../../build_defs/resources/seed_construction.mts';
-import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
+import { wasixSeedConsumerDeclaration } from '../../src/database-resources/seeds/wasix/consumer-contract.mts';
 import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
 import {
+  removeOwnedDirectory,
+  requireSafeDirectoryChain,
+} from '../packaging/release-directory-safety.mts';
+import {
   acquireAuthenticatedNativeBuildEvidence,
+  assertAuthenticatedNativeBuildOrigin,
   createNativeBuildEvidenceAcquirer,
   reviewedNativeProducerArtifacts,
   validateReviewedNativeProducerAssurance,
 } from './authenticate-native-build-evidence.mts';
 import {
+  loadReleaseMetadata,
+  nativePublicationInputProjection,
+  type ReleaseMetadata,
+} from './bazel-release-metadata.mts';
+import {
   type CompletedPublication,
   createCompletedPublicationChecker,
 } from './completed-release-publication.mts';
+import { captureCompletedSwiftSourceTag } from './completed-swift-source-delivery.mts';
 import { requestGithubPages, requestGithubRepositoryJson } from './github-read.mts';
 import {
+  assertNativeSwiftShippingPhase,
   type NativeBuildSource,
   validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
@@ -38,6 +51,7 @@ import {
   type CompletedDeliveryBaseline,
   captureCompletedNativePublicArtifacts,
   captureCompletedNativeRegistryCarriers,
+  captureCompletedNativeSwiftSourceSuppliers,
   compareNativeCompletedPhysicalDelivery,
 } from './native-completed-delivery.mts';
 import { fileIdentity } from './native-file-identity.mts';
@@ -51,18 +65,18 @@ import {
   type NativePublicationBuild,
   observeNativePublicationConstruction,
 } from './native-publication-observation.mts';
+import {
+  type NativeSeedConstructionBaseline,
+  proposeSeedConstructionAnchor,
+  readDeclaredSeedConstructionAnchor,
+  writeSeedConstructionAnchorProposal,
+} from './native-seed-baseline.mts';
 import { type NativeSeedInputControl, projectNativeSeedInputs } from './native-seed-inputs.mts';
+import { projectNativeBuildBoundSuppliers } from './native-shipping-suppliers.mts';
 import {
   type NativeSupplierArtifact,
   validateNativeSupplierArtifacts,
 } from './native-supplier-artifacts.mts';
-import {
-  proposeSeedConstructionAnchor,
-  type NativeSeedConstructionBaseline,
-  readDeclaredSeedConstructionAnchor,
-  writeSeedConstructionAnchorProposal,
-} from './native-seed-baseline.mts';
-import { projectNativeBuildBoundSuppliers } from './native-shipping-suppliers.mts';
 import {
   assertNativeVersionSourceTransition,
   type NativeVersionSourceBridge,
@@ -74,9 +88,15 @@ import {
   lockedPublicationFiles,
   sourceIdentity,
 } from './publication-lock.mts';
+import { constructionNativeFinalInputs } from './qualified-native-extension-final-inputs.mts';
 import { materializeRegistryCarrierIntegrity } from './registry-integrity.mts';
-import { loadProducts, ROOT, releasePackageBindings } from './release-graph.mts';
 import { allArtifactTargets } from './release-artifact-targets.mts';
+import {
+  loadProducts,
+  productCompatibilityVersion,
+  ROOT,
+  releasePackageBindings,
+} from './release-graph.mts';
 import { requestReleaseAssetProof } from './verify_github_release_attestations.mts';
 
 /** Construct the existing importer snapshot only from authenticated acquisition.
@@ -101,6 +121,7 @@ export async function acquireNativePublicationInputs(
     readBaseline = readCompletedNativePublicBaseline,
     readSeedAnchor = readDeclaredSeedConstructionAnchor,
     materialize = materializeRegistryCarrierIntegrity,
+    captureSwiftSource = captureCompletedSwiftSourceTag,
     assertCompleted = undefined as ReturnType<typeof createCompletedPublicationChecker> | undefined,
   } = {},
 ) {
@@ -137,10 +158,25 @@ export async function acquireNativePublicationInputs(
       consumerProducts.every((id) => catalog.products.some((product) => product.id === id)),
     'native input requests need unique canonical consumer owners',
   );
+  const seedConsumer = wasixSeedConsumerDeclaration(
+    Bun.TOML.parse(
+      readFileSync(path.join(ROOT, 'src/database-resources/seeds/wasix/Cargo.toml'), 'utf8'),
+    ),
+    productCompatibilityVersion('database-resources', 'liboliphaunt-wasix'),
+    catalog.products.find(({ id }) => id === 'liboliphaunt-wasix')!.version,
+  );
+  const authoredProducts = loadProducts();
   const bindings = releasePackageBindings([], {
-    products: loadProducts(),
+    products: authoredProducts,
     consumerProducts: new Set(consumerProducts),
-  });
+  }).filter(
+    (binding) =>
+      !(
+        seedConsumer.source === 'current' &&
+        binding.consumer === 'database-resources' &&
+        binding.producer === 'liboliphaunt-wasix'
+      ),
+  );
   const supplierRequests = [
     ...new Map(
       bindings.map((binding) => [
@@ -297,17 +333,18 @@ export async function acquireNativePublicationInputs(
     };
   };
   try {
-    // Conventional requirements request immutable source crates; configured File origins still decide actual consumption.
-    for (const binding of bindings) {
-      const carriers = catalog.carriers.filter(
-        (carrier) => carrier.product === binding.producer && carrier.ecosystem === 'cargo',
-      );
-      if (carriers.length !== 1) continue;
-      await retainCarrier(
-        await completeSupplier(binding.producer, binding.producerVersion),
-        carriers[0],
-      );
-    }
+    // Conventional requests identify retained source carriers; configured File origins decide actual consumption.
+    for (const binding of bindings)
+      for (const ecosystem of ['cargo', 'npm']) {
+        const carriers = catalog.carriers.filter(
+          (carrier) => carrier.product === binding.producer && carrier.ecosystem === ecosystem,
+        );
+        if (carriers.length !== 1) continue;
+        await retainCarrier(
+          await completeSupplier(binding.producer, binding.producerVersion),
+          carriers[0],
+        );
+      }
     const appleConsumers = new Set(
       expectedProductArtifactRows(
         catalog.products.filter((product) => consumerProducts.includes(product.id)),
@@ -340,6 +377,56 @@ export async function acquireNativePublicationInputs(
       );
       assert.equal(rows.length, 1, 'WASIX seed consumer needs one canonical portable archive');
       await retainPublicAssets(completed, rows);
+    }
+    for (const request of [
+      ...new Map(
+        bindings
+          .filter((binding) => binding.producer === 'oliphaunt-swift')
+          .map((binding) => [binding.producerVersion, binding]),
+      ).values(),
+    ]) {
+      const completed = await completeSupplier(request.producer, request.producerVersion);
+      const owner = catalog.products.find((product) => product.id === completed.product)!;
+      const rows = expectedProductArtifactRows([{ ...owner, version: completed.version }]).filter(
+        (row) => row.kind === 'swift-bindings',
+      );
+      assert.equal(
+        rows.length,
+        1,
+        'completed Swift source needs its actual owned bindings archive',
+      );
+      await retainPublicAssets(completed, rows);
+      const bindings = supplierArtifacts.find(
+        (row) =>
+          row.publication.product === completed.product &&
+          row.publication.version === completed.version &&
+          row.artifact === rows[0].id,
+      )!;
+      const retained = await captureSwiftSource(
+        {
+          publication: completed,
+          descriptor: authoredProducts[completed.product],
+          bindings: { name: rows[0].name, sha256: bindings.file.sha256 },
+          retainedArchive: path.join(
+            owned,
+            'suppliers',
+            completed.product,
+            completed.version,
+            `swift-source-tag-${completed.version}.tar.gz`,
+          ),
+        },
+        { assertCompletedPublication: complete, readJson: read, readPages: pages },
+      );
+      assert.ok(
+        retained.file,
+        'completed Swift source must retain its authenticated Git delivery bytes',
+      );
+      supplierArtifacts.push({
+        publication: completed,
+        artifact: `swift-source-tag:${completed.version}`,
+        source: retained.source,
+        file: retained.file,
+      });
     }
     if (consumerProducts.includes('oliphaunt-wasix-ts')) {
       const facade = catalog.products.find((product) => product.id === 'oliphaunt-wasix-ts')!;
@@ -563,12 +650,14 @@ export async function acquireNativePublicationBuilds(
     directory,
     ref = 'refs/heads/main',
     excludeArtifactNames = [],
+    requestedArtifactNames,
   }: {
     source: NativeBuildSource;
     runId: number;
     directory: string;
     ref?: string;
     excludeArtifactNames?: string[];
+    requestedArtifactNames?: string[];
   },
   {
     readJson = requestGithubRepositoryJson,
@@ -605,13 +694,31 @@ export async function acquireNativePublicationBuilds(
     ) && new Set(excludeArtifactNames).size === excludeArtifactNames.length,
     'native construction exclusions must be finite producer roles',
   );
+  assert.ok(
+    requestedArtifactNames === undefined ||
+      (requestedArtifactNames.length > 0 &&
+        new Set(requestedArtifactNames).size === requestedArtifactNames.length &&
+        requestedArtifactNames.every(
+          (name) =>
+            allRoles.some(({ artifactName }) => artifactName === name) &&
+            !excludeArtifactNames.includes(name),
+        )),
+    'native construction requests must use finite producer roles',
+  );
   const artifacts = await readPages(`repos/${repository}/actions/runs/${runId}/artifacts`);
   const roles = allRoles.filter(
     ({ artifactName }) =>
       !excludeArtifactNames.includes(artifactName) &&
+      (requestedArtifactNames === undefined || requestedArtifactNames.includes(artifactName)) &&
       artifacts.some((artifact) => artifact.name === artifactName && artifact.expired === false),
   );
   assert.ok(roles.length, 'native construction has no retained source producer artifacts');
+  if (requestedArtifactNames)
+    assert.deepEqual(
+      roles.map(({ artifactName }) => artifactName).sort(),
+      [...requestedArtifactNames].sort(),
+      'requested native constructor producer is not completed and retained',
+    );
   const destination = path.resolve(directory);
   requireSafeDirectoryChain(path.dirname(destination), {
     create: true,
@@ -675,7 +782,16 @@ export async function acquireNativeReleaseArchives(
     runId,
     directory,
     ref = 'refs/heads/main',
-  }: { source: NativeBuildSource; runId: number; directory: string; ref?: string },
+    publicationInputs,
+    consumerProducts,
+  }: {
+    source: NativeBuildSource;
+    runId: number;
+    directory: string;
+    ref?: string;
+    publicationInputs?: string;
+    consumerProducts?: string[];
+  },
   {
     readJson = requestGithubRepositoryJson,
     readPages = requestGithubPages,
@@ -697,17 +813,255 @@ export async function acquireNativeReleaseArchives(
         runId,
         directory: inputs,
         ref,
-        excludeArtifactNames: ['native-build-evidence-release-families'],
+        excludeArtifactNames: [
+          'native-build-evidence-release-families',
+          'native-build-evidence-react-native-macos-arm64',
+        ],
+        ...(consumerProducts === undefined
+          ? {}
+          : {
+              requestedArtifactNames: nativeConstructorProducerArtifacts(consumerProducts),
+            }),
       },
       { readJson, readPages, acquire },
     );
     const { origins } = construction;
     const families = stageNativeReleaseArchives(origins, source, destination);
     assert.ok(families.length, 'native archive assembly has no canonical public assets');
-    return { ...construction, directory: destination, families };
+    const snapshot =
+      publicationInputs === undefined
+        ? undefined
+        : writeNativeConstructionInputSnapshot({
+            source,
+            file: publicationInputs,
+            directory: `${destination}.inputs`,
+            finalInputs: nativeArchiveConstructionFinalInputs(construction, source),
+          });
+    return {
+      ...construction,
+      directory: destination,
+      families,
+      ...(snapshot ? { publicationInputs: snapshot } : {}),
+    };
   } catch (error) {
     rmSync(destination, { recursive: true, force: true });
     rmSync(inputs, { recursive: true, force: true });
+    rmSync(`${destination}.inputs`, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** Existing Apple producer composition owns the tuple used by the RN factory.
+ * This narrows construction acquisition, never release necessity or admission. */
+export function nativeConstructorProducerArtifacts(consumerProducts: string[]) {
+  assert.deepEqual(
+    consumerProducts,
+    ['oliphaunt-react-native'],
+    'native constructor bootstrap requires the canonical RN consumer',
+  );
+  const roles = reviewedNativeProducerArtifacts().filter(
+    ({ artifactName }) => artifactName === 'native-build-evidence-mobile-ios',
+  );
+  assert.equal(roles.length, 1, 'source-owned Apple constructor role is absent');
+  return roles.map(({ artifactName }) => artifactName);
+}
+
+/** Reuse the actual acquired cohort; construction does not assert reviewed-main discipline. */
+export function nativeArchiveConstructionFinalInputs(
+  construction: Awaited<ReturnType<typeof acquireNativePublicationBuilds>>,
+  source: NativeBuildSource,
+  metadata: ReleaseMetadata = loadReleaseMetadata(ROOT),
+) {
+  assert.equal(
+    construction.builds.length,
+    construction.origins.size,
+    'native construction producer plan differs',
+  );
+  const seen = new Set<string>();
+  const bazelVersion = readFileSync(path.join(ROOT, '.bazelversion'), 'utf8').trim();
+  const authenticated = construction.builds.map((build) => {
+    assert.ok(!seen.has(build.evidenceRoot), 'native construction producer repeats');
+    seen.add(build.evidenceRoot);
+    const origin = assertAuthenticatedNativeBuildOrigin(
+      construction.origins.get(build.evidenceRoot),
+    );
+    assert.deepEqual(build.expected.source, source, 'native constructor input source differs');
+    assert.deepEqual(
+      origin.github,
+      build.expected.github,
+      'native constructor producer context differs',
+    );
+    assert.equal(
+      origin.artifact.name,
+      build.expected.artifactName,
+      'native constructor artifact role differs',
+    );
+    const qualification = origin.finalFiles?.qualification;
+    assert.ok(qualification, 'native constructor requires acquired physical qualification');
+    const producingBazelVersion = origin.evidence.cohorts[0].buildEvents.find(
+      (event) => event.started !== undefined,
+    )?.started?.buildToolVersion;
+    assert.equal(producingBazelVersion, bazelVersion, 'native constructor Bazel pin differs');
+    assert.deepEqual(
+      qualification.source,
+      source,
+      'native constructor qualification source differs',
+    );
+    assert.deepEqual(qualification.github, build.expected.github);
+    assert.equal(qualification.testQualification, 'passed');
+    assert.equal(qualification.shippingAnalysis, 'bound');
+    assert.equal(qualification.qualificationPolicy, 'bound');
+    assert.ok(
+      qualification.requiredTests.length,
+      'native constructor imports need mandatory configured tests',
+    );
+    return { origin, evidence: origin.evidence, qualification };
+  });
+  return constructionNativeFinalInputs(
+    { observation: { authenticated }, origins: construction.origins },
+    metadata,
+  );
+}
+
+/** Replace constructor facts with this source's actual fresh envelopes.
+ * Source/selection/public completion facts are preserved; this JSON grants no admission. */
+export function writeNativeConstructionInputSnapshot(
+  {
+    source,
+    file,
+    directory,
+    finalInputs,
+  }: {
+    source: NativeBuildSource;
+    file: string;
+    directory: string;
+    finalInputs: ReturnType<typeof constructionNativeFinalInputs>;
+  },
+  metadata: ReleaseMetadata = loadReleaseMetadata(ROOT),
+) {
+  const before = fileIdentity(file);
+  const snapshot = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(snapshot.source, source, 'native construction snapshot source differs');
+  // Validate the inherited input facts before replacing only source-constructor tuples.
+  nativePublicationInputProjection(snapshot, metadata);
+  const next = { ...snapshot };
+  delete next.extensionFinalInputs;
+  delete next.nativeAppleBase;
+  delete next.nativeSwiftSource;
+  Object.assign(next, finalInputs);
+  nativePublicationInputProjection(next, metadata);
+  assert.deepEqual(fileIdentity(file), before, 'native construction input snapshot changed');
+  const destination = path.resolve(directory);
+  requireSafeDirectoryChain(path.dirname(destination), {
+    create: true,
+    label: 'native constructor inputs',
+  });
+  assert.ok(!existsSync(destination), 'native constructor snapshot needs a new owned directory');
+  mkdirSync(destination);
+  try {
+    const output = path.join(destination, 'native-publication-inputs.json');
+    writeFileSync(output, JSON.stringify(next) + '\n', { flag: 'wx', mode: 0o444 });
+    return output;
+  } catch (error) {
+    rmSync(destination, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** Stage the complete canonical construction inventory from its original producer Files.
+ * This creates no release selection, reviewed-main assurance, or publication admission. */
+export function stageNativePublicationConstruction({
+  source,
+  runId,
+  origins,
+  builds,
+  directory,
+}: {
+  source: NativeBuildSource;
+  runId: number;
+  origins: Awaited<ReturnType<typeof acquireNativePublicationBuilds>>['origins'];
+  builds: NativePublicationBuild[];
+  directory?: string;
+}) {
+  assert.equal(origins.size, builds.length, 'native construction producer inventory differs');
+  assert.ok(builds.length, 'native construction requires original producing builds');
+  const catalog = loadPublicationCatalog('native release construction');
+  const bazelVersion = readFileSync(path.join(ROOT, '.bazelversion'), 'utf8').trim();
+  const familyParent = requireSafeDirectoryChain(path.join(ROOT, 'target/native-release-family'), {
+    create: true,
+    label: 'native release families',
+  });
+  const familyCapture =
+    directory === undefined
+      ? mkdtempSync(path.join(familyParent, `${runId}-`))
+      : path.resolve(directory);
+  if (directory !== undefined) {
+    const relative = path.relative(ROOT, familyCapture);
+    assert.ok(
+      relative.startsWith(`target${path.sep}`) && !relative.split(path.sep).includes('..'),
+      'native construction staging must remain under target/',
+    );
+    requireSafeDirectoryChain(path.dirname(familyCapture), {
+      create: true,
+      label: 'native construction staging',
+    });
+    assert.ok(
+      !existsSync(familyCapture),
+      'native construction staging requires a new owned directory',
+    );
+    mkdirSync(familyCapture);
+  }
+  try {
+    const artifactRoots: string[] = [];
+    for (const [index, { evidenceRoot, expected }] of builds.entries()) {
+      const origin = origins.get(evidenceRoot);
+      assert.ok(origin);
+      const qualification = validateNativeBuildEvidence(origin.evidence, {
+        source,
+        github: expected.github,
+        bazelVersion,
+        requireShippingAnalysis: true,
+      });
+      assert.equal(
+        qualification.qualificationPolicy,
+        'bound',
+        `native producer ${expected.artifactName} has incomplete source-owned qualification`,
+      );
+      assertNativeSwiftShippingPhase(qualification, 'pre-version');
+      assert.ok(
+        origin.finalFiles && 'stage' in origin.finalFiles,
+        `native producer ${expected.artifactName} has no physical transport`,
+      );
+      artifactRoots.push(
+        ...origin.finalFiles.stage({
+          excludeRoles: ['github-release-asset', 'github-release-metadata'],
+          artifactPhase: 'pre-version',
+          stageDirectory: path
+            .relative(ROOT, path.join(familyCapture, 'registry', String(index)))
+            .split(path.sep)
+            .join('/'),
+        }),
+      );
+    }
+    const products = catalog.products.map(({ id }) => id);
+    const publicFamilies = stageNativeReleaseFamilies(
+      origins,
+      source,
+      path.join(familyCapture, 'products'),
+    );
+    // The conventional envelope reader enforces actual complete carrier/artifact inventory.
+    const candidate = {
+      ...buildPublicationCandidate({
+        products,
+        artifactRoots: [...artifactRoots, ...publicFamilies],
+        headRef: source.commit,
+        artifactPhase: 'pre-version',
+      }),
+      scope: 'construction' as const,
+    };
+    return { candidate, products, bazelVersion };
+  } catch (error) {
+    removeOwnedDirectory(familyCapture);
     throw error;
   }
 }
@@ -781,52 +1135,12 @@ export async function prepareNativeReleaseDelivery(
     { source, runId, directory: path.join(directory, 'producers') },
     { readJson: read, readPages: pages, acquire },
   );
-  const artifactRoots: string[] = [];
-  for (const { evidenceRoot, expected } of builds) {
-    const origin = origins.get(evidenceRoot);
-    assert.ok(origin);
-    const qualification = validateNativeBuildEvidence(origin.evidence, {
-      source,
-      github: expected.github,
-      bazelVersion,
-      requireShippingAnalysis: true,
-    });
-    assert.equal(
-      qualification.qualificationPolicy,
-      'bound',
-      `native producer ${expected.artifactName} has incomplete source-owned qualification`,
-    );
-    assert.ok(
-      origin.finalFiles && 'stage' in origin.finalFiles,
-      `native producer ${expected.artifactName} has no physical transport`,
-    );
-    artifactRoots.push(
-      ...origin.finalFiles.stage({
-        excludeRoles: ['github-release-asset', 'github-release-metadata'],
-      }),
-    );
-  }
-  const products = catalog.products.map(({ id }) => id);
-  const familyParent = requireSafeDirectoryChain(path.join(ROOT, 'target/native-release-family'), {
-    create: true,
-    label: 'native release families',
-  });
-  const familyCapture = mkdtempSync(path.join(familyParent, `${runId}-`));
-  const publicFamilies = stageNativeReleaseFamilies(
-    origins,
+  const { candidate, products } = stageNativePublicationConstruction({
     source,
-    path.join(familyCapture, 'products'),
-  );
-  // The conventional envelope reader enforces actual complete carrier/artifact inventory.
-  const candidate = {
-    ...buildPublicationCandidate({
-      products,
-      artifactRoots: [...artifactRoots, ...publicFamilies],
-      headRef: source.commit,
-      artifactPhase: 'pre-version',
-    }),
-    scope: 'construction' as const,
-  };
+    runId,
+    origins,
+    builds,
+  });
   const authenticate = async (
     evidenceRoot: string,
     expected: NativePublicationBuild['expected'],
@@ -1036,7 +1350,9 @@ export async function prepareNativeReleaseDelivery(
       },
     },
   );
-  const supplierBaselines = baselines.map((baseline) => ({
+  const supplierBaselines: ((typeof baselines)[number] & {
+    sourceTags?: NativeSupplierArtifact[];
+  })[] = baselines.map((baseline) => ({
     ...baseline,
     carriers: { ...baseline.carriers },
     productArtifacts: { ...baseline.productArtifacts },
@@ -1056,7 +1372,10 @@ export async function prepareNativeReleaseDelivery(
       row.publication,
       'retained supplier completed source differs',
     );
-    if (row.artifact.startsWith('github-release:'))
+    if (row.source) {
+      baseline.sourceTags ??= [];
+      baseline.sourceTags.push(row);
+    } else if (row.artifact.startsWith('github-release:'))
       baseline.productArtifacts[row.artifact] = row.file.path;
     else baseline.carriers[row.artifact] = [row.file.path];
   }
@@ -1083,6 +1402,7 @@ export async function prepareNativeReleaseDelivery(
         publication: baseline.publication,
         files: baseline.productArtifacts ?? {},
         carriers: baseline.carriers,
+        ...(baseline.sourceTags ? { sourceTags: baseline.sourceTags } : {}),
       })),
     },
     {
@@ -1091,6 +1411,19 @@ export async function prepareNativeReleaseDelivery(
           'files' in input && !Array.isArray(input.files) && 'carriers' in input,
           'native preparation supplier origin must come from its retained completed baseline',
         );
+        if ('sourceTags' in input)
+          return captureCompletedNativeSwiftSourceSuppliers(input, {
+            ...supplierTransports,
+            registryOptions: {
+              cachedReceipts: new Map(
+                [...retainedRegistry]
+                  .filter(([key]) =>
+                    key.startsWith(`${input.publication.product}@${input.publication.version}/`),
+                  )
+                  .map(([, retained]) => [retained.carrier.id, retained.receipt]),
+              ),
+            },
+          });
         const publicOrigin = await captureCompletedNativePublicArtifacts(
           { publication: input.publication, files: input.files },
           supplierTransports,
@@ -1141,6 +1474,11 @@ export async function prepareNativeReleaseDelivery(
     builds,
     origins,
     publicationInputs,
+    // Retain the existing one-pass public byte proofs for exact held inputs
+    // discovered after RP freezes independent producer/consumer scope.
+    completedPublicFiles: [...retainedPublic.values()].map((file) =>
+      Object.freeze(structuredClone(file)),
+    ),
   };
 }
 
@@ -1400,12 +1738,25 @@ if (import.meta.main) {
         }),
       );
     } else {
+      assert.ok(
+        process.env.OLIPHAUNT_NATIVE_PUBLICATION_INPUTS,
+        'native family construction requires the source-bound input snapshot',
+      );
       const result = await acquireNativeReleaseArchives({
         source: sourceIdentity('HEAD'),
+        publicationInputs: process.env.OLIPHAUNT_NATIVE_PUBLICATION_INPUTS,
+        ...(values['consumer-products-json']
+          ? { consumerProducts: JSON.parse(readFileSync(values['consumer-products-json'], 'utf8')) }
+          : {}),
         runId: Number(values['run-id']),
         directory: values['output-directory'],
         ref: values.ref,
       });
+      if (result.publicationInputs && process.env.GITHUB_ENV)
+        appendFileSync(
+          process.env.GITHUB_ENV,
+          `OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=${result.publicationInputs}\n`,
+        );
       console.log(result.directory);
     }
   } catch (error) {

@@ -1237,7 +1237,7 @@ fn declared_aot_modules(file: &Path) -> Result<DeclaredAotModules> {
                         .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())),
             "declared tools AOT requires the portable source fingerprint"
         );
-        let postgres_version = parts[0].to_owned();
+        let postgres_version = format!("{}-wasix-oliphaunt", parts[0]);
         let mut modules = BTreeMap::new();
         let mut paths = BTreeMap::new();
         for (name, identity) in [("pg_dump", portable.pg_dump), ("psql", portable.psql)] {
@@ -3854,7 +3854,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["tool:pg_dump", "tool:psql"]
         );
-        assert_eq!(manifest.postgres_version.as_deref(), Some("18.4"));
+        assert_eq!(
+            manifest.postgres_version.as_deref(),
+            Some("18.4-wasix-oliphaunt")
+        );
         assert_eq!(manifest.target_triple, "aarch64-apple-darwin");
         generate_declared_aot_manifest(&args).unwrap();
         assert_eq!(first, fs::read(&output).unwrap());

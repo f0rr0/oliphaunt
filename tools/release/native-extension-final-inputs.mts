@@ -34,6 +34,8 @@ export type NativeAppleBaseInput = {
   owner: 'liboliphaunt-native';
   version: string;
   file: ExtensionFinalInputFile;
+  framework: ExtensionFinalInputFile;
+  resources: ExtensionFinalInputFile;
 };
 export type NativeSwiftSourceInput = {
   owner: 'oliphaunt-swift';
@@ -41,6 +43,7 @@ export type NativeSwiftSourceInput = {
   archive: ExtensionFinalInputFile;
   carrier: ExtensionFinalInputFile;
   ownerCatalog: ExtensionFinalInputFile;
+  bindingsArchive: ExtensionFinalInputFile;
 };
 function fields(value: unknown, names: string[], label: string) {
   assert.ok(
@@ -91,7 +94,7 @@ export function projectOriginalNativeFinalFile(file: ExtensionFinalInputFile, pr
 }
 
 export function projectNativeAppleBaseInput(value: unknown) {
-  fields(value, ['owner', 'version', 'file'], 'native Apple base input');
+  fields(value, ['owner', 'version', 'file', 'framework', 'resources'], 'native Apple base input');
   const input = value as NativeAppleBaseInput;
   assert.equal(input.owner, 'liboliphaunt-native');
   assert.match(input.version, /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/u);
@@ -101,8 +104,55 @@ export function projectNativeAppleBaseInput(value: unknown) {
     'Apple base manifest must remain its whole regular original File',
   );
   assert.equal(path.basename(input.file.path), 'ios.json');
-  const projected = projectOriginalNativeFinalFile(input.file, 'native-apple-base');
-  return { input: { ...input, file: projected.file }, files: [projected.alias] };
+  const expected = {
+    file: ['ios.json', '//src/native/runtime:apple_ios_manifest_shipping'],
+    framework: [
+      `liboliphaunt-${input.version}-apple-spm-xcframework.zip`,
+      '//src/native/runtime:apple_swiftpm_shipping',
+    ],
+    resources: [
+      `liboliphaunt-${input.version}-runtime-resources-ios-datum64.tar.gz`,
+      '//src/native/runtime:apple_resources_shipping',
+    ],
+  };
+  const projected = { owner: input.owner, version: input.version } as NativeAppleBaseInput;
+  const files = [];
+  for (const name of ['file', 'framework', 'resources'] as const) {
+    assert.equal(
+      input[name].member,
+      undefined,
+      'Apple tuple requires whole original regular Files',
+    );
+    assert.equal(
+      path.basename(input[name].path),
+      expected[name][0],
+      'Apple original File name differs',
+    );
+    assert.equal(
+      input[name].producer.root,
+      expected[name][1],
+      'Apple original producer root differs',
+    );
+    assert.equal(
+      input[name].producer.evidenceDigest,
+      input.file.producer.evidenceDigest,
+      'Apple tuple mixes producer evidence',
+    );
+    assert.equal(
+      input[name].producer.invocationId,
+      input.file.producer.invocationId,
+      'Apple tuple mixes producer invocations',
+    );
+    assert.equal(
+      input[name].producer.configuration,
+      input.file.producer.configuration,
+      'Apple tuple mixes original configurations',
+    );
+    const result = projectOriginalNativeFinalFile(input[name], `native-apple-base/${name}`);
+    projected[name] = result.file;
+    files.push(result.alias);
+  }
+  return { input: projected, files };
 }
 
 /** The final fixture consumes original source/control Files, never a source
@@ -110,7 +160,7 @@ export function projectNativeAppleBaseInput(value: unknown) {
 export function projectNativeSwiftSourceInput(value: unknown) {
   fields(
     value,
-    ['owner', 'version', 'archive', 'carrier', 'ownerCatalog'],
+    ['owner', 'version', 'archive', 'carrier', 'ownerCatalog', 'bindingsArchive'],
     'native Swift source input',
   );
   const input = value as NativeSwiftSourceInput;
@@ -120,10 +170,11 @@ export function projectNativeSwiftSourceInput(value: unknown) {
     archive: 'Oliphaunt-source.zip',
     carrier: 'oliphaunt-react-native-ios-carriers.json',
     ownerCatalog: 'extension-owner-catalog.json',
+    bindingsArchive: `oliphaunt-swift-${input.version}-bindings.xcframework.zip`,
   };
   const aliases = [];
   const projected = { owner: input.owner, version: input.version } as NativeSwiftSourceInput;
-  for (const name of ['archive', 'carrier', 'ownerCatalog'] as const) {
+  for (const name of ['archive', 'carrier', 'ownerCatalog', 'bindingsArchive'] as const) {
     assert.equal(
       path.basename(input[name].path),
       expected[name],
@@ -136,9 +187,24 @@ export function projectNativeSwiftSourceInput(value: unknown) {
         'Swift source ZIP/catalog must remain whole original Files',
       );
     const result = projectOriginalNativeFinalFile(input[name], `native-swift-source/${name}`);
+    assert.equal(
+      input[name].producer.evidenceDigest,
+      input.archive.producer.evidenceDigest,
+      'Swift source tuple mixes producer evidence',
+    );
+    assert.equal(
+      input[name].producer.invocationId,
+      input.archive.producer.invocationId,
+      'Swift source tuple mixes producer invocations',
+    );
     projected[name] = result.file;
     aliases.push(result.alias);
   }
+  assert.equal(
+    input.bindingsArchive.producer.root,
+    '//src/native/sdks/swift:shipping_bindings',
+    'Swift bindings File needs its original canonical shipping root',
+  );
   const carrier = JSON.parse(readFileSync(input.carrier.path, 'utf8'));
   assert.equal(carrier.schema, 'oliphaunt-react-native-ios-carrier-v1');
   assert.equal(carrier.base?.product, 'liboliphaunt-native');

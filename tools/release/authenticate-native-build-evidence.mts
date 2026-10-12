@@ -41,7 +41,6 @@ const reviewedProducerArtifacts: readonly (readonly [string, string])[] = [
   ['Portable packages (macos-arm64)', 'native-build-evidence-native-macos-arm64'],
   ['Portable packages (windows-x64)', 'native-build-evidence-native-windows-x64'],
   ['Linux WASIX and installed browser', 'native-build-evidence-wasix-tools'],
-  ['Linux WASIX and installed browser', 'native-build-evidence-wasix-pg-hashids'],
   ['Linux native postmaster lifecycle', 'native-build-evidence-postmaster-linux'],
   ['Native postmaster lifecycle (linux-arm64)', 'native-build-evidence-postmaster-linux-arm64'],
   ['Native postmaster lifecycle (macos-arm64)', 'native-build-evidence-postmaster-macos-arm64'],
@@ -51,6 +50,7 @@ const reviewedProducerArtifacts: readonly (readonly [string, string])[] = [
   ['Portable packages (windows-x64)', 'native-build-evidence-napi-windows-x64'],
   ['Linux runtime (x86_64)', 'native-build-evidence-mobile-android'],
   ['Portable packages (macos-arm64)', 'native-build-evidence-mobile-ios'],
+  ['Native React Native consumers', 'native-build-evidence-react-native-macos-arm64'],
   ['Native release families', 'native-build-evidence-release-families'],
 ];
 const isReviewedProducerArtifact = (job: string, artifact: unknown) =>

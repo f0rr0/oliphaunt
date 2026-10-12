@@ -2,10 +2,12 @@ import { expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -16,6 +18,7 @@ import {
 } from '../../build_defs/resources/seed_construction.mts';
 import { archiveDirectory } from '../packaging/archive-directory.mts';
 import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
+import { removeOwnedDirectory } from '../packaging/release-directory-safety.mts';
 import {
   captureNativeBuildEvidence,
   writeNativeBuildEvidence,
@@ -198,74 +201,99 @@ test('split Cargo public trees preserve exact part ordering, identities and cont
     }
     writeFileSync(path.join(physical, 'packages.json'), `${JSON.stringify(packages)}\n`);
     writeFileSync(path.join(physical, 'Cargo.toml'), '[workspace]\n');
-    const graph: any = cohort.aquery;
-    const fragments = new Map(graph.pathFragments.map((row) => [row.id, row]));
-    const resolved = (id) => {
-      const row: any = fragments.get(id);
-      return row.parentId === undefined ? row.label : `${resolved(row.parentId)}/${row.label}`;
-    };
-    const artifact = graph.artifacts.find((row) => resolved(row.pathFragmentId) === previous);
-    const parts = output.split('/');
-    graph.pathFragments.push(
-      ...parts.map((label, index) => ({
-        id: `parts-${index}`,
-        label,
-        ...(index ? { parentId: `parts-${index - 1}` } : {}),
-      })),
-    );
-    artifact.pathFragmentId = `parts-${parts.length - 1}`;
-    root.package.ecosystem = 'cargo';
-    root.package.name = 'fixture-runtime-linux-x64-gnu';
-    root.package.outputs[0].path = output;
-    const members = captureNativeOutputMembers(cohort.executionRoot, output).members;
-    for (const event of cohort.buildEvents as any[]) {
-      const files = event.namedSetOfFiles?.files;
-      if (!files?.some((file) => file.name === previous)) continue;
-      event.namedSetOfFiles.files = files.flatMap((file) =>
-        file.name === previous
-          ? members
-              .filter((member) => member.type === 'file')
-              .map((member: any) => ({
-                name: `${output}/${member.path}`,
-                digest: member.sha256,
-                length: String(member.size),
-              }))
-          : [file],
+    const empty = path.join(physical, 'read-only-empty');
+    mkdirSync(empty);
+    chmodSync(empty, 0o555);
+    chmodSync(physical, 0o500);
+    const treeMode = statSync(physical).mode & 0o777;
+    const emptyMode = statSync(empty).mode & 0o777;
+    try {
+      const graph: any = cohort.aquery;
+      const fragments = new Map(graph.pathFragments.map((row) => [row.id, row]));
+      const resolved = (id) => {
+        const row: any = fragments.get(id);
+        return row.parentId === undefined ? row.label : `${resolved(row.parentId)}/${row.label}`;
+      };
+      const artifact = graph.artifacts.find((row) => resolved(row.pathFragmentId) === previous);
+      const parts = output.split('/');
+      graph.pathFragments.push(
+        ...parts.map((label, index) => ({
+          id: `parts-${index}`,
+          label,
+          ...(index ? { parentId: `parts-${index - 1}` } : {}),
+        })),
       );
-    }
-    const captured = captureNativeBuildEvidence({
-      ...constraints(f),
-      cohorts: [
-        {
-          ...cohort,
-          cquery: {
-            results: cohort.roots.map(({ label }) => ({
-              target: { rule: { name: label } },
-              configurationId: 1,
-            })),
-            configurations: [{ id: 1, checksum: cohort.rootConfigurations[0].configuration }],
+      artifact.pathFragmentId = `parts-${parts.length - 1}`;
+      root.package.ecosystem = 'cargo';
+      root.package.name = 'fixture-runtime-linux-x64-gnu';
+      root.package.outputs[0].path = output;
+      const members = captureNativeOutputMembers(cohort.executionRoot, output).members;
+      for (const event of cohort.buildEvents as any[]) {
+        const files = event.namedSetOfFiles?.files;
+        if (!files?.some((file) => file.name === previous)) continue;
+        event.namedSetOfFiles.files = files.flatMap((file) =>
+          file.name === previous
+            ? members
+                .filter((member) => member.type === 'file')
+                .map((member: any) => ({
+                  name: `${output}/${member.path}`,
+                  digest: member.sha256,
+                  length: String(member.size),
+                }))
+            : [file],
+        );
+      }
+      const captured = captureNativeBuildEvidence({
+        ...constraints(f),
+        cohorts: [
+          {
+            ...cohort,
+            cquery: {
+              results: cohort.roots.map(({ label }) => ({
+                target: { rule: { name: label } },
+                configurationId: 1,
+              })),
+              configurations: [{ id: 1, checksum: cohort.rootConfigurations[0].configuration }],
+            },
           },
-        },
-      ],
-    });
-    const directory = path.join(f.directory, 'parts-packet');
-    const file = writeNativeBuildEvidence(captured, directory);
-    const packet = readNativeBuildFinalFiles(
-      directory,
-      JSON.parse(readFileSync(file, 'utf8')),
-      constraints(f),
-    );
-    const files = packet.artifactRoots.filter((file) => file.includes('/alpha/crates/'));
-    expect(files.map((file) => path.basename(file))).toEqual([
-      'Cargo.toml',
-      ...packages.map(({ file }) => file),
-      'packages.json',
-    ]);
-    const manifest = files.find((file) => file.endsWith('packages.json'));
-    expect(JSON.parse(readFileSync(manifest, 'utf8'))).toEqual(packages);
-    for (const file of files)
-      expect(readFileSync(file)).toEqual(readFileSync(path.join(physical, path.basename(file))));
-    expect(packet.artifactRoots.some((file) => file.includes('-source/'))).toBe(false);
+        ],
+      });
+      const directory = path.join(f.directory, 'parts-packet');
+      const file = writeNativeBuildEvidence(captured, directory);
+      const packet = readNativeBuildFinalFiles(
+        directory,
+        JSON.parse(readFileSync(file, 'utf8')),
+        constraints(f),
+      );
+      const files = packet.artifactRoots.filter((file) => file.includes('/alpha/crates/'));
+      expect(files.map((file) => path.basename(file))).toEqual([
+        'Cargo.toml',
+        ...packages.map(({ file }) => file),
+        'packages.json',
+      ]);
+      const manifest = files.find((file) => file.endsWith('packages.json'));
+      expect(JSON.parse(readFileSync(manifest, 'utf8'))).toEqual(packages);
+      for (const file of files)
+        expect(readFileSync(file)).toEqual(readFileSync(path.join(physical, path.basename(file))));
+      expect(packet.artifactRoots.some((file) => file.includes('-source/'))).toBe(false);
+      const stagedDirectory = path.join(f.directory, 'read-only-stage');
+      const staged = packet.stage({
+        stageDirectory: path.relative(ROOT, stagedDirectory).split(path.sep).join('/'),
+      });
+      const tree = staged.find((file) => path.basename(file) === 'crates');
+      if (!tree) throw new Error('staged Cargo Tree is missing');
+      expect(statSync(tree).mode & 0o777).toBe(treeMode);
+      expect(statSync(path.join(tree, 'read-only-empty')).mode & 0o777).toBe(emptyMode);
+      expect(captureNativeOutputMembers(cohort.executionRoot, output).members).toEqual(members);
+      packet.assertUnchanged();
+      removeOwnedDirectory(stagedDirectory);
+      expect(existsSync(stagedDirectory)).toBe(false);
+      expect(statSync(physical).mode & 0o777).toBe(treeMode);
+      expect(statSync(empty).mode & 0o777).toBe(emptyMode);
+    } finally {
+      chmodSync(physical, 0o755);
+      chmodSync(empty, 0o755);
+    }
   });
 });
 

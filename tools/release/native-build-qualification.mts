@@ -1013,3 +1013,55 @@ export function validateNativeBuildEvidence(
     ],
   };
 }
+
+/** Preparation checks the checkout API; final selected Swift must also qualify
+ * the exact prospective installed package under its final source-owned policy.
+ * These are checks on captured configured facts, never producer authority. */
+export function assertNativeSwiftShippingPhase(
+  qualification: ReturnType<typeof validateNativeBuildEvidence>,
+  phase: 'pre-version' | 'final',
+) {
+  const sourceOwners = [
+    '//src/native/sdks/swift:preparation_shipping_export',
+    '//src/native/sdks/swift:shipping_export',
+  ];
+  const sourceRoots = qualification.cohorts.flatMap((cohort) =>
+    cohort.roots
+      .filter(
+        (root) =>
+          root.package.product === 'oliphaunt-swift' &&
+          ((root.package.ecosystem === 'github' &&
+            root.package.role === 'release-input' &&
+            root.package.name === 'Oliphaunt-source.zip') ||
+            cohort.qualificationPolicy?.policies.some(
+              (policy) =>
+                sourceOwners.includes(policy.owner) &&
+                policy.roots.includes(canonicalShippingLabel(root.label)),
+            )),
+      )
+      .map((root) => ({ cohort, root })),
+  );
+  if (!sourceRoots.length) return;
+  const owner =
+    phase === 'pre-version'
+      ? '//src/native/sdks/swift:preparation_shipping_export'
+      : '//src/native/sdks/swift:shipping_export';
+  for (const { cohort, root } of sourceRoots) {
+    const policies = cohort.qualificationPolicy?.policies ?? [];
+    const matches = policies.filter((policy) =>
+      policy.roots.includes(canonicalShippingLabel(root.label)),
+    );
+    if (
+      matches.length !== 1 ||
+      (phase === 'final' ? matches[0].owner !== owner : !sourceOwners.includes(matches[0].owner))
+    )
+      throw new Error('Swift ' + phase + ' requires its source-owned ' + owner + ' policy');
+    if (
+      phase === 'final' &&
+      !matches[0].requiredTests.some(
+        (test) => test.label === '//src/native/sdks/swift:installed_consumer_test',
+      )
+    )
+      throw new Error('final selected Swift requires its configured installed consumer test');
+  }
+}

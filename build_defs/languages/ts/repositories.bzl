@@ -6,6 +6,21 @@ def _metadata_impl(ctx):
     inputs = [ctx.attr.package, ctx.attr.lockfile, ctx.attr.converter] + ctx.attr.manifests + ctx.attr.dependency_manifests
     for source in inputs:
         ctx.read(source)
+    ctx.read(ctx.attr.archive_reader)
+    for source in ctx.attr.manifests + ctx.attr.dependency_manifests:
+        descriptor = ctx.path(source).dirname.get_child("release.toml")
+        if descriptor.exists:
+            ctx.read(descriptor)
+    supplier_archives = []
+    for row in json.decode(ctx.read(ctx.attr.supplier_artifacts)).values():
+        if not row["artifact"].startswith("npm:"):
+            continue
+        alias = row["file"]["path"]
+        file = ctx.path(Label(alias))
+        ctx.watch(file)
+        supplier_archives.append(dict(row, archive = alias, file = dict(row["file"], path = str(file))))
+    selected = json.decode(ctx.read(ctx.attr.selected_products))
+    ctx.file("dependency-inputs.json", json.encode({"supplierArchives": supplier_archives, "selectedProducts": selected}))
     ctx.watch(ctx.path(ctx.attr.bun))
     ctx.file("consumer-selection.json", json.encode(ctx.attr.consumer_tools))
     compiler_arguments = []
@@ -18,6 +33,7 @@ def _metadata_impl(ctx):
         ctx.path(ctx.attr.package),
         ctx.path(ctx.attr.lockfile),
         "--consumer-tools=" + str(ctx.path("consumer-selection.json")),
+        "--dependency-inputs=" + str(ctx.path("dependency-inputs.json")),
     ] + compiler_arguments + ["--consumer-workspace=" + workspace for workspace in ctx.attr.consumer_workspaces] + ["--consumer-graph-workspace=" + workspace for workspace in ctx.attr.consumer_graph_workspaces] + ["--dependency-manifest=" + str(ctx.path(source)) for source in ctx.attr.dependency_manifests] + [ctx.path(source) for source in ctx.attr.manifests], quiet = True)
     if result.return_code:
         fail("Cannot import canonical JavaScript workspace inputs: " + result.stderr)
@@ -33,6 +49,9 @@ def _metadata_impl(ctx):
 javascript_metadata_repository = repository_rule(
     implementation = _metadata_impl,
     attrs = {
+        "selected_products": attr.label(default = Label("@oliphaunt_metadata//:prepared-selected-products.json"), allow_single_file = True),
+        "supplier_artifacts": attr.label(default = Label("@oliphaunt_metadata//:completed-supplier-artifacts.json"), allow_single_file = True),
+        "archive_reader": attr.label(default = Label("//:tools/packaging/portable-archive.mts"), allow_single_file = True),
         "package": attr.label(default = Label("//:package.json"), allow_single_file = True),
         "lockfile": attr.label(default = Label("//:bun.lock"), allow_single_file = True),
         "converter": attr.label(default = Label("//build_defs/languages/ts:metadata.mts"), allow_single_file = True),

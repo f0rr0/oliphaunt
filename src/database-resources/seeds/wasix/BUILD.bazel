@@ -4,7 +4,7 @@ load("@wasix_seed_crates//:defs.bzl", seed_all_crate_deps = "all_crate_deps", se
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["Cargo.toml"])
+exports_files(["Cargo.toml", "consumer-contract.mts"])
 
 cargo_package_env()
 

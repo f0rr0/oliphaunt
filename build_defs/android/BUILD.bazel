@@ -2,6 +2,7 @@ load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":toolchain.bzl", "android_artifact")
+load(":app-query-test.bzl", "mobile_query_input_tests")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -61,6 +62,15 @@ alias(name = "resolver_junit", actual = "@oliphaunt_kotlin_maven//:junit_junit",
 bun_test(
     name = "app_action_test",
     entry_point = "app.test.mts",
-    data = ["app.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts"],
+    data = ["app.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts", "//src/database-resources:contracts/profile-probe.json", "//build_defs/native/apple:static-carrier-consumer.mts", "//build_defs/native/apple:framework_helpers", "//src/native/sdks/swift:generator_sources"],
+    size = "small",
+)
+
+mobile_query_input_tests()
+
+bun_test(
+    name = "installed_app_contract_test",
+    entry_point = "installed-app.test.mts",
+    data = ["installed-app.mts", "//build_defs/apple:installed-app.mts", "//:tools/packaging/portable-archive.mts", "//build_defs/languages/jvm:android-sdk-metadata.mts"],
     size = "small",
 )

@@ -1,11 +1,24 @@
+load("//build_defs/android:installed-app.bzl", "expo_android_installed_test")
+load("@expo_android_sources//:apple-metadata.bzl", "APPLE_NATIVE")
+load("@rules_apple//apple:ios.bzl", "ios_application")
+load("@rules_apple//apple:resources.bzl", "apple_resource_bundle")
+load("@rules_swift//swift:swift_library.bzl", "swift_library")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
+load("//build_defs/apple:app.bzl", "expo_ios_bundle", "expo_ios_project", "ios_project_file", "ios_project_file_name")
+load("//build_defs/apple:native.bzl", "react_apple_headers")
+load("//build_defs/apple:generated-files.bzl", "IOS_GENERATED_FILES")
+load("//build_defs/apple:final-libraries.bzl", "expo_ios_final_libraries")
+load("//build_defs/apple:resources.bzl", "expo_ios_resources")
+load("//build_defs/apple:installed-app.bzl", "expo_ios_installed_test")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_RELEASE_METADATA")
 load("@javascript_android_app_packages//:roots.bzl", "CONSUMER_CLOSURES", "CONSUMER_PACKAGES", "CONSUMER_TOOLS")
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@expo_android_sources//:metadata.bzl", "ANDROID_NATIVE")
-load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "PRODUCTS")
+load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_ARTIFACTS", "EXTENSIONS", "PREPARED_NATIVE_SELECTED_PRODUCTS", "PRODUCTS")
 load("@rules_android//android:rules.bzl", "aar_import", "android_binary", "android_library")
 load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
-load("//build_defs/android:app.bzl", "android_aar_native", "android_apk_proof", "android_app_runtime_assets", "android_extension_receipt", "android_final_aar", "android_header_tree", "android_jni_aar", "android_workspace_npm", "expo_android_bundle", "expo_android_project", "react_native_android_codegen")
+load("//build_defs/android:app.bzl", "android_aar_native", "android_apk_proof", "android_app_runtime_assets", "android_extension_receipt", "android_final_aar", "android_header_tree", "android_jni_aar", "android_workspace_npm", "expo_android_bundle", "expo_android_project", "mobile_query_input", "react_native_android_codegen")
 load("//build_defs/android:native-cpp.bzl", "REACT_NATIVE_RELEASE_DEFINES")
 load("//build_defs/extensions:mobile.bzl", "mobile_extension_registry")
 load("//build_defs/extensions:mobile_members.bzl", "MOBILE_MEMBER_LIBRARIES", "MOBILE_MEMBER_TARGETS")
@@ -27,13 +40,19 @@ IDENTITIES = {key: json.encode(row) for key, row in PACKAGES.items()}
 
 android_workspace_npm(name = "react_native_sdk", archive = "//src/native/sdks/react-native:npm",
                     package_name = JAVASCRIPT["@oliphaunt/react-native"]["name"], version = JAVASCRIPT["@oliphaunt/react-native"]["version"])
-android_workspace_npm(name = "query_sdk", archive = "//src/query/ts:npm",
-                    package_name = JAVASCRIPT["@oliphaunt/ts-query"]["name"], version = JAVASCRIPT["@oliphaunt/ts-query"]["version"])
+# This is the canonical owner of the RN manifest's authored npm dependency.
+_QUERY_OWNER = "oliphaunt-query-ts"
+_QUERY = mobile_query_input(_QUERY_OWNER,
+    JAVASCRIPT["@oliphaunt/react-native"]["dependencies"]["@oliphaunt/ts-query"],
+    JAVASCRIPT["@oliphaunt/ts-query"]["version"], PRODUCTS[_QUERY_OWNER]["version"],
+    PREPARED_NATIVE_SELECTED_PRODUCTS, COMPLETED_SUPPLIER_ARTIFACTS)
+android_workspace_npm(name = "query_sdk", archive = _QUERY["archive"],
+                    package_name = _QUERY["metadata"]["package"], version = _QUERY["metadata"]["version"], error = _QUERY.get("error", ""))
 
 WORKSPACE_INPUTS = {":react_native_sdk": "workspace_react_native", ":query_sdk": "workspace_query"}
 WORKSPACE_IDENTITIES = {
     "workspace_react_native": json.encode({"package": "@oliphaunt/react-native", "version": JAVASCRIPT["@oliphaunt/react-native"]["version"], "dependencies": {"@oliphaunt/ts-query": "workspace_query"}}),
-    "workspace_query": json.encode({"package": "@oliphaunt/ts-query", "version": JAVASCRIPT["@oliphaunt/ts-query"]["version"], "dependencies": {}}),
+    "workspace_query": json.encode(_QUERY["metadata"]),
 }
 
 filegroup(name = "app_sources", srcs = ["app.json", "package.json", "index.ts", "metro.config.cts"] + glob(["src/**/*.ts", "src/**/*.tsx", "assets/**"]))
@@ -118,7 +137,7 @@ kt_android_library(
     name = "oliphaunt_android_classes",
     srcs = ["//src/native/sdks/react-native:android_kotlin_sources", ":android_codegen", "@expo_android_sources//:generated/oliphaunt_react_native/BuildConfig.java"],
     manifest = "//src/native/sdks/react-native:android/src/main/AndroidManifest.xml", custom_package = "dev.oliphaunt.reactnative",
-    deps = [":kotlin_installed", "@expo_android_maven//:com_facebook_react_react_android_release", "@expo_android_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_android"] + _RN_JVM_RUNTIME,
+    deps = [":kotlin_installed", "@expo_android_sources//:react_android_release", "@expo_android_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_android"] + _RN_JVM_RUNTIME,
 )
 cc_library(name = "oliphaunt_reactnative_sources", srcs = ["//src/native/sdks/react-native:android_jsi_source"],
     hdrs = ["//src/native/sdks/react-native:cpp_headers"], deps = _RN_NATIVE,
@@ -139,7 +158,9 @@ cc_binary(name = "liboliphaunt_extensions.so", srcs = [":selected_registry"],
     linkopts = ["-Wl,-z,defs", "-Wl,-z,max-page-size=16384", "-Wl,-z,common-page-size=16384", "-Wl,-soname,liboliphaunt_extensions.so"], target_compatible_with = ["@platforms//os:android"])
 android_extension_receipt(name = "extension_receipt", library = ":liboliphaunt_extensions.so", registry = ":selected_registry", members = _MEMBERS, selected_extensions = SELECTED_EXTENSIONS, abi = _ABI)
 android_app_runtime_assets(name = "selected_runtime_assets", receipt = ":extension_receipt", selected_extensions = SELECTED_EXTENSIONS,
-    mobile_static_modules = [_DESCRIPTORS[name]["native-module-file"][:-3] for name in SELECTED_EXTENSIONS], version = PRODUCTS["liboliphaunt-native"]["version"])
+    mobile_static_modules = [_DESCRIPTORS[name]["native-module-file"][:-3] for name in SELECTED_EXTENSIONS], version = PRODUCTS["liboliphaunt-native"]["version"], abi = _ABI,
+    leaves = select({_ARM64: ["//build_defs/extensions/mobile/final:" + product.replace("-", "_") + "_android_arm64_v8a" for product in sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in SELECTED_EXTENSIONS}.keys())],
+                     _X64: ["//build_defs/extensions/mobile/final:" + product.replace("-", "_") + "_android_x86_64" for product in sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in SELECTED_EXTENSIONS}.keys())]}))
 
 _LIBRARIES = {
     ":liboliphauntreactnative.so": "liboliphauntreactnative.so", ":liboliphaunt_extensions.so": "liboliphaunt_extensions.so",
@@ -155,9 +176,10 @@ android_library(name = "expo_config_assets", manifest = ":android_manifest", cus
 android_library(name = "runtime_assets", manifest = ":android_manifest", custom_package = "dev.oliphaunt.reactnative.example", assets = [":selected_runtime_assets"], assets_dir = "selected_runtime_assets/assets")
 kt_android_library(name = "app_release_classes", srcs = [":android_project", ":android_expo_registry"], manifest = ":android_manifest",
     custom_package = "dev.oliphaunt.reactnative.example", resource_files = [":android_resources", ":android_bundle_resources"],
-    deps = [":oliphaunt_android_classes", "@expo_android_sources//:expo_modules", "@expo_android_maven//:com_facebook_react_react_android_release"] + _RN_JVM_RUNTIME)
+    deps = [":oliphaunt_android_classes", "@expo_android_sources//:expo_modules", "@expo_android_sources//:react_android_release"] + _RN_JVM_RUNTIME)
 android_binary(name = "release_binary", manifest = ":android_manifest", custom_package = "dev.oliphaunt.reactnative.example",
-    manifest_values = {"minSdkVersion": "24", "targetSdkVersion": "36", "versionCode": "1", "versionName": "0.0.0"},
+    resource_files = [":android_resources", ":android_bundle_resources"],
+    manifest_values = {"applicationId": "dev.oliphaunt.reactnative.example", "minSdkVersion": "24", "targetSdkVersion": "36", "versionCode": "1", "versionName": "0.0.0"},
     deps = [":app_release_classes", ":bundle_assets", ":expo_config_assets", ":runtime_assets", ":seed_installed", ":runtime_installed", ":source_jni", "@expo_android_maven//:com_facebook_hermes_hermes_android_release"],
     multidex = "native", incremental_dexing = 0, nocompress_extensions = ["so", "bundle"])
 [android_apk_proof(name = name, apk = ":release_binary", abi = abi, keystore = ":android_keystore", selected_extensions = SELECTED_EXTENSIONS,
@@ -167,3 +189,136 @@ android_binary(name = "release_binary", manifest = ":android_manifest", custom_p
  for name, abi in [("android_release", "arm64-v8a"), ("android_release_x86_64", "x86_64")]]
 
 source_quality_files()
+
+# Merge into the existing Expo example BUILD after the shared npm inputs.
+
+expo_ios_project(
+    name = "ios_project", target_name = "reactnativeoliphauntexpo",
+    expected_modules = APPLE_NATIVE["expectedModules"],
+    swift_sdk_version = APPLE_NATIVE["swiftSdkVersion"],
+    sources = COMMON_INPUTS["sources"], package_inputs = INPUTS, package_identities = IDENTITIES,
+    package_roots = ROOTS, workspace_inputs = WORKSPACE_INPUTS, workspace_identities = WORKSPACE_IDENTITIES,
+)
+expo_ios_bundle(
+    name = "ios_bundle", sources = COMMON_INPUTS["sources"],
+    selected_extensions = SELECTED_EXTENSIONS, catalog_profile = "standard",
+    package_inputs = INPUTS, package_identities = IDENTITIES, package_roots = ROOTS,
+    workspace_inputs = WORKSPACE_INPUTS, workspace_identities = WORKSPACE_IDENTITIES,
+)
+[ios_project_file(name = ios_project_file_name(relative), project = ":ios_project", path = relative) for relative in IOS_GENERATED_FILES]
+_IOS = {relative: ":" + ios_project_file_name(relative) for relative in IOS_GENERATED_FILES}
+react_apple_headers(
+    name = "ios_react_headers",
+    template = "@react_native_apple_release//:React.xcframework/React-VFS-template.yaml",
+    hermes_header = "@react_native_apple_release//:destroot/include/hermes/hermes.h",
+    dependencies_header = "@react_native_apple_release//:packages/react-native/third-party/ReactNativeDependencies.xcframework/Headers/folly/Traits.h",
+    headers = ["@react_native_apple_release//:react_headers", "@react_native_apple_release//:hermes_headers", "@react_native_apple_release//:dependency_headers"],
+    swift_bridging = "@native_apple_sdk//:toolchain/include/swift/bridging",
+    swift_headers = ["@native_apple_sdk//:swift_interop_headers"],
+)
+_IOS_REACT = ["@react_native_apple_release//:React", ":ios_react_headers"]
+_IOS_SWIFT = ["-swift-version", "5", "-cxx-interoperability-mode=default", "-Xcc", "-std=c++20", "-Xcc", "-ivfsoverlay", "-Xcc", "$(location :ios_react_headers)"]
+_CODEGEN = [relative for relative in IOS_GENERATED_FILES if relative.startswith("codegen/ReactCodegen/")]
+
+objc_library(
+    name = "ios_ReactCodegen",
+    srcs = [_IOS[relative] for relative in _CODEGEN if relative.endswith(".mm") or relative.endswith(".cpp")],
+    hdrs = [_IOS[relative] for relative in _CODEGEN if relative.endswith(".h")],
+    includes = ["ios_project/codegen", "ios_project/codegen/ReactCodegen"], deps = _IOS_REACT,
+    defines = ["RCT_NEW_ARCH_ENABLED=1"], alwayslink = True,
+    copts = ["-ivfsoverlay", "$(location :ios_react_headers)"], data = [":ios_react_headers"],
+)
+objc_library(
+    name = "ios_ReactAppDependencyProvider",
+    srcs = [_IOS["codegen/ReactAppDependencyProvider/RCTAppDependencyProvider.mm"]],
+    hdrs = [_IOS["codegen/ReactAppDependencyProvider/RCTAppDependencyProvider.h"]],
+    includes = ["ios_project/codegen/ReactAppDependencyProvider"],
+    deps = [":ios_ReactCodegen"] + _IOS_REACT,
+    enable_modules = True, module_name = "ReactAppDependencyProvider", alwayslink = True,
+    copts = ["-ivfsoverlay", "$(location :ios_react_headers)"], data = [":ios_react_headers"],
+)
+# Actual SDK Swift adapters link the declared held Swift package. The Objective-C
+# facade uses the shipped manual interface, so it does not import its own Swift header.
+swift_library(
+    name = "ios_RNAdapter", module_name = "OliphauntReactNative",
+    srcs = [_IOS["sdk/ios/OliphauntAdapter.swift"]],
+    deps = ["@react_native_swift_package//:Oliphaunt"], copts = ["-swift-version", "6"],
+    alwayslink = True,
+)
+objc_library(
+    name = "ios_RNFacade",
+    srcs = [_IOS["sdk/ios/Oliphaunt.mm"], _IOS["sdk/ios/OliphauntReactNative.h"], _IOS["sdk/ios/OliphauntAdapter.h"],
+        _IOS["sdk/cpp/Jsi.h"], _IOS["sdk/cpp/Lifecycle.h"]],
+    deps = [":ios_RNAdapter", ":ios_ReactCodegen"] + _IOS_REACT,
+    defines = ["RCT_NEW_ARCH_ENABLED=1"], alwayslink = True,
+    copts = ["-ivfsoverlay", "$(location :ios_react_headers)"], data = [":ios_react_headers"],
+)
+swift_library(
+    name = "ios_ExpoModulesProvider", module_name = "ExpoModulesProvider",
+    srcs = [_IOS["ExpoModulesProvider.swift"]], alwayslink = True,
+    deps = ["@expo_android_sources//:" + row["module"] for row in APPLE_NATIVE["modules"]] +
+        ["@expo_android_sources//:" + row["module"] for row in APPLE_NATIVE["frameworks"]],
+    copts = _IOS_SWIFT, swiftc_inputs = [":ios_react_headers"],
+)
+swift_library(
+    name = "ios_AppDelegate", module_name = "reactnativeoliphauntexpo",
+    srcs = [_IOS["app/AppDelegate.swift"]],
+    deps = [":ios_ReactAppDependencyProvider", ":ios_ExpoModulesProvider", "@expo_android_sources//:Expo"] + _IOS_REACT,
+    copts = _IOS_SWIFT, swiftc_inputs = [":ios_react_headers"],
+)
+filegroup(name = "ios_constants_config", srcs = [":ios_project"], output_group = "constants")
+filegroup(name = "ios_bundle_assets", srcs = [":ios_bundle"], output_group = "resources")
+
+# This is the same selected member as the previous mandatory mobile example.
+expo_ios_resources(name = "ios_selected_resources", base = "@react_native_swift_package//:native_requirement",
+    seed = "//src/database-resources:ios_datum64_standard_carriers_npm_files",
+    leaves = ["//build_defs/extensions/mobile/final:" + product.replace("-", "_") + "_ios_xcframework" for product in sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in SELECTED_EXTENSIONS}.keys())], extensions = SELECTED_EXTENSIONS)
+filegroup(name = "ios_selected_registry", srcs = [":ios_selected_resources"], output_group = "registry")
+apple_resource_bundle(name = "ios_selected_runtime_resources", bundle_name = "OliphauntReactNativeResources",
+    structured_resources = [":ios_selected_resources"],
+    strip_structured_resources_prefixes = ["ios_selected_resources"])
+filegroup(name = "ios_standard_seed_files", srcs = [":ios_selected_resources"], output_group = "seed")
+apple_resource_bundle(name = "ios_standard_seed", bundle_name = "OliphauntSeedNativeIOSStandard",
+    structured_resources = [":ios_standard_seed_files"],
+    strip_structured_resources_prefixes = ["ios_selected_resources"])
+expo_ios_final_libraries(name = "ios_final_libraries", extensions = SELECTED_EXTENSIONS, base = "@react_native_swift_package//:native_requirement")
+cc_library(name = "ios_selected_extensions", srcs = [":ios_selected_registry"], alwayslink = True,
+    linkopts = ["-Wl,-u,_liboliphaunt_selected_static_extensions"],
+    deps = ["@react_native_native_base//:runtime", "@react_native_native_base//:runtime_headers"] + [":ios_final_libraries"])
+
+ios_application(
+    name = "ios_release", bundle_name = "reactnativeoliphauntexpo",
+    bundle_id = "dev.oliphaunt.reactnative.example", families = ["iphone"],
+    minimum_os_version = "17.0",
+    frameworks = ["@expo_android_sources//:ExpoModulesJSI"],
+    infoplists = [_IOS["app/Info.plist"]],
+    entitlements = _IOS["app/reactnativeoliphauntexpo.entitlements"],
+    app_icons = [_IOS[relative] for relative in IOS_GENERATED_FILES if "/expo.icon/" in relative or "/AppIcon.appiconset/" in relative],
+    resources = [_IOS[relative] for relative in IOS_GENERATED_FILES if "/Images.xcassets/" in relative and "/AppIcon.appiconset/" not in relative] +
+        [_IOS["app/SplashScreen.storyboard"], _IOS["app/Supporting/Expo.plist"], ":ios_bundle", ":ios_bundle_assets"],
+    deps = [
+        ":ios_AppDelegate", ":ios_RNFacade", ":ios_selected_extensions",
+        "@expo_android_sources//:SafeAreaContext", "@expo_android_sources//:EXConstants_config",
+        ":ios_selected_runtime_resources", ":ios_standard_seed",
+    ] + ["@expo_android_sources//:" + row["module"] + "_privacy" for row in APPLE_NATIVE["modules"] + APPLE_NATIVE["frameworks"] if row["privacy"]],
+)
+
+expo_ios_installed_test(
+    name = "ios_installed_test", application = ":ios_release",
+    sdk = "//src/native/sdks/react-native:npm", extensions = SELECTED_EXTENSIONS,
+    helpers = ["//src/native/sdks/react-native:mobile_ios_e2e_sources",
+        "//src/native/runtime:mobile_e2e_sources", "//src/extensions/generated/sdk:metadata",
+        "//:src/extensions/generated/mobile/static-registry.json",
+        "//src/database-resources:contracts/profile-probe.json"],
+)
+
+# Install the exact final verified/re-signed File already requested by this job.
+filegroup(name = "android_installed_apk", srcs = [":android_release_x86_64"], output_group = "apk")
+filegroup(name = "android_installed_apk_proof", srcs = [":android_release_x86_64"], output_group = "proof")
+expo_android_installed_test(
+    name = "android_installed_test", apk = ":android_installed_apk", proof = ":android_installed_apk_proof",
+    sdk = "//src/native/sdks/react-native:npm", extensions = SELECTED_EXTENSIONS,
+    helpers = ["//src/native/sdks/react-native:mobile_android_e2e_sources", "//src/native/runtime:mobile_e2e_sources",
+        "//src/extensions/generated/sdk:metadata", "//:src/extensions/generated/mobile/static-registry.json",
+        "//src/database-resources:contracts/profile-probe.json"],
+)

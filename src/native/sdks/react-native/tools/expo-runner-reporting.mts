@@ -117,6 +117,35 @@ function extensionReceipt(
 
 const [command, ...args] = process.argv.slice(2);
 switch (command) {
+  case 'android-apk-manifests': {
+    const [file, destination] = args;
+    const { readAndroidApkEntries } = await import(
+      '../../../../../tools/packaging/portable-archive.mts'
+    );
+    const entries = readAndroidApkEntries(fs.realpathSync(file));
+    for (const relative of [
+      'runtime/manifest.properties',
+      'cluster-seed/manifest.properties',
+      'cluster-seed-icu/manifest.properties',
+    ]) {
+      const entry = entries.get('assets/oliphaunt/' + relative);
+      if (!entry) {
+        assert(
+          relative !== 'runtime/manifest.properties',
+          'Android APK must carry its exact runtime manifest',
+        );
+        continue;
+      }
+      assert(
+        entry.isFile && !entry.isSymbolicLink,
+        'Android APK manifest must be a regular member',
+      );
+      const output = destination + '/' + relative;
+      fs.mkdirSync(output.slice(0, output.lastIndexOf('/')), { recursive: true });
+      fs.writeFileSync(output, entry.data());
+    }
+    break;
+  }
   case 'json-object': {
     const file = args[0];
     const value = JSON.parse(fs.readFileSync(file, 'utf8'));

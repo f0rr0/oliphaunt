@@ -15,6 +15,7 @@ import {
   nativeMobileComponentInputs,
   nativeMobileMemberAliasInputs,
   nativePublicationInputProjection,
+  nativeSupplierGithubArtifactDeclarations,
   renderReleaseMetadata,
   repositoryPath,
 } from './bazel-release-metadata.mts';
@@ -559,17 +560,36 @@ test('runtime and resource construction reuse canonical artifact rows and captur
     );
     config.packages['src/native/postgres-tools'] = { component: 'postgres-tools-native' };
     config.packages['src/database-resources'] = { component: 'database-resources' };
+    config.packages['src/wasix/runtime'].component = 'liboliphaunt-wasix';
     manifest['src/native/postgres-tools'] = '4.5.6';
     manifest['src/database-resources'] = '5.6.7';
     write('release-please-config.json', JSON.stringify(config));
     write('.release-please-manifest.json', JSON.stringify(manifest));
+    write(
+      'src/wasix/runtime/release.toml',
+      readFileSync(path.join(root, 'src/wasix/runtime/release.toml'), 'utf8').replace(
+        'id="wasix"',
+        'id="liboliphaunt-wasix"',
+      ),
+    );
+    write(
+      'src/extensions/contrib/carriers.toml',
+      readFileSync(path.join(root, 'src/extensions/contrib/carriers.toml'), 'utf8').replace(
+        'wasix_owner="wasix"',
+        'wasix_owner="liboliphaunt-wasix"',
+      ),
+    );
     write(
       'src/native/postgres-tools/release.toml',
       'id="postgres-tools-native"\nregistry_packages=["npm:@oliphaunt/tools-linux-x64-gnu"]\n[artifact_targets]\npreset="postgres-tools-native"\ntargets=["linux-x64-gnu"]\n',
     );
     write(
       'src/database-resources/release.toml',
-      'id="database-resources"\nregistry_packages=["npm:@oliphaunt/icu"]\n',
+      'id="database-resources"\nregistry_packages=["npm:@oliphaunt/icu"]\n[compatibility_versions.liboliphaunt-wasix]\nsource_product="liboliphaunt-wasix"\npath="src/database-resources/seeds/wasix/Cargo.toml"\nparser="toml:package.metadata.oliphaunt.runtime-version"\n',
+    );
+    write(
+      'src/database-resources/seeds/wasix/Cargo.toml',
+      '[package.metadata.oliphaunt]\nruntime-version="2.3.4"\n',
     );
     const profiles: Record<string, Record<string, unknown>> = { standard: {} };
     const contract = {
@@ -961,13 +981,17 @@ test('the same snapshot retains actual original Swift source File references and
         'extension-owner-catalog.json',
         '//src/native/sdks/swift:shipping_extension-owner-catalog_json',
       ),
+      bindingsArchive: file(
+        'oliphaunt-swift-0.8.2-bindings.xcframework.zip',
+        '//src/native/sdks/swift:shipping_bindings',
+      ),
     };
     const snapshot = {
       source: { commit: 'a'.repeat(40), tree: 'b'.repeat(40) },
       nativeSwiftSource,
     };
     const projected = nativePublicationInputProjection(snapshot);
-    expect(projected.files).toHaveLength(3);
+    expect(projected.files).toHaveLength(4);
     expect(projected.nativeSwiftSource.nativeVersion).toBe('0.3.3');
     expect(projected.nativeSwiftSource.carrier.member).toBe(nativeSwiftSource.carrier.member);
     expect(projected.nativeSwiftSource.archive.producer).toEqual(
@@ -976,6 +1000,19 @@ test('the same snapshot retains actual original Swift source File references and
     expect(projected.nativeSwiftSource.ownerCatalog.path).toStartWith(
       '@oliphaunt_metadata//:native-swift-source/ownerCatalog/',
     );
+    fixture((fixtureRoot) => {
+      const rendered = renderReleaseMetadata(
+        loadReleaseMetadata(fixtureRoot),
+        '@//build_defs/release:identity.bzl',
+        projected,
+      );
+      expect(JSON.parse(rendered.nativeSwiftSourceInput)).toEqual(projected.nativeSwiftSource);
+      expect(JSON.parse(rendered.nativeAppleBaseInput)).toEqual(projected.nativeAppleBase);
+      expect(JSON.parse(rendered.preparedSelectedProducts)).toEqual(projected.selectedProducts);
+      expect(rendered.build).toContain('"native-apple-base-input.json"');
+      expect(rendered.build).toContain('"prepared-selected-products.json"');
+      expect(rendered.build).toContain('"native-swift-source-input.json"');
+    });
     for (const change of [
       (value) => (value.nativeSwiftSource.owner = 'other'),
       (value) => (value.nativeSwiftSource.archive.member = 'inside'),
@@ -990,4 +1027,97 @@ test('the same snapshot retains actual original Swift source File references and
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('supplied-root supplier projection includes declared Swift and extension carriers without reading controller source', () => {
+  fixture((root, write) => {
+    const config = JSON.parse(readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
+    config.packages['src/native/sdks/swift'] = { component: 'oliphaunt-swift' };
+    write('release-please-config.json', JSON.stringify(config));
+    const versions = JSON.parse(
+      readFileSync(path.join(root, '.release-please-manifest.json'), 'utf8'),
+    );
+    versions['src/native/sdks/swift'] = '9.8.7';
+    write('.release-please-manifest.json', JSON.stringify(versions));
+    write(
+      'src/native/sdks/swift/release.toml',
+      'id="oliphaunt-swift"\npublish_targets=["github-release-assets","swift-package-source-tag"]\n',
+    );
+    for (const product of [
+      'src/native/runtime',
+      'src/wasix/runtime',
+      'src/extensions/external/example',
+    ]) {
+      const file = product + '/release.toml';
+      const contents = readFileSync(path.join(root, file), 'utf8');
+      write(
+        file,
+        contents.includes('publish_targets=')
+          ? contents.replace(
+              'publish_targets=["crates-io","npm"]',
+              'publish_targets=["crates-io","npm","github-release-assets"]',
+            )
+          : contents.replace(
+              '\n[artifact_targets]',
+              '\npublish_targets=["github-release-assets"]\n[artifact_targets]',
+            ),
+      );
+    }
+    const metadata = loadReleaseMetadata(root);
+    const declarations = nativeSupplierGithubArtifactDeclarations(metadata);
+    const swift = declarations.filter(({ product }) => product === 'oliphaunt-swift');
+    expect(swift.map(({ asset }) => asset).sort()).toEqual([
+      'oliphaunt-swift-{version}-bindings.xcframework.zip',
+      'oliphaunt-swift-{version}-release-assets.sha256',
+    ]);
+    expect(
+      declarations.filter(({ product }) => product === 'oliphaunt-extension-example').length,
+    ).toBeGreaterThan(0);
+    const bytes = Buffer.from('supplied-root physical File fixture; no qualification claim');
+    const supplierArtifacts = declarations.map(({ product, asset }) => {
+      const version = metadata.products[product].version;
+      const file = path.join(root, asset.replaceAll('{version}', version));
+      writeFileSync(file, bytes);
+      return {
+        publication: {
+          product,
+          version,
+          tagName: product + '-v' + version,
+          publicationSha: 'a'.repeat(40),
+          publicationTree: 'b'.repeat(40),
+          releaseSha: 'c'.repeat(40),
+        },
+        artifact: 'github-release:' + asset.replaceAll('{version}', version),
+        file: {
+          path: file,
+          size: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+        },
+      };
+    });
+    const snapshot = {
+      source: { commit: 'd'.repeat(40), tree: 'e'.repeat(40) },
+      supplierArtifacts,
+    };
+    expect(
+      Object.keys(nativePublicationInputProjection(snapshot, metadata).supplierArtifacts),
+    ).toHaveLength(declarations.length);
+    const binding = supplierArtifacts.find(({ artifact }) =>
+      artifact.endsWith('bindings.xcframework.zip'),
+    )!;
+    expect(() =>
+      nativePublicationInputProjection(
+        {
+          ...snapshot,
+          supplierArtifacts: [{ ...binding, artifact: 'github-release:invented.zip' }],
+        },
+        metadata,
+      ),
+    ).toThrow('unknown canonical');
+    const sourceOnly = structuredClone(metadata);
+    sourceOnly.products['oliphaunt-swift'].publish_targets = ['swift-package-source-tag'];
+    expect(() =>
+      nativePublicationInputProjection({ ...snapshot, supplierArtifacts: [binding] }, sourceOnly),
+    ).toThrow('unknown canonical');
+  });
 });

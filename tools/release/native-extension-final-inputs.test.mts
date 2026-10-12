@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   type ExtensionFinalInput,
-  projectNativeExtensionFinalInputs,
   projectNativeAppleBaseInput,
+  projectNativeExtensionFinalInputs,
+  projectNativeSwiftSourceInput,
 } from './native-extension-final-inputs.mts';
 
 function fixture() {
@@ -41,11 +42,64 @@ function fixture() {
     manifest: file('manifest.json'),
     frozen: file('extension-artifacts.json'),
   };
-  return { directory, leaf };
+  return { directory, leaf, file };
 }
 
-test('Apple base uses the same whole regular File projection without archive or admission flags', () => {
-  const { directory, leaf } = fixture();
+test('Swift source tuple retains the genuine binding producer and rejects version/cohort substitutions', () => {
+  const { directory, file } = fixture();
+  try {
+    const carrier = file('oliphaunt-react-native-ios-carriers.json');
+    const document = Buffer.from(
+      JSON.stringify({
+        schema: 'oliphaunt-react-native-ios-carrier-v1',
+        base: {
+          product: 'liboliphaunt-native',
+          version: '0.3.3',
+          tag: 'liboliphaunt-native-v0.3.3',
+        },
+        extensions: [],
+        carriers: [],
+      }),
+    );
+    writeFileSync(carrier.path, document);
+    carrier.size = document.length;
+    carrier.sha256 = createHash('sha256').update(document).digest('hex');
+    const bindingsArchive = file('oliphaunt-swift-0.8.3-bindings.xcframework.zip');
+    bindingsArchive.producer.root = '//src/native/sdks/swift:shipping_bindings';
+    const input = {
+      owner: 'oliphaunt-swift',
+      version: '0.8.3',
+      archive: file('Oliphaunt-source.zip'),
+      carrier,
+      ownerCatalog: file('extension-owner-catalog.json'),
+      bindingsArchive,
+    };
+    const projected = projectNativeSwiftSourceInput(input);
+    expect(projected.files).toHaveLength(4);
+    expect(projected.input.bindingsArchive.producer).toEqual(bindingsArchive.producer);
+    expect(projected.input.bindingsArchive.path).toStartWith(
+      '@oliphaunt_metadata//:native-swift-source/bindingsArchive/',
+    );
+    for (const change of [
+      (value) => delete value.bindingsArchive,
+      (value) => (value.version = '0.8.4'),
+      (value) => (value.bindingsArchive.member = 'binding.zip'),
+      (value) => (value.bindingsArchive.producer.root = '//wrong:bindings'),
+      (value) => (value.bindingsArchive.producer.invocationId = 'different-candidate-run'),
+      (value) => (value.bindingsArchive.producer.evidenceDigest = `sha256:${'a'.repeat(64)}`),
+      (value) => (value.bindingsArchive.sha256 = '0'.repeat(64)),
+    ]) {
+      const changed = structuredClone(input);
+      change(changed);
+      expect(() => projectNativeSwiftSourceInput(changed)).toThrow();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Apple base preserves the final manifest/archive tuple and rejects stale versions and mixed producer runs', () => {
+  const { directory, leaf, file: original } = fixture();
   try {
     const source = path.join(directory, 'ios.json');
     const bytes = Buffer.from('actual original base manifest fixture');
@@ -61,16 +115,33 @@ test('Apple base uses the same whole regular File projection without archive or 
         output: 'bazel-out/config/bin/apple_release_assets/ios.json',
       },
     };
-    const input = { owner: 'liboliphaunt-native', version: '0.3.3', file };
+    const framework = original('liboliphaunt-0.3.3-apple-spm-xcframework.zip');
+    framework.producer.root = '//src/native/runtime:apple_swiftpm_shipping';
+    const resources = original('liboliphaunt-0.3.3-runtime-resources-ios-datum64.tar.gz');
+    resources.producer.root = '//src/native/runtime:apple_resources_shipping';
+    const input = { owner: 'liboliphaunt-native', version: '0.3.3', file, framework, resources };
     const projected = projectNativeAppleBaseInput(input);
     expect(projected.input.file.path).toStartWith('@oliphaunt_metadata//:native-apple-base/');
     expect(projected.input.file.producer).toEqual(file.producer);
-    expect(projected.files).toHaveLength(1);
+    expect(projected.files).toHaveLength(3);
     for (const changed of [
       { ...input, owner: 'liboliphaunt-wasix' },
       { ...input, authenticated: true },
       { ...input, file: { ...file, member: 'ios.json' } },
       { ...input, file: { ...file, sha256: '0'.repeat(64) } },
+      { ...input, version: '0.3.4' },
+      { ...input, framework: undefined },
+      {
+        ...input,
+        framework: { ...framework, producer: { ...framework.producer, root: '//wrong:archive' } },
+      },
+      {
+        ...input,
+        resources: {
+          ...resources,
+          producer: { ...resources.producer, invocationId: 'pre-version-run' },
+        },
+      },
     ])
       expect(() => projectNativeAppleBaseInput(changed)).toThrow();
   } finally {

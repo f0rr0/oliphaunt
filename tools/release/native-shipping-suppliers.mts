@@ -12,6 +12,7 @@ import type { NativeBuildSource } from './native-build-qualification.mts';
 import {
   captureCompletedNativePublicArtifacts,
   captureCompletedNativeRegistryCarriers,
+  captureCompletedNativeSwiftSourceSuppliers,
   nativeArchiveDeliveryMembers,
 } from './native-completed-delivery.mts';
 import { fileIdentity } from './native-file-identity.mts';
@@ -26,17 +27,20 @@ type Observation = Awaited<ReturnType<typeof observeNativePublicationConstructio
 type CompletedInput =
   | Parameters<typeof captureCompletedNativeArchiveDelivery>[0]
   | Parameters<typeof captureCompletedNativePublicArtifacts>[0]
-  | Parameters<typeof captureCompletedNativeRegistryCarriers>[0];
+  | Parameters<typeof captureCompletedNativeRegistryCarriers>[0]
+  | Parameters<typeof captureCompletedNativeSwiftSourceSuppliers>[0];
 const authenticateCompletedSupplier = (input: CompletedInput) =>
-  'carriers' in input
-    ? captureCompletedNativeRegistryCarriers(input)
-    : Array.isArray(input.files)
-      ? captureCompletedNativeArchiveDelivery(
-          input as Parameters<typeof captureCompletedNativeArchiveDelivery>[0],
-        )
-      : captureCompletedNativePublicArtifacts(
-          input as Parameters<typeof captureCompletedNativePublicArtifacts>[0],
-        );
+  'sourceTags' in input
+    ? captureCompletedNativeSwiftSourceSuppliers(input)
+    : 'carriers' in input
+      ? captureCompletedNativeRegistryCarriers(input)
+      : Array.isArray(input.files)
+        ? captureCompletedNativeArchiveDelivery(
+            input as Parameters<typeof captureCompletedNativeArchiveDelivery>[0],
+          )
+        : captureCompletedNativePublicArtifacts(
+            input as Parameters<typeof captureCompletedNativePublicArtifacts>[0],
+          );
 
 /** Only these canonical original Swift documents are data/ABI construction inputs. */
 function swiftSourceDocument(root, member: string | undefined) {
@@ -290,7 +294,10 @@ export async function projectNativeBuildBoundSuppliers(
     const original = builds[0];
     const cohorts = original.evidence.cohorts
       .map((cohort, index) => ({ cohort, index }))
-      .filter(({ cohort }) => cohort.invocationId === producer.invocationId);
+      .filter(
+        ({ index }) =>
+          original.qualification.cohorts?.[index]?.invocationId === producer.invocationId,
+      );
     if (cohorts.length !== 1) throw new Error('current supplier original invocation mismatch');
     const { cohort, index } = cohorts[0];
     const roots = cohort.roots.filter(
@@ -417,7 +424,17 @@ export async function projectNativeBuildBoundSuppliers(
     const matches = completed.filter((input) => {
       if (consumerDigest(input.publication) !== consumerDigest(publication)) return false;
       const artifact = supplier.origin.artifact;
-      if ('carriers' in input && Object.hasOwn(input.carriers, artifact)) return true;
+      if (
+        'sourceTags' in input &&
+        input.sourceTags.some(
+          (row) =>
+            row.artifact === artifact &&
+            consumerDigest(row.publication) === consumerDigest(publication),
+        )
+      )
+        return true;
+      if ('carriers' in input && input.carriers && Object.hasOwn(input.carriers, artifact))
+        return true;
       if (!('files' in input)) return false;
       if (!Array.isArray(input.files))
         return (

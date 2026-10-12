@@ -335,7 +335,7 @@ cargo_crates.annotation_select(
     crate = "llvm-sys",
     repositories = ["a", "s"],
     triples = ["aarch64-unknown-linux-gnu"],
-    link_deps = ["@oliphaunt//build_defs/extensions/postgis:libxml2"],
+    link_deps = ["@oliphaunt//build_defs/wasix:llvm_libxml2_arm64"],
 )
 cargo_crates.annotation_select(
     crate = "llvm-sys",
@@ -449,15 +449,9 @@ android_sdk_hub(name = "oliphaunt_android_sdk", archive = "oliphaunt_android_sdk
 android_sdk = use_extension("@rules_android//rules/android_sdk_repository:rule.bzl", "android_sdk_repository_extension")
 override_repo(android_sdk, androidsdk = "oliphaunt_android_sdk")
 
-frozen_native_carrier = use_repo_rule("//build_defs/release:frozen-native-carrier.bzl", "frozen_native_carrier_repository")
-frozen_native_carrier(
-    name = "swift_frozen_native",
-    source = "//build_defs/release:swift-0.8.2-source.json",
-    compatibility = "//src/native/sdks/swift:LIBOLIPHAUNT_VERSION",
-    native_releases = "//build_defs/release:native-0.3.3-releases.json",
-    native_completion = "//build_defs/release:native-0.3.3-completed-publication.json",
-    source_publication = "//build_defs/release:swift-0.8.2-publication-source.json",
-)
+# Lazy; ordinary SDK construction does not fetch emulator/system-image archives.
+android_emulator = use_repo_rule("//build_defs/languages/jvm:android-sdk-repository.bzl", "android_emulator_repository")
+android_emulator(name = "oliphaunt_android_emulator")
 
 frozen_native_runtime = use_repo_rule("//build_defs/release:frozen-native-runtime.bzl", "frozen_native_runtime_repository")
 frozen_native_runtime(
@@ -769,7 +763,7 @@ postmaster_crates.annotation_select(
     version = "=221.0.1",
     repositories = ["postmaster_compiler_crates"],
     triples = ["aarch64-unknown-linux-gnu"],
-    link_deps = ["@oliphaunt//build_defs/extensions/postgis:libxml2"],
+    link_deps = ["@oliphaunt//build_defs/wasix:llvm_libxml2_arm64"],
 )
 postmaster_crates.annotation_select(
     crate = "llvm-sys",
@@ -954,4 +948,26 @@ installed_cargo_inputs(
     bun = "@bun_runtime//:bun",
     lock = "//build_defs/languages/installed:wasix/query/Cargo.lock",
     index = "//build_defs/languages/installed:wasix/query/registry-index.json",
+)
+
+react_native_apple_release = use_repo_rule("//build_defs/apple:react-native-repository.bzl", "react_native_apple_release_repository")
+react_native_apple_release(name = "react_native_apple_release", native_metadata = "@expo_android_sources//:apple-metadata.json")
+
+apple_captured_archives = use_repo_rule("//build_defs/apple:captured-repository.bzl", "apple_captured_archives_repository")
+apple_captured_archives(
+    name = "react_native_native_base",
+    catalog = "@oliphaunt_metadata//:completed-supplier-artifacts.json",
+    current_native = "@oliphaunt_metadata//:native-apple-base-input.json",
+    selected_products = "@oliphaunt_metadata//:prepared-selected-products.json",
+    swift_construction = "@react_native_swift_package//:construction.json",
+)
+
+apple_captured_swift = use_repo_rule("//build_defs/apple:captured-swift-repository.bzl", "apple_captured_swift_repository")
+apple_captured_swift(
+    name = "react_native_swift_package",
+    catalog = "@oliphaunt_metadata//:completed-supplier-artifacts.json",
+    manifest = "//src/native/sdks/react-native:package.json",
+    selected_products = "@oliphaunt_metadata//:prepared-selected-products.json",
+    current_source = "@oliphaunt_metadata//:native-swift-source-input.json",
+    runtime = "@react_native_native_base//:runtime",
 )

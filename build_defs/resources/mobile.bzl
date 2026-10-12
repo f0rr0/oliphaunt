@@ -1,7 +1,7 @@
 """Genuine target ABI receipts for separately admitted native seed domains."""
 
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
-load("//build_defs/resources:resources.bzl", "NativeSeedInfo", "SEED_REUSE_ATTRS", "native_seed_envelopes", "seed_constructor_inputs", "seed_promotion", "seed_reuse")
+load("//build_defs/resources:resources.bzl", "NativeSeedInfo", "SEED_REUSE_ATTRS", "native_seed_envelopes", "seed_constructor_inputs", "seed_constructor_tree_members", "seed_promotion", "seed_reuse")
 load("//build_defs/release:shipping.bzl", "shipping_export")
 load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS", "DATABASE_RESOURCE_CONTRACT", "PRODUCTS", "SEED_REUSE_CONTROLS")
 load("//build_defs/native/carriers:defs.bzl", "native_carrier_legal_inputs")
@@ -108,6 +108,7 @@ def _native_seed_domain_impl(ctx):
         "icu": ctx.file.icu.path if ctx.file.icu else None,
         "contract": DATABASE_RESOURCE_CONTRACT,
         "constructionInputs": seed_constructor_inputs(ctx, constructor_inputs, logical_roles),
+        "constructionTreeMembers": seed_constructor_tree_members(ctx),
         "constructionOutput": construction.path,
         "reuse": reuse,
         "promotion": promotion,

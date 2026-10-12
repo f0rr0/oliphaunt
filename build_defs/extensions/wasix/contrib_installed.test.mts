@@ -22,9 +22,16 @@ import { assertCanonicalWasixAotManifest } from '../../../src/wasix/runtime/tool
 import { AOT_TARGET_TRIPLES } from '../../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
 
-assert.equal(process.argv.length, 9, 'contrib installed test requires its seven declared inputs');
+assert(
+  [9, 13].includes(process.argv.length),
+  'contrib installed test requires seven inputs or its four additional incremental inputs',
+);
 const [specInput, npmInput, cargoInput, frozenInput, coreInput, coreManifestInput, binary] =
   process.argv.slice(2);
+const [toolsSpecInput, toolsPortableInput, toolsAotInput, serverBinary] = process.argv.slice(9);
+const incremental = process.argv.length === 13;
+if (incremental)
+  assert([toolsSpecInput, toolsPortableInput, toolsAotInput, serverBinary].every(Boolean));
 const spec = JSON.parse(readFileSync(specInput, 'utf8'));
 const frozen = JSON.parse(readFileSync(frozenInput, 'utf8'));
 const root = mkdtempSync(
@@ -228,29 +235,92 @@ try {
       coreManifest: realpathSync(coreManifestInput),
     }),
   );
-  const result = Bun.spawnSync(
-    [
-      realpathSync(binary),
-      '--ignored',
-      '--exact',
+  const run = (executable: string, test: string, extraEnv: Record<string, string> = {}) => {
+    const result = Bun.spawnSync(
+      [realpathSync(executable), '--ignored', '--exact', test, '--nocapture', '--test-threads=1'],
+      {
+        env: { ...process.env, OLIPHAUNT_DECLARED_EXTENSION_PACKET: packet, ...extraEnv },
+        cwd: process.cwd(),
+        stdout: 'pipe',
+        stderr: 'pipe',
+        timeout: 900000,
+      },
+    );
+    assert.equal(result.exitCode, 0, `${result.stderr.toString()}\n${result.stdout.toString()}`);
+    assert.match(result.stdout.toString(), /1 passed; 0 failed/u);
+    console.log(result.stdout.toString().trim());
+    if (incremental && result.stderr.length) console.log(result.stderr.toString().trim());
+  };
+  if (incremental) {
+    const { validatePortableToolsPayload, validateToolsAotPayload } = await import(
+      '../../../src/wasix/postgres-tools/tools/package-assets.mts'
+    );
+    const tools = JSON.parse(readFileSync(toolsSpecInput, 'utf8'));
+    assert.equal(tools.runtimeVersion, spec.runtimeVersion);
+    const extractTools = (input: string, name: string, directory: string) => {
+      const entries = readPortableArchiveEntries(realpathSync(input));
+      const prefix = `${name}-${tools.version}`;
+      const cargo = Bun.TOML.parse(entries.get(`${prefix}/Cargo.toml`)!.data().toString());
+      assert.equal(cargo.package.name, name);
+      assert.equal(cargo.package.version, tools.version);
+      for (const [member, entry] of entries)
+        if (member.startsWith(`${prefix}/${directory}/`)) {
+          assert(entry.isDirectory || (entry.isFile && !entry.isSymbolicLink));
+          if (entry.isFile)
+            write(
+              `tools/${directory}/${member.slice(`${prefix}/${directory}/`.length)}`,
+              entry.data(),
+            );
+        }
+      return path.join(root, 'tools', directory);
+    };
+    const portable = extractTools(toolsPortableInput, tools.portableName, 'payload');
+    const aot = extractTools(toolsAotInput, tools.aotName, 'artifacts');
+    const sourceFingerprint = core['source-fingerprint'];
+    assert.equal(typeof sourceFingerprint, 'string');
+    const portableManifest = validatePortableToolsPayload(portable, tools.version, {
+      runtimeVersion: tools.runtimeVersion,
+      sourceFingerprint,
+    });
+    const aotManifest = validateToolsAotPayload(aot, tools.target, { sourceFingerprint });
+    const tool = (key: 'pgDump' | 'psql') => {
+      const module = portableManifest[key];
+      const image = aotManifest.artifacts.find(
+        (artifact: { name: string }) => artifact.name === `tool:${module.name}`,
+      );
+      assert(image, 'declared tools AOT has no portable command identity');
+      assert.equal(image['module-sha256'], module.sha256);
+      return {
+        wasm: path.join(portable, module.path),
+        aot: path.join(aot, image.path),
+        manifest: path.join(aot, 'manifest.json'),
+      };
+    };
+    const toolsPacket = write(
+      'tools/packet.json',
+      JSON.stringify({
+        version: tools.version,
+        runtimeVersion: tools.runtimeVersion,
+        pgDump: tool('pgDump'),
+        psql: tool('psql'),
+      }),
+    );
+    run(
+      binary,
+      'oliphaunt::extensions::extension_tests::declared_contrib_carriers_pass_logical_dump_restore',
+      { OLIPHAUNT_DECLARED_TOOLS_PACKET: toolsPacket },
+    );
+    run(serverBinary, 'declared_contrib_carriers_pass_server_smoke');
+    console.log('Actual 32-member WASIX contrib logical dump/restore and pgwire server SQL: PASS');
+  } else {
+    run(
+      binary,
       'oliphaunt::extensions::extension_tests::declared_contrib_carriers_pass_full_lifecycle',
-      '--nocapture',
-      '--test-threads=1',
-    ],
-    {
-      env: { ...process.env, OLIPHAUNT_DECLARED_EXTENSION_PACKET: packet },
-      cwd: process.cwd(),
-      stdout: 'pipe',
-      stderr: 'pipe',
-      timeout: 900000,
-    },
-  );
-  assert.equal(result.exitCode, 0, `${result.stderr.toString()}\n${result.stdout.toString()}`);
-  assert.match(result.stdout.toString(), /1 passed; 0 failed/u);
-  console.log(result.stdout.toString().trim());
-  console.log(
-    'Actual 32-member WASIX contrib npm/Cargo portable and four AOT cohorts with exact source-built core lifecycle: PASS',
-  );
+    );
+    console.log(
+      'Actual 32-member WASIX contrib npm/Cargo portable and four AOT cohorts with exact source-built core lifecycle: PASS',
+    );
+  }
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

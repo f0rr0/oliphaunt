@@ -12,6 +12,7 @@ import { defaultExtensionReleasePlan } from './default-extension-release-plan.mt
 import {
   captureCompletedNativePublicArtifacts,
   captureCompletedNativeRegistryCarriers,
+  nativeArchiveDeliveryMembers,
 } from './native-completed-delivery.mts';
 import { captureCompletedNativeArchiveDelivery } from './native-publication-delivery.mts';
 import {
@@ -828,7 +829,7 @@ async function importedFixture(run) {
     mkdirSync(path.dirname(archive), { recursive: true });
     await archiveDirectory(tree, archive);
     const original = structuredClone(cohort);
-    original.invocationId = 'original-linux-invocation';
+    const invocationId = 'original-linux-invocation';
     const root = structuredClone(roots[0]);
     root.label = '//runtime:bound_archive_shipping';
     root.package.ecosystem = 'github';
@@ -870,6 +871,7 @@ async function importedFixture(run) {
       qualification: {
         ...structuredClone(observation.authenticated[0].qualification),
         github: githubOrigin,
+        cohorts: [{ invocationId }],
       },
       origin: {
         github: githubOrigin,
@@ -902,7 +904,7 @@ async function importedFixture(run) {
           kind: 'current-source',
           producer: {
             evidenceDigest: build.origin.evidenceDigest,
-            invocationId: original.invocationId,
+            invocationId,
             root: root.label,
             configuration: '9'.repeat(64),
             output,
@@ -921,7 +923,7 @@ async function importedFixture(run) {
   }, 'held');
 }
 
-test('imported current member binds original authenticated archive across configurations', async () => {
+test('imported current member binds the qualified invocation without inventing a raw cohort field', async () => {
   await importedFixture(async ({ project }) => {
     const result = await project();
     expect(result.unknowns).toEqual([]);
@@ -1316,3 +1318,96 @@ for (const kind of ['carrier', 'ownerCatalog', 'archive'] as const) {
     },
   );
 }
+
+test('completed Git source context binds exact retained members and never becomes a current compiled adoption', async () => {
+  await fixture(async ({ input, roots, cohort, observation, executionRoot }) => {
+    const id = 'oliphaunt-swift';
+    const version = '0.8.2';
+    const completed = { ...publication, product: id, version, tagName: `${id}-v${version}` };
+    const artifact = `swift-source-tag:${version}`;
+    const member = 'src/sdks/swift/Sources/Oliphaunt/Oliphaunt.swift';
+    const bytes = Buffer.from('public struct FrozenSwiftSource {}\n');
+    const tree = path.join(executionRoot, 'source-tag-tree');
+    mkdirSync(path.join(tree, path.dirname(member)), { recursive: true });
+    writeFileSync(path.join(tree, member), bytes);
+    const archive = path.join(executionRoot, 'source-tag.tar.gz');
+    await archiveDirectory(tree, archive);
+    const outer = {
+      path: archive,
+      size: readFileSync(archive).length,
+      sha256: createHash('sha256').update(readFileSync(archive)).digest('hex'),
+    };
+    const row = {
+      publication: completed,
+      artifact,
+      source: {
+        commit: '1'.repeat(40),
+        tree: '2'.repeat(40),
+        member: 'src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json',
+        blob: '3'.repeat(40),
+      },
+      file: outer,
+    };
+    delete input.products[product];
+    input.products[id] = { version: '0.8.3' };
+    observation.products = Object.entries(input.products).map(([id, metadata]) => ({
+      product: { id, ...metadata },
+    }));
+    roots[0].package.product = id;
+    roots[0].package.version = '0.8.3';
+    roots[1].package.supplierInputs = [];
+    roots[2].package.supplierInputs = [
+      {
+        product: id,
+        version,
+        configuration: 'portable',
+        binding: 'abi-contract',
+        origin: { kind: 'completed-publication', publication: completed, artifact },
+        files: [{ path: heldFile, member }],
+      },
+    ];
+    writeFileSync(path.join(executionRoot, heldFile), bytes);
+    const capture = cohort.inputs.find(({ path: name }) => name === heldFile)!;
+    capture.members = captureNativeInputMembers(executionRoot, heldFile).members;
+    input.completed = [
+      { publication: completed, files: {}, carriers: {}, sourceTags: [structuredClone(row)] },
+    ] as any;
+    let reads = 0;
+    const authenticateCompleted = async (context) => {
+      reads++;
+      expect(context.sourceTags).toEqual([row]);
+      return {
+        scope: 'construction',
+        publication: completed,
+        unknowns: [],
+        archives: [
+          {
+            id: artifact,
+            name: artifact,
+            target: 'portable',
+            size: outer.size,
+            sha256: outer.sha256,
+            members: nativeArchiveDeliveryMembers(archive),
+          },
+        ],
+      };
+    };
+    const project = () => projectNativeBuildBoundSuppliers(input, { authenticateCompleted });
+    const result = await project();
+    expect(result.unknowns).toEqual([]);
+    expect([...result.buildBound!.get(consumer)!]).toEqual([]);
+    expect(reads).toBe(1);
+    capture.members[0].sha256 = '0'.repeat(64);
+    await expect(project()).rejects.toThrow('published member bytes');
+    capture.members = captureNativeInputMembers(executionRoot, heldFile).members;
+    delete roots[2].package.supplierInputs[0].files[0].member;
+    capture.members = [
+      { path: '', type: 'file', mode: 0o644, size: outer.size, sha256: outer.sha256 },
+    ];
+    expect((await project()).unknowns).toEqual([]);
+    input.completed[0].sourceTags[0].publication.publicationSha = '4'.repeat(40);
+    expect((await project()).unknowns).toContain(
+      'missing completed supplier bytes: oliphaunt-swift@0.8.2',
+    );
+  }, 'held');
+});

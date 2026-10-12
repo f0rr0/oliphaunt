@@ -53,6 +53,11 @@ export async function fixture(
       for (const [identifier] of slices) {
         mkdirSync(path.join(framework, identifier));
         writeFileSync(path.join(framework, identifier, 'fixture.a'), 'construction fixture\n');
+        mkdirSync(path.join(framework, identifier, 'Headers'));
+        writeFileSync(
+          path.join(framework, identifier, 'Headers', 'oliphaunt.h'),
+          '// genuine held native fixture header\n',
+        );
       }
     }
     const archive = path.join(scratch, asset.name);
@@ -108,7 +113,6 @@ export async function fixture(
     nativeVersion: '0.3.3',
     sources: sourceFiles,
     generatedSwift,
-    publicHeader: path.resolve('src/native/runtime/include/oliphaunt.h'),
     bindingsArchive,
     carrier: carrierFile,
     xcframework,

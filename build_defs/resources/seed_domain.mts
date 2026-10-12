@@ -27,8 +27,8 @@ import { fileIdentity } from '../../tools/release/native-file-identity.mts';
 import { extractNativePayload } from '../native/host-runtime-test-helpers.mts';
 import {
   captureSeedConstructionIntent,
-  seedProducerIdentity,
   seedConstructionFileBinding,
+  seedProducerIdentity,
   selectCompletedSeed,
   selectQualifiedSeed,
   validateSeedConstructionReceipt,
@@ -155,6 +155,7 @@ export async function constructSeedDomain(specification) {
             },
           },
           specification.constructionInputs,
+          specification.constructionTreeMembers,
         )
       : undefined;
     const producerContent =

@@ -144,7 +144,7 @@ export_mobile_e2e_icu_expectation_from_manifest() {
 export_mobile_e2e_icu_expectation_from_android_apk() {
   local apk="$1"
   local label="$2"
-  local extracted manifest member
+  local extracted manifest
   [ -f "$apk" ] || {
     echo "$label is missing: $apk" >&2
     return 1
@@ -154,18 +154,7 @@ export_mobile_e2e_icu_expectation_from_android_apk() {
     return 1
   }
   manifest="$extracted/runtime/manifest.properties"
-  mkdir -p "$extracted/runtime"
-  local extract_status=0
-  unzip -p "$apk" "assets/oliphaunt/runtime/manifest.properties" >"$manifest" ||
-    extract_status=$?
-  zipinfo -1 "$apk" >"$extracted/members" || extract_status=$?
-  for member in cluster-seed cluster-seed-icu; do
-    if grep -Fxq "assets/oliphaunt/$member/manifest.properties" "$extracted/members"; then
-      mkdir -p "$extracted/$member"
-      unzip -p "$apk" "assets/oliphaunt/$member/manifest.properties" >"$extracted/$member/manifest.properties" || extract_status=$?
-    fi
-  done
-  if [ "$extract_status" -ne 0 ]; then
+  if ! bun "$root/src/native/sdks/react-native/tools/expo-runner-reporting.mts" android-apk-manifests "$apk" "$extracted"; then
     rm -rf "$extracted"
     echo "$label resource manifests could not be read: $apk" >&2
     return 1

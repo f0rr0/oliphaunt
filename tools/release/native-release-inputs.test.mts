@@ -16,18 +16,25 @@ import {
   writeSeedConstructionReceipt,
 } from '../../build_defs/resources/seed_construction.mts';
 import { createDeterministicTar } from '../packaging/archive-directory.mts';
+import type { ExtensionFinalInputFile } from './native-extension-final-inputs.mts';
 import { fileIdentity } from './native-file-identity.mts';
 import { projectPreparedNativePublicationPlan } from './native-freeze-publication-candidate.mts';
 import {
   acquirePreparedNativeReleaseInputs,
   assertAcquiredPreparedNativeReleaseInputs,
   importPublicNativePublicationInputs,
+  type NativeReleaseFinalInputs,
   parseNativeReleaseInputRecord,
   relocateNativeReleaseInputs,
   resolveNativeReleaseInputContext,
   transportPublicNativePublicationInputs,
   writeNativeReleaseInputs,
 } from './native-release-inputs.mts';
+import {
+  nativeArchiveConstructionFinalInputs,
+  nativeConstructorProducerArtifacts,
+  writeNativeConstructionInputSnapshot,
+} from './native-release-preparation.mts';
 import {
   collectNativeVersionUpdates,
   commitNativeVersionUpdates,
@@ -126,6 +133,128 @@ async function fixture() {
     capsule,
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
+}
+
+function finalInputsFixture(root: string): Required<NativeReleaseFinalInputs> {
+  const directory = path.join(root, 'original-final-files');
+  mkdirSync(directory);
+  const file = (
+    name: string,
+    label: string,
+    contents = `original ${name}\n`,
+    member?: string,
+  ): ExtensionFinalInputFile => {
+    const absolute = path.join(directory, name);
+    writeFileSync(absolute, contents);
+    const { size, sha256 } = fileIdentity(absolute);
+    return {
+      path: absolute,
+      size,
+      sha256,
+      producer: {
+        evidenceDigest: `sha256:${'a'.repeat(64)}`,
+        invocationId: 'original-constructor-invocation',
+        root: label,
+        configuration: 'b'.repeat(64),
+        output: `bazel-out/original/bin/${name}`,
+      },
+      ...(member === undefined ? {} : { member }),
+    };
+  };
+  return {
+    extensionFinalInputs: [
+      {
+        product: 'pg-hashids',
+        owner: 'pg-hashids',
+        version: '0.1.0',
+        family: 'native',
+        target: 'linux-x64-gnu',
+        github: [
+          file(
+            'pg-hashids-0.1.0-linux-x64-gnu.tar.gz',
+            '//src/extensions/pg_hashids:shipping_github',
+            undefined,
+            'archives/pg-hashids-0.1.0-linux-x64-gnu.tar.gz',
+          ),
+        ],
+        npm: [file('pg-hashids-0.1.0.tgz', '//src/extensions/pg_hashids:shipping_npm')],
+        cargo: [file('pg-hashids-0.1.0.crate', '//src/extensions/pg_hashids:shipping_cargo')],
+        manifest: file('pg-hashids-release.json', '//src/extensions/pg_hashids:shipping_manifest'),
+        frozen: file('pg-hashids-frozen.json', '//src/extensions/pg_hashids:shipping_frozen'),
+      },
+    ],
+    nativeAppleBase: {
+      owner: 'liboliphaunt-native',
+      version: '0.3.3',
+      file: file('ios.json', '//src/native/runtime:apple_ios_manifest_shipping'),
+      framework: file(
+        'liboliphaunt-0.3.3-apple-spm-xcframework.zip',
+        '//src/native/runtime:apple_swiftpm_shipping',
+      ),
+      resources: file(
+        'liboliphaunt-0.3.3-runtime-resources-ios-datum64.tar.gz',
+        '//src/native/runtime:apple_resources_shipping',
+      ),
+    },
+    nativeSwiftSource: {
+      owner: 'oliphaunt-swift',
+      version: '0.8.2',
+      archive: file(
+        'Oliphaunt-source.zip',
+        '//src/native/sdks/swift:shipping_Oliphaunt-source_zip',
+      ),
+      carrier: file(
+        'oliphaunt-react-native-ios-carriers.json',
+        '//src/native/sdks/swift:shipping_oliphaunt-react-native-ios-carriers_json',
+        JSON.stringify({
+          schema: 'oliphaunt-react-native-ios-carrier-v1',
+          base: {
+            product: 'liboliphaunt-native',
+            version: '0.3.3',
+            tag: 'liboliphaunt-native-v0.3.3',
+          },
+          extensions: [],
+          carriers: [],
+        }),
+        'src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json',
+      ),
+      ownerCatalog: file(
+        'extension-owner-catalog.json',
+        '//src/native/sdks/swift:shipping_extension-owner-catalog_json',
+      ),
+      bindingsArchive: file(
+        'oliphaunt-swift-0.8.2-bindings.xcframework.zip',
+        '//src/native/sdks/swift:shipping_bindings',
+      ),
+    },
+  };
+}
+
+function finalFiles(inputs: NativeReleaseFinalInputs): ExtensionFinalInputFile[] {
+  return [
+    ...(inputs.extensionFinalInputs ?? []).flatMap((row) => [
+      ...row.github,
+      ...row.npm,
+      ...row.cargo,
+      row.manifest,
+      row.frozen,
+    ]),
+    ...(inputs.nativeAppleBase
+      ? [
+          inputs.nativeAppleBase.file,
+          inputs.nativeAppleBase.framework,
+          inputs.nativeAppleBase.resources,
+        ]
+      : []),
+    ...(inputs.nativeSwiftSource
+      ? [
+          inputs.nativeSwiftSource.archive,
+          inputs.nativeSwiftSource.carrier,
+          inputs.nativeSwiftSource.ownerCatalog,
+          inputs.nativeSwiftSource.bindingsArchive,
+        ]
+      : []),
+  ];
 }
 
 test('native publication scope and versions project the exact Prepare transition without a second ownership graph', async () => {
@@ -353,6 +482,165 @@ test('retained suppliers share the existing public and prepared File pool, reloc
     expect(() => relocateNativeReleaseInputs(prepared, f.record)).toThrow(
       'supplier origin differs',
     );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('public and prepared final constructor facts relocate every File through the existing pool without producer authority', async () => {
+  const f = await fixture();
+  try {
+    const finalInputs = finalInputsFixture(f.root);
+    const originals = finalFiles(finalInputs);
+    const publication = {
+      product: 'oliphaunt-swift',
+      version: '0.8.2',
+      tagName: 'oliphaunt-swift-v0.8.2',
+      publicationSha: 'c'.repeat(40),
+      publicationTree: 'd'.repeat(40),
+      releaseSha: 'e'.repeat(40),
+    };
+    const supplier = {
+      publication,
+      artifact: 'swift-source-tag:0.8.2',
+      source: {
+        commit: 'f'.repeat(40),
+        tree: '1'.repeat(40),
+        member: 'src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json',
+        blob: '2'.repeat(40),
+      },
+      file: {
+        path: finalInputs.nativeSwiftSource.archive.path,
+        size: finalInputs.nativeSwiftSource.archive.size,
+        sha256: finalInputs.nativeSwiftSource.archive.sha256,
+      },
+    };
+    const raw = path.join(f.root, 'final-public.json');
+    writeFileSync(
+      raw,
+      JSON.stringify({
+        source: f.record.bridge.source,
+        selectedProducts: f.record.selectedProducts,
+        seedControls: [],
+        supplierPublications: [publication],
+        supplierArtifacts: [supplier],
+        ...finalInputs,
+      }),
+    );
+    const exported = path.join(f.root, 'final-public-export');
+    transportPublicNativePublicationInputs(raw, exported, f.record.bridge.source);
+    const prepared = path.join(f.root, 'final-prepared');
+    writeNativeReleaseInputs(
+      prepared,
+      f.record,
+      f.controls,
+      [publication],
+      [supplier],
+      finalInputs,
+    );
+    const downloaded = path.join(f.root, 'final-downloaded');
+    cpSync(exported, downloaded, { recursive: true });
+    const serializedFile = path.join(downloaded, 'native-publication-inputs.json');
+    const serialized = JSON.parse(readFileSync(serializedFile, 'utf8'));
+    for (const file of finalFiles(serialized))
+      file.path = path.join('/missing/original-producer', path.basename(file.path));
+    writeFileSync(serializedFile, JSON.stringify(serialized));
+    rmSync(path.join(f.root, 'original-final-files'), { recursive: true });
+    const imported = JSON.parse(
+      readFileSync(importPublicNativePublicationInputs(downloaded, f.record.bridge.source), 'utf8'),
+    );
+    const relocated = relocateNativeReleaseInputs(prepared, f.record, {
+      ...f.record.preparedSource,
+      commit: '3'.repeat(40),
+    });
+    expect(finalFiles(imported)).toHaveLength(12);
+    for (const [index, file] of finalFiles(imported).entries()) {
+      expect(file.path).toBe(
+        path.join(downloaded, 'files', file.sha256, path.basename(originals[index].path)),
+      );
+      expect(file.producer).toEqual(originals[index].producer);
+      expect(file.member).toEqual(originals[index].member);
+      expect(fileIdentity(file.path).sha256).toBe(originals[index].sha256);
+      expect(finalFiles(relocated)[index].producer).toEqual(originals[index].producer);
+      expect(finalFiles(relocated)[index].member).toEqual(originals[index].member);
+      expect(finalFiles(relocated)[index].path).toStartWith(prepared);
+    }
+    expect(imported.supplierArtifacts[0].file.path).toBe(imported.nativeSwiftSource.archive.path);
+    expect(imported.supplierArtifacts[0].source).toEqual(supplier.source);
+    expect(imported.selectedProducts).toEqual(f.record.selectedProducts);
+    expect(relocated.selectedProducts).toEqual(f.record.selectedProducts);
+    expect(() => assertAcquiredPreparedNativeReleaseInputs(imported)).toThrow(
+      'authenticated Prepare',
+    );
+    expect(() => assertAcquiredPreparedNativeReleaseInputs(structuredClone(relocated))).toThrow(
+      'authenticated Prepare',
+    );
+    writeFileSync(imported.nativeAppleBase.resources.path, 'substituted original resource File');
+    expect(() => importPublicNativePublicationInputs(downloaded, f.record.bridge.source)).toThrow(
+      'File bytes differ',
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('final constructor transport rejects source, selected scope, tuple identity, and byte substitutions without restamping', async () => {
+  const f = await fixture();
+  try {
+    const finalInputs = finalInputsFixture(f.root);
+    const prepared = path.join(f.root, 'final-rejections');
+    writeNativeReleaseInputs(prepared, f.record, [], [], [], finalInputs);
+    const file = path.join(prepared, 'native-publication-inputs.json');
+    const snapshot = JSON.parse(readFileSync(file, 'utf8'));
+    for (const mutate of [
+      (value) => {
+        value.source.commit = 'f'.repeat(40);
+      },
+      (value) => {
+        value.selectedProducts = ['oliphaunt-query'];
+      },
+      (value) => {
+        value.nativeAppleBase.owner = 'oliphaunt-swift';
+      },
+      (value) => {
+        value.nativeAppleBase.version = '0.3.4';
+      },
+      (value) => {
+        value.nativeSwiftSource.version = '0.8.3';
+      },
+      (value) => {
+        value.nativeSwiftSource.bindingsArchive.producer.invocationId = 'another-invocation';
+      },
+    ]) {
+      const changed = structuredClone(snapshot);
+      mutate(changed);
+      writeFileSync(file, JSON.stringify(changed));
+      expect(() => relocateNativeReleaseInputs(prepared, f.record)).toThrow();
+    }
+    writeFileSync(file, JSON.stringify(snapshot));
+    const publicFile = path.join(f.root, 'wrong-source-final-public.json');
+    writeFileSync(
+      publicFile,
+      JSON.stringify({
+        source: f.record.bridge.source,
+        seedControls: [],
+        supplierPublications: [],
+        ...finalInputs,
+      }),
+    );
+    expect(() =>
+      transportPublicNativePublicationInputs(
+        publicFile,
+        path.join(f.root, 'wrong-source-final-export'),
+        f.record.preparedSource,
+      ),
+    ).toThrow('source differs');
+    writeFileSync(finalInputs.extensionFinalInputs[0].frozen.path, 'substituted frozen File');
+    const destination = path.join(f.root, 'bad-final-writer');
+    expect(() => writeNativeReleaseInputs(destination, f.record, [], [], [], finalInputs)).toThrow(
+      'File bytes differ',
+    );
+    expect(existsSync(destination)).toBe(false);
   } finally {
     f.cleanup();
   }
@@ -802,3 +1090,115 @@ for (const fault of [
       f.cleanup();
     }
   });
+
+test('same final source constructor facts replace stale tuples and survive the existing source snapshot transport', async () => {
+  const f = await fixture();
+  try {
+    const finalInputs = finalInputsFixture(f.root);
+    const inherited = path.join(f.root, 'source-inputs.json');
+    const snapshot = {
+      source: f.record.preparedSource,
+      selectedProducts: f.record.selectedProducts,
+      seedControls: [],
+      supplierPublications: [],
+      extensionFinalInputs: [],
+      nativeSwiftSource: finalInputs.nativeSwiftSource,
+    };
+    writeFileSync(inherited, JSON.stringify(snapshot));
+    const current = structuredClone(finalInputs);
+    current.nativeSwiftSource.archive.producer.evidenceDigest = `sha256:${'c'.repeat(64)}`;
+    for (const key of ['carrier', 'ownerCatalog', 'bindingsArchive'])
+      current.nativeSwiftSource[key].producer.evidenceDigest =
+        current.nativeSwiftSource.archive.producer.evidenceDigest;
+    const output = writeNativeConstructionInputSnapshot({
+      source: f.record.preparedSource,
+      file: inherited,
+      directory: path.join(f.root, 'source-fresh'),
+      finalInputs: current,
+    });
+    const written = JSON.parse(readFileSync(output, 'utf8'));
+    expect(written.source).toEqual(snapshot.source);
+    expect(written.selectedProducts).toEqual(snapshot.selectedProducts);
+    expect(written.nativeSwiftSource).toEqual(current.nativeSwiftSource);
+    expect(written.extensionFinalInputs).toEqual(current.extensionFinalInputs);
+    expect(written.nativeAppleBase).toEqual(current.nativeAppleBase);
+    expect(written.nativeSwiftSource.archive.producer.evidenceDigest).not.toBe(
+      snapshot.nativeSwiftSource.archive.producer.evidenceDigest,
+    );
+    const exported = transportPublicNativePublicationInputs(
+      output,
+      path.join(f.root, 'source-export'),
+      f.record.preparedSource,
+    );
+    const relocated = importPublicNativePublicationInputs(
+      path.dirname(exported),
+      f.record.preparedSource,
+    );
+    const imported = JSON.parse(readFileSync(relocated, 'utf8'));
+    const originalFiles = finalFiles(current),
+      importedFiles = finalFiles(imported);
+    expect(importedFiles).toHaveLength(originalFiles.length);
+    for (const [index, file] of importedFiles.entries()) {
+      expect(file.path).not.toBe(originalFiles[index].path);
+      expect(fileIdentity(file.path).sha256).toBe(originalFiles[index].sha256);
+      expect(file.producer).toEqual(originalFiles[index].producer);
+      expect(file.member).toEqual(originalFiles[index].member);
+    }
+    const missing = structuredClone(current);
+    delete missing.nativeSwiftSource.bindingsArchive;
+    expect(() =>
+      writeNativeConstructionInputSnapshot({
+        source: f.record.preparedSource,
+        file: inherited,
+        directory: path.join(f.root, 'missing-source-tuple'),
+        finalInputs: missing,
+      }),
+    ).toThrow('fields differ');
+    expect(existsSync(path.join(f.root, 'missing-source-tuple'))).toBe(false);
+    const restamped = structuredClone(current);
+    restamped.nativeSwiftSource.version = '0.8.3';
+    expect(() =>
+      writeNativeConstructionInputSnapshot({
+        source: f.record.preparedSource,
+        file: inherited,
+        directory: path.join(f.root, 'restamp'),
+        finalInputs: restamped,
+      }),
+    ).toThrow('name differs');
+    expect(() =>
+      writeNativeConstructionInputSnapshot({
+        source: f.record.bridge.source,
+        file: inherited,
+        directory: path.join(f.root, 'wrong-source'),
+        finalInputs: current,
+      }),
+    ).toThrow('source differs');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('the actual constructor coordinator rejects a raw origin and uses only the known Apple role for RN bootstrap', () => {
+  expect(nativeConstructorProducerArtifacts(['oliphaunt-react-native'])).toEqual([
+    'native-build-evidence-mobile-ios',
+  ]);
+  expect(() =>
+    nativeConstructorProducerArtifacts(['oliphaunt-react-native', 'oliphaunt-swift']),
+  ).toThrow('canonical RN');
+  const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
+  expect(() =>
+    nativeArchiveConstructionFinalInputs(
+      { builds: [], origins: new Map([['raw', {}]]) } as any,
+      source,
+    ),
+  ).toThrow('producer plan differs');
+  expect(() =>
+    nativeArchiveConstructionFinalInputs(
+      {
+        builds: [{ evidenceRoot: 'raw', expected: { source } }],
+        origins: new Map([['raw', {}]]),
+      } as any,
+      source,
+    ),
+  ).toThrow('authenticated producer transport');
+});

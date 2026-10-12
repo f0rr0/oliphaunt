@@ -39,7 +39,7 @@ describe('WASIX TypeScript extensions', () => {
       ['version', '999.0.0'],
       ['consumerSha256', 'f'.repeat(64)],
       ['target', 'linux-x64-gnu'],
-    ]) {
+    ] as const) {
       const changed = structuredClone(seed);
       (changed.runtime as unknown as Record<string, unknown>)[field] = value;
       expect(() => verifyClusterSeedIdentity(options, outer, changed)).toThrow();

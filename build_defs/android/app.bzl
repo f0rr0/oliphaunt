@@ -8,6 +8,7 @@ load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@rules_java//java/common:java_common.bzl", "java_common")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/extensions:mobile.bzl", "MobileExtensionInfo")
+load("//build_defs/extensions:final_leaf.bzl", "ExtensionFinalLeafInfo")
 
 _NODE = "@rules_nodejs//nodejs:toolchain_type"
 _TAR = "@tar.bzl//tar/toolchain:type"
@@ -246,13 +247,36 @@ android_final_aar = rule(implementation = _final_aar_impl, toolchains = BUN_SOUR
         "kind": attr.string(default = "aar", values = ["aar", "runtime", "seed"]),
         "package": attr.string(), "abi": attr.string(default = "", values = ["", "arm64-v8a", "x86_64"])}))
 
+def mobile_query_input(owner, requirement, source_version, final_version, selected_products, suppliers):
+    """Admit the prepared TS owner, otherwise retain its genuine completed dependency."""
+    package = "@oliphaunt/ts-query"
+    if owner in selected_products and source_version == final_version and source_version == requirement:
+        return {"archive": "//src/query/ts:npm", "metadata": {
+            "package": package, "version": source_version, "dependencies": {}, "origin": "prepared-source"}}
+    key = owner + "/" + requirement + "/npm:" + package
+    if key not in suppliers:
+        return {"archive": None, "metadata": {"package": package, "version": requirement, "dependencies": {}},
+                "error": "Mobile app requires the genuine completed query supplier " + key}
+    supplier = suppliers[key]
+    if supplier["publication"]["product"] != owner or supplier["publication"]["version"] != requirement or supplier["artifact"] != "npm:" + package:
+        return {"archive": None, "metadata": {"package": package, "version": requirement, "dependencies": {}},
+                "error": "Mobile query supplier differs from the conventional owner requirement " + key}
+    return {"archive": supplier["file"]["path"], "metadata": {
+        "package": package, "version": requirement, "dependencies": {}, "origin": "completed-supplier",
+        "sourceSha256": supplier["file"]["sha256"], "sourceSize": supplier["file"]["size"]}}
+
 def _exec_npm_impl(ctx):
+    if ctx.attr.error:
+        fail(ctx.attr.error)
+    if not ctx.file.archive:
+        fail("App npm input requires one actual source or completed archive File")
     return [DefaultInfo(files = depset([ctx.file.archive])),
             NpmPackageInfo(package = ctx.attr.package_name, version = ctx.attr.version,
                            src = ctx.file.archive, npm_package_store_infos = depset())]
 
 android_workspace_npm = rule(implementation = _exec_npm_impl, attrs = {
-    "archive": attr.label(mandatory = True, allow_single_file = [".tgz"], cfg = "exec"),
+    "archive": attr.label(allow_single_file = [".tgz"], cfg = "exec"),
+    "error": attr.string(),
     "package_name": attr.string(mandatory = True), "version": attr.string(mandatory = True),
 })
 
@@ -281,14 +305,31 @@ android_extension_receipt = rule(implementation = _link_receipt_impl, toolchains
         "_nm": attr.label(default = Label("@android_ndk//:nm"), cfg = "exec", allow_files = True),
     }))
 
+_STATIC_CARRIER_HELPERS = _HELPERS + [
+    Label("//build_defs/native/apple:static-carrier-consumer.mts"),
+    Label("//build_defs/native/apple:framework_helpers"),
+    Label("//src/native/sdks/swift:generator_sources"),
+]
+
 def _runtime_assets_impl(ctx):
     output = ctx.actions.declare_directory(ctx.label.name + "/assets")
     if len(ctx.files.payload) != 1 or not ctx.files.payload[0].is_directory:
         fail("App runtime assets need the actual declared native payload tree")
-    _action(ctx, "runtime-assets", {"payload": ctx.files.payload[0].path, "formatter": ctx.executable._formatter.path,
+    leaves, inputs = [], []
+    target = "android-" + ctx.attr.abi
+    for dependency in ctx.attr.leaves:
+        leaf = dependency[ExtensionFinalLeafInfo]
+        if leaf.family != "native" or leaf.target != target or leaf.metadata["runtimeVersion"] != ctx.attr.version:
+            fail("App selected carrier differs from the declared Android ABI or native version")
+        members = leaf.metadata.get("members", [leaf.metadata])
+        leaves.append({"product": leaf.product, "owner": leaf.owner, "version": leaf.version, "target": leaf.target,
+            "runtimeVersion": leaf.metadata["runtimeVersion"], "sqlNames": sorted([member["sqlName"] for member in members]),
+            "github": [file.path for file in leaf.github], "frozen": leaf.frozen.path})
+        inputs += leaf.github + [leaf.frozen] + ([leaf.validation] if leaf.validation else [])
+    _action(ctx, "runtime-assets", {"leaves": leaves, "abi": ctx.attr.abi, "payload": ctx.files.payload[0].path, "formatter": ctx.executable._formatter.path,
         "version": ctx.attr.version, "selectedExtensions": ctx.attr.selected_extensions, "mobileStaticModules": ctx.attr.mobile_static_modules,
         "receipt": ctx.file.receipt.path, "output": output.path},
-        ctx.files.payload + [ctx.file.receipt], [output], "ExpoSelectedRuntimeAssets", tools = [ctx.attr._formatter[DefaultInfo].files_to_run])
+        ctx.files.payload + [ctx.file.receipt] + inputs, [output], "ExpoSelectedRuntimeAssets", tools = [ctx.attr._formatter[DefaultInfo].files_to_run])
     return [DefaultInfo(files = depset([output]))]
 
 android_app_runtime_assets = rule(implementation = _runtime_assets_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
@@ -296,6 +337,9 @@ android_app_runtime_assets = rule(implementation = _runtime_assets_impl, toolcha
         "payload": attr.label(default = Label("//src/native/runtime:public_payload"), cfg = "exec", allow_files = True),
         "version": attr.string(mandatory = True), "selected_extensions": attr.string_list(mandatory = True),
         "mobile_static_modules": attr.string_list(mandatory = True), "receipt": attr.label(mandatory = True, allow_single_file = [".json"]),
+        "abi": attr.string(mandatory = True, values = ["arm64-v8a", "x86_64"]),
+        "leaves": attr.label_list(mandatory = True, providers = [ExtensionFinalLeafInfo], cfg = "exec"),
+        "_helpers": attr.label_list(default = _STATIC_CARRIER_HELPERS, allow_files = True),
         "_formatter": attr.label(default = Label("//src/native/runtime/packaging:resources"), cfg = "exec", executable = True),
     }))
 

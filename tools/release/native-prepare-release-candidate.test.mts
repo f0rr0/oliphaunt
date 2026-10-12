@@ -938,3 +938,56 @@ test('actual Git ancestry bounds Release Please despite clock skew and reordered
     rmSync(fixture, { recursive: true, force: true });
   }
 });
+
+test('actual RP exact-module requirements preserve held resources and independently version a qualified current adoption', async () => {
+  const product = 'database-resources',
+    sourceProduct = 'liboliphaunt-wasix';
+  const resource = graph.products[product],
+    core = graph.products[sourceProduct];
+  for (const selected of [[sourceProduct], [product], [sourceProduct, product]]) {
+    const plans = [];
+    const options = nativeProductOptions(selected);
+    options.nativeCurrentExactInputs = [{ product, sourceProduct }];
+    options.observeNativePlan = async (plan) => {
+      plans.push(plan);
+    };
+    const { candidate, versions } = await generateProductCandidate(
+      [],
+      () => '0.3.2',
+      () => {
+        // Mutation after the hook receives the derived list cannot change its plan.
+        options.nativeCurrentExactInputs[0].sourceProduct = 'liboliphaunt-native';
+      },
+      options,
+    );
+    expect(plans).toHaveLength(1);
+    expect(plans[0].selectedProducts).toEqual([...selected].sort());
+    const updates = mergeUpdates(candidate.updates);
+    const manifest = updates.find(({ path: file }) => file === '.release-please-manifest.json');
+    const after = JSON.parse(manifest.updater.updateContent(JSON.stringify(versions)));
+    const expectedCore = selected.includes(sourceProduct)
+      ? core.version
+          .split('.')
+          .map((part, index) => (index === 2 ? Number(part) + 1 : Number(part)))
+          .join('.')
+      : core.version;
+    expect(after[core.path]).toBe(expectedCore);
+    const pin = updates.find(
+      ({ path: file }) => file === 'src/database-resources/seeds/wasix/Cargo.toml',
+    );
+    const original = readFileSync(
+      path.join(ROOT, 'src/database-resources/seeds/wasix/Cargo.toml'),
+      'utf8',
+    );
+    const final = pin ? pin.updater.updateContent(original) : original;
+    expect(Bun.TOML.parse(final).package.metadata.oliphaunt['runtime-version']).toBe(
+      selected.includes(sourceProduct) && selected.includes(product) ? expectedCore : '0.3.2',
+    );
+    expect(plans[0].requirements).toEqual(
+      selected.length === 2 ? [{ product, sourceProduct, version: expectedCore }] : [],
+    );
+    expect(options.buildBound.get(product).size).toBe(0);
+    if (selected.includes(product)) expect(after[resource.path]).not.toBe(resource.version);
+    else expect(after[resource.path]).toBe(resource.version);
+  }
+});

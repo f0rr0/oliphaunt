@@ -4,13 +4,16 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { archive } from '../../../../../build_defs/query/package.mts';
-import { readFrozenNativeCarrier } from '../../../../../build_defs/release/frozen-native-carrier.mts';
 import { readPortableArchiveEntries } from '../../../../../tools/packaging/portable-archive.mts';
 import {
   assertSourceOnlyNpmArchive,
   SOURCE_ONLY_NPM_PROFILES,
 } from '../../../../../tools/packaging/source-only-sdk-package.mts';
-import { IOS_CARRIER_FILENAME } from '../../swift/tools/swift-native-carrier-contract.mts';
+import {
+  IOS_CARRIER_FILENAME,
+  validateFrozenNativeCarrierIdentity,
+} from '../../swift/tools/swift-native-carrier-contract.mts';
+import { readNativeAppleHeader } from '../../swift/tools/swift-xcframework-contract.mts';
 import { attachReactNativeCarrierManifest } from './native-carrier-package.mts';
 
 export interface ReactNativePackageInputs {
@@ -18,10 +21,6 @@ export interface ReactNativePackageInputs {
   authoredManifest: string;
   carrier: string;
   carrierSource: string;
-  nativeVersion: string;
-  nativeReleases: string;
-  nativeCompletion: string;
-  swiftSource: string;
   xcframework: string;
   iosStaticDependencies: string;
 }
@@ -44,19 +43,18 @@ export function reactNativeCarrier(inputs: ReactNativePackageInputs) {
   const source = json(inputs.carrierSource);
   assert.equal(
     authored.oliphaunt?.swiftSdkVersion,
-    source.source_tag,
-    'React Native Swift compatibility pin must match the captured source tag',
+    source.swiftVersion,
+    'React Native Swift compatibility pin must match the genuine source requirement',
   );
-  return readFrozenNativeCarrier({
-    source,
-    carrierBytes: readFileSync(inputs.carrier),
-    expectedVersion: readFileSync(inputs.nativeVersion, 'utf8').trim(),
-    publicationContext: {
-      nativeReleases: json(inputs.nativeReleases),
-      nativeCompletion: json(inputs.nativeCompletion),
-      swiftSource: json(inputs.swiftSource),
-    },
-    assetDirectory: undefined,
+  const bytes = readFileSync(inputs.carrier);
+  assert.deepEqual(
+    { size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') },
+    source.carrierFile,
+    'Carrier differs from its actual original source member',
+  );
+  return validateFrozenNativeCarrierIdentity({
+    carrier: JSON.parse(bytes.toString('utf8')),
+    expectedNativeVersion: source.nativeVersion,
   });
 }
 
@@ -112,31 +110,13 @@ export function packageReactNativeNpm(inputs: ReactNativePackageInputs): Buffer 
     framework.sha256,
     'Held XCFramework digest differs from carrier',
   );
-  const headers = regularArchive(inputs.xcframework, (file) =>
-    [...readPortableArchiveEntries(file, { format: 'zip' }).values()]
-      .filter(
-        (entry) =>
-          entry.isFile &&
-          /^liboliphaunt\.xcframework\/.+\/Headers\/oliphaunt\.h$/u.test(entry.name),
-      )
-      .map((entry) => Buffer.from(entry.data())),
-  );
-  assert(
-    headers.length >= 3 && headers[0].length > 0,
-    'Held XCFramework must declare its public C headers',
-  );
-  for (const header of headers)
-    assert.deepEqual(
-      header,
-      headers[0],
-      'Held XCFramework slices must share the canonical public C header',
-    );
+  const header = regularArchive(inputs.xcframework, readNativeAppleHeader);
   const { entries, manifest } = sourceEntries(inputs);
   entries['package/package.json'] = Buffer.from(
     `${JSON.stringify(attachReactNativeCarrierManifest(manifest), null, 2)}\n`,
   );
   entries[`package/${IOS_CARRIER_FILENAME}`] = readFileSync(inputs.carrier);
-  entries['package/android/src/main/cpp/include/oliphaunt.h'] = headers[0];
+  entries['package/android/src/main/cpp/include/oliphaunt.h'] = header;
   entries['package/src/generated/ios-static-dependencies.json'] = readFileSync(
     inputs.iosStaticDependencies,
   );

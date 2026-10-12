@@ -192,6 +192,22 @@ def cargo_library(name = "lib", kind = "rlib", path_dependencies = {}, proc_macr
         **kwargs
     )
 
+def cargo_napi_library(name, rustc_flags = [], **kwargs):
+    """Preserve napi-build's macOS cdylib linker policy, ignored by rules_rust."""
+    cargo_library(
+        name = name,
+        kind = "cdylib",
+        rustc_flags = rustc_flags + select({
+            "@platforms//os:macos": [
+                "-Clink-arg=-Wl",
+                "-Clink-arg=-undefined",
+                "-Clink-arg=dynamic_lookup",
+            ],
+            "//conditions:default": [],
+        }),
+        **kwargs
+    )
+
 def _isolated_cache_test_impl(ctx):
     binary = ctx.attr.binary[DefaultInfo].files_to_run.executable
     return bun_test_entrypoint(ctx, runner = ctx.file._runner, arguments = [binary], files = [binary], source_files = [ctx.file._runner], additional_runfiles = ctx.attr.binary[DefaultInfo].default_runfiles) + [ctx.attr.binary[RunEnvironmentInfo]]

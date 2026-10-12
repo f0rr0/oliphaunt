@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,11 +19,61 @@ import {
   parseProperties,
 } from '../../src/database-resources/contracts/native-manifest.mts';
 import { packageClusterSeed } from '../../src/database-resources/seeds/package.mts';
+import { WASIX_PORTABLE_RELEASE_MEMBERS } from '../../src/wasix/runtime/tools/wasix-runtime-npm-contract.mts';
+import { createDeterministicTar } from '../../tools/packaging/archive-directory.mts';
 import { buildMavenArtifactManifest } from '../../tools/packaging/build-maven-artifact-manifest.mts';
-import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
+import {
+  canonicalGzipSync,
+  readPortableArchiveEntries,
+} from '../../tools/packaging/portable-archive.mts';
 import { releaseProfilePackageLicense } from '../../tools/packaging/release-notices.mts';
 import { bindSeedDomain } from './seed_domain.mts';
 import { materializeInputs, nativeSeedHost, seedEnvironment } from './shared.mts';
+import { wasixRuntimeInputs } from './wasix_inputs.mts';
+
+test('WASIX resource archive aliases preserve declared bytes and reject non-file members', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'wasix-resource-archive-alias-'));
+  try {
+    const tree = path.join(root, 'release');
+    const bytes: Record<string, Buffer> = {
+      runtimeArchive: Buffer.from('declared runtime archive bytes'),
+      manifest: Buffer.from('{"declared":"manifest bytes"}'),
+    };
+    for (const [name, member] of Object.entries(WASIX_PORTABLE_RELEASE_MEMBERS)) {
+      mkdirSync(path.dirname(path.join(tree, member)), { recursive: true });
+      writeFileSync(path.join(tree, member), bytes[name]);
+    }
+    const archive = path.join(root, 'runtime.tar.gz');
+    writeFileSync(archive, canonicalGzipSync(await createDeterministicTar(tree)));
+    const alias = path.join(root, 'generated/runtimeFile');
+    mkdirSync(path.dirname(alias), { recursive: true });
+    symlinkSync(archive, alias, 'file');
+    const admitted = wasixRuntimeInputs(alias, path.join(root, 'archive-work'));
+    expect(readFileSync(path.join(admitted, 'oliphaunt.wasix.tar.zst'))).toEqual(
+      bytes.runtimeArchive,
+    );
+    expect(readFileSync(path.join(admitted, 'manifest.json'))).toEqual(bytes.manifest);
+
+    const directoryAlias = path.join(root, 'runtimeTree');
+    symlinkSync(admitted, directoryAlias, 'dir');
+    const directoryWork = path.join(root, 'directory-work');
+    expect(wasixRuntimeInputs(directoryAlias, directoryWork)).toBe(directoryAlias);
+    expect(existsSync(directoryWork)).toBe(false);
+
+    const manifest = path.join(tree, WASIX_PORTABLE_RELEASE_MEMBERS.manifest);
+    rmSync(manifest);
+    mkdirSync(manifest);
+    const invalidArchive = path.join(root, 'wrong-kind.tar.gz');
+    writeFileSync(invalidArchive, canonicalGzipSync(await createDeterministicTar(tree)));
+    const invalidAlias = path.join(root, 'generated/wrongRuntimeFile');
+    symlinkSync(invalidArchive, invalidAlias, 'file');
+    expect(() => wasixRuntimeInputs(invalidAlias, path.join(root, 'invalid-work'))).toThrow(
+      `admitted WASIX runtime needs regular ${WASIX_PORTABLE_RELEASE_MEMBERS.manifest}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('resource Maven formatter loads from declared helpers and rejects missing carrier mappings before output', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'resource-maven-contract-'));

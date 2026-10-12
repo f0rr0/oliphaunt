@@ -3,13 +3,15 @@
 load("@aspect_rules_js//npm:providers.bzl", "NpmPackageInfo")
 load("@javascript_compiler_packages//:roots.bzl", "COMPILER_PACKAGES", "COMPILER_TOOLS")
 load("@bazel_lib//lib:copy_file.bzl", "COPY_FILE_TOOLCHAINS", "copy_file_action")
+load("//build_defs/extensions:final_leaf.bzl", "NativeAppleBaseInfo")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 
 _PACKAGE_HELPERS = [
     ":tools/native-package.mts", ":tools/native-carrier-package.mts",
-    "//build_defs/release:frozen-native-carrier.mts", "//build_defs/query:package.mts",
+    "//build_defs/query:package.mts",
     "//src/native/sdks/swift:tools/native-legal-source-basis.mts",
     "//src/native/sdks/swift:tools/swift-native-carrier-contract.mts",
+    "//src/native/sdks/swift:tools/swift-xcframework-contract.mts",
     "//:tools/packaging/source-only-sdk-package.mts", "//:tools/packaging/archive-directory.mts",
     "//:tools/packaging/portable-archive.mts", "//:tools/packaging/release-notices.mts",
     "//:tools/packaging/release-directory-safety.mts", "//:LICENSE", "//:THIRD_PARTY_NOTICES.md",
@@ -18,21 +20,22 @@ _PACKAGE_HELPERS = [
 _PACKAGE_ATTRS = {
     "source_archive": attr.label(mandatory = True, allow_single_file = [".tgz"]),
     "manifest": attr.label(mandatory = True, allow_single_file = [".json"]),
-    "carrier": attr.label(default = "@swift_frozen_native//:carrier", allow_single_file = True),
-    "carrier_source": attr.label(default = "//build_defs/release:swift-0.8.2-source.json", allow_single_file = True),
-    "native_version": attr.label(default = "//src/native/sdks/swift:LIBOLIPHAUNT_VERSION", allow_single_file = True),
-    "native_releases": attr.label(default = "//build_defs/release:native-0.3.3-releases.json", allow_single_file = True),
-    "native_completion": attr.label(default = "//build_defs/release:native-0.3.3-completed-publication.json", allow_single_file = True),
-    "swift_source": attr.label(default = "//build_defs/release:swift-0.8.2-publication-source.json", allow_single_file = True),
-    "xcframework": attr.label(default = "@swift_frozen_native//:xcframework_archive", allow_single_file = True),
+    "carrier": attr.label(default = "@react_native_swift_package//:carrier", allow_single_file = True),
+    "carrier_source": attr.label(default = "@react_native_swift_package//:construction.json", allow_single_file = True),
+    "native_base": attr.label(default = "@react_native_swift_package//:native_requirement", providers = [NativeAppleBaseInfo]),
     "ios_static_dependencies": attr.label(default = "//src/extensions/generated/sdk:ios-static-dependencies.json", allow_single_file = True),
     "_helpers": attr.label_list(default = _PACKAGE_HELPERS, allow_files = True),
 }
 
 def _package_spec(ctx, runfiles = False):
-    fields = {"sourceArchive": "source_archive", "authoredManifest": "manifest", "carrier": "carrier", "carrierSource": "carrier_source", "nativeVersion": "native_version", "nativeReleases": "native_releases", "nativeCompletion": "native_completion", "swiftSource": "swift_source", "xcframework": "xcframework", "iosStaticDependencies": "ios_static_dependencies"}
+    fields = {"sourceArchive": "source_archive", "authoredManifest": "manifest", "carrier": "carrier", "carrierSource": "carrier_source", "iosStaticDependencies": "ios_static_dependencies"}
     files = [getattr(ctx.file, field) for field in fields.values()]
-    return {name: _runfile(ctx, getattr(ctx.file, field)) if runfiles else getattr(ctx.file, field).path for name, field in fields.items()}, files
+    base = ctx.attr.native_base[NativeAppleBaseInfo]
+    framework = [file for file in base.archive_files if file.path == base.archives["base-xcframework"]["path"]][0]
+    files += [framework, base.file]
+    inputs = {name: _runfile(ctx, getattr(ctx.file, field)) if runfiles else getattr(ctx.file, field).path for name, field in fields.items()}
+    inputs["xcframework"] = _runfile(ctx, framework) if runfiles else framework.path
+    return inputs, files
 
 def _package_impl(ctx):
     inputs, files = _package_spec(ctx)
@@ -195,13 +198,9 @@ _react_native_consumer_test = rule(
         "package_name": attr.string(mandatory = True), "version": attr.string(mandatory = True),
         "final_package": attr.bool(default = False),
         "source_archive": attr.label(allow_single_file = [".tgz"]),
+        "native_base": attr.label(providers = [NativeAppleBaseInfo]),
         "carrier": attr.label(allow_single_file = True),
         "carrier_source": attr.label(allow_single_file = True),
-        "native_version": attr.label(allow_single_file = True),
-        "native_releases": attr.label(allow_single_file = True),
-        "native_completion": attr.label(allow_single_file = True),
-        "swift_source": attr.label(allow_single_file = True),
-        "xcframework": attr.label(allow_single_file = True),
         "ios_static_dependencies": attr.label(allow_single_file = True),
         "runtime_resources": attr.label(allow_single_file = True),
         "_runner": attr.label(default = ":tools/native-consumer.mts", allow_single_file = True),

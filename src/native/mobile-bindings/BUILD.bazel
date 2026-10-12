@@ -28,3 +28,8 @@ mobile_bindgen()
 source_quality_files()
 
 rust_quality_files()
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "tools/dependency-license-contract.mts",
+], visibility = ["//visibility:public"])

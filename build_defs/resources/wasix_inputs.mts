@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { wasixRuntimeNpmPayloadInputs } from '../../src/wasix/runtime/tools/wasix-runtime-npm-payload.mts';
 import { WASIX_PORTABLE_RELEASE_MEMBERS } from '../../src/wasix/runtime/tools/wasix-runtime-npm-contract.mts';
+import { wasixRuntimeNpmPayloadInputs } from '../../src/wasix/runtime/tools/wasix-runtime-npm-payload.mts';
 import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
@@ -12,7 +12,7 @@ import { materializeArchive } from './shared.mts';
 /** Project the actual completed archive; current payload directories remain unchanged. */
 export function wasixRuntimeInputs(source: string, work: string): string {
   if (!statSync(source).isFile()) return source;
-  const entries = readPortableArchiveEntries(source);
+  const entries = readPortableArchiveEntries(realpathSync(source));
   const output = path.join(work, 'admitted-runtime');
   mkdirSync(output, { recursive: true });
   for (const [name, member] of Object.entries(WASIX_PORTABLE_RELEASE_MEMBERS)) {

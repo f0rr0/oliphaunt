@@ -5,7 +5,10 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } f
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { SEED_CONSTRUCTION_RECEIPT_SUFFIX } from '../../build_defs/resources/seed_construction.mts';
-import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
+import {
+  removeOwnedDirectory,
+  requireSafeDirectoryChain,
+} from '../packaging/release-directory-safety.mts';
 import {
   type NativeBuildEvidence,
   type NativeBuildGithub,
@@ -345,7 +348,7 @@ export function readNativeBuildFinalFiles(
         assertUnchanged();
         return staged;
       } finally {
-        rmSync(reconstruction, { recursive: true, force: true });
+        removeOwnedDirectory(reconstruction);
       }
     },
   };

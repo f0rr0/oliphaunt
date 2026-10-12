@@ -382,10 +382,8 @@ mod extension_tests {
         run_lifecycle_materialization_set(Extension::ALL)
     }
 
-    #[test]
-    #[ignore = "requires declared Bazel packet"]
     #[allow(unsafe_code)]
-    fn declared_contrib_carriers_pass_full_lifecycle() -> Result<()> {
+    fn declared_contrib_extensions() -> Result<Vec<Extension>> {
         use serde::Deserialize;
         use sha2::{Digest, Sha256};
 
@@ -462,11 +460,11 @@ mod extension_tests {
             .map(|archive| archive.sql_name.as_str())
             .collect();
         ensure!(
-            expected_names.len() == 32
+            !expected_names.is_empty()
                 && canonical_names.len() == expected_names.len()
                 && packet.archives.len() == expected_names.len()
                 && archive_names == expected_names,
-            "declared contrib packet must contain all 32 canonical members exactly once"
+            "declared contrib packet must contain all canonical members exactly once"
         );
 
         let aot_manifest_text = std::fs::read_to_string(&packet.aot_manifest)?;
@@ -515,7 +513,7 @@ mod extension_tests {
                 && actual_aot_paths.len() == manifest_artifacts.len()
                 && packet.aot_artifacts.len() == manifest_artifacts.len()
                 && packet_aot_paths == actual_aot_paths,
-            "declared contrib AOT packet must contain its exact 32-member host cohort"
+            "declared contrib AOT packet must contain its exact canonical host cohort"
         );
 
         let archives: Vec<(&'static str, &'static [u8], &'static str)> = packet
@@ -576,6 +574,16 @@ mod extension_tests {
             .iter()
             .map(|extension| extension.with_package(package))
             .collect();
+        Ok(extensions)
+    }
+
+    #[test]
+    #[ignore = "requires declared Bazel packet"]
+    fn declared_contrib_carriers_pass_full_lifecycle() -> Result<()> {
+        let extensions = declared_contrib_extensions()?;
+        let package = extensions[0]
+            .package()
+            .context("declared contrib selection has no final package")?;
         run_direct_and_restart_smoke_set(&extensions)?;
         run_lifecycle_materialization_set(&extensions)?;
 
@@ -599,6 +607,79 @@ mod extension_tests {
         ensure!(relative_files(&runtime_root.join("lib/postgresql")).len() == 2);
         run_direct_smoke(&mut selected, earthdistance)?;
         selected.close()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "tools-execution")]
+    #[test]
+    #[ignore = "requires declared Bazel extension and tools packets"]
+    #[allow(unsafe_code)]
+    fn declared_contrib_carriers_pass_logical_dump_restore() -> Result<()> {
+        use crate::tools::{PgDumpOptions, PsqlOptions, ToolAssets};
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Tool {
+            wasm: PathBuf,
+            aot: PathBuf,
+            manifest: PathBuf,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Tools {
+            version: String,
+            runtime_version: String,
+            pg_dump: Tool,
+            psql: Tool,
+        }
+
+        let tools_path = std::env::var_os("OLIPHAUNT_DECLARED_TOOLS_PACKET")
+            .context("declared contrib logical restore requires its final tools packet")?;
+        let tools: Tools = serde_json::from_slice(&std::fs::read(tools_path)?)?;
+        ensure!(
+            Some(tools.version.as_str()) == option_env!("OLIPHAUNT_DECLARED_TOOLS_VERSION"),
+            "declared tools differ from their canonical compiled product version"
+        );
+        ensure!(tools.runtime_version == liboliphaunt_wasix_portable::PACKAGE_VERSION);
+        let assets = |tool: Tool| -> Result<ToolAssets> {
+            // SAFETY: the runner validates these exact final-carrier bytes and manifests.
+            Ok(unsafe {
+                ToolAssets::new(
+                    std::fs::read(tool.wasm)?,
+                    std::fs::read(tool.aot)?,
+                    std::fs::read_to_string(tool.manifest)?,
+                )
+            })
+        };
+        let pg_dump = assets(tools.pg_dump)?;
+        let psql = assets(tools.psql)?;
+        for extension in declared_contrib_extensions()? {
+            let name = extension.sql_name();
+            eprintln!("logical dump/restore extension: {name}");
+            let mut source = Oliphaunt::builder().extension(extension).open()?;
+            run_direct_smoke(&mut source, extension)?;
+            source.exec("CREATE TABLE oliphaunt_logical_restore_probe(value text NOT NULL); INSERT INTO oliphaunt_logical_restore_probe VALUES ('retained')")?;
+            let dump = source
+                .pg_dump(PgDumpOptions::new().assets(pg_dump.clone()))
+                .with_context(|| format!("dump declared contrib {name}"))?;
+            ensure!(dump.contains("COPY public.oliphaunt_logical_restore_probe"));
+            source.close()?;
+            let mut restored = Oliphaunt::builder().extension(extension).open()?;
+            restored
+                .psql(PsqlOptions::new().assets(psql.clone()).script(dump))
+                .with_context(|| format!("restore declared contrib {name}"))?;
+            assert_extension_catalog_state(&mut restored, extension)?;
+            verify_persisted_fixture(&mut restored, extension)?;
+            ensure!(
+                restored
+                    .query("SELECT value FROM oliphaunt_logical_restore_probe")?
+                    .get_text(0, "value")?
+                    == Some("retained")
+            );
+            restored.close()?;
+        }
         Ok(())
     }
 

@@ -1,12 +1,21 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   nativeIcuDataManifest,
   parseNativeIcuDataIdentity,
 } from '../../src/database-resources/contracts/icu-data.mts';
+import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
 import { NATIVE_PGDATA_DIRECTORIES } from '../../src/database-resources/contracts/native-manifest.mts';
 import { packageSeedCarriers } from '../../src/database-resources/seeds/package-carriers.mts';
 import {
@@ -72,7 +81,7 @@ test('final resource comparison binds PostgreSQL bytes, empty directories, modes
   }
 });
 
-test('the final mobile verifier consumes the conventional Android and iOS package writers', async () => {
+test('the final mobile verifier consumes conventional Android and iOS package writers through declared input aliases', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'mobile-carrier-formatters-'));
   try {
     const version = '7.8.9';
@@ -190,14 +199,49 @@ test('the final mobile verifier consumes the conventional Android and iOS packag
         workDir: path.join(root, `${target}-mobile`),
         mavenDir: path.join(root, 'maven'),
       });
-      const swift = target === 'ios-datum64' ? outputs[0] : undefined;
+      const aliases = path.join(root, `${target}-input-aliases`);
+      mkdirSync(aliases);
+      const alias = (file: string) => {
+        const input = path.join(aliases, path.basename(file));
+        symlinkSync(file, input);
+        return input;
+      };
+      const aliasedIcu = alias(icu);
+      const swift = target === 'ios-datum64' ? alias(outputs[0]) : undefined;
+      let aliasedMaven: string | undefined;
+      if (target === 'android-datum64') {
+        const mavenRunfiles = path.join(root, 'maven-runfiles');
+        for (const seed of seeds) {
+          const identity = seedCarrierIdentities().find(
+            (row) =>
+              row.family === 'native' && row.target === target && row.profile === seed.profile,
+          );
+          if (!identity) throw new Error('missing canonical seed carrier');
+          const coordinate = path.join('dev/oliphaunt/runtime', identity.cargo, version);
+          const source = path.join(root, 'maven', coordinate);
+          const destination = path.join(mavenRunfiles, coordinate);
+          mkdirSync(destination, { recursive: true });
+          for (const name of readdirSync(source))
+            symlinkSync(path.join(source, name), path.join(destination, name));
+        }
+        aliasedMaven = alias(mavenRunfiles);
+      }
+      const aliasedSeeds = seeds.map((seed) => ({
+        ...seed,
+        frozen: alias(seed.frozen),
+        archive: alias(seed.archive),
+        manifest: alias(seed.manifest),
+        npm: alias(seed.npm),
+        cargo: alias(seed.cargo),
+        maven: aliasedMaven,
+      }));
       await verifyMobileResourceFiles({
         target,
         version,
         runtimeVersion,
-        icu,
+        icu: aliasedIcu,
         swift,
-        seeds,
+        seeds: aliasedSeeds,
         root: path.join(root, `${target}-proof`),
       });
       await expect(
@@ -205,10 +249,21 @@ test('the final mobile verifier consumes the conventional Android and iOS packag
           target,
           version: '7.8.8',
           runtimeVersion,
-          icu,
+          icu: aliasedIcu,
           swift,
-          seeds,
+          seeds: aliasedSeeds,
           root: path.join(root, `${target}-wrong-version`),
+        }),
+      ).rejects.toThrow();
+      await expect(
+        verifyMobileResourceFiles({
+          target,
+          version,
+          runtimeVersion,
+          icu: alias(icuRoot),
+          swift,
+          seeds: aliasedSeeds,
+          root: path.join(root, `${target}-directory-substitution`),
         }),
       ).rejects.toThrow();
     }

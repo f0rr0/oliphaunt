@@ -1,7 +1,9 @@
 """Runtime-owned WASIX contrib envelopes from the existing portable module graph."""
 
-load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "EXTENSION_RELEASE_METADATA")
+load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "EXTENSION_RELEASE_METADATA", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("@wasix_tool_metadata//:targets.bzl", "WASIX_AOT_TARGETS")
+load("@cargo_crates//:defs.bzl", _current_crate_deps = "crate_deps")
+load("@native_cargo_metadata//:cargo.bzl", _CURRENT_CARGO = "CARGO")
 load("//build_defs/extensions:contrib_carriers.bzl", "native_contrib_carrier_legal", "native_contrib_carrier_metadata")
 load("//build_defs/extensions:extensions.bzl", "extension_identity")
 load("//build_defs/extensions:final_leaf.bzl", "ExtensionFinalLeafInfo")
@@ -13,6 +15,7 @@ load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/wasix:aot.bzl", "WasixAotInfo", "wasix_aot")
 load("//build_defs/wasix:platform.bzl", "WASIX_PORTABLE_TRANSITION")
 load("//build_defs/wasix:wasm.bzl", "WasmModuleInfo")
+load("//build_defs/wasix:npm.bzl", "RUNTIME_NPM_NOTICES")
 
 def _metadata():
     spec = native_contrib_carrier_metadata("wasix-portable", family = "wasix")
@@ -144,19 +147,75 @@ def _installed_impl(ctx):
     if len(leaf.cargo) != len(WASIX_AOT_TARGETS) + 1 or any([file.is_directory for file in leaf.cargo]):
         fail("contrib installed test requires its exact five regular Cargo carriers")
     arguments = [leaf.spec, leaf.npm[0], leaf.cargo[0], leaf.frozen, host.module, host.manifest, binary]
-    return bun_test_entrypoint(ctx, ctx.file._runner, arguments, leaf.github + leaf.npm + leaf.cargo + [leaf.spec, leaf.frozen, host.module, host.manifest, binary] + ctx.files._helpers,
-        source_files = [ctx.file._runner] + ctx.files._helpers, additional_runfiles = ctx.attr.binary[DefaultInfo].default_runfiles)
+    files = leaf.github + leaf.npm + leaf.cargo + [leaf.spec, leaf.frozen, host.module, host.manifest, binary] + ctx.files._helpers
+    runfiles = ctx.attr.binary[DefaultInfo].default_runfiles
+    incremental = ctx.attr.server_binary != None
+    if incremental != (ctx.attr.tools_portable != None) or incremental != (ctx.attr.tools_aot != None):
+        fail("contrib incremental proof requires both final tools carriers and its server binary")
+    if incremental:
+        target = WASIX_AOT_TARGETS["linux-x64-gnu"]
+        rows = [row for row in PUBLICATION_CARRIERS if row["product"] == "postgres-tools-wasix" and row["ecosystem"] == "cargo"]
+        portable = [row for row in rows if row["target"] == None]
+        aot = [row for row in rows if row["target"] == target]
+        if len(portable) != 1 or len(aot) != 1:
+            fail("incremental contrib proof requires its unique canonical tools Cargo identities")
+        tools = ctx.actions.declare_file(ctx.label.name + ".tools.json")
+        ctx.actions.write(tools, json.encode({"version": PRODUCTS["postgres-tools-wasix"]["version"], "runtimeVersion": host.version,
+                                             "portableName": portable[0]["name"], "aotName": aot[0]["name"], "target": target}))
+        server = ctx.attr.server_binary[DefaultInfo].files_to_run.executable
+        arguments += [tools, ctx.file.tools_portable, ctx.file.tools_aot, server]
+        files += [tools, ctx.file.tools_portable, ctx.file.tools_aot, server] + ctx.files.additional_helpers
+        runfiles = runfiles.merge(ctx.attr.server_binary[DefaultInfo].default_runfiles)
+    elif ctx.files.additional_helpers:
+        fail("ordinary contrib lifecycle proof must not carry unused incremental helpers")
+    return bun_test_entrypoint(ctx, ctx.file._runner, arguments, files,
+        source_files = [ctx.file._runner] + ctx.files._helpers + ctx.files.additional_helpers, additional_runfiles = runfiles)
 
 _wasix_contrib_installed_test = rule(implementation = _installed_impl, test = True, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
         "leaf": attr.label(mandatory = True, providers = [ExtensionFinalLeafInfo]), "host": attr.label(mandatory = True, providers = [WasixExtensionHostInfo]),
         "binary": attr.label(default = "//src/wasix/sdks/rust:extension_carrier_unit_test", executable = True, cfg = "target"),
+        "server_binary": attr.label(executable = True, cfg = "target"),
+        "tools_portable": attr.label(allow_single_file = [".crate"]),
+        "tools_aot": attr.label(allow_single_file = [".crate"]),
+        "additional_helpers": attr.label_list(allow_files = True),
         "_runner": attr.label(default = "//build_defs/extensions/wasix:contrib_installed.test.mts", allow_single_file = True),
         "_helpers": attr.label_list(default = wasix_sql_carrier_helpers(), allow_files = True),
     }))
 
 def wasix_contrib_extension_installed_test(name, **kwargs):
     _wasix_contrib_installed_test(name = name, args = bun_test_entrypoint_args(name), **kwargs)
+
+def wasix_contrib_extension_incremental_installed_test(name, **kwargs):
+    """Run logical restore and server cases from one shared extracted contrib packet."""
+    wasix_contrib_extension_installed_test(name = name,
+        binary = "//src/wasix/sdks/rust:extension_carrier_tools_unit_test",
+        server_binary = "//src/wasix/pgwire-server:contrib_carrier_server_test",
+        tools_portable = "//src/wasix/postgres-tools:portable_cargo",
+        tools_aot = "//src/wasix/postgres-tools:linux_x64_gnu_cargo",
+        additional_helpers = ["//src/wasix/postgres-tools:tools/package-assets.mts", "//src/wasix/runtime:tools/package-release-assets.mts"] + RUNTIME_NPM_NOTICES.keys(),
+        **kwargs)
+
+def wasix_contrib_server_crate_deps(names, package_name):
+    """Bind the constructed server variant to one current Cargo dependency graph."""
+    if package_name != "src/wasix/pgwire-server":
+        fail("contrib server dependency override belongs only to its source test owner")
+    dependencies = []
+    for name in names:
+        if name == "oliphaunt-wasix":
+            dependencies.append("//src/wasix/sdks/rust:extension_carrier_lib")
+        else:
+            labels = {}
+            for owner, facts in _CURRENT_CARGO.items():
+                declaration = (facts["dependencies"] | facts["dev_dependencies"]).get(name)
+                if declaration == None or (type(declaration) == "dict" and ("path" in declaration or declaration.get("optional", False))):
+                    continue
+                for label in _current_crate_deps([name], package_name = owner):
+                    labels[str(label)] = label
+            if len(labels) != 1:
+                fail("contrib server requires one current Cargo identity for " + name + ": " + str(labels.keys()))
+            dependencies += labels.values()
+    return dependencies
 
 def wasix_contrib_extension_shipping(name, carriers, qualification):
     """Expose canonical runtime-owned bundle Files through existing shipping rules."""

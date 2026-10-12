@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { readNativeAppleHeader } from '../../../src/native/sdks/swift/tools/swift-xcframework-contract.mts';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
 import { zipArchive } from '../../../tools/packaging/testdata/zip-fixture.mts';
 import {
@@ -11,6 +12,28 @@ import {
 } from './source-delivery-contract.mts';
 import { fixture } from './source-package.fixture.mts';
 import { packageSwiftSource, verifyFrozenNativeArchives } from './source-package.mts';
+
+test('a held native header cannot be replaced by another slice or an incomplete framework', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'selected-native-header-'));
+  try {
+    const file = path.join(root, 'native.zip');
+    const rows = ['macos-arm64', 'ios-arm64', 'ios-arm64-simulator'].map((slice) => ({
+      name: `liboliphaunt.xcframework/${slice}/liboliphaunt.framework/Headers/oliphaunt.h`,
+      data: Buffer.from('original selected ABI header'),
+    }));
+    writeFileSync(file, zipArchive(rows));
+    expect(readNativeAppleHeader(file)).toEqual(rows[0].data);
+    writeFileSync(file, zipArchive(rows.slice(1)));
+    expect(() => readNativeAppleHeader(file)).toThrow(/all public C headers/);
+    writeFileSync(
+      file,
+      zipArchive([...rows.slice(0, 2), { ...rows[2], data: Buffer.from('another ABI header') }]),
+    );
+    expect(() => readNativeAppleHeader(file)).toThrow(/different public C headers/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('final source envelope preserves held native version, exact source-tag paths and portable package paths', async () => {
   const scratch = mkdtempSync(path.join(tmpdir(), 'oliphaunt-swift-source-'));
@@ -198,11 +221,14 @@ test('final source envelope preserves held native version, exact source-tag path
     ).toBe('// generated fixture\n');
     expect(entries.has('package/Tests/test.swift')).toBeTrue();
     expect(entries.has('package/Templates/OliphauntBroker/Info.plist')).toBeTrue();
+    expect(content('package/Sources/COliphaunt/include/oliphaunt.h').toString()).toBe(
+      '// genuine held native fixture header\n',
+    );
     expect(
       content('package/Sources/COliphaunt/include/oliphaunt.h').equals(
-        readFileSync(spec.publicHeader),
+        readFileSync('src/native/runtime/include/oliphaunt.h'),
       ),
-    ).toBeTrue();
+    ).toBeFalse();
     for (const name of [
       'extension-resource-inventory.mjs',
       'render-extension-products.mjs',

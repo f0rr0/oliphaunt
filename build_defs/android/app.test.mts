@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'bun:test';
@@ -12,6 +12,7 @@ import {
   extractFinalAar,
   mobileBundleEnvironment,
   stageNodeInputs,
+  stageAndroidSelectedResources,
 } from './app.mts';
 import { createDeterministicTar } from '../../tools/packaging/archive-directory.mts';
 import {
@@ -24,7 +25,22 @@ function dex(names: string[], definitions: number[]) {
   const types = strings + names.length * 4;
   const classes = types + names.length * 4;
   const data = classes + definitions.length * 32;
-  const encoded = names.map((name) => Buffer.from(`\x01L${name.replaceAll('.', '/')};\x00`));
+  const encoded = names.map((name) => {
+    const value = `L${name.replaceAll('.', '/')};`;
+    assert(value.length < 128);
+    const units = Array.from({ length: value.length }, (_, index) => value.charCodeAt(index));
+    return Buffer.from([
+      value.length,
+      ...units.flatMap((unit) =>
+        unit < 0x80
+          ? [unit]
+          : unit < 0x800
+            ? [0xc0 | (unit >> 6), 0x80 | (unit & 0x3f)]
+            : [0xe0 | (unit >> 12), 0x80 | ((unit >> 6) & 0x3f), 0x80 | (unit & 0x3f)],
+      ),
+      0,
+    ]);
+  });
   const bytes = Buffer.alloc(data + encoded.reduce((total, row) => total + row.length, 0));
   bytes.write('dex\n035\x00', 0, 'binary');
   for (const [offset, value] of [
@@ -55,9 +71,147 @@ test('APK bytecode proof distinguishes actual class definitions from references'
   const names = ['dev.oliphaunt.DatabaseStorage$TemporaryDirectory', 'com.sun.jna.Native'];
   assert.deepEqual([...dexDefinedClasses(dex(names, [0]))], [names[0]]);
   assert.deepEqual([...dexDefinedClasses(dex(names, [0, 1]))], names);
+  const companion = 'androidx.compose.animation.AnimatedContentTransitionScope$-CC';
+  assert.deepEqual([...dexDefinedClasses(dex([companion], [0]))], [companion]);
+  assert.deepEqual([...dexDefinedClasses(dex([companion], []))], []);
+  const unicode = 'dev.example.É漢𐐀';
+  assert.deepEqual([...dexDefinedClasses(dex([unicode], [0]))], [unicode]);
+  const canonical = dex(['dev.example.Valid'], [0]);
+  const stringData = canonical.readUInt32LE(canonical.readUInt32LE(60));
+  for (const overlong of [
+    [0xc1, 0x8c],
+    [0xe0, 0x81, 0x8c],
+  ]) {
+    const malformed = Buffer.concat([
+      canonical.subarray(0, stringData + 1),
+      Buffer.from(overlong),
+      canonical.subarray(stringData + 2),
+    ]);
+    malformed.writeUInt32LE(malformed.length, 32);
+    assert.throws(() => dexDefinedClasses(malformed), /Noncanonical DEX MUTF-8/u);
+  }
+  const wrongLength = Buffer.from(canonical);
+  wrongLength[stringData]++;
+  assert.throws(() => dexDefinedClasses(wrongLength), /UTF16 length differs/u);
+  for (const name of ['androidx..compose.Broken', '/Bad', 'Bad/', 'Bad;Other', 'Bad[Array'])
+    assert.throws(() => dexDefinedClasses(dex([name], [0])), /Invalid defined DEX class/u);
   assert.throws(() => dexDefinedClasses(dex(names, [2])), /invalid type index/u);
   const truncated = dex(names, [0]).subarray(0, 140);
   assert.throws(() => dexDefinedClasses(truncated));
+});
+
+test('selected Android resources use frozen carrier bytes and bind both ABI static archives to the link receipt', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'android-selected-resources-'));
+  try {
+    for (const abi of ['arm64-v8a', 'x86_64']) {
+      const directory = path.join(root, abi);
+      const payload = path.join(directory, 'payload');
+      mkdirSync(path.join(payload, 'files/share/postgresql/extension'), { recursive: true });
+      mkdirSync(path.join(payload, 'files/share/postgresql/data'), { recursive: true });
+      mkdirSync(path.join(payload, `mobile-static/android-${abi}/extensions/vector`), {
+        recursive: true,
+      });
+      writeFileSync(
+        path.join(payload, 'files/share/postgresql/extension/vector.control'),
+        'default_version=fixture\n',
+      );
+      writeFileSync(
+        path.join(payload, 'files/share/postgresql/extension/vector--fixture.sql'),
+        'original install SQL\n',
+      );
+      writeFileSync(
+        path.join(payload, 'files/share/postgresql/data/value'),
+        'original declared runtime data\n',
+      );
+      const archive = Buffer.from('original static archive fixture');
+      writeFileSync(
+        path.join(
+          payload,
+          `mobile-static/android-${abi}/extensions/vector/liboliphaunt_extension_vector.a`,
+        ),
+        archive,
+      );
+      const github = path.join(directory, 'github');
+      mkdirSync(github);
+      const file = path.join(github, 'vector.tar.gz');
+      writeFileSync(file, canonicalGzipSync(await createDeterministicTar(payload)));
+      const frozen = path.join(directory, 'frozen.json');
+      writeFileSync(
+        frozen,
+        JSON.stringify({
+          product: 'vector-product',
+          releaseProduct: 'vector-owner',
+          version: '1.2.3',
+          compatibility: { nativeRuntimeVersion: '3.3.3' },
+          sqlName: 'vector',
+          dataFiles: ['postgresql/data'],
+          assets: [
+            {
+              name: 'vector.tar.gz',
+              family: 'native',
+              target: `android-${abi}`,
+              kind: 'runtime',
+              bytes: readFileSync(file).length,
+              sha256: createHash('sha256').update(readFileSync(file)).digest('hex'),
+            },
+          ],
+        }),
+      );
+      const leaf = {
+        product: 'vector-product',
+        owner: 'vector-owner',
+        version: '1.2.3',
+        runtimeVersion: '3.3.3',
+        target: `android-${abi}`,
+        sqlNames: ['vector'],
+        github: [github],
+        frozen,
+      };
+      const receipt = path.join(directory, 'receipt.json');
+      const link = {
+        abi,
+        selectedExtensions: ['vector'],
+        members: [
+          {
+            sqlName: 'vector',
+            nativeModuleStem: 'vector',
+            archiveSha256: createHash('sha256').update(archive).digest('hex'),
+          },
+        ],
+      };
+      writeFileSync(receipt, JSON.stringify(link));
+      const spec = {
+        abi,
+        selectedExtensions: ['vector'],
+        version: '3.3.3',
+        leaves: [leaf],
+        receipt,
+      };
+      const staged = await stageAndroidSelectedResources(spec, path.join(directory, 'valid'));
+      assert.equal(staged.length, 1);
+      assert(readFileSync(staged[0]).equals(readFileSync(file)));
+      await assert.rejects(
+        stageAndroidSelectedResources(
+          { ...spec, abi: abi === 'arm64-v8a' ? 'x86_64' : 'arm64-v8a' },
+          path.join(directory, 'wrong-abi'),
+        ),
+        /ABI differs/u,
+      );
+      writeFileSync(
+        receipt,
+        JSON.stringify({
+          ...link,
+          members: [{ ...link.members[0], archiveSha256: '0'.repeat(64) }],
+        }),
+      );
+      await assert.rejects(
+        stageAndroidSelectedResources(spec, path.join(directory, 'wrong-link')),
+        /differs from actual app link/u,
+      );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 function elf(alignment: bigint, machine = 183) {
@@ -292,4 +446,184 @@ test('mobile bundle embeds the source-owned selected catalog and extension expec
       ),
     /Conflicting packaged/u,
   );
+});
+
+test('canonical Maven input Tree resolves sandbox File links and rejects directory links or duplicate carriers', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'maven-tree-transport-'));
+  try {
+    const payload = path.join(root, 'payload.aar');
+    const bytes = Buffer.from('declared original AAR bytes');
+    writeFileSync(payload, bytes);
+    const tree = path.join(root, 'tree');
+    const coordinate = path.join(tree, 'dev/example/artifact/1.0.0');
+    mkdirSync(coordinate, { recursive: true });
+    symlinkSync(payload, path.join(coordinate, 'artifact-1.0.0.aar'));
+    const output = path.join(root, 'installed.aar');
+    await extractFinalAar({ source: tree, output });
+    assert(readFileSync(output).equals(bytes));
+    symlinkSync(payload, path.join(coordinate, 'second-1.0.0.aar'));
+    await assert.rejects(extractFinalAar({ source: tree, output }), /exactly one final/u);
+    rmSync(path.join(coordinate, 'second-1.0.0.aar'));
+    symlinkSync(root, path.join(tree, 'directory-link'));
+    await assert.rejects(extractFinalAar({ source: tree, output }), /regular File leaves/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('actual source package requirements reject an independently advanced query and undeclared edges', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'app-query-requirement-'));
+  try {
+    function source(name: string, version: string, dependencies = {}) {
+      const directory = path.join(root, name.replaceAll('/', '_'));
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(
+        path.join(directory, 'package.json'),
+        JSON.stringify({ name, version, dependencies }),
+      );
+      return {
+        package: name,
+        version,
+        dependencies: {},
+        source: directory,
+        integrity: '',
+        local: true,
+      };
+    }
+    const rn = source('@oliphaunt/react-native', '0.3.2', { '@oliphaunt/ts-query': '0.1.1' });
+    const query = source('@oliphaunt/ts-query', '1.0.0');
+    const specification = {
+      packages: { rn: { ...rn, dependencies: { '@oliphaunt/ts-query': 'query' } }, query },
+      roots: { '@oliphaunt/react-native': 'rn' },
+      sources: [],
+      node: '',
+      tar: '',
+    };
+    assert.throws(
+      () => stageNodeInputs(path.join(root, 'major'), specification),
+      /does not satisfy 0\.1\.1/u,
+    );
+    assert.throws(
+      () =>
+        stageNodeInputs(path.join(root, 'missing'), {
+          ...specification,
+          packages: { ...specification.packages, rn },
+        }),
+      /Undeclared npm dependency/u,
+    );
+    assert.throws(
+      () =>
+        stageNodeInputs(path.join(root, 'extra'), {
+          ...specification,
+          packages: { ...specification.packages, rn: { ...rn, dependencies: { wrong: 'query' } } },
+        }),
+      /absent from its conventional manifest/u,
+    );
+    writeFileSync(
+      path.join(query.source, 'package.json'),
+      JSON.stringify({ name: query.package, version: '0.1.1' }),
+    );
+    const valid = {
+      ...specification,
+      packages: { ...specification.packages, query: { ...query, version: '0.1.1' } },
+    };
+    stageNodeInputs(path.join(root, 'valid'), valid);
+    const app = path.join(root, 'app.json');
+    writeFileSync(
+      app,
+      JSON.stringify({ name: 'app', dependencies: { '@oliphaunt/react-native': '^1.0.0' } }),
+    );
+    assert.throws(
+      () =>
+        stageNodeInputs(path.join(root, 'app-major'), {
+          ...valid,
+          sources: [{ source: app, destination: 'package.json' }],
+        }),
+      /does not satisfy \^1\.0\.0/u,
+    );
+    writeFileSync(
+      app,
+      JSON.stringify({ name: 'app', dependencies: { '@oliphaunt/react-native': 'workspace:*' } }),
+    );
+    const staged = path.join(root, 'app-workspace');
+    stageNodeInputs(staged, { ...valid, sources: [{ source: app, destination: 'package.json' }] });
+    assert.equal(
+      JSON.parse(readFileSync(path.join(staged, 'package.json'), 'utf8')).dependencies[
+        '@oliphaunt/react-native'
+      ],
+      '0.3.2',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('completed query bytes retain their File identity despite an equal-version candidate', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'app-query-byte-origin-'));
+  try {
+    const packageRoot = path.join(root, 'package');
+    mkdirSync(packageRoot);
+    writeFileSync(
+      path.join(packageRoot, 'package.json'),
+      JSON.stringify({ name: '@oliphaunt/ts-query', version: '0.1.1' }),
+    );
+    writeFileSync(path.join(packageRoot, 'query.txt'), 'genuine completed fixture');
+    const held = path.join(root, 'held.tgz');
+    writeFileSync(
+      held,
+      canonicalGzipSync(await createDeterministicTar(packageRoot, { keepParent: true })),
+    );
+    const row = {
+      package: '@oliphaunt/ts-query',
+      version: '0.1.1',
+      dependencies: {},
+      integrity: '',
+      local: true,
+      origin: 'completed-supplier',
+      source: held,
+      sourceSha256: createHash('sha256').update(readFileSync(held)).digest('hex'),
+      sourceSize: readFileSync(held).length,
+    };
+    writeFileSync(path.join(packageRoot, 'query.txt'), 'unpublished same-version candidate');
+    const candidate = path.join(root, 'candidate.tgz');
+    writeFileSync(
+      candidate,
+      canonicalGzipSync(await createDeterministicTar(packageRoot, { keepParent: true })),
+    );
+    assert.notEqual(
+      createHash('sha256').update(readFileSync(candidate)).digest('hex'),
+      row.sourceSha256,
+    );
+    assert.equal(
+      Buffer.from(readPortableArchiveEntries(held).get('package/query.txt')!.data()).toString(),
+      'genuine completed fixture',
+    );
+    const specification = {
+      packages: { query: row },
+      roots: { '@oliphaunt/ts-query': 'query' },
+      sources: [],
+      node: '',
+      tar: '',
+    };
+    assert.throws(
+      () =>
+        stageNodeInputs(path.join(root, 'candidate'), {
+          ...specification,
+          packages: {
+            query: { ...row, source: candidate, sourceSize: readFileSync(candidate).length },
+          },
+        }),
+      /npm supplier File SHA256/u,
+    );
+    assert.throws(
+      () =>
+        stageNodeInputs(path.join(root, 'missing-identity'), {
+          ...specification,
+          packages: { query: { ...row, sourceSha256: undefined } },
+        }),
+      /Missing completed npm File identity/u,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

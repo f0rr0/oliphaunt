@@ -12,7 +12,11 @@ import { requireSafeDirectoryChain } from '../packaging/release-directory-safety
 import { assertAuthenticatedNativeBuildOrigin } from './authenticate-native-build-evidence.mts';
 import { validateReleaseConsumerCompatibility } from './consumer-compatibility.mts';
 import { requestGithubPages, requestGithubRepositoryJson } from './github-read.mts';
-import type { NativeBuildSource } from './native-build-qualification.mts';
+import {
+  assertNativeSwiftShippingPhase,
+  type NativeBuildSource,
+} from './native-build-qualification.mts';
+import { fileIdentity } from './native-file-identity.mts';
 import {
   observedNativePublicationMetadata,
   writeMetadataRecords,
@@ -35,6 +39,10 @@ import {
   stageNativeReleaseFamilies,
 } from './native-release-preparation.mts';
 import { projectNativeBuildBoundSuppliers } from './native-shipping-suppliers.mts';
+import {
+  type NativeSupplierArtifact,
+  validateNativeSupplierArtifacts,
+} from './native-supplier-artifacts.mts';
 import {
   loadPublicationCatalog,
   publicationCatalogDigest,
@@ -396,7 +404,27 @@ async function observeAuthenticated(
 export async function acquireObservedCompletedSuppliers(
   observation: Observation,
   directory: string,
+  retainedArtifacts: unknown = [],
 ): Promise<CompletedInputs> {
+  const retained = validateNativeSupplierArtifacts(retainedArtifacts);
+  const retainedFile = (publication, artifact: string) => {
+    const matches = retained.filter(
+      (row) =>
+        consumerDigest(row.publication) === consumerDigest(publication) &&
+        row.artifact === artifact,
+    );
+    assert.ok(matches.length <= 1, 'retained completed supplier artifact repeats');
+    const row = matches[0];
+    if (row) {
+      const physical = fileIdentity(row.file.path);
+      equal(
+        { size: physical.size, sha256: physical.sha256 },
+        { size: row.file.size, sha256: row.file.sha256 },
+        'retained completed supplier File changed',
+      );
+    }
+    return row;
+  };
   const catalog = loadPublicationCatalog('native publication held suppliers');
   const groups = new Map<string, { publication: any; artifacts: Set<string> }>();
   for (const { evidence } of observation.authenticated)
@@ -417,14 +445,45 @@ export async function acquireObservedCompletedSuppliers(
   for (const [index, { publication, artifacts }] of [...groups.values()].entries()) {
     const carriers: Record<string, string[]> = {};
     const files: Record<string, string> = {};
+    const sourceTags: NativeSupplierArtifact[] = [];
     let release: any;
     let assets: any[];
     for (const [item, identity] of [...artifacts].sort().entries()) {
+      if (identity.startsWith('swift-source-tag:')) {
+        const retainedSource = retainedFile(publication, identity);
+        assert.ok(
+          retainedSource?.source,
+          'completed Git source supplier is absent from the acquired Prepare inputs',
+        );
+        const product = catalog.products.find(({ id }) => id === publication.product);
+        assert.ok(product, 'unknown completed source supplier');
+        const bindings = expectedProductArtifactRows([
+          { ...product, version: publication.version },
+        ]).filter(({ kind, role }) => kind === 'swift-bindings' && role === 'github-release-asset');
+        assert.equal(
+          bindings.length,
+          1,
+          'completed source supplier needs one canonical binding archive',
+        );
+        const binding = retainedFile(publication, bindings[0].id);
+        assert.ok(
+          binding && !binding.source,
+          'completed source supplier requires its retained same-publication binding archive',
+        );
+        files[bindings[0].id] = binding.file.path;
+        sourceTags.push(retainedSource);
+        continue;
+      }
       const separator = identity.indexOf(':');
       const ecosystem = identity.slice(0, separator);
       if (['cargo', 'npm'].includes(ecosystem)) {
         const carrier = resolveActualCarrier(catalog, ecosystem, identity.slice(separator + 1));
         assert.equal(carrier.product, publication.product, 'held registry supplier owner differs');
+        const captured = retainedFile(publication, identity);
+        if (captured) {
+          carriers[identity] = [captured.file.path];
+          continue;
+        }
         const retained = await materializeRegistryCarrierIntegrity(
           {
             ...carrier,
@@ -452,6 +511,11 @@ export async function acquireObservedCompletedSuppliers(
           'held supplier requires an exact canonical public artifact',
         );
         const row = matching[0];
+        const captured = retainedFile(publication, row.id);
+        if (captured) {
+          files[row.id] = captured.file.path;
+          continue;
+        }
         release ??= await requestGithubRepositoryJson(
           `repos/${repository}/releases/tags/${encodeURIComponent(publication.tagName)}`,
         );
@@ -467,8 +531,11 @@ export async function acquireObservedCompletedSuppliers(
         files[row.id] = retainedPath;
       }
     }
-    if (Object.keys(carriers).length) inputs.push({ publication, carriers });
-    if (Object.keys(files).length) inputs.push({ publication, files });
+    if (sourceTags.length) inputs.push({ publication, files, carriers, sourceTags });
+    else {
+      if (Object.keys(carriers).length) inputs.push({ publication, carriers });
+      if (Object.keys(files).length) inputs.push({ publication, files });
+    }
   }
   return inputs;
 }
@@ -578,6 +645,9 @@ export async function admitNativePublicationCandidate({
     { envelope: withoutMetadata, files: selectedFiles },
     observation.authenticated,
   );
+  if (prepared.record.selectedProducts.includes('oliphaunt-swift'))
+    for (const build of selectedObservation.authenticated)
+      assertNativeSwiftShippingPhase(build.qualification, 'final');
   const records = observedNativePublicationMetadata(
     {
       envelope: withoutMetadata,
@@ -886,6 +956,7 @@ export async function freezeNativePublicationFromRun({
   const completed = await acquireObservedCompletedSuppliers(
     observation,
     path.join(directory, 'held'),
+    JSON.parse(readFileSync(prepared.snapshotFile, 'utf8')).supplierArtifacts ?? [],
   );
   await admitNativePublicationCandidate({
     candidate,

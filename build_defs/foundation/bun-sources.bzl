@@ -47,7 +47,7 @@ def bun_source_tree(ctx, name, files):
             hardlink = "off",
         )
         trees[repository] = tree
-    return struct(trees = trees, files = depset(trees.values()))
+    return struct(trees = trees, files = depset(trees.values()), members = destinations)
 
 def bun_source_path(ctx, sources, file):
     repository, relative = _identity(ctx, file)

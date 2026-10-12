@@ -41,7 +41,7 @@ def _android_sdk_hub_impl(ctx):
     # rendered by upstream's unchanged template/helper.
     aliases = [
         "sdk", "sdk-%d" % api, "files", "aapt2", "fail",
-        "platform-tools/adb", "adb", "dexdump", "build_tools_libs",
+        "platform-tools/adb", "adb", "platform_tools_files", "dexdump", "build_tools_libs",
         "core-for-system-modules-jar", "d8_jar_import",
         "org_apache_http_legacy", "org_apache_http_legacy-%d" % api,
     ]
@@ -81,6 +81,31 @@ def _android_sdk_archive_impl(ctx):
         platform + "build.prop",
         platform + "data/**",
     ]))
+    ctx.file("BUILD.bazel", ctx.read("BUILD.bazel") + '\nfilegroup(name = "platform_tools_files", srcs = glob(["platform-tools/**"]), visibility = ["//visibility:public"])\n')
+    return ctx.repo_metadata(reproducible = True)
+
+def _android_emulator_impl(ctx):
+    if not _supported_host(ctx):
+        ctx.template("BUILD.bazel", ctx.attr.empty_template)
+        return ctx.repo_metadata(reproducible = True)
+    ctx.read(ctx.attr.manifest)
+    ctx.read(ctx.attr.converter)
+    ctx.watch(ctx.path(ctx.attr.bun))
+    command = [str(ctx.path(ctx.attr.bun)), str(ctx.path(ctx.attr.converter)), str(ctx.path(ctx.attr.manifest)), str(ctx.path("emulator.json")), "--emulator"]
+    result = ctx.execute(command, timeout = 60)
+    if result.return_code:
+        fail("Android emulator acquisition metadata is invalid:\n" + result.stdout + result.stderr)
+    metadata = json.decode(ctx.read("emulator.json"))
+    for archive in metadata["archives"]:
+        ctx.download_and_extract(url = archive["url"], sha256 = archive["sha256"], output = archive["directory"], strip_prefix = archive["strip_prefix"])
+    result = ctx.execute(command + [str(ctx.path("."))], timeout = 60)
+    if result.return_code:
+        fail("Android emulator archive identity is invalid:\n" + result.stdout + result.stderr)
+    ctx.file("BUILD.bazel", '\n'.join([
+        'package(default_visibility = ["//visibility:public"])',
+        'exports_files(["emulator.json"])',
+        'filegroup(name = "files", srcs = glob(["emulator/**", "system-images/**", "cmdline-tools/**"]))',
+    ]) + '\n')
     return ctx.repo_metadata(reproducible = True)
 
 def _metadata_attrs():
@@ -108,4 +133,9 @@ _archive_attrs.update({
 android_sdk_archive_repository = repository_rule(
     implementation = _android_sdk_archive_impl,
     attrs = _archive_attrs,
+)
+
+android_emulator_repository = repository_rule(
+    implementation = _android_emulator_impl,
+    attrs = _metadata_attrs(),
 )

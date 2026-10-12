@@ -872,7 +872,8 @@ export function wasixArtifactRows(
   return descriptor.render(prefix, [...targets]);
 }
 
-export function rawArtifactTargetRows(prefix = 'release-artifact-targets.mts') {
+/** Source-owned Swift archive declarations, shared by metadata and inventory. */
+export function swiftArtifactRows() {
   return [
     {
       id: 'oliphaunt-swift.bindings',
@@ -888,6 +889,12 @@ export function rawArtifactTargetRows(prefix = 'release-artifact-targets.mts') {
       ...githubChecksumRow('oliphaunt-swift'),
       _source_file: 'src/native/sdks/swift/tools/build-bindings-xcframework.sh',
     },
+  ];
+}
+
+export function rawArtifactTargetRows(prefix = 'release-artifact-targets.mts') {
+  return [
+    ...swiftArtifactRows(),
     ...databaseResourceArtifactRows(),
     ...liboliphauntNativeRows(prefix),
     ...postgresToolsNativeRows(prefix),

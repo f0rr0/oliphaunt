@@ -1,6 +1,5 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@aspect_rules_js//js:defs.bzl", "js_library")
-load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@bazel_lib//lib:copy_file.bzl", "copy_file")
 load("@javascript_packages//:defs.bzl", "PACKAGES", "javascript_type_links")
@@ -9,7 +8,7 @@ load("@javascript_compiler_packages//:roots.bzl", "COMPILER_CLOSURES", "COMPILER
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_metadata", "sdk_extension_projections")
-load("//build_defs/languages/ts:defs.bzl", "npm_archive_package")
+load("//build_defs/languages/ts:defs.bzl", "workspace_dependency_package", "workspace_dependency_link")
 load("//build_defs/query:defs.bzl", "query_envelope")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load(":native-package.bzl", "react_native_bundle", "react_native_consumer_test", "react_native_manifest", "react_native_npm", "react_native_package_test", "react_native_templates")
@@ -25,8 +24,8 @@ SOURCE_FILES = glob(["android/**", "ios/**", "cpp/**", "README.md", "CHANGELOG.m
 
 javascript_type_links(SDK["types"])
 compiler_input_links(COMPILER_INPUTS[SDK["name"]])
-npm_archive_package(name = "query_package", archive = "//src/query/ts:npm", package_name = QUERY["name"], version = QUERY["version"])
-npm_link_package(name = "node_modules/@oliphaunt/ts-query", src = ":query_package")
+workspace_dependency_package(name = "query_package", workspace = SDK, dependency = QUERY["name"], current = "//src/query/ts:shipping_package")
+workspace_dependency_link(name = "node_modules/@oliphaunt/ts-query", package = ":query_package", workspace = SDK, dependency = QUERY["name"])
 js_library(name = "package_metadata", srcs = ["package.json"])
 
 sdk_extension_projections(name = "extension_projections", sdk = "react-native")
@@ -102,14 +101,13 @@ query_envelope(
 
 shipping_package(name = "construction", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":source_npm"], ecosystem = "internal", package_name = SDK["name"], configuration = "portable", role = "construction")
 
-# Published RN0.3.2 intentionally consumes Swift0.8.2/native0.3.3. The held
-# source carrier supplies its historical legal metadata and exact native bytes.
+# The final package follows its conventional Swift pin and genuine native Files.
 react_native_npm(name = "npm", out = "oliphaunt-react-native-" + SDK["version"] + ".tgz", source_archive = ":source_npm", manifest = "package.json")
 filegroup(name = "ios_carrier_input", srcs = [":npm"], output_group = "carrier")
 react_native_package_test(name = "package_test", archive = ":npm", carrier_output = ":ios_carrier_input", source_archive = ":source_npm", manifest = "package.json", size = "small")
-shipping_package(name = "ios_carrier_shipping", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":ios_carrier_input"], ecosystem = "github", package_name = "oliphaunt-react-native-ios-carriers.json", configuration = "portable", role = "release-input", suppliers = "@swift_frozen_native//:xcframework_supplier")
-shipping_package(name = "package", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":npm"], ecosystem = "npm", package_name = SDK["name"], configuration = "portable", role = "source-sdk", suppliers = "@swift_frozen_native//:xcframework_supplier")
-shipping_export(name = "shipping_export", packages = [":construction", ":package", ":ios_carrier_shipping"], qualification = [":package_test", ":installed_consumer_test"], testonly = True)
+shipping_package(name = "ios_carrier_shipping", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":ios_carrier_input"], ecosystem = "github", package_name = "oliphaunt-react-native-ios-carriers.json", configuration = "portable", role = "release-input", suppliers = "@react_native_swift_package//:package_suppliers")
+shipping_package(name = "package", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":npm"], ecosystem = "npm", package_name = SDK["name"], configuration = "portable", role = "source-sdk", suppliers = "@react_native_swift_package//:package_suppliers")
+shipping_export(name = "apple_shipping_export", packages = [":construction", ":package", ":ios_carrier_shipping"], qualification = [":package_test", ":installed_consumer_test", "//src/examples/native/react-native-expo:ios_installed_test"], testonly = True, target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64"])
 
 CONSUMER_COMPILER_IDS = [key for root in COMPILER_INPUTS[SDK["name"]].values() for key in COMPILER_CLOSURES[root]]
 CONSUMER_COMPILER_PACKAGES = {key: row for key, row in COMPILER_PACKAGES.items() if key in CONSUMER_COMPILER_IDS}
@@ -119,22 +117,18 @@ CONSUMER_ARCHIVES = {"@javascript_packages//:" + key: key for key in PACKAGES} |
 CONSUMER_ROOTS = SDK["types"] | COMPILER_INPUTS[SDK["name"]]
 
 react_native_consumer_test(
-    name = "source_consumer_test", archive = ":source_npm", query = "//src/query/ts:npm", manifest = "package.json",
+    name = "source_consumer_test", archive = ":source_npm", query = ":query_package", manifest = "package.json",
     package_name = SDK["name"], version = SDK["version"],
     packages = CONSUMER_PACKAGES, inputs = CONSUMER_ARCHIVES, roots = CONSUMER_ROOTS, size = "medium",
 )
 react_native_consumer_test(
     name = "installed_consumer_test", archive = ":npm", final_package = True,
-    runtime_resources = "@swift_frozen_native//:runtime_resources_archive", size = "medium",
-    query = "//src/query/ts:npm", manifest = "package.json", source_archive = ":source_npm",
+    runtime_resources = "@react_native_swift_package//:runtime_resources_archive", size = "medium",
+    query = ":query_package", manifest = "package.json", source_archive = ":source_npm",
     package_name = SDK["name"], version = SDK["version"],
     packages = CONSUMER_PACKAGES, inputs = CONSUMER_ARCHIVES, roots = CONSUMER_ROOTS,
-    carrier = "@swift_frozen_native//:carrier", carrier_source = "//build_defs/release:swift-0.8.2-source.json",
-    native_version = "//src/native/sdks/swift:LIBOLIPHAUNT_VERSION",
-    native_releases = "//build_defs/release:native-0.3.3-releases.json",
-    native_completion = "//build_defs/release:native-0.3.3-completed-publication.json",
-    swift_source = "//build_defs/release:swift-0.8.2-publication-source.json",
-    xcframework = "@swift_frozen_native//:xcframework_archive",
+    native_base = "@react_native_swift_package//:native_requirement",
+    carrier = "@react_native_swift_package//:carrier", carrier_source = "@react_native_swift_package//:construction.json",
     ios_static_dependencies = "//src/extensions/generated/sdk:ios-static-dependencies.json",
 )
 
@@ -158,3 +152,23 @@ exports_files(["android/build.gradle", "android/src/main/AndroidManifest.xml"])
 filegroup(name = "android_kotlin_sources", srcs = glob(["android/src/main/java/**/*.kt"]) + glob(["android/src/main/java/**/*.java"], allow_empty = True))
 filegroup(name = "android_jsi_source", srcs = ["android/src/main/cpp/OliphauntJsiBindings.cpp"])
 filegroup(name = "cpp_headers", srcs = glob(["cpp/*.h"]))
+
+# Original source helpers used by the E2E_ONLY installed path. No build wrappers
+# execute: the actual stock application archive is the test's declared input.
+exports_files(["tools/stage-ios-app.mts", "tools/native-resource-closure.mts"])
+filegroup(name = "mobile_ios_e2e_sources", srcs = [
+    "package.json", "tools/mobile-e2e.sh", "tools/expo-ios-runner.sh",
+    "tools/expo-runner-common.sh", "tools/expo-runner-common.mts",
+    "tools/expo-runner-metro.sh", "tools/expo-runner-workspace.sh",
+    "tools/expo-runner-reporting.sh", "tools/expo-runner-reporting.mts",
+    "tools/mobile-extension-runtime.sh", "tools/mobile-extension-runtime.mts",
+    "tools/expo-runner-runtime-resources.sh", "tools/expo-runner-ios-device.sh",
+    "tools/expo-runner-ios-device.mts", "tools/expo-runner-ios-installed-app.sh",
+])
+
+filegroup(name = "mobile_android_e2e_sources", srcs = [
+    "package.json", "tools/mobile-e2e.sh", "tools/expo-android-runner.sh", "tools/expo-android-gradle-limits.sh",
+    "tools/expo-runner-common.sh", "tools/expo-runner-common.mts", "tools/expo-runner-metro.sh", "tools/expo-runner-workspace.sh",
+    "tools/expo-runner-reporting.sh", "tools/expo-runner-reporting.mts", "tools/mobile-extension-runtime.sh", "tools/mobile-extension-runtime.mts",
+    "tools/expo-runner-runtime-resources.sh", "tools/expo-runner-android-device.sh",
+])

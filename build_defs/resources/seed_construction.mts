@@ -168,30 +168,80 @@ export function captureSeedConstructionIntent(
   slot: Slot,
   invocation: unknown,
   inputs: Record<string, string>,
+  toolTreeMembers: Record<string, Record<string, string>> = {},
 ): SeedConstructionIntent {
   assert.ok(['native', 'wasix'].includes(slot.family), 'seed family is required');
   assert.ok(['standard', 'icu'].includes(slot.profile), 'seed profile is required');
   safeName(slot.target);
   assert.ok(Object.keys(inputs).length > 0, 'seed construction must declare actual inputs');
+  for (const [name, declared] of Object.entries(toolTreeMembers)) {
+    assert.ok(Object.hasOwn(inputs, name), 'constructor tool tree must be a declared input');
+    assert.ok(Object.keys(declared).length, 'constructor tool tree requires declared members');
+    for (const [member, source] of Object.entries(declared)) {
+      safeName(member);
+      assert.ok(
+        Object.values(inputs).includes(source),
+        'constructor tool member must be a declared File',
+      );
+    }
+  }
   const records = Object.entries(inputs)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, file]) => {
       safeName(name);
       const physical = realpathSync(file);
       const members: Record<string, unknown>[] = [];
+      const expected = Object.hasOwn(toolTreeMembers, name) ? toolTreeMembers[name] : undefined;
+      const directories = new Set(['']);
+      const observed = new Set<string>();
+      if (expected)
+        for (const member of Object.keys(expected)) {
+          const parts = member.split('/');
+          for (let count = 1; count < parts.length; count++)
+            directories.add(parts.slice(0, count).join('/'));
+        }
       const visit = (file: string, name: string) => {
         const stat = lstatSync(file);
-        assert.ok(!stat.isSymbolicLink(), 'constructor input tree must contain actual Files');
+        assert.ok(
+          expected || !stat.isSymbolicLink(),
+          'constructor input tree must contain actual Files',
+        );
+        let actual: FileIdentity | undefined;
+        if (expected) {
+          if (stat.isDirectory())
+            assert.ok(directories.has(name), 'constructor tool tree has an undeclared directory');
+          else {
+            assert.ok(
+              Object.hasOwn(expected, name),
+              'constructor tool tree has an undeclared member',
+            );
+            actual = identity(physicalFile(file));
+            assert.deepEqual(
+              actual,
+              identity(physicalFile(expected[name])),
+              'constructor tool tree member differs from its declared File',
+            );
+            observed.add(name);
+          }
+        }
         if (stat.isDirectory()) {
           members.push({ path: name, type: 'directory' });
           for (const child of readdirSync(file).sort())
             visit(path.join(file, child), name ? `${name}/${child}` : child);
         } else {
-          members.push({ path: name, type: 'file', ...identity(fileIdentity(file)) });
+          members.push({ path: name, type: 'file', ...(actual ?? identity(fileIdentity(file))) });
         }
       };
       // Cache read-only modes and checkout write bits do not describe seed intent.
+      if (expected)
+        assert.ok(lstatSync(physical).isDirectory(), 'constructor tool tree must be a directory');
       visit(physical, '');
+      if (expected)
+        assert.deepEqual(
+          [...observed].sort(),
+          Object.keys(expected).sort(),
+          'constructor tool tree is missing a declared File',
+        );
       members.sort((left, right) => String(left.path).localeCompare(String(right.path)));
       assert.ok(members.length, 'constructor input must contain actual bytes');
       return { name, members };
@@ -714,7 +764,7 @@ export function selectCompletedSeed(
 
 /** The public seed must contain every original PGDATA byte and empty directory. */
 export function assertSeedPublicData(archive: string, receipt: SeedConstructionReceipt) {
-  const entries = readPortableArchiveEntries(archive);
+  const entries = readPortableArchiveEntries(realpathSync(archive));
   const actualTree = logicalTreeSha256(
     [...entries.values()]
       .filter((entry) => entry.isFile)

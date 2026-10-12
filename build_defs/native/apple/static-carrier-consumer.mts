@@ -44,7 +44,18 @@ function filesAt(input: string): string[] {
 }
 
 /** Relocate exact original archives; all frozen identity fields remain unchanged. */
-export function stageAppleStaticLeaf(leaf: any, root: string, runtimeVersion: string) {
+export function stageNativeStaticLeaf(
+  leaf: any,
+  root: string,
+  runtimeVersion: string,
+  expectedTarget = 'ios-xcframework',
+) {
+  assert(
+    ['ios-xcframework', 'android-arm64-v8a', 'android-x86_64'].includes(expectedTarget),
+    'Unsupported static carrier target',
+  );
+  if (leaf.target !== undefined)
+    assert.equal(leaf.target, expectedTarget, 'Static leaf target differs');
   assert.equal(leaf.runtimeVersion, runtimeVersion, 'static carrier holds a different native core');
   const frozen = json(leaf.frozen);
   assert.equal(frozen.product, leaf.product);
@@ -70,7 +81,7 @@ export function stageAppleStaticLeaf(leaf: any, root: string, runtimeVersion: st
   const direct = new Map<string, any>();
   for (const row of frozen.carrierAssets ?? members[0].assets) {
     assert.equal(row.family, 'native');
-    assert.equal(row.target, 'ios-xcframework');
+    assert.equal(row.target, expectedTarget);
     const file = physical.get(row.name);
     assert.ok(file, `missing actual packaged carrier ${row.name}`);
     assert.ok(!direct.has(row.name), 'frozen carrier archive basenames must be unique');
@@ -109,6 +120,8 @@ export function stageAppleStaticLeaf(leaf: any, root: string, runtimeVersion: st
   writeFileSync(output, `${JSON.stringify(document, null, 2)}\n`);
   return { output, archives: [...direct.values()] };
 }
+
+export const stageAppleStaticLeaf = stageNativeStaticLeaf;
 
 /** Maintained Apple static XCFrameworks store ar bytes inside a .framework binary. */
 export function macosStaticArchive(framework: string): string {

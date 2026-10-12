@@ -1,6 +1,10 @@
 import { expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { importJavascriptMetadata } from './metadata.mts';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { gzipSync, gunzipSync } from 'node:zlib';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { importJavascriptMetadata, validateJavascriptDependencyArchive } from './metadata.mts';
 
 test('installed tools fixture acquires the public held SDK closure and rejects stale pins', () => {
   const fixture = new URL('../../../src/wasix/postgres-tools/ts/tests/installed/', import.meta.url);
@@ -110,7 +114,7 @@ test('imports nested exact Bun resolutions, preserving a dependency’s differen
   expect(Object.values(imported.packages).some((pkg) => pkg.package === 'typescript')).toBe(false);
 });
 
-test('external runtime acquisition stays locked and local workspace dependencies require source', () => {
+test('external runtime acquisition stays locked and workspace names can resolve genuine registry entries', () => {
   const value = fixture();
   value.manifests['src/sdk'].dependencies.fzstd = '0.1.1';
   value.lock.packages.fzstd = ['fzstd@0.1.1', '', {}, 'sha512-ZnpzdGQ='];
@@ -136,9 +140,10 @@ test('external runtime acquisition stays locked and local workspace dependencies
     'sha512-cXVlcnk=',
   ];
   delete workspace.manifests['src/query'];
-  expect(() =>
-    importJavascriptMetadata(workspace.root, workspace.lock, workspace.manifests),
-  ).toThrow('selected source package');
+  const locked = importJavascriptMetadata(workspace.root, workspace.lock, workspace.manifests);
+  expect(locked.workspaces['@oliphaunt/sdk'].dependencyInputs?.['@oliphaunt/query'].source).toBe(
+    'registry',
+  );
 });
 
 test('asset workspace dependency identities remain conventional without becoming compiler inputs', () => {
@@ -163,9 +168,10 @@ test('asset workspace dependency identities remain conventional without becoming
   ).toThrow('stale workspace identity');
   asset.version = '0.2.4';
   value.manifests['src/sdk'].dependencies[asset.name] = '0.2.5';
-  expect(() =>
-    importJavascriptMetadata(value.root, value.lock, value.manifests, {}, {}, dependencies),
-  ).toThrow('conventional workspace version');
+  expect(
+    importJavascriptMetadata(value.root, value.lock, value.manifests, {}, {}, dependencies)
+      .workspaces['@oliphaunt/sdk'].dependencyInputs?.[asset.name].source,
+  ).toBe('unverified');
   expect(() =>
     importJavascriptMetadata(value.root, value.lock, value.manifests, {}, {}, value.manifests),
   ).toThrow('both compiler and dependency');
@@ -230,7 +236,7 @@ test('consumer tools use an isolated exact lock closure with canonical overrides
   }
 });
 
-test('rejects stale declarations, missing integrity, and unavailable held workspace versions', () => {
+test('rejects stale declarations and missing integrity without selecting unavailable workspace versions', () => {
   for (const mutate of [
     (value: any) => {
       value.lock.workspaces['src/sdk'] = { ...value.lock.workspaces['src/sdk'], version: '1.2.2' };
@@ -240,10 +246,6 @@ test('rejects stale declarations, missing integrity, and unavailable held worksp
     },
     (value: any) => {
       value.lock.packages['@oliphaunt/sdk/@types/node'][3] = '';
-    },
-    (value: any) => {
-      value.manifests['src/query'].version = '2.0.0';
-      value.lock.workspaces['src/query'].version = '2.0.0';
     },
     (value: any) => {
       value.root.overrides = { '@types/node': '24.1.0' };
@@ -682,4 +684,158 @@ test('distinct optional peer contexts cannot silently share one installation ide
       ['@oliphaunt/docs'],
     ),
   ).not.toThrow();
+});
+
+function heldQueryFixture() {
+  const value = fixture();
+  const original = value.manifests['src/query'];
+  original.name = '@oliphaunt/ts-query';
+  original.version = '0.1.1';
+  value.manifests['src/sdk'].dependencies = { [original.name]: '0.1.1' };
+  value.lock.packages[`${original.name}/@types/node`] =
+    value.lock.packages['@oliphaunt/query/@types/node'];
+  value.lock.packages[`${original.name}/@types/node/undici-types`] =
+    value.lock.packages['@oliphaunt/query/@types/node/undici-types'];
+  const file = new URL('./testdata/ts-query-0.1.1.tgz', import.meta.url).pathname;
+  const bytes = readFileSync(file);
+  const row = {
+    publication: {
+      product: 'oliphaunt-query-ts',
+      version: '0.1.1',
+      tagName: 'oliphaunt-query-ts-v0.1.1',
+      publicationSha: 'c51052fe8b8ffc7e992266c5ab3d7a63b47441e7',
+      publicationTree: '59791800860832994b48b8009bb48c5a74a7764e',
+      releaseSha: '7b192697ff522f71f9c694593d352aa30469cea1',
+    },
+    artifact: `npm:${original.name}`,
+    archive: '@oliphaunt_metadata//:supplier-artifacts/query.tgz',
+    file: {
+      path: file,
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    },
+  };
+  const owners = {
+    'src/query': { id: row.publication.product, registry_packages: [row.artifact] },
+  };
+  const project = (options = {}) =>
+    importJavascriptMetadata(value.root, value.lock, value.manifests, {}, {}, {}, [], [], {
+      supplierArchives: [row],
+      sourceOwners: owners,
+      ...options,
+    });
+  return { value, row, owners, project };
+}
+
+test('ordinary held query survives a current major version and uses the exact retained published File', () => {
+  const { value, row, project } = heldQueryFixture();
+  value.manifests['src/query'].version = '1.0.0';
+  const choice = project().workspaces['@oliphaunt/sdk'].dependencyInputs!['@oliphaunt/ts-query'];
+  expect(choice).toMatchObject({
+    source: 'completed',
+    version: '0.1.1',
+    archive: row.archive,
+    sha256: 'f0f690ed68891aef72f49dab3f4b79206cda428e55ace54cef8ff8de58557c60',
+    packages: {},
+  });
+  expect(project().workspaces['@oliphaunt/sdk'].dependencies['@oliphaunt/ts-query']).toBe('0.1.1');
+});
+
+test('same-version workspace bytes do not imply adoption; prepared source selection and owner must both match', () => {
+  const { row, project } = heldQueryFixture();
+  expect(
+    project().workspaces['@oliphaunt/sdk'].dependencyInputs!['@oliphaunt/ts-query'].source,
+  ).toBe('completed');
+  const selected = project({ selectedProducts: ['oliphaunt-query-ts'] }).workspaces[
+    '@oliphaunt/sdk'
+  ].dependencyInputs!['@oliphaunt/ts-query'];
+  expect(selected).toEqual({
+    source: 'workspace',
+    workspace: 'src/query',
+    version: '0.1.1',
+    owner: 'oliphaunt-query-ts',
+  });
+  expect(
+    project({ selectedProducts: ['oliphaunt-react-native'] }).workspaces['@oliphaunt/sdk']
+      .dependencyInputs!['@oliphaunt/ts-query'].source,
+  ).toBe('completed');
+  expect(
+    project({
+      selectedProducts: ['oliphaunt-query-ts'],
+      sourceOwners: { 'src/query': { id: 'other', registry_packages: [row.artifact] } },
+    }).workspaces['@oliphaunt/sdk'].dependencyInputs!['@oliphaunt/ts-query'].source,
+  ).toBe('unverified');
+});
+
+test('explicit workspace source remains conventional and missing pool does not prevent metadata/tool loading', () => {
+  const { value, project } = heldQueryFixture();
+  const missing = project({ supplierArchives: [] });
+  expect(missing.typescript.version).toBe('6.0.3');
+  expect(
+    missing.workspaces['@oliphaunt/sdk'].dependencyInputs!['@oliphaunt/ts-query'],
+  ).toMatchObject({ source: 'unverified' });
+  value.manifests['src/sdk'].dependencies['@oliphaunt/ts-query'] = 'workspace:*';
+  expect(
+    project({ supplierArchives: [] }).workspaces['@oliphaunt/sdk'].dependencyInputs![
+      '@oliphaunt/ts-query'
+    ].source,
+  ).toBe('workspace');
+  value.manifests['src/sdk'].dependencies['@oliphaunt/ts-query'] = 'workspace:2.0.0';
+  expect(() => project()).toThrow('conventional workspace version');
+});
+
+test('held File digest and packed identity reject same-version byte substitution and wrong archive identities', () => {
+  const { row, project } = heldQueryFixture();
+  const directory = mkdtempSync(path.join(tmpdir(), 'ts-held-query-'));
+  try {
+    const file = path.join(directory, 'query.tgz');
+    copyFileSync(row.file.path, file);
+    const bytes = gzipSync(gunzipSync(readFileSync(file)), { level: 1 });
+    writeFileSync(file, bytes);
+    expect(validateJavascriptDependencyArchive(file, '@oliphaunt/ts-query', '0.1.1').version).toBe(
+      '0.1.1',
+    );
+    expect(() =>
+      project({
+        supplierArchives: [{ ...row, file: { ...row.file, path: file, size: bytes.length } }],
+      }),
+    ).toThrow('digest differs');
+    expect(() =>
+      validateJavascriptDependencyArchive(row.file.path, '@oliphaunt/ts-query', '1.0.0', row.file),
+    ).toThrow('packed identity differs');
+    expect(() =>
+      validateJavascriptDependencyArchive(row.file.path, 'wrong', '0.1.1', row.file),
+    ).toThrow('packed identity differs');
+    expect(() => project({ supplierArchives: [row, row] })).toThrow('Ambiguous');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('declared dependency worker preserves retained archive bytes and rejects post-projection tampering', () => {
+  const { row } = heldQueryFixture();
+  const directory = mkdtempSync(path.join(tmpdir(), 'ts-dependency-worker-'));
+  try {
+    const output = path.join(directory, 'checked.tgz');
+    const run = (file = row.file.path) =>
+      Bun.spawnSync([
+        process.execPath,
+        new URL('./metadata.mts', import.meta.url).pathname,
+        '--verify-dependency',
+        file,
+        output,
+        '@oliphaunt/ts-query',
+        '0.1.1',
+        String(row.file.size),
+        row.file.sha256,
+      ]);
+    expect(run().exitCode).toBe(0);
+    expect(readFileSync(output)).toEqual(readFileSync(row.file.path));
+    const substitute = path.join(directory, 'substitute.tgz');
+    writeFileSync(substitute, gzipSync(gunzipSync(readFileSync(row.file.path)), { level: 1 }));
+    expect(run(substitute).exitCode).not.toBe(0);
+    expect(readFileSync(output)).toEqual(readFileSync(row.file.path));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
