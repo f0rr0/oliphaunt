@@ -449,10 +449,6 @@ android_sdk_hub(name = "oliphaunt_android_sdk", archive = "oliphaunt_android_sdk
 android_sdk = use_extension("@rules_android//rules/android_sdk_repository:rule.bzl", "android_sdk_repository_extension")
 override_repo(android_sdk, androidsdk = "oliphaunt_android_sdk")
 
-# Lazy; ordinary SDK construction does not fetch emulator/system-image archives.
-android_emulator = use_repo_rule("//build_defs/languages/jvm:android-sdk-repository.bzl", "android_emulator_repository")
-android_emulator(name = "oliphaunt_android_emulator")
-
 frozen_native_runtime = use_repo_rule("//build_defs/release:frozen-native-runtime.bzl", "frozen_native_runtime_repository")
 frozen_native_runtime(
     name = "held_native",
@@ -971,3 +967,8 @@ apple_captured_swift(
     current_source = "@oliphaunt_metadata//:native-swift-source-input.json",
     runtime = "@react_native_native_base//:runtime",
 )
+
+# Append repository rules to preserve canonical names recorded by module extensions.
+# Lazy; ordinary SDK construction does not fetch emulator/system-image archives.
+android_emulator = use_repo_rule("//build_defs/languages/jvm:android-sdk-repository.bzl", "android_emulator_repository")
+android_emulator(name = "oliphaunt_android_emulator")

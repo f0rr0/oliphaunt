@@ -47,6 +47,9 @@ jobs:
       - name: Set up verified Node.js and Bun
         uses: ./.github/actions/setup-node-bun
 
+      - name: Check every used module extension before producer fanout
+        run: bash tools/dev/bazel.sh mod deps --lockfile_mode=error
+
       - name: Check release-owned source versions
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
