@@ -1,16 +1,62 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
+load("//build_defs/native/carriers:defs.bzl", "native_carrier_helpers")
 load(":kotlin.bzl", "kotlin_sdk_toolchain")
+load("@rules_kotlin//kotlin:jvm.bzl", "kt_jvm_library")
+load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
+load(":android-lint.bzl", "kotlin_android_lint_test")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(glob(["*.bzl", "*.mts"]))
 
 exports_files(["aar-import-android-bootclasspath.patch"])
+exports_files(["lint_maven_install.json"])
 
 kotlin_sdk_toolchain(name = "sdk_toolchain")
 
+kt_jvm_library(
+    name = "lint_model",
+    testonly = True,
+    srcs = ["LintModel.kt"],
+    deps = [
+        "@oliphaunt_android_lint_maven//:com_android_tools_lint_lint_model",
+        "@oliphaunt_android_lint_maven//:com_android_tools_sdk_common",
+        "@oliphaunt_android_lint_maven//:com_android_tools_sdklib",
+        "@oliphaunt_android_lint_maven//:com_android_tools_common",
+        "@oliphaunt_android_lint_maven//:com_google_code_gson_gson",
+    ],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+# This independent compiled fixture must produce a real API-level source error.
+# It detects a model which ignores its sources or loses Android/Gradle identity.
+kt_android_library(
+    name = "lint_api_canary_classes",
+    testonly = True,
+    srcs = ["testdata/lint/NewApi.kt"],
+    manifest = "testdata/lint/AndroidManifest.xml",
+    custom_package = "dev.oliphaunt",
+    deps = ["@oliphaunt_kotlin_maven//:org_jetbrains_kotlin_kotlin_stdlib"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+kotlin_android_lint_test(
+    name = "android_lint_api_canary_test",
+    library = ":lint_api_canary_classes",
+    srcs = ["testdata/lint/NewApi.kt"],
+    manifest = "testdata/lint/AndroidManifest.xml",
+    min_sdk = 24,
+    expect_issue = "NewApi",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "small",
+)
+
+bun_test(name = "android_lint_runner_test", entry_point = "android-lint.test.mts", data = ["android-lint.mts"], size = "small")
+
 bun_binary(name = "plugin_descriptor", entry_point = "plugin-descriptor.mts")
+
+bun_test(name = "ktlint_runner_test", entry_point = "ktlint.test.mts", data = ["ktlint.mts"], size = "small")
 
 bun_test(name = "android_sdk_metadata_test", entry_point = "android-sdk-metadata.test.mts", data = ["android-sdk-metadata.mts", "//tools/dev:android-sdk.toml"], size = "small")
 
@@ -41,6 +87,17 @@ bun_test(
         "//:tools/packaging/windows-vc-runtime-policy.json",
         "//:tools/packaging/release-notices.mts", "//:tools/packaging/release-directory-safety.mts", "//:tools/packaging/rust-dependency-license-contract.mts", "//tools/release:platform-compatibility-policy.mts",
     ],
+    size = "small",
+)
+
+bun_test(
+    name = "installed_maven_contract_test",
+    entry_point = "installed-maven-contract.test.mts",
+    data = [
+        "installed-maven.test.mts", "//src/native/sdks/kotlin:tools/check-package.mts", "//src/native/sdks/kotlin:tools/kotlin-maven-staging.mts",
+        "//build_defs/languages:mobile-legal.mts",
+        "//:tools/packaging/testdata/zip-fixture.mts", "//:tools/packaging/maven-central-contract.mts",
+    ] + native_carrier_helpers(),
     size = "small",
 )
 

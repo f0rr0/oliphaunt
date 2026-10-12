@@ -36,4 +36,4 @@ def postmaster_imported_host_carrier(target, native_platform, execution, name = 
     postmaster_runtime_test(name = name + "_runtime_test", carrier = ":" + carrier, native_platform = native_platform,
                             target = target, target_compatible_with = compatible, exec_compatible_with = execution,
                             tags = ["manual"], size = "medium", timeout = "long")
-    postmaster_release_asset(name = name, target = target, carrier = ":" + carrier, execution = execution)
+    postmaster_release_asset(name = name, target = target, carrier = ":" + carrier, execution = execution, qualification = [":" + name + "_runtime_test"])

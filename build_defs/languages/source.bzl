@@ -4,6 +4,7 @@ load("@native_cargo_metadata//:cargo.bzl", "CARGO")
 load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "shipping_suppliers")
 
 _RUST_TOOLCHAIN = "@rules_rust//rust:toolchain"
 CargoSourceInfo = provider(fields = ["archive", "manifest", "workspace_manifest", "entries", "metadata"])
@@ -92,7 +93,7 @@ _cargo_source = rule(
     },
 )
 
-def cargo_source_package(product, fixtures = "", native_sdk = False, cargo_facts = CARGO, workspace_manifest = "//:Cargo.toml"):
+def cargo_source_package(product, fixtures = "", native_sdk = False, cargo_facts = CARGO, workspace_manifest = "//:Cargo.toml", qualification = []):
     facts = cargo_facts[native.package_name()]
     descriptor = PRODUCTS[product]
     if "crates:" + facts["name"] not in descriptor.get("registry_packages", []):
@@ -130,5 +131,8 @@ def cargo_source_package(product, fixtures = "", native_sdk = False, cargo_facts
     if fixtures:
         entries["//src/test-fixtures:rust_fixtures"] = fixtures
     _cargo_source(name = "crate", manifest = "Cargo.toml", workspace_manifest = workspace_manifest, entries = entries, metadata = json.encode(metadata), out = facts["name"] + ".crate")
-    shipping_package(name = "shipping_package", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":crate"], ecosystem = "cargo", package_name = facts["name"], configuration = "source", role = carriers[0]["role"])
-    shipping_export(name = "shipping_export", packages = [":shipping_package"])
+    # This envelope contains authored source and conventional requirements.
+    # Its compile/test dependencies are not incorporated compiled carrier Files.
+    shipping_suppliers(name = "source_suppliers", inputs = [])
+    shipping_package(name = "shipping_package", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":crate"], ecosystem = "cargo", package_name = facts["name"], configuration = "source", role = carriers[0]["role"], suppliers = ":source_suppliers")
+    shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = qualification, testonly = True)

@@ -1,3 +1,4 @@
+/** Declared Bazel archive consumer; requires its runner-supplied package inputs. */
 import assert from 'node:assert/strict';
 import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,9 +11,13 @@ import {
   validateReactNativeNpm,
 } from './native-package.mts';
 
-const [specification, archiveInput] = Bun.argv.slice(2);
+const [specification, archiveInput, carrierOutput] = Bun.argv.slice(2);
 assert(
-  specification && archiveInput && process.env.OLIPHAUNT_BAZEL_RUNFILES && process.env.TEST_TMPDIR,
+  specification &&
+    archiveInput &&
+    carrierOutput &&
+    process.env.OLIPHAUNT_BAZEL_RUNFILES &&
+    process.env.TEST_TMPDIR,
 );
 const runfilesRoot = process.env.OLIPHAUNT_BAZEL_RUNFILES;
 const archive = join(process.env.TEST_TMPDIR, 'react-native-public.tgz');
@@ -37,6 +42,11 @@ const entries = Object.fromEntries(
   ]),
 );
 assert.deepEqual(entries[`package/${IOS_CARRIER_FILENAME}`], readFileSync(inputs.carrier));
+assert.deepEqual(
+  readFileSync(carrierOutput),
+  entries[`package/${IOS_CARRIER_FILENAME}`],
+  'Source-owned RN carrier output must be the actual final npm member',
+);
 const manifest = JSON.parse(entries['package/package.json'].toString('utf8'));
 assert.equal(manifest.exports['./ios-carriers'], `./${IOS_CARRIER_FILENAME}`);
 assert.equal(manifest.oliphaunt.iosCarrierManifest, `./${IOS_CARRIER_FILENAME}`);

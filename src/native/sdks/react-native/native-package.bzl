@@ -39,8 +39,9 @@ def _package_impl(ctx):
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(spec, json.encode(inputs))
     output = ctx.actions.declare_file(ctx.attr.out)
-    bun_file_action(ctx, entry_point = ctx.file._writer, arguments = [spec.path, output.path], inputs = files + [spec] + ctx.files._helpers, source_files = ctx.files._helpers, outputs = [output], mnemonic = "ReactNativeNpmPackage")
-    return [DefaultInfo(files = depset([output]))]
+    carrier = ctx.actions.declare_file(ctx.label.name + "/ios-carriers/oliphaunt-react-native-ios-carriers.json")
+    bun_file_action(ctx, entry_point = ctx.file._writer, arguments = [spec.path, output.path, carrier.path], inputs = files + [spec] + ctx.files._helpers, source_files = ctx.files._helpers, outputs = [output, carrier], mnemonic = "ReactNativeNpmPackage")
+    return [DefaultInfo(files = depset([output])), OutputGroupInfo(carrier = depset([carrier]))]
 
 react_native_npm = rule(
     implementation = _package_impl,
@@ -52,12 +53,12 @@ def _package_test_impl(ctx):
     inputs, files = _package_spec(ctx, runfiles = True)
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(spec, json.encode(inputs))
-    return bun_test_entrypoint(ctx, ctx.file._runner, [spec, ctx.file.archive], files + [spec, ctx.file.archive, ctx.file._runner] + ctx.files._helpers, source_files = [ctx.file._runner] + ctx.files._helpers, runfiles_environment = ["OLIPHAUNT_BAZEL_RUNFILES"])
+    return bun_test_entrypoint(ctx, ctx.file._runner, [spec, ctx.file.archive, ctx.file.carrier_output], files + [spec, ctx.file.archive, ctx.file.carrier_output, ctx.file._runner] + ctx.files._helpers, source_files = [ctx.file._runner] + ctx.files._helpers, runfiles_environment = ["OLIPHAUNT_BAZEL_RUNFILES"])
 
 _react_native_package_test = rule(
     implementation = _package_test_impl, test = True,
     toolchains = BUN_SOURCE_TOOLCHAINS,
-    attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **dict(_PACKAGE_ATTRS, **{"archive": attr.label(mandatory = True, allow_single_file = [".tgz"]), "_runner": attr.label(default = ":tools/native-package.test.mts", allow_single_file = True)})),
+    attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **dict(_PACKAGE_ATTRS, **{"archive": attr.label(mandatory = True, allow_single_file = [".tgz"]), "carrier_output": attr.label(mandatory = True, allow_single_file = [".json"]), "_runner": attr.label(default = ":tools/native-package-contract.mts", allow_single_file = True)})),
 )
 
 def react_native_package_test(name, args = [], **kwargs):

@@ -19,14 +19,15 @@ import {
 } from '../../tools/packaging/portable-archive.mts';
 import { extractNativePayload } from '../native/host-runtime-test-helpers.mts';
 import { materializeArchive, materializeInputs } from './shared.mts';
-import { extractWasixRuntime } from './wasix_inputs.mts';
+import { extractWasixRuntime, wasixRuntimeInputs } from './wasix_inputs.mts';
+import { seedProducerIdentity, validateSeedConstructionReceipt } from './seed_construction.mts';
 
 const [unitTest, runner, portable, icu, version, runtimeVersion, ...files] = process.argv.slice(2);
-assert.equal(files.length, 22);
+assert.equal(files.length, 24);
 const identityJson = files.pop();
 assert.ok(identityJson);
 const identities = JSON.parse(identityJson);
-const seedFiles = files.splice(0, 10);
+const seedFiles = files.splice(0, 12);
 const fzstd = files.shift();
 assert.ok(fzstd);
 const sdkSources: Record<string, string> = {};
@@ -52,7 +53,8 @@ try {
   });
   assert.equal(units.exitCode, 0, `${units.stderr.toString()}\n${units.stdout.toString()}`);
   console.log(units.stdout.toString());
-  const runtime = extractWasixRuntime(portable, root);
+  const admitted = wasixRuntimeInputs(portable, root);
+  const runtime = extractWasixRuntime(admitted, root);
   const icuRoot = path.join(root, 'icu-resource');
   extractPortableArchiveTree(copyArchive(icu), icuRoot);
   const icuData = path.join(icuRoot, 'share/icu');
@@ -61,8 +63,8 @@ try {
   const sdk = materializeInputs(sdkSources, path.join(root, 'sdk'));
   extractPortableArchiveTree(copyArchive(fzstd), path.join(sdk, 'node_modules/.fzstd'));
   renameSync(path.join(sdk, 'node_modules/.fzstd/package'), path.join(sdk, 'node_modules/fzstd'));
-  const runtimeBytes = readFileSync(path.join(portable, 'oliphaunt.wasix.tar.zst'));
-  const coreBytes = readFileSync(path.join(portable, 'manifest.json'));
+  const runtimeBytes = readFileSync(path.join(admitted, 'oliphaunt.wasix.tar.zst'));
+  const coreBytes = readFileSync(path.join(admitted, 'manifest.json'));
   const coreInputs = wasixRuntimeNpmPayloadInputs({
     manifestBytes: coreBytes,
     runtimeBytes,
@@ -108,7 +110,16 @@ try {
     return prepared.loadClusterSeed();
   };
   for (const [index, profile] of ['standard', 'icu'].entries()) {
-    const [frozen, archive, manifestPath, npm, cargo] = seedFiles.slice(index * 5, index * 5 + 5);
+    const [frozen, archive, manifestPath, npm, cargo, construction] = seedFiles.slice(
+      index * 6,
+      index * 6 + 6,
+    );
+    const receipt = validateSeedConstructionReceipt(JSON.parse(readFileSync(construction, 'utf8')));
+    const producer = seedProducerIdentity(receipt);
+    assert.deepEqual(receipt.frozen, {
+      size: readFileSync(frozen).length,
+      sha256: digest(readFileSync(frozen)),
+    });
     const seed = path.join(root, profile);
     extractPortableArchiveTree(copyArchive(archive), seed);
     validatePgdataDirectories(seed);
@@ -125,11 +136,8 @@ try {
       manifest.runtime.consumerSha256,
       digest(readFileSync(path.join(runtime, 'bin/postgres'))),
     );
-    assert.equal(manifest.runtime.producerSha256, manifest.runtime.consumerSha256);
-    assert.equal(
-      manifest.runtime.initdbSha256,
-      digest(readFileSync(path.join(runtime, 'bin/initdb'))),
-    );
+    assert.equal(manifest.runtime.producerSha256, producer.postgresSha256);
+    assert.equal(manifest.runtime.initdbSha256, producer.initdbSha256);
     assert.equal(manifest.archive.sha256, digest(readFileSync(archive)));
     assert.equal(manifest.catalogProfile, profile);
     const options = optionsFor(profile, readFileSync(archive), manifestBytes);
@@ -229,7 +237,7 @@ try {
   mkdirSync(wrong);
   writeFileSync(
     path.join(wrong, 'manifest.json'),
-    readFileSync(path.join(portable, 'manifest.json')),
+    readFileSync(path.join(admitted, 'manifest.json')),
   );
   writeFileSync(path.join(wrong, 'oliphaunt.wasix.tar.zst'), 'altered actual archive');
   assert.throws(() => extractWasixRuntime(wrong, path.join(root, 'wrong-input')), /sha256|archive/);

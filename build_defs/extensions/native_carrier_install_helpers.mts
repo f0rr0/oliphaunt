@@ -6,11 +6,14 @@ import {
   chmodSync,
   cpSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
@@ -160,23 +163,72 @@ export async function prepareNativeCarrierSdk({
   } finally {
     ffi.close();
   }
-  const sdkManifest = JSON.parse(readFileSync(path.join(sdk, 'package.json'), 'utf8'));
+  const sdkManifestFile = path.join(sdk, 'package.json');
+  const sdkManifestBytes = readFileSync(sdkManifestFile);
+  const sdkManifest = JSON.parse(sdkManifestBytes.toString('utf8'));
+  const sdkRuntimeVersion = sdkManifest.oliphaunt.liboliphauntVersion;
   const assets = await import(pathToFileURL(path.join(sdk, 'src/native/assets.ts')).href);
   const install = { libraryPath: library, runtimeDirectory: runtime };
-  if (sdkManifest.oliphaunt.liboliphauntVersion !== runtimeVersion) {
+  if (sdkRuntimeVersion !== runtimeVersion) {
     await assert.rejects(
       () => assets.materializeExtensionInstall(install, selected),
       /does not match @oliphaunt\/ts liboliphauntVersion/,
-      'held SDK must reject a newly compiled supplier before adoption',
+      'source SDK must reject a carrier outside its unchanged declared host requirement',
     );
     console.log(
-      `Held SDK host ${sdkManifest.oliphaunt.liboliphauntVersion} correctly rejects native extension host ${runtimeVersion}; exercising explicit candidate SDK adoption.`,
+      `Source SDK host ${sdkRuntimeVersion} rejects extension host ${runtimeVersion}; constructor SQL uses the explicit runtime-directory API. Default adoption requires the generated SDK and frozen installed consumers.`,
     );
-    sdkManifest.oliphaunt.liboliphauntVersion = runtimeVersion;
-    chmodSync(path.join(sdk, 'package.json'), 0o644);
-    writeFileSync(path.join(sdk, 'package.json'), JSON.stringify(sdkManifest));
   }
-  return { assets, install, runtime, packages };
+  const extensionRuntime = await import(
+    pathToFileURL(path.join(sdk, 'src/native/extension-runtime.ts')).href
+  );
+  const materialize = async (extensions: string[]) => {
+    assert.deepEqual(readFileSync(sdkManifestFile), sdkManifestBytes, 'SDK manifest was altered');
+    if (sdkRuntimeVersion === runtimeVersion)
+      return assets.materializeExtensionInstall(install, extensions);
+    // A producer can change before release preparation adopts its exact host in
+    // an independently versioned SDK. Qualify those real bytes through the
+    // supported explicit-runtime API without changing any SDK requirements.
+    const selected = extensionRuntime.selectedExtensionClosure(extensions) as string[];
+    const stage = mkdtempSync(path.join(tmpdir(), 'native-explicit-extension-'));
+    const runtimeDirectory = path.join(stage, 'runtime');
+    try {
+      cpSync(runtime, runtimeDirectory, { recursive: true });
+      for (const sqlName of selected) {
+        const owners = packages.filter(({ manifest }) =>
+          manifest.oliphaunt.members.includes(sqlName),
+        );
+        assert.equal(
+          owners.length,
+          1,
+          `selected extension ${sqlName} has no unique installed carrier`,
+        );
+        const { manifest, directory } = owners[0];
+        const relative =
+          manifest.oliphaunt.memberRuntimeRelativePaths?.[sqlName] ??
+          manifest.oliphaunt.runtimeRelativePath;
+        assert.equal(
+          typeof relative,
+          'string',
+          `selected extension ${sqlName} has no runtime payload`,
+        );
+        cpSync(assets.resolvePackageRelativePath(directory, relative, sqlName), runtimeDirectory, {
+          recursive: true,
+        });
+      }
+      const prepared = await assets.prepareExtensionInstall(
+        { ...install, runtimeDirectory, packageManaged: false },
+        extensions,
+        { explicitRuntimeDirectory: true },
+      );
+      assert.deepEqual(readFileSync(sdkManifestFile), sdkManifestBytes, 'SDK manifest was altered');
+      return prepared;
+    } catch (error) {
+      rmSync(stage, { recursive: true, force: true });
+      throw error;
+    }
+  };
+  return { assets, install, runtime, packages, materialize, sdkRuntimeVersion };
 }
 
 export function exerciseNativeCarrierSql({

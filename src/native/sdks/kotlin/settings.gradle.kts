@@ -23,7 +23,8 @@ dependencyResolutionManagement {
 }
 
 val oliphauntBuildRoot =
-    providers.gradleProperty("oliphauntBuildRoot")
+    providers
+        .gradleProperty("oliphauntBuildRoot")
         .orElse(providers.environmentVariable("OLIPHAUNT_GRADLE_BUILD_ROOT"))
         .orNull
         ?.takeIf(String::isNotBlank)

@@ -1,4 +1,8 @@
+#include "postgres_fe.h"
+#include "catalog/catversion.h"
+#include "catalog/pg_control.h"
 #include "oliphaunt.h"
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,11 +12,55 @@ static uint32_t read_u32(const uint8_t *data) {
            ((uint32_t)data[2] << 8) | (uint32_t)data[3];
 }
 
+/* Test-only negative fixtures retain the canonical ControlFileData CRC. */
+static int corrupt_control_file(const char *path, int catalog) {
+    unsigned char bytes[PG_CONTROL_FILE_SIZE];
+    ControlFileData control;
+    pg_crc32c crc;
+    FILE *file = fopen(path, "r+b");
+    if (file == NULL) return 2;
+    if (fread(bytes, 1, sizeof(bytes), file) != sizeof(bytes) ||
+        fgetc(file) != EOF || ferror(file)) {
+        fclose(file);
+        return 2;
+    }
+    memcpy(&control, bytes, sizeof(control));
+    INIT_CRC32C(crc);
+    COMP_CRC32C(crc, bytes, offsetof(ControlFileData, crc));
+    FIN_CRC32C(crc);
+    if (!EQ_CRC32C(crc, control.crc) ||
+        control.pg_control_version != PG_CONTROL_VERSION ||
+        control.catalog_version_no != CATALOG_VERSION_NO) {
+        fclose(file);
+        fputs("fixture requires an original compatible control file with a valid CRC32C\n", stderr);
+        return 2;
+    }
+    if (catalog) control.catalog_version_no ^= 1U;
+    else control.pg_control_version ^= 1U;
+    memcpy(bytes, &control, sizeof(control));
+    INIT_CRC32C(crc);
+    COMP_CRC32C(crc, bytes, offsetof(ControlFileData, crc));
+    FIN_CRC32C(crc);
+    memcpy(bytes + offsetof(ControlFileData, crc), &crc, sizeof(control.crc));
+    if (fseek(file, 0, SEEK_SET) != 0 ||
+        fwrite(bytes, 1, sizeof(bytes), file) != sizeof(bytes) || fflush(file) != 0) {
+        fclose(file);
+        return 2;
+    }
+    if (fclose(file) != 0) return 2;
+    printf("corrupted %s with valid CRC32C\n", catalog ? "CATALOG_VERSION_NO" : "PG_CONTROL_VERSION");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
         puts(oliphaunt_version());
         return 0;
     }
+    if (argc == 3 && strcmp(argv[1], "--corrupt-control") == 0)
+        return corrupt_control_file(argv[2], 0);
+    if (argc == 3 && strcmp(argv[1], "--corrupt-catalog") == 0)
+        return corrupt_control_file(argv[2], 1);
     if (argc != 5) return 2;
     OliphauntConfig config = {
         .abi_version = OLIPHAUNT_ABI_VERSION, .pgdata = argv[1], .runtime_dir = argv[2],

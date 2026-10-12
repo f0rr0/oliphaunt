@@ -17,6 +17,8 @@ import {
   nativeMobileAbiReceipt,
 } from '../../../src/native/runtime/tools/native-mobile-abi-contract.mts';
 import { requiredRuntimeMemberPaths } from '../../../src/native/runtime/tools/native-runtime-payload.mts';
+import { writeIosCarrierManifest } from '../../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
+import { currentNativeLegalSourceBasis } from '../../../src/native/sdks/swift/tools/native-legal-source-basis.mts';
 import { validateAppleXcframeworkAsset } from '../../../src/native/sdks/swift/tools/swift-xcframework-contract.mts';
 import {
   createDeterministicTar,
@@ -342,6 +344,13 @@ export async function packageAppleRuntime(specification): Promise<void> {
     }
     for (const name of ['swiftpm', 'archive', 'resources', 'macos_resources'])
       chmodSync(specification[name], 0o644);
+    writeIosCarrierManifest(specification.ios_manifest, {
+      baseAssetDir: path.dirname(specification.swiftpm),
+      baseRuntimeVersion: specification.version,
+      baseTag: `liboliphaunt-native-v${specification.version}`,
+      baseSourceBasis: currentNativeLegalSourceBasis,
+      baseLegalSourceRoot: legal,
+    });
     writeFileSync(
       specification.checksums,
       `${['swiftpm', 'archive', 'resources']

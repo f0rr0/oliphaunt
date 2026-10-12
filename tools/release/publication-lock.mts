@@ -36,6 +36,7 @@ import {
   readFileOnlyTarGzipEntries,
   readPortableArchiveEntries,
 } from '../packaging/portable-archive.mts';
+import { validateChecksumManifest } from './checksum-manifest.mts';
 import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
 import {
   NATIVE_PUBLICATION_METADATA_KIND,
@@ -55,6 +56,7 @@ import {
   canonicalExtensionBundleAssetName,
   contribCarrierDescriptor,
   expectedExtensionGithubReleaseAssetRows as declaredExtensionGithubReleaseAssetRows,
+  extensionReleaseMetadataRows as declaredExtensionReleaseMetadataRows,
   extensionArtifactTargets,
   extensionMetadata,
   extensionSourceIdentity,
@@ -580,39 +582,6 @@ function exactDirectFileSet(directory, expectedNames, context) {
     throw error(
       `${context} public release asset set mismatch: missing=${JSON.stringify(missing)}, extra=${JSON.stringify(extra)}`,
     );
-  }
-}
-
-function validateChecksumManifest(file, payloadFiles, context) {
-  const declared = new Map();
-  for (const [index, rawLine] of readFileSync(file, 'utf8').split(/\r?\n/u).entries()) {
-    if (rawLine.length === 0) {
-      continue;
-    }
-    const match = rawLine.match(/^([0-9a-f]{64}) {2}\.\/([^/\0]+)$/u);
-    if (match === null) {
-      throw error(`${context} checksum line ${index + 1} must be '<sha256>  ./<basename>'`);
-    }
-    const [, digest, name] = match;
-    if (declared.has(name)) {
-      throw error(`${context} checksum manifest declares ${name} more than once`);
-    }
-    declared.set(name, digest);
-  }
-  const expected = new Map(
-    payloadFiles.map((payload) => [path.basename(payload), sha256File(payload)]),
-  );
-  const declaredNames = [...declared.keys()].sort(compareText);
-  const expectedNames = [...expected.keys()].sort(compareText);
-  if (stableJson(declaredNames) !== stableJson(expectedNames)) {
-    throw error(
-      `${context} checksum entries do not exactly cover public payloads: expected=${JSON.stringify(expectedNames)}, actual=${JSON.stringify(declaredNames)}`,
-    );
-  }
-  for (const [name, digest] of expected) {
-    if (declared.get(name) !== digest) {
-      throw error(`${context} checksum for ${name} does not match its frozen bytes`);
-    }
   }
 }
 
@@ -1812,6 +1781,8 @@ function discoverProductArtifactsForSelection(
     nativeSourceBasis = undefined,
     nativeMetadataProducts = [],
     nativeMetadataSource = undefined,
+    artifactPhase = 'final',
+    swiftExtensionFixture = false,
   } = {},
 ) {
   const files = [...new Set(roots.flatMap((root) => walkFiles(path.resolve(ROOT, root))))].sort(
@@ -1837,13 +1808,10 @@ function discoverProductArtifactsForSelection(
     );
     artifacts.push(productArtifact({ ...row, file: matches[0] }));
   }
-  const contrib = contribCarrierDescriptor('publication-lock');
-  const hasSelectedExtensionProducts = selectedProducts.some(
-    (product) =>
-      EXTENSION_PRODUCT_KINDS.has(product?.kind) ||
-      product?.id === contrib.nativeOwner ||
-      product?.id === contrib.wasixOwner,
-  );
+  const requireExtensionFixture = expectedProductArtifactRows(selectedProducts, {
+    artifactPhase,
+    swiftExtensionFixture,
+  }).some((row) => row.kind === 'swiftpm-extension-consumer-fixture');
   for (const product of products) {
     if (typeof product?.id !== 'string' || typeof product?.version !== 'string') {
       throw error('product artifact discovery requires canonical product rows with id and version');
@@ -1857,7 +1825,7 @@ function discoverProductArtifactsForSelection(
     if (product.id === 'oliphaunt-swift') {
       artifacts.push(
         ...swiftReleaseInputs(files, product, {
-          requireExtensionFixture: hasSelectedExtensionProducts,
+          requireExtensionFixture,
           nativeSourceBasis,
         }),
       );
@@ -2079,6 +2047,8 @@ export function buildPublicationCandidate({
   allowMissing = false,
   nativeSourceBasis = undefined,
   nativeMetadataProducts = [],
+  artifactPhase = 'final',
+  swiftExtensionFixture = false,
 } = {}) {
   const source = sourceIdentity(headRef);
   const catalog = loadPublicationCatalog('publication-lock', { products });
@@ -2094,6 +2064,8 @@ export function buildPublicationCandidate({
     nativeSourceBasis,
     nativeMetadataProducts,
     nativeMetadataSource: source,
+    artifactPhase,
+    swiftExtensionFixture,
   });
   const carriers = [];
   const seenStableIds = new Set();
@@ -2146,6 +2118,7 @@ export function buildPublicationCandidate({
   validateCargoPayloadPartSets(carriers);
   assignPublishOrder(carriers, catalog.products);
   const packageEnvelopeDigest = digestValue({
+    ...(artifactPhase === 'pre-version' ? { artifactPhase } : {}),
     carriers: carriers.map(carrierEnvelope),
     productArtifacts: productArtifacts.map(productArtifactEnvelope),
   });
@@ -2154,7 +2127,10 @@ export function buildPublicationCandidate({
     catalogSchema: PUBLICATION_CATALOG_SCHEMA,
     catalogDigest: publicationCatalogDigest(catalog),
     source,
-    ...(nativeMetadataProducts.length ? { scope: 'construction' } : {}),
+    ...(nativeMetadataProducts.length || artifactPhase === 'pre-version'
+      ? { scope: 'construction' }
+      : {}),
+    ...(artifactPhase === 'pre-version' ? { artifactPhase } : {}),
     products: catalog.products,
     carriers,
     productArtifacts,
@@ -2237,6 +2213,39 @@ export function freezePublicationCandidate(candidate) {
   };
   delete frozen.missing;
   frozen.lockDigest = digestValue(withoutDigest(frozen));
+  return frozen;
+}
+
+/** Fresh native publication is authorized only by the authenticated post-version
+ * controller. Parsed construction JSON and metadata cannot mint this capability. */
+export async function freezeNativePublicationCandidate(candidate) {
+  validatePublicationCandidate(candidate);
+  const { assertAdmittedNativePublicationCandidate } = await import(
+    './native-freeze-publication-candidate.mts'
+  );
+  assertAdmittedNativePublicationCandidate(candidate);
+  if (
+    candidate.scope !== 'construction' ||
+    (candidate.artifactPhase ?? 'final') !== 'final' ||
+    candidate.missing.length ||
+    Object.hasOwn(candidate, 'nativePayloads')
+  )
+    throw error('native publication admission requires an exact complete final envelope');
+  const metadata = candidate.productArtifacts.filter(
+    (artifact) => artifact.kind === NATIVE_PUBLICATION_METADATA_KIND,
+  );
+  if (
+    metadata.length !== candidate.products.length ||
+    candidate.products.some(
+      (product) => metadata.filter((artifact) => artifact.product === product.id).length !== 1,
+    )
+  )
+    throw error('native publication admission requires every selected product provenance file');
+  const frozen = { ...structuredClone(candidate), schema: PUBLICATION_LOCK_SCHEMA };
+  delete frozen.scope;
+  delete frozen.missing;
+  frozen.lockDigest = digestValue(withoutDigest(frozen));
+  validatePublicationLock(frozen);
   return frozen;
 }
 
@@ -2336,16 +2345,8 @@ function expectedExtensionMetadataNames(product) {
     .sort(compareText);
 }
 
-function extensionReleaseMetadataRows(product) {
-  const family = extensionCarrierFamily(product);
-  return [
-    ['manifest-json', `${product.id}-${product.version}-manifest.json`],
-    ['manifest-properties', `${product.id}-${product.version}-manifest.properties`],
-    ...(family === null || family === 'native'
-      ? [['swift-extension-carrier', swiftExtensionCarrierAssetName(product.id, product.version)]]
-      : []),
-    ['checksums', `${product.id}-${product.version}-release-assets.sha256`],
-  ];
+export function extensionReleaseMetadataRows(product, family = extensionCarrierFamily(product)) {
+  return declaredExtensionReleaseMetadataRows(product, family);
 }
 
 function expectedExtensionProductArtifactRows(product) {
@@ -2374,7 +2375,7 @@ function expectedExtensionProductArtifactRows(product) {
   ];
 }
 
-function expectedProductArtifacts(product, hasSelectedExtensionProducts) {
+function expectedProductArtifacts(product, hasSelectedExtensionProducts, artifactPhase) {
   if (EXTENSION_PRODUCT_KINDS.has(product.kind))
     return expectedExtensionProductArtifactRows(product);
   const rows = allArtifactTargets(
@@ -2399,7 +2400,7 @@ function expectedProductArtifacts(product, hasSelectedExtensionProducts) {
       ...SWIFT_RELEASE_INPUT_FILES.map(([name, kind]) => ({ name, kind })),
       { name: 'oliphaunt-react-native-ios-carriers.json', kind: 'swiftpm-ios-carrier-manifest' },
       { id: 'swiftpm-release-tree', name: 'release-tree', kind: 'swiftpm-release-tree' },
-      ...(hasSelectedExtensionProducts
+      ...(hasSelectedExtensionProducts && artifactPhase === 'final'
         ? [
             {
               name: 'swiftpm-extension-consumer-fixture',
@@ -2442,7 +2443,12 @@ function expectedProductArtifacts(product, hasSelectedExtensionProducts) {
   return rows;
 }
 
-export function expectedProductArtifactRows(products, { nativeMetadataProducts = [] } = {}) {
+export function expectedProductArtifactRows(
+  products,
+  { nativeMetadataProducts = [], artifactPhase = 'final', swiftExtensionFixture = false } = {},
+) {
+  if (!['pre-version', 'final'].includes(artifactPhase))
+    throw error('artifact inventory phase must be pre-version or final');
   if (
     !Array.isArray(products) ||
     products.some(
@@ -2456,16 +2462,13 @@ export function expectedProductArtifactRows(products, { nativeMetadataProducts =
     throw error('expected artifact inventory requires canonical product rows');
   if (new Set(products.map(({ id }) => id)).size !== products.length)
     throw error('expected artifact inventory requires unique product rows');
-  const contrib = contribCarrierDescriptor('publication-lock');
-  const hasSelectedExtensionProducts = products.some(
-    (product) =>
-      EXTENSION_PRODUCT_KINDS.has(product.kind) ||
-      product.id === contrib.nativeOwner ||
-      product.id === contrib.wasixOwner,
-  );
+  if (typeof swiftExtensionFixture !== 'boolean')
+    throw error('Swift extension fixture request must be explicit');
+  if (swiftExtensionFixture && !products.some(({ id }) => id === 'oliphaunt-swift'))
+    throw error('Swift extension fixture requires the source SDK product');
   return [
     ...products.flatMap((product) =>
-      expectedProductArtifacts(product, hasSelectedExtensionProducts),
+      expectedProductArtifacts(product, swiftExtensionFixture, artifactPhase),
     ),
     ...nativePublicationMetadataArtifactRows(products, nativeMetadataProducts),
   ].sort((left, right) =>
@@ -2511,7 +2514,7 @@ function validateExtensionProductArtifactInventory(product, artifacts) {
   }
 }
 
-function validateProductArtifactInventory(product, artifacts, { hasSelectedExtensionProducts }) {
+function validateProductArtifactInventory(product, artifacts, { expectedRows }) {
   const nativeMetadata = artifacts.filter(
     (artifact) => artifact.kind === NATIVE_PUBLICATION_METADATA_KIND,
   );
@@ -2536,7 +2539,7 @@ function validateProductArtifactInventory(product, artifacts, { hasSelectedExten
   }
 
   const expected = [
-    ...expectedProductArtifacts(product, hasSelectedExtensionProducts),
+    ...expectedRows.filter((row) => row.product === product.id),
     ...expectedNativeMetadata,
   ].map(({ id }) => id);
   const contrib = contribCarrierDescriptor('publication-lock');
@@ -2566,8 +2569,14 @@ function validateProductArtifactInventory(product, artifacts, { hasSelectedExten
   }
 }
 
-export function validatePublicationCandidate(candidate) {
+export function validatePublicationCandidate(candidate, { nativeMetadata = false } = {}) {
   requireObject(candidate, 'candidate');
+  const artifactPhase = candidate.artifactPhase ?? 'final';
+  if (
+    !['pre-version', 'final'].includes(artifactPhase) ||
+    (artifactPhase === 'pre-version' && candidate.scope !== 'construction')
+  )
+    throw error('pre-version artifact inventory requires construction scope');
   if (candidate.schema !== PUBLICATION_CANDIDATE_SCHEMA) {
     throw error(`candidate schema must be ${PUBLICATION_CANDIDATE_SCHEMA}`);
   }
@@ -2595,11 +2604,10 @@ export function validatePublicationCandidate(candidate) {
     candidate.productArtifacts.some(
       (artifact) => artifact.kind === NATIVE_PUBLICATION_METADATA_KIND,
     ) &&
-    candidate.scope !== 'construction'
+    candidate.scope !== 'construction' &&
+    !nativeMetadata
   )
-    throw error(
-      'native metadata requires construction scope until complete native admission is implemented',
-    );
+    throw error('native metadata requires construction scope or an admitted publication lock');
   const products = new Map();
   for (const [index, product] of candidate.products.entries()) {
     requireObject(product, `candidate product ${index}`);
@@ -2772,17 +2780,24 @@ export function validatePublicationCandidate(candidate) {
       throw error(`${id} contains invalid artifact metadata`);
     }
   }
-  const hasSelectedExtensionProducts = candidate.products.some((product) =>
-    EXTENSION_PRODUCT_KINDS.has(product.kind),
-  );
+  // The fixture is an optional consumer input. Its source-bound requirement is
+  // checked before native admission; historical structure follows these frozen
+  // artifacts rather than a newer checkout's independently adopted native pin.
+  const expectedRows = expectedProductArtifactRows(candidate.products, {
+    artifactPhase,
+    swiftExtensionFixture: candidate.productArtifacts.some(
+      ({ kind }) => kind === 'swiftpm-extension-consumer-fixture',
+    ),
+  });
   for (const product of candidate.products) {
     validateProductArtifactInventory(
       product,
       candidate.productArtifacts.filter((artifact) => artifact.product === product.id),
-      { hasSelectedExtensionProducts },
+      { expectedRows },
     );
   }
   const expectedEnvelope = digestValue({
+    ...(artifactPhase === 'pre-version' ? { artifactPhase } : {}),
     carriers: candidate.carriers.map(carrierEnvelope),
     productArtifacts: candidate.productArtifacts.map(productArtifactEnvelope),
   });
@@ -2799,7 +2814,8 @@ export function validatePublicationLock(lock) {
   if (
     lock.scope !== undefined ||
     Object.hasOwn(lock, 'nativePayloads') ||
-    lock.productArtifacts?.some((artifact) => artifact.kind === NATIVE_PUBLICATION_METADATA_KIND)
+    (lock.schema !== PUBLICATION_LOCK_SCHEMA &&
+      lock.productArtifacts?.some((artifact) => artifact.kind === NATIVE_PUBLICATION_METADATA_KIND))
   ) {
     throw error('construction evidence cannot authorize a publication lock');
   }
@@ -2808,7 +2824,21 @@ export function validatePublicationLock(lock) {
   }
   const candidate = { ...structuredClone(lock), schema: PUBLICATION_CANDIDATE_SCHEMA, missing: [] };
   delete candidate.lockDigest;
-  validatePublicationCandidate(candidate);
+  const nativeMetadata = lock.productArtifacts.some(
+    (artifact) => artifact.kind === NATIVE_PUBLICATION_METADATA_KIND,
+  );
+  if (
+    nativeMetadata &&
+    lock.products.some(
+      (product) =>
+        lock.productArtifacts.filter(
+          (artifact) =>
+            artifact.product === product.id && artifact.kind === NATIVE_PUBLICATION_METADATA_KIND,
+        ).length !== 1,
+    )
+  )
+    throw error('native publication lock must retain every selected product provenance file');
+  validatePublicationCandidate(candidate, { nativeMetadata });
   assertHash(lock.lockDigest, 'publication lock lockDigest');
   const expected = digestValue(withoutDigest(lock));
   if (lock.lockDigest !== expected) {
@@ -2997,7 +3027,12 @@ export function assertLockedProductArtifacts(lock, product, roots, options = {})
   if (productRow === undefined) {
     throw error(`publication lock does not select product ${product}`);
   }
-  const actual = discoverProductArtifactsForSelection(roots, [productRow], lock.products, options);
+  const actual = discoverProductArtifactsForSelection(roots, [productRow], lock.products, {
+    ...options,
+    swiftExtensionFixture: lock.productArtifacts.some(
+      ({ kind }) => kind === 'swiftpm-extension-consumer-fixture',
+    ),
+  });
   const envelope = (artifacts) =>
     artifacts
       .map(

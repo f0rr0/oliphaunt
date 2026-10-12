@@ -2,8 +2,11 @@ load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_f
 load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_library_test", "cargo_package_env", "napi_artifact")
 load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
 load("//build_defs/languages/carriers:defs.bzl", "native_helper_carriers")
+load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
 
 package(default_visibility = ["//visibility:public"])
+
+native_release_checksum_family(product = "oliphaunt-node-direct")
 exports_files(["Cargo.toml", "tools/dependency-license-contract.mts"])
 filegroup(name = "carrier_legal_sources", srcs = ["dependency-licenses.json"] + glob(["dependency-license-blobs/*.base64"]))
 filegroup(name = "carrier_template_sources", srcs = glob(["packages/*/package.json", "packages/*/README.md"]))
@@ -27,7 +30,7 @@ napi_artifact(
 cargo_library_test(crate = ":addon_library", tags = ["manual"])
 rust_clippy_test(name = "clippy_test", targets = [":addon_library", ":unit_test", ":build_script_"], transitive = False, size = "small")
 
-native_helper_carriers(product = "oliphaunt-node-direct", binary = ":addon")
+native_helper_carriers(product = "oliphaunt-node-direct", binary = ":addon", qualification = ["//build_defs/languages/carriers:installed_sql_test"])
 
 source_quality_files()
 

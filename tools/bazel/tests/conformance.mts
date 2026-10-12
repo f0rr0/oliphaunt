@@ -14,6 +14,7 @@ import {
   renameSync,
   rmdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -162,9 +163,48 @@ function externalBunEntrypoints() {
     const result = bazel('run', [`${pkg}:binary`, injection, '--noshow_progress']);
     assert.equal(result.stdout.trim(), 'external Bun entrypoint');
   }
+  for (const name of ['missing_entry_argument_test', 'wrong_entry_argument_test']) {
+    const result = bazel(
+      'build',
+      [`//build_defs/foundation/fixtures/bun_imports:${name}`, '--nobuild', '--noshow_progress'],
+      true,
+    );
+    assert.match(result.stderr, /Bun entrypoint requires args\[0\]/u);
+  }
   console.log(
-    JSON.stringify({ externalBunEntrypoints: { mainTests: 3, externalTests: 6, binaries: 2 } }),
+    JSON.stringify({
+      externalBunEntrypoints: {
+        mainTests: 3,
+        externalTests: 6,
+        binaries: 2,
+        rejectedEntryArguments: 2,
+      },
+    }),
   );
+}
+
+function ignoreGeneratedOutputDirectories() {
+  const queryArguments = [
+    'labels(srcs, //:root_quality_sources)',
+    '--output=label',
+    '--noshow_progress',
+  ];
+  const original = bazel('query', queryArguments).stdout;
+  const generated = path.join(workspace, 'bazel-incomplete-output');
+  mkdirSync(generated);
+  writeFileSync(path.join(generated, 'generated.json'), '{}');
+  symlinkSync(
+    path.join(scratch, 'missing-generated-output'),
+    path.join(generated, 'dangling'),
+    'dir',
+  );
+  assert.equal(
+    bazel('query', queryArguments).stdout,
+    original,
+    'source discovery must prune incomplete generated outputs and keep the source input graph unchanged',
+  );
+  rmSync(generated, { recursive: true });
+  console.log(JSON.stringify({ generatedOutputDiscovery: 'pruned' }));
 }
 
 function cargoBuildScriptParity() {
@@ -692,6 +732,7 @@ try {
     ...products.flatMap((product) => [`${product}_bin`, `${product}_archive`]),
   ];
   scenario('cold complete graph + aggregate/member union', allProduction, [...products]);
+  ignoreGeneratedOutputDirectories();
   assert.ok(
     !readdirSync(path.join(outputBase, 'external')).some((name) => name.endsWith('+android_ndk')),
     'unrelated native targets must not acquire the Android NDK merely to register its constraints',

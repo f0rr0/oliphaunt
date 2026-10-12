@@ -3,7 +3,9 @@
 load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts", "unittest")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//build_defs/extensions:external.bzl", "external_extension_inputs")
+load("//build_defs/extensions:wasix_carriers.bzl", "wasix_extension_uses_current_host")
 load("//build_defs/wasix:wasm.bzl", "wasix_module")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_COMPATIBILITY")
 
 def _inputs_test_impl(ctx):
     env = unittest.begin(ctx)
@@ -11,6 +13,15 @@ def _inputs_test_impl(ctx):
     asserts.equals(env, "list", type(flags))
     asserts.equals(env, ["-lm"], flags)
     asserts.equals(env, None, external_extension_inputs(name = "probe", sql_name = "pg_uuidv7", link_profile = "wasix").get("linkopts"))
+    names = sorted(EXTENSION_COMPATIBILITY.keys())
+    # Few, partial and full adoption preserve each unchanged immutable host.
+    for count in [1, len(names) // 2, len(names)]:
+        requirements = {name: "0.3.3" if index < count else "0.3.2" for index, name in enumerate(names)}
+        selected = [name for name in names if wasix_extension_uses_current_host(requirements[name], "0.3.3", ["liboliphaunt-wasix"])]
+        asserts.equals(env, names[:count], selected)
+    asserts.false(env, wasix_extension_uses_current_host("0.3.3", "0.3.3", []))
+    asserts.false(env, wasix_extension_uses_current_host("0.3.3", "0.3.3", ["oliphaunt-extension-vector"]))
+    asserts.false(env, wasix_extension_uses_current_host("0.3.2", "0.3.3", ["liboliphaunt-wasix"]))
     return unittest.end(env)
 
 _inputs_test = unittest.make(_inputs_test_impl)

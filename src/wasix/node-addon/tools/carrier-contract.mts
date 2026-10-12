@@ -344,3 +344,40 @@ export function assertWasixNapiPlatformEntries(
   if (Buffer.from(receipt.data()).toString('utf8') !== expectedReceipt)
     throw new Error(`${label} ${expectedReceiptMember} does not bind its exact VC runtime bytes`);
 }
+
+export const WASIX_NAPI_PLATFORM_PACKAGES = Object.freeze([
+  '@oliphaunt/wasix-napi-darwin-arm64',
+  '@oliphaunt/wasix-napi-linux-arm64-gnu',
+  '@oliphaunt/wasix-napi-linux-x64-gnu',
+  '@oliphaunt/wasix-napi-win32-x64-msvc',
+]);
+
+export function assertWasixTypescriptNativeCarrier(manifest, carrier) {
+  const sdk = manifest.oliphaunt;
+  const native = carrier.oliphaunt;
+  if (
+    manifest.name !== '@oliphaunt/wasix-ts' ||
+    sdk?.runtimeProduct !== 'liboliphaunt-wasix' ||
+    sdk?.wasixNapiProduct !== 'oliphaunt-wasix-napi' ||
+    !/^\d+\.\d+\.\d+$/u.test(sdk?.runtimeVersion ?? '') ||
+    !/^\d+\.\d+\.\d+$/u.test(sdk?.wasixNapiVersion ?? '') ||
+    !Number.isSafeInteger(sdk?.wasixAddonAbiVersion) ||
+    sdk.wasixAddonAbiVersion < 1 ||
+    !Number.isSafeInteger(sdk?.nodeApiVersion) ||
+    sdk.nodeApiVersion < 1 ||
+    Object.hasOwn(sdk, 'qualificationOnly') ||
+    Object.hasOwn(native ?? {}, 'qualificationOnly') ||
+    !WASIX_NAPI_PLATFORM_PACKAGES.includes(carrier.name) ||
+    carrier.version !== sdk?.wasixNapiVersion ||
+    manifest.optionalDependencies?.[carrier.name] !== carrier.version ||
+    native?.runtimeProduct !== sdk?.runtimeProduct ||
+    native?.runtimeVersion !== sdk?.runtimeVersion ||
+    native?.addonAbiVersion !== sdk?.wasixAddonAbiVersion ||
+    native?.nodeApiVersion !== sdk?.nodeApiVersion ||
+    JSON.stringify(native?.profiles) !== JSON.stringify(['standard', 'icu'])
+  ) {
+    throw new Error(
+      `wasix-typescript-package.mts: ${carrier.name}@${carrier.version} is incompatible with @oliphaunt/wasix-ts@${manifest.version}: SDK requires N-API ${sdk?.wasixNapiVersion} embedding runtime ${sdk?.runtimeVersion}, carrier embeds runtime ${native?.runtimeVersion}`,
+    );
+  }
+}

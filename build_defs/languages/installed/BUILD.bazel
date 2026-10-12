@@ -1,6 +1,7 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":defs.bzl", "installed_cargo_test")
+load(":source-compile.bzl", "source_compile_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -33,3 +34,52 @@ installed_cargo_test(
 )
 
 source_quality_files()
+
+exports_files([
+    "source-compile.bzl", "source-compile.mts", "source-compile.test.mts",
+    "wasix/sdk/Cargo.lock", "wasix/sdk/registry-index.json",
+    "wasix/server/Cargo.lock", "wasix/server/registry-index.json",
+    "wasix/query/Cargo.lock", "wasix/query/registry-index.json",
+])
+
+bun_test(
+    name = "source_compile_selection_test",
+    entry_point = "source-compile.test.mts",
+    data = [
+        "source-compile.mts", "consumer.mts", "context.mts",
+        "//build_defs/languages:cargo-environment.mts",
+        "//:tools/packaging/cargo-manifest.mts", "//:tools/packaging/frozen-cargo.mts",
+        "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts",
+    ],
+)
+
+source_compile_test(
+    name = "wasix_sdk_source_compile_test",
+    archive = "//src/wasix/sdks/rust:crate",
+    dependencies = ["//src/query/rust:crate"],
+    cargo_home = "@installed_wasix_sdk_cargo_inputs//:cargo_home",
+    lock = "wasix/sdk/Cargo.lock",
+    index = "wasix/sdk/registry-index.json",
+    cargo_args = ["--no-default-features", "--features", "extensions,tools,icu"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "large", timeout = "long", tags = ["manual", "installed-consumer"],
+)
+source_compile_test(
+    name = "pgwire_source_compile_test",
+    archive = "//src/wasix/pgwire-server:crate",
+    dependencies = ["//src/wasix/sdks/rust:crate", "//src/query/rust:crate"],
+    cargo_home = "@installed_pgwire_cargo_inputs//:cargo_home",
+    lock = "wasix/server/Cargo.lock",
+    index = "wasix/server/registry-index.json",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "large", timeout = "long", tags = ["manual", "installed-consumer"],
+)
+source_compile_test(
+    name = "query_source_compile_test",
+    archive = "//src/query/rust:crate",
+    cargo_home = "@installed_query_cargo_inputs//:cargo_home",
+    lock = "wasix/query/Cargo.lock",
+    index = "wasix/query/registry-index.json",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "small", tags = ["manual", "installed-consumer"],
+)

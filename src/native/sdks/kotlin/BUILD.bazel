@@ -1,6 +1,8 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/languages/jvm:bindings.bzl", "uniffi_kotlin")
-load("//build_defs/languages/jvm:maven.bzl", "kotlin_maven_package")
+load("//build_defs/languages/jvm:maven.bzl", "kotlin_installed_maven_test", "kotlin_maven_package")
+load("//build_defs/languages/jvm:quality.bzl", "kotlin_format_test")
+load("//build_defs/languages/jvm:android-lint.bzl", "kotlin_android_lint_test")
 load("//build_defs/android:toolchain.bzl", "android_artifact")
 load("//build_defs/release:shipping.bzl", "shipping_export")
 load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_projections")
@@ -21,6 +23,7 @@ exports_files([
     "gradle/libs.versions.toml",
     "gradle/wrapper/gradle-wrapper.properties",
     "tools/kotlin-maven-staging.mts",
+    "tools/check-package.mts",
     "maven_install.json",
 ])
 
@@ -40,6 +43,8 @@ sdk_extension_projections(
 )
 
 COMMON_SOURCES = glob(["oliphaunt/src/commonMain/kotlin/**/*.kt"], exclude = ["oliphaunt/src/commonMain/kotlin/**/GeneratedExtensions.kt", "oliphaunt/src/commonMain/kotlin/**/OliphauntExtension.kt"]) + [":generated_extensions"]
+ANDROID_SOURCES = glob(["oliphaunt/src/androidMain/kotlin/**/*.kt"])
+AIDL_SOURCES = glob(["oliphaunt/src/androidMain/aidl/**/*.aidl"])
 LINUX_EXECUTION = ["@platforms//os:linux", "@platforms//cpu:x86_64"]
 
 kt_jvm_library(
@@ -77,7 +82,7 @@ test_suite(name = "common_test", tests = [":database_test", ":broker_test", ":sh
 
 android_library(
     name = "broker_aidl",
-    idl_srcs = glob(["oliphaunt/src/androidMain/aidl/**/*.aidl"]),
+    idl_srcs = AIDL_SOURCES,
     idl_import_root = "oliphaunt/src/androidMain/aidl",
     target_compatible_with = LINUX_EXECUTION,
 )
@@ -93,7 +98,7 @@ expand_template(
 
 kt_android_library(
     name = "android_classes",
-    srcs = COMMON_SOURCES + glob(["oliphaunt/src/androidMain/kotlin/**/*.kt"]) + [":generated_bindings"],
+    srcs = COMMON_SOURCES + ANDROID_SOURCES + [":generated_bindings"],
     manifest = ":android_manifest",
     custom_package = KOTLIN["namespace"],
     proguard_specs = ["oliphaunt/consumer-rules.pro"],
@@ -155,7 +160,7 @@ kotlin_maven_package(
     classes = [":android_classes", ":broker_aidl"],
     android_aar = ":android_classes.aar",
     native_libraries = {":mobile_arm64": "arm64-v8a", ":mobile_x86_64": "x86_64"},
-    sources = COMMON_SOURCES + glob(["oliphaunt/src/androidMain/kotlin/**/*.kt", "oliphaunt/src/androidMain/aidl/**/*.aidl"]) + [":generated_bindings"],
+    sources = COMMON_SOURCES + ANDROID_SOURCES + AIDL_SOURCES + [":generated_bindings"],
     legal_sources = ["//:LICENSE", "//:THIRD_PARTY_NOTICES.md", "//:Cargo.lock", "//src/native/mobile-bindings:license_inputs"],
     coroutines_jvm = "@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core_jvm",
     target_compatible_with = LINUX_EXECUTION,
@@ -185,9 +190,39 @@ kt_android_library(
     target_compatible_with = LINUX_EXECUTION,
 )
 
+kotlin_installed_maven_test(
+    name = "installed_maven_test",
+    packages = [":android_maven", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:plugin_maven", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:marker_maven"],
+    consumer = ":installed_public_api_consumer",
+    target_compatible_with = LINUX_EXECUTION,
+    size = "medium",
+)
+
 shipping_export(
     name = "shipping_export",
     packages = [":android_maven_shipping", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:plugin_maven_shipping", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:marker_maven_shipping"],
+    qualification = [
+        ":installed_maven_test",
+        ":database_test", ":broker_test", ":shared_protocol_test",
+        ":android_configuration_test", ":android_java_test", ":android_runtime_assets_test", ":native_bindings_test",
+        "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:contract_test",
+    ],
+    testonly = True,
+)
+
+kotlin_format_test(name = "format_test", target_compatible_with = LINUX_EXECUTION, size = "small")
+
+kotlin_android_lint_test(
+    name = "lint_test",
+    library = ":android_classes",
+    additional_classes = [":broker_aidl"],
+    srcs = [source for source in COMMON_SOURCES if source != ":generated_extensions"] + ANDROID_SOURCES + AIDL_SOURCES,
+    generated_srcs = [":generated_extensions", ":generated_bindings"],
+    conventional_files = ["oliphaunt/build.gradle.kts", "build.gradle.kts", "settings.gradle.kts", "gradle/libs.versions.toml", "gradle.properties", "gradle/wrapper/gradle-wrapper.properties"],
+    manifest = "oliphaunt/src/androidMain/AndroidManifest.xml",
+    proguard = ["oliphaunt/consumer-rules.pro"],
+    target_compatible_with = LINUX_EXECUTION,
+    size = "medium",
 )
 
 source_quality_files()

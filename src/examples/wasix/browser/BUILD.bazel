@@ -1,5 +1,27 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
+load("@bazel_lib//lib:copy_to_bin.bzl", "copy_to_bin")
+load("@javascript_packages//:defs.bzl", "javascript_type_links")
+load("@javascript_compiler_packages//:defs.bzl", "compiler_input_links")
+load("@javascript_compiler_packages//:roots.bzl", "COMPILER_INPUTS")
+load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
+
 package(default_visibility = ["//visibility:public"])
+exports_files(["package.json"])
+
+EXAMPLE = JAVASCRIPT["oliphaunt-example-browser-wasix"]
+
+javascript_type_links(EXAMPLE["types"])
+compiler_input_links(COMPILER_INPUTS[EXAMPLE["name"]])
+copy_to_bin(name = "source_files", srcs = glob(["**/*.ts"], exclude = ["node_modules/**"]))
+ts_config(name = "source_config", src = "tsconfig.json", deps = ["//src/wasix/sdks/ts:source_config"])
+js_library(
+    name = "source_inputs",
+    srcs = ["package.json"],
+    deps = ["//src/wasix/sdks/ts:source_inputs", "//src/wasix/sdks/ts:node_modules/@oliphaunt/ts-query"] + [":node_modules/" + name for name in EXAMPLE["types"]] + [":node_modules/" + name for name in COMPILER_INPUTS[EXAMPLE["name"]]],
+)
+test_suite(name = "source_checks", tests = ["//:browser_example_source_checks_typecheck_test"])
 
 filegroup(
     name = "opfs_fixtures",

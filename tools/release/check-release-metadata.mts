@@ -290,7 +290,7 @@ function validateReleasePleaseVersions(graph) {
   }
 }
 
-function validateCompatibility(graph, { publication = false } = {}) {
+function validateCompatibility(graph, { publication = false, buildBound } = {}) {
   validateConsumerContractCoverage(graph.products);
   const entries = compatibilityVersionEntries(graph.products, {
     requireSourceProduct: true,
@@ -301,9 +301,14 @@ function validateCompatibility(graph, { publication = false } = {}) {
     'compatibility field ids must be globally unique',
   );
   const dependencyPlan = new Map(
-    (publication ? releaseDependencyPlan(graph.products, Object.keys(graph.products)) : []).map(
-      (entry) => [entry.id, entry.version],
-    ),
+    (publication
+      ? releaseDependencyPlan(
+          graph.products,
+          Object.keys(graph.products),
+          buildBound === undefined ? {} : { buildBound },
+        )
+      : []
+    ).map((entry) => [entry.id, entry.version]),
   );
   let pendingRelease;
   let checkedPendingRelease = false;
@@ -347,7 +352,10 @@ function validateCompatibility(graph, { publication = false } = {}) {
         // Published compatibility pins already have immutable tag provenance.
         // Only an unpublished version needs its release commit validated.
         if (status.currentTagCommit === null) {
-          pendingRelease = latestVerifiedReleaseCommit({ repo: ROOT });
+          pendingRelease = latestVerifiedReleaseCommit({
+            repo: ROOT,
+            ...(buildBound === undefined ? {} : { buildBound }),
+          });
           pendingVersions = new Map(Object.entries(pendingRelease?.versions ?? {}));
           checkedPendingRelease = true;
         }
@@ -570,8 +578,7 @@ function parseArgs(argv) {
   return { json, publication };
 }
 
-function main(argv) {
-  const args = parseArgs(argv);
+export function validateReleaseMetadata(args = {}) {
   const graph = { products: loadProducts(TOOL) };
   validateReleasePleaseVersions(graph);
   const compatibilityFields = validateCompatibility(graph, args);
@@ -589,6 +596,12 @@ function main(argv) {
     sourceNpmManifests: manifests.npm,
     sourceCargoManifests: manifests.cargo,
   };
+  return report;
+}
+
+function main(argv) {
+  const args = parseArgs(argv);
+  const report = validateReleaseMetadata(args);
   if (args.json) {
     console.log(`${JSON.stringify(report, null, 2)}\n`);
   } else {

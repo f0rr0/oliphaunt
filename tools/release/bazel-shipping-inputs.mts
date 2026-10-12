@@ -1,5 +1,29 @@
 /** Declared construction inputs, not a publication or compatibility certificate. */
 import { createHash } from 'node:crypto';
+import type { CompletedPublication } from './completed-release-publication.mts';
+
+export type NativeShippingSupplier = {
+  product: string;
+  version: string;
+  /** The supplier's delivery slot, independent of its consumer's configuration. */
+  configuration: string;
+  binding: 'compiled-input' | 'abi-contract';
+  origin:
+    | {
+        kind: 'current-source';
+        /** Original authenticated final archive, for a consumed imported File. */
+        producer?: {
+          evidenceDigest: string;
+          invocationId: string;
+          root: string;
+          configuration: string;
+          output: string;
+          member?: string;
+        };
+      }
+    | { kind: 'completed-publication'; publication: CompletedPublication; artifact: string };
+  files: { path: string; member?: string }[];
+};
 
 export interface ShippingProductInputs {
   version: string;
@@ -53,6 +77,32 @@ export function canonicalShippingLabel(value: unknown): string {
   return text(value).replace(/^@@?\/\//, '//');
 }
 
+/** The one declared private Apple document needed by foreign final construction. */
+export function isNativeAppleBaseInputRoot(root: {
+  label: string;
+  package: {
+    product: string;
+    ecosystem: string;
+    configuration: string;
+    name: string;
+    role: string;
+    outputs: { path: string }[];
+  };
+}) {
+  const pkg = root.package;
+  return (
+    canonicalShippingLabel(root.label) === '//src/native/runtime:apple_ios_manifest_shipping' &&
+    pkg.product === 'liboliphaunt-native' &&
+    pkg.ecosystem === 'internal' &&
+    pkg.configuration === 'ios-xcframework' &&
+    pkg.name === 'ios.json' &&
+    pkg.role === 'apple-base-ios-manifest-input' &&
+    pkg.outputs.length === 1 &&
+    pkg.outputs[0].path.startsWith('bazel-out/') &&
+    pkg.outputs[0].path.endsWith('/apple_release_assets/ios.json')
+  );
+}
+
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (value && typeof value === 'object') {
@@ -64,10 +114,132 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Structural completed-origin facts only; the controller authenticates their public bytes. */
+export function validateNativeSupplierPublications(value: unknown): CompletedPublication[] {
+  const seen = new Set<string>();
+  return array(value).map((raw) => {
+    const publication = row(raw);
+    if (
+      Object.keys(publication).sort().join(',') !==
+        'product,publicationSha,publicationTree,releaseSha,tagName,version' ||
+      publication.tagName !== `${text(publication.product)}-v${text(publication.version)}` ||
+      ![publication.publicationSha, publication.publicationTree, publication.releaseSha].every(
+        (sha) => typeof sha === 'string' && /^[a-f0-9]{40}$/u.test(sha),
+      )
+    )
+      throw new Error('native suppliers require an exact canonical completed publication');
+    const key = `${publication.product}@${publication.version}`;
+    if (seen.has(key)) throw new Error('duplicate completed supplier publication');
+    seen.add(key);
+    return structuredClone(publication) as unknown as CompletedPublication;
+  });
+}
+
+/** Structural provider contract only; actual File/origin binding is checked separately. */
+export function validateNativeShippingSuppliers(value: unknown): NativeShippingSupplier[] {
+  const exactFields = (value: unknown, names: string[]) => {
+    const object = row(value);
+    if (Object.keys(object).sort().join(',') !== names.sort().join(','))
+      throw new Error('native suppliers require exact typed fields');
+    return object;
+  };
+  const relative = (value: unknown) => {
+    const path = text(value);
+    if (
+      path.startsWith('/') ||
+      /[\\\u0000-\u001f\u007f]/u.test(path) ||
+      path.normalize('NFC') !== path ||
+      path.split('/').some((part) => !part || part === '.' || part === '..')
+    )
+      throw new Error('native suppliers require safe declared File/member paths');
+    return path;
+  };
+  const seen = new Set<string>();
+  return array(value).map((raw) => {
+    const supplier = exactFields(raw, [
+      'product',
+      'version',
+      'configuration',
+      'binding',
+      'origin',
+      'files',
+    ]);
+    for (const key of ['product', 'version', 'configuration']) text(supplier[key]);
+    if (!['compiled-input', 'abi-contract'].includes(text(supplier.binding)))
+      throw new Error('native supplier has invalid binding');
+    const origin = row(supplier.origin);
+    if (origin.kind === 'current-source') {
+      exactFields(origin, Object.hasOwn(origin, 'producer') ? ['kind', 'producer'] : ['kind']);
+      if (Object.hasOwn(origin, 'producer')) {
+        const producerFields = [
+          'evidenceDigest',
+          'invocationId',
+          'root',
+          'configuration',
+          'output',
+        ];
+        if (Object.hasOwn(row(origin.producer), 'member')) producerFields.push('member');
+        const producer = exactFields(origin.producer, producerFields);
+        if (!/^sha256:[a-f0-9]{64}$/u.test(text(producer.evidenceDigest)))
+          throw new Error('current supplier requires the authenticated evidence digest');
+        for (const name of ['invocationId', 'root', 'configuration']) text(producer[name]);
+        relative(producer.output);
+        if (Object.hasOwn(producer, 'member')) relative(producer.member);
+      }
+    } else if (origin.kind === 'completed-publication') {
+      exactFields(origin, ['kind', 'publication', 'artifact']);
+      const publication = validateNativeSupplierPublications([origin.publication])[0];
+      if (publication.product !== supplier.product || publication.version !== supplier.version)
+        throw new Error('native suppliers require an exact canonical completed publication');
+      relative(origin.artifact);
+    } else throw new Error('native supplier requires an explicit physical origin');
+    const key = canonical({
+      product: supplier.product,
+      binding: supplier.binding,
+      configuration: supplier.configuration,
+      origin,
+    });
+    if (seen.has(key)) throw new Error('duplicate native supplier binding');
+    seen.add(key);
+    const files = array(supplier.files);
+    if (!files.length) throw new Error('native supplier requires actual consumed Files');
+    const names = new Set<string>();
+    for (const rawFile of files) {
+      const wholeArchive =
+        supplier.binding === 'abi-contract' &&
+        (origin.kind === 'completed-publication' || Object.hasOwn(origin, 'producer')) &&
+        !Object.hasOwn(row(rawFile), 'member');
+      const file = exactFields(
+        rawFile,
+        !wholeArchive &&
+          (origin.kind === 'completed-publication' || Object.hasOwn(origin, 'producer'))
+          ? ['path', 'member']
+          : ['path'],
+      );
+      const path = relative(file.path);
+      if (names.has(path)) throw new Error('duplicate native supplier File');
+      names.add(path);
+      if (
+        !wholeArchive &&
+        (origin.kind === 'completed-publication' || Object.hasOwn(origin, 'producer'))
+      )
+        relative(file.member);
+    }
+    return structuredClone(supplier) as NativeShippingSupplier;
+  });
+}
+
 export function buildShippingInputView(
   exportValue: unknown,
   aqueryValue: unknown,
-  { configurationByOutput }: { configurationByOutput?: ReadonlyMap<string, string> } = {},
+  {
+    configurationByOutput,
+    inspectPackageInputs,
+  }: {
+    configurationByOutput?: ReadonlyMap<string, string>;
+    /** Check declared supplier Files against this package, never sibling roots. */
+    inspectPackageInputs?: (pkg: Row, consumes: (path: string) => boolean) => void;
+  } = {},
 ): ShippingInputView {
   const exported = row(exportValue);
   if (exported.schema !== 'oliphaunt-bazel-shipping-v1')
@@ -213,6 +385,41 @@ export function buildShippingInputView(
     if (new Set(definitions).size !== 1)
       throw new Error(`ambiguous artifact producers for ${artifactPath}`);
   }
+  // Scalar reachability is shared for requested supplier Files only. Retaining
+  // transitive header sets or walking the full graph per package is unnecessary.
+  const supplierReachability = new Map<
+    string,
+    { artifacts: Map<string, boolean>; depSets: Map<string, boolean> }
+  >();
+  const consumes = (output: string, path: string): boolean => {
+    if (!byPath.has(path) || virtualOutputs.has(path)) return false;
+    let memo = supplierReachability.get(path);
+    if (!memo) {
+      memo = { artifacts: new Map(), depSets: new Map() };
+      supplierReachability.set(path, memo);
+    }
+    const fromArtifact = (key: string): boolean => {
+      const cached = memo.artifacts.get(key);
+      if (cached !== undefined) return cached;
+      const action = producers.get(key);
+      const reached =
+        !!action && array(action.inputDepSetIds ?? []).some((input) => fromDepSet(id(input)));
+      memo.artifacts.set(key, reached);
+      return reached;
+    };
+    const fromDepSet = (key: string): boolean => {
+      const cached = memo.depSets.get(key);
+      if (cached !== undefined) return cached;
+      const item = required(depSets, key);
+      const reached =
+        array(item.directArtifactIds ?? []).some(
+          (input) => required(artifactPaths, id(input)) === path || fromArtifact(id(input)),
+        ) || array(item.transitiveDepSetIds ?? []).some((input) => fromDepSet(id(input)));
+      memo.depSets.set(key, reached);
+      return reached;
+    };
+    return fromArtifact(output);
+  };
   for (const value of array(exported.packages)) {
     const pkg = row(value);
     const product = text(pkg.product);
@@ -247,6 +454,7 @@ export function buildShippingInputView(
       visited.add(key);
     };
     const outputs = array(pkg.outputs);
+    const outputKeys: string[] = [];
     if (!outputs.length) throw new Error(`empty shipping outputs for ${identity}`);
     for (const outputValue of outputs) {
       const output = row(outputValue);
@@ -263,11 +471,13 @@ export function buildShippingInputView(
         );
       });
       if (!key) throw new Error(`shipping output owner disagrees with aquery: ${output.path}`);
+      outputKeys.push(key);
       visit(key, new Set());
     }
     view.packages.push(pkg);
     view.inputs = [...leaves].sort();
     view.actions = [...descriptions].sort();
+    inspectPackageInputs?.(pkg, (path) => outputKeys.some((key) => consumes(key, path)));
   }
   for (const view of Object.values(products))
     view.packages.sort((a, b) => {

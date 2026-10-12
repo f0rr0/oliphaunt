@@ -8,11 +8,18 @@ import {
 } from '../../src/native/runtime/tools/native-runtime-payload.mts';
 import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
+import { validateReviewedNativeProducerAssurance } from './authenticate-native-build-evidence.mts';
 import {
   type CompletedPublication,
   createCompletedPublicationChecker,
 } from './completed-release-publication.mts';
 import { requestGithubPages, requestGithubRepositoryJson } from './github-read.mts';
+import { nativeShippingRootsHaveQualification } from './native-build-qualification.mts';
+import {
+  assertSeedConstructionBaseline,
+  type NativeSeedConstructionBaseline,
+  seedArchiveHasChangedDeclaredContents,
+} from './native-seed-baseline.mts';
 import type { compareNativeCompletedPhysicalDelivery } from './native-completed-delivery.mts';
 import { nativeOutputPath } from './native-publication-artifacts.mts';
 import type { observeNativePublicationConstruction } from './native-publication-observation.mts';
@@ -472,8 +479,10 @@ export function compareCompletedNativeArchiveDelivery(
 /**
  * One pre-version comparison for the supported completed delivery bridges.
  * Invoke before version updates or controller metadata sealing. Changed inputs
- * and action definitions request checks only. Neither physical equality nor
- * observed successful tests supply the still-missing native admission contract.
+ * and action definitions request checks only. A source-owned configured policy,
+ * reviewed producing origin and complete physical contract admit each decision.
+ * Complete repository resolution is separate from execution: held baselines may
+ * be reused only after their causal input and contract identity has been proven.
  */
 export function compareNativePreVersionDelivery({
   source,
@@ -483,6 +492,7 @@ export function compareNativePreVersionDelivery({
   completed,
   affectedProducts,
   observation,
+  seedConstructionBaseline,
 }: {
   source: Source;
   products: string[];
@@ -491,11 +501,23 @@ export function compareNativePreVersionDelivery({
   completed?: Awaited<ReturnType<typeof compareNativeCompletedPhysicalDelivery>>;
   affectedProducts?: string[];
   observation?: Awaited<ReturnType<typeof observeNativePublicationConstruction>>;
+  seedConstructionBaseline?: NativeSeedConstructionBaseline;
 }) {
   exactSource(source);
+  if (seedConstructionBaseline) assertSeedConstructionBaseline(seedConstructionBaseline, source);
   if (!Array.isArray(products) || new Set(products).size !== products.length)
     throw new Error('native pre-version comparison requires unique explicit products');
-  const catalog = loadPublicationCatalog('native pre-version delivery', { products });
+  if (
+    affectedProducts !== undefined &&
+    (!Array.isArray(affectedProducts) ||
+      new Set(affectedProducts).size !== affectedProducts.length ||
+      affectedProducts.some((product) => !products.includes(product)))
+  )
+    throw new Error('native affected build selection differs from the explicit product inventory');
+  const catalog = loadPublicationCatalog('native pre-version delivery');
+  const selected = catalog.products.filter((product) => products.includes(product.id));
+  if (selected.length !== products.length)
+    throw new Error('native pre-version comparison contains an unknown product');
   for (const comparison of [archives, sources, completed]) {
     if (!comparison) continue;
     if (comparison.scope !== 'construction' || !same(comparison.source, source))
@@ -507,10 +529,8 @@ export function compareNativePreVersionDelivery({
     if (comparison.products.some(({ product }) => !products.includes(product)))
       throw new Error('native pre-version comparison exceeds explicit product inventory');
   }
-  const qualificationUnknowns = [
-    'immutable input lifetime and loaded-analysis provenance',
-    'admitted complete product-specific qualification and delivery contract',
-  ];
+  const qualificationUnknowns: string[] = [];
+  let producerAssured = false;
   if (observation) {
     if (!observation.authenticated.length || !observation.coverage.completeProductInventory)
       throw new Error('native pre-version observation has incomplete frozen inventory');
@@ -525,9 +545,20 @@ export function compareNativePreVersionDelivery({
       )
         throw new Error('native pre-version observation differs from source/configured tests');
       qualificationUnknowns.push(...build.qualification.unverified);
+      if (build.producerAssurance)
+        validateReviewedNativeProducerAssurance(build.producerAssurance, {
+          source,
+          github: build.origin.github,
+          artifact: build.origin.artifact,
+          evidenceDigest: build.origin.evidenceDigest,
+          requiredTests: build.qualification.requiredTests,
+        });
     }
+    producerAssured = observation.authenticated.every((build) => build.producerAssurance);
   }
-  const results = catalog.products.map((product) => {
+  if (!producerAssured)
+    qualificationUnknowns.push('immutable input lifetime and loaded-analysis provenance');
+  const results = selected.map((product) => {
     const sourceDelivery = sources?.products.find((row) => row.product === product.id);
     const archiveDelivery = archives?.products.find((row) => row.product === product.id);
     const completedDelivery = completed?.products.find((row) => row.product === product.id);
@@ -601,6 +632,78 @@ export function compareNativePreVersionDelivery({
         }
       }
     } else if (sourceDelivery) reason = sourceDelivery.reason ?? reason;
+    const relevantBuilds =
+      observation?.authenticated.filter((build) =>
+        (build.qualification.cohorts ?? []).some((cohort) =>
+          cohort.roots.some((root) => root.package.product === product.id),
+        ),
+      ) ?? [];
+    const relevantCohorts = relevantBuilds.flatMap((build) =>
+      build.qualification.cohorts.filter((cohort) =>
+        cohort.roots.some((root) => root.package.product === product.id),
+      ),
+    );
+    const policiesBound =
+      relevantCohorts.length > 0 &&
+      relevantCohorts.every((cohort) =>
+        nativeShippingRootsHaveQualification(
+          cohort.qualificationPolicy,
+          cohort.roots.filter((root) => root.package.product === product.id),
+        ),
+      );
+    const productUnknowns = relevantBuilds
+      .flatMap((build) => build.qualification.unverified)
+      .filter(
+        (unknown) =>
+          unknown !== 'complete canonical product qualification and completed-baseline admission' &&
+          !(
+            policiesBound &&
+            unknown ===
+              'source-owned mandatory qualification policy bound to every configured shipping root'
+          ),
+      );
+    const qualified =
+      policiesBound &&
+      relevantBuilds.every((build) => build.producerAssurance) &&
+      !productUnknowns.length;
+    // Fresh initdb identity needs causal freeze/reuse evidence, even after its tests pass.
+    const seedRows = expectedProductArtifactRows([product]).filter((artifact) =>
+      ['native-seeds', 'wasix-seeds'].includes(artifact.kind),
+    );
+    const seedComparisons =
+      completedDelivery?.comparisons?.filter((comparison) =>
+        ['native-seeds', 'wasix-seeds'].includes(comparison.kind),
+      ) ?? [];
+    const unclassifiedSeedChange =
+      seedRows.length > 0 &&
+      deliveryStatus === 'different' &&
+      (!same(
+        seedRows.map(({ id }) => id).sort(),
+        seedComparisons.map((comparison) => comparison.currentId ?? comparison.id).sort(),
+      ) ||
+        seedComparisons.some((comparison) => {
+          const row = seedRows.find((row) => row.id === (comparison.currentId ?? comparison.id));
+          if (!comparison.differentMembers.length || !row?.name.endsWith('.tar.zst')) return false;
+          if (!seedConstructionBaseline || !observation || !completedDelivery?.origin) return true;
+          try {
+            return !seedArchiveHasChangedDeclaredContents({
+              declaration: seedConstructionBaseline,
+              source,
+              publication: completedDelivery.origin,
+              observation,
+              artifactId: comparison.currentId ?? comparison.id,
+            });
+          } catch {
+            return true; // Missing or conflicting causal/public File joins remain unclassified.
+          }
+        }));
+    if (unclassifiedSeedChange) reason = 'seed-lifetime-or-reuse-unverified';
+    const necessaryDelivery =
+      !unclassifiedSeedChange && qualified && deliveryStatus !== 'unknown'
+        ? deliveryStatus === 'different'
+          ? ('needed' as const)
+          : ('not-needed' as const)
+        : ('unknown' as const);
     return {
       product: product.id,
       affectedBuild:
@@ -611,16 +714,51 @@ export function compareNativePreVersionDelivery({
             : ('not-required' as const),
       deliveryStatus,
       ...(archiveDelivery ? { archiveDeliveryStatus: archiveDelivery.deliveryStatus } : {}),
-      configuredTests: observation ? ('observed-passed' as const) : ('unverified' as const),
-      necessaryDelivery: 'unknown' as const,
+      configuredTests: qualified
+        ? ('qualified' as const)
+        : observation
+          ? ('observed-passed' as const)
+          : ('unverified' as const),
+      necessaryDelivery,
       reason,
     };
   });
+  const completeRepositoryInventory = same(
+    [...products].sort(),
+    catalog.products.map(({ id }) => id).sort(),
+  );
+  const completeDecisions = results.every((product) => product.necessaryDelivery !== 'unknown');
+  if (!completeDecisions)
+    qualificationUnknowns.push(
+      'admitted complete product-specific qualification and delivery contract',
+    );
+  if (!completeRepositoryInventory)
+    qualificationUnknowns.push('complete repository product decision inventory');
+  const unverified = [...new Set(qualificationUnknowns)].filter(
+    (unknown) =>
+      !(
+        completeDecisions &&
+        unknown === 'complete canonical product qualification and completed-baseline admission'
+      ),
+  );
+  const releaseDecision =
+    completeRepositoryInventory && completeDecisions && !unverified.length
+      ? ('qualified' as const)
+      : ('unverified' as const);
   return {
     scope: 'construction' as const,
-    source,
-    releaseDecision: 'unverified' as const,
+    source: structuredClone(source),
+    releaseDecision,
+    completeRepositoryInventory,
+    ...(releaseDecision === 'qualified'
+      ? {
+          selectedProducts: results
+            .filter((product) => product.necessaryDelivery === 'needed')
+            .map(({ product }) => product)
+            .sort(),
+        }
+      : {}),
     products: results,
-    unverified: [...new Set(qualificationUnknowns)],
+    unverified,
   };
 }

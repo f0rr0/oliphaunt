@@ -2,7 +2,7 @@
 import { deepStrictEqual } from 'node:assert';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs, promisify } from 'node:util';
@@ -33,12 +33,23 @@ import {
   prepareBundleVerification,
   readGhBundleVerification,
   requestReleaseAssetProof,
+  releaseAttestationPublisherRequest,
   verifyAttestationBundleSubject,
   writeImmutableReceipt,
 } from './verify_github_release_attestations.mts';
 
 const execute = promisify(execFile);
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+const authenticatedBaselines = new WeakMap<object, { digest: string; unchanged: () => void }>();
+export function assertAuthenticatedNativePublicBaseline(value: unknown) {
+  if (!value || typeof value !== 'object' || !authenticatedBaselines.has(value))
+    throw new Error('native seed baseline lacks its authenticated completed metadata origin');
+  const proof = authenticatedBaselines.get(value)!;
+  proof.unchanged();
+  if (hash(Buffer.from(JSON.stringify(value))) !== proof.digest)
+    throw new Error('authenticated completed native metadata facts changed');
+  return value as Awaited<ReturnType<typeof readCompletedNativePublicBaseline>>;
+}
 const limitations = [
   'immutable input lifetime from the producing build through content capture',
   'native action-graph dump bytes authenticated by the producing invocation',
@@ -55,12 +66,23 @@ export async function prepareNativePublicationMetadata(
 ) {
   const frozen = structuredClone(input);
   const observation = await observeNativePublicationConstruction(frozen, transports);
+  return observedNativePublicationMetadata(frozen, observation);
+}
+
+/** Describe a previously observed producer set without another acquisition or
+ * graph validation. Descriptive metadata cannot grant publication authority. */
+export function observedNativePublicationMetadata(
+  input: Parameters<typeof observeNativePublicationConstruction>[0],
+  observation: Awaited<ReturnType<typeof observeNativePublicationConstruction>>,
+  publicationQualification?: Record<string, unknown>,
+) {
   return observation.products.map((product) =>
     validateNativePublicationMetadata({
       schema: NATIVE_PUBLICATION_METADATA_SCHEMA,
       scope: 'construction',
-      repository: frozen.repository,
-      source: frozen.envelope.source,
+      repository: input.repository,
+      source: input.envelope.source,
+      ...(publicationQualification === undefined ? {} : { publicationQualification }),
       ...product,
       // The separately attested control file never includes itself or a checksum
       // envelope. Existing producer checksums remain unchanged outside this file.
@@ -95,7 +117,7 @@ export async function writePreparedNativePublicationMetadata(
   return writeMetadataRecords(directory, records);
 }
 
-async function writeMetadataRecords(
+export async function writeMetadataRecords(
   directory: string,
   records: ReturnType<typeof validateNativePublicationMetadata>[],
 ) {
@@ -242,21 +264,25 @@ export async function readCompletedNativePublicBaseline(
   }: {
     publication: CompletedPublication;
     file: string;
-    publisherSha: string;
-    bundlePaths: string[];
+    publisherSha?: string;
+    bundlePaths?: string[];
   },
   {
     repository = 'f0rr0/oliphaunt',
-    assertCompleted = createCompletedPublicationChecker({ repository }),
+    assertCompleted = undefined as ReturnType<typeof createCompletedPublicationChecker> | undefined,
     readJson = requestGithubRepositoryJson,
     readPages = requestGithubPages,
     proveAsset = requestReleaseAssetProof,
     verifyAttestation = authenticatePublicMetadataAttestation,
   } = {},
 ) {
-  if (!/^[a-f0-9]{40}$/u.test(publisherSha))
+  if (publisherSha !== undefined && !/^[a-f0-9]{40}$/u.test(publisherSha))
     throw new Error('public native metadata requires exact publishing controller source');
-  const completed = await assertCompleted(publication);
+  if (Boolean(publisherSha) !== Boolean(bundlePaths))
+    throw new Error('native metadata explicit publisher and bundles must be paired');
+  const completed = await (assertCompleted ?? createCompletedPublicationChecker({ repository }))(
+    publication,
+  );
   deepStrictEqual(completed, publication, 'native metadata completion');
   const source = { commit: completed.publicationSha, tree: completed.publicationTree };
   const artifact = nativePublicationMetadataArtifactRow({
@@ -312,13 +338,68 @@ export async function readCompletedNativePublicBaseline(
       : { bytes: asset.size, sha256: asset.digest.slice(7) };
   if (proof.bytes !== bytes.length || proof.sha256 !== sha256)
     throw new Error('public native metadata bytes differ from authenticated asset');
-  const attestation = await verifyAttestation({
-    file: absolute,
-    artifact: { ...artifact, sha256, size: bytes.length },
-    repository,
-    publisherSha,
-    bundlePaths,
-  });
+  let attestation;
+  if (publisherSha) {
+    attestation = await verifyAttestation({
+      file: absolute,
+      artifact: { ...artifact, sha256, size: bytes.length },
+      repository,
+      publisherSha,
+      bundlePaths,
+    });
+  } else {
+    const rows = await readPages(`repos/${repository}/attestations/sha256:${sha256}`, {
+      itemsField: 'attestations',
+      maxPages: 10,
+    });
+    const scratch = mkdtempSync(path.join(tmpdir(), 'oliphaunt-completed-metadata-bundles-'));
+    const seen = new Set<string>();
+    try {
+      for (const row of rows) {
+        let request;
+        try {
+          request = releaseAttestationPublisherRequest(row.bundle, {
+            repo: repository,
+            name: artifact.name,
+            sha256,
+          });
+        } catch {
+          continue;
+        }
+        if (!request) continue;
+        const contents = Buffer.from(JSON.stringify(row.bundle));
+        if (contents.length > 32 * 1024 * 1024)
+          throw new Error('completed metadata attestation bundle exceeds bound');
+        const digest = hash(contents);
+        if (seen.has(digest)) continue;
+        seen.add(digest);
+        const bundle = path.join(scratch, `${digest}.json`);
+        writeFileSync(bundle, contents, { flag: 'wx' });
+        try {
+          const verified = await verifyAttestation({
+            file: absolute,
+            artifact: { ...artifact, sha256, size: bytes.length },
+            repository,
+            publisherSha: request.publisherSha,
+            bundlePaths: [bundle],
+          });
+          if (
+            verified?.subjects?.filter(
+              (subject) => subject.name === artifact.name && subject.sha256 === sha256,
+            ).length !== 1
+          )
+            continue;
+          attestation = verified;
+          publisherSha = request.publisherSha;
+          break;
+        } catch {
+          /* Unsigned lookup fields cannot replace an authenticated signer. */
+        }
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
   if (
     !attestation ||
     !Array.isArray(attestation.subjects) ||
@@ -332,7 +413,7 @@ export async function readCompletedNativePublicBaseline(
     { repository, source, product: { id: completed.product, version: completed.version } },
   );
   capture.assertUnchanged();
-  return {
+  const result = {
     scope: 'construction' as const,
     publication: completed,
     metadata,
@@ -347,6 +428,18 @@ export async function readCompletedNativePublicBaseline(
     baselineAdmission: 'unknown' as const,
     releaseDecision: 'unverified' as const,
   };
+  if (
+    assertCompleted === undefined &&
+    readJson === requestGithubRepositoryJson &&
+    readPages === requestGithubPages &&
+    proveAsset === requestReleaseAssetProof &&
+    verifyAttestation === authenticatePublicMetadataAttestation
+  )
+    authenticatedBaselines.set(result, {
+      digest: hash(Buffer.from(JSON.stringify(result))),
+      unchanged: capture.assertUnchanged,
+    });
+  return result;
 }
 
 if (import.meta.main) {

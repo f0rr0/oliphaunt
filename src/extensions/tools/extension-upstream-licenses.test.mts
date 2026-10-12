@@ -35,6 +35,7 @@ import {
   extensionUpstreamLicenseFileInventory,
   extensionUpstreamLicenseRows,
   externalReleaseExtensionSqlNames,
+  nativeExtensionCarrierLegal,
   nativeExtensionConstructionLicenseInventory,
   nativeExtensionConstructionMavenLicenses,
   PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS,
@@ -44,6 +45,42 @@ import {
 } from './extension-upstream-licenses.mts';
 
 const ROOT = path.resolve(import.meta.dirname, '../../..');
+
+test('native carrier SPDX follows actual compiler-runtime receipts and rejects altered receipts', () => {
+  const product = 'oliphaunt-extension-vector';
+  const target = 'android-arm64-v8a';
+  const files = nativeExtensionConstructionLicenseInventory('vector', target);
+  const legal = nativeExtensionCarrierLegal(product, ['vector'], {
+    target,
+    carriesPayload: true,
+    memberContracts: [{ sqlName: 'vector', nativeConstructionLicenseFiles: files }],
+  });
+  assert.equal(
+    legal.packageSpdx,
+    `${extensionCarrierLegalContract(product, ['vector'], { family: 'native', target }).packageSpdx} AND Apache-2.0 WITH LLVM-exception`,
+  );
+  assert.equal(Object.isFrozen(legal), true);
+  assert.equal(
+    nativeExtensionCarrierLegal(product, ['vector'], { carriesPayload: false }).profile,
+    'code-facade',
+  );
+  assert.throws(
+    () =>
+      nativeExtensionCarrierLegal(product, ['vector'], {
+        target,
+        carriesPayload: true,
+        memberContracts: [
+          {
+            sqlName: 'vector',
+            nativeConstructionLicenseFiles: files.map((file, index) =>
+              index === 0 ? { ...file, sha256: '0'.repeat(64) } : file,
+            ),
+          },
+        ],
+      }),
+    /differs from the immutable construction source/u,
+  );
+});
 
 test('Maven compiler-runtime entries follow validated canonical receipts', () => {
   const receipts = nativeExtensionConstructionLicenseInventory('vector', 'android-arm64-v8a');

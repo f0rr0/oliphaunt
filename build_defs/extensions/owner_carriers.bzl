@@ -2,15 +2,16 @@
 
 Foreign-host files are inputs to these rules, never replacements for a typed C
 producer. Collections are internal partial evidence. Complete family carriers
-require every canonical native target; external owner-wide WASIX joins remain
-separate from this native family surface.
+require every canonical native target and the genuine WASIX constructor for
+external owners. Contrib retains separate native and WASIX runtime owners.
 """
 
-load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_OWNERS", "EXTENSIONS", "EXTENSION_PROFILES", "EXTENSION_RELEASE_METADATA", "PRODUCTS")
+load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_OWNERS", "EXTENSIONS", "EXTENSION_GITHUB_ARTIFACTS", "EXTENSION_PROFILES", "EXTENSION_RELEASE_METADATA", "PRODUCTS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "merge_shipping_suppliers")
 load(":contrib_carriers.bzl", "native_contrib_carrier_legal", "native_contrib_carrier_metadata")
 load(":construction.bzl", "desktop_member_inventory")
-load(":final_leaf.bzl", "ExtensionFinalLeafInfo")
+load(":final_leaf.bzl", "ExtensionFinalLeafInfo", "NativeAppleBaseInfo")
 load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extension_carrier_legal", "native_external_carrier_metadata")
 
 def native_owner_carrier_helpers():
@@ -22,13 +23,16 @@ def native_owner_carrier_helpers():
         "//:tools/packaging/rust-native-targets.mts",
         "//src/extensions/tools:native-component-contract.mts",
         "//:src/extensions/artifacts/native/tools/ios-extension-registration.mts",
+        "//tools/release:native-file-identity.mts",
     ]
 
-def native_owner_carrier_metadata(product):
+def native_owner_carrier_metadata(product, family = "native"):
     releases = [row for row in EXTENSION_RELEASE_METADATA if row["artifactProduct"] == product]
     if not releases:
         fail("native final join requires a canonical extension distribution: " + product)
     release = releases[0]
+    if family not in ["native", "wasix"] or (family == "wasix" and release["class"] != "contrib"):
+        fail("separate WASIX owner composition only applies to runtime-owned contrib")
     targets = [target for profile in EXTENSION_PROFILES["profiles"] for target in profile["targets"] if target["family"] == "native"]
     target_names = sorted([target["target"] for target in targets])
     if release["class"] == "contrib":
@@ -45,12 +49,14 @@ def native_owner_carrier_metadata(product):
     if sorted([member["sqlName"] for member in members]) != sorted([row["sqlName"] for row in releases]):
         fail("native final join member set differs from canonical release metadata")
     dynamic = sorted([row["target"] for row in targets if row["kind"] == "native-dynamic"])
+    if family == "wasix":
+        owner = wasix_owner
     return {
         "schema": "oliphaunt-native-extension-final-join-inputs-v1", "product": product,
-        "owner": owner, "version": leaf["version"], "runtimeVersion": leaf["runtimeVersion"],
-        "releaseMetadata": release, "profiles": targets, "allProfiles": [target for profile in EXTENSION_PROFILES["profiles"] for target in profile["targets"]],
+        "owner": owner, "version": PRODUCTS[owner]["version"], "runtimeVersion": leaf["runtimeVersion"],
+        "releaseMetadata": release, "profiles": targets if family == "native" else [], "allProfiles": [target for profile in EXTENSION_PROFILES["profiles"] for target in profile["targets"]],
         "catalogSqlNames": sorted([row["sql-name"] for row in EXTENSIONS.values()]), "members": members, "carriers": leaf["carriers"],
-        "ownerFamilies": ["native"] if owner != wasix_owner else ["native", "wasix"],
+        "ownerFamilies": ["wasix"] if family == "wasix" else (["native"] if owner != wasix_owner else ["native", "wasix"]),
         "cargoFacadeMetadata": {
             "nativeOwner": owner, "wasixOwner": wasix_owner, "version": leaf["version"],
             "sqlNames": sorted([member["sqlName"] for member in members]),
@@ -70,7 +76,8 @@ def _leaf_input(leaf):
     return {"product": leaf.product, "owner": leaf.owner, "version": leaf.version, "family": leaf.family, "target": leaf.target,
             "github": [file.path for file in leaf.github], "npm": [file.path for file in leaf.npm], "cargo": [file.path for file in leaf.cargo],
             "manifest": leaf.manifest.path, "frozen": leaf.frozen.path, "validation": leaf.validation.path if leaf.validation else None,
-            "receipt": leaf.receipt.path if leaf.receipt else None, "expectedOrigin": leaf.origin}
+            "receipt": leaf.receipt.path if leaf.receipt else None, "expectedOrigin": leaf.origin,
+            "originalFiles": leaf.original_files.path if hasattr(leaf, "original_files") and leaf.original_files else None}
 
 def _leaf_files(leaf):
     return leaf.github + leaf.npm + leaf.cargo + [leaf.manifest, leaf.frozen, leaf.spec] + ([leaf.validation] if leaf.validation else []) + ([leaf.receipt] if leaf.receipt else [])
@@ -139,47 +146,65 @@ native_extension_final_receipt_fixture = rule(implementation = _receipt_fixture_
              "_helpers": attr.label_list(default = native_owner_carrier_helpers() + ["//build_defs/extensions:owner_carriers.mts"], allow_files = True)})
 
 def _join_impl(ctx):
-    spec = native_owner_carrier_metadata(ctx.attr.product)
-    leaves = [target[ExtensionFinalLeafInfo] for target in ctx.attr.leaves]
+    spec = native_owner_carrier_metadata(ctx.attr.product, ctx.attr.family)
+    leaves = [target[ExtensionFinalLeafInfo] for target in ctx.attr.leaves + ctx.attr.wasix_leaves]
     for leaf in leaves:
-        if leaf.product != spec["product"] or leaf.owner != spec["owner"] or leaf.version != spec["version"] or leaf.family != "native":
+        if leaf.product != spec["product"] or leaf.owner != spec["owner"] or leaf.version != spec["version"] or leaf.family not in spec["ownerFamilies"]:
             fail("final extension files differ from their canonical distribution owner/version")
-    targets = [leaf.target for leaf in leaves]
-    if len(targets) != len({target: True for target in targets}):
+    slots = [leaf.family + "/" + leaf.target for leaf in leaves]
+    targets = [leaf.target for leaf in leaves if leaf.family == "native"]
+    if len(slots) != len({slot: True for slot in slots}):
         fail("final extension join contains repeated target cohorts")
     if ctx.attr.complete and sorted(targets) != sorted([row["target"] for row in spec["profiles"]]):
         fail("complete native extension family requires every canonical native target; got " + ", ".join(sorted(targets)))
+    if ctx.attr.complete and "wasix" in spec["ownerFamilies"]:
+        if [leaf.target for leaf in leaves if leaf.family == "wasix"] != ["wasix-portable"]:
+            fail("complete extension owner requires its one genuine portable WASIX constructor")
     outputs = {"collection": ctx.actions.declare_file(ctx.label.name + ".collection.json")}
     if ctx.attr.complete:
-        outputs["github"] = ctx.actions.declare_directory(ctx.label.name + "/native-family-release")
-        outputs["npm"] = ctx.actions.declare_directory(ctx.label.name + "/npm-facade")
-        if spec["ownerFamilies"] == ["native"]:
-            outputs["cargo"] = ctx.actions.declare_directory(ctx.label.name + "/cargo-facade")
-        if not ctx.file.base_carrier_manifest:
-            fail("complete native npm facade requires the actual native base iOS carrier manifest")
+        if "native" in spec["ownerFamilies"]:
+            rows = [row for row in spec["carriers"] if row["ecosystem"] == "npm" and row["target"] == None and row["role"] == "facade"]
+            if len(rows) != 1:
+                fail("complete native family requires its one canonical npm facade")
+            outputs["npm"] = ctx.actions.declare_file(ctx.label.name + "/npm/" + rows[0]["name"].replace("@", "").replace("/", "-") + "-" + spec["version"] + ".tgz")
+            outputs["cargo"] = ctx.actions.declare_file(ctx.label.name + "/cargo/" + spec["product"] + "-" + spec["version"] + ".crate")
+            if not ctx.file.base_carrier_manifest:
+                fail("complete native npm facade requires the actual native base iOS carrier manifest")
+        controls = [row for row in EXTENSION_GITHUB_ARTIFACTS if row["artifactProduct"] == spec["product"] and row["owner"] == spec["owner"] and row["version"] == spec["version"] and row.get("control", False)]
+        if not controls or len(controls) != len({row["kind"]: True for row in controls}):
+            fail("complete extension owner requires its canonical unique control inventory")
+        for row in controls:
+            outputs["control_" + row["kind"]] = ctx.actions.declare_file(ctx.label.name + "/github/" + row["name"])
+    base = ctx.attr.base_carrier_manifest[NativeAppleBaseInfo] if ctx.attr.base_carrier_manifest and NativeAppleBaseInfo in ctx.attr.base_carrier_manifest else None
     spec.update({"operation": "compose" if ctx.attr.complete else "collect", "leaves": [_leaf_input(leaf) for leaf in leaves],
                  "baseCarrierManifest": ctx.file.base_carrier_manifest.path if ctx.file.base_carrier_manifest else None,
+                 "baseArchiveInputs": base.archives if base else None,
                  "components": ctx.file._components.path,
                  "outputs": {name: file.path for name, file in outputs.items()}})
     action = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(action, json.encode(spec))
-    files = [file for leaf in leaves for file in _leaf_files(leaf)] + [action, ctx.file._components] + ctx.files.legal + ctx.files.base_carrier_manifest
+    files = [file for leaf in leaves for file in _leaf_files(leaf)] + [action, ctx.file._components] + ctx.files.legal + ctx.files.base_carrier_manifest + (base.archive_files if base else [])
     bun_file_action(ctx, ctx.file._tool, arguments = [action.path], inputs = files,
                     source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal,
                     outputs = outputs.values(), mnemonic = "NativeExtensionFamilyJoin")
     groups = {name: depset([file]) for name, file in outputs.items()}
     groups["spec"] = depset([action])
-    return [DefaultInfo(files = depset(outputs.values())), OutputGroupInfo(**groups)]
+    targets = ctx.attr.leaves + ctx.attr.wasix_leaves + ([ctx.attr.base_carrier_manifest] if ctx.attr.base_carrier_manifest else [])
+    suppliers = [target[ShippingSupplierInfo] for target in targets if ShippingSupplierInfo in target]
+    supplier = merge_shipping_suppliers(suppliers) if len(suppliers) == len(targets) else ShippingSupplierInfo(suppliers = None, files = depset(transitive = [info.files for info in suppliers]))
+    return [DefaultInfo(files = depset(outputs.values())), OutputGroupInfo(**groups), supplier]
 
 _native_extension_final_join = rule(implementation = _join_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = dict(_TOOLS, **{"product": attr.string(mandatory = True), "leaves": attr.label_list(providers = [ExtensionFinalLeafInfo], mandatory = True),
+        "wasix_leaves": attr.label_list(providers = [ExtensionFinalLeafInfo]), "family": attr.string(default = "native", values = ["native", "wasix"]),
         "complete": attr.bool(default = False), "base_carrier_manifest": attr.label(allow_single_file = True), "legal": attr.label_list(allow_files = True)}))
 
 def native_extension_final_collection(name, product, leaves, **kwargs):
     _native_extension_final_join(name = name, product = product, leaves = leaves, legal = native_owner_carrier_legal(product), **kwargs)
 
-def native_extension_family_carriers(name, product, leaves, base_carrier_manifest, **kwargs):
+def native_extension_family_carriers(name, product, leaves, base_carrier_manifest = None, wasix_leaves = [], family = "native", **kwargs):
     _native_extension_final_join(name = name, product = product, leaves = leaves, complete = True,
+                                 wasix_leaves = wasix_leaves, family = family,
                                  base_carrier_manifest = base_carrier_manifest, legal = native_owner_carrier_legal(product), **kwargs)
 
 def _final_contract_test_impl(ctx):

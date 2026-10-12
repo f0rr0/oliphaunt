@@ -24,7 +24,7 @@ test('release mutation tests cannot consume a live publish request journal', () 
   );
 });
 
-test('the local release check includes pins once and the mutation runner leaves them to Moon', () => {
+test('the local release check runs each test once and isolates the version-pin suite', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'release-test-ownership-'));
   const log = path.join(root, 'invocations.log');
   const script = readFileSync(new URL('./release-check.sh', import.meta.url), 'utf8');
@@ -37,14 +37,21 @@ test('the local release check includes pins once and the mutation runner leaves 
     const initialized = spawnSync('git', ['init', '--quiet'], { cwd: root, encoding: 'utf8' });
     assert.equal(initialized.status, 0, initialized.stderr);
     write('tools/release/release-check.sh', script);
-    write('tools/dev/bun.sh', 'printf "%s\\n" "$TEST_RELEASE_CHECK_BUN"\n');
+    write(
+      'tools/dev/bun.sh',
+      'if [[ "${1:-}" == -p ]]; then\n' +
+        '  printf "%s\\n" "$TEST_RELEASE_CHECK_BUN"\n' +
+        'else\n' +
+        '  printf "unit:%s\\n" "$*" >> "$TEST_RELEASE_CHECK_LOG"\n' +
+        'fi\n',
+    );
     write(
       'tools/release/release-metadata-check.sh',
       'echo metadata >> "$TEST_RELEASE_CHECK_LOG"\n',
     );
     write('tools/release/release-please-state.sh', 'shift 2\nexec "$@"\n');
     write('tools/release/with-source.sh', 'shift\nexec "$@"\n');
-    write('tools/ci/with-projects.sh', 'printf "unit:%s\\n" "$*" >> "$TEST_RELEASE_CHECK_LOG"\n');
+    write('tools/ci/with-projects.sh', 'exit 97\n');
     write(
       'tools/release/independent-version-pins.test.sh',
       'echo pins >> "$TEST_RELEASE_CHECK_LOG"\n',

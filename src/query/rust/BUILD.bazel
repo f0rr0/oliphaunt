@@ -30,7 +30,13 @@ rust_test(
     rustc_env = QUERY_RUST_ENV,
 )
 
-cargo_source_package(product = "oliphaunt-query")
+cargo_source_package(
+    product = "oliphaunt-query",
+    qualification = [":consumer_test"] + select({
+        "//build_defs/native:linux_x86_64": ["//build_defs/languages/installed:query_source_compile_test"],
+        "//conditions:default": [],
+    }),
+)
 rust_clippy_test(name = "clippy_test", targets = [":oliphaunt_query", ":unit_test"], transitive = False, size = "small")
 
 cargo_consumer_test(

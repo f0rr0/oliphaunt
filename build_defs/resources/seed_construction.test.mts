@@ -1,0 +1,911 @@
+import { expect, test } from 'bun:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { packageClusterSeed } from '../../src/database-resources/seeds/package.mts';
+import { createDeterministicTar } from '../../tools/packaging/archive-directory.mts';
+import { extractPortableArchiveTree } from '../../tools/packaging/portable-archive.mts';
+import {
+  readDeclaredSeedConstructionAnchor,
+  seedArchiveHasChangedDeclaredContents,
+  seedConstructionAnchorPath,
+} from '../../tools/release/native-seed-baseline.mts';
+import {
+  captureSeedConstructionIntent,
+  captureSeedContentIntent,
+  captureSeedProducerIdentity,
+  SEED_CONSTRUCTION_ANCHOR_SCHEMA,
+  seedConstructionFileBinding,
+  seedConstructionInvocation,
+  seedProducerIdentity,
+  selectCompletedSeed,
+  selectQualifiedSeed,
+  validateSeedConstructionAnchor,
+  validateSeedConstructionReceipt,
+  writePromotedSeedReceipt,
+  writeSeedConstructionReceipt,
+} from './seed_construction.mts';
+
+const publication = {
+  product: 'database-resources',
+  version: '0.2.2',
+  tagName: 'database-resources-v0.2.2',
+  publicationSha: 'a'.repeat(40),
+  publicationTree: 'b'.repeat(40),
+  releaseSha: 'c'.repeat(40),
+};
+const identity = (file: string) => {
+  const bytes = readFileSync(file);
+  return {
+    path: file,
+    size: bytes.length,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+  };
+};
+
+test('semantic File roles must bind exact declared inputs and invalidate reassigned headers', () => {
+  const inputs = { manual: '/cache/manual.h', control: '/cache/control.h' };
+  expect(seedConstructionFileBinding(inputs, '/cache/manual.h')).toBe('manual');
+  expect(() => seedConstructionFileBinding(inputs, '/ambient/header.h')).toThrow(
+    'declared logical File',
+  );
+  expect(() =>
+    seedConstructionFileBinding({ ...inputs, alias: '/cache/manual.h' }, '/cache/manual.h'),
+  ).toThrow('exactly one');
+  const bindings = (headers: Record<string, string>) =>
+    Object.fromEntries(
+      Object.entries(headers).map(([role, file]) => [
+        role,
+        seedConstructionFileBinding(inputs, file),
+      ]),
+    );
+  expect(bindings({ manual: inputs.manual, control: inputs.control })).not.toEqual(
+    bindings({ manual: inputs.control, control: inputs.manual }),
+  );
+});
+async function fixture(family: 'native' | 'wasix', profile: 'standard' | 'icu' = 'standard') {
+  const root = mkdtempSync(path.join(tmpdir(), 'seed-construction-test-'));
+  const contract = JSON.parse(
+    readFileSync(
+      new URL('../../src/database-resources/contracts/contract.json', import.meta.url),
+      'utf8',
+    ),
+  );
+  const target = family === 'native' ? 'linux-x64-gnu' : 'portable';
+  const pgdata = path.join(root, 'pgdata');
+  for (const directory of contract.pgdataDirectories)
+    mkdirSync(path.join(pgdata, directory), { recursive: true });
+  writeFileSync(path.join(pgdata, 'PG_VERSION'), '18\n');
+  // Opaque formatter fixtures: installed resource tests supply actual PostgreSQL execution.
+  writeFileSync(path.join(pgdata, 'global/pg_control'), 'unchanged opaque control bytes\n');
+  writeFileSync(
+    path.join(pgdata, 'pg_wal/000000010000000000000001'),
+    'unchanged opaque WAL bytes\n',
+  );
+  const runtime = path.join(root, 'runtime');
+  mkdirSync(path.join(runtime, 'bin'), { recursive: true });
+  const postgres = path.join(runtime, 'bin/postgres');
+  const initdb = path.join(runtime, 'bin/initdb');
+  const tool = path.join(root, 'constructor.mts');
+  writeFileSync(postgres, 'actual declared postgres bytes fixture');
+  writeFileSync(initdb, 'actual declared initdb bytes fixture');
+  writeFileSync(tool, 'actual constructor source fixture');
+  const inputs = { postgres, initdb, tool };
+  const invocation = {
+    contract,
+    command: 'initdb',
+    arguments: ['--encoding=UTF8'],
+    environment: { TZ: 'UTC' },
+  };
+  const intent = captureSeedConstructionIntent({ family, target, profile }, invocation, inputs);
+  const frozen = path.join(root, 'frozen.tar');
+  writeFileSync(frozen, await createDeterministicTar(pgdata));
+  const receiptPath = path.join(root, 'receipt.json');
+  const receipt = writeSeedConstructionReceipt(receiptPath, intent, frozen, pgdata);
+  const icuData = profile === 'icu' ? path.join(root, 'icu') : undefined;
+  if (icuData) {
+    mkdirSync(icuData);
+    writeFileSync(path.join(icuData, 'icudt76l.dat'), 'fixture data');
+  }
+  const assets = await packageClusterSeed({
+    family,
+    target,
+    profile,
+    pgdata,
+    runtime,
+    icuData,
+    contract,
+    version: publication.version,
+    runtimeVersion: '0.3.2',
+    outputDir: path.join(root, 'assets'),
+  });
+  const metadata = path.join(root, 'metadata.json');
+  const updateMetadata = (currentReceipt = receipt) =>
+    writeFileSync(
+      metadata,
+      JSON.stringify({
+        source: { commit: publication.publicationSha, tree: publication.publicationTree },
+        product: { id: publication.product, version: publication.version },
+        construction: [
+          { seedConstructions: [{ path: receiptPath, contents: JSON.stringify(currentReceipt) }] },
+        ],
+      }),
+    );
+  updateMetadata();
+  const control = () => ({
+    operation: 'reuse' as const,
+    publication,
+    archive: identity(assets.archive),
+    manifest: identity(assets.manifest),
+    metadata: identity(metadata),
+  });
+  return {
+    root,
+    intent,
+    inputs,
+    invocation,
+    pgdata,
+    receipt,
+    receiptPath,
+    frozen,
+    assets,
+    metadata,
+    updateMetadata,
+    control,
+  };
+}
+
+for (const family of ['native', 'wasix'] as const) {
+  for (const profile of ['standard', 'icu'] as const) {
+    test(`${family}/${profile} reuses every immutable PGDATA and empty directory only with matching concrete intent`, async () => {
+      const f = await fixture(family, profile);
+      try {
+        const selected = selectCompletedSeed(f.intent, f.control());
+        expect(selected?.origin.operation).toBe('reused');
+        expect(selected?.origin.metadata).toBeDefined();
+        const destination = path.join(f.root, 'copy');
+        extractPortableArchiveTree(f.assets.archive, destination);
+        expect(readFileSync(path.join(destination, 'global/pg_control'))).toEqual(
+          readFileSync(path.join(f.pgdata, 'global/pg_control')),
+        );
+        expect(readFileSync(path.join(destination, 'pg_wal/000000010000000000000001'))).toEqual(
+          readFileSync(path.join(f.pgdata, 'pg_wal/000000010000000000000001')),
+        );
+        expect(
+          selectCompletedSeed(f.intent, { ...f.control(), metadata: undefined }),
+        ).toBeUndefined();
+        expect(selectCompletedSeed(f.intent)).toBeUndefined();
+        const adoption = selectCompletedSeed(f.intent, {
+          ...f.control(),
+          operation: 'adopt',
+          metadata: undefined,
+        });
+        expect(adoption?.origin.operation).toBe('adopted');
+        expect(adoption?.origin.metadata).toBeUndefined();
+        const adoptedReceipt = writeSeedConstructionReceipt(
+          f.receiptPath,
+          f.intent,
+          f.frozen,
+          f.pgdata,
+          adoption?.origin,
+        );
+        expect(adoptedReceipt.origin.kind).toBe('completed-publication');
+        expect(adoptedReceipt).not.toHaveProperty('qualified');
+        f.updateMetadata(adoptedReceipt);
+        expect(selectCompletedSeed(f.intent, f.control())?.origin.operation).toBe('reused');
+      } finally {
+        rmSync(f.root, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
+test('legacy and changed recipe proof constructs afresh; corrupt declared completion bytes fail closed', async () => {
+  const f = await fixture('native');
+  try {
+    writeFileSync(
+      f.metadata,
+      JSON.stringify({
+        source: { commit: publication.publicationSha, tree: publication.publicationTree },
+        product: { id: publication.product, version: publication.version },
+        construction: [{}],
+      }),
+    );
+    expect(selectCompletedSeed(f.intent, f.control())).toBeUndefined();
+    f.updateMetadata();
+    const changed = structuredClone(f.intent);
+    changed.invocation = { ...f.invocation, arguments: ['--encoding=LATIN1'] };
+    expect(selectCompletedSeed(changed, f.control())).toBeUndefined();
+    const captured = f.control();
+    writeFileSync(f.assets.archive, 'corrupt bytes');
+    expect(() => selectCompletedSeed(f.intent, captured)).toThrow('input bytes differ');
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('fresh control/WAL entropy never proves the old seed came from an unchanged constructor', async () => {
+  const f = await fixture('wasix');
+  try {
+    writeFileSync(path.join(f.pgdata, 'global/pg_control'), 'fresh control clock/PID/random');
+    writeFileSync(path.join(f.pgdata, 'pg_wal/000000010000000000000001'), 'fresh WAL entropy');
+    writeFileSync(f.frozen, await createDeterministicTar(f.pgdata));
+    const fresh = writeSeedConstructionReceipt(f.receiptPath, f.intent, f.frozen, f.pgdata);
+    expect(fresh.intentSha256).toBe(f.receipt.intentSha256);
+    expect(fresh.pgdata.treeSha256).not.toBe(f.receipt.pgdata.treeSha256);
+    f.updateMetadata(fresh);
+    expect(() => selectCompletedSeed(f.intent, f.control())).toThrow('PGDATA differs');
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('deterministic random actual-input mutations always invalidate reuse and restore coherently', async () => {
+  const f = await fixture('native');
+  try {
+    let random = 0x5eed;
+    const before = Object.fromEntries(
+      Object.entries(f.inputs).map(([name, file]) => [name, readFileSync(file)]),
+    );
+    for (let scenario = 0; scenario < 64; scenario++) {
+      random = (Math.imul(random, 1664525) + 1013904223) >>> 0;
+      const selected = Object.keys(f.inputs).filter((_, index) => (random & (1 << index)) !== 0);
+      for (const name of selected)
+        writeFileSync(f.inputs[name], Buffer.concat([before[name], Buffer.from(` ${scenario}`)]));
+      const current = captureSeedConstructionIntent(f.intent, f.invocation, f.inputs);
+      expect(selectCompletedSeed(current, f.control()) !== undefined).toBe(selected.length === 0);
+      for (const name of selected) writeFileSync(f.inputs[name], before[name]);
+      expect(
+        selectCompletedSeed(
+          captureSeedConstructionIntent(f.intent, f.invocation, f.inputs),
+          f.control(),
+        )?.origin.operation,
+      ).toBe('reused');
+    }
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('source transport modes preserve intent; actual empty directories, command and environment belong to intent', async () => {
+  const f = await fixture('native');
+  try {
+    const changedEnvironment = captureSeedConstructionIntent(
+      f.intent,
+      { ...f.invocation, environment: { TZ: 'Pacific/Honolulu' } },
+      f.inputs,
+    );
+    expect(selectCompletedSeed(changedEnvironment, f.control())).toBeUndefined();
+    if (process.platform !== 'win32') {
+      chmodSync(f.inputs.tool, 0o444);
+      expect(
+        selectCompletedSeed(
+          captureSeedConstructionIntent(f.intent, f.invocation, f.inputs),
+          f.control(),
+        )?.origin.operation,
+      ).toBe('reused');
+      chmodSync(f.inputs.tool, 0o755);
+      expect(
+        selectCompletedSeed(
+          captureSeedConstructionIntent(f.intent, f.invocation, f.inputs),
+          f.control(),
+        )?.origin.operation,
+      ).toBe('reused');
+    }
+    const inputTree = path.join(f.root, 'input-tree');
+    mkdirSync(path.join(inputTree, 'empty'), { recursive: true });
+    writeFileSync(path.join(inputTree, 'tool.mts'), 'declared tool');
+    const initial = captureSeedConstructionIntent(f.intent, f.invocation, { inputTree });
+    rmSync(path.join(inputTree, 'empty'), { recursive: true });
+    expect(captureSeedConstructionIntent(f.intent, f.invocation, { inputTree })).not.toEqual(
+      initial,
+    );
+    expect(() =>
+      captureSeedConstructionIntent(f.intent, f.invocation, { '../escape': inputTree }),
+    ).toThrow('safe logical name');
+    const bad = structuredClone(f.receipt);
+    bad.intent.invocation = 'forged';
+    expect(() => validateSeedConstructionReceipt(bad)).toThrow('intent digest differs');
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('transport locations do not hide any actual command, environment or input data', () => {
+  const invocation = (root: string) =>
+    seedConstructionInvocation(
+      `${root}/runtime/bin/initdb`,
+      ['-D', `${root}/work/pgdata`, '--encoding=UTF8'],
+      { HOME: `${root}/work`, TZ: 'UTC' },
+      { runtime: `${root}/runtime`, work: `${root}/work` },
+    );
+  expect(invocation('/first')).toEqual(invocation('/second'));
+  expect(invocation('/first').arguments).toContain('--encoding=UTF8');
+  expect(invocation('/first').environment.TZ).toBe('UTC');
+});
+
+test('version promotion keeps one frozen seed and original constructor while observing final runtime intent', async () => {
+  const f = await fixture('wasix');
+  try {
+    writeFileSync(f.inputs.postgres, 'actual final versioned runtime bytes');
+    const current = captureSeedConstructionIntent(f.intent, f.invocation, f.inputs);
+    expect(selectCompletedSeed(current, f.control())).toBeUndefined();
+    const control = {
+      source: { commit: 'd'.repeat(40), tree: 'e'.repeat(40) },
+      evidenceDigest: `sha256:${'f'.repeat(64)}`,
+      invocationId: 'original-qualified-invocation',
+      frozen: identity(f.frozen),
+      receipt: identity(f.receiptPath),
+      transition: {
+        source: { commit: '1'.repeat(40), tree: '2'.repeat(40) },
+        updatesSha256: '3'.repeat(64),
+      },
+    };
+    const promotion = selectQualifiedSeed(current, control);
+    assert.ok(promotion);
+    const frozen = path.join(f.root, 'promoted.tar');
+    copyFileSync(promotion.frozen, frozen);
+    const promotedReceipt = writePromotedSeedReceipt(
+      path.join(f.root, 'promoted.json'),
+      promotion,
+      frozen,
+      f.pgdata,
+    );
+    expect(promotedReceipt.frozen).toEqual(f.receipt.frozen);
+    expect(promotedReceipt.pgdata).toEqual(f.receipt.pgdata);
+    expect(promotedReceipt.intentSha256).toBe(f.receipt.intentSha256);
+    expect(promotedReceipt.intent).toEqual(f.receipt.intent);
+    expect(promotedReceipt.qualificationIntent).toEqual(current);
+    expect(promotedReceipt.origin.kind).toBe('qualified-construction');
+    expect(promotedReceipt).not.toHaveProperty('qualified');
+    f.updateMetadata(promotedReceipt);
+    expect(selectCompletedSeed(current, f.control())?.origin.operation).toBe('reused');
+    expect(selectCompletedSeed(f.intent, f.control())).toBeUndefined();
+    expect(() => selectQualifiedSeed({ ...current, profile: 'icu' }, control)).toThrow(
+      'cannot change seed slot',
+    );
+    expect(() =>
+      selectQualifiedSeed(current, { ...control, evidenceDigest: 'unverified' }),
+    ).toThrow('authenticated evidence digest');
+    writeFileSync(f.frozen, 'changed frozen constructor bytes');
+    expect(() => selectQualifiedSeed(current, control)).toThrow(
+      'qualified seed input bytes differ',
+    );
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+function bootstrapFiles(root: string) {
+  const share = path.join(root, 'share');
+  mkdirSync(path.join(share, 'extension'), { recursive: true });
+  for (const name of [
+    'postgres.bki',
+    'pg_hba.conf.sample',
+    'pg_ident.conf.sample',
+    'postgresql.conf.sample',
+    'snowball_create.sql',
+    'information_schema.sql',
+    'sql_features.txt',
+    'system_constraints.sql',
+    'system_functions.sql',
+    'system_views.sql',
+  ])
+    writeFileSync(path.join(share, name), `actual ${name} bytes\n`);
+  writeFileSync(path.join(share, 'extension/plpgsql.control'), "default_version = '1.0'\n");
+  writeFileSync(path.join(share, 'extension/plpgsql--1.0.sql'), 'actual language bootstrap SQL\n');
+  return share;
+}
+
+test('actual archive/receipt/source join distinguishes changed content from fresh control/WAL entropy', async () => {
+  const f = await fixture('native');
+  const repository = mkdtempSync(path.join(tmpdir(), 'seed-causal-source-'));
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
+  const commit = () => {
+    git('add', '.');
+    git(
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit',
+      '-qm',
+      'source',
+    );
+    return { commit: git('rev-parse', 'HEAD'), tree: git('rev-parse', 'HEAD^{tree}') };
+  };
+  try {
+    git('init', '-q');
+    writeFileSync(path.join(repository, 'source.mts'), '// source');
+    const originalSource = commit();
+    const share = bootstrapFiles(f.root);
+    const oldContent = captureSeedContentIntent(
+      f.intent,
+      { contract: 'actual desired contents' },
+      share,
+    );
+    const adopted = selectCompletedSeed(
+      f.intent,
+      { ...f.control(), metadata: undefined, operation: 'adopt' },
+      oldContent,
+    );
+    writeSeedConstructionReceipt(
+      f.receiptPath,
+      f.intent,
+      f.frozen,
+      f.pgdata,
+      adopted?.origin,
+      oldContent,
+    );
+    const contents = readFileSync(f.receiptPath, 'utf8');
+    const plain = (file: string) => {
+      const { path: _, ...value } = identity(file);
+      return value;
+    };
+    const anchor = {
+      schema: SEED_CONSTRUCTION_ANCHOR_SCHEMA,
+      source: originalSource,
+      publication,
+      seeds: [
+        {
+          family: 'native',
+          target: f.intent.target,
+          profile: f.intent.profile,
+          archive: plain(f.assets.archive),
+          manifest: plain(f.assets.manifest),
+          receipt: { ...plain(f.receiptPath), contents },
+          producer: {
+            evidenceDigest: `sha256:${'f'.repeat(64)}`,
+            invocationId: 'original-PR-construction',
+            root: '//resource:seed',
+            configuration: 'config',
+            output: 'seed.seed-construction.json',
+          },
+        },
+      ],
+    };
+    const file = path.join(repository, seedConstructionAnchorPath);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(anchor));
+    const source = commit();
+    const declaration = readDeclaredSeedConstructionAnchor(source, repository)!;
+    writeFileSync(path.join(share, 'postgres.bki'), 'changed desired bootstrap catalog');
+    const newContent = captureSeedContentIntent(
+      f.intent,
+      { contract: 'actual desired contents' },
+      share,
+    );
+    writeFileSync(path.join(f.pgdata, 'global/pg_control'), 'fresh actual control');
+    writeFileSync(path.join(f.pgdata, 'pg_wal/000000010000000000000001'), 'fresh actual WAL');
+    writeFileSync(f.frozen, await createDeterministicTar(f.pgdata));
+    const current = await packageClusterSeed({
+      family: 'native',
+      target: f.intent.target,
+      profile: 'standard',
+      pgdata: f.pgdata,
+      runtime: path.dirname(path.dirname(f.inputs.postgres)),
+      contract: f.invocation.contract,
+      version: publication.version,
+      runtimeVersion: '0.3.2',
+      outputDir: path.join(f.root, 'current-assets'),
+    });
+    const receipt = writeSeedConstructionReceipt(
+      f.receiptPath,
+      f.intent,
+      f.frozen,
+      f.pgdata,
+      undefined,
+      newContent,
+    );
+    const qualified = (file: string) => ({
+      frozenPath: file,
+      label: '//resource:seed',
+      ...plain(file),
+    });
+    const observation: any = {
+      products: [
+        {
+          product: { id: publication.product },
+          productArtifacts: [
+            {
+              id: 'current-archive',
+              kind: 'native-seeds',
+              target: f.intent.target,
+              name: path.basename(current.archive),
+              qualifiedFiles: [qualified(current.archive)],
+            },
+            {
+              id: 'current-descriptor',
+              kind: 'native-seeds',
+              target: f.intent.target,
+              name: path.basename(current.manifest),
+              qualifiedFiles: [qualified(current.manifest)],
+            },
+          ],
+          construction: [
+            {
+              roots: [{ label: '//resource:seed' }],
+              seedConstructions: [
+                { path: 'seed.seed-construction.json', contents: JSON.stringify(receipt) },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const input = { declaration, source, publication, observation, artifactId: 'current-archive' };
+    expect(seedArchiveHasChangedDeclaredContents(input)).toBe(true);
+    const entropyOnly = writeSeedConstructionReceipt(
+      f.receiptPath,
+      f.intent,
+      f.frozen,
+      f.pgdata,
+      undefined,
+      oldContent,
+    );
+    observation.products[0].construction[0].seedConstructions[0].contents =
+      JSON.stringify(entropyOnly);
+    expect(seedArchiveHasChangedDeclaredContents(input)).toBe(false);
+    expect(() =>
+      seedArchiveHasChangedDeclaredContents({
+        ...input,
+        publication: { ...publication, publicationSha: '1'.repeat(40) },
+      }),
+    ).toThrow('completed origin differs');
+    const wrongTree = structuredClone(entropyOnly);
+    wrongTree.pgdata.treeSha256 = '1'.repeat(64);
+    observation.products[0].construction[0].seedConstructions[0].contents =
+      JSON.stringify(wrongTree);
+    expect(() => seedArchiveHasChangedDeclaredContents(input)).toThrow('PGDATA differs');
+    writeFileSync(current.archive, 'substituted physical archive');
+    expect(() => seedArchiveHasChangedDeclaredContents(input)).toThrow('public File changed');
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('desired content binds actual bootstrap/ABI/invocation/ICU, independent of tool comments and version envelopes', async () => {
+  const f = await fixture('native');
+  try {
+    const share = bootstrapFiles(f.root);
+    const invocation = {
+      arguments: ['--encoding=UTF8'],
+      abi: 'real catalog/control ABI',
+      contract: 'PG18',
+    };
+    const content = () => captureSeedContentIntent(f.intent, invocation, share);
+    const original = content();
+    writeFileSync(f.inputs.tool, '// constructor comment changed\n');
+    writeFileSync(f.inputs.postgres, 'same valid runtime with different version envelope\n');
+    expect(content()).toEqual(original);
+    expect(captureSeedConstructionIntent(f.intent, f.invocation, f.inputs)).not.toEqual(f.intent);
+    writeFileSync(path.join(share, 'postgres.bki'), 'actual changed desired catalog\n');
+    expect(content()).not.toEqual(original);
+    expect(
+      captureSeedContentIntent(f.intent, { ...invocation, abi: 'changed ABI' }, share),
+    ).not.toEqual(content());
+    expect(
+      captureSeedContentIntent(
+        f.intent,
+        { ...invocation, arguments: ['--encoding=LATIN1'] },
+        share,
+      ),
+    ).not.toEqual(content());
+    const icu = path.join(f.root, 'actual-icu');
+    mkdirSync(icu);
+    writeFileSync(path.join(icu, 'data.dat'), 'ICU one');
+    const icuContent = captureSeedContentIntent(
+      { ...f.intent, profile: 'icu' },
+      invocation,
+      share,
+      icu,
+    );
+    writeFileSync(path.join(icu, 'data.dat'), 'ICU two');
+    expect(
+      captureSeedContentIntent({ ...f.intent, profile: 'icu' }, invocation, share, icu),
+    ).not.toEqual(icuContent);
+    writeFileSync(
+      path.join(share, 'extension/plpgsql.control'),
+      "default_version = '1.0'\ndefault_version = '2.0'\n",
+    );
+    expect(() => content()).toThrow('one declared');
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+for (const family of ['native', 'wasix'] as const) {
+  test(`${family} fixed legacy adoption retains exact public data through comments/versions and changes only on desired input`, async () => {
+    const f = await fixture(family);
+    try {
+      const share = bootstrapFiles(f.root);
+      const content = captureSeedContentIntent(
+        f.intent,
+        { contract: 'actual desired contract' },
+        share,
+      );
+      const adoption = selectCompletedSeed(
+        f.intent,
+        { ...f.control(), operation: 'adopt', metadata: undefined },
+        content,
+      );
+      const receipt = writeSeedConstructionReceipt(
+        f.receiptPath,
+        f.intent,
+        f.frozen,
+        f.pgdata,
+        adoption?.origin,
+        content,
+      );
+      const contents = readFileSync(f.receiptPath, 'utf8');
+      const anchor = {
+        schema: SEED_CONSTRUCTION_ANCHOR_SCHEMA,
+        source: { commit: 'd'.repeat(40), tree: 'e'.repeat(40) },
+        publication,
+        seeds: [
+          {
+            family,
+            target: f.intent.target,
+            profile: f.intent.profile,
+            archive: identity(f.assets.archive),
+            manifest: identity(f.assets.manifest),
+            receipt: { ...identity(f.receiptPath), contents },
+            producer: {
+              evidenceDigest: `sha256:${'f'.repeat(64)}`,
+              invocationId: 'original-PR-construction',
+              root: '//source:resource',
+              configuration: 'actual-root-config',
+              output: 'actual-resource.tar',
+            },
+          },
+        ],
+      };
+      // Transport paths are not part of the immutable source contract.
+      for (const seed of anchor.seeds)
+        for (const field of ['archive', 'manifest', 'receipt']) delete seed[field].path;
+      const anchorPath = path.join(f.root, 'construction-anchor.json');
+      writeFileSync(anchorPath, JSON.stringify(validateSeedConstructionAnchor(anchor)));
+      const control = { ...f.control(), metadata: undefined, anchor: identity(anchorPath) };
+      writeFileSync(f.inputs.postgres, 'current valid version wrapper');
+      writeFileSync(f.inputs.tool, '// current worker comments');
+      const current = captureSeedConstructionIntent(f.intent, f.invocation, f.inputs);
+      const selected = selectCompletedSeed(current, control, content);
+      expect(selected?.origin.operation).toBe('reused');
+      expect(selected?.origin.anchor.source).toEqual(anchor.source);
+      expect(selected?.origin).not.toHaveProperty('metadata');
+      expect(selected?.archive).toBe(f.assets.archive);
+      const reusedReceipt = writeSeedConstructionReceipt(
+        f.receiptPath,
+        current,
+        f.frozen,
+        f.pgdata,
+        selected?.origin,
+        content,
+      );
+      expect(reusedReceipt.pgdata).toEqual(receipt.pgdata);
+      f.updateMetadata(reusedReceipt);
+      expect(selectCompletedSeed(current, f.control(), content)?.origin.operation).toBe('reused');
+      writeFileSync(path.join(share, 'postgres.bki'), 'genuinely changed catalog content');
+      const changed = captureSeedContentIntent(
+        f.intent,
+        { contract: 'actual desired contract' },
+        share,
+      );
+      expect(selectCompletedSeed(current, control, changed)).toBeUndefined();
+      expect(() => selectCompletedSeed(current, control)).toThrow('observed desired');
+      expect(() =>
+        selectCompletedSeed(
+          current,
+          { ...control, publication: { ...publication, publicationTree: '1'.repeat(40) } },
+          content,
+        ),
+      ).toThrow('completed origin differs');
+      const edited = structuredClone(anchor);
+      edited.seeds[0].receipt.contents += ' ';
+      expect(() => validateSeedConstructionAnchor(edited)).toThrow('receipt size differs');
+      const fabricated = structuredClone(anchor);
+      const raw = JSON.parse(fabricated.seeds[0].receipt.contents);
+      raw.origin = { kind: 'constructed' };
+      fabricated.seeds[0].receipt.contents = JSON.stringify(raw);
+      fabricated.seeds[0].receipt.size = Buffer.byteLength(fabricated.seeds[0].receipt.contents);
+      fabricated.seeds[0].receipt.sha256 = createHash('sha256')
+        .update(fabricated.seeds[0].receipt.contents)
+        .digest('hex');
+      expect(() => validateSeedConstructionAnchor(fabricated)).toThrow('explicit adoption');
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('copied seed creator facts survive version promotion while WASIX consumer binds actual final bytes', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'seed-producer-identity-'));
+  const contract = JSON.parse(
+    readFileSync(
+      new URL('../../src/database-resources/contracts/contract.json', import.meta.url),
+      'utf8',
+    ),
+  );
+  const publication = {
+    product: 'database-resources',
+    version: '0.2.2',
+    tagName: 'database-resources-v0.2.2',
+    publicationSha: 'a'.repeat(40),
+    publicationTree: 'b'.repeat(40),
+    releaseSha: 'c'.repeat(40),
+  };
+  const id = (file: string) => {
+    return identity(file);
+  };
+  try {
+    for (const family of ['native', 'wasix'] as const) {
+      const base = path.join(root, family);
+      const pgdata = path.join(base, 'pgdata');
+      for (const dir of contract.pgdataDirectories)
+        mkdirSync(path.join(pgdata, dir), { recursive: true });
+      writeFileSync(path.join(pgdata, 'PG_VERSION'), '18\n');
+      writeFileSync(path.join(pgdata, 'global/pg_control'), 'opaque original control');
+      writeFileSync(path.join(pgdata, 'pg_wal/000000010000000000000001'), 'opaque original WAL');
+      const runtime = path.join(base, 'runtime');
+      mkdirSync(path.join(runtime, 'bin'), { recursive: true });
+      writeFileSync(path.join(runtime, 'bin/postgres'), 'original actual postgres bytes');
+      writeFileSync(path.join(runtime, 'bin/initdb'), 'original actual initdb bytes');
+      const target = family === 'native' ? 'linux-x64-gnu' : 'portable';
+      const slot = { family, target, profile: 'standard' as const };
+      const originalProducer = captureSeedProducerIdentity(runtime, target);
+      const bootstrap = path.join(base, 'bootstrap.sql');
+      writeFileSync(bootstrap, 'declared same bootstrap content');
+      const content = captureSeedConstructionIntent(slot, { contract }, { bootstrap });
+      const frozen = path.join(base, 'frozen.tar');
+      writeFileSync(frozen, await createDeterministicTar(pgdata));
+      const assets = await packageClusterSeed({
+        family,
+        target,
+        profile: 'standard',
+        pgdata,
+        runtime,
+        contract,
+        version: '0.2.2',
+        runtimeVersion: '0.3.2',
+        outputDir: path.join(base, 'public'),
+      });
+      writeFileSync(path.join(runtime, 'bin/postgres'), 'preversion current actual postgres');
+      writeFileSync(path.join(runtime, 'bin/initdb'), 'preversion current actual initdb');
+      const beforeIntent = captureSeedConstructionIntent(
+        slot,
+        { contract, producer: captureSeedProducerIdentity(runtime, target) },
+        { runtime },
+      );
+      const fresh = writeSeedConstructionReceipt(
+        path.join(base, 'fresh.seed-construction.json'),
+        beforeIntent,
+        frozen,
+        pgdata,
+      );
+      expect(seedProducerIdentity(fresh)).toEqual(captureSeedProducerIdentity(runtime, target));
+      expect(
+        seedProducerIdentity({
+          ...fresh,
+          intent: {
+            ...fresh.intent,
+            invocation: { producer: { ...originalProducer, extra: 'never copied into source' } },
+          },
+        }),
+      ).toEqual(originalProducer);
+      const completed = selectCompletedSeed(
+        beforeIntent,
+        {
+          operation: 'adopt',
+          publication,
+          archive: id(assets.archive),
+          manifest: id(assets.manifest),
+        },
+        content,
+      )!;
+      const receiptFile = path.join(base, 'adopted.seed-construction.json');
+      const adopted = writeSeedConstructionReceipt(
+        receiptFile,
+        beforeIntent,
+        frozen,
+        pgdata,
+        completed.origin,
+        content,
+        completed.sourceManifest,
+      );
+      expect(seedProducerIdentity(adopted)).toEqual(originalProducer);
+      expect(() => seedProducerIdentity({ ...adopted, sourceManifest: undefined })).toThrow(
+        'original completed descriptor',
+      );
+      expect(() =>
+        validateSeedConstructionReceipt({
+          ...adopted,
+          sourceManifest: {
+            ...adopted.sourceManifest,
+            contents: adopted.sourceManifest!.contents + ' ',
+          },
+        }),
+      ).toThrow('descriptor bytes differ');
+      writeFileSync(path.join(runtime, 'bin/postgres'), 'final compiled bumped runtime bytes');
+      writeFileSync(path.join(runtime, 'bin/initdb'), 'final compiled bumped initdb bytes');
+      const finalIntent = captureSeedConstructionIntent(
+        slot,
+        { contract, producer: captureSeedProducerIdentity(runtime, target) },
+        { runtime },
+      );
+      const promotion = {
+        source: { commit: 'd'.repeat(40), tree: 'e'.repeat(40) },
+        evidenceDigest: `sha256:${'f'.repeat(64)}`,
+        invocationId: 'original-qualified-construction',
+        frozen: id(frozen),
+        receipt: id(receiptFile),
+        transition: {
+          source: { commit: '1'.repeat(40), tree: '2'.repeat(40) },
+          updatesSha256: '3'.repeat(64),
+        },
+      };
+      const selected = selectQualifiedSeed(finalIntent, promotion, content)!;
+      const promoted = writePromotedSeedReceipt(
+        path.join(base, 'promoted.seed-construction.json'),
+        selected,
+        frozen,
+        pgdata,
+      );
+      expect(promoted.intent).toEqual(adopted.intent);
+      expect(promoted.sourceManifest).toEqual(adopted.sourceManifest);
+      expect(promoted.pgdata).toEqual(adopted.pgdata);
+      expect(seedProducerIdentity(promoted)).toEqual(originalProducer);
+      const final = await packageClusterSeed({
+        family,
+        target,
+        profile: 'standard',
+        pgdata,
+        runtime,
+        contract,
+        version: '0.2.3',
+        runtimeVersion: '0.3.3',
+        outputDir: path.join(base, 'final'),
+        producer: seedProducerIdentity(promoted),
+        nativeSourceManifest: family === 'native' ? promoted.sourceManifest?.contents : undefined,
+      });
+      const descriptor = JSON.parse(readFileSync(final.manifest, 'utf8'));
+      expect(descriptor.runtime.version).toBe(
+        family === 'native'
+          ? JSON.parse(promoted.sourceManifest?.contents ?? '{}').runtime?.version
+          : '0.3.3',
+      );
+      if (family === 'native')
+        expect({
+          postgresSha256: descriptor.source.postgresSha256,
+          initdbSha256: descriptor.source.initdbSha256,
+        }).toEqual(originalProducer);
+      else {
+        expect(descriptor.runtime.consumerSha256).toBe(
+          captureSeedProducerIdentity(runtime, target).postgresSha256,
+        );
+        expect(descriptor.runtime.producerSha256).toBe(originalProducer.postgresSha256);
+        expect(descriptor.runtime.initdbSha256).toBe(originalProducer.initdbSha256);
+        expect(descriptor.runtime.consumerSha256).not.toBe(descriptor.runtime.producerSha256);
+      }
+      writeFileSync(bootstrap, 'changed desired bootstrap content');
+      const changed = captureSeedConstructionIntent(slot, { contract }, { bootstrap });
+      expect(() => selectQualifiedSeed(finalIntent, promotion, changed)).toThrow(
+        'declared seed contents',
+      );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

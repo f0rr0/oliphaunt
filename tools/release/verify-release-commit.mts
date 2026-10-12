@@ -3,15 +3,15 @@ import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } fr
 import path from 'node:path';
 import process from 'node:process';
 import { electronReleaseDependencies } from '../../src/examples/tools/example-release-dependencies.mts';
-import { exampleCargoReleaseVersionBindings } from './example-cargo-versions.mts';
 import { isDefaultExtensionRequirement } from './consumer-compatibility.mts';
+import { exampleCargoReleaseVersionBindings } from './example-cargo-versions.mts';
 import {
   nativeToolsOptionalPackageProducts,
   registryPackageRows,
 } from './release-artifact-targets.mts';
 import {
-  buildBoundCompatibilityProducts,
   requirePublicSupportTransition,
+  resolveBuildBoundCompatibilityProducts,
 } from './release-dependency-plan.mts';
 import {
   compatibilityVersionEntries,
@@ -26,7 +26,6 @@ const ROOT = path.resolve(import.meta.dir, '../..');
 const SEMVER =
   /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:[.](?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:[.][0-9A-Za-z-]+)*)?$/u;
 const CARGO_DEPENDENCY_TABLES = new Set(['dependencies', 'dev-dependencies', 'build-dependencies']);
-let cachedDerivedRules;
 
 function error(message) {
   return new Error(`${TOOL}: ${message}`);
@@ -321,9 +320,7 @@ function structuredRuleKey(type, file, parts) {
   return `${type}\0${file}\0${pathKey(parts)}`;
 }
 
-function derivedVersionRules() {
-  if (cachedDerivedRules !== undefined) return cachedDerivedRules;
-  const products = loadProducts(TOOL);
+function derivedVersionRules(products, buildBound, suppliedBuildBound) {
   const structured = new Map();
   const text = new Map();
   const addStructured = (
@@ -344,7 +341,24 @@ function derivedVersionRules() {
     ) {
       throw error(`conflicting derived version rules for ${file}:${parts.join('.')}`);
     }
-    const rule = { sourceProduct, wrapped, consumerProduct };
+    const rule = {
+      sourceProduct,
+      wrapped,
+      consumerProduct,
+      // RP may update installed ecosystem requirements of selected packages.
+      // A supplied held map cannot authorize generated runtime metadata/consts
+      // merely because the independent producer is also selected.
+      allowSelectedProducerRetarget:
+        !suppliedBuildBound ||
+        (type === 'json' &&
+          file.endsWith('/package.json') &&
+          ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'].includes(
+            parts[0],
+          )) ||
+        (type === 'toml' &&
+          parts.at(-1) === 'version' &&
+          CARGO_DEPENDENCY_TABLES.has(parts.at(-3))),
+    };
     structured.set(key, rule);
     if (
       type === 'json' &&
@@ -372,7 +386,6 @@ function derivedVersionRules() {
     text.set(file, rule);
   };
 
-  const buildBound = buildBoundCompatibilityProducts(products);
   for (const entry of compatibilityVersionEntries(products, {
     requireSourceProduct: true,
     prefix: TOOL,
@@ -468,6 +481,7 @@ function derivedVersionRules() {
   }
   for (const rule of text.values()) {
     if (rule.consumerProduct !== undefined) {
+      rule.allowSelectedProducerRetarget = !suppliedBuildBound;
       rule.buildBound = buildBound.get(rule.consumerProduct)?.has(rule.sourceProduct) ?? false;
       rule.defaultInstall = isDefaultExtensionRequirement(
         products,
@@ -476,8 +490,7 @@ function derivedVersionRules() {
       );
     }
   }
-  cachedDerivedRules = { structured, text };
-  return cachedDerivedRules;
+  return { structured, text };
 }
 
 function productTransition(rule, before, after, transitions, productVersions) {
@@ -498,7 +511,9 @@ function productTransition(rule, before, after, transitions, productVersions) {
       (rule.defaultInstall
         ? Bun.semver.order(after, productVersions.get(rule.sourceProduct)) <= 0
         : after === productVersions.get(rule.sourceProduct) &&
-          (rule.buildBound || transitions.some(({ product }) => product === rule.sourceProduct))) &&
+          (rule.buildBound ||
+            (rule.allowSelectedProducerRetarget &&
+              transitions.some(({ product }) => product === rule.sourceProduct)))) &&
       Bun.semver.order(after, before) > 0
     );
   }
@@ -801,8 +816,11 @@ function validateAllowedFileSemantics({
   derivedFiles,
   transitions,
   productVersions,
+  products,
+  buildBound,
+  suppliedBuildBound,
 }) {
-  const derivedRules = derivedVersionRules();
+  const derivedRules = derivedVersionRules(products, buildBound, suppliedBuildBound);
   const cargoVersions = new Map();
   for (const file of changed) {
     if (file === '.release-please-manifest.json' || changelogs.has(file)) continue;
@@ -935,7 +953,10 @@ export function releaseProductsFromManifests(config, before, after) {
   return changedProducts;
 }
 
-export function verifyReleaseCommit({ repo = ROOT, headRef = 'HEAD', products }) {
+export function verifyReleaseCommit(options) {
+  const { repo = ROOT, headRef = 'HEAD', products } = options;
+  const metadata = loadProducts(TOOL);
+  const buildBound = resolveBuildBoundCompatibilityProducts(metadata, options);
   if (
     !Array.isArray(products) ||
     products.length === 0 ||
@@ -1145,9 +1166,11 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = 'HEAD', products })
     productVersions: new Map(
       [...byProduct].map(([product, { packagePath }]) => [product, after[packagePath]]),
     ),
+    products: metadata,
+    buildBound,
+    suppliedBuildBound: Object.hasOwn(options, 'buildBound'),
   });
 
-  const metadata = loadProducts(TOOL);
   for (const entry of publicSupportEntries()) {
     const transition = transitions.find(({ product }) => product === entry.product);
     if (!transition || transition.before === '0.0.0') continue;
@@ -1171,13 +1194,14 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = 'HEAD', products })
   };
 }
 
-export function latestVerifiedReleaseCommit({ repo = ROOT, headRef = 'HEAD' } = {}) {
+export function latestVerifiedReleaseCommit(options = {}) {
+  const { repo = ROOT, headRef = 'HEAD' } = options;
   const { release, commit } = releaseHistory(repo);
   if (releaseCommit(repo, headRef) !== commit)
     throw error('latest release history belongs to another head');
   if (release === '') return null;
   const { products } = deriveReleaseProducts({ repo, headRef: release });
-  return verifyReleaseCommit({ repo, headRef: release, products });
+  return verifyReleaseCommit({ ...options, repo, headRef: release, products });
 }
 
 function parseArgs(argv) {

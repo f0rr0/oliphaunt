@@ -6,11 +6,16 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE", "NATIVE_C_COMPATIBLE", "NATIVE_EMBEDDED_DEFINES", "NATIVE_BUILTIN_SNOWBALL", "NATIVE_BUILTIN_SNOWBALL_DEPS", "NATIVE_LINKOPTS", "NATIVE_RELEASE_LINKOPTS", "NATIVE_WRAPPER_COPTS", "NATIVE_WRAPPER_DEFINES", "NATIVE_BUILTIN_PLPGSQL_DEPS", "NATIVE_RUNTIME_LINKOPTS", "NATIVE_EMBEDDED_MODULE_LINKOPTS", "NATIVE_ELF_C_COMPATIBLE", "NATIVE_MACOS_COMPATIBLE", "NATIVE_WINDOWS_COMPATIBLE", "NATIVE_HOST_COMPATIBLE", "NATIVE_LINUX_COMPATIBLE", "NATIVE_UNIX_COMPATIBLE")
 load("//build_defs/native:windows_link.bzl", "postgres_windows_exports")
 load("//build_defs/native:mobile.bzl", "native_apple_runtime_targets", "native_ios_runtime_targets")
+load("//build_defs/native/apple:static-carrier-consumer.bzl", "apple_static_carrier_consumer_test")
+load("//build_defs/native/android:runtime.bzl", "native_android_runtime_targets")
 load("//build_defs/foundation:bun.bzl", "bun_script_test")
 load("//build_defs/native/carriers:defs.bzl", "native_desktop_carriers")
+load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
 load("//build_defs/native/carriers:tests.bzl", "native_cargo_consumer_test")
 
 package(default_visibility = ["//visibility:public"])
+
+native_release_checksum_family(product = "liboliphaunt-native")
 
 exports_files(["release.toml", "postgres/series", "include/oliphaunt.h", "bin/android-cxx-runtime.map", "tools/native-mobile-abi-contract.mts"] + glob(["patches/**/*.patch"]))
 exports_files(["THIRD_PARTY_NOTICES.md", "tools/native-runtime-payload.mts", "tools/native-runtime-payload-policy.json"])
@@ -86,8 +91,26 @@ cc_binary(
 )
 
 alias(name = "runtime_shared", actual = select({"//build_defs/native:macos_arm64": ":liboliphaunt.dylib", "//build_defs/native:windows_x64": ":oliphaunt.dll", "//conditions:default": ":liboliphaunt.so"}))
+native_android_runtime_targets()
 native_ios_runtime_targets()
-native_apple_runtime_targets()
+native_apple_runtime_targets(qualification = [
+    ":apple_final_contract_test",
+    "//build_defs/native/apple:framework_contract_test",
+    ":apple_static_carrier_consumer_test",
+])
+apple_static_carrier_consumer_test(
+    name = "apple_static_carrier_consumer_test",
+    base = ":apple_swiftpm",
+    ios_resources = ":apple_resources",
+    macos_resources = ":apple_macos_resources",
+    base_manifest = ":apple_ios_manifest",
+    leaves = ["//build_defs/extensions/mobile/final:oliphaunt_extension_contrib_pg18_ios_xcframework"],
+    extensions = ["cube", "pg_trgm"],
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
+    size = "large",
+    timeout = "long",
+    tags = ["no-remote"],
+)
 # The ABI receipt consumes the producer's exact File, including the iOS archive.
 alias(name = "runtime_abi_binary", actual = select({"//build_defs/native:ios": ":mobile_static_archive", "//conditions:default": ":runtime_shared"}))
 filegroup(name = "runtime_windows_interface", srcs = [":oliphaunt.dll"], output_group = "interface_library", target_compatible_with = NATIVE_WINDOWS_COMPATIBLE)
@@ -205,6 +228,11 @@ native_desktop_carriers(
     root_mappings = [":runtime_library", ":runtime_public_header", ":runtime_embedded_modules", ":runtime_windows_import_library", ":runtime_icu_libraries"],
     runtime_mappings = [":runtime_binaries", ":runtime_libpq", ":runtime_server_modules", ":runtime_catalog", ":runtime_stopwords", ":runtime_extension_data", ":runtime_timezone", ":runtime_timezone_abbreviations", ":runtime_icu_libraries"],
     binary_mappings = [":runtime_library", ":runtime_embedded_modules", ":runtime_binaries", ":runtime_libpq", ":runtime_server_modules", ":runtime_icu_libraries"],
+    qualification = [":installed_cargo_test"] + select({
+        "//build_defs/native:macos_arm64": [":host_runtime_sql_test"],
+        "//build_defs/native:windows_x64": [":host_runtime_sql_test"],
+        "//conditions:default": [":unix_runtime_sql_test"],
+    }),
 )
 
 native_cargo_consumer_test(

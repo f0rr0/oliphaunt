@@ -75,7 +75,8 @@ export async function validateSelectedNativeSeed(
   if (
     runtime?.product !== 'liboliphaunt-native' ||
     runtime.engineFamily !== 'native' ||
-    runtime.version !== runtimeVersion ||
+    !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(runtime.version ?? '') ||
+    !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(runtimeVersion) ||
     runtime.target !== target ||
     runtime.postgresMajor !== 18 ||
     runtime.physicalFormat !== 'native-pg18-v1' ||

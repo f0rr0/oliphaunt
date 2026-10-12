@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { SEED_CONSTRUCTION_RECEIPT_SUFFIX } from '../../build_defs/resources/seed_construction.mts';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import {
   type NativeBuildEvidence,
@@ -28,6 +29,7 @@ function finalFiles(evidence: NativeBuildEvidence) {
   const files: File[] = [];
   const unsupported = [];
   const supportedRoots = [];
+  const artifactFileKeys = new Set<string>();
   for (const [cohort, value] of evidence.cohorts.entries()) {
     const selected = new Set<string>();
     const sourceInputs = new Set(nativeSwiftSourceTagRoots(value));
@@ -46,10 +48,22 @@ function finalFiles(evidence: NativeBuildEvidence) {
       for (const output of pkg.outputs) selected.add(output.path);
     }
     const seen = new Map<string, unknown>();
-    for (const output of value.outputs.filter(({ path }) => selected.has(path)))
+    // Promotion needs the exact original constructor Files, not a reconstruction
+    // from a public compressed archive. They remain internal evidence inputs.
+    const seedFiles = new Set(
+      (value.seedConstructions ?? []).flatMap(({ path: file }) => [
+        file,
+        `${file.slice(0, -SEED_CONSTRUCTION_RECEIPT_SUFFIX.length)}.tar`,
+      ]),
+    );
+    for (const output of [
+      ...value.outputs.filter(({ path }) => selected.has(path)),
+      ...value.inputs.filter(({ path }) => seedFiles.has(path)),
+    ])
       for (const member of output.members) {
         if (member.type !== 'file') continue;
         const name = member.path ? `${output.path}/${member.path}` : output.path;
+        if (selected.has(output.path)) artifactFileKeys.add(`${cohort}\0${name}`);
         const identity = { ...member, path: name };
         if (seen.has(name)) {
           deepStrictEqual(seen.get(name), identity, 'overlapping native final file declarations');
@@ -60,7 +74,7 @@ function finalFiles(evidence: NativeBuildEvidence) {
       }
   }
   files.sort((left, right) => left.cohort - right.cohort || left.path.localeCompare(right.path));
-  return { files, unsupported, supportedRoots };
+  return { files, unsupported, supportedRoots, artifactFileKeys };
 }
 
 /** No receipt is added: source/configuration/run and file identities remain in evidence. */
@@ -98,13 +112,18 @@ export function readNativeBuildFinalFiles(
   evidence: NativeBuildEvidence,
   expected: Parameters<typeof validateNativeBuildEvidence>[1],
 ) {
-  validateNativeBuildEvidence(evidence, expected);
+  const qualification = validateNativeBuildEvidence(evidence, expected);
   const root = requireSafeDirectoryChain(path.resolve(directory), { label: 'native file packet' });
-  const { supportedRoots, ...inventory } = finalFiles(evidence);
+  const { supportedRoots, artifactFileKeys, ...inventory } = finalFiles(evidence);
   const transport = path.join(root, 'files');
   if (!existsSync(transport)) {
     if (inventory.files.length) throw new Error('native final file transport is missing');
-    return { scope: 'construction' as const, ...inventory, artifactRoots: [] as string[] };
+    return {
+      scope: 'construction' as const,
+      qualification,
+      ...inventory,
+      artifactRoots: [] as string[],
+    };
   }
   const expectedFiles = inventory.files.map(({ cohort, path }) => `${cohort}/${path}`).sort();
   const expectedDirectories = new Set(['']);
@@ -176,23 +195,68 @@ export function readNativeBuildFinalFiles(
   });
   return {
     scope: 'construction' as const,
+    qualification,
     ...inventory,
-    artifactRoots: captures.map(({ absolute }) => absolute),
+    artifactRoots: captures.flatMap(({ absolute }, index) =>
+      artifactFileKeys.has(`${inventory.files[index].cohort}\0${inventory.files[index].path}`)
+        ? [absolute]
+        : [],
+    ),
     assertUnchanged,
     /** Restore only verified captured modes in owned staging, never in downloaded bytes. */
-    stage(options: { stageDirectory?: string } = {}) {
+    stage(
+      options: {
+        stageDirectory?: string;
+        excludeRoles?: readonly string[];
+        products?: readonly string[];
+        artifactPhase?: 'pre-version' | 'final';
+      } = {},
+    ) {
       assertUnchanged();
+      if (
+        options.artifactPhase !== undefined &&
+        !['pre-version', 'final'].includes(options.artifactPhase)
+      )
+        throw new Error('native File staging requires a conventional inventory phase');
+      if (
+        options.products !== undefined &&
+        (!Array.isArray(options.products) ||
+          !options.products.length ||
+          new Set(options.products).size !== options.products.length ||
+          options.products.some(
+            (id) =>
+              typeof id !== 'string' ||
+              !selected.some((cohort) => cohort.roots.some((root) => root.package.product === id)),
+          ))
+      )
+        throw new Error('native File staging requires unique observed product IDs');
+      const stagedSelection = selected.map((cohort) => ({
+        ...cohort,
+        roots: cohort.roots.filter(
+          (root) =>
+            !options.excludeRoles?.includes(root.package.role) &&
+            (options.products === undefined || options.products.includes(root.package.product)) &&
+            !(
+              options.artifactPhase === 'pre-version' &&
+              root.package.role === 'release-input' &&
+              root.package.name === 'swiftpm-extension-consumer-fixture'
+            ),
+        ),
+      }));
+      if (stagedSelection.every((cohort) => cohort.roots.length === 0)) return [];
       const identity = createHash('sha256')
         .update(
           JSON.stringify({
             source,
             github,
-            cohorts: selected.map(({ executionRoot, roots, rootConfigurations, outputs }) => ({
-              executionRoot,
-              roots,
-              rootConfigurations,
-              outputs,
-            })),
+            cohorts: stagedSelection.map(
+              ({ executionRoot, roots, rootConfigurations, outputs }) => ({
+                executionRoot,
+                roots,
+                rootConfigurations,
+                outputs,
+              }),
+            ),
           }),
         )
         .digest('hex');
@@ -204,7 +268,7 @@ export function readNativeBuildFinalFiles(
       // Existing paths cannot substitute for this validated packet, including concurrent callers.
       mkdirSync(reconstruction);
       try {
-        const cohorts = selected.map((cohort, index) => ({
+        const cohorts = stagedSelection.map((cohort, index) => ({
           ...cohort,
           executionRoot: path.join(reconstruction, String(index)),
         }));

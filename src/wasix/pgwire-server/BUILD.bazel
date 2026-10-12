@@ -1,7 +1,7 @@
 load("//build_defs/quality:sources.bzl", "rust_quality_files")
 load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_integration_test", "cargo_library", "cargo_library_test", "cargo_package_env")
 load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
-load("//build_defs/languages:source.bzl", "cargo_source_package")
+load("//build_defs/languages:source.bzl", "cargo_source_contract_test", "cargo_source_package")
 load("@wasix_adapter_cargo_metadata//:cargo.bzl", "CARGO")
 load("@wasix_adapter_crates//:defs.bzl", "all_crate_deps", "crate_deps")
 load("@wasix_release_cargo_metadata//:cargo.bzl", RELEASE_CARGO = "CARGO")
@@ -27,6 +27,9 @@ _INTEGRATION_ROOTS = glob(["tests/*.rs"])
         name = source.removeprefix("tests/").removesuffix(".rs") + "_test",
         source = source,
         srcs = glob(["tests/support/**/*.rs"]),
+        args = ["--include-ignored", "--test-threads=1"],
+        size = "large",
+        timeout = "long",
         rustc_env = {"CARGO_BIN_EXE_oliphaunt-pgwire-server": "$(rootpath :server)"},
         data = [":server", "//src/test-fixtures:rust_fixtures"],
         cargo_facts = CARGO,
@@ -41,6 +44,18 @@ rust_clippy_test(
     transitive = False,
     size = "small",
 )
-cargo_source_package(product = "oliphaunt-pgwire-server", cargo_facts = CARGO, workspace_manifest = "//src/wasix/node-addon:Cargo.toml")
+cargo_source_package(
+    product = "oliphaunt-pgwire-server",
+    cargo_facts = CARGO,
+    workspace_manifest = "//src/wasix/node-addon:Cargo.toml",
+    qualification = [":source_package_test", "//build_defs/languages/installed:pgwire_source_compile_test", ":unit_test", ":binary_test"] +
+                    [":" + source.removeprefix("tests/").removesuffix(".rs") + "_test" for source in _INTEGRATION_ROOTS if source != "tests/extensions.rs"],
+)
+cargo_source_contract_test(
+    name = "source_package_test",
+    packages = [":crate"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "small",
+)
 
 rust_quality_files()

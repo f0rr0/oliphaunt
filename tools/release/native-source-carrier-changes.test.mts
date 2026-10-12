@@ -426,7 +426,7 @@ test('seeded authentic source envelopes compare singleton and many products inde
       source: input.source,
       products: ['oliphaunt-query'],
       sources: singletonSources,
-      affectedProducts,
+      affectedProducts: affectedProducts.filter((product) => product === 'oliphaunt-query'),
     });
     assert.equal(singleton.products.length, 1);
     assert.equal(singleton.products[0].deliveryStatus, mask & 1 ? 'different' : 'identical');

@@ -1,6 +1,42 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { buildShippingInputView, selectShippingChanges } from './bazel-shipping-inputs.mts';
+import {
+  buildShippingInputView,
+  isNativeAppleBaseInputRoot,
+  selectShippingChanges,
+} from './bazel-shipping-inputs.mts';
+
+test('only the exact declared private Apple File root is transportable', () => {
+  const root = {
+    label: '@@//src/native/runtime:apple_ios_manifest_shipping',
+    package: {
+      product: 'liboliphaunt-native',
+      ecosystem: 'internal',
+      configuration: 'ios-xcframework',
+      name: 'ios.json',
+      role: 'apple-base-ios-manifest-input',
+      outputs: [{ path: 'bazel-out/cfg/bin/src/native/runtime/apple_release_assets/ios.json' }],
+    },
+  };
+  expect(isNativeAppleBaseInputRoot(root)).toBe(true);
+  for (const changed of [
+    { product: 'fixture' },
+    { ecosystem: 'github' },
+    { configuration: 'macos-arm64' },
+    { name: 'other.json' },
+    { role: 'construction' },
+    { outputs: [] },
+    { outputs: [...root.package.outputs, ...root.package.outputs] },
+    { outputs: [{ path: 'source/apple_release_assets/ios.json' }] },
+    { outputs: [{ path: 'bazel-out/cfg/bin/unrelated/ios.json' }] },
+  ])
+    expect(isNativeAppleBaseInputRoot({ ...root, package: { ...root.package, ...changed } })).toBe(
+      false,
+    );
+  expect(
+    isNativeAppleBaseInputRoot({ ...root, label: '//other:apple_ios_manifest_shipping' }),
+  ).toBe(false);
+});
 
 function fixture() {
   const exported = {
@@ -84,6 +120,56 @@ test('shipping source and packager inputs follow actual producer edges', () => {
   expect(selectShippingChanges(view.products, view, { alpha: ['test/alpha.test.c'] })).toEqual({
     affectedProducts: [],
     unclassifiedPaths: ['test/alpha.test.c'],
+  });
+});
+
+test('supplier File checks retain each sibling closure without changing the shared product view', () => {
+  const { exported, graph } = fixture();
+  exported.packages.push({
+    ...exported.packages[0],
+    name: '@example/alpha-objects',
+    outputs: [{ path: 'bazel-out/alpha.o', owner: '//:compile' }],
+  });
+  const before = buildShippingInputView(exported, graph);
+  const observed = new Map();
+  const requested = ['bazel-out/alpha.o', 'src/alpha.c', 'tools/packager', 'missing/input'];
+  expect(
+    buildShippingInputView(exported, graph, {
+      inspectPackageInputs: (pkg, consumes) => observed.set(pkg.name, requested.filter(consumes)),
+    }),
+  ).toEqual(before);
+  expect(observed.get('@example/alpha')).toEqual([
+    'bazel-out/alpha.o',
+    'src/alpha.c',
+    'tools/packager',
+  ]);
+  expect(observed.get('@example/alpha-objects')).toEqual(['src/alpha.c']);
+  graph.actions[0].mnemonic = 'Middleman';
+  observed.clear();
+  buildShippingInputView(exported, graph, {
+    inspectPackageInputs: (pkg, consumes) => observed.set(pkg.name, requested.filter(consumes)),
+  });
+  expect(observed.get('@example/alpha')).toEqual(['src/alpha.c', 'tools/packager']);
+});
+
+test('supplier File checks resolve transitive dep sets and reject the root File itself', () => {
+  const { exported, graph } = fixture();
+  graph.depSetOfFiles[1].transitiveDepSetIds = [3];
+  graph.depSetOfFiles.push({ id: 3, directArtifactIds: [1] });
+  const observed: Record<string, boolean> = {};
+  const before = buildShippingInputView(exported, graph);
+  expect(
+    buildShippingInputView(exported, graph, {
+      inspectPackageInputs(_pkg, consumes) {
+        for (const name of ['src/alpha.c', 'bazel-out/alpha.o', 'bazel-out/package.tgz'])
+          observed[name] = consumes(name);
+      },
+    }),
+  ).toEqual(before);
+  expect(observed).toEqual({
+    'src/alpha.c': true,
+    'bazel-out/alpha.o': true,
+    'bazel-out/package.tgz': false,
   });
 });
 

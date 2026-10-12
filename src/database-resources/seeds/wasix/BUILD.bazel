@@ -34,7 +34,7 @@ cargo_binary(
 cargo_library_test(
     name = "unit_test",
     all_dependencies = seed_all_crate_deps,
-    crate_features = ["cluster-seed-runner"],
+    features = ["cluster-seed-runner"],
     experimental_use_cc_common_link = 1,
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
     size = "small",

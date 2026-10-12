@@ -11,6 +11,6 @@ cargo_library()
 cargo_library_test()
 cargo_doc_test(size = "small")
 rust_clippy_test(name = "clippy_test", targets = [":lib", ":unit_test"], transitive = False, size = "small")
-cargo_source_package(product = "oliphaunt-rust")
+cargo_source_package(product = "oliphaunt-rust", qualification = ["//build_defs/languages/installed:consumer_test"])
 
 rust_quality_files()

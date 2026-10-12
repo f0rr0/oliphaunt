@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +14,7 @@ import {
   loadReleaseMetadata,
   nativeMobileComponentInputs,
   nativeMobileMemberAliasInputs,
+  nativePublicationInputProjection,
   renderReleaseMetadata,
   repositoryPath,
 } from './bazel-release-metadata.mts';
@@ -23,6 +25,103 @@ import {
   validateExtensionCatalogRows,
   wasixArtifactRows,
 } from './release-artifact-targets.mts';
+
+test('one per-run metadata snapshot projects exact completed suppliers without an auth claim', () => {
+  const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
+  const publication = {
+    product: 'liboliphaunt-wasix',
+    version: '0.3.2',
+    tagName: 'liboliphaunt-wasix-v0.3.2',
+    publicationSha: 'c'.repeat(40),
+    publicationTree: 'd'.repeat(40),
+    releaseSha: 'e'.repeat(40),
+  };
+  const input = { source, supplierPublications: [publication] };
+  const projected = nativePublicationInputProjection(input);
+  expect(projected).toEqual({
+    supplierPublications: { 'liboliphaunt-wasix@0.3.2': publication },
+    seedControls: {},
+    extensionFinalInputs: {},
+    nativeAppleBase: null,
+    nativeSwiftSource: null,
+    supplierArtifacts: {},
+    selectedProducts: [],
+    files: [],
+  });
+  input.supplierPublications[0].publicationSha = 'f'.repeat(40);
+  expect(projected.supplierPublications['liboliphaunt-wasix@0.3.2'].publicationSha).toBe(
+    'c'.repeat(40),
+  );
+  for (const corrupt of [
+    { source: { ...source, commit: 'main' } },
+    { source, supplierPublications: [{ ...publication, tagName: 'latest' }] },
+    { source, supplierPublications: [publication, publication] },
+    { source, supplierPublications: [{ ...publication, authenticated: true }] },
+    { source, ready: true },
+  ])
+    expect(() => nativePublicationInputProjection(corrupt)).toThrow();
+  expect(nativePublicationInputProjection({ source })).toEqual({
+    supplierPublications: {},
+    seedControls: {},
+    extensionFinalInputs: {},
+    nativeAppleBase: null,
+    nativeSwiftSource: null,
+    supplierArtifacts: {},
+    selectedProducts: [],
+    files: [],
+  });
+});
+
+test('the same immutable snapshot projects original final Files through the existing metadata aliases', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'native-metadata-final-import-'));
+  try {
+    const file = (name: string) => {
+      const bytes = Buffer.from(`actual retained fixture ${name}`);
+      const source = path.join(directory, name);
+      writeFileSync(source, bytes);
+      return {
+        path: source,
+        size: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        producer: {
+          evidenceDigest: `sha256:${'a'.repeat(64)}`,
+          invocationId: 'original-native-invocation',
+          root: '//src/extensions/external/pgtap:native_github_shipping',
+          configuration: 'b'.repeat(64),
+          output: `bazel-out/cfg/bin/${name}`,
+        },
+      };
+    };
+    const leaf = {
+      product: 'oliphaunt-extension-pgtap',
+      owner: 'oliphaunt-extension-pgtap',
+      version: '0.1.1',
+      family: 'native',
+      target: 'android-arm64-v8a',
+      github: [file('pgtap.tar.gz')],
+      npm: [],
+      cargo: [],
+      manifest: file('manifest.json'),
+      frozen: file('extension-artifacts.json'),
+    };
+    const snapshot = {
+      source: { commit: 'c'.repeat(40), tree: 'd'.repeat(40) },
+      extensionFinalInputs: [leaf],
+    };
+    const projected = nativePublicationInputProjection(snapshot);
+    expect(projected.files).toHaveLength(3);
+    const saved =
+      projected.extensionFinalInputs['oliphaunt-extension-pgtap/native/android-arm64-v8a'];
+    expect(saved.github[0].producer).toEqual(leaf.github[0].producer);
+    expect(saved.github[0].path).toStartWith('@oliphaunt_metadata//:extension-final-inputs/');
+    expect(projected.seedControls).toEqual({});
+    expect(projected.supplierPublications).toEqual({});
+    writeFileSync(leaf.github[0].path, 'substituted archive');
+    expect(() => nativePublicationInputProjection(snapshot)).toThrow(/bytes differ/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 function fixture(run: (root: string, write: (name: string, content: string) => void) => void) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-domain-metadata-'));
@@ -115,6 +214,10 @@ kind="wasix-runtime"
       ],
     }),
   );
+  write(
+    'src/extensions/generated/wasix/extensions.json',
+    readFileSync(path.join(root, 'src/extensions/generated/extensions.catalog.json'), 'utf8'),
+  );
   try {
     run(root, write);
   } finally {
@@ -132,6 +235,38 @@ test('native component projection preserves the parsed canonical source and watc
     expect(renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl').bzl).toContain(
       'NATIVE_COMPONENTS =',
     );
+  });
+});
+
+test('WASIX extension projection preserves all canonical members and PostGIS support metadata', () => {
+  const root = path.resolve(import.meta.dirname, '../..');
+  const file = 'src/extensions/generated/wasix/extensions.json';
+  const source = readFileSync(path.join(root, file), 'utf8');
+  const canonical = JSON.parse(source).extensions;
+  const catalog = JSON.parse(
+    readFileSync(path.join(root, 'src/extensions/generated/extensions.catalog.json'), 'utf8'),
+  );
+  fixture((fixtureRoot, write) => {
+    write(file, source);
+    const metadata = loadReleaseMetadata(fixtureRoot);
+    expect(Object.keys(metadata.wasixExtensions)).toHaveLength(39);
+    expect(Object.keys(metadata.wasixExtensions).sort()).toEqual(
+      catalog.extensions.map((row) => row['sql-name']).sort(),
+    );
+    for (const row of canonical) expect(metadata.wasixExtensions[row['sql-name']]).toEqual(row);
+    expect(metadata.wasixExtensions.postgis['native-support-modules']).toEqual([
+      {
+        name: 'postgis_deps',
+        'build-path': 'postgis/postgis/liboliphaunt_postgis_deps.so',
+        'runtime-path': 'lib/postgresql/liboliphaunt_postgis_deps.so',
+        'aot-file': 'postgis_deps-llvm-opta.bin.zst',
+      },
+    ]);
+    expect(metadata.inputs[file]).toBe(source);
+    const rendered = renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl');
+    expect(rendered.bzl).toContain('WASIX_EXTENSIONS =');
+    expect(rendered.bzl).toContain('"aot-file": "postgis_deps-llvm-opta.bin.zst"');
+    expect(rendered.extensionSourcesBzl).not.toContain('WASIX_EXTENSIONS');
   });
 });
 
@@ -261,14 +396,39 @@ roots=["fixture"]
       'oliphaunt-extension-example-3.4.5-native-ios-xcframework.zip',
       'oliphaunt-extension-example-3.4.5-native-ios-runtime.tar.gz',
       'oliphaunt-extension-example-3.4.5-native-linux-x64-gnu-runtime.tar.gz',
+      'oliphaunt-extension-example-3.4.5-wasix-portable.tar.zst',
+      'oliphaunt-extension-example-3.4.5-manifest.json',
+      'oliphaunt-extension-example-3.4.5-manifest.properties',
+      'oliphaunt-extension-example-3.4.5-swift-extension-carrier.json',
+      'oliphaunt-extension-example-3.4.5-release-assets.sha256',
     ]);
     expect(external.every((row) => row.owner === 'oliphaunt-extension-example')).toBe(true);
+    expect(
+      external.filter((row) => row.control).every((row) => row.role === 'github-release-metadata'),
+    ).toBe(true);
+    expect(
+      external.filter((row) => !row.control).every((row) => row.role === 'github-release-asset'),
+    ).toBe(true);
     expect(external.find((row) => row.kind === 'ios-xcframework')?.identity).toBe('different-stem');
     const contrib = metadata.extensionGithubArtifacts.filter(
       (row) => row.artifactProduct === 'oliphaunt-extension-contrib-pg18',
     );
-    expect(contrib.every((row) => row.owner === 'native' && row.version === '1.2.3')).toBe(true);
-    expect(contrib.every((row) => row.name.includes('-1.2.3-'))).toBe(true);
+    for (const family of ['native', 'wasix']) {
+      const owned = contrib.filter((row) => row.family === family);
+      expect(owned.length).toBeGreaterThan(0);
+      const version = metadata.products[metadata.contribOwners[family]].version;
+      expect(
+        owned.every(
+          (row) => row.owner === metadata.contribOwners[family] && row.version === version,
+        ),
+      ).toBe(true);
+      expect(owned.every((row) => row.name.includes(`-${version}-`))).toBe(true);
+      expect(owned.filter((row) => row.control).map((row) => row.kind)).toEqual(
+        family === 'native'
+          ? ['manifest-json', 'manifest-properties', 'swift-extension-carrier', 'checksums']
+          : ['manifest-json', 'manifest-properties', 'checksums'],
+      );
+    }
     expect(renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl').bzl).toContain(
       'EXTENSION_GITHUB_ARTIFACTS =',
     );
@@ -727,4 +887,107 @@ test('metadata paths cannot escape; rendered identities have no construction dep
       'repository-qualified',
     );
   });
+});
+
+test('prepared selection remains fact-only, validates canonical IDs and renders existing aliases', () => {
+  const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
+  const selected = ['native'];
+  const projected = nativePublicationInputProjection({ source, selectedProducts: selected });
+  selected.push('wasix');
+  expect(projected.selectedProducts).toEqual(['native']);
+  for (const selectedProducts of [['native', 'native'], ['../outside'], null, {}, ['native', 4]])
+    expect(() => nativePublicationInputProjection({ source, selectedProducts })).toThrow();
+  fixture((root) => {
+    const metadata = loadReleaseMetadata(root);
+    expect(
+      renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl', projected).bzl,
+    ).toContain('PREPARED_NATIVE_SELECTED_PRODUCTS = ["native"]');
+    expect(() =>
+      renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl', {
+        ...projected,
+        selectedProducts: ['absent'],
+      }),
+    ).toThrow(/unknown prepared/);
+  });
+});
+
+test('the same snapshot retains actual original Swift source File references and aliases', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'native-swift-metadata-'));
+  try {
+    const file = (name: string, root: string, member?: string) => {
+      const bytes = Buffer.from(
+        name === 'oliphaunt-react-native-ios-carriers.json'
+          ? JSON.stringify({
+              schema: 'oliphaunt-react-native-ios-carrier-v1',
+              base: {
+                product: 'liboliphaunt-native',
+                version: '0.3.3',
+                tag: 'liboliphaunt-native-v0.3.3',
+              },
+              extensions: [],
+              carriers: [],
+            })
+          : 'retained original ' + name,
+      );
+      const source = path.join(directory, name);
+      writeFileSync(source, bytes);
+      return {
+        path: source,
+        size: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        producer: {
+          evidenceDigest: 'sha256:' + 'c'.repeat(64),
+          invocationId: 'original-swift-job',
+          root,
+          configuration: 'd'.repeat(64),
+          output: 'bazel-out/cfg/bin/source_package/' + (member ? 'release-tree' : name),
+        },
+        ...(member ? { member } : {}),
+      };
+    };
+    const nativeSwiftSource = {
+      owner: 'oliphaunt-swift',
+      version: '0.8.2',
+      archive: file(
+        'Oliphaunt-source.zip',
+        '//src/native/sdks/swift:shipping_Oliphaunt-source_zip',
+      ),
+      carrier: file(
+        'oliphaunt-react-native-ios-carriers.json',
+        '//src/native/sdks/swift:shipping_oliphaunt-react-native-ios-carriers_json',
+        'src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json',
+      ),
+      ownerCatalog: file(
+        'extension-owner-catalog.json',
+        '//src/native/sdks/swift:shipping_extension-owner-catalog_json',
+      ),
+    };
+    const snapshot = {
+      source: { commit: 'a'.repeat(40), tree: 'b'.repeat(40) },
+      nativeSwiftSource,
+    };
+    const projected = nativePublicationInputProjection(snapshot);
+    expect(projected.files).toHaveLength(3);
+    expect(projected.nativeSwiftSource.nativeVersion).toBe('0.3.3');
+    expect(projected.nativeSwiftSource.carrier.member).toBe(nativeSwiftSource.carrier.member);
+    expect(projected.nativeSwiftSource.archive.producer).toEqual(
+      nativeSwiftSource.archive.producer,
+    );
+    expect(projected.nativeSwiftSource.ownerCatalog.path).toStartWith(
+      '@oliphaunt_metadata//:native-swift-source/ownerCatalog/',
+    );
+    for (const change of [
+      (value) => (value.nativeSwiftSource.owner = 'other'),
+      (value) => (value.nativeSwiftSource.archive.member = 'inside'),
+      (value) => (value.nativeSwiftSource.ownerCatalog.path = value.nativeSwiftSource.archive.path),
+    ]) {
+      const corrupt = structuredClone(snapshot);
+      change(corrupt);
+      expect(() => nativePublicationInputProjection(corrupt)).toThrow();
+    }
+    writeFileSync(nativeSwiftSource.archive.path, 'substituted source bytes');
+    expect(() => nativePublicationInputProjection(snapshot)).toThrow(/bytes differ/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

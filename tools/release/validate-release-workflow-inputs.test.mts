@@ -6,25 +6,22 @@ import path from 'node:path';
 import test from 'node:test';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
-test('publication scopes tag planning to the verified Release Please candidate', () => {
+test('publication plans once from the authenticated Prepare scope', () => {
   const { steps } = Bun.YAML.parse(
     readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8'),
   ).jobs['plan-candidate'];
-  const identity = steps.findIndex((step) => step.id === 'release_scope');
   const plan = steps.findIndex((step) => step.id === 'release_plan');
-  assert.ok(identity >= 0 && identity < plan);
-  assert.match(steps[identity].run, /--derive-products/u);
-  assert.equal(steps[plan].env.PRODUCTS_JSON, `\${{ steps.release_scope.outputs.products_json }}`);
-  assert.match(steps[plan].run, /--products-json "\$PRODUCTS_JSON"/u);
-  const proof = steps.findIndex((step) => step.id === 'verify_publication_candidate');
-  assert.ok(proof > plan);
-  assert.equal(steps[proof].env.PRODUCTS_JSON, `\${{ steps.release_plan.outputs.products_json }}`);
+  const markable = steps.findIndex((step) => step.id === 'assert_release_please_markable');
+  assert.ok(plan >= 0 && markable > plan);
+  assert.match(steps[plan].run, /native-freeze-publication-candidate\.mts --plan-publication/u);
+  assert.match(steps[markable].run, /steps\.release_plan\.outputs\.release_sha/u);
+  assert.equal(steps.filter((step) => step.id === 'release_plan').length, 1);
 });
-test('registry bootstrap remains eligible when qualification dispatch was skipped', () => {
+test('registry bootstrap consumes the prepared native candidate', () => {
   const { jobs } = Bun.YAML.parse(
     readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8'),
   );
-  assert.ok(jobs['prepare-candidate'].needs.includes('request-qualification'));
+  assert.deepEqual(jobs['prepare-candidate'].needs, ['plan-candidate']);
   const bootstrap = jobs['publish-bootstrap'];
   assert.ok(bootstrap.needs.includes('prepare-candidate'));
   assert.match(bootstrap.if, /!cancelled\(\)/u);
@@ -43,7 +40,7 @@ test('both npm publication jobs can generate required provenance', () => {
     );
   }
 });
-test('qualified recovery packages the original source and restores its checked controller', () => {
+test('qualified recovery freezes original outputs and restores its checked controller', () => {
   const { jobs } = Bun.YAML.parse(
     readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8'),
   );
@@ -52,17 +49,18 @@ test('qualified recovery packages the original source and restores its checked c
     (step) => step.name === 'Checkout qualified source for unchanged packaging',
   );
   const registry = steps.findIndex((step) => step.id === 'validate_release_registry_state');
-  const pack = steps.findIndex((step) => step.name === 'Package public release carriers');
+  const outputs = steps.findIndex((step) => step.id === 'freeze_publication_lock');
   const freeze = steps.findIndex((step) => step.id === 'freeze_publication_candidate');
   const restore = steps.findIndex((step) => step.name === 'Restore checked publication controller');
   const credentials = steps.findIndex((step) => step.id === 'bootstrap_credentials');
   assert.ok(
     registry < checkout &&
-      checkout < pack &&
-      pack < freeze &&
+      checkout < outputs &&
+      outputs < freeze &&
       freeze < restore &&
       restore < credentials,
   );
+  assert.match(steps[outputs].run, /native-freeze-publication-candidate\.mts/u);
   for (const index of [checkout, restore])
     assert.equal(steps[index].if, `\${{ inputs.qualification_run_id != '' }}`);
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-qualified-recovery-'));

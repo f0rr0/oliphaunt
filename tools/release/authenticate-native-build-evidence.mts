@@ -3,10 +3,11 @@
 import { deepStrictEqual } from 'node:assert';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs, promisify } from 'node:util';
+import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import { readNativeBuildFinalFiles } from './native-build-files.mts';
 import {
   assertNativeBuildGithub,
@@ -18,9 +19,27 @@ import {
 } from './native-build-qualification.mts';
 
 const execute = promisify(execFile);
+const authenticatedOrigins = new WeakSet<object>();
+function freezeAuthenticated(value: any) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freezeAuthenticated(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+/** This capability is minted by actual GitHub/ZIP acquisition, never JSON parsing. */
+export function assertAuthenticatedNativeBuildOrigin(value: unknown) {
+  if (!value || typeof value !== 'object' || !authenticatedOrigins.has(value))
+    throw new Error('native origin was not acquired through the authenticated producer transport');
+  const origin = value as Awaited<ReturnType<typeof acquireAuthenticatedNativeBuildEvidence>>;
+  origin.finalFiles?.assertUnchanged?.();
+  return origin;
+}
 const reviewedProducerArtifacts: readonly (readonly [string, string])[] = [
   ['Linux runtime (x86_64)', 'native-build-evidence-x86_64'],
   ['Linux runtime (aarch64)', 'native-build-evidence-aarch64'],
+  ['Portable packages (macos-arm64)', 'native-build-evidence-native-macos-arm64'],
+  ['Portable packages (windows-x64)', 'native-build-evidence-native-windows-x64'],
   ['Linux WASIX and installed browser', 'native-build-evidence-wasix-tools'],
   ['Linux WASIX and installed browser', 'native-build-evidence-wasix-pg-hashids'],
   ['Linux native postmaster lifecycle', 'native-build-evidence-postmaster-linux'],
@@ -32,9 +51,13 @@ const reviewedProducerArtifacts: readonly (readonly [string, string])[] = [
   ['Portable packages (windows-x64)', 'native-build-evidence-napi-windows-x64'],
   ['Linux runtime (x86_64)', 'native-build-evidence-mobile-android'],
   ['Portable packages (macos-arm64)', 'native-build-evidence-mobile-ios'],
+  ['Native release families', 'native-build-evidence-release-families'],
 ];
 const isReviewedProducerArtifact = (job: string, artifact: unknown) =>
   reviewedProducerArtifacts.some(([owner, name]) => owner === job && name === artifact);
+export function reviewedNativeProducerArtifacts() {
+  return reviewedProducerArtifacts.map(([job, artifactName]) => ({ job, artifactName }));
+}
 const acceptedExecutionAssumptions = [
   'producer inputs remained immutable through capture in the reviewed isolated job',
   'the reviewed coordinator retained the native after-build dump from its producer invocation',
@@ -123,15 +146,71 @@ export function reviewedNativeProducerUnknowns(unverified: string[]) {
 }
 
 /** Caller expectations are constraints; only the downloader's GitHub API reads supply origin metadata. */
-export async function authenticateNativeBuildEvidence(
+type NativeBuildOriginExpectation = {
+  source: NativeBuildSource;
+  github: NativeBuildGithub;
+  event: 'push' | 'pull_request' | 'workflow_dispatch';
+  ref: string;
+  artifactName: string;
+};
+
+export function authenticateNativeBuildEvidence(
   evidenceRoot: string,
-  expected: {
-    source: NativeBuildSource;
-    github: NativeBuildGithub;
-    event: 'push' | 'pull_request' | 'workflow_dispatch';
-    ref: string;
-    artifactName: string;
-  },
+  expected: NativeBuildOriginExpectation,
+) {
+  return readAuthenticatedNativeBuildEvidence(evidenceRoot, expected);
+}
+
+/** Acquire once into an owned directory; observation can reuse this authenticated origin. */
+export function acquireAuthenticatedNativeBuildEvidence(
+  directory: string,
+  expected: NativeBuildOriginExpectation,
+) {
+  const destination = path.resolve(directory);
+  requireSafeDirectoryChain(path.dirname(destination), {
+    create: true,
+    label: 'native evidence acquisition',
+  });
+  if (existsSync(destination))
+    throw new Error('native evidence acquisition requires a new owned directory');
+  return readAuthenticatedNativeBuildEvidence(undefined, expected, destination);
+}
+
+/** A controller-owned metadata snapshot is shared across one finite acquisition.
+ * No caller path or inherited cache can supply origin facts to this session.
+ */
+export function createNativeBuildEvidenceAcquirer() {
+  const owner = mkdtempSync(path.join(tmpdir(), 'oliphaunt-native-acquisition-'));
+  let closed = false;
+  return {
+    acquire(directory: string, expected: NativeBuildOriginExpectation) {
+      if (closed) throw new Error('native evidence acquisition session is closed');
+      const destination = path.resolve(directory);
+      requireSafeDirectoryChain(path.dirname(destination), {
+        create: true,
+        label: 'native evidence acquisition',
+      });
+      if (existsSync(destination))
+        throw new Error('native evidence acquisition requires a new owned directory');
+      return readAuthenticatedNativeBuildEvidence(
+        undefined,
+        expected,
+        destination,
+        path.join(owner, 'snapshots'),
+      );
+    },
+    dispose() {
+      closed = true;
+      rmSync(owner, { recursive: true, force: true });
+    },
+  };
+}
+
+async function readAuthenticatedNativeBuildEvidence(
+  evidenceRoot: string | undefined,
+  expected: NativeBuildOriginExpectation,
+  retainedRoot?: string,
+  snapshotDirectory?: string,
 ) {
   assertNativeBuildGithub(expected.github);
   if (![expected.source.commit, expected.source.tree].every((sha) => /^[0-9a-f]{40}$/u.test(sha)))
@@ -152,15 +231,18 @@ export async function authenticateNativeBuildEvidence(
     throw new Error('native origin requires an eligible exact workflow event and ref');
   if (!/^[A-Za-z0-9_.-]+$/u.test(expected.artifactName))
     throw new Error('native origin artifact name is invalid');
-  const file = path.join(path.resolve(evidenceRoot), 'native-build-evidence.json');
-  const metadata = lstatSync(file);
-  if (!metadata.isFile() || metadata.isSymbolicLink())
-    throw new Error('native origin evidence must be a regular file');
-  const bytes = readFileSync(file);
+  let bytes: Buffer | undefined;
+  if (evidenceRoot !== undefined) {
+    const file = path.join(path.resolve(evidenceRoot), 'native-build-evidence.json');
+    const metadata = lstatSync(file);
+    if (!metadata.isFile() || metadata.isSymbolicLink())
+      throw new Error('native origin evidence must be a regular file');
+    bytes = readFileSync(file);
+  }
   const scratch = mkdtempSync(path.join(tmpdir(), 'oliphaunt-native-origin-'));
   try {
     // This cache is created by this controller, never restored from evidence or inherited from a caller.
-    const snapshots = path.join(scratch, 'snapshots');
+    const snapshots = snapshotDirectory ?? path.join(scratch, 'snapshots');
     const downloaded = path.join(scratch, 'downloaded');
     const repositoryRoot = path.resolve(import.meta.dir, '../..');
     await execute(
@@ -198,10 +280,18 @@ export async function authenticateNativeBuildEvidence(
         maxBuffer: 1024 * 1024,
       },
     );
-    if (!bytes.equals(readFileSync(path.join(downloaded, 'native-build-evidence.json'))))
+    const downloadedBytes = readFileSync(path.join(downloaded, 'native-build-evidence.json'));
+    if (bytes && !bytes.equals(downloadedBytes))
       throw new Error(
         'native build evidence bytes differ from the authenticated immutable artifact',
       );
+    bytes ??= downloadedBytes;
+    if (retainedRoot !== undefined) {
+      cpSync(downloaded, retainedRoot, { recursive: true, errorOnExist: true, force: false });
+      evidenceRoot = retainedRoot;
+    }
+    if (evidenceRoot === undefined)
+      throw new Error('native authenticated files require owned storage');
     const snapshot = JSON.parse(
       readFileSync(path.join(snapshots, `run-${expected.github.runId}.json`), 'utf8'),
     );
@@ -234,7 +324,7 @@ export async function authenticateNativeBuildEvidence(
       deepStrictEqual(finalFiles.files, downloadedFiles.files, 'authenticated native final files');
       finalFiles.assertUnchanged?.();
     }
-    return {
+    const origin = {
       github: {
         repository: snapshot.repo,
         workflow: snapshot.workflowName,
@@ -254,6 +344,9 @@ export async function authenticateNativeBuildEvidence(
       evidence: evidence as unknown,
       ...(finalFiles === undefined ? {} : { finalFiles }),
     };
+    freezeAuthenticated(origin);
+    authenticatedOrigins.add(origin);
+    return origin;
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

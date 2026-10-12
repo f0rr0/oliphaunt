@@ -4,13 +4,16 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { loadProducts } from './release-graph.mts';
 import {
   cargoManifestPaths,
   cargoPathDependencyBindings,
   desiredCargoPathDependencyVersion,
   priorCargoPathDependencyVersions,
+  releaseDerivedPathInventory,
   syncExampleCargoManifestText,
   syncLockfile,
+  syncReleasePr,
   syncTomlStringPath,
 } from './sync-release-pr.mts';
 
@@ -34,6 +37,74 @@ if (mode === 'inventory') {
   process.exit(0);
 }
 
+// Invoke the real runner in a disposable full checkout; no production CLI option.
+if (mode === 'supplier-map') {
+  const sdk = path.join(root, 'src/native/sdks/rust/Cargo.toml');
+  const broker = path.join(root, 'src/native/broker/Cargo.toml');
+  const manifestFile = path.join(root, '.release-please-manifest.json');
+  const parsed = (file) => Bun.TOML.parse(readFileSync(file, 'utf8'));
+  const next = (version) => version.replace(/\d+$/u, (patch) => String(Number(patch) + 1));
+  if (stage === 'prepare') {
+    const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+    for (const file of [sdk, broker]) {
+      const version = parsed(file).package.version;
+      writeFileSync(
+        file,
+        readFileSync(file, 'utf8').replace(
+          `version = "${version}"`,
+          `version = "${next(version)}"`,
+        ),
+      );
+      manifest[path.relative(root, path.dirname(file)).split(path.sep).join('/')] = next(version);
+    }
+    writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+    process.exit(0);
+  }
+  const buildBound = new Map(
+    Object.keys(loadProducts('sync fixture')).map((id) => [id, new Set()]),
+  );
+  const constantFile = path.join(root, 'src/native/sdks/rust/src/broker.rs');
+  const beforeSdk = parsed(sdk);
+  const beforeConstant = readFileSync(constantFile, 'utf8');
+  if (stage === 'held') {
+    // The checkout already contains version transitions and stale derived pins.
+    // Unknown supplier coverage must reject before changing any derived file.
+    const before = new Map(
+      releaseDerivedPathInventory().map((file) => [file, readFileSync(path.join(root, file))]),
+    );
+    for (const unknown of [undefined, new Map()]) {
+      await assert.rejects(syncReleasePr([], { buildBound: unknown }), /buildBound/u);
+      for (const [file, contents] of before)
+        assert.deepEqual(readFileSync(path.join(root, file)), contents);
+    }
+  } else {
+    assert.equal(stage, 'current');
+    buildBound.get('oliphaunt-rust').add('oliphaunt-broker');
+  }
+  await syncReleasePr([], { buildBound });
+  const afterSdk = parsed(sdk);
+  const expected =
+    stage === 'held'
+      ? beforeSdk.package.metadata.oliphaunt['broker-version']
+      : parsed(broker).package.version;
+  assert.equal(afterSdk.package.metadata.oliphaunt['broker-version'], expected);
+  assert.equal(afterSdk.dependencies['oliphaunt-broker'].version, expected);
+  assert.match(
+    readFileSync(constantFile, 'utf8'),
+    new RegExp(`BROKER_RELEASE_VERSION: &str = "${expected.replaceAll('.', '[.]')}"`, 'u'),
+  );
+  assert.equal(
+    afterSdk.package.metadata.oliphaunt['native-version'],
+    beforeSdk.package.metadata.oliphaunt['native-version'],
+  );
+  assert.equal(
+    afterSdk.dependencies['oliphaunt-query'].version,
+    beforeSdk.dependencies['oliphaunt-query'].version,
+  );
+  if (stage === 'held') assert.equal(readFileSync(constantFile, 'utf8'), beforeConstant);
+  process.exit(0);
+}
+
 test('compatibility sync handles inline and table Cargo dependencies without changing other fields', () => {
   for (const source of [
     `[dependencies]\nquery = { path = '../query', version = '0.1.0', features = ['one'] }\n`,
@@ -47,6 +118,15 @@ test('compatibility sync handles inline and table Cargo dependencies without cha
       syncTomlStringPath(result.text, 'dependencies.query.version', '0.2.0', 'consumer').detail,
       undefined,
     );
+  }
+});
+
+test('unknown supplied relationships reject the actual sync runner before derived writes', async () => {
+  const file = path.resolve(import.meta.dir, '../../release-please-config.json');
+  const before = readFileSync(file);
+  for (const buildBound of [undefined, null, new Map()]) {
+    await assert.rejects(syncReleasePr([], { buildBound }), /buildBound/u);
+    assert.deepEqual(readFileSync(file), before);
   }
 });
 
@@ -130,16 +210,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
       ['serde', '9.9.9'],
     ]);
     const checkChanges = [];
-    syncLockfile(lockfile, versions, checkChanges, { write: false });
+    const observed = [];
+    const observeUpdate = (update) => observed.push(update);
+    syncLockfile(lockfile, versions, checkChanges, { write: false, observeUpdate });
     assert.equal(readFileSync(lockfile, 'utf8'), initial);
+    assert.deepEqual(observed, []);
     assert.deepEqual(
       checkChanges.map(({ detail }) => detail),
       ['oliphaunt 0.0.0 -> 0.1.0'],
     );
 
     const writeChanges = [];
-    syncLockfile(lockfile, versions, writeChanges, { write: true });
+    syncLockfile(lockfile, versions, writeChanges, { write: true, observeUpdate });
     const updated = readFileSync(lockfile, 'utf8');
+    assert.equal(observed.length, 1);
+    assert.deepEqual(observed[0].before, Buffer.from(initial));
+    assert.deepEqual(observed[0].after, readFileSync(lockfile));
+    syncLockfile(lockfile, versions, [], { write: true, observeUpdate });
+    assert.equal(observed.length, 1);
     assert.match(updated, /name = "oliphaunt"\nversion = "0[.]1[.]0"/u);
     assert.match(updated, /name = "serde"\nversion = "1[.]0[.]0"\nsource =/u);
     assert.deepEqual(

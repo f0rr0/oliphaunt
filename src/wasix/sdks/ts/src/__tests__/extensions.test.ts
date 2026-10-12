@@ -14,6 +14,7 @@ import {
   overlayIcuArchive,
   parseWasixAssetManifest,
   resolveWasixExtensions,
+  verifyClusterSeedIdentity,
 } from '../resources/extensions.js';
 import type { SerializedExtensionCarrier, SerializedRuntimeDescriptor } from '../workers/rpc.js';
 import type { WasixAssetManifest } from '../core/types.js';
@@ -22,6 +23,29 @@ type ProjectedExtension = ReturnType<typeof resolveWasixExtensions>['extensions'
 type ProjectedLifecycle = ProjectedExtension['lifecycle'];
 
 describe('WASIX TypeScript extensions', () => {
+  it('keeps original creator hashes independent of the exact admitted module and version', () => {
+    const seed = sharedSeedFixture('standard.valid.json') as Parameters<
+      typeof verifyClusterSeedIdentity
+    >[2];
+    seed.runtime.target = 'portable';
+    const runtime = runtimeDescriptor();
+    runtime.version = seed.runtime.version;
+    const outer = manifest();
+    outer.runtime['module-sha256'] = seed.runtime.consumerSha256;
+    const options = { runtime } as Parameters<typeof verifyClusterSeedIdentity>[0];
+    expect(seed.runtime.consumerSha256).not.toBe(seed.runtime.producerSha256);
+    expect(() => verifyClusterSeedIdentity(options, outer, seed)).not.toThrow();
+    for (const [field, value] of [
+      ['version', '999.0.0'],
+      ['consumerSha256', 'f'.repeat(64)],
+      ['target', 'linux-x64-gnu'],
+    ]) {
+      const changed = structuredClone(seed);
+      (changed.runtime as unknown as Record<string, unknown>)[field] = value;
+      expect(() => verifyClusterSeedIdentity(options, outer, changed)).toThrow();
+    }
+  });
+
   it('binds separately supplied ICU bytes to their manifest and rejects corruption', async () => {
     const data = Uint8Array.of(1, 2, 3);
     const digest = createHash('sha256')

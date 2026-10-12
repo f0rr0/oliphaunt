@@ -43,7 +43,7 @@ bun_test(
     name = "metadata_test",
     size = "small",
     entry_point = "metadata.test.mts",
-    data = ["metadata.mts", "//tools/release:platform-compatibility-policy.mts"],
+    data = ["metadata.mts", "native-metadata.mts", "//tools/release:platform-compatibility-policy.mts"],
 )
 
 bun_test(
@@ -54,3 +54,13 @@ bun_test(
 )
 
 source_quality_files()
+
+# Add to the existing Android support package after root source barrier.
+exports_files(["expo_maven_install.json", "expo_jna_maven_install.json", "rules-jvm-external-android-gradle.patch"])
+alias(name = "resolver_junit", actual = "@oliphaunt_kotlin_maven//:junit_junit", testonly = True)
+bun_test(
+    name = "app_action_test",
+    entry_point = "app.test.mts",
+    data = ["app.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts"],
+    size = "small",
+)

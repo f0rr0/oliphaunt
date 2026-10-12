@@ -1,7 +1,6 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
-load("@javascript_consumer_packages//:defs.bzl", "PACKAGES")
-load("@javascript_consumer_packages//:roots.bzl", "CONSUMER_TOOLS")
+load("@javascript_consumer_packages//:roots.bzl", "CONSUMER_ACQUISITIONS", "CONSUMER_CLOSURES", "CONSUMER_TOOLS")
 load(":defs.bzl", "browser_consumer_tools_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -10,7 +9,8 @@ exports_files(["metadata.mts", "repositories.bzl", "defs.bzl", "compile.mts", "b
 browser_consumer_tools_test(
     name = "consumer_tools_test",
     size = "small",
-    packages = {"@javascript_consumer_packages//:" + key: key for key in PACKAGES},
+    packages = {"@javascript_consumer_packages//:" + key: key for key in CONSUMER_CLOSURES["@oliphaunt/wasix-ts"]},
+    acquisition = CONSUMER_ACQUISITIONS["@oliphaunt/wasix-ts"],
     roots = CONSUMER_TOOLS["@oliphaunt/wasix-ts"],
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 )

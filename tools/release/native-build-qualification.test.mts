@@ -5,9 +5,15 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  captureSeedConstructionIntent,
+  writeSeedConstructionReceipt,
+} from '../../build_defs/resources/seed_construction.mts';
+import {
   type NativeBuildEvidence,
+  nativeAnalysisInputBindings,
   nativeBuildMetadata,
   validateNativeBuildEvidence,
+  validateNativeSeedConstructions,
 } from './native-build-qualification.mts';
 import { captureNativeOutputMembers } from './native-publication-staging.mts';
 
@@ -202,6 +208,112 @@ test('successful cache-backed target binds configured output bytes and all curre
     );
     // No execution log exists or is needed: successful Bazel cache reuse is valid.
     expect(Object.hasOwn(result, 'executionLog')).toBe(false);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('loaded-source facts bind each shipping root and remain optional for old diagnostic packets', () => {
+  const f = fixture();
+  try {
+    const cohort = f.evidence.cohorts[0];
+    expect(nativeAnalysisInputBindings(cohort)).toBeUndefined();
+    cohort.analysisInputs = [f.capture(f.source)];
+    cohort.rootAnalysisInputPaths = [{ label: cohort.roots[0].label, paths: [f.source] }];
+    const result = validateNativeBuildEvidence(f.evidence, f.expected);
+    expect(result.cohorts[0].rootAnalysisInputPaths).toEqual(cohort.rootAnalysisInputPaths);
+    expect(result.cohorts[0].analysisInputsDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(result.releaseDecision).toBe('unverified');
+    for (const fault of [
+      'missing-capture',
+      'missing-map',
+      'foreign-root',
+      'duplicate-root',
+      'foreign-path',
+      'generated',
+      'empty',
+      'directory',
+    ]) {
+      const changed = structuredClone(cohort);
+      if (fault === 'missing-capture') delete changed.analysisInputs;
+      if (fault === 'missing-map') delete changed.rootAnalysisInputPaths;
+      if (fault === 'foreign-root') changed.rootAnalysisInputPaths![0].label = '//foreign:shipping';
+      if (fault === 'duplicate-root')
+        changed.rootAnalysisInputPaths!.push(changed.rootAnalysisInputPaths![0]);
+      if (fault === 'foreign-path')
+        changed.rootAnalysisInputPaths![0].paths = ['other/BUILD.bazel'];
+      if (fault === 'generated')
+        changed.rootAnalysisInputPaths![0].paths = ['bazel-out/k8-opt/bin/BUILD.bazel'];
+      if (fault === 'empty') changed.rootAnalysisInputPaths![0].paths = [];
+      if (fault === 'directory')
+        changed.analysisInputs![0].members = [{ path: '', type: 'directory', mode: 0o755 }];
+      expect(() => nativeAnalysisInputBindings(changed), fault).toThrow();
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('reached seed constructor JSON binds its own captured File and same-action frozen TAR', () => {
+  const f = fixture();
+  try {
+    const stem = 'bazel-out/k8-opt/bin/package/seed';
+    const frozen = `${stem}.tar`;
+    const receiptPath = `${stem}.seed-construction.json`;
+    writeFileSync(path.join(f.executionRoot, frozen), 'immutable frozen PGDATA fixture');
+    const pgdata = path.join(f.executionRoot, 'pgdata');
+    const contract = JSON.parse(
+      readFileSync(
+        new URL('../../src/database-resources/contracts/contract.json', import.meta.url),
+        'utf8',
+      ),
+    );
+    for (const name of contract.pgdataDirectories)
+      mkdirSync(path.join(pgdata, name), { recursive: true });
+    writeFileSync(path.join(pgdata, 'PG_VERSION'), '18\n');
+    const intent = captureSeedConstructionIntent(
+      { family: 'native', target: 'linux-x64-gnu', profile: 'standard' },
+      { command: 'fixture-initdb' },
+      { constructor: path.join(f.executionRoot, f.source) },
+    );
+    writeSeedConstructionReceipt(
+      path.join(f.executionRoot, receiptPath),
+      intent,
+      path.join(f.executionRoot, frozen),
+      pgdata,
+    );
+    const rows = [
+      {
+        path: receiptPath,
+        contents: readFileSync(path.join(f.executionRoot, receiptPath), 'utf8'),
+      },
+    ];
+    const inputs = [f.capture(receiptPath), f.capture(frozen)];
+    const action = { mnemonic: 'PostgresClusterSeed', outputs: [frozen, receiptPath] };
+    expect(validateNativeSeedConstructions(rows, inputs, [JSON.stringify(action)])).toEqual(rows);
+    for (const failure of [
+      'missing',
+      'duplicate',
+      'contents',
+      'frozen',
+      'action',
+      'family',
+      'split-output',
+    ] as const) {
+      const current = structuredClone(rows);
+      const files = structuredClone(inputs);
+      const producer = structuredClone(action);
+      if (failure === 'missing') current.length = 0;
+      else if (failure === 'duplicate') current.push(current[0]);
+      else if (failure === 'contents') current[0].contents += ' ';
+      else if (failure === 'frozen') files[1].members[0].sha256 = 'f'.repeat(64);
+      else if (failure === 'action') producer.mnemonic = 'FileWrite';
+      else if (failure === 'family') producer.mnemonic = 'WasixClusterSeed';
+      else producer.outputs = [receiptPath];
+      expect(() =>
+        validateNativeSeedConstructions(current, files, [JSON.stringify(producer)]),
+      ).toThrow();
+    }
   } finally {
     f.cleanup();
   }

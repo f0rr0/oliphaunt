@@ -28,3 +28,7 @@ _external_source_test = rule(
 
 def external_source_test(name, args = [], **kwargs):
     _external_source_test(name = name, args = bun_test_entrypoint_args(name) + args, **kwargs)
+
+def invalid_entrypoint_test(name, entrypoint_args = []):
+    """Analysis-negative fixtures must never invoke Bun or masquerade as tests."""
+    _external_source_test(name = name, modules = [], args = entrypoint_args, tags = ["manual"])

@@ -62,6 +62,300 @@ test('canonical member equality preserves names, modes and every delivered ident
   );
 });
 
+// These origin shapes exercise the decision seam. Authentication, physical
+// archive readers and owner-policy capture have their separate real fixtures.
+function decisionFixture(
+  ids = loadPublicationCatalog('native decision fixture').products.map(({ id }) => id),
+) {
+  const products = loadPublicationCatalog('native decision fixture', { products: ids }).products;
+  const github = {
+    repository: 'f0rr0/oliphaunt',
+    workflow: 'Native Bazel qualification',
+    workflowPath: '.github/workflows/bazel.yml',
+    runId: 7,
+    runAttempt: 1,
+    job: 'Linux runtime (x86_64)',
+  };
+  const artifact = {
+    id: 9,
+    name: 'native-build-evidence-x86_64',
+    digest: `sha256:${'d'.repeat(64)}`,
+    size: 1,
+  };
+  const evidenceDigest = `sha256:${'e'.repeat(64)}`;
+  const configuration = 'c'.repeat(64);
+  const requiredTests = [
+    { label: '//fixture:installed_test', configuration, invocationId: 'fixture-qualified' },
+  ];
+  const roots = products.map((product) => ({
+    label: `//fixture/${product.id}:shipping`,
+    configuration,
+    package: { product: product.id, version: product.version },
+  }));
+  const qualificationPolicy = {
+    owner: '//fixture:shipping_export',
+    configuration,
+    roots: roots.map(({ label }) => label),
+    requiredTests: requiredTests.map(({ invocationId: _, ...test }) => test),
+  };
+  const producerAssurance = {
+    scope: 'reviewed-producer-assurance',
+    reviewedSource: source,
+    event: 'push',
+    ref: 'refs/heads/main',
+    github,
+    artifact,
+    evidenceDigest,
+    shippingAnalysis: 'bound',
+    testQualification: 'passed',
+    requiredTests,
+    acceptedExecutionAssumptions: [
+      'producer inputs remained immutable through capture in the reviewed isolated job',
+      'the reviewed coordinator retained the native after-build dump from its producer invocation',
+    ],
+  };
+  const observation: any = {
+    coverage: { completeProductInventory: true },
+    products: products.map((product) => ({ product, carriers: [], productArtifacts: [] })),
+    authenticated: [
+      {
+        origin: { github, artifact, evidenceDigest },
+        evidence: { source },
+        producerAssurance,
+        qualification: {
+          source,
+          shippingAnalysis: 'bound',
+          testQualification: 'passed',
+          requiredTests,
+          cohorts: [{ roots, qualificationPolicy }],
+          unverified: ['complete canonical product qualification and completed-baseline admission'],
+        },
+      },
+    ],
+  };
+  const completed: any = {
+    scope: 'construction',
+    source,
+    products: products.map(({ id }) => ({
+      product: id,
+      deliveryStatus: 'identical',
+      carriers: [],
+      productArtifacts: [],
+    })),
+  };
+  return { source, products: ids, observation, completed };
+}
+
+test('complete catalog resolves zero, few and many changes independently of checks while seed reuse remains unverified', () => {
+  const input = decisionFixture();
+  const seeds = new Set(
+    loadPublicationCatalog('native seed decision fixture')
+      .products.filter((product) =>
+        expectedProductArtifactRows([product]).some((row) =>
+          ['native-seeds', 'wasix-seeds'].includes(row.kind),
+        ),
+      )
+      .map(({ id }) => id),
+  );
+  expect(seeds.size).toBeGreaterThan(0);
+  const initial = compareNativePreVersionDelivery(input);
+  expect(initial.completeRepositoryInventory).toBe(true);
+  expect(initial.releaseDecision).toBe('qualified');
+  expect(initial.selectedProducts).toEqual([]);
+  let seed = 0x294b4e1;
+  for (let scenario = 0; scenario < 24; scenario++) {
+    const expected = [];
+    const affected = [];
+    for (const [index, product] of input.completed.products.entries()) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const changed =
+        scenario === 0
+          ? false
+          : scenario === 1
+            ? index === 0
+            : scenario === 2
+              ? true
+              : Boolean(seed & 1);
+      product.deliveryStatus = changed ? 'different' : 'identical';
+      if (changed && !seeds.has(product.product)) expected.push(product.product);
+      if (seed & 2) affected.push(product.product);
+    }
+    const result = compareNativePreVersionDelivery({ ...input, affectedProducts: affected });
+    const seedChanged = input.completed.products.some(
+      (product) => seeds.has(product.product) && product.deliveryStatus === 'different',
+    );
+    expect(result.releaseDecision).toBe(seedChanged ? 'unverified' : 'qualified');
+    expect(result.selectedProducts).toEqual(seedChanged ? undefined : expected.sort());
+    for (const product of result.products) {
+      expect(product.affectedBuild).toBe(
+        affected.includes(product.product) ? 'required' : 'not-required',
+      );
+      expect(product.necessaryDelivery).toBe(
+        seeds.has(product.product) &&
+          input.completed.products.find((row) => row.product === product.product).deliveryStatus ===
+            'different'
+          ? 'unknown'
+          : expected.includes(product.product)
+            ? 'needed'
+            : 'not-needed',
+      );
+    }
+  }
+});
+
+test('unchanged real catalog seeds need no release, while fresh control or WAL entropy cannot justify one', () => {
+  const catalog = loadPublicationCatalog('native real seed negative');
+  const product = catalog.products.find((product) =>
+    expectedProductArtifactRows([product]).some((row) => row.kind === 'native-seeds'),
+  )!;
+  const input = decisionFixture([product.id]);
+  const rows = expectedProductArtifactRows([product])
+    .filter((row) => ['native-seeds', 'wasix-seeds'].includes(row.kind))
+    .map((row) => ({ ...row, sha256: 'f'.repeat(64), size: 1, path: `target/${row.name}` }));
+  expect(rows.some((row) => row.kind === 'native-seeds')).toBe(true);
+  expect(rows.some((row) => row.kind === 'wasix-seeds')).toBe(true);
+  input.observation.products[0].productArtifacts = rows;
+  input.completed.products[0].productArtifacts = rows;
+  expect(compareNativePreVersionDelivery(input).products[0].necessaryDelivery).toBe('not-needed');
+  input.completed.products[0].deliveryStatus = 'different';
+  input.completed.products[0].comparisons = rows.map((row) => ({
+    id: row.id,
+    currentId: row.id,
+    kind: row.kind,
+    differentMembers: [],
+  }));
+  const nonSeed = catalog.carriers.find(
+    (carrier) => carrier.product === product.id && carrier.ecosystem === 'npm',
+  )!;
+  input.completed.products[0].comparisons.push({
+    id: nonSeed.id,
+    kind: 'npm',
+    differentMembers: ['THIRD_PARTY_NOTICES.md'],
+  });
+  expect(compareNativePreVersionDelivery(input).products[0].necessaryDelivery).toBe('needed');
+  for (const differentMembers of [
+    ['pgdata/global/pg_control'],
+    ['pgdata/pg_wal/000000010000000000000001'],
+  ]) {
+    input.completed.products[0].deliveryStatus = 'different';
+    input.completed.products[0].comparisons = rows.map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      differentMembers,
+    }));
+    const result = compareNativePreVersionDelivery(input);
+    expect(result.products[0].configuredTests).toBe('qualified');
+    expect(result.products[0].deliveryStatus).toBe('different');
+    expect(result.products[0].necessaryDelivery).toBe('unknown');
+    expect(result.products[0].reason).toBe('seed-lifetime-or-reuse-unverified');
+    expect(result.releaseDecision).toBe('unverified');
+  }
+});
+
+test('focused qualification can resolve a product without claiming a complete repository release plan', () => {
+  const input = decisionFixture(['oliphaunt-query-ts']);
+  input.completed.products[0].deliveryStatus = 'different';
+  const result = compareNativePreVersionDelivery(input);
+  expect(result.products[0].necessaryDelivery).toBe('needed');
+  expect(result.completeRepositoryInventory).toBe(false);
+  expect(result.releaseDecision).toBe('unverified');
+  expect(result.selectedProducts).toBeUndefined();
+  expect(result.unverified).toContain('complete repository product decision inventory');
+});
+
+test('qualified decision snapshots its source and rejects foreign or duplicate affected products', () => {
+  const input = decisionFixture();
+  input.source = { ...source };
+  const result = compareNativePreVersionDelivery(input);
+  input.source.commit = 'f'.repeat(40);
+  expect(result.source).toEqual(source);
+  for (const affectedProducts of [['foreign'], [input.products[0], input.products[0]]])
+    expect(() =>
+      compareNativePreVersionDelivery({ ...decisionFixture(), affectedProducts }),
+    ).toThrow(/affected build selection/);
+});
+
+test('an unrelated unknown producer does not erase a complete product decision', () => {
+  const input = decisionFixture(['oliphaunt-query-ts', 'oliphaunt-query']);
+  const build = input.observation.authenticated[0];
+  const other = structuredClone(build);
+  build.qualification.cohorts[0].roots = build.qualification.cohorts[0].roots.filter(
+    (root) => root.package.product === 'oliphaunt-query-ts',
+  );
+  other.qualification.cohorts[0].roots = other.qualification.cohorts[0].roots.filter(
+    (root) => root.package.product === 'oliphaunt-query',
+  );
+  delete other.producerAssurance;
+  other.qualification.unverified.push('unreviewed separate producer');
+  input.observation.authenticated.push(other);
+  const result = compareNativePreVersionDelivery(input);
+  expect(
+    result.products.find(({ product }) => product === 'oliphaunt-query-ts')?.necessaryDelivery,
+  ).toBe('not-needed');
+  expect(
+    result.products.find(({ product }) => product === 'oliphaunt-query')?.necessaryDelivery,
+  ).toBe('unknown');
+  expect(result.releaseDecision).toBe('unverified');
+});
+
+for (const fault of [
+  'observed-only',
+  'missing-policy',
+  'empty-policy',
+  'unknown-delivery',
+  'qualification-unknown',
+  'archive-only',
+] as const)
+  test(`complete native delivery decisions remain unverified for ${fault}`, () => {
+    const input = decisionFixture();
+    const build = input.observation.authenticated[0];
+    if (fault === 'observed-only') delete build.producerAssurance;
+    else if (fault === 'missing-policy') delete build.qualification.cohorts[0].qualificationPolicy;
+    else if (fault === 'empty-policy')
+      build.qualification.cohorts[0].qualificationPolicy.requiredTests = [];
+    else if (fault === 'unknown-delivery') input.completed.products[0].deliveryStatus = 'unknown';
+    else if (fault === 'qualification-unknown')
+      build.qualification.unverified.push('unmapped producer qualification');
+    const result = compareNativePreVersionDelivery({
+      ...input,
+      ...(fault === 'archive-only'
+        ? {
+            completed: undefined,
+            archives: {
+              scope: 'construction',
+              source,
+              releaseDecision: 'unverified',
+              currentArchives: [],
+              products: input.products.map((product) => ({ product, deliveryStatus: 'identical' })),
+            } as any,
+          }
+        : {}),
+    });
+    expect(result.releaseDecision).toBe('unverified');
+    expect(result.selectedProducts).toBeUndefined();
+    expect(result.products.some(({ necessaryDelivery }) => necessaryDelivery === 'unknown')).toBe(
+      true,
+    );
+  });
+
+test('reviewed assurance cannot be transplanted from another source, artifact or workflow role', () => {
+  for (const change of [
+    (build) => {
+      build.producerAssurance.reviewedSource = { ...source, tree: 'f'.repeat(40) };
+    },
+    (build) => {
+      build.producerAssurance.evidenceDigest = `sha256:${'f'.repeat(64)}`;
+    },
+    (build) => {
+      build.producerAssurance.github = { ...build.origin.github, job: 'Unreviewed producer' };
+    },
+  ]) {
+    const input = decisionFixture();
+    change(input.observation.authenticated[0]);
+    expect(() => compareNativePreVersionDelivery(input)).toThrow();
+  }
+});
+
 async function fixture(run) {
   const executionRoot = mkdtempSync(path.join(os.tmpdir(), 'native-delivered-members-'));
   const catalog = loadPublicationCatalog('native final-member fixture', { products: ids });
@@ -620,4 +914,46 @@ test('completed origin binds actual release/source/asset identity, downloaded by
     symlinkSync(backup, archive);
     await expect(call()).rejects.toThrow();
   });
+});
+
+test('qualified descriptor comparison classifies core-only resource hold and explicit admitted-consumer adoption before versioning', () => {
+  const catalog = loadPublicationCatalog('WASIX resource admission fixture');
+  const resource = catalog.products.find((row) => row.id === 'database-resources')!;
+  const core = catalog.products.find((row) => row.id === 'liboliphaunt-wasix')!;
+  const input = decisionFixture();
+  const rows = expectedProductArtifactRows([resource])
+    .filter((row) => ['native-seeds', 'wasix-seeds'].includes(row.kind))
+    .map((row) => ({ ...row, sha256: 'f'.repeat(64), size: 1, path: 'target/' + row.name }));
+  input.observation.products.find((row) => row.product.id === resource.id).productArtifacts = rows;
+  const completedResource = input.completed.products.find((row) => row.product === resource.id);
+  completedResource.productArtifacts = rows;
+  const completedCore = input.completed.products.find((row) => row.product === core.id);
+  completedCore.deliveryStatus = 'different';
+  completedCore.comparisons = [
+    { id: 'fixture-core', kind: 'wasix-runtime', differentMembers: ['oliphaunt/bin/postgres'] },
+  ];
+  const hold = compareNativePreVersionDelivery({
+    ...input,
+    affectedProducts: [core.id, resource.id],
+  });
+  expect(hold.selectedProducts).toEqual([core.id]);
+  expect(hold.products.find((row) => row.product === resource.id).necessaryDelivery).toBe(
+    'not-needed',
+  );
+  const descriptor = rows.find((row) => row.kind === 'wasix-seeds' && row.name.endsWith('.json'))!;
+  completedResource.deliveryStatus = 'different';
+  completedResource.comparisons = rows.map((row) => ({
+    id: row.id,
+    currentId: row.id,
+    kind: row.kind,
+    differentMembers: row.id === descriptor.id ? ['runtime.version', 'runtime.consumerSha256'] : [],
+  }));
+  const adopt = compareNativePreVersionDelivery({ ...input, affectedProducts: [resource.id] });
+  expect(adopt.selectedProducts).toEqual([resource.id, core.id].sort());
+  expect(adopt.products.find((row) => row.product === resource.id).necessaryDelivery).toBe(
+    'needed',
+  );
+  expect(
+    input.observation.products.find((row) => row.product.id === resource.id).productArtifacts,
+  ).toEqual(rows);
 });

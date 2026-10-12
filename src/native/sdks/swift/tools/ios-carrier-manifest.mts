@@ -14,12 +14,14 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readPortableArchiveEntries } from '../../../../../tools/packaging/portable-archive.mts';
 import {
+  releaseNoticeDeclaration,
   releaseNoticeRows,
   releaseProfilePackageLicense,
 } from '../../../../../tools/packaging/release-notices.mts';
 import {
   currentProductVersionSync,
   extensionProductForSqlName,
+  extensionReleaseMetadataRows,
   extensionReleaseProductForSqlName,
   extensionSqlNames,
 } from '../../../../../tools/release/release-artifact-targets.mts';
@@ -373,8 +375,8 @@ function prefixedMember(prefix, member) {
   return prefix ? `${prefix}/${member}` : member;
 }
 
-function canonicalLegalFileSpecs(profile, memberPrefix = '') {
-  return releaseNoticeRows({ profile }).map((row) => ({
+function canonicalLegalFileSpecs(profile, memberPrefix = '', sourceRoot = undefined) {
+  return releaseNoticeRows({ profile, sourceRoot }).map((row) => ({
     bytes: statSync(row.source).size,
     kind: legalKind(row.member),
     member: prefixedMember(memberPrefix, row.member),
@@ -400,15 +402,61 @@ function legalGroupShape({ assetRole, files, profile, spdx }) {
  * locators remain archive-relative; a consumer chooses the applicable groups
  * (the ICU sidecar is optional) and never needs this repository to stage them.
  */
-export function iosBaseLegalMetadata() {
+export function iosBaseLegalMetadata({ sourceRoot = undefined } = {}) {
   return BASE_LEGAL_PROFILES.map(({ assetRole, memberPrefix, profile }) =>
     legalGroupShape({
       assetRole,
-      files: canonicalLegalFileSpecs(profile, memberPrefix),
+      files: canonicalLegalFileSpecs(profile, memberPrefix, sourceRoot),
       profile,
-      spdx: releaseProfilePackageLicense(profile).spdx,
+      spdx: releaseProfilePackageLicense(profile, { sourceRoot }).spdx,
     }),
   );
+}
+
+/** A new projection of genuine archived legal bytes. It does not claim the
+ * historical producer recipe or substitute current notice content. */
+export function iosBaseLegalMetadataFromArchives(archiveFiles, archiveCache = new Map()) {
+  const roles = Object.keys(archiveFiles).sort(compareText);
+  if (
+    JSON.stringify(roles) !==
+    JSON.stringify(BASE_LEGAL_PROFILES.map(({ assetRole }) => assetRole).sort(compareText))
+  )
+    throw error('archived Apple base requires both exact public archive roles');
+  return BASE_LEGAL_PROFILES.map(({ assetRole, memberPrefix, profile }) => {
+    const file = archiveFiles[assetRole].path;
+    const index = archiveIndex(file, archiveFormat(path.basename(file), assetRole), archiveCache, {
+      includeDigests: true,
+    });
+    const declaration = releaseNoticeDeclaration(profile);
+    const members = declaration.members.map((member) => prefixedMember(memberPrefix, member));
+    const prefix = memberPrefix ? memberPrefix + '/' : '';
+    const actual = [...index.byName.values()]
+      .filter(
+        (entry) =>
+          entry.type === 'file' &&
+          entry.name.startsWith(prefix) &&
+          (entry.name.slice(prefix.length) === 'LICENSE' ||
+            entry.name.slice(prefix.length).startsWith('THIRD_PARTY_NOTICES') ||
+            entry.name.slice(prefix.length).startsWith('THIRD_PARTY_LICENSES/')),
+      )
+      .map((entry) => entry.name)
+      .sort(compareText);
+    if (JSON.stringify(actual) !== JSON.stringify([...members].sort(compareText)))
+      throw error(`${assetRole} archived legal namespace differs from its declared profile`);
+    return legalGroupShape({
+      assetRole,
+      profile,
+      spdx: declaration.spdx,
+      files: members.map((member) => {
+        const entry = index.byName.get(member);
+        if (entry?.type !== 'file' || (entry.mode & 0o777) !== 0o644 || entry.size <= 0)
+          throw error(
+            `${assetRole} archived legal file must be regular, nonempty and mode0644: ${member}`,
+          );
+        return { member, bytes: entry.size, sha256: entry.sha256, kind: legalKind(member) };
+      }),
+    });
+  });
 }
 
 function assertLegalGroupArchiveBytes(file, format, group, archiveCache, label) {
@@ -531,6 +579,8 @@ function baseCarrier({
   verifyMembers,
   archiveCache,
   sourceBasis,
+  legalSourceRoot,
+  archiveFiles,
 }) {
   const product = 'liboliphaunt-native';
   const version = stableVersion(baseRuntimeVersion, 'base runtime version');
@@ -550,7 +600,7 @@ function baseCarrier({
   const assets = rows.map((row) =>
     asset({
       ...row,
-      file: path.join(baseAssetDir, row.name),
+      file: archiveFiles?.[row.role]?.path ?? path.join(baseAssetDir, row.name),
       tag,
       repository,
       localUrls,
@@ -562,13 +612,16 @@ function baseCarrier({
   const legal = nativeBaseLegalForSource({
     base,
     sourceBasis,
-    currentLegal: iosBaseLegalMetadata,
+    currentLegal: () =>
+      archiveFiles
+        ? iosBaseLegalMetadataFromArchives(archiveFiles, archiveCache)
+        : iosBaseLegalMetadata({ sourceRoot: legalSourceRoot }),
   }).map((group) => {
     const selected = rows.find(({ role }) => role === group.assetRole);
     if (selected === undefined)
       throw error(`base legal group references unknown asset role ${group.assetRole}`);
     return assertLegalGroupArchiveBytes(
-      path.join(baseAssetDir, selected.name),
+      archiveFiles?.[selected.role]?.path ?? path.join(baseAssetDir, selected.name),
       archiveFormat(selected.name, `${selected.role} asset`),
       group,
       archiveCache,
@@ -581,7 +634,13 @@ function baseCarrier({
   };
 }
 
-function frozenBaseCarrier(file, baseRuntimeVersion, sourceBasis, baseTag) {
+function frozenBaseCarrier(
+  file,
+  baseRuntimeVersion,
+  sourceBasis,
+  baseTag,
+  expectedArchiveBase = undefined,
+) {
   let manifest;
   try {
     manifest = JSON.parse(
@@ -626,6 +685,14 @@ function frozenBaseCarrier(file, baseRuntimeVersion, sourceBasis, baseTag) {
     if (archiveFormat(row.name, `${file} base asset ${index}`) !== row.format) {
       throw error(`${file} base asset ${index} name does not match its archive format`);
     }
+  }
+  if (expectedArchiveBase) {
+    if (
+      JSON.stringify(stable(base)) !== JSON.stringify(stable(expectedArchiveBase.base)) ||
+      JSON.stringify(stable(legal)) !== JSON.stringify(stable(expectedArchiveBase.legal))
+    )
+      throw error(`${file} does not match its exact declared public archives/legal bytes`);
+    return expectedArchiveBase;
   }
   return {
     base: stable(base),
@@ -1126,7 +1193,9 @@ export function swiftExtensionCarrierAssetName(product, version) {
     throw error(`invalid exact-extension product ${product}`);
   }
   stableVersion(version, `${product} version`);
-  return `${product}-${version}-swift-extension-carrier.json`;
+  return extensionReleaseMetadataRows({ id: product, version }, 'native').find(
+    ([kind]) => kind === 'swift-extension-carrier',
+  )[1];
 }
 
 function dependencyCarrierReference(sqlName, declaredProducts = undefined) {
@@ -1251,6 +1320,8 @@ export function buildIosCarrierManifest({
   localUrls = false,
   verifyMembers = true,
   baseSourceBasis = undefined,
+  baseLegalSourceRoot = undefined,
+  baseArchiveInputs = undefined,
 } = {}) {
   validateRepository(repository);
   if (typeof assetRoot !== 'string' || assetRoot.length === 0) {
@@ -1263,9 +1334,40 @@ export function buildIosCarrierManifest({
   stableVersion(baseRuntimeVersion, 'base runtime version');
   baseTag = nativeBaseTag(baseRuntimeVersion, baseTag, declaredProducts);
   const archiveCache = new Map();
+  let archiveBase;
+  if (baseArchiveInputs !== undefined) {
+    archiveBase = baseCarrier({
+      baseAssetDir,
+      baseRuntimeVersion,
+      baseTag,
+      repository,
+      localUrls,
+      verifyMembers,
+      archiveCache,
+      archiveFiles: baseArchiveInputs,
+    });
+    for (const asset of archiveBase.base.assets) {
+      const file = baseArchiveInputs[asset.role];
+      const expectedName =
+        asset.role === 'base-xcframework'
+          ? `liboliphaunt-${baseRuntimeVersion}-apple-spm-xcframework.zip`
+          : `liboliphaunt-${baseRuntimeVersion}-runtime-resources-ios-datum64.tar.gz`;
+      if (
+        !file ||
+        asset.name !== expectedName ||
+        path.basename(file.path) !== expectedName ||
+        asset.bytes !== file.size ||
+        asset.sha256 !== file.sha256
+      )
+        throw error(
+          `declared completed Apple archive identity differs: ${asset.role}/${asset.name}`,
+        );
+    }
+  }
   const frozenBase =
     baseCarrierManifest === undefined
-      ? baseCarrier({
+      ? (archiveBase ??
+        baseCarrier({
           archiveCache,
           baseAssetDir: path.resolve(baseAssetDir),
           baseRuntimeVersion,
@@ -1274,8 +1376,15 @@ export function buildIosCarrierManifest({
           localUrls,
           verifyMembers,
           sourceBasis: baseSourceBasis,
-        })
-      : frozenBaseCarrier(baseCarrierManifest, baseRuntimeVersion, baseSourceBasis, baseTag);
+          legalSourceRoot: baseLegalSourceRoot,
+        }))
+      : frozenBaseCarrier(
+          baseCarrierManifest,
+          baseRuntimeVersion,
+          baseSourceBasis,
+          baseTag,
+          archiveBase,
+        );
   const { base, legal: baseLegal } = frozenBase;
   const documents = extensionManifests.map((file) => {
     const document = extensionCarriers(path.resolve(file), {

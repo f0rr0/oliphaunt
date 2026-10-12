@@ -75,7 +75,6 @@ def wasix_postgis_modules(name = "postgis"):
         output_name = "postgis-3.so",
         deps = [":" + name + "_objects"],
         dynamic_deps = [":" + name + "_dependency_module"],
-        linkopts = ["--export-all", "--no-gc-sections"],
         target_compatible_with = WASIX_DEPENDENCY_COMPATIBLE,
     )
     postgis_sql(name = name + "_sql_resources", configuration = ":" + name + "_config", headers = ":" + name + "_headers", target_compatible_with = WASIX_DEPENDENCY_COMPATIBLE)

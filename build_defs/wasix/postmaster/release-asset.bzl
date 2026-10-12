@@ -2,7 +2,7 @@
 
 load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS", "WASIX_ARTIFACTS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
-load("//build_defs/native/carriers:defs.bzl", "native_checksum_manifest")
+load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 
@@ -91,7 +91,7 @@ _archive_test = rule(
     }),
 )
 
-def postmaster_release_asset(name, target, carrier, execution):
+def postmaster_release_asset(name, target, carrier, execution, qualification):
     rows = [row for row in WASIX_ARTIFACTS if row["product"] == "liboliphaunt-wasix-postmaster" and row["target"] == target and row["kind"] == "wasix-postmaster-runtime"]
     if len(rows) != 1:
         fail("Postmaster release needs one canonical artifact row for " + target)
@@ -110,23 +110,13 @@ def postmaster_release_asset(name, target, carrier, execution):
                      package_name = "native_carrier", configuration = row["target"], role = "construction")
     shipping_package(name = prefix + "_release_asset_shipping", owner = owner, artifacts = [":" + name + "_release_asset"], ecosystem = "github",
                      package_name = row["asset"].replace("{version}", PRODUCTS[row["product"]]["version"]), configuration = row["target"], role = "github-release-asset")
-    shipping_export(name = prefix + "_shipping_export", packages = [":" + prefix + "_carrier_construction", ":" + prefix + "_release_asset_shipping"])
+    shipping_export(name = prefix + "_shipping_export", packages = [":" + prefix + "_carrier_construction", ":" + prefix + "_release_asset_shipping"], qualification = [":" + prefix + "_public_archive_test"] + qualification, testonly = True)
 
-def postmaster_linux_release_asset():
+def postmaster_linux_release_asset(qualification):
     postmaster_release_asset(name = "linux_x64_gnu", target = "linux-x64-gnu", carrier = "@postmaster_postgres//:native_carrier",
-                              execution = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"])
+                              execution = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"], qualification = qualification)
 
 def postmaster_release_family():
-    """Join exactly the three actual authenticated public Files plus one checksum."""
-    native_checksum_manifest(name = "release_assets", product = "liboliphaunt-wasix-postmaster",
-                             artifact_rows = WASIX_ARTIFACTS, archives = ["@postmaster_guest//:release_archives"], assemble = True)
-    packages = []
-    for row in [row for row in WASIX_ARTIFACTS if row["product"] == "liboliphaunt-wasix-postmaster" and "github-release" in row["surfaces"]]:
-        name = "release_" + ("checksums" if row["kind"] == "checksums" else row["target"].replace("-", "_"))
-        asset = row["asset"].replace("{version}", PRODUCTS[row["product"]]["version"])
-        native.filegroup(name = name, srcs = [":release_assets"], output_group = "checksums" if row["kind"] == "checksums" else asset)
-        shipping_package(name = name + "_shipping", owner = "@oliphaunt_metadata//:product_liboliphaunt-wasix-postmaster",
-                         artifacts = [":" + name], ecosystem = "github", package_name = asset,
-                         configuration = row.get("target", "") or "portable", role = "github-release-asset")
-        packages.append(":" + name + "_shipping")
-    shipping_export(name = "release_shipping_export", packages = packages)
+    """Keep the three host archive roots unique; qualify and export their checksum."""
+    native_release_checksum_family(product = "liboliphaunt-wasix-postmaster", artifact_rows = WASIX_ARTIFACTS,
+                                   export_name = "release_shipping_export")

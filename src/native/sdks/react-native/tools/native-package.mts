@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { archive } from '../../../../../build_defs/query/package.mts';
 import { readFrozenNativeCarrier } from '../../../../../build_defs/release/frozen-native-carrier.mts';
 import { readPortableArchiveEntries } from '../../../../../tools/packaging/portable-archive.mts';
@@ -158,12 +158,17 @@ export function validateReactNativeNpm(file: string, inputs: ReactNativePackageI
 }
 
 if (import.meta.main) {
-  const [specification, output] = Bun.argv.slice(2);
+  const [specification, output, carrierOutput] = Bun.argv.slice(2);
   assert(
-    specification && output && Bun.argv.length === 4,
-    'usage: native-package.mts INPUTS.json OUTPUT.tgz',
+    specification && output && [4, 5].includes(Bun.argv.length),
+    'usage: native-package.mts INPUTS.json OUTPUT.tgz [CARRIER.json]',
   );
   const inputs = json(specification) as ReactNativePackageInputs;
   writeFileSync(output, packageReactNativeNpm(inputs));
   validateReactNativeNpm(output, inputs);
+  if (carrierOutput) {
+    mkdirSync(dirname(carrierOutput), { recursive: true });
+    // Retain the very same authenticated held File embedded in the final npm.
+    writeFileSync(carrierOutput, readFileSync(inputs.carrier), { mode: 0o644 });
+  }
 }

@@ -72,6 +72,15 @@ def _android_sdk_archive_impl(ctx):
         "__default_api_level__": str(metadata["api"]),
         "__system_image_dirs__": "",
     })
+    platform = "platforms/android-%d/" % metadata["api"]
+    ctx.file("BUILD.bazel", ctx.read("BUILD.bazel") + '\nfilegroup(name = "lint_inputs", srcs = glob(%s), visibility = ["//visibility:public"])\n' % repr([
+        platform + "android.jar",
+        platform + "framework.aidl",
+        platform + "source.properties",
+        platform + "sdk.properties",
+        platform + "build.prop",
+        platform + "data/**",
+    ]))
     return ctx.repo_metadata(reproducible = True)
 
 def _metadata_attrs():

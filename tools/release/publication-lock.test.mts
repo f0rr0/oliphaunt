@@ -129,7 +129,8 @@ test('native publication inventory requires no Moon metadata and preserves runti
     if (contrib.some(row => row.product === 'oliphaunt-extension-contrib-pg18')) throw new Error('Contrib has no independent release version');
     const swiftOnly = loadPublicationCatalog('native-inventory-swift', { products: ['oliphaunt-swift'] });
     if (expectedProductArtifactRows(swiftOnly.products).some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Unselected extension fixture');
-    if (!rows.some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Missing selected extension fixture');
+    if (rows.some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Undeclared consumer fixture');
+    if (!expectedProductArtifactRows(catalog.products, { swiftExtensionFixture: true }).some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Missing requested extension fixture');
   `;
   const result = Bun.spawnSync([process.execPath, '-e', script], {
     cwd: ROOT,
@@ -140,14 +141,15 @@ test('native publication inventory requires no Moon metadata and preserves runti
 
 test('canonical extension GitHub projection matches every legacy native asset row', () => {
   const metadata = loadReleaseMetadata(ROOT);
+  const nativePayloads = metadata.extensionGithubArtifacts.filter(
+    (row) => row.family === 'native' && !row.control,
+  );
   const distributions = [
     ...new Set(metadata.extensionGithubArtifacts.map((row) => row.artifactProduct)),
   ];
   expect(distributions).toHaveLength(8);
   for (const artifactProduct of distributions) {
-    const actual = metadata.extensionGithubArtifacts.filter(
-      (row) => row.artifactProduct === artifactProduct,
-    );
+    const actual = nativePayloads.filter((row) => row.artifactProduct === artifactProduct);
     const identity = { id: artifactProduct, version: actual[0].version, family: 'native' };
     const legacy = expectedExtensionGithubReleaseAssetRows(identity).filter(
       (row) => row.family === 'native',
@@ -174,7 +176,11 @@ test('canonical extension GitHub projection matches every legacy native asset ro
       }),
     ).toEqual(legacy);
   }
-  expect(metadata.extensionGithubArtifacts).toHaveLength(68);
+  expect(nativePayloads).toHaveLength(68);
+  expect(
+    metadata.extensionGithubArtifacts.filter((row) => row.family === 'wasix' && !row.control),
+  ).toHaveLength(8);
+  expect(metadata.extensionGithubArtifacts.filter((row) => row.control)).toHaveLength(35);
   for (const [target, count] of [
     ['android-arm64-v8a', 8],
     ['android-x86_64', 8],
@@ -193,6 +199,7 @@ test('canonical extension GitHub projection matches every legacy native asset ro
   );
   expect(
     metadata.extensionGithubArtifacts
+      .filter((row) => !row.control)
       .map(({ artifactProduct: _artifactProduct, owner: _owner, family: _family, ...row }) => row)
       .sort((left, right) => left.id.localeCompare(right.id)),
   ).toEqual(old.sort((left, right) => left.id.localeCompare(right.id)));
@@ -1722,6 +1729,31 @@ describe('publication artifact discovery and freezing', () => {
     ).toBe(true);
   });
 
+  test('pre-version inventory is digest-bound construction and cannot be frozen', () => {
+    const root = mkdtempSync(path.join(ROOT, 'target/publication-lock-phase-'));
+    temporaryDirectories.push(root);
+    const product = loadPublicationCatalog('publication-lock-phase', { products: ['oliphaunt-js'] })
+      .products[0];
+    npmFixture(root, '@oliphaunt/ts', product.version);
+    const final = buildPublicationCandidate({ products: [product.id], artifactRoots: [root] });
+    const pre = buildPublicationCandidate({
+      products: [product.id],
+      artifactRoots: [root],
+      artifactPhase: 'pre-version',
+    });
+    expect(pre.carriers).toEqual(final.carriers);
+    expect(pre.productArtifacts).toEqual(final.productArtifacts);
+    expect(pre.packageEnvelopeDigest).not.toBe(final.packageEnvelopeDigest);
+    expect(() => validatePublicationCandidate(pre)).not.toThrow();
+    expect(() => freezePublicationCandidate(pre)).toThrow(/construction.*cannot freeze/u);
+    const forged = { ...pre, artifactPhase: 'final' };
+    expect(() => validatePublicationCandidate(forged)).toThrow(/packageEnvelopeDigest/u);
+    expect(() => validatePublicationCandidate({ ...pre, scope: undefined })).toThrow(
+      /construction scope/u,
+    );
+    expect(() => freezePublicationCandidate(final)).not.toThrow();
+  });
+
   test('freezes a selection-neutral Swift source carrier and separately composed dependency-closed output', () => {
     const workspaceRoot = mkdtempSync(
       path.join(import.meta.dir, '../../target/publication-lock-swift-'),
@@ -1815,11 +1847,29 @@ describe('publication artifact discovery and freezing', () => {
     expect(() => discoverProductArtifacts([sdk, fixture], [product])).toThrow(
       /selects no extension products and requires no frozen Swift consumer fixture/u,
     );
-    expect(() => discoverProductArtifacts([sdk, extensionRoot], catalog.products)).toThrow(
-      /selects extension products and requires exactly one frozen Swift consumer fixture/u,
+    expect(() =>
+      discoverProductArtifacts([sdk, extensionRoot], catalog.products, {
+        swiftExtensionFixture: true,
+      }),
+    ).toThrow(/selects extension products and requires exactly one frozen Swift consumer fixture/u);
+    const preVersionArtifacts = discoverProductArtifacts([sdk, extensionRoot], catalog.products, {
+      artifactPhase: 'pre-version',
+    });
+    expect(
+      preVersionArtifacts.some(({ kind }) => kind === 'swiftpm-extension-consumer-fixture'),
+    ).toBe(false);
+    expect(preVersionArtifacts.map(({ product, id }) => `${product}:${id}`).sort()).toEqual(
+      expectedProductArtifactRows(catalog.products, { artifactPhase: 'pre-version' })
+        .map(({ product, id }) => `${product}:${id}`)
+        .sort(),
     );
 
-    const artifacts = discoverProductArtifacts(selectedRoots, catalog.products);
+    const artifacts = discoverProductArtifacts(selectedRoots, catalog.products, {
+      swiftExtensionFixture: true,
+    });
+    expect(artifacts.filter(({ kind }) => kind !== 'swiftpm-extension-consumer-fixture')).toEqual(
+      preVersionArtifacts,
+    );
     const swiftArtifacts = artifacts.filter((artifact) => artifact.product === product.id);
     expect(swiftArtifacts.map(({ id }) => id).sort()).toEqual([
       `github-release:${bindingsName}`,
@@ -1843,9 +1893,9 @@ describe('publication artifact discovery and freezing', () => {
     ).not.toThrow();
     const qualificationMarker = path.join(sdk, 'qualification.json');
     writeFileSync(qualificationMarker, JSON.stringify({ qualificationOnly: true }));
-    expect(() => discoverProductArtifacts(selectedRoots, catalog.products)).toThrow(
-      'workspace qualification carrier',
-    );
+    expect(() =>
+      discoverProductArtifacts(selectedRoots, catalog.products, { swiftExtensionFixture: true }),
+    ).toThrow('workspace qualification carrier');
     unlinkSync(qualificationMarker);
     const frozenFixture = swiftArtifacts.find(
       ({ id }) => id === 'release-input:swiftpm-extension-consumer-fixture',
@@ -1857,7 +1907,9 @@ describe('publication artifact discovery and freezing', () => {
       ),
       'tampered\n',
     );
-    const tamperedFixture = discoverProductArtifacts(selectedRoots, catalog.products).find(
+    const tamperedFixture = discoverProductArtifacts(selectedRoots, catalog.products, {
+      swiftExtensionFixture: true,
+    }).find(
       ({ id, product: artifactProduct }) =>
         artifactProduct === product.id && id === 'release-input:swiftpm-extension-consumer-fixture',
     );
@@ -1866,9 +1918,9 @@ describe('publication artifact discovery and freezing', () => {
     const selectedSourceCarrier = structuredClone(canonicalSourceCarrier);
     selectedSourceCarrier.extensions.push({ sqlName: 'pgtap' });
     writeFileSync(sourceCarrier, `${JSON.stringify(selectedSourceCarrier)}\n`);
-    expect(() => discoverProductArtifacts(selectedRoots, catalog.products)).toThrow(
-      /ios-carriers\.json\.extensions.*selection-neutral/u,
-    );
+    expect(() =>
+      discoverProductArtifacts(selectedRoots, catalog.products, { swiftExtensionFixture: true }),
+    ).toThrow(/ios-carriers\.json\.extensions.*selection-neutral/u);
 
     const malformedSourceCarrier = structuredClone(canonicalSourceCarrier);
     delete malformedSourceCarrier.carriers;

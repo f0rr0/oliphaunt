@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -5,6 +6,7 @@ import { GitHub, Manifest, registerChangelogNotes } from 'release-please';
 import { DefaultChangelogNotes } from 'release-please/build/src/changelog-notes/default.js';
 import { parseConventionalCommits } from 'release-please/build/src/commit.js';
 import { ManifestPlugin } from 'release-please/build/src/plugin.js';
+import { NodeWorkspace } from 'release-please/build/src/plugins/node-workspace.js';
 import { appendDependenciesSectionToChangelog } from 'release-please/build/src/plugins/workspace.js';
 import { Changelog } from 'release-please/build/src/updaters/changelog.js';
 import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
@@ -16,17 +18,29 @@ import { readCommitHistory, readCommitPaths } from './commit-paths.mts';
 import { createCompletedPublicationChecker } from './completed-release-publication.mts';
 import { defaultExtensionReleasePlan } from './default-extension-release-plan.mts';
 import { requestGithubRepositoryJson } from './github-read.mts';
+import { writeNativeReleaseInputs } from './native-release-inputs.mts';
 import {
-  buildBoundCompatibilityProducts,
+  prepareNativeReleaseDelivery,
+  qualifiedNativeSeedControls,
+} from './native-release-preparation.mts';
+import {
+  collectNativeVersionUpdates,
+  commitNativeVersionUpdates,
+} from './native-version-source.mts';
+import { sourceIdentity } from './publication-lock.mts';
+import {
   releaseDependencyPlan,
+  resolveBuildBoundCompatibilityProducts,
 } from './release-dependency-plan.mts';
 import {
   buildPlan,
   compatibilityVersionEntries,
   loadGraph,
+  loadProducts,
   productCompatibilityVersion,
 } from './release-graph.mts';
-import { syncTomlStringPath } from './sync-release-pr.mts';
+import { syncReleasePr, syncTomlStringPath } from './sync-release-pr.mts';
+import { releaseProductsFromManifests } from './verify-release-commit.mts';
 
 // Supply source ownership and public host support intent. Release Please
 // owns version policy, changelog text and ecosystem updaters in both cases.
@@ -35,14 +49,117 @@ export function includeOwnedSourceCommits(
   github,
   graph,
   readCompatibility = productCompatibilityVersion,
-  {
+  options = {},
+) {
+  const buildBound = resolveBuildBoundCompatibilityProducts(graph.products, options);
+  const native = Object.hasOwn(options, 'nativeNecessaryProducts');
+  const nativeSelected = new Set<string>();
+  const nativeLeaves = new Map<string, Set<string>>();
+  let nativePlan;
+  if (native) {
+    const necessary = options.nativeNecessaryProducts;
+    if (
+      !(Array.isArray(necessary) || necessary instanceof Set) ||
+      !Object.hasOwn(options, 'buildBound') ||
+      typeof options.observeNativePlan !== 'function' ||
+      options.nativeObservation?.coverage?.completeProductInventory !== true
+    )
+      throw new Error(
+        'native Release Please requires a complete necessary decision and supplier map',
+      );
+    for (const product of necessary) {
+      if (!Object.hasOwn(graph.products, product) || nativeSelected.has(product))
+        throw new Error('native Release Please has unknown or duplicate necessary products');
+      nativeSelected.add(product);
+    }
+    for (const { product, construction } of options.nativeObservation.products) {
+      if (
+        !Object.hasOwn(graph.products, product.id) ||
+        nativeLeaves.has(product.id) ||
+        !Array.isArray(construction) ||
+        !construction.length
+      )
+        throw new Error('native Release Please lacks exact configured product input coverage');
+      const leaves = new Set<string>();
+      for (const view of construction) {
+        if (
+          !Array.isArray(view.leafInputPaths) ||
+          view.leafInputPaths.some((file) => typeof file !== 'string' || !file)
+        )
+          throw new Error('native Release Please lacks captured causal source leaves');
+        if (
+          !Array.isArray(view.analysisInputPaths) ||
+          view.analysisInputPaths.some((file) => typeof file !== 'string' || !file)
+        )
+          throw new Error('native Release Please has unknown loaded recipe version intent');
+        for (const file of [...view.leafInputPaths, ...view.analysisInputPaths]) leaves.add(file);
+      }
+      nativeLeaves.set(product.id, leaves);
+    }
+    if (nativeLeaves.size !== Object.keys(graph.products).length)
+      throw new Error('native Release Please lacks complete configured product input coverage');
+    // Use the pinned workspace extension hooks before it creates any dependency
+    // updater. A held dependency cannot adopt an independently selected producer.
+    manifest.plugins = manifest.plugins.map((plugin) => {
+      if (!(plugin instanceof NodeWorkspace)) return plugin;
+      return new (class extends NodeWorkspace {
+        packageProducts = new Map<string, string>();
+        async buildGraph(packages) {
+          const graph = await super.buildGraph(packages);
+          this.packageProducts = new Map(
+            [...graph].map(([name, node]) => [
+              name,
+              this.repositoryConfig[this.pathFromPackage(node.value)].component,
+            ]),
+          );
+          return graph;
+        }
+        buildGraphOrder(graph, names) {
+          return super
+            .buildGraphOrder(graph, names)
+            .filter((pkg) =>
+              nativeSelected.has(this.repositoryConfig[this.pathFromPackage(pkg)].component),
+            );
+        }
+        updateCandidate(candidate, pkg, versions) {
+          const consumer = this.repositoryConfig[this.pathFromPackage(pkg)].component;
+          const adopted = new Set(
+            [...nativePlan.requirements.values()]
+              .filter((entry) => entry.product === consumer)
+              .map((entry) => entry.sourceProduct),
+          );
+          return super.updateCandidate(
+            candidate,
+            pkg,
+            new Map(
+              [...versions].filter(([name]) => {
+                const producer = this.packageProducts.get(name);
+                return (
+                  name === pkg.name ||
+                  buildBound.get(consumer)?.has(producer) ||
+                  adopted.has(producer)
+                );
+              }),
+            ),
+          );
+        }
+      })(github, 'main', manifest.repositoryConfig, {
+        logger: plugin.logger,
+        manifestPath: plugin.manifestPath,
+        merge: plugin.merge,
+        updateAllPackages: plugin.updateAllPackages,
+        alwaysLinkLocal: plugin.alwaysLinkLocal,
+        updatePeerDependencies: plugin.updatePeerDependencies,
+      });
+    });
+  }
+  const {
     readCommitFiles,
     commitHistory,
     assertCompletedPublication = createCompletedPublicationChecker({
       repository: `${github.repository.owner}/${github.repository.repo}`,
     }),
-  } = {},
-) {
+  } = options;
   const observed = [];
   const published = new Map();
   const selectedHistory = new Map();
@@ -139,11 +256,32 @@ export function includeOwnedSourceCommits(
         const owners = new Map(
           observed.map((commit) => [
             commit.sha,
-            new Set(
-              buildPlan(graph, commit.files ?? [], 'prepare-release-candidate').releaseProducts,
-            ),
+            native
+              ? new Set(
+                  [...nativeLeaves]
+                    .filter(([, leaves]) => commit.files.some((file) => leaves.has(file)))
+                    .map(([product]) => product),
+                )
+              : new Set(
+                  buildPlan(graph, commit.files ?? [], 'prepare-release-candidate').releaseProducts,
+                ),
           ]),
         );
+        const unmappedBreaking = new Set<string>();
+        const unknownIntent = new Map<string, string[]>();
+        if (native)
+          for (const commit of observed) {
+            const parsed = parseConventionalCommits([commit]);
+            for (const intent of parsed) {
+              // Existing conventional component scopes are an explicit intent
+              // contract, including repository inputs whose Git origin is not
+              // yet represented by action leaves or loaded BUILD files.
+              if (intent.scope && Object.hasOwn(graph.products, intent.scope))
+                owners.get(commit.sha).add(intent.scope);
+              else if (intent.notes?.length && !owners.get(commit.sha).size)
+                unmappedBreaking.add(commit.sha);
+            }
+          }
         for (const [ownerPath, config] of Object.entries(manifest.repositoryConfig)) {
           const release = releasesByPath[ownerPath];
           const version = manifest.releasedVersions[ownerPath]?.toString();
@@ -174,13 +312,20 @@ export function includeOwnedSourceCommits(
               `prepare-release-candidate: history did not reach ${config.component} boundary ${boundary}`,
             );
           const selected = [];
+          const unknown = [];
           for (const commit of observed) {
             if (local ? !local.selected.has(commit.sha) : commit.sha === boundary) {
               if (local) continue;
               break;
             }
-            if (owners.get(commit.sha).has(config.component)) selected.push(commit);
+            if (unmappedBreaking.has(commit.sha)) unknown.push(commit.sha);
+            if (
+              (!native || nativeSelected.has(config.component)) &&
+              owners.get(commit.sha).has(config.component)
+            )
+              selected.push(commit);
           }
+          unknownIntent.set(config.component, unknown);
           commitsByPath[ownerPath] = selected;
         }
         const entries = compatibilityVersionEntries(graph.products, { requireSourceProduct: true });
@@ -190,12 +335,32 @@ export function includeOwnedSourceCommits(
               .filter((section) => !section.hidden)
               .map((section) => section.type),
           );
+          if (!releaseTypes.size)
+            for (const type of ['feat', 'fix', 'perf', 'refactor', 'revert'])
+              releaseTypes.add(type);
           return parseConventionalCommits(commitsByPath[ownerPath] ?? []).some(
             (commit) => commit.notes?.length || releaseTypes.has(commit.type),
           );
         };
+        const addNativeIntent = (product, adoption = false) => {
+          const ownerPath = graph.products[product].path;
+          if (unknownIntent.get(product)?.length)
+            throw new Error(
+              `native Release Please has unknown breaking acquisition intent for ${product}: ${unknownIntent.get(product).join(', ')}`,
+            );
+          if (!strategies[ownerPath])
+            throw new Error(`native Release Please lacks strategy for ${product}`);
+          if (hasReleaseIntent(ownerPath, manifest.repositoryConfig[ownerPath])) return;
+          commitsByPath[ownerPath].push({
+            sha: '',
+            files: [],
+            message: adoption
+              ? `${graph.products[product].extension?.class === 'external' ? 'fix!' : 'fix'}: align default extension installation`
+              : 'fix: qualified native delivery changed',
+          });
+        };
+        if (native) for (const product of nativeSelected) addNativeIntent(product);
         const plannedProducts = structuredClone(graph.products);
-        const compiled = buildBoundCompatibilityProducts(graph.products);
         // Only these source-selected producers determine public exact host retargets.
         for (const runtime of ['liboliphaunt-native', 'liboliphaunt-wasix']) {
           const owner = graph.products[runtime]?.path;
@@ -220,7 +385,7 @@ export function includeOwnedSourceCommits(
           if (!releaseIntent && !runtimeChanged) continue;
           const plan = releaseDependencyPlan(plannedProducts, [product], {
             entries: entries.filter((entry) => entry.product === product && entry.publicSupport),
-            buildBound: compiled,
+            buildBound,
             readValue: (entry) => readCompatibility(entry.product, entry.sourceProduct),
           });
           const changes = plan.flatMap((entry) => {
@@ -267,6 +432,50 @@ export function includeOwnedSourceCommits(
             return candidate;
           };
         }
+        if (native) {
+          const predicted = structuredClone(graph.products);
+          const previewed = new Set<string>();
+          for (;;) {
+            for (const product of nativeSelected) {
+              if (previewed.has(product)) continue;
+              const ownerPath = graph.products[product].path;
+              let commits = parseConventionalCommits(commitsByPath[ownerPath]);
+              for (const plugin of manifest.plugins) commits = plugin.processCommits(commits);
+              const candidate = await strategies[ownerPath].buildReleasePullRequest(
+                commits,
+                releasesByPath[ownerPath],
+                manifest.draftPullRequest,
+                manifest.labels,
+              );
+              if (!candidate)
+                throw new Error(`native necessary delivery produced no candidate: ${product}`);
+              predicted[product].version = candidate.version.toString();
+              previewed.add(product);
+            }
+            nativePlan = defaultExtensionReleasePlan(predicted, nativeSelected, {
+              readCompatibility,
+              buildBound,
+            });
+            const missing = [...nativePlan.required].filter(
+              (product) => !nativeSelected.has(product),
+            );
+            if (!missing.length) break;
+            for (const product of missing) {
+              nativeSelected.add(product);
+              addNativeIntent(product, true);
+            }
+          }
+          await options.observeNativePlan(
+            Object.freeze({
+              selectedProducts: Object.freeze([...nativeSelected].sort()),
+              requirements: Object.freeze(
+                [...nativePlan.requirements.values()].map((entry) =>
+                  Object.freeze(structuredClone(entry)),
+                ),
+              ),
+            }),
+          );
+        }
         return strategies;
       }
 
@@ -280,7 +489,27 @@ export function includeOwnedSourceCommits(
             products[product].version = candidate.pullRequest.version.toString();
             selected.add(product);
           }
-          plan = defaultExtensionReleasePlan(products, selected, { readCompatibility });
+          if (native) {
+            if (
+              selected.size !== nativeSelected.size ||
+              [...selected].some((product) => !nativeSelected.has(product))
+            )
+              throw new Error('native Release Please escaped its frozen necessary/adoption scope');
+            plan = defaultExtensionReleasePlan(products, selected, {
+              readCompatibility,
+              buildBound,
+            });
+            if (
+              [...plan.required].some((product) => !nativeSelected.has(product)) ||
+              JSON.stringify([...plan.requirements]) !==
+                JSON.stringify([...nativePlan.requirements])
+            )
+              throw new Error('native Release Please changed its admitted adoption plan');
+          } else
+            plan = defaultExtensionReleasePlan(products, selected, {
+              readCompatibility,
+              buildBound,
+            });
           const missing = [...plan.required].filter((product) => !selected.has(product));
           if (!missing.length) break;
           for (const product of missing) {
@@ -401,7 +630,7 @@ export function bindReleaseSourceHistory(
   };
 }
 
-export function applyCandidate(root, candidate) {
+export function applyCandidate(root, candidate, observeUpdate = undefined) {
   const changed = [];
   for (const update of mergeUpdates(candidate.updates)) {
     const destination = path.resolve(root, update.path);
@@ -413,6 +642,11 @@ export function applyCandidate(root, candidate) {
     if (after && after !== before) {
       mkdirSync(path.dirname(destination), { recursive: true });
       writeFileSync(destination, after);
+      observeUpdate?.({
+        path: update.path,
+        before: before === undefined ? undefined : Buffer.from(before),
+        after: Buffer.from(after),
+      });
       changed.push(update.path);
     }
   }
@@ -447,14 +681,77 @@ async function main() {
   const commitHistory = readCommitHistory();
   bindReleaseSourceHistory(github, commitHistory, sha);
   const manifest = await Manifest.fromManifest(github, 'main');
-  includeOwnedSourceCommits(manifest, github, loadGraph('prepare-release-candidate'), undefined, {
+  const nativeRun = process.env.NATIVE_QUALIFICATION_RUN_ID;
+  const graph =
+    nativeRun === undefined
+      ? loadGraph('prepare-release-candidate')
+      : { products: loadProducts('prepare-release-candidate') };
+  const versionUpdates = collectNativeVersionUpdates();
+  let native;
+  let nativeFinalProducts: string[] | undefined;
+  if (nativeRun !== undefined) {
+    if (!/^[1-9][0-9]*$/u.test(nativeRun))
+      throw new Error('native preparation requires an exact positive qualification run ID');
+    native = await prepareNativeReleaseDelivery({
+      source: sourceIdentity(sha),
+      runId: Number(nativeRun),
+      completedVersions: Object.fromEntries(
+        Object.entries(graph.products).map(([product, metadata]) => [
+          product,
+          manifest.releasedVersions[metadata.path]?.toString(),
+        ]),
+      ),
+      directory: path.join(destination, 'native'),
+    });
+  }
+  includeOwnedSourceCommits(manifest, github, graph, undefined, {
     readCommitFiles: readCommitPaths,
     commitHistory,
+    ...(native
+      ? {
+          buildBound: native.suppliers.buildBound,
+          nativeNecessaryProducts: native.decision.selectedProducts,
+          nativeObservation: native.observation,
+          observeNativePlan: async ({ selectedProducts, requirements }) => {
+            const necessary = new Set(native.decision.selectedProducts);
+            if (
+              !Array.isArray(selectedProducts) ||
+              new Set(selectedProducts).size !== selectedProducts.length ||
+              selectedProducts.some((product) => !graph.products[product]) ||
+              [...necessary].some((product) => !selectedProducts.includes(product))
+            )
+              throw new Error(
+                'native final release set differs from the qualified necessary products',
+              );
+            for (const product of selectedProducts.filter((product) => !necessary.has(product))) {
+              const declaredRetarget = [...requirements.values()].some(
+                (entry) => entry.product === product,
+              );
+              const currentEmbedding = [...native.suppliers.buildBound.get(product)].some(
+                (supplier) => selectedProducts.includes(supplier),
+              );
+              if (!declaredRetarget && !currentEmbedding)
+                throw new Error(
+                  `native ${product} has no explicit default-install or current-embedding adoption`,
+                );
+            }
+            const selected = [...selectedProducts].sort();
+            if (
+              nativeFinalProducts &&
+              JSON.stringify(nativeFinalProducts) !== JSON.stringify(selected)
+            )
+              throw new Error('native final release set changed after its fixed point');
+            nativeFinalProducts = selected;
+          },
+        }
+      : {}),
   });
   const candidates = await manifest.buildPullRequests();
   if (candidates.length > 1) throw new Error('expected one grouped Release Please candidate');
   mkdirSync(destination, { recursive: true });
   if (!candidates.length) {
+    if (native?.decision.selectedProducts.length)
+      throw new Error('native necessary delivery produced no release candidate');
     writeFileSync(path.join(destination, 'required'), 'false\n');
     return;
   }
@@ -464,7 +761,60 @@ async function main() {
     candidate.title.toString() !== 'chore(release): prepare main releases'
   )
     throw new Error('unexpected Release Please branch/title');
-  applyCandidate(root, candidate);
+  if (native && !nativeFinalProducts)
+    throw new Error('native candidate did not freeze its compatible product set');
+  applyCandidate(root, candidate, native ? versionUpdates.observe : undefined);
+  if (native)
+    await syncReleasePr([], {
+      buildBound: native.suppliers.buildBound,
+      observeUpdate: versionUpdates.observe,
+    });
+  if (native) {
+    const bridge = versionUpdates.freeze(native.candidate.source);
+    const before = JSON.parse(
+      execFileSync('git', ['show', `${bridge.source.commit}:.release-please-manifest.json`], {
+        cwd: root,
+        encoding: 'utf8',
+      }),
+    );
+    const after = JSON.parse(
+      readFileSync(path.join(root, '.release-please-manifest.json'), 'utf8'),
+    );
+    const config = JSON.parse(readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
+    if (
+      JSON.stringify(releaseProductsFromManifests(config, before, after)) !==
+      JSON.stringify(nativeFinalProducts)
+    )
+      throw new Error('native generated manifest differs from the frozen release set');
+    const preparedSource = commitNativeVersionUpdates(bridge, candidate.title.toString(), root);
+    const record = {
+      bridge,
+      selectedProducts: nativeFinalProducts,
+      preparedSource,
+      buildBound: [...native.suppliers.buildBound]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([consumer, suppliers]) => [consumer, [...suppliers].sort()] as [string, string[]]),
+    };
+    writeNativeReleaseInputs(
+      path.join(destination, 'native-release-inputs'),
+      record,
+      qualifiedNativeSeedControls(native, bridge, preparedSource, root),
+      [
+        ...new Map(
+          [
+            ...native.baselines.map(({ publication }) => publication),
+            ...native.publicationInputs.snapshot.supplierPublications,
+          ].map((publication) => [`${publication.product}@${publication.version}`, publication]),
+        ).values(),
+      ],
+      native.publicationInputs.snapshot.supplierArtifacts ?? [],
+    );
+    writeFileSync(
+      path.join(destination, 'native-version-source.json'),
+      `${JSON.stringify(record)}\n`,
+      { flag: 'wx' },
+    );
+  }
   writeFileSync(path.join(destination, 'required'), 'true\n');
   writeFileSync(path.join(destination, 'title'), `${candidate.title.toString()}\n`);
   writeFileSync(path.join(destination, 'body.md'), `${candidate.body.toString()}\n`);

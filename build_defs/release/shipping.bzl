@@ -1,11 +1,13 @@
 """Construction outputs and declared ownership, not publication admission evidence."""
 
 load(":identity.bzl", "ReleaseIdentityInfo")
+load(":supplier.bzl", "ShippingSupplierInfo")
 
-ShippingInfo = provider(fields = ["product", "version", "ecosystem", "name", "configuration", "role", "files"])
+ShippingInfo = provider(fields = ["product", "version", "ecosystem", "name", "configuration", "role", "files", "supplier_inputs"])
+ShippingExportInfo = provider(fields = ["packages", "qualification", "policies"])
 
 def _package(info):
-    return {
+    result = {
         "product": info.product,
         "version": info.version,
         "ecosystem": info.ecosystem,
@@ -14,6 +16,9 @@ def _package(info):
         "role": info.role,
         "outputs": [{"path": file.path, "owner": str(file.owner)} for file in info.files.to_list()],
     }
+    if info.supplier_inputs != None:
+        result["supplierInputs"] = info.supplier_inputs
+    return result
 
 def _shipping_package_impl(ctx):
     owner = ctx.attr.owner[ReleaseIdentityInfo]
@@ -28,6 +33,7 @@ def _shipping_package_impl(ctx):
         configuration = ctx.attr.configuration,
         role = ctx.attr.role,
         files = files,
+        supplier_inputs = ctx.attr.suppliers[ShippingSupplierInfo].suppliers if ctx.attr.suppliers else None,
     )
     manifest = ctx.actions.declare_file(ctx.label.name + ".shipping.json")
     ctx.actions.write(manifest, json.encode({"label": str(ctx.label), "package": _package(info)}) + "\n")
@@ -42,14 +48,34 @@ shipping_package = rule(
         "package_name": attr.string(mandatory = True),
         "configuration": attr.string(mandatory = True),
         "role": attr.string(mandatory = True),
+        "suppliers": attr.label(providers = [ShippingSupplierInfo], doc = "Actual configured supplier Files. Omission is unknown coverage; shipping_suppliers(inputs = []) explicitly declares none."),
     },
 )
 
 def _shipping_export_impl(ctx):
+    targets = list(ctx.attr.packages)
+    tests = {str(target.label): target for target in ctx.attr.qualification}
+    policies = []
+    if targets:
+        policies.append({
+            "owner": str(ctx.label),
+            "roots": [str(target.label) for target in targets],
+            "qualification": [str(target.label) for target in ctx.attr.qualification],
+        })
+    for child in ctx.attr.exports:
+        export = child[ShippingExportInfo]
+        targets.extend(export.packages)
+        policies.extend(export.policies)
+        for target in export.qualification:
+            tests[str(target.label)] = target
+    if not targets:
+        fail("shipping export must contain actual shipping packages")
+    if ctx.attr.qualification and not ctx.attr.packages:
+        fail("composed shipping qualification belongs to the source owner of its packages")
     packages = []
     identities = {}
     versions = {}
-    for target in ctx.attr.packages:
+    for target in targets:
         info = target[ShippingInfo]
         key = info.ecosystem + ":" + info.name
         if info.ecosystem == "github":
@@ -66,15 +92,28 @@ def _shipping_export_impl(ctx):
         versions[info.product] = info.version
         packages.append(_package(info))
     output = ctx.actions.declare_file(ctx.label.name + ".json")
-    ctx.actions.write(output, json.encode({"schema": "oliphaunt-bazel-shipping-v1", "scope": "construction", "packages": packages}) + "\n")
-    return [DefaultInfo(files = depset([output]))]
+    ctx.actions.write(output, json.encode({
+        "schema": "oliphaunt-bazel-shipping-v1",
+        "scope": "construction",
+        "owner": str(ctx.label),
+        "roots": [str(target.label) for target in targets],
+        "packages": packages,
+        "qualification": sorted(tests.keys()),
+        "policies": policies,
+    }) + "\n")
+    return [
+        DefaultInfo(files = depset([output])),
+        OutputGroupInfo(shipping_policy = depset([output])),
+        ShippingExportInfo(packages = targets, qualification = tests.values(), policies = policies),
+    ]
 
 shipping_export = rule(
     implementation = _shipping_export_impl,
     attrs = {
-        "packages": attr.label_list(providers = [ShippingInfo], mandatory = True),
+        "packages": attr.label_list(providers = [ShippingInfo]),
+        "exports": attr.label_list(providers = [ShippingExportInfo], doc = "Source-owned exports; each child's own root-to-test policy is retained."),
         "qualification": attr.label_list(
-            doc = "Mandatory final consumer test rules in this configuration; set testonly = True on the export. Declare actual tests, including manual tests, rather than test_suite targets. Incompatible mandatory tests make the export incompatible; use select() only when the owner explicitly has no policy for that configuration.",
+            doc = "Mandatory configured actual tests, including final installed consumers; set testonly = True on the export. Source/host unit tests retain that scope and do not replace installed runtime proof. Declare actual tests, including manual tests, rather than test_suite targets. Incompatible mandatory tests make the export incompatible; use select() only when the owner explicitly has no policy for that configuration.",
         ),
     },
 )

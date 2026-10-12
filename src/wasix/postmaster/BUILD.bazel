@@ -34,7 +34,7 @@ postmaster_rust_targets(
     library_sources = glob(["executor/src/**/*.rs"], exclude = ["executor/src/bin/**/*.rs"]),
 )
 
-postmaster_linux_release_asset()
+postmaster_linux_release_asset(qualification = [":linux_sealed_profile_test", ":linux_runtime_test"])
 postmaster_release_family()
 
 # These are the sole actual test instances. The original source-repository

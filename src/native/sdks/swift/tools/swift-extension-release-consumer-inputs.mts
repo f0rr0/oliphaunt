@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 
 import { contribCarrierDescriptor } from '../../../../../tools/release/release-artifact-targets.mts';
+import { buildIosCarrierManifest } from './ios-carrier-manifest.mts';
 import { validateSelectionNeutralSwiftSourceCarrier } from './swift-source-carrier-contract.mts';
 
 const PREFIX = 'swift-extension-release-consumer-inputs.mts';
@@ -83,16 +84,57 @@ function readJson(file, label) {
   }
 }
 
+/** Request a consumer tuple from source-bound requirements before construction.
+ * A carrier at another adopted base remains an independent publication; it is
+ * never relabeled or accepted as part of this SDK's installed composition.
+ */
+export function requestedSwiftExtensionCarrierProducts({ selectedProducts, sourceBase, carriers }) {
+  if (
+    !Array.isArray(selectedProducts) ||
+    new Set(selectedProducts).size !== selectedProducts.length
+  )
+    fail('selected products must be a unique array');
+  if (!selectedProducts.includes('oliphaunt-swift')) return [];
+  const source = baseReference(sourceBase, 'source carrier base');
+  const owners = new Set();
+  const requested = [];
+  for (const carrier of carriers) {
+    const release = releaseReference(carrier.release, 'independent carrier release');
+    const base = baseReference(carrier.base, 'independent carrier base');
+    if (!selectedProducts.includes(release.product))
+      fail(`independent carrier ${release.product} is outside the selected products`);
+    if (owners.has(release.product)) fail(`independent carrier ${release.product} repeats`);
+    owners.add(release.product);
+    if (
+      base.product === source.product &&
+      base.version === source.version &&
+      base.tag === source.tag
+    )
+      requested.push(release.product);
+  }
+  return requested.sort(compareText);
+}
+
 export function extensionReleaseConsumerInputs({
   sourceCarrierFile,
   extensionCarrierFiles,
   nativeSourceBasis = undefined,
+  nativeBaseArchiveInputs = undefined,
 }) {
   const sourceCarrier = readJson(sourceCarrierFile, 'source carrier');
   try {
-    validateSelectionNeutralSwiftSourceCarrier(sourceCarrier, sourceCarrierFile, {
-      sourceBasis: nativeSourceBasis,
-    });
+    if (nativeBaseArchiveInputs)
+      buildIosCarrierManifest({
+        baseRuntimeVersion: sourceCarrier.base.version,
+        baseTag: sourceCarrier.base.tag,
+        declaredProducts: {},
+        baseCarrierManifest: sourceCarrierFile,
+        baseArchiveInputs: nativeBaseArchiveInputs,
+      });
+    else
+      validateSelectionNeutralSwiftSourceCarrier(sourceCarrier, sourceCarrierFile, {
+        sourceBasis: nativeSourceBasis,
+      });
   } catch (cause) {
     fail(cause instanceof Error ? cause.message : String(cause));
   }

@@ -10,6 +10,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import {
+  captureSeedConstructionIntent,
+  writeSeedConstructionReceipt,
+} from '../../build_defs/resources/seed_construction.mts';
 import { archiveDirectory } from '../packaging/archive-directory.mts';
 import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
 import {
@@ -128,6 +132,40 @@ test('actual packed public files survive transport with exact members and held d
       { name: '@fixture/beta', version: '2.0.0' },
     ]);
     expect(registry[0].dependencies['@fixture/held-runtime']).toBe('=0.3.2');
+  });
+});
+
+test('selected File staging preserves source bytes while leaving other public products outside the release directory', async () => {
+  await fixture(async (f) => {
+    const directory = path.join(f.directory, 'selected-packet');
+    const file = writeNativeBuildEvidence(f.capture, directory);
+    const evidence = JSON.parse(readFileSync(file, 'utf8'));
+    const packet = readNativeBuildFinalFiles(directory, evidence, constraints(f));
+    const selected = packet.stage({
+      products: ['alpha'],
+      stageDirectory: path
+        .relative(ROOT, path.join(f.directory, 'selected-alpha'))
+        .split(path.sep)
+        .join('/'),
+    });
+    const registry = selected
+      .filter((file) => file.endsWith('.tgz'))
+      .map((file) =>
+        JSON.parse(readPortableArchiveEntries(file).get('package/package.json').data().toString()),
+      );
+    expect(registry.map(({ name }) => name)).toEqual(['@fixture/alpha']);
+    expect(registry[0].dependencies).toEqual({ '@fixture/held-runtime': '=0.3.2' });
+    const together = packet.stage({
+      products: ['alpha', 'beta'],
+      stageDirectory: path
+        .relative(ROOT, path.join(f.directory, 'selected-both'))
+        .split(path.sep)
+        .join('/'),
+    });
+    expect(together.filter((file) => file.endsWith('.tgz'))).toHaveLength(2);
+    expect(() => packet.stage({ products: ['unobserved'] })).toThrow(/observed product/);
+    expect(() => packet.stage({ products: ['alpha', 'alpha'] })).toThrow(/unique observed/);
+    packet.assertUnchanged();
   });
 });
 
@@ -361,5 +399,164 @@ test('producer internals and unsupported source publication inputs stay outside 
       ),
     ).toBe(false);
     expect(packet).not.toHaveProperty('releaseDecision');
+  });
+});
+
+test('the exact private Apple basis transports real bytes and excludes unrelated internal roots', async () => {
+  await fixture(async (f) => {
+    const cohort = f.origin.evidence.cohorts[0];
+    const root = cohort.roots[0];
+    const previousLabel = root.label;
+    const previousPath = root.package.outputs[0].path;
+    const output = 'bazel-out/k8-opt/bin/src/native/runtime/apple_release_assets/ios.json';
+    const contents = Buffer.from('{"schema":"controlled-Apple-basis-fixture"}\n');
+    mkdirSync(path.dirname(path.join(cohort.executionRoot, output)), { recursive: true });
+    writeFileSync(path.join(cohort.executionRoot, output), contents);
+    root.label = '//src/native/runtime:apple_ios_manifest_shipping';
+    Object.assign(root.package, {
+      product: 'liboliphaunt-native',
+      ecosystem: 'internal',
+      name: 'ios.json',
+      configuration: 'ios-xcframework',
+      role: 'apple-base-ios-manifest-input',
+    });
+    root.package.outputs[0].path = output;
+    cohort.rootConfigurations.find(({ label }) => label === previousLabel).label = root.label;
+    cohort.outputs.find(({ path: name }) => name === previousPath).path = output;
+    cohort.outputs.find(({ path: name }) => name === output).members = captureNativeOutputMembers(
+      cohort.executionRoot,
+      output,
+    ).members;
+    const graph = cohort.aquery as any;
+    const previous = new Map(graph.pathFragments.map((part) => [String(part.id), part]));
+    const resolve = (id: unknown): string => {
+      const part = previous.get(String(id)) as any;
+      return part.parentId ? `${resolve(part.parentId)}/${part.label}` : part.label;
+    };
+    const artifact = graph.artifacts.find(
+      ({ pathFragmentId }) => resolve(pathFragmentId) === previousPath,
+    );
+    const parts = output.split('/');
+    graph.pathFragments.push(
+      ...parts.map((label, index) => ({
+        id: `apple-${index}`,
+        label,
+        ...(index ? { parentId: `apple-${index - 1}` } : {}),
+      })),
+    );
+    artifact.pathFragmentId = `apple-${parts.length - 1}`;
+    for (const event of cohort.buildEvents as any[]) {
+      if (event.id?.targetCompleted?.label === previousLabel)
+        event.id.targetCompleted.label = root.label;
+      for (const file of event.namedSetOfFiles?.files ?? [])
+        if (file.name === previousPath)
+          Object.assign(file, {
+            name: output,
+            length: String(contents.length),
+            digest: cohort.outputs.find(({ path: name }) => name === output).members[0].sha256,
+          });
+    }
+    const directory = path.join(f.directory, 'private-apple-packet');
+    const evidenceFile = writeNativeBuildEvidence(f.capture, directory);
+    const evidence = JSON.parse(readFileSync(evidenceFile, 'utf8'));
+    const packet = readNativeBuildFinalFiles(directory, evidence, constraints(f));
+    const transferred = packet.artifactRoots.find((file) =>
+      file.endsWith('/apple_release_assets/ios.json'),
+    );
+    expect(readFileSync(transferred)).toEqual(contents);
+    expect(packet).not.toHaveProperty('releaseDecision');
+    writeFileSync(transferred, 'substituted private Apple basis');
+    expect(() => readNativeBuildFinalFiles(directory, evidence, constraints(f))).toThrow(/bytes/);
+  });
+});
+
+test('exact reached seed TAR and receipt survive internal transport without entering public artifact roots', async () => {
+  await fixture(async (f) => {
+    const cohort = f.origin.evidence.cohorts[0];
+    const graph = cohort.aquery as any;
+    const frozen = 'bazel-out/k8-opt/bin/seed.tar';
+    const receipt = 'bazel-out/k8-opt/bin/seed.seed-construction.json';
+    writeFileSync(
+      path.join(cohort.executionRoot, frozen),
+      'exact original constructor TAR fixture',
+    );
+    const pgdata = path.join(f.directory, 'fixture-pgdata');
+    const contract = JSON.parse(
+      readFileSync(path.join(ROOT, 'src/database-resources/contracts/contract.json'), 'utf8'),
+    );
+    for (const name of contract.pgdataDirectories)
+      mkdirSync(path.join(pgdata, name), { recursive: true });
+    writeFileSync(path.join(pgdata, 'PG_VERSION'), '18\n');
+    const input = cohort.inputs.find((input) => !input.path.startsWith('bazel-out/'));
+    if (!input) throw new Error('seed transport fixture needs a source File');
+    const intent = captureSeedConstructionIntent(
+      { family: 'native', target: 'linux-x64-gnu', profile: 'standard' },
+      { command: 'fixture-initdb' },
+      { constructor: path.join(cohort.executionRoot, input.path) },
+    );
+    writeSeedConstructionReceipt(
+      path.join(cohort.executionRoot, receipt),
+      intent,
+      path.join(cohort.executionRoot, frozen),
+      pgdata,
+    );
+    const ids = [frozen, receipt].map((file, offset) => {
+      const id = graph.artifacts.length + 1;
+      const parts = file.split('/');
+      for (const [part, label] of parts.entries())
+        graph.pathFragments.push({
+          id: `seed-${offset}-${part}`,
+          label,
+          ...(part ? { parentId: `seed-${offset}-${part - 1}` } : {}),
+        });
+      graph.artifacts.push({ id, pathFragmentId: `seed-${offset}-${parts.length - 1}` });
+      return id;
+    });
+    const targetId = graph.targets.length + 1;
+    graph.targets.push({ id: targetId, label: '//fixture:seed_constructor' });
+    const depSetId = graph.depSetOfFiles.length + 1;
+    graph.depSetOfFiles.push({ id: depSetId, directArtifactIds: ids });
+    graph.actions[0].inputDepSetIds.push(depSetId);
+    graph.actions.push({
+      targetId,
+      configurationId: 1,
+      mnemonic: 'PostgresClusterSeed',
+      actionKey: 'actual-fixture-seed-constructor',
+      outputIds: ids,
+      primaryOutputId: ids[0],
+    });
+    const captured = captureNativeBuildEvidence({
+      ...constraints(f),
+      cohorts: [
+        {
+          ...cohort,
+          roots: cohort.roots,
+          cquery: {
+            configurations: [{ id: 1, checksum: cohort.rootConfigurations[0].configuration }],
+            results: cohort.roots.map((root) => ({
+              target: { rule: { name: root.label } },
+              configurationId: 1,
+            })),
+          },
+        },
+      ],
+    });
+    expect(captured.evidence.cohorts[0].seedConstructions).toHaveLength(1);
+    const directory = path.join(f.directory, 'seed-packet');
+    const file = writeNativeBuildEvidence(captured, directory);
+    const packet = readNativeBuildFinalFiles(
+      directory,
+      JSON.parse(readFileSync(file, 'utf8')),
+      constraints(f),
+    );
+    expect(packet.files).toHaveLength(5);
+    expect(packet.artifactRoots).toHaveLength(3);
+    for (const name of [frozen, receipt])
+      expect(readFileSync(path.join(directory, 'files/0', name))).toEqual(
+        readFileSync(path.join(cohort.executionRoot, name)),
+      );
+    expect(packet.stage()).toHaveLength(3);
+    writeFileSync(path.join(directory, 'files/0', frozen), 'substitution');
+    expect(() => packet.assertUnchanged()).toThrow();
   });
 });

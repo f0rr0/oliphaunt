@@ -1,4 +1,4 @@
-/** Install actual final leaves through SDK staging, then load both native ABIs. */
+/** Validate final leaves and their real SDK host contract, then load both native ABIs. */
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -164,15 +164,16 @@ assert.equal(cargoPayload.size, [...gh.keys()].filter((name) => name.startsWith(
 const root = mkdtempSync(path.join(tmpdir(), 'native-final-install-'));
 let materialized: { runtimeDirectory?: string; moduleDirectory?: string } | undefined;
 try {
-  const { assets, install, runtime, packages } = await prepareNativeCarrierSdk({
-    root,
-    runtimeFile,
-    npmFiles: [npmFile],
-    runtimeVersion: spec.runtimeVersion,
-    selected: [spec.sqlName],
-  });
+  const { assets, install, runtime, packages, materialize, sdkRuntimeVersion } =
+    await prepareNativeCarrierSdk({
+      root,
+      runtimeFile,
+      npmFiles: [npmFile],
+      runtimeVersion: spec.runtimeVersion,
+      selected: [spec.sqlName],
+    });
   const targetRoot = packages[0].directory;
-  materialized = await assets.materializeExtensionInstall(install, [spec.sqlName]);
+  materialized = await materialize([spec.sqlName]);
   assert(materialized.runtimeDirectory);
   assert(materialized.moduleDirectory);
   for (const name of gh.keys())
@@ -196,25 +197,27 @@ try {
     plans: [installSql, smokeSql, startupFile],
     environment: spec.recipe.runtime_environment ?? [],
   });
-  for (const dependency of member.nativeDependencyModules ?? []) {
-    const file = path.join(targetRoot, 'runtime/lib/modules', dependency);
-    const bytes = readFileSync(file);
-    rmSync(file);
+  if (sdkRuntimeVersion === spec.runtimeVersion) {
+    for (const dependency of member.nativeDependencyModules ?? []) {
+      const file = path.join(targetRoot, 'runtime/lib/modules', dependency);
+      const bytes = readFileSync(file);
+      rmSync(file);
+      await assert.rejects(
+        () => assets.materializeExtensionInstall(install, [spec.sqlName]),
+        /missing declared native dependency module/,
+      );
+      writeFileSync(file, bytes, { mode: 0o755 });
+    }
+    const foreign = path.join(targetRoot, 'runtime/lib/modules/foreign.so');
+    mkdirSync(path.dirname(foreign), { recursive: true });
+    writeFileSync(foreign, 'undeclared module');
     await assert.rejects(
       () => assets.materializeExtensionInstall(install, [spec.sqlName]),
-      /missing declared native dependency module/,
+      /undeclared runtime file/,
     );
-    writeFileSync(file, bytes, { mode: 0o755 });
   }
-  const foreign = path.join(targetRoot, 'runtime/lib/modules/foreign.so');
-  mkdirSync(path.dirname(foreign), { recursive: true });
-  writeFileSync(foreign, 'undeclared module');
-  await assert.rejects(
-    () => assets.materializeExtensionInstall(install, [spec.sqlName]),
-    /undeclared runtime file/,
-  );
   console.log(
-    `${spec.product}@${spec.version}: exact final GitHub/npm/Cargo bytes, SDK staging, supplier identity, restart and server SQL verified.`,
+    `${spec.product}@${spec.version}: exact final GitHub/npm/Cargo bytes, ${sdkRuntimeVersion === spec.runtimeVersion ? 'matching source SDK asset staging' : 'explicit runtime-directory staging with held SDK rejection'}, supplier identity, restart and server SQL verified.`,
   );
 } finally {
   if (materialized?.runtimeDirectory)

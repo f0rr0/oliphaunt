@@ -1,11 +1,21 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_CONFIGURATION")
+load(":supplier.bzl", "cc_shipping_supplier")
 
 package(default_visibility = ["//visibility:public"])
 
 NATIVE_BINARY_HELPERS = ["//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json", "//tools/release:platform-compatibility-policy.mts"]
 
 exports_files(glob(["*.bzl", "*.mts", "*-source.json", "*-releases.json", "*-completed-publication.json", "*-npm-*.json", "testdata/*.json"]))
+
+cc_shipping_supplier(
+    name = "current_native_core_supplier",
+    producer = "//src/native/runtime:runtime_shared_library",
+    owner = "@oliphaunt_metadata//:product_liboliphaunt-native",
+    configuration = NATIVE_EXTENSION_CONFIGURATION,
+    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+)
 
 bun_test(
     name = "frozen_native_carrier_test",

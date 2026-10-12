@@ -3,7 +3,7 @@ import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   extractPortableArchiveTree,
-  readFileOnlyTarGzipEntries,
+  readPortableArchiveEntries,
 } from '../../tools/packaging/portable-archive.mts';
 import {
   type CargoLinkConfiguration,
@@ -14,6 +14,30 @@ export {
   type CargoLinkConfiguration,
   cargoLinkEnvironment,
 } from '../languages/cargo-environment.mts';
+
+export function sourceCrateRoot(archive: string): string {
+  const entries = readPortableArchiveEntries(archive);
+  for (const entry of entries.values())
+    assert(
+      entry.isDirectory ? entry.mode === 0o755 : entry.isFile && entry.mode === 0o644,
+      'source crate must contain regular mode 0644 files and mode 0755 directories',
+    );
+  const manifests = [...entries.values()].filter(
+    (entry) => entry.isFile && entry.name.endsWith('/Cargo.toml'),
+  );
+  assert.equal(manifests.length, 1, 'source crate must contain one Cargo manifest');
+  const [manifest] = manifests;
+  assert(manifest);
+  const prefix = manifest.name.slice(0, -'/Cargo.toml'.length);
+  assert(
+    [...entries.values()].every(
+      (entry) =>
+        entry.name.startsWith(`${prefix}/`) || (entry.isDirectory && entry.name === prefix),
+    ),
+    'source crate members must stay inside their package root',
+  );
+  return prefix;
+}
 
 async function installedConsumerTest(args: string[]) {
   const [archive, manifest, source, cargo, rustc, rustdoc, linkConfiguration, runfiles] = args;
@@ -32,12 +56,7 @@ async function installedConsumerTest(args: string[]) {
   await mkdir(directory, { recursive: true });
   const installedArchive = join(directory, 'query.crate');
   await copyFile(archive, installedArchive);
-  const entries = readFileOnlyTarGzipEntries(installedArchive);
-  const manifests = [...entries.keys()].filter((path) => path.endsWith('/Cargo.toml'));
-  assert.equal(manifests.length, 1, 'source crate must contain one Cargo manifest');
-  const packageManifest = manifests[0];
-  assert(packageManifest);
-  const prefix = packageManifest.slice(0, -'/Cargo.toml'.length);
+  const prefix = sourceCrateRoot(installedArchive);
   extractPortableArchiveTree(installedArchive, join(directory, 'installed'), prefix);
   const consumer = join(directory, 'consumer');
   await mkdir(join(consumer, 'src'), { recursive: true });

@@ -25,6 +25,8 @@ def _bun_test_entrypoint(ctx, runner, arguments, files, environment = {}, runfil
     executable = ctx.actions.declare_file(ctx.label.name + (".exe" if runtime.runtime_platform.startswith("windows-") else ""))
     ctx.actions.symlink(output = executable, target_file = runtime.bun, is_executable = True)
     entry = ctx.actions.declare_file(ctx.label.name + ".entry.mts")
+    if not hasattr(ctx.attr, "args") or not ctx.attr.args or ctx.attr.args[0] != entry.short_path:
+        fail("Bun entrypoint requires args[0] = %r; use bun_test_entrypoint_args(%r) in the declaration macro" % (entry.short_path, ctx.label.name))
     argument_files = [argument for argument in arguments if type(argument) == "File"]
     ctx.actions.expand_template(
         template = ctx.file._bun_test_entrypoint_template,

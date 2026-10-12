@@ -107,7 +107,7 @@ shipping_package(
     role = [carrier["role"] for carrier in PUBLICATION_CARRIERS if carrier["product"] == "postgres-tools-wasix" and carrier["ecosystem"] == "npm" and carrier["name"] == SDK["name"]][0],
 )
 
-shipping_export(name = "shipping_export", packages = [":shipping_package"])
+shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = [":installed_consumer_test"], testonly = True)
 
 INSTALLED_TYPES = {"@types/node": SDK["types"]["@types/node"]}
 

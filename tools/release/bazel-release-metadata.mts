@@ -9,6 +9,7 @@ import {
   validateNativeComponentContract,
 } from '../../src/extensions/tools/native-component-contract.mts';
 import { nativeCargoArtifactRows } from '../packaging/rust-native-targets.mts';
+import { validateNativeSupplierPublications } from './bazel-shipping-inputs.mts';
 import { compatibilityVersionFromText } from './compatibility-version-parser.mts';
 import {
   contribExtensionMetadata,
@@ -16,11 +17,19 @@ import {
   extensionPublicationMetadataRows,
   extensionSourceMetadata,
 } from './extension-release-metadata.mts';
+import {
+  projectNativeAppleBaseInput,
+  projectNativeExtensionFinalInputs,
+  projectNativeSwiftSourceInput,
+} from './native-extension-final-inputs.mts';
+import { projectNativeSeedInputs } from './native-seed-inputs.mts';
+import { projectNativeSupplierArtifacts } from './native-supplier-artifacts.mts';
 import { loadPublicationCatalog } from './publication-catalog.mts';
 import {
   databaseResourceArtifactRows,
   expectedExtensionGithubReleaseAssetRows,
   extensionRegistryPackageTargetSetsFromRows,
+  extensionReleaseMetadataRows,
   nativeHelperArtifactRows,
   nativeRuntimeArtifactRows,
   runtimeExtensionTargetRowsFromConfigs,
@@ -50,6 +59,7 @@ export interface ReleaseMetadata {
   contribMembers: Record<string, unknown>[];
   postgresSource: Record<string, unknown>;
   extensions: Record<string, Record<string, unknown>>;
+  wasixExtensions: Record<string, Record<string, unknown>>;
   extensionSources: Record<string, Record<string, unknown>>;
   extensionRecipes: Record<string, Record<string, unknown>>;
   extensionCompatibility: Record<string, Record<string, unknown>>;
@@ -152,11 +162,18 @@ export function nativeMobileMemberAliasInputs(catalog: Map<string, Record<string
 }
 
 export function extensionGithubArtifactInputs(
-  identity: { artifactProduct: string; owner: string; version: string; sqlNames: string[] },
+  identity: {
+    artifactProduct: string;
+    owner: string;
+    version: string;
+    sqlNames: string[];
+    family?: 'native' | 'wasix' | null;
+  },
   profiles: { target: string; family: string; kind: string }[],
   catalog: Map<string, Record<string, unknown>>,
   mobile: ReleaseMetadata['nativeMobileComponentClosures'],
 ) {
+  const selectedFamily = identity.family === undefined ? 'native' : identity.family;
   const requiredRows = identity.sqlNames.flatMap((sqlName) => {
     const descriptor = catalog.get(sqlName);
     if (!descriptor) throw new Error(`extension asset inventory is missing ${sqlName}`);
@@ -166,9 +183,19 @@ export function extensionGithubArtifactInputs(
         `extension asset inventory requires the canonical module stem for ${sqlName}`,
       );
     return profiles
-      .filter((row) => row.family === 'native')
+      .filter(
+        (row) =>
+          (selectedFamily === null || row.family === selectedFamily) &&
+          (row.family === 'native' || row.target === 'wasix-portable'),
+      )
       .flatMap(({ family, target }) => {
-        const runtime = { sqlName, family, target, kind: 'runtime', identity: null };
+        const runtime = {
+          sqlName,
+          family,
+          target,
+          kind: family === 'wasix' ? 'wasix-runtime' : 'runtime',
+          identity: null,
+        };
         if (target !== 'ios-xcframework' || module === undefined) return [runtime];
         const closure = mobile[sqlName]?.[target];
         if (!closure) throw new Error(`extension asset inventory is missing ${sqlName}/${target}`);
@@ -191,7 +218,7 @@ export function extensionGithubArtifactInputs(
     return a < b ? -1 : a > b ? 1 : 0;
   });
   return expectedExtensionGithubReleaseAssetRows(
-    { id: identity.artifactProduct, version: identity.version, family: 'native' },
+    { id: identity.artifactProduct, version: identity.version, family: selectedFamily },
     { sqlNames: identity.sqlNames, requiredRows },
   ).map((row) => ({
     artifactProduct: identity.artifactProduct,
@@ -451,6 +478,16 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
     json('src/extensions/generated/extensions.catalog.json'),
     'release metadata',
   );
+  const wasixCatalog = json('src/extensions/generated/wasix/extensions.json').extensions;
+  if (!Array.isArray(wasixCatalog)) throw new Error('WASIX extensions must be an array');
+  const wasixExtensions: ReleaseMetadata['wasixExtensions'] = {};
+  for (const value of wasixCatalog) {
+    const row = object(value, 'WASIX extension');
+    const sqlName = string(row['sql-name'], 'WASIX extension SQL name');
+    if (Object.hasOwn(wasixExtensions, sqlName))
+      throw new Error(`duplicate WASIX extension ${sqlName}`);
+    wasixExtensions[sqlName] = row;
+  }
   const moduleMembers = new Set(
     [...generatedCatalog]
       .filter(([, row]) => typeof row['native-module-file'] === 'string')
@@ -590,21 +627,47 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
       const rows = extensionReleaseMetadata.filter(
         (row) => row.artifactProduct === artifactProduct,
       );
-      const owner =
+      const owners =
         rows[0].class === 'contrib'
-          ? contribOwners.native
-          : string(artifactProduct, 'extension artifact product');
-      return extensionGithubArtifactInputs(
-        {
+          ? [
+              { owner: contribOwners.native, family: 'native' as const },
+              { owner: contribOwners.wasix, family: 'wasix' as const },
+            ]
+          : [{ owner: string(artifactProduct, 'extension artifact product'), family: null }];
+      return owners.flatMap(({ owner, family }) => {
+        const identity = {
           artifactProduct: string(artifactProduct, 'extension artifact product'),
           owner,
           version: products[owner].version,
           sqlNames: rows.map((row) => string(row.sqlName, 'extension SQL name')),
-        },
-        targetRows,
-        generatedCatalog,
-        nativeMobileComponentClosures,
-      );
+          family,
+        };
+        return [
+          ...extensionGithubArtifactInputs(
+            identity,
+            targetRows,
+            generatedCatalog,
+            nativeMobileComponentClosures,
+          ),
+          ...extensionReleaseMetadataRows(
+            { id: identity.artifactProduct, version: identity.version },
+            family,
+          ).map(([kind, name]) => ({
+            artifactProduct: identity.artifactProduct,
+            owner,
+            product: owner,
+            version: identity.version,
+            id: `github-release:${name}`,
+            role: 'github-release-metadata',
+            family,
+            kind,
+            target: 'portable',
+            identity: null,
+            name,
+            control: true,
+          })),
+        ];
+      });
     });
   return {
     products,
@@ -612,6 +675,7 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
     contribMembers,
     postgresSource,
     extensions,
+    wasixExtensions,
     extensionSources,
     extensionRecipes,
     extensionCompatibility,
@@ -649,16 +713,128 @@ function starlark(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function renderReleaseMetadata(metadata: ReleaseMetadata, identityRule: string) {
+export function nativePublicationInputProjection(value: unknown, metadata?: ReleaseMetadata) {
+  const snapshot = object(value, 'native publication inputs');
+  if (
+    Object.keys(snapshot).some(
+      (key) =>
+        ![
+          'source',
+          'seedControls',
+          'supplierPublications',
+          'extensionFinalInputs',
+          'nativeAppleBase',
+          'nativeSwiftSource',
+          'selectedProducts',
+          'supplierArtifacts',
+        ].includes(key),
+    )
+  )
+    throw new Error('native publication inputs contain unknown fields');
+  const source = object(snapshot.source, 'native publication source');
+  if (
+    Object.keys(source).sort().join(',') !== 'commit,tree' ||
+    ![source.commit, source.tree].every(
+      (sha) => typeof sha === 'string' && /^[a-f0-9]{40}$/u.test(sha),
+    )
+  )
+    throw new Error('native publication inputs require an exact source commit and tree');
+  const supplierPublications = validateNativeSupplierPublications(
+    snapshot.supplierPublications ?? [],
+  );
+  const seeds = projectNativeSeedInputs(
+    snapshot.seedControls ?? [],
+    source as { commit: string; tree: string },
+  );
+  const extensions = projectNativeExtensionFinalInputs(snapshot.extensionFinalInputs ?? []);
+  const apple =
+    snapshot.nativeAppleBase === undefined
+      ? { input: null, files: [] }
+      : projectNativeAppleBaseInput(snapshot.nativeAppleBase);
+  const swift =
+    snapshot.nativeSwiftSource === undefined
+      ? { input: null, files: [] }
+      : projectNativeSwiftSourceInput(snapshot.nativeSwiftSource);
+  const selectedProducts = snapshot.selectedProducts === undefined ? [] : snapshot.selectedProducts;
+  if (
+    !Array.isArray(selectedProducts) ||
+    selectedProducts.some((id) => typeof id !== 'string' || !/^[a-z][a-z0-9-]*$/u.test(id)) ||
+    new Set(selectedProducts).size !== selectedProducts.length
+  )
+    throw new Error('prepared native selected products require unique canonical IDs');
+  const suppliers = projectNativeSupplierArtifacts(
+    snapshot.supplierArtifacts === undefined ? [] : snapshot.supplierArtifacts,
+    metadata && {
+      publicationCarriers: metadata.publicationCarriers,
+      githubArtifacts: [
+        ...metadata.nativeRuntimeArtifacts,
+        ...metadata.nativeHelperArtifacts,
+        ...metadata.wasixArtifacts,
+        ...metadata.databaseResourceArtifacts,
+      ].flatMap((row) =>
+        typeof row.product === 'string' && typeof row.asset === 'string'
+          ? [{ product: row.product, asset: row.asset }]
+          : [],
+      ),
+    },
+  );
+  for (const { publication } of Object.values(suppliers.artifacts)) {
+    const matching = supplierPublications.find(
+      (row) => row.product === publication.product && row.version === publication.version,
+    );
+    if (matching && Object.keys(matching).some((key) => matching[key] !== publication[key]))
+      throw new Error('completed supplier artifact source conflicts with supplier publication');
+  }
+  return {
+    selectedProducts: [...selectedProducts],
+    nativeSwiftSource: swift.input,
+    supplierArtifacts: suppliers.artifacts,
+    supplierPublications: Object.fromEntries(
+      supplierPublications.map((publication) => [
+        `${publication.product}@${publication.version}`,
+        publication,
+      ]),
+    ),
+    seedControls: seeds.controls,
+    extensionFinalInputs: extensions.leaves,
+    nativeAppleBase: apple.input,
+    files: [
+      ...seeds.files,
+      ...extensions.files,
+      ...apple.files,
+      ...swift.files,
+      ...suppliers.files,
+    ],
+  };
+}
+
+export function renderReleaseMetadata(
+  metadata: ReleaseMetadata,
+  identityRule: string,
+  publicationInputs = {
+    supplierPublications: {},
+    seedControls: {},
+    extensionFinalInputs: {},
+    nativeAppleBase: null,
+    nativeSwiftSource: null,
+    selectedProducts: [],
+    supplierArtifacts: {},
+    files: [],
+  },
+) {
   if (!identityRule.startsWith('@') || !identityRule.endsWith(':identity.bzl')) {
     throw new Error('identity rule must be a repository-qualified identity.bzl label');
   }
+  for (const id of publicationInputs.selectedProducts)
+    if (!Object.hasOwn(metadata.products, id))
+      throw new Error(`unknown prepared native selected product: ${id}`);
   const definitions = {
     PRODUCTS: metadata.products,
     CONTRIB_OWNERS: metadata.contribOwners,
     CONTRIB_MEMBERS: metadata.contribMembers,
     POSTGRES_SOURCE: metadata.postgresSource,
     EXTENSIONS: metadata.extensions,
+    WASIX_EXTENSIONS: metadata.wasixExtensions,
     EXTENSION_SOURCES: metadata.extensionSources,
     EXTENSION_RECIPES: metadata.extensionRecipes,
     EXTENSION_COMPATIBILITY: metadata.extensionCompatibility,
@@ -677,6 +853,13 @@ export function renderReleaseMetadata(metadata: ReleaseMetadata, identityRule: s
     DATABASE_RESOURCE_CONTRACT: metadata.databaseResourceContract,
     DATABASE_RESOURCE_ARTIFACTS: metadata.databaseResourceArtifacts,
     DATABASE_SEED_CARRIERS: metadata.databaseSeedCarriers,
+    COMPLETED_SUPPLIER_PUBLICATIONS: publicationInputs.supplierPublications,
+    SEED_REUSE_CONTROLS: publicationInputs.seedControls,
+    EXTENSION_FINAL_INPUTS: publicationInputs.extensionFinalInputs,
+    NATIVE_APPLE_BASE_INPUT: publicationInputs.nativeAppleBase,
+    NATIVE_SWIFT_SOURCE_INPUT: publicationInputs.nativeSwiftSource,
+    PREPARED_NATIVE_SELECTED_PRODUCTS: publicationInputs.selectedProducts,
+    COMPLETED_SUPPLIER_ARTIFACTS: publicationInputs.supplierArtifacts,
   };
   const bzl = `${Object.entries(definitions)
     .map(([name, value]) => `${name} = ${starlark(value)}`)
@@ -684,7 +867,10 @@ export function renderReleaseMetadata(metadata: ReleaseMetadata, identityRule: s
   const build = [
     `load(${JSON.stringify(identityRule)}, "release_identity")`,
     'package(default_visibility = ["//visibility:public"])',
-    'exports_files(["metadata.bzl", "extension-sources.bzl"])',
+    'exports_files(["metadata.bzl", "extension-sources.bzl", "completed-supplier-artifacts.json"])',
+    ...(publicationInputs.files.length
+      ? [`exports_files(${starlark(publicationInputs.files.map(({ path }) => path))})`]
+      : []),
     ...Object.values(metadata.products)
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       .map(
@@ -706,19 +892,25 @@ export function renderReleaseMetadata(metadata: ReleaseMetadata, identityRule: s
     ]),
   );
   const extensionSourcesBzl = `EXTENSION_SOURCES = ${starlark(acquisitionSources)}\n\nEXTENSION_DEPENDENCIES = ${starlark(metadata.extensionDependencies)}\n`;
-  return { bzl, extensionSourcesBzl, build: `${build}\n` };
+  return {
+    bzl,
+    extensionSourcesBzl,
+    completedSupplierArtifacts: `${JSON.stringify(publicationInputs.supplierArtifacts)}\n`,
+    build: `${build}\n`,
+  };
 }
 
 if (import.meta.main) {
   const args = Bun.argv.slice(2);
   if (
-    args.length !== 6 ||
+    ![6, 8].includes(args.length) ||
     args[0] !== '--root' ||
     args[2] !== '--output-dir' ||
-    args[4] !== '--identity-rule'
+    args[4] !== '--identity-rule' ||
+    (args.length === 8 && args[6] !== '--native-publication-inputs')
   ) {
     throw new Error(
-      'usage: bazel-release-metadata.mts --root ROOT --output-dir DIR --identity-rule LABEL',
+      'usage: bazel-release-metadata.mts --root ROOT --output-dir DIR --identity-rule LABEL [--native-publication-inputs FILE]',
     );
   }
   const metadata = loadReleaseMetadata(args[1]);
@@ -747,12 +939,33 @@ if (import.meta.main) {
       );
     }
   }
-  const rendered = renderReleaseMetadata(metadata, args[5]);
+  const publicationInputs =
+    args.length === 8
+      ? nativePublicationInputProjection(
+          JSON.parse(
+            new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+              readFileSync(args[7]),
+            ),
+          ),
+          metadata,
+        )
+      : undefined;
+  const rendered = renderReleaseMetadata(metadata, args[5], publicationInputs);
   mkdirSync(args[3], { recursive: true });
   writeFileSync(path.join(args[3], 'metadata.bzl'), rendered.bzl);
   writeFileSync(path.join(args[3], 'extension-sources.bzl'), rendered.extensionSourcesBzl);
+  writeFileSync(
+    path.join(args[3], 'completed-supplier-artifacts.json'),
+    rendered.completedSupplierArtifacts,
+  );
   writeFileSync(path.join(args[3], 'BUILD.bazel'), rendered.build);
-  writeFileSync(path.join(args[3], '.metadata-inputs.json'), JSON.stringify(metadata.inputs));
+  writeFileSync(
+    path.join(args[3], '.metadata-inputs.json'),
+    JSON.stringify({
+      sourceInputs: metadata.inputs,
+      nativePublicationFiles: publicationInputs?.files ?? [],
+    }),
+  );
   writeFileSync(
     path.join(args[3], '.metadata-directories.json'),
     JSON.stringify(metadata.directories),

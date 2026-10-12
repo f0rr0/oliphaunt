@@ -117,6 +117,11 @@ for (const [profile, provider, wrongProvider, expected] of [
 
 const compiled = metadata.compiledMember;
 assert.equal(compiled?.sqlName, 'pg_uuidv7', 'expected canonical compiled extension metadata');
+assert.deepEqual(
+  metadata.newCoreMember,
+  compiled,
+  'an unrelated core version must not adopt a new extension host',
+);
 const canonicalModule = compiled.descriptor['native-module-file'];
 assert.equal(typeof canonicalModule, 'string');
 assert(canonicalModule.endsWith('.so'));

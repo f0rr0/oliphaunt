@@ -1,3 +1,4 @@
+import { isNativeAppleBaseInputRoot } from './bazel-shipping-inputs.mts';
 import { fileIdentity, safeRelative } from './native-file-identity.mts';
 
 export { copyNativeInputFile } from './native-file-identity.mts';
@@ -119,8 +120,10 @@ export function captureNativeInputMembers(executionRoot: string, input: string) 
  * byte staging, never producer execution, qualification or release selection.
  */
 /** Final envelopes and the exact documents required to join extension target leaves. */
-export function isNativeFinalTransportRoot({ package: pkg }: NativeRoot) {
+export function isNativeFinalTransportRoot(root: NativeRoot) {
+  const pkg = root.package;
   return (
+    isNativeAppleBaseInputRoot(root) ||
     pkg.ecosystem !== 'internal' ||
     ['extension-release-manifest-input', 'extension-release-frozen-input'].includes(pkg.role)
   );

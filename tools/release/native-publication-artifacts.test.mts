@@ -435,6 +435,17 @@ test('validates the frozen Swift manifest and source tree as actual native outpu
     const read = () =>
       readNativePublicationArtifacts(authority, [cohort], { products: [product.id] });
     const result = read();
+    authority.artifactRows = expectedProductArtifactRows(catalog.products, {
+      swiftExtensionFixture: true,
+    });
+    expect(read).toThrow(/incomplete native shipping coverage/u);
+    const preVersion = readNativePublicationArtifacts(authority, [cohort], {
+      products: [product.id],
+      artifactPhase: 'pre-version',
+    });
+    expect(preVersion.productArtifacts).toEqual(result.productArtifacts);
+    expect(preVersion.registryArtifacts).toEqual(result.registryArtifacts);
+    authority.artifactRows = rows;
     expect(result.sourcePublicationInputs).toBe(2);
     expect(result.productArtifacts).toHaveLength(rows.length);
     expect(

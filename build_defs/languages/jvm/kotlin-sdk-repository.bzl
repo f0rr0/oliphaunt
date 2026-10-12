@@ -9,7 +9,7 @@ def _kotlin_sdk_metadata_impl(ctx):
     result = ctx.execute(command, timeout = 60)
     if result.return_code:
         fail("Kotlin SDK conventional import failed:\n" + result.stdout + result.stderr)
-    ctx.file("BUILD.bazel", "exports_files([\"metadata.bzl\"], visibility=[\"//visibility:public\"])\n")
+    ctx.file("BUILD.bazel", "exports_files([\"metadata.bzl\", \"lint.versions.toml\"], visibility=[\"//visibility:public\"])\n")
     return ctx.repo_metadata(reproducible = True)
 
 kotlin_sdk_metadata_repository = repository_rule(

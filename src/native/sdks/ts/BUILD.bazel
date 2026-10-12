@@ -1,7 +1,7 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@aspect_rules_js//js:defs.bzl", "js_library")
 load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
-load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@oliphaunt_metadata//:metadata.bzl", "PUBLICATION_CARRIERS")
 load("@javascript_packages//:defs.bzl", "PACKAGES", "javascript_type_links")
@@ -40,6 +40,13 @@ npm_link_package(
 )
 
 js_library(name = "package_metadata", srcs = ["package.json"])
+ts_config(name = "source_config", src = "tsconfig.json")
+
+js_library(
+    name = "source_inputs",
+    types = SDK_SRCS + [":extension_projections"],
+    deps = [":package_metadata"] + [":node_modules/" + name for name in SDK["types"]],
+)
 
 sdk_extension_projections(name = "extension_projections", sdk = "ts")
 
@@ -105,7 +112,7 @@ shipping_package(
     role = [carrier["role"] for carrier in PUBLICATION_CARRIERS if carrier["product"] == "oliphaunt-js" and carrier["ecosystem"] == "npm" and carrier["name"] == SDK["name"]][0],
 )
 
-shipping_export(name = "shipping_export", packages = [":shipping_package"])
+shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = [":consumer_test", "//build_defs/languages/carriers:installed_sql_test"], testonly = True)
 
 source_sdk_consumer_test(
     name = "consumer_test",

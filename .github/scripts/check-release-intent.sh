@@ -7,6 +7,11 @@ head_ref="${3:-HEAD}"
 head_branch="${4:-}"
 event_name="${5:-}"
 full_ref="${6:-}"
+policy_mode="${7:-}"
+if [[ -n "$policy_mode" && "$policy_mode" != --source-policy-only ]]; then
+  echo "unknown release-intent policy mode: $policy_mode" >&2
+  exit 1
+fi
 
 if [[ -z "${subject}" ]]; then
   echo "expected a non-empty PR title or commit subject" >&2
@@ -140,20 +145,29 @@ if [[ "${is_release_pr}" == true ]]; then
     echo "release PRs must contain one normalized release-bump commit directly on the current base" >&2
     exit 1
   fi
-  release_products_json="$(
+  if [[ "$policy_mode" != --source-policy-only ]]; then
+    release_products_json="$(
+      bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" "${head_ref}" tools/dev/bun.sh tools/release/verify-release-commit.mts \
+        --derive-products \
+        --head-ref "${head_ref}"
+    )"
     bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" "${head_ref}" tools/dev/bun.sh tools/release/verify-release-commit.mts \
-      --derive-products \
+      --products-json "${release_products_json}" \
       --head-ref "${head_ref}"
-  )"
-  bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" "${head_ref}" tools/dev/bun.sh tools/release/verify-release-commit.mts \
-    --products-json "${release_products_json}" \
-    --head-ref "${head_ref}"
-  consumer_products_json="${release_products_json}"
+    consumer_products_json="${release_products_json}"
+  fi
 elif [[ "${event_name}" == workflow_dispatch && "${full_ref}" == refs/heads/main && "${CI_RELEASE_PRODUCTS_JSON:-[]}" != '[]' ]]; then
   consumer_products_json="${CI_RELEASE_PRODUCTS_JSON}"
 fi
-if [[ -n "${consumer_products_json}" ]]; then
+if [[ -n "${consumer_products_json}" && "$policy_mode" != --source-policy-only ]]; then
   bash tools/release/with-product-history.sh "$PWD" "${head_ref}" '' @workspace bash tools/dev/bun.sh tools/release/consumer-compatibility.mts "${consumer_products_json}"
+fi
+
+# Native construction decides delivery changes before Release Please runs.
+# The native context separately authenticates the exact successful Prepare tree
+# and its configured suppliers; these guards never recalculate that selection.
+if [[ "$policy_mode" == --source-policy-only ]]; then
+  exit 0
 fi
 
 release_plan="$(bash tools/release/release-plan.sh --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"

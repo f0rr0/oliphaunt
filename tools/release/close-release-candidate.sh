@@ -6,6 +6,13 @@ cd "$(git rev-parse --show-toplevel)"
   exit 2
 }
 [[ "$(cat "$1/required")" == true ]] || exit 0
+if [[ -n "${NATIVE_QUALIFICATION_RUN_ID:-}" ]]; then
+  for check in check_release_please_config check_artifact_targets; do
+    bash tools/dev/bun.sh "tools/release/$check.mts"
+  done
+  bash tools/release/with-source.sh HEAD bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" HEAD bash tools/release/with-product-history.sh "$PWD" HEAD '' @workspace bash tools/dev/bun.sh tools/release/native-close-release-candidate.mts "$1"
+  exit 0
+fi
 title="$(cat "$1/title")"
 git config user.name "$(bun -p 'require("./tools/release/release-bot.json").name')"
 git config user.email "$(bun -p 'require("./tools/release/release-bot.json").email')"

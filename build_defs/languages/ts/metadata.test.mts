@@ -451,3 +451,235 @@ test('nested compiler dependencies inherit the nearest locked resolution context
   const transformer = compiled.packages[framework.dependencies.transformer];
   expect(compiled.packages[transformer.dependencies.parser].version).toBe('3.5.0');
 });
+
+function executionFixture() {
+  const value = fixture();
+  value.root.overrides = { esbuild: '0.28.1' };
+  value.lock.overrides = { ...value.root.overrides };
+  const manifest = {
+    name: '@oliphaunt/docs',
+    version: '0.0.0',
+    dependencies: { framework: '^16.0.0', render: '^19.0.0' },
+    devDependencies: { css: '^4.0.0', typescript: '^5.9.3' },
+  };
+  value.dependencies = { 'src/docs': manifest };
+  value.lock.workspaces['src/docs'] = structuredClone(manifest);
+  Object.assign(value.lock.packages, {
+    framework: [
+      'framework@16.2.7',
+      '',
+      {
+        dependencies: { esbuild: '^0.21.0' },
+        peerDependencies: { render: '^19.0.0', optional: '^1.0.0', unrelated: '^7.0.0' },
+        optionalPeers: ['optional', 'unrelated'],
+        bin: { build: './dist/cli.js' },
+      },
+      'sha512-ZnJhbWU=',
+    ],
+    render: ['render@19.2.7', '', {}, 'sha512-cmVuZGVy'],
+    css: ['css@4.3.0', '', { dependencies: { optional: '^1.0.0' } }, 'sha512-Y3Nz'],
+    optional: ['optional@1.0.0', '', {}, 'sha512-cGVlcg=='],
+    unrelated: ['unrelated@6.4.2', '', {}, 'sha512-dml0ZQ=='],
+    '@oliphaunt/docs/typescript': [
+      'typescript@5.9.3',
+      '',
+      { bin: { tsc: './bin/tsc' } },
+      'sha512-dHM=',
+    ],
+    esbuild: [
+      'esbuild@0.28.1',
+      '',
+      { optionalDependencies: { linux: '0.28.1', darwin: '0.28.1' } },
+      'sha512-ZXNi',
+    ],
+    linux: ['linux@0.28.1', '', { os: 'linux', cpu: 'x64' }, 'sha512-bGludXg='],
+    darwin: ['darwin@0.28.1', '', { os: 'darwin', cpu: 'arm64' }, 'sha512-ZGFyd2lu'],
+  });
+  return value;
+}
+
+const executionProjection = (value = executionFixture()) =>
+  importJavascriptMetadata(value.root, value.lock, value.manifests, {}, {}, value.dependencies, [
+    '@oliphaunt/docs',
+  ]);
+
+test('execution workspaces acquire every conventional root with their own compiler and lock-projected CLI paths', () => {
+  const value = executionFixture();
+  const before = importJavascriptMetadata(
+    value.root,
+    value.lock,
+    value.manifests,
+    {},
+    {},
+    value.dependencies,
+  );
+  const { consumerTools, ...unchanged } = executionProjection(value);
+  expect(unchanged).toEqual(before);
+  const acquired = consumerTools!;
+  expect(Object.keys(acquired.roots['@oliphaunt/docs'])).toEqual([
+    'css',
+    'framework',
+    'render',
+    'typescript',
+  ]);
+  expect(acquired.packages[acquired.roots['@oliphaunt/docs'].typescript].version).toBe('5.9.3');
+  expect(before.typescript.version).toBe('6.0.3');
+  const framework = acquired.packages[acquired.roots['@oliphaunt/docs'].framework];
+  expect(Object.keys(framework.dependencies).sort()).toEqual(['esbuild', 'optional', 'render']);
+  const esbuild = acquired.packages[framework.dependencies.esbuild];
+  expect(esbuild.version).toBe('0.28.1');
+  expect(Object.keys(esbuild.dependencies)).toEqual(['linux']);
+  expect(acquired.bins['@oliphaunt/docs']).toEqual({
+    framework: { build: 'dist/cli.js' },
+    typescript: { tsc: 'bin/tsc' },
+  });
+  expect(acquired.closures['@oliphaunt/docs']).toEqual(Object.keys(acquired.packages).sort());
+  value.manifests['src/sdk'].devDependencies.tool = '1.0.0';
+  value.lock.packages.tool = [
+    'tool@1.0.0',
+    '',
+    { dependencies: { esbuild: '^0.21.0' } },
+    'sha512-dG9vbA==',
+  ];
+  const isolated = importJavascriptMetadata(
+    value.root,
+    value.lock,
+    value.manifests,
+    { '@oliphaunt/sdk': ['tool'] },
+    {},
+    value.dependencies,
+    ['@oliphaunt/docs'],
+  ).consumerTools!;
+  expect(
+    isolated.closures['@oliphaunt/sdk'].map((id) => isolated.packages[id].package).sort(),
+  ).toEqual(['esbuild', 'linux', 'tool']);
+  expect(isolated.closures['@oliphaunt/docs']).not.toContain(isolated.roots['@oliphaunt/sdk'].tool);
+  const scalar = executionFixture();
+  scalar.lock.packages.framework[2].bin = './dist/cli.js';
+  expect(executionProjection(scalar).consumerTools!.bins['@oliphaunt/docs'].framework).toEqual({
+    framework: 'dist/cli.js',
+  });
+});
+
+test('optional peers require a compatible provider in the selected workspace context', () => {
+  for (const provided of [false, true]) {
+    const value = executionFixture();
+    delete value.lock.packages.css[2].dependencies.optional;
+    if (provided) {
+      value.dependencies['src/docs'].devDependencies.unrelated = '^6.0.0';
+      value.lock.workspaces['src/docs'].devDependencies.unrelated = '^6.0.0';
+    }
+    const acquired = executionProjection(value).consumerTools!;
+    const framework = acquired.packages[acquired.roots['@oliphaunt/docs'].framework];
+    expect(Object.keys(framework.dependencies).sort()).toEqual(['esbuild', 'render']);
+  }
+  const value = executionFixture();
+  value.manifests['src/sdk'].devDependencies.framework = '^16.0.0';
+  value.manifests['src/sdk'].devDependencies.css = '^4.0.0';
+  value.lock.workspaces['src/sdk'] = structuredClone(value.manifests['src/sdk']);
+  value.lock.workspaces['src/sdk'].devDependencies.css = '^3.0.0';
+  expect(() =>
+    importJavascriptMetadata(value.root, value.lock, value.manifests, {
+      '@oliphaunt/sdk': ['framework'],
+    }),
+  ).toThrow('stale consumer provider declaration');
+  const incompatible = executionFixture();
+  incompatible.lock.packages.css[2].dependencies.optional = '^2.0.0';
+  expect(() => executionProjection(incompatible)).toThrow('does not satisfy');
+  const required = executionFixture();
+  required.lock.packages.framework[2].dependencies.optional = '^1.0.0';
+  required.lock.packages.framework[2].peerDependencies.optional = '^2.0.0';
+  expect(executionProjection(required).consumerTools?.packages).toBeDefined();
+});
+
+test('execution acquisition rejects stale declarations, wrong platforms, missing peers, integrity and overrides', () => {
+  for (const mutate of [
+    (value: any) => {
+      value.lock.workspaces['src/docs'].dependencies.framework = '^15.0.0';
+    },
+    (value: any) => {
+      value.lock.workspaces['src/docs'].dependencies.removed = '1.0.0';
+    },
+    (value: any) => {
+      value.lock.packages.framework[2].os = 'darwin';
+    },
+    (value: any) => {
+      delete value.lock.packages.render;
+    },
+    (value: any) => {
+      value.lock.packages.render[0] = 'render@18.0.0';
+    },
+    (value: any) => {
+      value.lock.packages.framework[3] = '';
+    },
+    (value: any) => {
+      value.lock.overrides.esbuild = '0.21.0';
+    },
+    (value: any) => {
+      value.lock.packages.framework[2].dependencies.framework = '^16.0.0';
+    },
+  ]) {
+    const value = executionFixture();
+    mutate(value);
+    expect(() => executionProjection(value)).toThrow();
+  }
+  const value = executionFixture();
+  expect(() =>
+    importJavascriptMetadata(value.root, value.lock, value.manifests, {}, {}, value.dependencies, [
+      '@oliphaunt/docs',
+      '@oliphaunt/docs',
+    ]),
+  ).toThrow('Duplicate execution workspace');
+});
+
+test('consumer CLI paths stay inside the declared package', () => {
+  for (const path of [
+    '',
+    '../cli.js',
+    './dist/../../cli.js',
+    '/cli.js',
+    'C:/cli.js',
+    'dist\\cli.js',
+    'dist/\ncli.js',
+  ]) {
+    const value = executionFixture();
+    value.lock.packages.framework[2].bin.build = path;
+    expect(() => executionProjection(value)).toThrow();
+  }
+  for (const command of ['', '../build', 'build:run', 'build\nrun']) {
+    const value = executionFixture();
+    value.lock.packages.framework[2].bin = { [command]: 'dist/cli.js' };
+    expect(() => executionProjection(value)).toThrow();
+  }
+});
+
+test('distinct optional peer contexts cannot silently share one installation identity', () => {
+  const value = executionFixture();
+  value.manifests['src/sdk'].devDependencies.framework = '^16.0.0';
+  expect(() =>
+    importJavascriptMetadata(
+      value.root,
+      value.lock,
+      value.manifests,
+      { '@oliphaunt/sdk': ['framework'] },
+      {},
+      value.dependencies,
+      ['@oliphaunt/docs'],
+    ),
+  ).toThrow('Conflicting acquisition closure');
+  value.manifests['src/sdk'].devDependencies.css = '^4.0.0';
+  const same = structuredClone(value.lock.packages.framework);
+  same[2].peerDependencies = Object.fromEntries(Object.entries(same[2].peerDependencies).reverse());
+  value.lock.packages['@oliphaunt/sdk/framework'] = same;
+  expect(() =>
+    importJavascriptMetadata(
+      value.root,
+      value.lock,
+      value.manifests,
+      { '@oliphaunt/sdk': ['framework'] },
+      {},
+      value.dependencies,
+      ['@oliphaunt/docs'],
+    ),
+  ).not.toThrow();
+});

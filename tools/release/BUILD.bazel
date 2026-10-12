@@ -5,6 +5,16 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["bazel-release-metadata.mts", "bazel-shipping-inputs.mts", "extension-release-metadata.mts", "compatibility-version-parser.mts", "compatibility-version-policy.mts", "product-version.mts", "platform-compatibility-policy.mts", "frozen-extension-consumer.mts", "release-artifact-targets.mts", "release-graph.mts", "release-history.mts"])
 exports_files(["native-file-identity.mts"])
+exports_files(["checksum-manifest.mts"])
+exports_files(["native-extension-final-inputs.mts", "qualified-native-extension-final-inputs.mts"])
+exports_files(["native-supplier-artifacts.mts"])
+
+bun_test(
+    name = "native_extension_final_inputs_test",
+    entry_point = "native-extension-final-inputs.test.mts",
+    data = ["native-extension-final-inputs.mts", "native-file-identity.mts", "//:tools/packaging/release-directory-safety.mts"],
+    size = "small",
+)
 exports_files(["github-read.mts", "github-core-request-journal.mts", "github-release-lineage.mts"])
 
 bun_test(
@@ -19,9 +29,15 @@ bun_test(
     size = "small",
     entry_point = "bazel-release-metadata.test.mts",
     data = [
+        "//:src/extensions/generated/wasix/extensions.json",
         "bazel-release-metadata.mts",
+        "bazel-shipping-inputs.mts",
         "compatibility-version-parser.mts",
         "extension-release-metadata.mts",
+        "native-extension-final-inputs.mts",
+        "native-file-identity.mts",
+        "native-seed-inputs.mts",
+        "native-supplier-artifacts.mts",
         "platform-compatibility-policy.mts",
         "publication-catalog.mts",
         "release-artifact-targets.mts",

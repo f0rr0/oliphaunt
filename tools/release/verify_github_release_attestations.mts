@@ -28,6 +28,7 @@ import {
   extensionSourceIdentity,
   extensionSqlNames,
 } from './release-artifact-targets.mts';
+import { createRetainedDownload } from './retained-download.mts';
 
 export { requestBoundedGithubJson, requestGithubJsonWithRetry } from './github-read.mts';
 
@@ -407,7 +408,7 @@ async function expectedAssets(product, version, { extensionAssets } = {}) {
   fail(`asset expectation is not defined for ${product}`);
 }
 
-async function exactResponseProof(response, expectedSize, context) {
+async function exactResponseProof(response, expectedSize, context, retained, expectedSha256) {
   const declared = responseContentLength(response, context);
   if (declared !== null && declared !== expectedSize) {
     await response.body?.cancel?.().catch(() => {});
@@ -423,6 +424,7 @@ async function exactResponseProof(response, expectedSize, context) {
     size = bytes.byteLength;
     if (size > expectedSize) throw new Error(`${context} exceeds expected size ${expectedSize}`);
     hash.update(bytes);
+    await retained?.write(bytes);
   } else {
     try {
       for (;;) {
@@ -430,11 +432,14 @@ async function exactResponseProof(response, expectedSize, context) {
         if (done) break;
         size += value.byteLength;
         if (size > expectedSize) {
-          await reader.cancel().catch(() => {});
           throw new Error(`${context} exceeds expected size ${expectedSize}`);
         }
         hash.update(value);
+        await retained?.write(value);
       }
+    } catch (error) {
+      await reader.cancel().catch(() => {});
+      throw error;
     } finally {
       reader.releaseLock();
     }
@@ -442,7 +447,11 @@ async function exactResponseProof(response, expectedSize, context) {
   if (size !== expectedSize) {
     throw new Error(`${context} size ${size} does not match expected size ${expectedSize}`);
   }
-  return { bytes: size, sha256: hash.digest('hex') };
+  const sha256 = hash.digest('hex');
+  if (expectedSha256 !== undefined && sha256 !== expectedSha256) {
+    throw new Error(`${context} sha256 ${sha256} does not match expected sha256 ${expectedSha256}`);
+  }
+  return { bytes: size, sha256 };
 }
 
 function releaseAssetApiUrl(rawUrl, name) {
@@ -496,20 +505,48 @@ export async function requestReleaseAssetProof(
   url,
   name,
   expectedSize,
-  { fetchImpl = fetch, timeoutMs = RELEASE_ASSET_TIMEOUT_MS } = {},
+  { fetchImpl = fetch, timeoutMs = RELEASE_ASSET_TIMEOUT_MS, retainedPath, expectedSha256 } = {},
 ) {
   const size = expectedAssetSize(expectedSize, name);
-  await reserveGitHubCoreRequest({ label: `prove GitHub release asset ${name}` });
-  const response = await fetchImpl(releaseAssetApiUrl(url, name), {
-    headers: authHeaders('application/octet-stream'),
-    redirect: 'follow',
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!response.ok) {
-    await response.body?.cancel?.().catch(() => {});
-    throw new Error(`GitHub asset download returned HTTP ${response.status} for ${name}`);
+  const apiUrl = releaseAssetApiUrl(url, name);
+  if (
+    expectedSha256 !== undefined &&
+    (typeof expectedSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(expectedSha256))
+  ) {
+    throw new Error(`GitHub release asset ${name} has invalid expected sha256`);
   }
-  return exactResponseProof(response, size, `GitHub release asset ${name}`);
+  const retained =
+    retainedPath === undefined ? undefined : await createRetainedDownload(retainedPath);
+  try {
+    await reserveGitHubCoreRequest({ label: `prove GitHub release asset ${name}` });
+    const response = await fetchImpl(apiUrl, {
+      headers: authHeaders('application/octet-stream'),
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) {
+      await response.body?.cancel?.().catch(() => {});
+      throw new Error(`GitHub asset download returned HTTP ${response.status} for ${name}`);
+    }
+    const proof = await exactResponseProof(
+      response,
+      size,
+      `GitHub release asset ${name}`,
+      retained,
+      expectedSha256,
+    );
+    return retained === undefined ? proof : { ...proof, path: await retained.commit() };
+  } catch (error) {
+    try {
+      await retained?.abort();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        `GitHub release asset ${name} cleanup failed`,
+      );
+    }
+    throw error;
+  }
 }
 
 async function githubJson(url) {
@@ -2746,4 +2783,26 @@ async function main(argv) {
 
 if (import.meta.main) {
   await main(Bun.argv.slice(2));
+}
+
+/** An unsigned request only; gh subsequently authenticates this exact signer digest and workflow. */
+export function releaseAttestationPublisherRequest(bundle, { repo, name, sha256 }) {
+  const statement = decodeBundleStatement(bundle, 'completed release attestation');
+  const subjects = statementSubjects(statement, 'completed release attestation');
+  if (subjects.filter((subject) => subject.name === name && subject.sha256 === sha256).length !== 1)
+    return undefined;
+  const definition = statement.predicate?.buildDefinition;
+  const workflow = definition?.externalParameters?.workflow;
+  if (
+    workflow?.repository !== `https://github.com/${repo}` ||
+    workflow?.ref !== 'refs/heads/main' ||
+    workflow?.path !== '.github/workflows/release.yml'
+  )
+    return undefined;
+  const dependencies = definition?.resolvedDependencies?.filter(
+    (dependency) => dependency.uri === `git+https://github.com/${repo}@refs/heads/main`,
+  );
+  if (dependencies?.length !== 1 || !/^[a-f0-9]{40}$/u.test(dependencies[0].digest?.gitCommit))
+    return undefined;
+  return { publisherSha: dependencies[0].digest.gitCommit };
 }

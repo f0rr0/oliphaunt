@@ -78,5 +78,5 @@ def wasix_runtime_npm():
         fail("WASIX portable runtime product must own exactly one npm carrier")
     owner = "@oliphaunt_metadata//:product_" + product
     _runtime_npm(name = "npm", payload = ":portable_payload", product = owner, package_name = names[0])
-    shipping_package(name = "npm_shipping_package", owner = owner, artifacts = [":npm"], ecosystem = "npm", package_name = names[0], configuration = "portable", role = "portable-leaf")
+    shipping_package(name = "npm_shipping_package", owner = owner, artifacts = [":npm"], ecosystem = "npm", package_name = names[0], configuration = "portable", role = "portable-leaf", suppliers = "//src/wasix/runtime:runtime_public_suppliers")
     shipping_export(name = "npm_shipping_export", packages = [":npm_shipping_package"])

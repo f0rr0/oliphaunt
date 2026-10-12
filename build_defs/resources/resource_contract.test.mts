@@ -1,6 +1,14 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -10,10 +18,29 @@ import {
   parseProperties,
 } from '../../src/database-resources/contracts/native-manifest.mts';
 import { packageClusterSeed } from '../../src/database-resources/seeds/package.mts';
+import { buildMavenArtifactManifest } from '../../tools/packaging/build-maven-artifact-manifest.mts';
 import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
 import { releaseProfilePackageLicense } from '../../tools/packaging/release-notices.mts';
 import { bindSeedDomain } from './seed_domain.mts';
 import { materializeInputs, nativeSeedHost, seedEnvironment } from './shared.mts';
+
+test('resource Maven formatter loads from declared helpers and rejects missing carrier mappings before output', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'resource-maven-contract-'));
+  const manifest = path.join(root, 'maven.tsv');
+  try {
+    await expect(
+      buildMavenArtifactManifest(manifest, {
+        artifactProduct: 'database-resources',
+        artifactIds: ['unknown-carrier'],
+        runtimeAssetRoot: root,
+        context: { version: '1.0.0', artifactTargets: [], registryPackages: [] },
+      }),
+    ).rejects.toThrow('database-resources artifact targets did not produce any Maven artifacts');
+    expect(existsSync(manifest)).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('native bootstrap rejects a runtime for a different executor before filesystem mutation', () => {
   const artifact = {
@@ -144,6 +171,41 @@ test('seed envelopes preserve explicit historical runtime requirements and empty
     expect(entries.get('pg_twophase')?.isDirectory).toBe(true);
     expect(entries.get('pg_twophase')?.mode).toBe(0o755);
     expect(entries.get('global/pg_control')?.mode).toBe(0o644);
+    const heldOptions = {
+      ...options,
+      runtime: undefined,
+      producer: manifest.source,
+      nativeSourceManifest: JSON.stringify(manifest),
+    };
+    const beforeCoreBump = await packageClusterSeed({
+      ...heldOptions,
+      runtimeVersion: '0.3.3',
+      outputDir: path.join(root, 'before-core'),
+    });
+    const afterCoreBump = await packageClusterSeed({
+      ...heldOptions,
+      runtimeVersion: '0.3.4',
+      outputDir: path.join(root, 'after-core'),
+    });
+    expect(readFileSync(afterCoreBump.manifest)).toEqual(readFileSync(beforeCoreBump.manifest));
+    expect(readFileSync(afterCoreBump.archive)).toEqual(readFileSync(beforeCoreBump.archive));
+    const heldDescriptor = JSON.parse(readFileSync(afterCoreBump.manifest, 'utf8'));
+    expect(heldDescriptor.runtime).toEqual(manifest.runtime);
+    expect(heldDescriptor.source).toEqual(manifest.source);
+    await expect(
+      packageClusterSeed({
+        ...heldOptions,
+        producer: { ...manifest.source, postgresSha256: '0'.repeat(64) },
+      }),
+    ).rejects.toThrow('producer/profile');
+    const incompatibleOriginal = structuredClone(manifest);
+    incompatibleOriginal.runtime.target = 'ios-datum64';
+    await expect(
+      packageClusterSeed({
+        ...heldOptions,
+        nativeSourceManifest: JSON.stringify(incompatibleOriginal),
+      }),
+    ).rejects.toThrow('physical identity');
     const before = readFileSync(path.join(pgdata, 'global/pg_control'));
     await packageClusterSeed({ ...options, version: '0.2.3' });
     expect(readFileSync(path.join(pgdata, 'global/pg_control')).equals(before)).toBe(true);

@@ -12,8 +12,18 @@ bazel_dep(name = "aspect_rules_js", version = "3.5.1")
 bazel_dep(name = "aspect_rules_ts", version = "3.10.1")
 bazel_dep(name = "rules_nodejs", version = "6.7.6")
 bazel_dep(name = "rules_pkg", version = "1.3.0")
+bazel_dep(name = "tar.bzl", version = "0.10.4")
 bazel_dep(name = "hermetic_cc_toolchain", version = "4.3.0")
 bazel_dep(name = "rules_apple", version = "5.2.0")
+# Keep maintained resource/framework/signing implementations; declare licensed
+# app-tool bytes in their ordinary tool runfiles.
+single_version_override(
+    module_name = "rules_apple",
+    version = "5.2.0",
+    patches = ["//build_defs/apple:declared-app-tools.patch"],
+    patch_strip = 1,
+)
+
 bazel_dep(name = "rules_swift", version = "4.2.1")
 bazel_dep(name = "rules_bison", version = "0.4.bcr.1")
 bazel_dep(name = "rules_flex", version = "0.4.1")
@@ -24,9 +34,17 @@ bazel_dep(name = "rules_java", version = "8.14.0")
 bazel_dep(name = "rules_kotlin", version = "2.2.2")
 bazel_dep(name = "rules_android", version = "0.6.6")
 bazel_dep(name = "rules_jvm_external", version = "6.10")
+# The separately hosted stock Maven extension emits this upstream metadata load.
+bazel_dep(name = "package_metadata", version = "0.0.7")
+bazel_dep(name = "rules_license", version = "1.0.0")
 bazel_dep(name = "rules_cc_autoconf", version = "0.24.0")
 bazel_dep(name = "gcc_toolchain", version = "0.12.0")
 bazel_dep(name = "protobuf", version = "34.0.bcr.1")
+
+# The existing live documentation snapshot prepares these two declared files.
+# Source-only checks do not resolve this repository.
+local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
+local_repository(name = "docs_build_inputs", path = "target/docs/native-inputs")
 
 single_version_override(
     module_name = "rules_rust",
@@ -47,6 +65,12 @@ single_version_override(
     module_name = "rules_android",
     version = "0.6.6",
     patches = ["//build_defs/languages/jvm:aar-import-android-bootclasspath.patch"],
+    patch_strip = 1,
+)
+single_version_override(
+    module_name = "rules_jvm_external",
+    version = "6.10",
+    patches = ["//build_defs/android:rules-jvm-external-android-gradle.patch"],
     patch_strip = 1,
 )
 single_version_override(
@@ -182,9 +206,11 @@ javascript_metadata(
         "//src/wasix/sdks/ts:package.json",
         "//src/native/sdks/react-native:package.json",
         "//src/wasix/postgres-tools/ts:package.json",
+        "//src/examples/wasix/browser:package.json",
     ],
-    dependency_manifests = ["//src/wasix/postgres-tools:npm/package.json"],
+    dependency_manifests = ["//src/wasix/postgres-tools:npm/package.json", "//src/docs:package.json"],
     consumer_tools = {"@oliphaunt/wasix-ts": ["vite"]},
+    consumer_workspaces = ["@oliphaunt/docs"],
     compiler_inputs = "//build_defs/languages/ts:compiler-inputs.json",
 )
 javascript_metadata(
@@ -194,14 +220,22 @@ javascript_metadata(
     manifests = ["//src/wasix/postgres-tools/ts/tests/installed:package.json"],
     consumer_tools = {"oliphaunt-wasix-tools-installed-consumer": ["@oliphaunt/wasix-ts"]},
 )
+javascript_metadata(
+    name = "expo_app_javascript_metadata",
+    manifests = ["//src/native/sdks/react-native:package.json", "//src/query/ts:package.json"],
+    dependency_manifests = ["//src/examples/native/react-native-expo:package.json"],
+    consumer_workspaces = ["react-native-oliphaunt-expo"],
+    consumer_graph_workspaces = ["react-native-oliphaunt-expo"],
+)
 javascript_packages = use_extension("//build_defs/languages/ts:repositories.bzl", "javascript_packages")
 javascript_packages.configure(
     metadata = "@oliphaunt_javascript_metadata//:acquisition.json",
     consumer_metadata = "@oliphaunt_javascript_metadata//:consumer-tools.json",
     compiler_metadata = "@oliphaunt_javascript_metadata//:compiler-inputs.json",
     installed_metadata = "@tools_installed_javascript_metadata//:consumer-tools.json",
+    android_app_metadata = "@expo_app_javascript_metadata//:consumer-tools.json",
 )
-use_repo(javascript_packages, "javascript_packages", "javascript_consumer_packages", "javascript_compiler_packages", "javascript_installed_packages")
+use_repo(javascript_packages, "javascript_packages", "javascript_consumer_packages", "javascript_compiler_packages", "javascript_installed_packages", "javascript_android_app_packages")
 
 icu(name = "icu_wasix", build_file = "//build_defs/wasix:icu.BUILD.bazel")
 
@@ -329,6 +363,25 @@ kotlin_maven.install(
     lock_file = "//src/native/sdks/kotlin:maven_install.json",
     repositories = ["https://repo.maven.apache.org/maven2"],
 )
+kotlin_maven.amend_artifact(
+    name = "oliphaunt_kotlin_maven",
+    coordinates = "com.pinterest.ktlint:ktlint-cli",
+    testonly = "true",
+)
+kotlin_maven.from_toml(
+    name = "oliphaunt_android_lint_maven",
+    libs_versions_toml = "@oliphaunt_kotlin_manifest//:lint.versions.toml",
+)
+kotlin_maven.install(
+    name = "oliphaunt_android_lint_maven",
+    lock_file = "//build_defs/languages/jvm:lint_maven_install.json",
+    repositories = ["https://repo.maven.apache.org/maven2", "https://dl.google.com/dl/android/maven2"],
+)
+kotlin_maven.amend_artifact(
+    name = "oliphaunt_android_lint_maven",
+    coordinates = "com.android.tools.lint:lint-gradle",
+    testonly = "true",
+)
 kotlin_maven.override(
     name = "rules_android_maven",
     coordinates = "com.google.protobuf:protobuf-java",
@@ -339,7 +392,55 @@ kotlin_maven.override(
     coordinates = "com.google.protobuf:protobuf-java",
     target = "@protobuf//java/core:core",
 )
-use_repo(kotlin_maven, "oliphaunt_kotlin_maven")
+use_repo(kotlin_maven, "oliphaunt_kotlin_maven", "oliphaunt_android_lint_maven")
+
+expo_android_sources = use_repo_rule("//build_defs/android:native-repository.bzl", "expo_android_sources_repository")
+expo_android_sources(name = "expo_android_sources", metadata = "@expo_app_javascript_metadata//:consumer-tools.json")
+expo_maven = use_extension("//build_defs/android:maven.bzl", "maven")
+expo_maven.from_toml(
+    name = "expo_android_maven",
+    libs_versions_toml = "@expo_android_sources//:maven.versions.toml",
+)
+expo_maven.install(
+    name = "expo_android_maven",
+    lock_file = "//build_defs/android:expo_maven_install.json",
+    # Resolve the conventional Android variants and POM intervals with the
+    # maintained acquisition resolver; product construction remains Bazel.
+    resolver = "gradle",
+    repositories = ["https://repo.maven.apache.org/maven2", "https://dl.google.com/dl/android/maven2"],
+)
+expo_maven.override(
+    name = "expo_android_maven",
+    coordinates = "org.jetbrains.kotlin:kotlin-stdlib",
+    target = "@oliphaunt_kotlin_maven//:org_jetbrains_kotlin_kotlin_stdlib",
+)
+expo_maven.override(
+    name = "expo_android_maven",
+    coordinates = "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm",
+    target = "@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core_jvm",
+)
+expo_maven.override(
+    name = "expo_android_maven",
+    coordinates = "org.jetbrains:annotations",
+    target = "@oliphaunt_kotlin_maven//:org_jetbrains_annotations",
+)
+expo_maven.override(
+    name = "expo_android_maven",
+    coordinates = "com.squareup.zstd:zstd-kmp",
+    target = "@expo_android_maven//:com_squareup_zstd_zstd_kmp_android",
+)
+expo_maven.from_toml(
+    name = "expo_android_jna_maven",
+    libs_versions_toml = "@expo_android_sources//:jna-android.versions.toml",
+)
+expo_maven.install(
+    name = "expo_android_jna_maven",
+    lock_file = "//build_defs/android:expo_jna_maven_install.json",
+    repositories = ["https://repo.maven.apache.org/maven2"],
+    resolver = "coursier",
+)
+use_repo(expo_maven, "expo_android_jna_maven")
+use_repo(expo_maven, "expo_android_maven")
 
 android_sdk_archive = use_repo_rule("//build_defs/languages/jvm:android-sdk-repository.bzl", "android_sdk_archive_repository")
 android_sdk_archive(name = "oliphaunt_android_sdk_archive")
@@ -833,4 +934,24 @@ wasix_release_crates.annotation(
     version = "=0.3.2",
     repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+)
+
+# Reuse existing installed_cargo_inputs = use_repo_rule(...), no new resolver.
+installed_cargo_inputs(
+    name = "installed_wasix_sdk_cargo_inputs",
+    bun = "@bun_runtime//:bun",
+    lock = "//build_defs/languages/installed:wasix/sdk/Cargo.lock",
+    index = "//build_defs/languages/installed:wasix/sdk/registry-index.json",
+)
+installed_cargo_inputs(
+    name = "installed_pgwire_cargo_inputs",
+    bun = "@bun_runtime//:bun",
+    lock = "//build_defs/languages/installed:wasix/server/Cargo.lock",
+    index = "//build_defs/languages/installed:wasix/server/registry-index.json",
+)
+installed_cargo_inputs(
+    name = "installed_query_cargo_inputs",
+    bun = "@bun_runtime//:bun",
+    lock = "//build_defs/languages/installed:wasix/query/Cargo.lock",
+    index = "//build_defs/languages/installed:wasix/query/registry-index.json",
 )

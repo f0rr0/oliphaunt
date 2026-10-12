@@ -15,9 +15,10 @@ import {
 } from './completed-swift-source-delivery.mts';
 import { requestGithubPages, requestGithubRepositoryJson } from './github-read.mts';
 import { fileIdentity } from './native-file-identity.mts';
+import { nativePublicationMetadataArtifactRow } from './native-publication-metadata-contract.mts';
 import { differentNativeDeliveredMembers } from './native-publication-delivery.mts';
 import { sourceCarrierMembers } from './native-source-carrier-changes.mts';
-import { loadPublicationCatalog } from './publication-catalog.mts';
+import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
 import {
   discoverPublicationArtifacts,
   expectedProductArtifactRows,
@@ -180,6 +181,186 @@ function boundArtifacts(artifacts: Carrier['artifacts']) {
   });
 }
 
+async function completedRegistryDeclarations(publication, productPath, options) {
+  const contrib = contribCarrierDescriptor('completed registry declarations');
+  const historicalContrib = [contrib.nativeOwner, contrib.wasixOwner].includes(publication.product)
+    ? await readCompletedContribCarrierRows(publication, {
+        repository: options.repository,
+        assertCompleted: options.assertCompletedPublication,
+        readJson: options.readJson,
+      })
+    : undefined;
+  let descriptor;
+  if (historicalContrib) descriptor = historicalContrib.descriptor;
+  else {
+    const descriptorPath = `${productPath}/release.toml`;
+    const contents = await options.readJson(
+      `repos/${options.repository}/contents/${descriptorPath}?ref=${publication.publicationSha}`,
+    );
+    requireValue(
+      contents.type === 'file' &&
+        contents.path === descriptorPath &&
+        contents.encoding === 'base64' &&
+        typeof contents.content === 'string',
+      'missing completed source descriptor',
+    );
+    const bytes = Buffer.from(contents.content, 'base64');
+    requireValue(
+      createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex') ===
+        contents.sha,
+      'completed descriptor Git blob differs',
+    );
+    descriptor = Bun.TOML.parse(utf8.decode(bytes));
+  }
+  requireValue(
+    descriptor.id === publication.product &&
+      (descriptor.registry_packages === undefined || Array.isArray(descriptor.registry_packages)),
+    'completed descriptor owner/registry inventory differs',
+  );
+  return {
+    descriptor,
+    declaredRegistry: historicalContrib
+      ? historicalContrib.registryRows.map(({ raw }) => raw)
+      : (descriptor.registry_packages ?? []),
+  };
+}
+
+async function completedRegistryCarrier(publication, carrier, files, declaredRegistry, options) {
+  const owner = carrier.parentCarrier ?? carrier.id;
+  requireValue(
+    declaredRegistry.includes(owner.replace(/^cargo:/u, 'crates:')),
+    `historical registry ownership is unverified: ${carrier.id}`,
+  );
+  requireValue(Array.isArray(files) && files.length, `completed carrier is missing: ${carrier.id}`);
+  const records = discoverPublicationArtifacts(files);
+  requireValue(
+    records.length === 1 &&
+      records[0].ecosystem === carrier.ecosystem &&
+      records[0].name === carrier.name &&
+      records[0].version === publication.version,
+    'completed carrier files have a different registry identity',
+  );
+  const published = {
+    ...carrier,
+    version: publication.version,
+    artifacts: records[0].artifacts,
+    packageDependencies: records[0].dependencies,
+  };
+  // Discovery must not acquire an adjacent Maven companion outside this input.
+  requireValue(
+    same(
+      published.artifacts.map(({ path: file }) => absolute(file)).sort(),
+      files.map(absolute).sort(),
+    ),
+    'completed carrier includes undeclared companion files',
+  );
+  const beforeFiles = boundArtifacts(published.artifacts);
+  const registryProof = await verifyRegistryCarrierIntegrity(published, options);
+  for (const { file, before } of beforeFiles)
+    requireValue(
+      same(fileIdentity(file), before),
+      'carrier changed during registry authentication',
+    );
+  return { published, registryProof };
+}
+
+/**
+ * Authenticate only explicitly consumed registry carriers at a completed source.
+ * This is not complete owner inventory or a historical producer graph. Preserve
+ * every raw packed member: own versions and Cargo provenance are consumed bytes.
+ */
+export async function captureCompletedNativeRegistryCarriers(
+  { publication, carriers }: Pick<CompletedDeliveryBaseline, 'publication' | 'carriers'>,
+  {
+    repository = 'f0rr0/oliphaunt',
+    assertCompletedPublication = createCompletedPublicationChecker({ repository }),
+    readJson = requestGithubRepositoryJson,
+    registryOptions = {},
+  } = {},
+) {
+  requireValue(repository === 'f0rr0/oliphaunt', 'unsupported repository');
+  requireValue(
+    same(await assertCompletedPublication(publication), publication),
+    'completed registry origin differs from requested source/version',
+  );
+  requireValue(
+    carriers && typeof carriers === 'object' && !Array.isArray(carriers),
+    'completed registry inputs must be an explicit carrier map',
+  );
+  const catalog = loadPublicationCatalog('completed registry member capture', {
+    products: [publication.product],
+  });
+  const { descriptor, declaredRegistry } = await completedRegistryDeclarations(
+    publication,
+    catalog.products[0].path,
+    { repository, assertCompletedPublication, readJson },
+  );
+  const archives = [];
+  const unknowns = [];
+  for (const [id, files] of Object.entries(carriers)) {
+    const separator = id.indexOf(':');
+    requireValue(separator > 0, 'registry input lacks its canonical identity');
+    const carrier = resolveActualCarrier(catalog, id.slice(0, separator), id.slice(separator + 1));
+    requireValue(carrier.id === id, 'registry input has a different canonical identity');
+    const { published, registryProof } = await completedRegistryCarrier(
+      publication,
+      carrier,
+      files,
+      declaredRegistry,
+      registryOptions,
+    );
+    if (!['cargo', 'npm'].includes(carrier.ecosystem)) {
+      unknowns.push(`unsupported-supplier-registry-contract:${id}`);
+      continue;
+    }
+    const bindings = boundArtifacts(published.artifacts);
+    requireValue(bindings.length === 1, 'registry supplier needs exactly one packed archive');
+    const packed = bindings[0];
+    const root =
+      carrier.ecosystem === 'cargo' ? `${carrier.name}-${publication.version}/` : 'package/';
+    const members = [];
+    for (const entry of readPortableArchiveEntries(packed.file).values()) {
+      requireValue(
+        entry.name.startsWith(root),
+        'registry member is outside its owned package root',
+      );
+      const member = entry.name.slice(root.length).replace(/\/$/u, '');
+      if (!member) continue;
+      members.push(
+        entry.isDirectory
+          ? { path: member, type: 'directory' as const, mode: entry.mode & 0o777 }
+          : {
+              path: member,
+              type: 'file' as const,
+              mode: entry.mode & 0o777,
+              size: entry.size,
+              sha256: sha(entry.data()),
+            },
+      );
+    }
+    requireValue(
+      same(fileIdentity(packed.file), packed.before),
+      'registry carrier changed during member capture',
+    );
+    archives.push({
+      ...published,
+      name: id,
+      target: carrier.target ?? 'portable',
+      members: members.sort((a, b) => a.path.localeCompare(b.path)),
+      registryProof,
+    });
+  }
+  return {
+    scope: 'construction' as const,
+    origin: 'completed-registry-archives' as const,
+    publication,
+    descriptor,
+    declaredRegistry,
+    archives,
+    unknowns,
+  };
+}
+
 const archiveKinds = new Set([
   'native-runtime',
   'native-tools',
@@ -202,6 +383,18 @@ const archiveKinds = new Set([
   'ios-xcframework',
 ]);
 const metadataKinds = new Set(['manifest-json', 'manifest-properties', 'swift-extension-carrier']);
+function publicDeliveryContract(row: { kind: string; name: string }) {
+  // Both seed formats are canonical public assets. Preserve the descriptor and
+  // every PGDATA byte; unchanged construction must reuse the completed seed.
+  if (row.kind === 'native-seeds' || row.kind === 'wasix-seeds') {
+    if (row.name.endsWith('.tar.zst')) return 'archive';
+    if (row.name.endsWith('.json')) return 'file';
+    return undefined;
+  }
+  if (archiveKinds.has(row.kind)) return 'archive';
+  if (metadataKinds.has(row.kind)) return 'file';
+  return undefined;
+}
 // Canonical asset IDs contain the own versioned filename. Pair the two
 // independently canonical inventories by their semantic slot, retaining each
 // side's actual ID/name for API and physical-file authentication.
@@ -253,14 +446,29 @@ export async function captureCompletedNativePublicArtifacts(
   );
   const assets = await readPages(`repos/${repository}/releases/${release.id}/assets`);
   const unknowns = [];
-  if (!same(assets.map(({ name }) => name).sort(), rows.map(({ name }) => name).sort()))
+  const metadataName = nativePublicationMetadataArtifactRow({
+    id: publication.product,
+    version: publication.version,
+  }).name;
+  const metadataAssets = assets.filter(({ name }) => name === metadataName);
+  if (
+    metadataAssets.length > 1 ||
+    !same(
+      assets
+        .filter(({ name }) => name !== metadataName)
+        .map(({ name }) => name)
+        .sort(),
+      rows.map(({ name }) => name).sort(),
+    )
+  )
     unknowns.push('completed-public-asset-inventory-differs');
   if (Object.keys(files).some((id) => !rows.some((row) => row.id === id)))
     unknowns.push('completed-public-artifact-inventory-differs');
   const archives = [];
   for (const row of rows) {
     if (row.kind === 'checksums') continue;
-    if (!archiveKinds.has(row.kind) && !metadataKinds.has(row.kind)) {
+    const contract = publicDeliveryContract(row);
+    if (!contract) {
       unknowns.push(`unsupported-public-delivery-contract:${row.kind}`);
       continue;
     }
@@ -295,17 +503,18 @@ export async function captureCompletedNativePublicArtifacts(
         identity.sha256 === proof.sha256,
       'completed public archive bytes differ',
     );
-    const members = archiveKinds.has(row.kind)
-      ? nativeArchiveDeliveryMembers(absolute(file))
-      : [
-          {
-            path: '',
-            type: 'file' as const,
-            mode: 0o644,
-            size: identity.size,
-            sha256: identity.sha256,
-          },
-        ];
+    const members =
+      contract === 'archive'
+        ? nativeArchiveDeliveryMembers(absolute(file))
+        : [
+            {
+              path: '',
+              type: 'file' as const,
+              mode: 0o644,
+              size: identity.size,
+              sha256: identity.sha256,
+            },
+          ];
     requireValue(
       same(fileIdentity(absolute(file)), identity),
       'public archive changed during capture',
@@ -353,7 +562,6 @@ export async function compareNativeCompletedPhysicalDelivery(
   );
   validatePublicationCandidate(candidate);
   const currentDeclarations = loadProducts('native completed delivery declarations');
-  const contrib = contribCarrierDescriptor('native completed delivery declarations');
   requireValue(
     new Set(baselines.map(({ publication }) => publication.product)).size === baselines.length,
     'duplicate completed product origin',
@@ -389,45 +597,11 @@ export async function compareNativeCompletedPhysicalDelivery(
       same(publication, baseline.publication),
       'completed publication differs from requested source/version',
     );
-    const historicalContrib = [contrib.nativeOwner, contrib.wasixOwner].includes(product.id)
-      ? await readCompletedContribCarrierRows(publication, {
-          repository,
-          assertCompleted: assertCompletedPublication,
-          readJson,
-        })
-      : undefined;
-    let descriptor;
-    if (historicalContrib) descriptor = historicalContrib.descriptor;
-    else {
-      const descriptorPath = `${product.path}/release.toml`;
-      const contents = await readJson(
-        `repos/${repository}/contents/${descriptorPath}?ref=${publication.publicationSha}`,
-      );
-      requireValue(
-        contents.type === 'file' &&
-          contents.path === descriptorPath &&
-          contents.encoding === 'base64' &&
-          typeof contents.content === 'string',
-        'missing completed source descriptor',
-      );
-      const descriptorBytes = Buffer.from(contents.content, 'base64');
-      requireValue(
-        createHash('sha1')
-          .update(`blob ${descriptorBytes.length}\0`)
-          .update(descriptorBytes)
-          .digest('hex') === contents.sha,
-        'completed descriptor Git blob differs',
-      );
-      descriptor = Bun.TOML.parse(utf8.decode(descriptorBytes));
-    }
-    requireValue(
-      descriptor.id === product.id &&
-        (descriptor.registry_packages === undefined || Array.isArray(descriptor.registry_packages)),
-      'completed descriptor owner/registry inventory differs',
+    const { descriptor, declaredRegistry } = await completedRegistryDeclarations(
+      publication,
+      product.path,
+      { repository, assertCompletedPublication, readJson },
     );
-    const declaredRegistry = historicalContrib
-      ? historicalContrib.registryRows.map(({ raw }) => raw)
-      : (descriptor.registry_packages ?? []);
     const unknowns: string[] = [];
     if (
       !same([...(descriptor.publish_targets ?? [])].sort(), [...product.publishTargets].sort()) ||
@@ -465,31 +639,15 @@ export async function compareNativeCompletedPhysicalDelivery(
         unknowns.push(`completed-carrier-missing:${carrier.id}`);
         continue;
       }
-      const record = discoverPublicationArtifacts(files);
-      requireValue(
-        record.length === 1 &&
-          record[0].ecosystem === carrier.ecosystem &&
-          record[0].name === carrier.name &&
-          record[0].version === publication.version,
-        'completed carrier files have a different registry identity',
-      );
-      const published = {
-        ...carrier,
-        version: publication.version,
-        artifacts: record[0].artifacts,
-        packageDependencies: record[0].dependencies,
-      };
-      // Discovery must not acquire an adjacent Maven file absent from this exact input set.
-      requireValue(
-        same(
-          published.artifacts.map(({ path: file }) => absolute(file)).sort(),
-          files.map(absolute).sort(),
-        ),
-        'completed carrier includes undeclared companion files',
+      const { published, registryProof } = await completedRegistryCarrier(
+        publication,
+        carrier,
+        files,
+        declaredRegistry,
+        registryOptions,
       );
       const beforeFiles = boundArtifacts(published.artifacts);
       const currentFiles = boundArtifacts(carrier.artifacts);
-      const registryProof = await verifyRegistryCarrierIntegrity(published, registryOptions);
       const before = nativeCarrierDeliveryMembers(published);
       const after = nativeCarrierDeliveryMembers(carrier);
       for (const { file, before: identity } of [...beforeFiles, ...currentFiles])
@@ -555,7 +713,7 @@ export async function compareNativeCompletedPhysicalDelivery(
         }
         const currentFiles = boundArtifacts([current]);
         const memberView = (file: string) =>
-          archiveKinds.has(row.kind)
+          publicDeliveryContract(row) === 'archive'
             ? nativeArchiveDeliveryMembers(file)
             : [
                 {

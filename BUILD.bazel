@@ -2,10 +2,33 @@ load("//build_defs/quality:biome.bzl", "biome_test")
 load("//build_defs/quality:rust.bzl", "root_cargo_quality")
 load("//build_defs/quality:rustfmt.bzl", "rustfmt_test")
 load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
+load("//build_defs/release:shipping.bzl", "shipping_export")
+load("//build_defs/languages/swift:extension-fixture.bzl", "selected_swift_extension_fixture_exports")
 
 package(default_visibility = ["//visibility:public"])
 
 root_cargo_quality()
+
+# The conventional browser config maps SDK source outside its package. Keeping
+# this stock TypeScript action at the repository root preserves that rootDir.
+ts_project(
+    name = "browser_example_source_checks",
+    srcs = ["//src/examples/wasix/browser:source_files"],
+    tsconfig = {"compilerOptions": {
+        "rootDir": ".",
+        "outDir": ".",
+        "typeRoots": [
+            "src/examples/wasix/browser/node_modules/@types",
+            "src/examples/wasix/browser/node_modules",
+        ],
+    }},
+    extends = "//src/examples/wasix/browser:source_config",
+    no_emit = True,
+    declaration = True,
+    supports_workers = 0,
+    deps = ["//src/examples/wasix/browser:source_inputs"],
+)
 
 exports_files([
     ".bazelversion",
@@ -22,6 +45,12 @@ exports_files([
     "src/third-party/tools/source-fetch-scopes.mts",
     "src/third-party/tools/source-fetch-scopes.test.mts",
     "src/extensions/generated/extensions.catalog.json",
+    "src/extensions/generated/contrib-build.tsv",
+    "src/extensions/generated/pgxs-build.tsv",
+    "src/extensions/generated/wasix/extensions.json",
+    "src/extensions/generated/mobile/static-extensions.tsv",
+    "src/extensions/generated/mobile/static-registry.json",
+    "src/extensions/generated/docs/extension-evidence.json",
     "src/extensions/artifacts/native/tools/ios-extension-registration.mts",
     "src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts",
     "src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts",
@@ -36,6 +65,7 @@ exports_files([
     "package.json",
     "rust-toolchain.toml",
     "release-please-config.json",
+    ".release-please-manifest.json",
     "tools/packaging/archive-directory.mts",
     "tools/packaging/atomic-directory.mts",
     "tools/packaging/build-maven-artifact-manifest.mts",
@@ -95,6 +125,7 @@ filegroup(
         "//build_defs/languages/swift:quality_sources",
         "//build_defs/languages/ts:quality_sources",
         "//build_defs/native:quality_sources",
+        "//build_defs/native/android:quality_sources",
         "//build_defs/native/apple:quality_sources",
         "//build_defs/native/carriers:quality_sources",
         "//build_defs/query:quality_sources",
@@ -107,6 +138,7 @@ filegroup(
         "//build_defs/wasix/postmaster:quality_sources",
         "//src/database-resources:quality_sources",
         "//src/database-resources/icu:quality_sources",
+        "//src/docs:quality_sources",
         "//src/examples/wasix/browser:quality_sources",
         "//src/extensions/catalog:quality_sources",
         "//src/extensions/contracts:quality_sources",
@@ -248,6 +280,8 @@ test_suite(
         "//build_defs/wasix/postmaster:postgres_overlay_duplicate_test",
         "//build_defs/android:metadata_test",
         "//build_defs/languages:cargo_metadata_test",
+        "//build_defs/languages:napi_artifact_projection_test",
+        "//build_defs/languages:napi_artifact_kind_test",
         "//build_defs/languages:source_package_test",
         "//build_defs/languages/installed:context_test",
         "//build_defs/languages/ts:metadata_test",
@@ -265,6 +299,9 @@ test_suite(
         "//tools/release:bazel_metadata_test",
         "//tools/release:bazel_shipping_inputs_test",
         "//tools/release:compatibility_version_parser_test",
+        "//tools/release:native_extension_final_inputs_test",
+        "//tools/release:native_file_identity_test",
+        "//build_defs/extensions:declared_final_inputs_test",
         "//tools/bazel:execution_log_test",
         "//tools/bazel:shipping_coverage_test",
     ],
@@ -284,4 +321,104 @@ test_suite(
         "//build_defs/extensions:native_final_contract_test",
         "//build_defs/extensions:native_final_composition_test",
     ],
+)
+
+shipping_export(
+    name = "native_shipping_export",
+    testonly = True,
+    exports = [
+        "//src/native/runtime:native_shipping_export",
+        "//src/native/postgres-tools:native_shipping_export",
+        "//src/native/broker:native_shipping_export",
+        "//src/native/node-addon:native_shipping_export",
+        "//src/database-resources:native_target_shipping_export",
+        "//src/extensions/contrib:native_shipping_export",
+        "//src/extensions/external/pg_hashids:native_shipping_export",
+        "//src/extensions/external/pg_ivm:native_shipping_export",
+        "//src/extensions/external/pg_textsearch:native_shipping_export",
+        "//src/extensions/external/pg_uuidv7:native_shipping_export",
+        "//src/extensions/external/pgtap:native_shipping_export",
+        "//src/extensions/external/postgis:native_shipping_export",
+        "//src/extensions/external/vector:native_shipping_export",
+    ] + select({
+        "//build_defs/native:linux_x86_64": [
+            "//src/native/postgres-tools:facade_shipping_export",
+            "//src/database-resources:icu_shipping_export",
+            "//src/query/rust:shipping_export",
+            "//src/query/ts:shipping_export",
+            "//src/native/rust-bindings:shipping_export",
+            "//src/native/sdks/rust:shipping_export",
+            "//src/native/sdks/rust/crates/oliphaunt-build:shipping_export",
+            "//src/native/broker:shipping_export",
+            "//src/native/sdks/ts:shipping_export",
+            "//src/native/sdks/react-native:shipping_export",
+            "//src/native/sdks/kotlin:shipping_export",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+shipping_export(
+    name = "native_android_shipping_export",
+    testonly = True,
+    exports = [
+        "//src/native/runtime:android_shipping_export",
+        "//src/database-resources:android_shipping_export",
+        "//build_defs/extensions/mobile/final:android_shipping_export",
+    ],
+)
+
+shipping_export(
+    name = "native_apple_shipping_export",
+    testonly = True,
+    exports = [
+        "//src/native/runtime:apple_shipping_export",
+        "//src/database-resources:ios_shipping_export",
+        "//src/native/sdks/swift:shipping_export",
+        "//build_defs/extensions/mobile/final:ios_xcframework_shipping_export",
+    ],
+)
+
+shipping_export(
+    name = "wasix_shipping_export",
+    testonly = True,
+    exports = [
+        "//src/wasix/runtime:shipping_export",
+        "//src/wasix/postgres-tools:shipping_export",
+        "//src/database-resources:wasix_shipping_export",
+        "//src/wasix/sdks/ts:shipping_export",
+        "//src/wasix/sdks/rust:shipping_export",
+        "//src/wasix/pgwire-server:shipping_export",
+        "//build_defs/extensions/wasix:contrib_shipping_export",
+        "//build_defs/extensions/wasix:pg_hashids_shipping_export",
+        "//build_defs/extensions/wasix:pg_ivm_shipping_export",
+        "//build_defs/extensions/wasix:pg_textsearch_shipping_export",
+        "//build_defs/extensions/wasix:pg_uuidv7_shipping_export",
+        "//build_defs/extensions/wasix:postgis_shipping_export",
+        "//build_defs/extensions/wasix:vector_shipping_export",
+        "//src/extensions/external/pgtap:wasix_shipping_export",
+    ],
+)
+
+shipping_export(
+    name = "release_family_shipping_export",
+    testonly = True,
+    exports = [
+        "//src/native/runtime:checksum_shipping_export",
+        "//src/native/postgres-tools:checksum_shipping_export",
+        "//src/native/broker:checksum_shipping_export",
+        "//src/native/node-addon:checksum_shipping_export",
+        "//src/wasix/node-addon:checksum_shipping_export",
+        "//src/wasix/postmaster:release_shipping_export",
+        "//src/database-resources:checksum_shipping_export",
+        "//build_defs/extensions:contrib_native_family_shipping_export",
+        "//build_defs/extensions:contrib_wasix_family_shipping_export",
+        "//build_defs/extensions:pgtap_family_shipping_export",
+        "//build_defs/extensions:pg_hashids_family_shipping_export",
+        "//build_defs/extensions:pg_uuidv7_family_shipping_export",
+        "//build_defs/extensions:vector_family_shipping_export",
+        "//build_defs/extensions:pg_ivm_family_shipping_export",
+        "//build_defs/extensions:pg_textsearch_family_shipping_export",
+        "//build_defs/extensions:postgis_family_shipping_export",
+    ] + selected_swift_extension_fixture_exports(),
 )

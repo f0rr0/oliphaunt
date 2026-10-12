@@ -3,8 +3,11 @@ load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_integration_test"
 load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
 load("//build_defs/languages:source.bzl", "cargo_source_package")
 load("//build_defs/languages/carriers:defs.bzl", "native_helper_carriers")
+load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
 
 package(default_visibility = ["//visibility:public"])
+
+native_release_checksum_family(product = "oliphaunt-broker")
 exports_files(["Cargo.toml", "tools/broker-dependency-license-contract.mts"])
 filegroup(name = "carrier_legal_sources", srcs = ["dependency-licenses.json"] + glob(["dependency-license-blobs/*.base64"]))
 filegroup(name = "carrier_template_sources", srcs = glob(["packages/*/package.json", "packages/*/README.md", "crates/*/Cargo.toml", "crates/*/build.rs", "crates/*/src/lib.rs", "crates/*/README.md"]))
@@ -24,8 +27,8 @@ cargo_integration_test(
     tags = ["manual"],
 )
 rust_clippy_test(name = "clippy_test", targets = [":lib", ":unit_test", ":broker", ":binary_test", ":postgres_client_test"], transitive = False, size = "small")
-cargo_source_package(product = "oliphaunt-broker")
-native_helper_carriers(product = "oliphaunt-broker", binary = ":broker")
+cargo_source_package(product = "oliphaunt-broker", qualification = ["//build_defs/languages/installed:consumer_test"])
+native_helper_carriers(product = "oliphaunt-broker", binary = ":broker", qualification = ["//build_defs/languages/carriers:installed_sql_test"])
 
 source_quality_files()
 

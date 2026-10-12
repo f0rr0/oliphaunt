@@ -1,13 +1,18 @@
 #!/usr/bin/env bun
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import {
   checkRegistryPublication,
   queryProductPublication,
 } from './check_registry_publication.mts';
 import { validateReleaseConsumerCompatibility } from './consumer-compatibility.mts';
 import { parseTagCommits, parseTagRefs } from './git-tag-state.mts';
+import { acquireNativePublicationPreparation } from './native-freeze-publication-candidate.mts';
+import { assertAcquiredPreparedNativeReleaseInputs } from './native-release-inputs.mts';
 import { currentVersion } from './product-version.mts';
+import { sourceIdentity } from './publication-lock.mts';
 import {
   compareVersion,
   compatibilityVersionEntries,
@@ -304,8 +309,12 @@ export function selectedDependencySatisfiesPin(
   return selected.has(dependency) && selectedVersion === pinnedVersion;
 }
 
-async function validateReleaseDependencies(products, graph) {
-  validateReleaseConsumerCompatibility(products, { products: graph.products, prefix: TOOL });
+async function validateReleaseDependencies(products, graph, options = {}) {
+  validateReleaseConsumerCompatibility(products, {
+    ...options,
+    products: graph.products,
+    prefix: TOOL,
+  });
   const selected = new Set(products);
   const entries = compatibilityVersionEntries(graph.products, {
     requireSourceProduct: true,
@@ -327,11 +336,12 @@ async function validateReleaseDependencies(products, graph) {
   }
 }
 
-function parseArgs(argv) {
+export function parseReleaseVersionCheckArgs(argv) {
   const args = {
     productsJson: undefined,
     headRef: 'HEAD',
     checkRegistries: false,
+    nativePreparation: false,
     registryInventoryOutput: '',
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -354,6 +364,8 @@ function parseArgs(argv) {
       args.headRef = value.slice('--head-ref='.length);
     } else if (value === '--check-registries') {
       args.checkRegistries = true;
+    } else if (value === '--native-preparation') {
+      args.nativePreparation = true;
     } else if (value === '--registry-inventory-output') {
       if (index + 1 >= argv.length) {
         fail('--registry-inventory-output requires a value');
@@ -364,7 +376,7 @@ function parseArgs(argv) {
       args.registryInventoryOutput = value.slice('--registry-inventory-output='.length);
     } else if (value === '-h' || value === '--help') {
       console.log(
-        'usage: tools/release/check_release_versions.mts [--products-json JSON] [--head-ref REF] [--check-registries] [--registry-inventory-output FILE]',
+        'usage: tools/release/check_release_versions.mts [--products-json JSON] [--head-ref REF] [--native-preparation] [--check-registries] [--registry-inventory-output FILE]',
       );
       process.exit(0);
     } else {
@@ -374,8 +386,28 @@ function parseArgs(argv) {
   return args;
 }
 
+/** Parsed facts cannot replace actual authenticated Prepare acquisition. */
+export function nativePreparedRegistryBuildBound(
+  prepared: unknown,
+  source: { commit: string; tree: string },
+  selected: string[],
+) {
+  const acquired = assertAcquiredPreparedNativeReleaseInputs(prepared);
+  assert.equal(
+    source.tree,
+    acquired.record.preparedSource.tree,
+    'native registry source differs from Prepare',
+  );
+  assert.deepEqual(
+    [...selected].sort(),
+    acquired.record.selectedProducts,
+    'native registry scope differs from Prepare',
+  );
+  return new Map([...acquired.buildBound].map(([id, suppliers]) => [id, new Set(suppliers)]));
+}
+
 async function main(argv) {
-  const args = parseArgs(argv);
+  const args = parseReleaseVersionCheckArgs(argv);
   if (
     !/^[0-9a-f]{40}$/u.test(process.env.RELEASE_HEAD_COMMIT ?? '') ||
     !process.env.RELEASE_TAG_REFS ||
@@ -390,6 +422,23 @@ async function main(argv) {
   };
   const graph = { products: loadProducts() };
   const selected = parseProducts(args.productsJson, graph);
+  let buildBound;
+  if (args.nativePreparation) {
+    assert.ok(
+      args.productsJson !== undefined && selected.length,
+      'native registry checks require explicit selected products',
+    );
+    const source = sourceIdentity(args.headRef);
+    assert.equal(source.commit, git.headCommit, 'native registry Git source context differs');
+    const parent = requireSafeDirectoryChain(path.join(ROOT, 'target/native-registry-check'), {
+      create: true,
+    });
+    const { prepared } = await acquireNativePublicationPreparation({
+      source,
+      directory: path.join(mkdtempSync(path.join(parent, 'prepare-')), 'prepared'),
+    });
+    buildBound = nativePreparedRegistryBuildBound(prepared, source, selected);
+  }
   if (args.registryInventoryOutput && !args.checkRegistries) {
     fail('--registry-inventory-output requires --check-registries');
   }
@@ -402,7 +451,11 @@ async function main(argv) {
       git,
     );
   }
-  await validateReleaseDependencies(selected, graph);
+  await validateReleaseDependencies(
+    selected,
+    graph,
+    buildBound === undefined ? {} : { buildBound },
+  );
   if (args.checkRegistries) {
     const inventory = await validateRegistryPublication(
       selected,

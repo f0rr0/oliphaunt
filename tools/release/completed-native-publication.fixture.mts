@@ -15,7 +15,7 @@ const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 export const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
 const configuration = 'c'.repeat(64);
 
-export async function fixture(run, { producerCapture = false } = {}) {
+export async function fixture(run, { producerCapture = false, ownerPolicy = false } = {}) {
   // These products/transport responses are synthetic. Real packed files and
   // the actual collector, BEP validator and registry verifier exercise the seam.
   mkdirSync(path.join(ROOT, 'target'), { recursive: true });
@@ -204,6 +204,16 @@ export async function fixture(run, { producerCapture = false } = {}) {
     label: `//fixture/${id}:installed_test`,
     configuration,
   }));
+  const owner = '//fixture:shipping_export';
+  let policy;
+  if (ownerPolicy) {
+    if (!producerCapture)
+      throw new Error('owner policy fixture requires producing shipping manifests');
+    const file = 'bazel-out/k8-opt/bin/fixture/shipping_export.json';
+    const contents = `${JSON.stringify({ schema: 'oliphaunt-bazel-shipping-v1', scope: 'construction', owner, roots: roots.map((root) => root.label), packages: roots.map((root) => root.package), qualification: requiredTests.map((test) => test.label) })}\n`;
+    action(owner, [addFile(file, contents)], [], 1, 'FileWrite');
+    policy = { file, contents };
+  }
   const events = [
     { id: { started: {} }, started: { uuid: 'fixture-build', buildToolVersion: '8.8.1' } },
     { id: { workspace: {} }, workspaceInfo: { localExecRoot: executionRoot } },
@@ -234,6 +244,28 @@ export async function fixture(run, { producerCapture = false } = {}) {
         ],
       },
     });
+  if (policy)
+    events.push(
+      {
+        id: { namedSet: { id: 'owner-policy' } },
+        namedSetOfFiles: {
+          files: [
+            {
+              name: policy.file,
+              digest: hash(Buffer.from(policy.contents)),
+              length: String(Buffer.byteLength(policy.contents)),
+            },
+          ],
+        },
+      },
+      {
+        id: { targetCompleted: { label: owner, configuration: { id: configuration } } },
+        completed: {
+          success: true,
+          outputGroup: [{ name: 'shipping_policy', fileSets: [{ id: 'owner-policy' }] }],
+        },
+      },
+    );
   for (const [index, root] of roots.entries()) {
     const output = root.package.outputs[0].path;
     const members = captureNativeOutputMembers(executionRoot, output).members;
@@ -323,7 +355,11 @@ export async function fixture(run, { producerCapture = false } = {}) {
       {
         executionRoot,
         ...(producerCapture
-          ? { shippingRoots: roots.map((root) => root.label), aqueryFile }
+          ? {
+              shippingRoots: roots.map((root) => root.label),
+              aqueryFile,
+              ...(ownerPolicy ? { shippingExport: owner } : {}),
+            }
           : {
               roots,
               cquery: {

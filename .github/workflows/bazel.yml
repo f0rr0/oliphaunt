@@ -3,23 +3,115 @@ name: Native Bazel qualification
 on:
   workflow_dispatch:
   pull_request:
+    types: [opened, synchronize, reopened, closed]
   push:
     branches: [main]
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 
 concurrency:
-  group: bazel-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: bazel-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || format('sha-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
     shell: bash
 
 jobs:
+  release-inputs:
+    name: Resolve native release inputs
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      attestations: read
+    outputs:
+      native_inputs: ${{ steps.context.outputs.native_inputs }}
+      pull_number: ${{ steps.context.outputs.pull_number }}
+      run_id: ${{ steps.producer.outputs.run_id }}
+      public_artifact_id: ${{ steps.public-upload.outputs.artifact-id }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up verified Node.js and Bun
+        uses: ./.github/actions/setup-node-bun
+
+      - name: Check release-owned source versions
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && format('{0}^', github.sha)) || 'origin/main' }}
+          HEAD_REF: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_FULL_REF: ${{ github.ref }}
+        run: |
+          subject="${PR_TITLE:-}"
+          if [[ -z "$subject" ]]; then
+            subject="$(git log -1 --pretty=%s "$HEAD_REF")"
+          fi
+          bash .github/scripts/check-release-intent.sh "$subject" "$BASE_REF" "$HEAD_REF" \
+            "$HEAD_BRANCH" "$CI_EVENT_NAME" "$CI_FULL_REF" --source-policy-only
+
+      - name: Resolve canonical prepared release tree
+        id: context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PULL_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          context_args=(--resolve-context)
+          if [[ -n "$EVENT_PULL_NUMBER" ]]; then
+            context_args+=(--pull-number "$EVENT_PULL_NUMBER")
+          fi
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+            tools/release/native-release-inputs.mts "${context_args[@]}"
+
+      - name: Require the exact completed Prepare producer
+        if: steps.context.outputs.native_inputs == 'true'
+        id: producer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PREPARE_SOURCE_SHA: ${{ steps.context.outputs.prepare_source_sha }}
+        run: >-
+          bash .github/scripts/require-workflow-success.sh Release "$PREPARE_SOURCE_SHA" 900
+          --event workflow_dispatch --job 'Prepare release PR' --artifact native-release-inputs
+
+      - name: Acquire completed public inputs once
+        if: steps.context.outputs.native_inputs != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          snapshot="$(bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+            tools/release/native-release-preparation.mts --publication-inputs \
+            --output-directory "$RUNNER_TEMP/native-public-acquisition")"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+            tools/release/native-release-inputs.mts --transport-public-inputs "$snapshot" \
+            --output-directory "$RUNNER_TEMP/native-public-inputs"
+
+      - name: Upload source-bound public inputs
+        if: steps.context.outputs.native_inputs != 'true'
+        id: public-upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-public-inputs
+          path: ${{ runner.temp }}/native-public-inputs
+          if-no-files-found: error
+          retention-days: 7
+
   portable:
     name: Portable packages (${{ matrix.platform }})
+    needs: release-inputs
     runs-on: ${{ matrix.runner }}
     # Native addon and Apple package qualification share this job's compiler base.
     timeout-minutes: 120
@@ -43,8 +135,34 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Set up release controller runtimes
+        if: matrix.platform == 'linux-x64'
+        uses: ./.github/actions/setup-node-bun
+
+      - name: Set up Cargo for release source metadata
+        if: matrix.platform == 'linux-x64'
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
+
+      - name: Qualify release controller and Git source policy
+        if: matrix.platform == 'linux-x64'
+        env:
+          MOON_BIN: /definitely-unavailable-moon
+        run: |
+          bash tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
+          bash tools/dev/bun.sh tools/release/check_release_please_config.mts
+          bash tools/dev/bun.sh tools/release/check_artifact_targets.mts
+          bash tools/release/release-check.sh --mutation-tests-only
+
       # Cold, credential-free requests prove tool acquisition and real packages.
-      # Existing Required/Qualified publication gates remain authoritative.
       - name: Check Bazel acquisition
         run: bash tools/dev/bazel-bootstrap.test.sh
 
@@ -82,13 +200,6 @@ jobs:
                 //src/native/runtime:abi_conformance_test
                 //src/native/runtime:runtime_sql_test
                 //src/native/runtime:native_tools_sql_test
-                //src/native/runtime:npm
-                //src/native/runtime:installed_cargo_test
-                //src/native/postgres-tools:cargo_facade
-                //src/native/postgres-tools:installed_cargo_test
-                //src/native/postgres-tools:installed_carrier_test
-                //src/database-resources:native_resource_test
-                //src/database-resources:native_shipping_export
               )
               ;;
           esac
@@ -111,6 +222,9 @@ jobs:
               //src/wasix/sdks/ts:source_checks_typecheck_test
               //src/native/sdks/react-native:source_checks_typecheck_test
               //src/wasix/postgres-tools/ts:source_checks_typecheck_test
+              //src/examples/wasix/browser:source_checks
+              //src/docs:source_checks
+              //src/native/sdks/kotlin:format_test
             )
           fi
           if [[ "$TARGET_PLATFORM" != macos-arm64 ]]; then
@@ -244,16 +358,52 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Qualify declared macOS Swift SDK
-        if: matrix.platform == 'macos-arm64'
-        run: >-
-          bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel" --host_jvm_args=-Xmx3g
-          --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" test -c opt //build_defs/host:host_swift_smoke
-          //src/native/sdks/swift:installed_consumer_test
-          //src/native/sdks/swift:native_candidate_consumer_test
-          //src/database-resources:swift_seed_archive
-          --config=macos-sandbox --platforms=//build_defs/host:apple_package_macos_arm64
-          --host_platform=//build_defs/host:native_macos_arm64 --jobs=2
+      - name: Qualify final native carriers and frozen resources
+        if: matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64'
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          QUALIFICATION_JOB_NAME: Portable packages (${{ matrix.platform }})
+        run: |
+          input_root="$RUNNER_TEMP/native-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          case "$TARGET_PLATFORM" in
+            macos-arm64)
+              jq -nc --arg base "$RUNNER_TEMP/native-bazel" \
+                --arg log "$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" \
+                '["--output_base="+$base,"--host_jvm_args=-Xmx3g","--server_jvm_out="+$log]' \
+                > "$input_root/startup.json"
+              jq -nc '["-c","opt","--config=macos-sandbox",
+                "--platforms=//build_defs/host:native_macos_arm64",
+                "--host_platform=//build_defs/host:native_macos_arm64","--jobs=2"]' \
+                > "$input_root/configuration.json"
+              ;;
+            windows-x64)
+              jq -nc --arg base "$RUNNER_TEMP/b" '["--output_base="+$base]' \
+                > "$input_root/startup.json"
+              jq -nc '["-c","opt","--platforms=//build_defs/host:native_windows_x64",
+                "--host_platform=//build_defs/host:native_windows_x64","--jobs=2"]' \
+                > "$input_root/configuration.json"
+              ;;
+          esac
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:native_shipping_export \
+            --output-directory "$RUNNER_TEMP/native-build-capture"
+
+      - name: Upload native construction evidence
+        if: matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-native-${{ matrix.platform }}
+          path: ${{ runner.temp }}/native-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Construct native iOS device and simulator ABI consumers
         if: matrix.platform == 'macos-arm64'
@@ -273,7 +423,7 @@ jobs:
             --config=macos-sandbox --platforms=//build_defs/host:apple_package_macos_arm64 \
             --host_platform=//build_defs/host:native_macos_arm64 --jobs=2
 
-      - name: Qualify complete iOS extension packages
+      - name: Qualify complete Apple runtime, resources, SDK and extension packages
         if: matrix.platform == 'macos-arm64'
         env:
           QUALIFICATION_JOB_NAME: Portable packages (${{ matrix.platform }})
@@ -293,12 +443,12 @@ jobs:
             "--platforms=//build_defs/host:apple_package_macos_arm64",
             "--host_platform=//build_defs/host:native_macos_arm64","--jobs=1","--local_test_jobs=1"]' \
             > "$input_root/configuration.json"
-          jq -nc '["//build_defs/extensions/mobile/final:ios_xcframework_final_contract_test"]' \
+          jq -nc '["//build_defs/host:host_swift_smoke"]' \
             > "$input_root/targets.json"
           bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
             --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
             --configuration-json "$input_root/configuration.json" \
-            --shipping-export //build_defs/extensions/mobile/final:ios_xcframework_shipping_export \
+            --shipping-export //:native_apple_shipping_export \
             --targets-json "$input_root/targets.json" --output-directory "$RUNNER_TEMP/ios-extension-build-capture"
 
       - name: Upload iOS extension construction evidence
@@ -309,6 +459,17 @@ jobs:
           path: ${{ runner.temp }}/ios-extension-build-capture/evidence/
           if-no-files-found: error
           retention-days: 7
+
+      - name: Qualify declared documentation export and examples
+        if: matrix.platform == 'linux-x64'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          bash tools/dev/bun.sh src/docs/tools/verify-live.mts snapshot \
+            target/docs/expected-products.json target/docs/native-inputs
+          bash tools/dev/bazel.sh test -c opt //src/docs:site_checks \
+            --platforms=//build_defs/native:linux_x86_64_glibc_2_28 \
+            --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
 
       - name: Check execution tool selection for foreign targets
         if: matrix.platform == 'linux-x64'
@@ -336,8 +497,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
+      - name: Upload failed Windows native test diagnostics
+        if: failure() && matrix.platform == 'windows-x64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-bazel-windows-test-diagnostics
+          path: |
+            ${{ runner.temp }}/b/command.log
+            ${{ runner.temp }}/b/execroot/_main/bazel-out/**/testlogs/**/test.log
+            ${{ runner.temp }}/b/execroot/_main/bazel-out/**/testlogs/**/test.xml
+          if-no-files-found: ignore
+          retention-days: 5
+
   linux:
     name: Linux runtime (${{ matrix.platform }})
+    needs: release-inputs
     runs-on: ${{ matrix.runner }}
     # Cold native, Android and installed-package construction shares one base.
     timeout-minutes: 90
@@ -357,6 +531,13 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
       # One invocation shares PostgreSQL/ICU/generators across real consumers.
       - name: Qualify runtime, frontends, crypto and extension SQL
         env:
@@ -365,7 +546,7 @@ jobs:
           profile="//build_defs/native:linux_${TARGET_CPU}_glibc_2_28"
           bash tools/dev/bazel.sh test -c opt //:native_linux_tests \
             --platforms="$profile" --host_platform="$profile" \
-            --java_runtime_version=remotejdk_17 --tool_java_runtime_version=remotejdk_17 --jobs=2
+            --jobs=2
 
       - name: Qualify Android cross-compiled runtime and ABI
         if: matrix.platform == 'x86_64'
@@ -399,7 +580,7 @@ jobs:
           ]' > "$input_root/targets.json"
           bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
             --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
-            --shipping-export //build_defs/extensions/mobile/final:android_shipping_export \
+            --shipping-export //:native_android_shipping_export \
             --targets-json "$input_root/targets.json" --output-directory "$RUNNER_TEMP/android-extension-build-capture"
 
       - name: Upload Android extension construction evidence
@@ -448,7 +629,7 @@ jobs:
           //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:marker_maven
           --platforms=//build_defs/native:linux_x86_64_glibc_2_28
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28
-          --java_runtime_version=remotejdk_17 --tool_java_runtime_version=remotejdk_17 --jobs=2
+          --jobs=2
 
       - name: Qualify final native carriers and frozen resources
         env:
@@ -466,24 +647,11 @@ jobs:
             > "$input_root/github.json"
           jq -nc --arg profile "$profile" \
             '["-c","opt","--platforms="+$profile,"--host_platform="+$profile,
-              "--java_runtime_version=remotejdk_17","--tool_java_runtime_version=remotejdk_17","--jobs=2"]' \
+              "--jobs=2"]' \
             > "$input_root/configuration.json"
-          jq -nc '[
-            "//src/native/runtime:native_github_shipping",
-            "//src/native/runtime:native_npm_shipping",
-            "//src/native/runtime:native_cargo_shipping",
-            "//src/native/runtime:native_payload_shipping",
-            "//src/native/postgres-tools:native_github_shipping",
-            "//src/native/postgres-tools:native_npm_shipping",
-            "//src/native/postgres-tools:native_cargo_shipping",
-            "//src/native/postgres-tools:native_payload_shipping",
-            "//src/native/postgres-tools:npm_facade_shipping",
-            "//src/native/postgres-tools:cargo_facade_shipping"
-          ]' > "$input_root/roots.json"
-          jq -nc '["//src/database-resources:linux_resource_test"]' > "$input_root/targets.json"
           bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
             --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
-            --shipping-roots-json "$input_root/roots.json" --targets-json "$input_root/targets.json" \
+            --shipping-export //:native_shipping_export \
             --output-directory "$capture_root"
 
       - name: Upload native construction evidence
@@ -496,6 +664,7 @@ jobs:
 
   wasix:
     name: Linux WASIX and installed browser
+    needs: release-inputs
     runs-on: ubuntu-24.04
     # A measured cold producer request takes 82 minutes before browser host
     # construction; share its base and allow the complete cold qualification.
@@ -510,6 +679,13 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
 
       - name: Restore bounded Bazel action cache
         id: bazel-cache
@@ -550,17 +726,10 @@ jobs:
             "--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full","--test_env=XDG_CACHE_HOME="+$cache,"--test_env=RUST_TEST_THREADS=1",
             "--test_env=OLIPHAUNT_BROWSER_CHROME="+$chrome,"--test_env=OLIPHAUNT_BROWSER_CHROME_RECEIPT="+$chromeReceipt
           ]' > "$input_root/configuration.json"
-          jq -nc '[
-            "//src/wasix/runtime:aot_linux_x64_gnu_payload",
-            "//src/wasix/runtime:aot_linux_arm64_gnu_payload",
-            "//src/wasix/runtime:aot_macos_arm64_payload",
-            "//src/wasix/runtime:aot_windows_x64_msvc_payload",
-            "//src/wasix/runtime:cargo"
-          ]' > "$input_root/targets.json"
           jq -nc '["postgres-tools-wasix"]' > "$input_root/complete-products.json"
           bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
             --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
-            --shipping-export //src/wasix/postgres-tools:shipping_export --targets-json "$input_root/targets.json" \
+            --shipping-export //:wasix_shipping_export \
             --complete-products-json "$input_root/complete-products.json" \
             --output-directory "$RUNNER_TEMP/wasix-tools-build-capture"
 
@@ -572,44 +741,24 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Qualify declared WASIX pg_hashids packages
-        run: >-
-          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts
-          --github-json "$RUNNER_TEMP/wasix-tools-build-inputs/github.json"
-          --configuration-json "$RUNNER_TEMP/wasix-tools-build-inputs/configuration.json"
-          --shipping-export //build_defs/extensions/wasix:pg_hashids_shipping_export
-          --output-directory "$RUNNER_TEMP/wasix-pg-hashids-build-capture"
-
-      - name: Upload WASIX pg_hashids construction evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: native-build-evidence-wasix-pg-hashids
-          path: ${{ runner.temp }}/wasix-pg-hashids-build-capture/evidence/
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Capture final WASIX Cargo inputs for native hosts
         id: wasix-cargo-capture
         run: |
           capture_root="$RUNNER_TEMP/wasix-cargo-capture"
           mkdir -p "$capture_root"
           test -z "$(git status --porcelain)"
-          configuration=(--config=wasix-aot \
-            --config=ci-cache --disk_cache="$HOME/.cache/oliphaunt/bazel-disk" \
-            --platforms=//build_defs/native:linux_x86_64_glibc_2_28 \
-            --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=1)
-          expression='kind("shipping_package", deps(//src/wasix/runtime:cargo_shipping_export, 1))'
-          bash tools/dev/bazel.sh cquery "$expression" "${configuration[@]}" \
-            --output=starlark --starlark:file=tools/bazel/shipping.cquery.bzl > "$capture_root/roots.jsonl"
-          bash tools/dev/bazel.sh aquery "deps($expression)" "${configuration[@]}" \
-            --include_artifacts --include_commandline --output=jsonproto > "$capture_root/aquery.json"
-          execution_root="$(bash tools/dev/bazel.sh info execution_root)"
-          source_commit="$(git rev-parse HEAD)"
-          source_tree="$(git rev-parse 'HEAD^{tree}')"
-          jq -n --arg commit "$source_commit" --arg tree "$source_tree" --arg executionRoot "$execution_root" \
-            --slurpfile roots "$capture_root/roots.jsonl" --slurpfile aquery "$capture_root/aquery.json" \
-            '[{source:{commit:$commit,tree:$tree},executionRoot:$executionRoot,roots:$roots,aquery:$aquery[0]}]' \
+          # Reuse the producing invocation captured above. The reader requires
+          # exactly the five canonical core Cargo envelopes.
+          jq '. as $evidence | [
+            .cohorts[] | {
+              source: $evidence.source, executionRoot: .executionRoot, aquery: .aquery,
+              roots: [.roots[] | select(.package.product == "liboliphaunt-wasix"
+                and .package.ecosystem == "cargo"
+                and (.package.name | startswith("liboliphaunt-wasix-")))]
+            } | select(.roots | length > 0)
+          ]' "$RUNNER_TEMP/wasix-tools-build-capture/evidence/native-build-evidence.json" \
             > "$capture_root/cohorts.json"
+          source_commit="$(git rev-parse HEAD)"
           test -z "$(git status --porcelain)"
           bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
             build_defs/wasix/capture-cargo.mts "$capture_root/cohorts.json" \
@@ -653,6 +802,7 @@ jobs:
 
   postmaster:
     name: Linux native postmaster lifecycle
+    needs: release-inputs
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     outputs:
@@ -665,6 +815,13 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
 
       # This owner has a separate compiler/sysroot closure. Keep it parallel to
       # tools/browser construction and share its one base across both profiles.
@@ -738,12 +895,13 @@ jobs:
 
   postmaster-host:
     name: Native postmaster lifecycle (${{ matrix.platform }})
-    needs: postmaster
+    needs: [postmaster, release-inputs]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     strategy:
       fail-fast: false
       matrix:
@@ -764,6 +922,13 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
       - name: Select declared Apple SDK
         if: matrix.platform == 'macos-arm64'
         uses: ./.github/actions/setup-apple
@@ -773,6 +938,7 @@ jobs:
       - name: Qualify native carrier from authenticated Linux guest
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           EXPECTED_SOURCE_COMMIT: ${{ needs.postmaster.outputs.source_commit }}
           EXPECTED_SOURCE_TREE: ${{ needs.postmaster.outputs.source_tree }}
           WORKFLOW_EVENT: ${{ github.event_name }}
@@ -835,9 +1001,68 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  release-families:
+    name: Native release families
+    needs: [portable, linux, wasix, postmaster, postmaster-host, release-inputs]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Authenticate this run's completed archive producers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts
+          --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF"
+          --output-directory target/native-release-archive-inputs
+
+      - name: Qualify complete public checksum families
+        run: |
+          input_root="$RUNNER_TEMP/release-family-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "Native release families" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg archives "$GITHUB_WORKSPACE/target/native-release-archive-inputs" '[
+            "-c","opt","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=2",
+            "--repo_env=OLIPHAUNT_NATIVE_RELEASE_ARCHIVES="+$archives
+          ]' > "$input_root/configuration.json"
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
+            --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:release_family_shipping_export \
+            --output-directory "$RUNNER_TEMP/release-family-build-capture"
+
+      - name: Upload public checksum construction evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-release-families
+          path: ${{ runner.temp }}/release-family-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
   wasix-host:
     name: WASIX imported runtime (${{ matrix.platform }})
-    needs: wasix
+    needs: [wasix, release-inputs]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -860,6 +1085,13 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
 
       - name: Select declared Apple SDK
         if: matrix.platform == 'macos-arm64'
@@ -903,3 +1135,15 @@ jobs:
             --test_env=OLIPHAUNT_WASM_AOT_VERIFY=full \
             --test_env=XDG_CACHE_HOME="$RUNNER_TEMP/wasix-imported-sdk-cache" \
             --test_env=RUST_TEST_THREADS=1
+
+  required:
+    name: Required
+    needs: [release-inputs, portable, linux, wasix, postmaster, postmaster-host, release-families, wasix-host]
+    if: always() && (github.event_name != 'pull_request' || github.event.action != 'closed')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every native qualification job
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: jq -e 'all(.[]; .result == "success")' <<< "$NEEDS_JSON"

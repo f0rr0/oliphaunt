@@ -9,6 +9,8 @@ load("//build_defs/wasix:config.bzl", "WASIX_COPTS")
 load("@postgres_wasix//:patches.bzl", "POSTGRES_PATCHES")
 load("//build_defs/wasix:npm.bzl", "wasix_runtime_npm")
 load("//build_defs/wasix:cargo.bzl", "wasix_runtime_cargo_exports")
+load("//build_defs/wasix:runtime-release.bzl", "wasix_runtime_release_assets")
+load("//build_defs/release:supplier.bzl", "shipping_suppliers")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -137,9 +139,27 @@ wasix_artifact(
 
 wasix_runtime_aot_targets()
 
+shipping_suppliers(name = "runtime_public_suppliers", inputs = [])
+
 wasix_runtime_npm()
 
 wasix_runtime_cargo_exports()
+
+wasix_runtime_release_assets(
+    patches = postgres_patch_inputs(POSTGRES_PATCHES),
+    generated = {
+        "//:src/extensions/generated/extensions.catalog.json": "src/extensions/generated/extensions.catalog.json",
+        "//:src/extensions/generated/contrib-build.tsv": "src/extensions/generated/contrib-build.tsv",
+        "//:src/extensions/generated/pgxs-build.tsv": "src/extensions/generated/pgxs-build.tsv",
+        "//:src/extensions/generated/wasix/extensions.json": "src/extensions/generated/wasix/extensions.json",
+        "//:src/extensions/generated/mobile/static-extensions.tsv": "src/extensions/generated/mobile/static-extensions.tsv",
+        "//:src/extensions/generated/mobile/static-registry.json": "src/extensions/generated/mobile/static-registry.json",
+        "//:src/extensions/generated/docs/extension-evidence.json": "src/extensions/generated/docs/extension-evidence.json",
+        "//src/extensions/generated/sdk:metadata": "src/extensions/generated/sdk/extensions.json",
+        "//src/extensions/generated/sdk:ios-static-dependencies.json": "src/extensions/generated/sdk/ios-static-dependencies.json",
+    },
+    qualification = ["//build_defs/extensions/wasix:contrib_installed_test"],
+)
 
 source_quality_files()
 

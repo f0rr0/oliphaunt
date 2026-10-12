@@ -1,7 +1,9 @@
+load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS")
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/resources:resources.bzl", "linux_resource_slice", "linux_resource_test", "native_resource_test", "resource_compile_data", "wasix_resource_slice", "wasix_resource_test")
-load("//build_defs/resources:mobile.bzl", "android_resource_slice", "ios_resource_slice", "native_abi_receipt")
+load("//build_defs/resources:mobile.bzl", "android_resource_slice", "ios_resource_slice", "mobile_resource_test", "native_abi_receipt")
 load("//build_defs/android:toolchain.bzl", "android_artifact")
+load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -28,7 +30,7 @@ native_abi_receipt(name = "native_target_abi")
     platform = "//build_defs/android:android_" + architecture,
 ) for architecture in ["arm64", "x86_64"]]
 
-linux_resource_slice(name = "linux_shipping_export", templates = {
+linux_resource_slice(name = "linux_shipping_export", qualification = [":native_resource_test"], templates = {
     "//src/database-resources/icu:npm/package.json": "npm/package.json",
     "//src/database-resources/icu:npm/README.md": "npm/README.md",
     "//src/database-resources/icu:npm/OliphauntICU.podspec": "npm/OliphauntICU.podspec",
@@ -40,13 +42,17 @@ linux_resource_slice(name = "linux_shipping_export", templates = {
     "//src/database-resources/icu:cargo/src/lib.rs": "cargo/src/lib.rs",
 })
 
-android_resource_slice(name = "android_shipping_export")
-ios_resource_slice(name = "ios_shipping_export")
+android_resource_slice(name = "android_shipping_export", qualification = [":android_resource_test", ":native_resource_test"])
+ios_resource_slice(name = "ios_shipping_export", qualification = [":ios_resource_test", ":native_resource_test"])
+mobile_resource_test(name = "android_resource_test", target = "android-datum64")
+mobile_resource_test(name = "ios_resource_test", target = "ios-datum64")
 
-wasix_resource_slice(name = "wasix_shipping_export")
+wasix_resource_slice(name = "wasix_shipping_export", qualification = [":wasix_resource_test"])
 wasix_resource_test(name = "wasix_resource_test")
 
 linux_resource_test(name = "linux_resource_test")
 native_resource_test(name = "native_resource_test")
+
+native_release_checksum_family(product = "database-resources", artifact_rows = DATABASE_RESOURCE_ARTIFACTS)
 
 source_quality_files()

@@ -1,0 +1,14 @@
+diff --git a/tools/wrapper_common/BUILD b/tools/wrapper_common/BUILD
+--- a/tools/wrapper_common/BUILD
++++ b/tools/wrapper_common/BUILD
+@@ -9,6 +9,10 @@ py_library(
+         "__init__.py",
+         "execute.py",
+     ],
++    data = select({
++        "@platforms//os:macos": ["@@//build_defs/apple:licensed_app_tools"],
++        "//conditions:default": [],
++    }),
+     srcs_version = "PY3",
+     visibility = [
+         "//tools/bitcode_strip:__pkg__",

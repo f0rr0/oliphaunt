@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+exports_files(["declared-app-tools.patch"])
+# Stock rule tools retain original execution. Actual licensed bytes and receipt
+# enter their FilesToRunProvider through the maintained execute library's data.
+filegroup(
+    name = "licensed_app_tools",
+    srcs = ["@native_apple_sdk//:app_tools"],
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64"],
+)

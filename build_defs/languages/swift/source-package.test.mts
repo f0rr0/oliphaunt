@@ -4,6 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
+import { zipArchive } from '../../../tools/packaging/testdata/zip-fixture.mts';
 import {
   assertSwiftSourceDeliveryParity,
   readSwiftSourceTagMembers,
@@ -47,40 +48,145 @@ test('final source envelope preserves held native version, exact source-tag path
     ).toBeTrue();
     const entries = readPortableArchiveEntries(path.join(first, 'Oliphaunt-source.zip'));
     const tree = path.join(first, 'release-tree');
-    const parity = () =>
-      assertSwiftSourceDeliveryParity(
-        path.join(first, 'Oliphaunt-source.zip'),
-        readSwiftSourceTagMembers(tree),
-        readFileSync(path.join(tree, 'Package.swift')),
-      );
-    parity();
-    const member = path.join(tree, 'src/sdks/swift/Sources/Oliphaunt/Oliphaunt.swift');
-    const original = readFileSync(member);
-    for (const fault of ['removed', 'changed', 'extra', 'mode', 'symlink']) {
-      const extra = path.join(tree, 'src/sdks/swift/Sources/Oliphaunt/extra.swift');
-      if (fault === 'removed') rmSync(member);
-      if (fault === 'changed') writeFileSync(member, '// only source tag changed\n');
-      if (fault === 'extra') writeFileSync(extra, '// extra source tag member\n');
-      if (fault === 'mode') chmodSync(member, 0o755);
-      if (fault === 'symlink') {
-        rmSync(member);
-        symlinkSync(spec.generatedSwift, member);
-      }
-      expect(parity).toThrow();
-      rmSync(extra, { force: true });
-      rmSync(member, { force: true });
-      writeFileSync(member, original, { mode: 0o644 });
+    const treeManifest = readFileSync(path.join(tree, 'Package.swift'));
+    // This is the publisher's Git100644 fixture, not a claim about NTFS
+    // permission bits. Exact physical-tree modes are checked separately below.
+    const declaredTagMembers = readSwiftSourceTagMembers(tree).map((row) =>
+      row.type === 'file' ? { ...row, mode: 0o644 } : row,
+    );
+    const archiveParity = (archive: string) =>
+      assertSwiftSourceDeliveryParity(archive, declaredTagMembers, treeManifest);
+    archiveParity(path.join(first, 'Oliphaunt-source.zip'));
+    const zipRows = [...entries].map(([name, entry]) => {
+      expect(entry.mode & 0o777).toBe(entry.isDirectory ? 0o755 : 0o644);
+      return {
+        name: entry.isDirectory ? `${name}/` : name,
+        data: entry.isFile ? Buffer.from(entry.data()) : Buffer.alloc(0),
+        externalAttributes:
+          ((entry.isDirectory ? 0o40755 : 0o100644) << 16) | (entry.isDirectory ? 0x10 : 0),
+      };
+    });
+    const corruptArchive = path.join(scratch, 'source-fault.zip');
+    writeFileSync(corruptArchive, zipArchive(zipRows));
+    archiveParity(corruptArchive);
+    const sharedMember = 'package/Sources/Oliphaunt/Oliphaunt.swift';
+    for (const [rows, message] of [
+      [zipRows.filter(({ name }) => name !== sharedMember), 'shared delivered members differ'],
+      [
+        zipRows.map((row) =>
+          row.name === sharedMember
+            ? { ...row, data: Buffer.from('// ZIP-only source edit\n') }
+            : row,
+        ),
+        'shared delivered members differ',
+      ],
+      [
+        [
+          ...zipRows,
+          {
+            name: 'package/Sources/Oliphaunt/extra.swift',
+            data: Buffer.from('// ZIP-only extra source\n'),
+            externalAttributes: 0o100644 << 16,
+          },
+        ],
+        'shared delivered members differ',
+      ],
+      [
+        zipRows.map((row) =>
+          row.name === 'package/Package.swift'
+            ? {
+                ...row,
+                data: Buffer.concat([row.data, Buffer.from('// ZIP-only manifest edit\n')]),
+              }
+            : row,
+        ),
+        'manifest differs beyond the canonical source path rewrite',
+      ],
+    ] as const) {
+      writeFileSync(corruptArchive, zipArchive(rows));
+      expect(() => archiveParity(corruptArchive)).toThrow(message);
     }
-    parity();
-    const tagManifest = path.join(tree, 'Package.swift');
-    const manifestBytes = readFileSync(tagManifest);
-    writeFileSync(tagManifest, Buffer.concat([manifestBytes, Buffer.from('// tree-only edit\n')]));
-    expect(parity).toThrow('manifest differs beyond the canonical source path rewrite');
-    writeFileSync(tagManifest, manifestBytes);
-    chmodSync(tagManifest, 0o755);
-    expect(parity).toThrow('manifest mode differs');
-    chmodSync(tagManifest, 0o644);
-    parity();
+    for (const member of [sharedMember, 'package/Package.swift']) {
+      writeFileSync(
+        corruptArchive,
+        zipArchive(
+          zipRows.map((row) =>
+            row.name === member ? { ...row, externalAttributes: 0o100755 << 16 } : row,
+          ),
+        ),
+      );
+      expect(() => archiveParity(corruptArchive)).toThrow(
+        member.endsWith('/Package.swift')
+          ? 'manifest mode differs'
+          : 'shared delivered members differ',
+      );
+    }
+    for (const [name, message] of [
+      ['package/../escape', 'unsafe archive member'],
+      ['/escape', 'unsafe archive member'],
+      ['C:/escape', 'unsafe archive member'],
+      ['package\\escape', 'unsafe archive member'],
+      ['package/Sources/CON.swift', 'non-portable archive member'],
+      ['package/Sources/file.swift:stream', 'non-portable archive member'],
+    ]) {
+      writeFileSync(corruptArchive, zipArchive([...zipRows, { name, data: 'unsafe member' }]));
+      expect(() => archiveParity(corruptArchive)).toThrow(message);
+    }
+    for (const mode of [0o120777, 0o10644]) {
+      writeFileSync(
+        corruptArchive,
+        zipArchive(
+          zipRows.map((row) =>
+            row.name === sharedMember
+              ? { ...row, data: Buffer.from('../outside'), externalAttributes: mode << 16 }
+              : row,
+          ),
+        ),
+      );
+      expect(() => archiveParity(corruptArchive)).toThrow('link or special ZIP entry');
+    }
+    // Windows chmod/stat cannot establish a POSIX source-tree mode contract,
+    // and file symlink creation may require privileges. Encoded ZIP faults
+    // above cover both contracts portably without weakening the public reader.
+    if (process.platform !== 'win32') {
+      const parity = () =>
+        assertSwiftSourceDeliveryParity(
+          path.join(first, 'Oliphaunt-source.zip'),
+          readSwiftSourceTagMembers(tree),
+          readFileSync(path.join(tree, 'Package.swift')),
+        );
+      parity();
+      const member = path.join(tree, 'src/sdks/swift/Sources/Oliphaunt/Oliphaunt.swift');
+      const original = readFileSync(member);
+      for (const fault of ['removed', 'changed', 'extra', 'mode', 'symlink']) {
+        const extra = path.join(tree, 'src/sdks/swift/Sources/Oliphaunt/extra.swift');
+        if (fault === 'removed') rmSync(member);
+        if (fault === 'changed') writeFileSync(member, '// only source tag changed\n');
+        if (fault === 'extra') writeFileSync(extra, '// extra source tag member\n');
+        if (fault === 'mode') chmodSync(member, 0o755);
+        if (fault === 'symlink') {
+          rmSync(member);
+          symlinkSync(spec.generatedSwift, member);
+        }
+        expect(parity).toThrow();
+        rmSync(extra, { force: true });
+        rmSync(member, { force: true });
+        writeFileSync(member, original, { mode: 0o644 });
+      }
+      parity();
+      const tagManifest = path.join(tree, 'Package.swift');
+      const manifestBytes = readFileSync(tagManifest);
+      writeFileSync(
+        tagManifest,
+        Buffer.concat([manifestBytes, Buffer.from('// tree-only edit\n')]),
+      );
+      expect(parity).toThrow('manifest differs beyond the canonical source path rewrite');
+      writeFileSync(tagManifest, manifestBytes);
+      chmodSync(tagManifest, 0o755);
+      expect(parity).toThrow('manifest mode differs');
+      chmodSync(tagManifest, 0o644);
+      parity();
+    }
     const content = (member: string) => {
       const entry = entries.get(member);
       assert.ok(entry?.isFile, `Missing ${member}`);

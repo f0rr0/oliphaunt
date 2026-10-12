@@ -1,2 +1,2 @@
-# Package discovery must not walk package-manager installations in workspaces.
-ignore_directories(["**/node_modules"])
+# Package discovery must not walk generated outputs or package-manager installations.
+ignore_directories(["bazel-*", "**/node_modules"])

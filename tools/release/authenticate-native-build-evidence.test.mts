@@ -5,8 +5,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  acquireAuthenticatedNativeBuildEvidence,
+  assertAuthenticatedNativeBuildOrigin,
   assureReviewedNativeBuildProducer,
   authenticateNativeBuildEvidence,
+  createNativeBuildEvidenceAcquirer,
   validateReviewedNativeProducerAssurance,
 } from './authenticate-native-build-evidence.mts';
 import {
@@ -547,6 +550,14 @@ test('reviewed producer requires producing-analysis shipping and complete succes
 test('native origin uses the existing exact-ID/digest transport and selected successful job, ignoring inherited fixture caches', async () => {
   await fixture(async (root) => {
     const origin = await authenticateNativeBuildEvidence(path.join(root, 'evidence'), expected);
+    expect(assertAuthenticatedNativeBuildOrigin(origin)).toBe(origin);
+    expect(() => assertAuthenticatedNativeBuildOrigin(JSON.parse(JSON.stringify(origin)))).toThrow(
+      /authenticated producer transport/u,
+    );
+    expect(Object.isFrozen(origin.evidence)).toBe(true);
+    expect(() => {
+      origin.github.job = 'invented producer';
+    }).toThrow();
     expect(origin.github).toEqual(expected.github);
     expect(origin.artifact).toMatchObject({ id: 101, name: expected.artifactName });
     expect(origin.artifact.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
@@ -568,6 +579,47 @@ test('native origin uses the existing exact-ID/digest transport and selected suc
     expect(readFileSync(path.join(root, 'untrusted-cache/run-77.json'), 'utf8')).toContain(
       'untrusted',
     );
+  });
+});
+
+test('owned native acquisition authenticates and retains one download without accepting an existing destination', async () => {
+  await fixture(async (root) => {
+    const destination = path.join(root, 'acquired');
+    const origin = await acquireAuthenticatedNativeBuildEvidence(destination, expected);
+    expect(origin.evidence).toEqual({ synthetic: true });
+    expect(
+      JSON.parse(readFileSync(path.join(destination, 'native-build-evidence.json'), 'utf8')),
+    ).toEqual(origin.evidence);
+    const requests = readFileSync(path.join(root, 'api.log'), 'utf8')
+      .trim()
+      .split('\n')
+      .map(JSON.parse);
+    expect(requests.filter((url) => url.endsWith('/actions/artifacts/101/zip'))).toHaveLength(1);
+    expect(() => acquireAuthenticatedNativeBuildEvidence(destination, expected)).toThrow(
+      /new owned directory/,
+    );
+  });
+});
+
+test('one controller session shares only its owned origin metadata and still authenticates every archive', async () => {
+  await fixture(async (root) => {
+    const session = createNativeBuildEvidenceAcquirer();
+    try {
+      await session.acquire(path.join(root, 'first'), expected);
+      await session.acquire(path.join(root, 'second'), expected);
+      const requests: string[] = readFileSync(path.join(root, 'api.log'), 'utf8')
+        .trim()
+        .split('\n')
+        .map(JSON.parse);
+      expect(requests.filter((url) => url.endsWith('/actions/artifacts/101/zip'))).toHaveLength(2);
+      expect(requests.filter((url) => url.endsWith('/actions/runs/77'))).toHaveLength(1);
+      expect(
+        requests.filter((url) => url.endsWith(`/git/commits/${expected.source.commit}`)),
+      ).toHaveLength(1);
+    } finally {
+      session.dispose();
+    }
+    expect(() => session.acquire(path.join(root, 'third'), expected)).toThrow('session is closed');
   });
 });
 

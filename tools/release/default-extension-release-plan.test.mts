@@ -59,6 +59,62 @@ test('runtime-only, SDK-only and compatible extension updates retain independent
   }
 });
 
+test('a supplied held extension host does not adopt an unrelated newer workspace runtime', () => {
+  const state = fixture();
+  advance(state.products[native]);
+  advance(state.products[wasix]);
+  const buildBound = new Map(Object.keys(state.products).map((id) => [id, new Set<string>()]));
+  const before = structuredClone({ products: state.products, pins: state.pins });
+  const plan = defaultExtensionReleasePlan(state.products, [extension], { ...state, buildBound });
+  expect([...plan.required]).toEqual([extension]);
+  expect(plan.requirements.size).toBe(0);
+  expect({ products: state.products, pins: state.pins }).toEqual(before);
+  expect(() =>
+    validateReleaseConsumerCompatibility([extension], { ...state, buildBound }),
+  ).not.toThrow();
+
+  buildBound.get(extension).add(native);
+  const current = defaultExtensionReleasePlan(state.products, [extension], {
+    ...state,
+    buildBound,
+  });
+  expect(current.requirements.get(`oliphaunt-js:${native}`).version).toBe(
+    state.products[native].version,
+  );
+});
+
+test('conflicting held extension suppliers reject before synthetic host adoption', () => {
+  const state = fixture();
+  const second = 'oliphaunt-extension-pg-hashids';
+  state.products[second] = {
+    ...structuredClone(state.products[extension]),
+    tag_prefix: `${second}-v`,
+  };
+  state.pins[second] = structuredClone(state.pins[extension]);
+  state.published[second] = structuredClone(state.pins[extension]);
+  advance(state.products[native]);
+  const buildBound = new Map(Object.keys(state.products).map((id) => [id, new Set<string>()]));
+  buildBound.get(extension).add(native);
+  const before = structuredClone({ products: state.products, pins: state.pins });
+  expect(() =>
+    defaultExtensionReleasePlan(state.products, [extension], { ...state, buildBound }),
+  ).toThrow('update its conventional runtime requirement');
+  expect({ products: state.products, pins: state.pins }).toEqual(before);
+
+  // A source adoption can deliberately use a published host older than the
+  // unrelated workspace host; an empty map must not silently replace it.
+  advance(state.products[native]);
+  state.pins[extension][native] = '0.3.2';
+  state.pins[second][native] = '0.3.2';
+  buildBound.get(extension).clear();
+  const adopted = defaultExtensionReleasePlan(state.products, [extension], {
+    ...state,
+    buildBound,
+  });
+  expect(adopted.required.has(second)).toBe(true);
+  expect(adopted.requirements.get(`oliphaunt-js:${native}`).version).toBe('0.3.2');
+});
+
 test('a native host change selects exactly the required default SDK and wrapper updates', () => {
   const state = fixture();
   advance(state.products[native]);
@@ -77,6 +133,48 @@ test('a native host change selects exactly the required default SDK and wrapper 
   expect(state.pins['oliphaunt-react-native']['oliphaunt-kotlin']).toBe(
     state.products['oliphaunt-kotlin'].version,
   );
+});
+
+test('default native SDK adoption preserves independently held dynamic helpers', () => {
+  const state = fixture();
+  for (const [id, version] of [
+    ['oliphaunt-node-direct', '0.2.2'],
+    ['oliphaunt-broker', '0.3.1'],
+  ]) {
+    state.products[id] = {
+      version,
+      kind: 'runtime',
+      tag_prefix: `${id}-v`,
+      compatibility_versions: {
+        host: { source_product: native, public_support: false },
+      },
+    };
+    state.pins[id] = { [native]: state.products[native].version };
+    state.published[id] = structuredClone(state.pins[id]);
+    state.pins['oliphaunt-js'][id] = version;
+    state.published['oliphaunt-js'][id] = version;
+    state.products['oliphaunt-js'].compatibility_versions[id] = {
+      source_product: id,
+      public_support: false,
+    };
+  }
+  advance(state.products[native]);
+  // The selected extension deliberately adopts an already published new host.
+  // Its ABI supplier map does not falsely turn dynamically loaded helpers into
+  // consumers that embed the current runtime.
+  state.pins[extension][native] = state.products[native].version;
+  const buildBound = new Map(Object.keys(state.products).map((id) => [id, new Set<string>()]));
+  const before = structuredClone({ products: state.products, pins: state.pins });
+  const plan = defaultExtensionReleasePlan(state.products, [extension], { ...state, buildBound });
+  expect(plan.requirements.get(`oliphaunt-js:${native}`).version).toBe(
+    state.products[native].version,
+  );
+  for (const helper of ['oliphaunt-node-direct', 'oliphaunt-broker']) {
+    expect(plan.required.has(helper)).toBe(false);
+    expect(plan.requirements.has(`oliphaunt-js:${helper}`)).toBe(false);
+    expect(state.pins['oliphaunt-js'][helper]).toBe(before.pins['oliphaunt-js'][helper]);
+  }
+  expect({ products: state.products, pins: state.pins }).toEqual(before);
 });
 
 test('a WASIX host change selects a matching addon instead of substituting workspace bytes', () => {

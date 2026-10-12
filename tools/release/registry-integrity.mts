@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 import { createHash } from 'node:crypto';
 import {
-  lstatSync,
+  promises as fs,
   linkSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   statSync,
@@ -11,10 +12,11 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-
-import { createCratesIoReadGate } from './registry-http-retry.mts';
 import { loadPublicationLock } from './publication-lock.mts';
-import { ROOT, compareText } from './release-graph.mts';
+import { createCratesIoReadGate } from './registry-http-retry.mts';
+import { compareText, ROOT } from './release-graph.mts';
+import { createRetainedDownload } from './retained-download.mts';
+
 const CRATES_IO_API = process.env.CRATES_IO_API || 'https://crates.io/api/v1';
 const DEFAULT_NPM_REGISTRY = 'https://registry.npmjs.org';
 const MAVEN_CENTRAL_BASE = process.env.MAVEN_CENTRAL_BASE || 'https://repo1.maven.org/maven2';
@@ -28,6 +30,7 @@ const MAX_TRANSIENT_RETRY_DELAY_MS = 30_000;
 const MAX_RATE_LIMIT_RETRY_DELAY_MS = 5 * 60_000;
 const MAX_RETRY_DELAY_BUDGET_MS = 10 * 60_000;
 const MAX_METADATA_RESPONSE_BYTES = 8 * 1024 * 1024;
+const MAX_RETAINED_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 const MAX_REGISTRY_RECEIPT_EVIDENCE_BYTES = 64 * 1024 * 1024;
 export const REGISTRY_RECEIPT_EVIDENCE_SCHEMA = 'oliphaunt-registry-integrity-receipts-v1';
 const DEFAULT_CRATES_IO_READ_GATE = createCratesIoReadGate();
@@ -307,45 +310,83 @@ async function requestJson(url, fetchImpl, cratesIoReadGate = null) {
   );
 }
 
-async function responseSha256(response, maximum, context) {
+async function responseSha256(response, maximum, context, options = {}) {
   const declared = declaredResponseLength(response, context);
   if (declared !== null && declared > maximum) {
     await response.body?.cancel?.().catch(() => {});
     throw new RegistryResponseError(`${context} response exceeds locked size ${maximum}`);
   }
   const hash = createHash('sha256');
-  let size = 0;
-  if (response.body?.getReader !== undefined) {
-    const reader = response.body.getReader();
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const bytes = Buffer.from(value);
-        size += bytes.length;
-        if (size > maximum) {
-          await reader.cancel().catch(() => {});
-          throw new RegistryResponseError(`${context} response exceeds locked size ${maximum}`);
-        }
-        hash.update(bytes);
-      }
-    } finally {
-      reader.releaseLock();
+  const sha512 = options.expectedSha512 === undefined ? null : createHash('sha512');
+  let retained = null;
+  try {
+    if (options.retainedPath !== undefined) {
+      retained = await createRetainedDownload(options.retainedPath);
     }
-  } else {
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.length > maximum) {
-      throw new RegistryResponseError(`${context} response exceeds locked size ${maximum}`);
-    }
-    hash.update(bytes);
-    size = bytes.length;
+  } catch (cause) {
+    await response.body?.cancel?.().catch(() => {});
+    throw new RegistryResponseError(cause.message);
   }
-  return { sha256: hash.digest('hex'), size };
+  let size = 0;
+  try {
+    if (response.body?.getReader !== undefined) {
+      const reader = response.body.getReader();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const bytes = Buffer.from(value);
+          size += bytes.length;
+          if (size > maximum) {
+            await reader.cancel().catch(() => {});
+            throw new RegistryResponseError(`${context} response exceeds locked size ${maximum}`);
+          }
+          hash.update(bytes);
+          sha512?.update(bytes);
+          await retained?.write(bytes);
+        }
+      } catch (cause) {
+        await reader.cancel().catch(() => {});
+        throw cause;
+      } finally {
+        reader.releaseLock();
+      }
+    } else {
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length > maximum) {
+        throw new RegistryResponseError(`${context} response exceeds locked size ${maximum}`);
+      }
+      hash.update(bytes);
+      sha512?.update(bytes);
+      await retained?.write(bytes);
+      size = bytes.length;
+    }
+    const proof = { sha256: hash.digest('hex'), size };
+    if (options.expectedSize !== undefined && size !== options.expectedSize) {
+      throw new RegistryResponseError(
+        `${context} size ${size} does not match expected size ${options.expectedSize}`,
+      );
+    }
+    if (options.expectedSha256 !== undefined && proof.sha256 !== options.expectedSha256) {
+      throw new RegistryResponseError(`${context} SHA256 does not match expected digest`);
+    }
+    if (sha512 !== null && sha512.digest('base64') !== options.expectedSha512) {
+      throw new RegistryResponseError(`${context} SHA512 does not match registry integrity`);
+    }
+    if (retained !== null) return { ...proof, path: await retained.commit() };
+    return proof;
+  } finally {
+    await retained?.abort();
+  }
 }
 
-async function requestSha256(url, fetchImpl, maximum) {
-  return request(url, 'application/octet-stream', fetchImpl, (response) =>
-    responseSha256(response, maximum, url),
+async function requestSha256(url, fetchImpl, maximum, options = {}, cratesIoReadGate = null) {
+  return request(
+    url,
+    'application/octet-stream',
+    fetchImpl,
+    (response) => responseSha256(response, maximum, url, options),
+    cratesIoReadGate,
   );
 }
 
@@ -353,6 +394,18 @@ function lockedArtifactEnvelope(carrier) {
   return carrier.artifacts
     .map(({ sha256, size }) => ({ sha256, size }))
     .sort((left, right) => compareText(left.sha256, right.sha256));
+}
+
+function carrierReceipt(carrier, registryProof) {
+  return {
+    id: carrier.id,
+    product: carrier.product,
+    ecosystem: carrier.ecosystem,
+    name: carrier.name,
+    version: carrier.version,
+    lockedArtifacts: lockedArtifactEnvelope(carrier),
+    registryProof,
+  };
 }
 
 function expectedCargoReceipt(carrier) {
@@ -364,20 +417,12 @@ function expectedCargoReceipt(carrier) {
   const file = requireLockedFile(carrier.artifacts[0], '.crate', carrier);
   const digest = hashFile(file, 'sha256');
   const url = `${CRATES_IO_API.replace(/\/+$/u, '')}/crates/${encodeURIComponent(carrier.name)}/${encodeURIComponent(carrier.version)}`;
-  return {
-    id: carrier.id,
-    product: carrier.product,
-    ecosystem: carrier.ecosystem,
-    name: carrier.name,
-    version: carrier.version,
-    lockedArtifacts: lockedArtifactEnvelope(carrier),
-    registryProof: {
-      algorithm: 'sha256',
-      digest,
-      source: 'crates.io-version-checksum',
-      url,
-    },
-  };
+  return carrierReceipt(carrier, {
+    algorithm: 'sha256',
+    digest,
+    source: 'crates.io-version-checksum',
+    url,
+  });
 }
 
 async function cargoReceipt(carrier, fetchImpl, cratesIoReadGate) {
@@ -401,20 +446,12 @@ function expectedNpmReceipt(carrier) {
   const file = requireLockedFile(carrier.artifacts[0], '.tgz', carrier);
   const digest = hashFile(file, 'sha512', 'base64');
   const url = `${canonicalNpmRegistry()}/${encodeURIComponent(carrier.name)}/${encodeURIComponent(carrier.version)}`;
-  return {
-    id: carrier.id,
-    product: carrier.product,
-    ecosystem: carrier.ecosystem,
-    name: carrier.name,
-    version: carrier.version,
-    lockedArtifacts: lockedArtifactEnvelope(carrier),
-    registryProof: {
-      algorithm: 'sha512',
-      digest,
-      source: 'npm-dist-integrity',
-      url,
-    },
-  };
+  return carrierReceipt(carrier, {
+    algorithm: 'sha512',
+    digest,
+    source: 'npm-dist-integrity',
+    url,
+  });
 }
 
 async function npmReceipt(carrier, fetchImpl) {
@@ -481,20 +518,12 @@ function expectedMavenReceipt(carrier) {
       url,
     });
   }
-  return {
-    id: carrier.id,
-    product: carrier.product,
-    ecosystem: carrier.ecosystem,
-    name: carrier.name,
-    version: carrier.version,
-    lockedArtifacts: lockedArtifactEnvelope(carrier),
-    registryProof: {
-      algorithm: 'sha256',
-      digest: digestValue(proofs),
-      files: proofs,
-      source: 'maven-central-payload-bytes',
-    },
-  };
+  return carrierReceipt(carrier, {
+    algorithm: 'sha256',
+    digest: digestValue(proofs),
+    files: proofs,
+    source: 'maven-central-payload-bytes',
+  });
 }
 
 async function mavenReceipt(carrier, fetchImpl) {
@@ -511,7 +540,7 @@ async function mavenReceipt(carrier, fetchImpl) {
   return receipt;
 }
 
-function expectedLockedCarrierReceipt(carrier, lock) {
+function expectedLockedCarrierReceipt(carrier) {
   if (carrier.ecosystem === 'cargo') return expectedCargoReceipt(carrier);
   if (carrier.ecosystem === 'npm') return expectedNpmReceipt(carrier);
   if (carrier.ecosystem === 'maven') return expectedMavenReceipt(carrier);
@@ -684,9 +713,7 @@ export function validateLockedRegistryReceipts(
   const carriers = selectedLockedRegistryCarriers(lock, { products, ecosystems, carrierIds });
   const expectedById =
     receiptMode === 'local'
-      ? new Map(
-          carriers.map((carrier) => [carrier.id, expectedLockedCarrierReceipt(carrier, lock)]),
-        )
+      ? new Map(carriers.map((carrier) => [carrier.id, expectedLockedCarrierReceipt(carrier)]))
       : new Map(carriers.map((carrier) => [carrier.id, carrier]));
   const observedById = new Map();
   for (const receipt of receipts) {
@@ -827,14 +854,249 @@ export function validateRegistryReceiptEvidence(
 
 export async function verifyRegistryCarrierIntegrity(
   carrier,
-  { fetchImpl = fetch, cratesIoReadGate = DEFAULT_CRATES_IO_READ_GATE } = {},
+  {
+    fetchImpl = fetch,
+    cratesIoReadGate = DEFAULT_CRATES_IO_READ_GATE,
+    cachedReceipt,
+    cachedReceipts,
+  } = {},
 ) {
+  if (cachedReceipts !== undefined && !(cachedReceipts instanceof Map)) {
+    throw error('cachedReceipts must be a Map keyed by exact carrier identity');
+  }
+  if (cachedReceipts?.has(carrier.id)) {
+    const cached = cachedReceipts.get(carrier.id);
+    if (
+      cached?.id !== carrier.id ||
+      (cachedReceipt !== undefined && stableJson(cachedReceipt) !== stableJson(cached))
+    ) {
+      throw error(`${carrier.id} has conflicting cached registry receipts`);
+    }
+    cachedReceipt ??= cached;
+  }
+  if (cachedReceipt !== undefined) {
+    validateSealedLockedCarrierReceipt(cachedReceipt, carrier);
+    for (const artifact of carrier.artifacts) {
+      const stat = lstatSync(path.resolve(ROOT, artifact.path));
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw error(`${carrier.id} cached registry bytes must be regular owned files`);
+      }
+    }
+    const expected = expectedLockedCarrierReceipt(carrier);
+    if (stableJson(cachedReceipt) !== stableJson(expected)) {
+      throw error(`${carrier.id} cached registry receipt does not match its local bytes`);
+    }
+    return cachedReceipt;
+  }
   if (carrier.ecosystem === 'cargo') return cargoReceipt(carrier, fetchImpl, cratesIoReadGate);
   if (carrier.ecosystem === 'npm') return npmReceipt(carrier, fetchImpl);
   if (carrier.ecosystem === 'maven') return mavenReceipt(carrier, fetchImpl);
   throw error(
     `${carrier.id} byte-level registry verification is unsupported for ${carrier.ecosystem}`,
   );
+}
+
+export async function materializeRegistryCarrierIntegrity(
+  carrier,
+  {
+    directory,
+    fetchImpl = fetch,
+    cratesIoReadGate = DEFAULT_CRATES_IO_READ_GATE,
+    maximumBytes = MAX_RETAINED_ARCHIVE_BYTES,
+  } = {},
+) {
+  if (typeof directory !== 'string' || directory.length === 0) {
+    throw error('registry materialization requires an owned output directory');
+  }
+  if (
+    !Number.isSafeInteger(maximumBytes) ||
+    maximumBytes < 1 ||
+    maximumBytes > MAX_RETAINED_ARCHIVE_BYTES
+  ) {
+    throw error(
+      `registry materialization maximumBytes must be from 1 through ${MAX_RETAINED_ARCHIVE_BYTES}`,
+    );
+  }
+  for (const field of ['id', 'product', 'ecosystem', 'name', 'version']) {
+    if (
+      typeof carrier?.[field] !== 'string' ||
+      carrier[field].length === 0 ||
+      /[\u0000-\u001f\u007f]/u.test(carrier[field])
+    ) {
+      throw error(`registry materialization requires an exact carrier ${field}`);
+    }
+  }
+  if (!SUPPORTED_ECOSYSTEMS.has(carrier.ecosystem)) {
+    throw error(`${carrier.id} registry materialization does not support ${carrier.ecosystem}`);
+  }
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9.+-]*$/u.test(carrier.version) ||
+    (carrier.ecosystem === 'cargo' && !/^[A-Za-z0-9_-]+$/u.test(carrier.name)) ||
+    (carrier.ecosystem === 'npm' &&
+      !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/u.test(carrier.name))
+  ) {
+    throw error(`${carrier.id} has an invalid exact registry package name or version`);
+  }
+  if (!Array.isArray(carrier.artifacts) || carrier.artifacts.length === 0) {
+    throw error(`${carrier.id} registry materialization requires explicit artifact names`);
+  }
+  const names = new Set();
+  for (const artifact of carrier.artifacts) {
+    const name = typeof artifact.path === 'string' ? path.basename(artifact.path) : '';
+    if (
+      !name ||
+      name === '.' ||
+      name === '..' ||
+      /[\\:\u0000-\u001f\u007f]/u.test(name) ||
+      names.has(name)
+    ) {
+      throw error(`${carrier.id} requires unique safe publication artifact basenames`);
+    }
+    names.add(name);
+    if (
+      artifact.size !== undefined &&
+      (!Number.isSafeInteger(artifact.size) || artifact.size < 0 || artifact.size > maximumBytes)
+    ) {
+      throw error(`${carrier.id} has an invalid expected artifact size`);
+    }
+    if (artifact.sha256 !== undefined && !/^[a-f0-9]{64}$/u.test(artifact.sha256)) {
+      throw error(`${carrier.id} has an invalid expected artifact SHA256`);
+    }
+  }
+  if (carrier.ecosystem !== 'maven') {
+    const suffix = carrier.ecosystem === 'cargo' ? '.crate' : '.tgz';
+    if (carrier.artifacts.length !== 1 || !carrier.artifacts[0].path.endsWith(suffix)) {
+      throw error(`${carrier.id} must declare exactly one ${suffix} archive`);
+    }
+  }
+  await fs.mkdir(path.resolve(directory), { recursive: true });
+  const ownedDirectory = await fs.mkdtemp(path.join(path.resolve(directory), 'registry-carrier-'));
+  const artifacts = [];
+  let metadata = null;
+  let registryProof;
+  const capture = async (artifact, url, options = {}, gate = null) => {
+    const observed = await requestSha256(
+      url,
+      fetchImpl,
+      options.expectedSize ?? artifact.size ?? maximumBytes,
+      {
+        expectedSize: artifact.size,
+        expectedSha256: artifact.sha256,
+        retainedPath: path.join(ownedDirectory, path.basename(artifact.path)),
+        ...options,
+      },
+      gate,
+    );
+    artifacts.push({
+      ...artifact,
+      path: observed.path,
+      size: observed.size,
+      sha256: observed.sha256,
+    });
+    return observed;
+  };
+  try {
+    if (carrier.ecosystem === 'cargo') {
+      const url = `${CRATES_IO_API.replace(/\/+$/u, '')}/crates/${encodeURIComponent(carrier.name)}/${encodeURIComponent(carrier.version)}`;
+      metadata = await requestJson(url, fetchImpl, cratesIoReadGate);
+      const version = metadata?.version;
+      if (
+        version?.crate !== carrier.name ||
+        version?.num !== carrier.version ||
+        !/^[a-f0-9]{64}$/u.test(version?.checksum ?? '')
+      ) {
+        throw error(`${carrier.id} Cargo metadata changed its exact version identity or checksum`);
+      }
+      const artifact = carrier.artifacts[0];
+      if (artifact.sha256 !== undefined && artifact.sha256 !== version.checksum) {
+        throw error(`${carrier.id} registry checksum mismatch`);
+      }
+      if (
+        version.crate_size !== undefined &&
+        (!Number.isSafeInteger(version.crate_size) ||
+          version.crate_size < 0 ||
+          version.crate_size > maximumBytes ||
+          (artifact.size !== undefined && artifact.size !== version.crate_size))
+      ) {
+        throw error(`${carrier.id} Cargo metadata has an invalid or conflicting archive size`);
+      }
+      await capture(
+        artifact,
+        `${url}/download`,
+        {
+          expectedSha256: version.checksum,
+          expectedSize: artifact.size ?? version.crate_size,
+        },
+        cratesIoReadGate,
+      );
+      registryProof = {
+        algorithm: 'sha256',
+        digest: version.checksum,
+        source: 'crates.io-version-checksum',
+        url,
+      };
+    } else if (carrier.ecosystem === 'npm') {
+      const url = `${canonicalNpmRegistry()}/${encodeURIComponent(carrier.name)}/${encodeURIComponent(carrier.version)}`;
+      metadata = await requestJson(url, fetchImpl);
+      if (metadata?.name !== carrier.name || metadata?.version !== carrier.version) {
+        throw error(`${carrier.id} npm metadata changed its exact package version identity`);
+      }
+      const integrity = metadata?.dist?.integrity;
+      const digests =
+        typeof integrity === 'string'
+          ? [
+              ...new Set(
+                integrity
+                  .trim()
+                  .split(/\s+/u)
+                  .filter((token) => token.startsWith('sha512-'))
+                  .map((token) => token.slice(7)),
+              ),
+            ]
+          : [];
+      if (digests.length !== 1)
+        throw error(`${carrier.id} npm metadata requires one exact SHA512 integrity`);
+      assertCanonicalSha512Base64(digests[0], `${carrier.id} npm integrity`);
+      const basename = carrier.name.split('/').at(-1);
+      const tarball = `${canonicalNpmRegistry()}/${carrier.name}/-/${basename}-${carrier.version}.tgz`;
+      if (metadata.dist.tarball !== tarball) {
+        throw error(`${carrier.id} npm tarball must use its exact canonical package version URL`);
+      }
+      await capture(carrier.artifacts[0], tarball, { expectedSha512: digests[0] });
+      registryProof = {
+        algorithm: 'sha512',
+        digest: digests[0],
+        source: 'npm-dist-integrity',
+        url,
+      };
+    } else {
+      const { artifact: artifactName, base } = mavenCoordinate(carrier);
+      const files = [];
+      const remoteNames = new Set();
+      for (const artifact of carrier.artifacts) {
+        const remoteName = mavenRemoteFilename(carrier, artifact, artifactName);
+        if (remoteNames.has(remoteName))
+          throw error(`${carrier.id} declares duplicate Maven companion ${remoteName}`);
+        remoteNames.add(remoteName);
+        const url = `${base}/${encodeURIComponent(remoteName)}`;
+        const observed = await capture(artifact, url);
+        files.push({ algorithm: 'sha256', digest: observed.sha256, size: observed.size, url });
+      }
+      registryProof = {
+        algorithm: 'sha256',
+        digest: digestValue(files),
+        files,
+        source: 'maven-central-payload-bytes',
+      };
+    }
+    const materialized = { ...carrier, artifacts };
+    const receipt = carrierReceipt(materialized, registryProof);
+    validateSealedLockedCarrierReceipt(receipt, materialized);
+    return { carrier: materialized, receipt, metadata };
+  } catch (cause) {
+    await fs.rm(ownedDirectory, { recursive: true, force: true });
+    throw cause;
+  }
 }
 
 export async function verifyLockedCarrierIntegrity(lock, carrierId, options = {}) {
@@ -852,6 +1114,7 @@ export async function verifyLockedRegistryIntegrity(
     fetchImpl = fetch,
     concurrency = Number(process.env.REGISTRY_INTEGRITY_CONCURRENCY ?? 8),
     cratesIoReadGate = DEFAULT_CRATES_IO_READ_GATE,
+    cachedReceipts = new Map(),
   } = {},
 ) {
   if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 32) {
@@ -860,6 +1123,14 @@ export async function verifyLockedRegistryIntegrity(
     );
   }
   const carriers = selectedLockedRegistryCarriers(lock, { products, ecosystems, carrierIds });
+  if (!(cachedReceipts instanceof Map))
+    throw error('cachedReceipts must be a Map keyed by exact carrier identity');
+  const selectedIds = new Set(carriers.map(({ id }) => id));
+  for (const [id, receipt] of cachedReceipts) {
+    if (!selectedIds.has(id) || receipt?.id !== id) {
+      throw error('cachedReceipts must contain unique selected carrier identities');
+    }
+  }
   const receipts = new Array(carriers.length);
   let next = 0;
   const worker = async () => {
@@ -870,6 +1141,7 @@ export async function verifyLockedRegistryIntegrity(
       receipts[index] = await verifyLockedCarrierIntegrity(lock, carriers[index].id, {
         fetchImpl,
         cratesIoReadGate,
+        cachedReceipts,
       });
     }
   };

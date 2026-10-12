@@ -1,10 +1,13 @@
 """Public native helper envelopes from constructed binaries and canonical rows."""
 
-load("@oliphaunt_metadata//:metadata.bzl", "NATIVE_HELPER_ARTIFACTS", "PRODUCTS", "PUBLICATION_CARRIERS")
+load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_PUBLICATIONS", "NATIVE_HELPER_ARTIFACTS", "PRODUCTS", "PUBLICATION_CARRIERS")
+load("@native_cargo_metadata//:cargo.bzl", "CARGO")
+load("@cargo_crates//:defs.bzl", "crate_deps")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "use_cc_toolchain")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/languages:cargo-toolchain.bzl", "cargo_test_toolchain")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "rust_shipping_supplier", "shipping_suppliers")
 
 _CONFIGURATIONS = {
     "linux-x64-gnu": "//build_defs/native:linux_x86_64",
@@ -90,7 +93,29 @@ _native_helper_package = rule(
     },
 )
 
-def native_helper_carriers(product, binary):
+def _registry_suppliers(name):
+    inputs = []
+    for dependency, declaration in CARGO[native.package_name()]["dependencies"].items():
+        rows = [row for row in PUBLICATION_CARRIERS if row["ecosystem"] == "cargo" and row["name"] == dependency]
+        if not rows:
+            continue
+        if len(rows) != 1 or (type(declaration) == "dict" and "path" in declaration):
+            fail("native helper supplier must identify one conventional registry carrier: " + dependency)
+        row = rows[0]
+        version = declaration if type(declaration) == "string" else declaration["version"]
+        key = row["product"] + "@" + version.removeprefix("=")
+        producers = crate_deps([dependency], package_name = native.package_name())
+        if len(producers) != 1:
+            fail("native helper supplier must identify one actual registry crate target")
+        supplier = name + "_" + dependency.replace("-", "_")
+        rust_shipping_supplier(name = supplier, producer = producers[0], owner = "@oliphaunt_metadata//:product_" + row["product"],
+                               origin = json.encode({"kind": "completed-publication", "publication": COMPLETED_SUPPLIER_PUBLICATIONS[key], "artifact": "cargo:" + dependency}) if key in COMPLETED_SUPPLIER_PUBLICATIONS else "")
+        inputs.append(":" + supplier)
+    shipping_suppliers(name = name, inputs = inputs)
+
+def native_helper_carriers(product, binary, qualification):
+    _registry_suppliers("native_compiled_suppliers")
+    suppliers = ":native_compiled_suppliers"
     descriptor = PRODUCTS[product]
     rows = [row for row in NATIVE_HELPER_ARTIFACTS if row["product"] == product and row["kind"] in ["broker-helper", "node-direct-addon"]]
     carriers = [row for row in PUBLICATION_CARRIERS if row["product"] == product]
@@ -145,14 +170,14 @@ def native_helper_carriers(product, binary):
     )
     native.filegroup(name = "github_archive", srcs = [":native_carriers"], output_group = "github")
     native.filegroup(name = "npm", srcs = [":native_carriers"], output_group = "npm")
-    shipping_package(name = "native_github_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":github_archive"], ecosystem = "github", package_name = select(github_names), configuration = select(physical_targets), role = "github-release-asset")
-    shipping_package(name = "native_npm_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":npm"], ecosystem = "npm", package_name = select(npm_identities), configuration = select(npm_targets), role = select(npm_roles))
+    shipping_package(name = "native_github_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":github_archive"], ecosystem = "github", package_name = select(github_names), configuration = select(physical_targets), role = "github-release-asset", suppliers = suppliers)
+    shipping_package(name = "native_npm_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":npm"], ecosystem = "npm", package_name = select(npm_identities), configuration = select(npm_targets), role = select(npm_roles), suppliers = suppliers)
     shipping = [":native_github_shipping", ":native_npm_shipping"]
     if cargo_names:
         native.filegroup(name = "artifact_crate", srcs = [":native_carriers"], output_group = "cargo")
-        shipping_package(name = "native_cargo_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":artifact_crate"], ecosystem = "cargo", package_name = select(cargo_identities), configuration = select(physical_targets), role = select(cargo_roles))
+        shipping_package(name = "native_cargo_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":artifact_crate"], ecosystem = "cargo", package_name = select(cargo_identities), configuration = select(physical_targets), role = select(cargo_roles), suppliers = suppliers)
         shipping.append(":native_cargo_shipping")
-    shipping_export(name = "native_shipping_export", packages = shipping)
+    shipping_export(name = "native_shipping_export", packages = shipping, qualification = qualification, testonly = True)
 
 def _unit_inputs_impl(ctx):
     inputs = []

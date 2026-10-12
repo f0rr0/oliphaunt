@@ -46,7 +46,25 @@ release_identity(name = "gamma_identity", product_id = "fixture-gamma", version 
     role = "package",
 ) for product in ["alpha", "beta", "gamma"]]
 
-shipping_export(name = "export", packages = [":alpha_ship", ":beta_ship", ":gamma_ship"])
+shipping_export(
+    name = "alpha_export",
+    testonly = True,
+    packages = [":alpha_ship"],
+    qualification = [":alpha_test"],
+)
+
+shipping_export(
+    name = "beta_gamma_export",
+    testonly = True,
+    packages = [":beta_ship", ":gamma_ship"],
+    qualification = [":beta_test", ":gamma_test"],
+)
+
+shipping_export(
+    name = "export",
+    testonly = True,
+    exports = [":alpha_export", ":beta_gamma_export"],
+)
 
 [bun_script_test(
     name = product + "_test",

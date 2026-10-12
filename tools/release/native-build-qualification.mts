@@ -1,7 +1,15 @@
 /** Content binding inside qualification evidence; authentication and release admission remain external. */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { buildShippingInputView, canonicalShippingLabel } from './bazel-shipping-inputs.mts';
+import {
+  SEED_CONSTRUCTION_RECEIPT_SUFFIX,
+  validateSeedConstructionReceipt,
+} from '../../build_defs/resources/seed_construction.mts';
+import {
+  buildShippingInputView,
+  canonicalShippingLabel,
+  validateNativeShippingSuppliers,
+} from './bazel-shipping-inputs.mts';
 import type { NativeRoot } from './native-publication-artifacts.mts';
 import type { NativeOutputMember } from './native-publication-staging.mts';
 
@@ -20,6 +28,8 @@ export type NativeBuildFileCapture = { path: string; members: NativeOutputMember
 export type NativeProducerCapture = {
   aqueryFile: string;
   shippingManifests: { path: string; contents: string }[];
+  /** The existing owner export, delivered by the same producing invocation. */
+  qualificationManifest?: { path: string; contents: string };
 };
 export type NativeBuildCohortEvidence = {
   executionRoot: string;
@@ -31,6 +41,11 @@ export type NativeBuildCohortEvidence = {
   outputs: NativeBuildFileCapture[];
   /** Present only when shipping identities were emitted by the producing analysis. */
   producerCapture?: NativeProducerCapture;
+  /** Reached internal constructor outputs; their JSON is bound to captured File bytes. */
+  seedConstructions?: { path: string; contents: string }[];
+  /** Actual configured-root buildfiles; repository acquisition provenance is separate. */
+  analysisInputs?: NativeBuildFileCapture[];
+  rootAnalysisInputPaths?: { label: string; paths: string[] }[];
 };
 export type NativeBuildEvidence = {
   schema: 'oliphaunt-native-build-evidence-v1';
@@ -191,6 +206,105 @@ function captures(value: unknown, expected: string[], context: string) {
   return result;
 }
 
+/** Join each reached receipt to its own constructor action and frozen TAR File. */
+export function validateNativeSeedConstructions(
+  raw: unknown,
+  inputs: NativeBuildFileCapture[],
+  actions: string[],
+) {
+  const expected = inputs
+    .filter((input) => input.path.endsWith(SEED_CONSTRUCTION_RECEIPT_SUFFIX))
+    .map((input) => input.path)
+    .sort();
+  const rows = raw === undefined ? [] : list(raw);
+  const result = rows.map((value) => {
+    const row = object(value);
+    exactFields(row, ['path', 'contents'], 'native seed constructor contents');
+    const file = relative(row.path);
+    if (!file.startsWith('bazel-out/') || typeof row.contents !== 'string')
+      throw new Error('native seed constructor requires a generated UTF-8 File');
+    const bytes = Buffer.from(row.contents, 'utf8');
+    const capture = inputs.find((input) => input.path === file);
+    const member = capture?.members[0];
+    if (capture?.members.length !== 1 || member?.type !== 'file')
+      throw new Error('native seed constructor contents have no captured File');
+    equal(
+      { size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') },
+      { size: member.size, sha256: member.sha256 },
+      'native seed constructor File digest',
+    );
+    const receipt = validateSeedConstructionReceipt(JSON.parse(row.contents));
+    const frozen = file.slice(0, -SEED_CONSTRUCTION_RECEIPT_SUFFIX.length) + '.tar';
+    const definitions = actions
+      .map((action) => object(JSON.parse(action)))
+      .filter((action) => list(action.outputs).includes(file));
+    if (
+      definitions.length !== 1 ||
+      !['PostgresClusterSeed', 'WasixClusterSeed', 'NativeSeedDomainAdmission'].includes(
+        definitions[0].mnemonic,
+      ) ||
+      !list(definitions[0].outputs).includes(frozen)
+    )
+      throw new Error(
+        'native seed constructor receipt and frozen TAR need the same actual constructor action',
+      );
+    if (
+      (definitions[0].mnemonic === 'WasixClusterSeed' ? 'wasix' : 'native') !==
+      receipt.intent.family
+    )
+      throw new Error('native seed constructor family differs from its actual action');
+    if (
+      definitions[0].mnemonic === 'NativeSeedDomainAdmission' &&
+      !['android-datum64', 'ios-datum64'].includes(receipt.intent.target)
+    )
+      throw new Error('native seed domain receipt needs its own mobile domain slot');
+    const frozenCapture = inputs.find((input) => input.path === frozen);
+    const frozenMember = frozenCapture?.members[0];
+    if (frozenCapture?.members.length !== 1 || frozenMember?.type !== 'file')
+      throw new Error('native seed constructor needs its captured frozen TAR File');
+    equal(
+      receipt.frozen,
+      { size: frozenMember.size, sha256: frozenMember.sha256 },
+      'native seed constructor frozen TAR identity',
+    );
+    return { path: file, contents: row.contents as string };
+  });
+  equal(result.map((row) => row.path).sort(), expected, 'native reached seed constructor coverage');
+  return result;
+}
+
+/** Preserve direct loaded-file facts without claiming repository acquisition provenance. */
+export function nativeAnalysisInputBindings(
+  cohort: Pick<NativeBuildCohortEvidence, 'roots' | 'analysisInputs' | 'rootAnalysisInputPaths'>,
+) {
+  if (cohort.analysisInputs === undefined && cohort.rootAnalysisInputPaths === undefined)
+    return undefined;
+  const mappings = list(cohort.rootAnalysisInputPaths).map((raw) => {
+    const row = object(raw);
+    exactFields(row, ['label', 'paths'], 'native root analysis mapping');
+    const label = canonicalShippingLabel(text(row.label));
+    const paths = list(row.paths).map(relative);
+    if (
+      !paths.length ||
+      paths.some((file) => file.startsWith('bazel-out/') || file.startsWith('external/'))
+    )
+      throw new Error('native analysis inputs must be concrete workspace files');
+    equal(paths, [...new Set(paths)].sort(), 'native root analysis input order');
+    return { label, paths };
+  });
+  equal(
+    mappings.map((row) => row.label).sort(),
+    cohort.roots.map((root) => canonicalShippingLabel(root.label)).sort(),
+    'native root analysis coverage',
+  );
+  const expected = [...new Set(mappings.flatMap((row) => row.paths))].sort();
+  const inputs = captures(cohort.analysisInputs, expected, 'native analysis input content');
+  for (const input of inputs.values())
+    if (input.members.length !== 1 || input.members[0].type !== 'file')
+      throw new Error('native analysis inputs must be regular workspace Files');
+  return { mappings, inputs: [...inputs.values()] };
+}
+
 export function nativeBuildEventIndex(
   cohort: Pick<NativeBuildCohortEvidence, 'executionRoot' | 'buildEvents'>,
   bazelVersion: string,
@@ -277,7 +391,15 @@ export function nativeShippingManifestBindings(
   bep: ReturnType<typeof nativeBuildEventIndex>,
 ) {
   const capture = object(raw) as NativeProducerCapture;
-  exactFields(capture, ['aqueryFile', 'shippingManifests'], 'native producer capture');
+  exactFields(
+    capture,
+    [
+      'aqueryFile',
+      'shippingManifests',
+      ...(capture.qualificationManifest ? ['qualificationManifest'] : []),
+    ],
+    'native producer capture',
+  );
   if (
     !path.posix.isAbsolute(text(capture.aqueryFile)) &&
     !path.win32.isAbsolute(capture.aqueryFile)
@@ -318,11 +440,21 @@ export function nativeShippingManifestBindings(
     const pkg = object(root.package);
     exactFields(
       pkg,
-      ['product', 'version', 'ecosystem', 'name', 'configuration', 'role', 'outputs'],
+      [
+        'product',
+        'version',
+        'ecosystem',
+        'name',
+        'configuration',
+        'role',
+        'outputs',
+        ...(Object.hasOwn(pkg, 'supplierInputs') ? ['supplierInputs'] : []),
+      ],
       'native shipping package',
     );
     for (const field of ['product', 'version', 'ecosystem', 'name', 'configuration', 'role'])
       text(pkg[field]);
+    if (Object.hasOwn(pkg, 'supplierInputs')) validateNativeShippingSuppliers(pkg.supplierInputs);
     for (const output of list(pkg.outputs)) {
       exactFields(object(output), ['path', 'owner'], 'native shipping output');
       relative(output.path);
@@ -348,6 +480,165 @@ export function nativeShippingManifestBindings(
   });
   if (!bindings.length) throw new Error('native producer requires shipping manifests');
   return bindings;
+}
+
+/** Bind source-owned mandatory tests to exactly the shipping roots they qualify. */
+export function nativeShippingQualificationPolicy(
+  capture: NativeProducerCapture,
+  bep: ReturnType<typeof nativeBuildEventIndex>,
+  roots: NativeRoot[],
+) {
+  if (capture.qualificationManifest === undefined) return undefined;
+  const manifest = object(capture.qualificationManifest);
+  exactFields(manifest, ['path', 'contents'], 'native owner qualification manifest');
+  const file = relative(manifest.path);
+  if (!file.startsWith('bazel-out/') || typeof manifest.contents !== 'string')
+    throw new Error('native owner qualification requires a generated UTF-8 manifest');
+  const owner = object(JSON.parse(manifest.contents));
+  exactFields(
+    owner,
+    [
+      'schema',
+      'scope',
+      'owner',
+      'roots',
+      'packages',
+      'qualification',
+      ...(Object.hasOwn(owner, 'policies') ? ['policies'] : []),
+    ],
+    'native owner qualification',
+  );
+  if (owner.schema !== 'oliphaunt-bazel-shipping-v1' || owner.scope !== 'construction')
+    throw new Error('native owner qualification manifest has an unsupported schema');
+  const label = canonicalShippingLabel(text(owner.owner));
+  const labels = list(owner.roots).map((value) => canonicalShippingLabel(text(value)));
+  const tests = list(owner.qualification).map((value) => canonicalShippingLabel(text(value)));
+  for (const [values, context] of [
+    [labels, 'roots'],
+    [tests, 'tests'],
+  ] as const)
+    if (new Set(values).size !== values.length || values.some((value) => !value.startsWith('//')))
+      throw new Error(`native owner qualification requires unique workspace ${context}`);
+  const policies = (
+    Object.hasOwn(owner, 'policies')
+      ? list(owner.policies)
+      : [{ owner: label, roots: labels, qualification: tests }]
+  ).map((raw) => {
+    const policy = object(raw);
+    exactFields(policy, ['owner', 'roots', 'qualification'], 'native source owner policy');
+    const owner = canonicalShippingLabel(text(policy.owner));
+    const roots = list(policy.roots).map((value) => canonicalShippingLabel(text(value)));
+    const qualification = list(policy.qualification).map((value) =>
+      canonicalShippingLabel(text(value)),
+    );
+    if (
+      !owner.startsWith('//') ||
+      !roots.length ||
+      [roots, qualification].some(
+        (values) =>
+          new Set(values).size !== values.length || values.some((value) => !value.startsWith('//')),
+      )
+    )
+      throw new Error('native source owner policy requires unique workspace roots and tests');
+    return { owner, roots, qualification };
+  });
+  if (new Set(policies.map((policy) => policy.owner)).size !== policies.length)
+    throw new Error('native source owner policy repeats an owner');
+  equal(
+    policies.flatMap((policy) => policy.roots).sort(),
+    [...labels].sort(),
+    'native source owner policy root coverage',
+  );
+  equal(
+    [...new Set(policies.flatMap((policy) => policy.qualification))].sort(),
+    [...tests].sort(),
+    'native source owner policy test coverage',
+  );
+  equal(
+    [...labels].sort(),
+    roots.map((root) => canonicalShippingLabel(root.label)).sort(),
+    'native owner qualification root coverage',
+  );
+  equal(
+    labels
+      .map((label, index) => ({ label, package: list(owner.packages)[index] }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+    roots
+      .map((root) => ({ ...root, label: canonicalShippingLabel(root.label) }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+    'native owner qualification package coverage',
+  );
+  if (list(owner.packages).length !== labels.length)
+    throw new Error('native owner qualification has extra package declarations');
+  const targets = bep.completed.filter((target) => canonicalShippingLabel(target.label) === label);
+  if (targets.length !== 1 || targets[0].value.success !== true)
+    throw new Error('native owner qualification requires one successful configured export');
+  const target = targets[0];
+  if (!bep.configs.has(target.configuration))
+    throw new Error('native owner qualification configuration is missing');
+  const files = bep.filesOf(target.value, 'shipping_policy');
+  if (files.size !== 1 || !files.has(file))
+    throw new Error('native owner qualification output group differs');
+  const bytes = Buffer.from(manifest.contents, 'utf8');
+  equal(
+    files.get(file),
+    { sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length },
+    'native BEP/owner qualification digest',
+  );
+  const rootConfigurations = roots.map((root) => {
+    const matching = bep.completed.filter(
+      (candidate) => canonicalShippingLabel(candidate.label) === canonicalShippingLabel(root.label),
+    );
+    if (
+      matching.length !== 1 ||
+      matching[0].value.success !== true ||
+      !bep.configs.has(matching[0].configuration)
+    )
+      throw new Error('native owner qualification has no unambiguous configured shipping root');
+    return { label: canonicalShippingLabel(root.label), configuration: matching[0].configuration };
+  });
+  const requiredTests = tests.map((label) => {
+    const matching = bep.completed.filter(
+      (candidate) => canonicalShippingLabel(candidate.label) === label,
+    );
+    if (
+      matching.length !== 1 ||
+      matching[0].value.success !== true ||
+      !bep.configs.has(matching[0].configuration)
+    )
+      throw new Error('native owner qualification has no unambiguous mandatory configured test');
+    return { label, configuration: matching[0].configuration };
+  });
+  return {
+    owner: label,
+    configuration: target.configuration,
+    roots: labels,
+    rootConfigurations,
+    requiredTests,
+    policies: policies.map((policy) => ({
+      owner: policy.owner,
+      roots: policy.roots,
+      requiredTests: requiredTests.filter((test) => policy.qualification.includes(test.label)),
+    })),
+  };
+}
+
+/** A test from another owner cannot qualify an owner with no declared policy. */
+export function nativeShippingRootsHaveQualification(
+  policy: ReturnType<typeof nativeShippingQualificationPolicy>,
+  roots: Pick<NativeRoot, 'label'>[],
+) {
+  return (
+    !!policy &&
+    roots.length > 0 &&
+    roots.every((root) =>
+      (policy.policies ?? [policy]).some(
+        (owner) =>
+          owner.roots.includes(canonicalShippingLabel(root.label)) &&
+          owner.requiredTests.length > 0,
+      ),
+    )
+  );
 }
 
 /** Validate content reported by the actual qualifying builder, including cache-backed success. */
@@ -397,6 +688,7 @@ export function validateNativeBuildEvidence(
     string,
     { label: string; configuration: string; invocationId: string }[]
   >();
+  const policyTests = new Map<string, NativeRequiredTest>();
   const cohorts = evidence.cohorts.map((cohort) => {
     exactFields(
       object(cohort),
@@ -409,6 +701,9 @@ export function validateNativeBuildEvidence(
         'inputs',
         'outputs',
         ...(cohort.producerCapture === undefined ? [] : ['producerCapture']),
+        ...(cohort.seedConstructions === undefined ? [] : ['seedConstructions']),
+        ...(cohort.analysisInputs === undefined ? [] : ['analysisInputs']),
+        ...(cohort.rootAnalysisInputPaths === undefined ? [] : ['rootAnalysisInputPaths']),
       ],
       'native build cohort',
     );
@@ -419,6 +714,7 @@ export function validateNativeBuildEvidence(
       throw new Error('native build requires its absolute execution root');
     if (!list(cohort.roots).length) throw new Error('native build requires actual shipping roots');
     const rootConfigurations = new Map<string, string>();
+    const analysis = nativeAnalysisInputBindings(cohort);
     for (const raw of list(cohort.rootConfigurations)) {
       const row = object(raw);
       exactFields(row, ['label', 'configuration'], 'native configured root');
@@ -451,6 +747,11 @@ export function validateNativeBuildEvidence(
     ].sort();
     const declaredInputs = view.physicalInputs.map(relative);
     const inputs = captures(cohort.inputs, declaredInputs, 'native input content');
+    const seedConstructions = validateNativeSeedConstructions(
+      cohort.seedConstructions,
+      [...inputs.values()],
+      actions,
+    );
     const outputs = captures(
       cohort.outputs,
       cohort.roots.flatMap((root) => root.package.outputs.map((output) => relative(output.path))),
@@ -501,13 +802,69 @@ export function validateNativeBuildEvidence(
         }
     } else if (expected.requireShippingAnalysis === true)
       throw new Error('native qualification requires producing-analysis shipping manifests');
-    for (const test of requiredTests ?? []) {
+    const qualificationPolicy =
+      cohort.producerCapture === undefined
+        ? undefined
+        : nativeShippingQualificationPolicy(cohort.producerCapture, bep, cohort.roots);
+    if (qualificationPolicy) {
+      for (const test of qualificationPolicy.requiredTests)
+        policyTests.set(`${test.label}\0${test.configuration}`, test);
+      const policyView = buildShippingInputView(
+        {
+          schema: 'oliphaunt-bazel-shipping-v1',
+          scope: 'construction',
+          packages: [
+            {
+              ...cohort.roots[0].package,
+              outputs: [
+                {
+                  path: cohort.producerCapture!.qualificationManifest!.path,
+                  owner: qualificationPolicy.owner,
+                },
+              ],
+            },
+          ],
+        },
+        cohort.aquery,
+        {
+          configurationByOutput: new Map([
+            [
+              cohort.producerCapture!.qualificationManifest!.path,
+              qualificationPolicy.configuration,
+            ],
+          ]),
+        },
+      );
+      for (const product of Object.values(policyView.products))
+        for (const action of product.actions) {
+          const definition = object(JSON.parse(action));
+          if (definition.mnemonic !== 'FileWrite' || definition.inputs.count !== 0)
+            throw new Error('native owner qualification requires its configured FileWrite action');
+        }
+    }
+    const cohortTests = new Map(
+      (requiredTests ?? []).map((test) => [`${test.label}\0${test.configuration}`, test]),
+    );
+    for (const test of qualificationPolicy?.requiredTests ?? [])
+      cohortTests.set(`${test.label}\0${test.configuration}`, test);
+    for (const test of cohortTests.values()) {
       const matches = (event: Row, field: string) =>
         event.id?.[field] !== undefined &&
         canonicalShippingLabel(event.id[field].label) === test.label &&
         event.id[field].configuration?.id === test.configuration;
       const summaries = bep.events.filter((event) => matches(event, 'testSummary'));
-      if (!summaries.length) continue;
+      if (!summaries.length) {
+        if (
+          qualificationPolicy?.requiredTests.some(
+            (required) =>
+              required.label === test.label && required.configuration === test.configuration,
+          )
+        )
+          throw new Error(
+            `native owner policy is missing its mandatory configured test: ${test.label}`,
+          );
+        continue;
+      }
       const targets = bep.completed.filter(
         (target) =>
           canonicalShippingLabel(target.label) === test.label &&
@@ -591,9 +948,29 @@ export function validateNativeBuildEvidence(
       // The raw evidence retains actual configured actions and every input member.
       aqueryDigest: digest(cohort.aquery),
       buildEventsDigest: digest(cohort.buildEvents),
+      ...(qualificationPolicy ? { qualificationPolicy } : {}),
+      ...(seedConstructions.length ? { seedConstructions } : {}),
+      ...(analysis
+        ? {
+            rootAnalysisInputPaths: analysis.mappings,
+            analysisInputsDigest: digest(analysis.inputs),
+          }
+        : {}),
     };
   });
-  const tests = (requiredTests ?? []).map((test) => {
+  if (requiredTests && policyTests.size)
+    for (const test of policyTests.values())
+      if (
+        !requiredTests.some(
+          (required) =>
+            required.label === test.label && required.configuration === test.configuration,
+        )
+      )
+        throw new Error(
+          `native required test plan omits source-owned mandatory configured test: ${test.label}`,
+        );
+  const testsToVerify = requiredTests ?? [...policyTests.values()];
+  const tests = testsToVerify.map((test) => {
     const matches = testObservations.get(`${test.label}\0${test.configuration}`) ?? [];
     if (matches.length !== 1)
       throw new Error(
@@ -609,8 +986,13 @@ export function validateNativeBuildEvidence(
     shippingAnalysis: evidence.cohorts.every((cohort) => cohort.producerCapture !== undefined)
       ? ('bound' as const)
       : ('unverified' as const),
-    testQualification: requiredTests === undefined ? ('unverified' as const) : ('passed' as const),
+    testQualification: testsToVerify.length ? ('passed' as const) : ('unverified' as const),
     requiredTests: tests,
+    qualificationPolicy: cohorts.every((cohort) =>
+      nativeShippingRootsHaveQualification(cohort.qualificationPolicy, cohort.roots),
+    )
+      ? ('bound' as const)
+      : ('unverified' as const),
     releaseDecision: 'unverified' as const,
     unverified: [
       'authenticated producing workflow, attempt, job and immutable artifact',
@@ -619,7 +1001,12 @@ export function validateNativeBuildEvidence(
       ...(evidence.cohorts.some((cohort) => cohort.producerCapture === undefined)
         ? ['shipping identities and configurations bound to the producing analysis']
         : []),
-      ...(requiredTests === undefined
+      ...(cohorts.some(
+        (cohort) => !nativeShippingRootsHaveQualification(cohort.qualificationPolicy, cohort.roots),
+      )
+        ? ['source-owned mandatory qualification policy bound to every configured shipping root']
+        : []),
+      ...(!testsToVerify.length
         ? ['declared mandatory test roots and successful BEP results']
         : []),
       'complete canonical product qualification and completed-baseline admission',

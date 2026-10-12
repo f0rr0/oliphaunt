@@ -1888,7 +1888,7 @@ pub(crate) fn generate_declared_extension_link(args: &[String]) -> Result<()> {
             && spec
                 .sql_name
                 .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'),
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'),
         "invalid declared extension SQL name"
     );
     ensure!(
@@ -3507,6 +3507,32 @@ mod tests {
         );
         generate_declared_extension_link(&args).unwrap();
         assert_eq!(fs::read(&output).unwrap(), first);
+        inputs["sql_name"] = serde_json::json!("uuid-ossp");
+        inputs["modules"][0]["name"] = serde_json::json!("uuid-ossp");
+        fs::write(&spec, serde_json::to_vec(&inputs).unwrap()).unwrap();
+        generate_declared_extension_link(&args).unwrap();
+        let hyphenated: serde_json::Value =
+            serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(hyphenated["sqlName"], "uuid-ossp");
+        for name in [
+            "",
+            "../plugin",
+            "uuid/ossp",
+            "uuid ossp",
+            "uuid'ossp",
+            "uuid.ossπ",
+        ] {
+            inputs["sql_name"] = serde_json::json!(name);
+            fs::write(&spec, serde_json::to_vec(&inputs).unwrap()).unwrap();
+            assert!(
+                generate_declared_extension_link(&args)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("invalid declared extension SQL name")
+            );
+        }
+        inputs["sql_name"] = serde_json::json!("plugin");
+        inputs["modules"][0]["name"] = serde_json::json!("plugin");
         inputs["modules"][0]["runtime_path"] = serde_json::json!("../plugin.so");
         fs::write(&spec, serde_json::to_vec(&inputs).unwrap()).unwrap();
         assert!(generate_declared_extension_link(&args).is_err());

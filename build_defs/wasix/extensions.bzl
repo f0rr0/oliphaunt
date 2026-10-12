@@ -50,7 +50,7 @@ def wasix_contrib_modules(crypto = None):
         elif identity == "pgcrypto":
             deps.append(crypto)
         cc_library(name = name + "_objects", srcs = sources, hdrs = headers, deps = deps, copts = copts, linkstatic = True, target_compatible_with = _COMPATIBLE)
-        wasix_module(name = name, output_name = member["sql-name"] + ".so", deps = [":" + name + "_objects"], target_compatible_with = _COMPATIBLE)
+        wasix_module(name = name, output_name = member["module-file"], deps = [":" + name + "_objects"], target_compatible_with = _COMPATIBLE)
         modules.append(":" + name)
     return modules
 

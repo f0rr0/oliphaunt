@@ -7,7 +7,7 @@ import {
   authenticateNativeBuildEvidence,
   reviewedNativeProducerUnknowns,
 } from './authenticate-native-build-evidence.mts';
-import { buildShippingInputView } from './bazel-shipping-inputs.mts';
+import { buildShippingInputView, canonicalShippingLabel } from './bazel-shipping-inputs.mts';
 import {
   type NativeBuildEvidence,
   type NativeBuildSource,
@@ -18,6 +18,12 @@ import type { NativeRoot } from './native-publication-artifacts.mts';
 import { consumerDigest } from './publication-consumer-proof.mts';
 
 type Row = Record<string, any>;
+type Authenticated = {
+  origin: Awaited<ReturnType<typeof authenticateNativeBuildEvidence>>;
+  qualification: ReturnType<typeof validateNativeBuildEvidence>;
+  evidence: NativeBuildEvidence;
+  producerAssurance?: Awaited<ReturnType<typeof assureReviewedNativeBuildProducer>>['assurance'];
+};
 export type NativePublicationBuild = {
   evidenceRoot: string;
   expected: Parameters<typeof authenticateNativeBuildEvidence>[1];
@@ -96,7 +102,35 @@ export async function observeNativePublicationConstruction(
       ...(reviewed ? { producerAssurance: reviewed.assurance } : {}),
     });
   }
-  const cohorts = authenticated.flatMap(({ evidence }) => evidence.cohorts);
+  return projectNativePublicationConstruction({ envelope: lock, files }, authenticated);
+}
+
+/** Reuse an already observed producer set for a selected envelope. This projection
+ * does not authenticate origins or grant publication authority. */
+export function projectNativePublicationConstruction(
+  { envelope: lock, files }: { envelope: Row; files: NativePublicationFile[] },
+  authenticated: Authenticated[],
+) {
+  const selected = new Set(lock.products.map((product) => product.id));
+  // The only conditional final input is constructed for the actual release
+  // selection, after the unconditional product inventory has been qualified.
+  const cohorts = authenticated
+    .flatMap(({ evidence }) => evidence.cohorts)
+    .map((cohort) => ({
+      ...cohort,
+      roots: cohort.roots.filter(
+        (root) =>
+          selected.has(root.package.product) &&
+          !(
+            lock.artifactPhase === 'pre-version' &&
+            root.package.product === 'oliphaunt-swift' &&
+            root.package.name === 'swiftpm-extension-consumer-fixture' &&
+            root.package.role === 'release-input' &&
+            root.package.configuration === 'portable'
+          ),
+      ),
+    }))
+    .filter((cohort) => cohort.roots.length > 0);
   const authority: CoverageAuthority = {
     catalog: {
       schema: lock.catalogSchema,
@@ -216,6 +250,20 @@ export async function observeNativePublicationConstruction(
           cohort.aquery,
         );
         const needed = new Set(view.physicalInputs);
+        const analysisPaths =
+          cohort.rootAnalysisInputPaths === undefined
+            ? undefined
+            : [
+                ...new Set(
+                  cohort.rootAnalysisInputPaths
+                    .filter((row) =>
+                      selectedRoots.some(
+                        (root) => canonicalShippingLabel(root.label) === row.label,
+                      ),
+                    )
+                    .flatMap((row) => row.paths),
+                ),
+              ].sort();
         return [
           {
             evidenceDigest: origin.evidenceDigest,
@@ -227,6 +275,27 @@ export async function observeNativePublicationConstruction(
             ),
             actions: view.products[product.id].actions,
             inputs: cohort.inputs.filter((input) => needed.has(input.path)),
+            // Index the causal leaves in the same captured input records. Generated
+            // intermediates remain evidence, but cannot stand in for source changes.
+            leafInputPaths: view.products[product.id].inputs,
+            ...(analysisPaths === undefined
+              ? {}
+              : {
+                  analysisInputPaths: analysisPaths,
+                  analysisInputs: cohort.analysisInputs!.filter((input) =>
+                    analysisPaths.includes(input.path),
+                  ),
+                }),
+            ...(qualification.cohorts[index].qualificationPolicy
+              ? { qualificationPolicy: qualification.cohorts[index].qualificationPolicy }
+              : {}),
+            ...(cohort.seedConstructions?.some((receipt) => needed.has(receipt.path))
+              ? {
+                  seedConstructions: cohort.seedConstructions.filter((receipt) =>
+                    needed.has(receipt.path),
+                  ),
+                }
+              : {}),
           },
         ];
       }),

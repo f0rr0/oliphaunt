@@ -18,7 +18,11 @@ import {
   nativeRootConfigurations,
   writeNativeBuildEvidence,
 } from './capture-native-build-evidence.mts';
-import { nativeBuildMetadata, validateNativeBuildEvidence } from './native-build-qualification.mts';
+import {
+  nativeBuildMetadata,
+  nativeShippingRootsHaveQualification,
+  validateNativeBuildEvidence,
+} from './native-build-qualification.mts';
 
 function fixture() {
   const directory = mkdtempSync(path.join(tmpdir(), 'native-build-capture-'));
@@ -271,6 +275,262 @@ function producerFixture() {
     capture: () => captureNativeBuildEvidence(options),
   };
 }
+
+function ownerPolicyFixture() {
+  const f = producerFixture();
+  const owner = '//src:shipping_export';
+  const policyFile = 'bazel-out/k8-opt/bin/src/shipping_export.json';
+  const configuration = 'c'.repeat(64);
+  const test = '//src:installed_test';
+  const policy = {
+    schema: 'oliphaunt-bazel-shipping-v1',
+    scope: 'construction',
+    owner,
+    roots: ['//src:shipping'],
+    packages: f.cohort.roots.map((root) => root.package),
+    qualification: [test],
+  };
+  const contents = `${JSON.stringify(policy)}\n`;
+  mkdirSync(path.dirname(path.join(f.executionRoot, policyFile)), { recursive: true });
+  writeFileSync(path.join(f.executionRoot, policyFile), contents);
+  const graph = f.options.cohorts[0].aquery;
+  const parts = policyFile.split('/');
+  graph.pathFragments.push(
+    ...parts.map((label, part) => ({
+      id: `policy-${part}`,
+      label,
+      ...(part ? { parentId: `policy-${part - 1}` } : {}),
+    })),
+  );
+  graph.artifacts.push({ id: 6, pathFragmentId: `policy-${parts.length - 1}` });
+  graph.targets.push({ id: 4, label: owner });
+  const action = {
+    targetId: 4,
+    configurationId: 2,
+    actionKey: 'owner-policy-definition',
+    mnemonic: 'FileWrite',
+    inputDepSetIds: [],
+    outputIds: [6],
+    primaryOutputId: 6,
+  };
+  graph.actions.push(action);
+  const fileSet = {
+    id: { namedSet: { id: 'policy' } },
+    namedSetOfFiles: {
+      files: [
+        {
+          name: policyFile,
+          digest: createHash('sha256').update(contents).digest('hex'),
+          length: String(Buffer.byteLength(contents)),
+        },
+      ],
+    },
+  };
+  const ownerEvent = {
+    id: { targetCompleted: { label: owner, configuration: { id: configuration } } },
+    completed: {
+      success: true,
+      outputGroup: [{ name: 'shipping_policy', fileSets: [{ id: 'policy' }] }],
+    },
+  };
+  const testIdentity = { label: test, configuration: { id: configuration } };
+  f.events.splice(
+    -1,
+    0,
+    fileSet,
+    ownerEvent,
+    { id: { targetCompleted: testIdentity }, completed: { success: true } },
+    {
+      id: { testResult: { ...testIdentity, run: 1, shard: 1, attempt: 1 } },
+      testResult: { status: 'PASSED' },
+    },
+    {
+      id: { testSummary: testIdentity },
+      testSummary: { overallStatus: 'PASSED', totalRunCount: 1 },
+    },
+  );
+  const options = { ...f.options, cohorts: [{ ...f.options.cohorts[0], shippingExport: owner }] };
+  return {
+    ...f,
+    policy,
+    policyFile,
+    action,
+    ownerEvent,
+    fileSet,
+    options,
+    rewrite() {
+      const contents = `${JSON.stringify(policy)}\n`;
+      writeFileSync(path.join(f.executionRoot, policyFile), contents);
+      Object.assign(fileSet.namedSetOfFiles.files[0], {
+        digest: createHash('sha256').update(contents).digest('hex'),
+        length: String(Buffer.byteLength(contents)),
+      });
+    },
+  };
+}
+
+test('one BEP-bound owner export proves exact root coverage and mandatory configured tests', () => {
+  const f = ownerPolicyFixture();
+  try {
+    const captured = captureNativeBuildEvidence(f.options);
+    expect(captured.qualification.qualificationPolicy).toBe('bound');
+    expect(captured.qualification.testQualification).toBe('passed');
+    expect(captured.qualification.requiredTests).toEqual([
+      {
+        label: '//src:installed_test',
+        configuration: 'c'.repeat(64),
+        invocationId: 'fixture-invocation',
+      },
+    ]);
+    expect(captured.qualification.cohorts[0].qualificationPolicy?.roots).toEqual([
+      '//src:shipping',
+    ]);
+    expect(() =>
+      validateNativeBuildEvidence(captured.evidence, {
+        ...f.options,
+        requiredTests: [{ label: '//src:unrelated_test', configuration: 'c'.repeat(64) }],
+      }),
+    ).toThrow(/omits source-owned mandatory configured test/);
+    writeFileSync(path.join(f.executionRoot, f.policyFile), 'substituted after capture');
+    expect(() => captured.assertUnchanged()).toThrow(/changed after capture/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('configuration trimming binds shipping roots separately from their owner and mandatory tests', () => {
+  const f = ownerPolicyFixture();
+  try {
+    const configuration = 'd'.repeat(64);
+    f.events.splice(-1, 0, {
+      id: { configuration: { id: configuration } },
+      configuration: { mnemonic: 'trimmed-package' },
+    });
+    f.events.find(
+      (event) => event.id?.targetCompleted?.label === '//src:shipping',
+    ).id.targetCompleted.configuration.id = configuration;
+    f.options.cohorts[0].aquery.configuration.push({
+      id: 3,
+      checksum: configuration,
+      isTool: false,
+    });
+    f.manifestAction.configurationId = 3;
+    const captured = captureNativeBuildEvidence(f.options);
+    expect(captured.qualification.qualificationPolicy).toBe('bound');
+    expect(captured.qualification.cohorts[0].qualificationPolicy?.configuration).toBe(
+      'c'.repeat(64),
+    );
+    expect(captured.qualification.cohorts[0].qualificationPolicy?.rootConfigurations).toEqual([
+      { label: '//src:shipping', configuration },
+    ]);
+    expect(captured.qualification.requiredTests[0].configuration).toBe('c'.repeat(64));
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('composed source owners retain their own root qualification rather than sharing a test union', () => {
+  const f = ownerPolicyFixture();
+  try {
+    Object.assign(f.policy, {
+      policies: [
+        {
+          owner: '//src:original_owner',
+          roots: f.policy.roots,
+          qualification: f.policy.qualification,
+        },
+      ],
+    });
+    f.rewrite();
+    const policy = captureNativeBuildEvidence(f.options).qualification.cohorts[0]
+      .qualificationPolicy;
+    expect(policy?.policies[0].owner).toBe('//src:original_owner');
+    expect(nativeShippingRootsHaveQualification(policy, [{ label: '//src:shipping' }])).toBe(true);
+    const separate = {
+      ...policy!,
+      roots: ['//src:shipping', '//src:empty'],
+      policies: [
+        ...policy!.policies,
+        { owner: '//src:empty_owner', roots: ['//src:empty'], requiredTests: [] },
+      ],
+    };
+    expect(nativeShippingRootsHaveQualification(separate, [{ label: '//src:shipping' }])).toBe(
+      true,
+    );
+    expect(nativeShippingRootsHaveQualification(separate, [{ label: '//src:empty' }])).toBe(false);
+    expect(
+      nativeShippingRootsHaveQualification(separate, [
+        { label: '//src:shipping' },
+        { label: '//src:empty' },
+      ]),
+    ).toBe(false);
+    f.policy.policies.push({
+      owner: '//src:other_owner',
+      roots: f.policy.roots,
+      qualification: [],
+    });
+    f.rewrite();
+    expect(() => captureNativeBuildEvidence(f.options)).toThrow(
+      /source owner policy root coverage/,
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+for (const scenario of [
+  'digest',
+  'missing-root',
+  'extra-root',
+  'wrong-package',
+  'duplicate-test',
+  'foreign-configuration',
+  'failed-test',
+  'missing-test',
+  'different-action',
+] as const)
+  test(`source-owned owner policy rejects ${scenario}`, () => {
+    const f = ownerPolicyFixture();
+    try {
+      if (scenario === 'digest') f.fileSet.namedSetOfFiles.files[0].digest = 'f'.repeat(64);
+      else if (scenario === 'missing-root') f.policy.roots = [];
+      else if (scenario === 'extra-root') f.policy.roots.push('//src:foreign');
+      else if (scenario === 'wrong-package') f.policy.packages[0].version = '9.9.9';
+      else if (scenario === 'duplicate-test') f.policy.qualification.push('//src:installed_test');
+      else if (scenario === 'foreign-configuration')
+        f.ownerEvent.id.targetCompleted.configuration.id = 'f'.repeat(64);
+      else if (scenario === 'failed-test')
+        f.events.find((event) => event.testResult).testResult.status = 'FAILED';
+      else if (scenario === 'missing-test')
+        f.events.splice(
+          f.events.findIndex((event) => event.testSummary),
+          1,
+        );
+      else f.action.mnemonic = 'Package';
+      if (scenario !== 'digest') f.rewrite();
+      expect(() => captureNativeBuildEvidence(f.options)).toThrow();
+    } finally {
+      f.cleanup();
+    }
+  });
+
+test('an empty source-owned policy stays unverified and old packets gain no qualification', () => {
+  const f = ownerPolicyFixture();
+  const old = producerFixture();
+  try {
+    f.policy.qualification = [];
+    f.rewrite();
+    expect(captureNativeBuildEvidence(f.options).qualification.qualificationPolicy).toBe(
+      'unverified',
+    );
+    expect(captureNativeBuildEvidence(old.options).qualification.qualificationPolicy).toBe(
+      'unverified',
+    );
+  } finally {
+    f.cleanup();
+    old.cleanup();
+  }
+});
 
 test('native producer derives exact roots from BEP manifests without a later query', () => {
   const f = producerFixture();

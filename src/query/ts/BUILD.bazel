@@ -1,4 +1,5 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@aspect_rules_js//js:defs.bzl", "js_library")
 load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
 load("@oliphaunt_toolchain_metadata//:query-package-type.bzl", "QUERY_NPM_NAME", "QUERY_PACKAGE_TYPE")
@@ -13,6 +14,8 @@ exports_files(["package.json"])
 require_commonjs_package(QUERY_PACKAGE_TYPE)
 
 QUERY_SRCS = glob(["src/**/*.ts"])
+
+js_library(name = "source_inputs", types = QUERY_SRCS, srcs = ["package.json"], deps = [":node_modules/@types/node", ":node_modules/undici-types"])
 
 npm_link_package(
     name = "node_modules/@types/node",
@@ -91,6 +94,8 @@ shipping_package(
 shipping_export(
     name = "shipping_export",
     packages = [":shipping_package"],
+    qualification = [":consumer_test"],
+    testonly = True,
 )
 
 npm_consumer_test(

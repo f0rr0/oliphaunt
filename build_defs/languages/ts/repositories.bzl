@@ -18,7 +18,7 @@ def _metadata_impl(ctx):
         ctx.path(ctx.attr.package),
         ctx.path(ctx.attr.lockfile),
         "--consumer-tools=" + str(ctx.path("consumer-selection.json")),
-    ] + compiler_arguments + ["--dependency-manifest=" + str(ctx.path(source)) for source in ctx.attr.dependency_manifests] + [ctx.path(source) for source in ctx.attr.manifests], quiet = True)
+    ] + compiler_arguments + ["--consumer-workspace=" + workspace for workspace in ctx.attr.consumer_workspaces] + ["--consumer-graph-workspace=" + workspace for workspace in ctx.attr.consumer_graph_workspaces] + ["--dependency-manifest=" + str(ctx.path(source)) for source in ctx.attr.dependency_manifests] + [ctx.path(source) for source in ctx.attr.manifests], quiet = True)
     if result.return_code:
         fail("Cannot import canonical JavaScript workspace inputs: " + result.stderr)
     data = json.decode(result.stdout)
@@ -40,6 +40,8 @@ javascript_metadata_repository = repository_rule(
         "manifests": attr.label_list(allow_files = True, mandatory = True),
         "dependency_manifests": attr.label_list(allow_files = True, default = []),
         "consumer_tools": attr.string_list_dict(default = {}),
+        "consumer_workspaces": attr.string_list(default = []),
+        "consumer_graph_workspaces": attr.string_list(default = []),
         "compiler_inputs": attr.label(allow_single_file = [".json"]),
     },
 )
@@ -99,13 +101,23 @@ def _hub_impl(ctx):
         lines.append("SHARED = " + repr(ctx.attr.shared))
     ctx.file("defs.bzl", "\n".join(lines) + "\n")
     ctx.file("acquisition.json", json.encode(data) if ctx.attr.consumer or ctx.attr.compiler else ctx.read(ctx.attr.metadata))
+    consumer_files = []
     if ctx.attr.consumer:
-        ctx.file("roots.bzl", "CONSUMER_TOOLS = " + repr(metadata["roots"]) + "\n")
+        acquisitions = ["CONSUMER_ACQUISITIONS = {"]
+        for workspace, keys in sorted(metadata.get("closures", {}).items()):
+            path = "workspaces/" + workspace + ".json"
+            ctx.file(path, json.encode({key: data[key] for key in keys}))
+            consumer_files.append(path)
+            acquisitions.append("    %s: Label(%s)," % (repr(workspace), repr("//:" + path)))
+        acquisitions.append("}")
+        ctx.file("roots.bzl", "CONSUMER_TOOLS = " + repr(metadata["roots"]) + "\nCONSUMER_BINS = " + repr(metadata.get("bins", {})) + "\nCONSUMER_PACKAGES = " + repr(data) + "\nCONSUMER_CLOSURES = " + repr(metadata.get("closures", {})) + "\n" + "\n".join(acquisitions) + "\n")
     if ctx.attr.compiler:
         ctx.file("roots.bzl", "COMPILER_INPUTS = " + repr(metadata["roots"]) + "\nCOMPILER_TOOLS = " + repr(metadata["tools"]) + "\nCOMPILER_PACKAGES = " + repr(data) + "\nCOMPILER_CLOSURES = " + repr(metadata["closures"]) + "\n")
     build = ['package(default_visibility = ["//visibility:public"])', 'exports_files(["defs.bzl", "acquisition.json"])']
     if ctx.attr.consumer or ctx.attr.compiler:
         build.append('exports_files(["roots.bzl"])')
+    if consumer_files:
+        build.append("exports_files(%s)" % repr(consumer_files))
     for key in sorted(data):
         source_prefix = "javascript_" if key in ctx.attr.shared else ctx.attr.prefix
         build.append("alias(name = %s, actual = %s)" % (repr(key), repr("@" + source_prefix + key + "//:pkg")))
@@ -142,7 +154,7 @@ def _packages_impl(ctx):
         )
     _javascript_hub(name = "javascript_packages", metadata = metadata)
     repos = ["javascript_packages"]
-    for context, metadata in [("consumer", tags[0].consumer_metadata), ("installed", tags[0].installed_metadata)]:
+    for context, metadata in [("consumer", tags[0].consumer_metadata), ("installed", tags[0].installed_metadata), ("android_app", tags[0].android_app_metadata)]:
         if not metadata:
             continue
         consumer = json.decode(ctx.read(metadata))
@@ -186,6 +198,7 @@ javascript_packages = module_extension(
     tag_classes = {"configure": tag_class(attrs = {
         "metadata": attr.label(mandatory = True),
         "consumer_metadata": attr.label(),
+        "android_app_metadata": attr.label(),
         "installed_metadata": attr.label(),
         "compiler_metadata": attr.label(),
     })},

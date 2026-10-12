@@ -15,6 +15,7 @@ import {
 import path from 'node:path';
 import { validateNativeIcuDataManifest } from '../../src/database-resources/contracts/icu-data.mts';
 import {
+  emptyDirectoryPaths,
   filesystemTreeRows,
   logicalTreeSha256,
   validateNativeClusterSeedDirectory,
@@ -22,6 +23,7 @@ import {
 } from '../../src/database-resources/contracts/native-manifest.mts';
 import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
 import { parseNativeMobileAbiReceipt } from '../../src/native/runtime/tools/native-mobile-abi-contract.mts';
+import { validateSelectedNativeSeed } from '../../src/native/sdks/ts/src/native/cluster-seed.ts';
 import { publishNativeDescriptor } from '../../src/native/sdks/ts/src/root-descriptor.ts';
 import { validateMavenCentralPublication } from '../../tools/packaging/maven-central-contract.mts';
 import {
@@ -34,6 +36,7 @@ import {
   assertMissingHostRuntime,
   extractNativePayload,
 } from '../native/host-runtime-test-helpers.mts';
+import { seedProducerIdentity, validateSeedConstructionReceipt } from './seed_construction.mts';
 import { materializeArchive, nativeSeedHost, run, seedEnvironment } from './shared.mts';
 
 const [
@@ -53,7 +56,7 @@ const [
 const runtimeArtifact = JSON.parse(readFileSync(seedSpecification, 'utf8')).runtimeArtifact;
 const host = nativeSeedHost(runtimeArtifact);
 const target = host.target;
-assert.equal(seedInputs.length, 12);
+assert.equal(seedInputs.length, 14);
 assert(process.env.TEST_TMPDIR, 'test requires a private Bazel scratch directory');
 const root = path.resolve(process.env.TEST_TMPDIR);
 const copyArchive = (source: string) => materializeArchive(source, path.join(root, 'inputs'));
@@ -146,9 +149,9 @@ const seedProfiles = Object.keys(
 ).sort();
 const identities = seedCarrierIdentities();
 for (const [index, profile] of seedProfiles.entries()) {
-  let [archive, manifestFile, frozen, abiFile, npm, cargo] = seedInputs.slice(
-    index * 6,
-    (index + 1) * 6,
+  let [archive, manifestFile, frozen, abiFile, npm, cargo, constructionFile] = seedInputs.slice(
+    index * 7,
+    (index + 1) * 7,
   );
   archive = copyArchive(archive);
   npm = copyArchive(npm);
@@ -156,23 +159,42 @@ for (const [index, profile] of seedProfiles.entries()) {
   const tree = path.join(root, profile, 'frozen');
   await extractNativePayload(frozen, tree);
   const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
-  assert.equal(manifest.runtime.version, runtimeVersion);
+  const construction = validateSeedConstructionReceipt(
+    JSON.parse(readFileSync(constructionFile, 'utf8')),
+  );
+  assert.equal(construction.intent.family, 'native');
+  assert.equal(construction.intent.target, target);
+  assert.equal(construction.intent.profile, profile);
+  const frozenBytes = readFileSync(frozen);
+  assert.deepEqual(construction.frozen, {
+    size: frozenBytes.length,
+    sha256: createHash('sha256').update(frozenBytes).digest('hex'),
+  });
+  if (construction.sourceManifest) {
+    const original = JSON.parse(construction.sourceManifest.contents);
+    assert.deepEqual(
+      manifest.runtime,
+      original.runtime,
+      'qualification must retain the original admitted native runtime',
+    );
+    assert.deepEqual(
+      manifest.source,
+      original.source,
+      'qualification must retain the original seed source',
+    );
+  }
   assert.equal(manifest.runtime.target, target);
   assert.equal(
     manifest.archive.sha256,
     createHash('sha256').update(readFileSync(archive)).digest('hex'),
   );
-  assert.equal(
-    manifest.source.postgresSha256,
-    createHash('sha256')
-      .update(readFileSync(path.join(runtime, `bin/postgres${host.executableSuffix}`)))
-      .digest('hex'),
-  );
-  assert.equal(
-    manifest.source.initdbSha256,
-    createHash('sha256')
-      .update(readFileSync(path.join(runtime, `bin/initdb${host.executableSuffix}`)))
-      .digest('hex'),
+  assert.deepEqual(
+    {
+      postgresSha256: manifest.source.postgresSha256,
+      initdbSha256: manifest.source.initdbSha256,
+    },
+    seedProducerIdentity(construction),
+    'seed producer hashes must identify the original constructor',
   );
   const abi = parseNativeMobileAbiReceipt(readFileSync(abiFile, 'utf8'));
   assert.equal(abi.get('target'), target);
@@ -181,6 +203,25 @@ for (const [index, profile] of seedProfiles.entries()) {
     icuData: profile === 'icu' ? icuData : undefined,
   });
   const originalHash = logicalTreeSha256(filesystemTreeRows(path.join(tree, 'files')));
+  const selectedManifestFile = path.join(root, profile, 'selected-seed.json');
+  writeFileSync(
+    selectedManifestFile,
+    JSON.stringify({
+      ...manifest,
+      directory: {
+        path: 'frozen/files',
+        treeSha256: originalHash,
+        emptyDirectories: emptyDirectoryPaths(path.join(tree, 'files')),
+      },
+    }),
+  );
+  await validateSelectedNativeSeed(
+    { manifestPath: selectedManifestFile, directory: path.join(tree, 'files') },
+    target,
+    runtimeVersion,
+    profile === 'icu' ? icuIdentity.icuDataTreeSha256 : undefined,
+  );
+  assert.equal(construction.pgdata.treeSha256, originalHash);
   const seedEntries = readPortableArchiveEntries(archive);
   assert.equal(logicalTreeSha256(archiveLogicalTreeRows(seedEntries, archive, '')), originalHash);
   const directories = readdirSync(path.join(tree, 'files'), {
@@ -222,6 +263,38 @@ for (const [index, profile] of seedProfiles.entries()) {
   await publishNativeDescriptor(path.dirname(pgdata));
   const env = seedEnvironment(runtime, root, profile === 'icu' ? icuData : undefined);
   const probe = profileContract.profiles[profile];
+  // Each negative starts from the immutable original, before a successful open
+  // can checkpoint or otherwise change PGDATA. PostgreSQL's CRC routines
+  // preserve a valid checksum so PostgreSQL must reject the physical version.
+  for (const field of ['control', 'catalog']) {
+    const incompatible = path.join(root, profile, `incompatible-${field}`, 'pgdata');
+    mkdirSync(path.dirname(incompatible), { recursive: true });
+    cpSync(pgdata, incompatible, { recursive: true });
+    await publishNativeDescriptor(path.dirname(incompatible));
+    const controlFile = path.join(incompatible, 'global/pg_control');
+    const before = readFileSync(controlFile);
+    const mutation = run(consumer, [`--corrupt-${field}`, controlFile], env, root);
+    assert.match(
+      mutation,
+      new RegExp(
+        `corrupted ${field === 'control' ? 'PG_CONTROL_VERSION' : 'CATALOG_VERSION_NO'} with valid CRC32C`,
+        'u',
+      ),
+    );
+    const changed = readFileSync(controlFile);
+    assert.equal(changed.length, before.length);
+    assert.ok(!changed.equals(before), 'test must change the physical control file');
+    const rejected = Bun.spawnSync([consumer, incompatible, runtime, probe.sql, probe.expected], {
+      env,
+      cwd: root,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    assert.notEqual(rejected.exitCode, 0, `runtime accepted incompatible ${field} version`);
+    const diagnostic = rejected.stderr.toString();
+    assert.match(diagnostic, /database files are incompatible with server/u);
+    assert.doesNotMatch(diagnostic, /incorrect checksum in control file/u);
+  }
   run(consumer, [pgdata, runtime, probe.sql, probe.expected], env, root);
   if (profile === 'icu') {
     const data = path.join(icuData, 'icudt76l.dat');
@@ -289,7 +362,8 @@ for (const [index, profile] of seedProfiles.entries()) {
   );
   assert(!packedNpm.has('package/seed.tar.zst'));
   const npmManifest = JSON.parse(member(packedNpm, 'package/manifest.json').data().toString());
-  assert.equal(npmManifest.runtime.version, runtimeVersion);
+  assert.deepEqual(npmManifest.runtime, manifest.runtime);
+  assert.deepEqual(npmManifest.source, manifest.source);
   assert.equal(npmManifest.directory.treeSha256, originalHash);
   assert.equal(
     logicalTreeSha256(
@@ -315,11 +389,11 @@ for (const [index, profile] of seedProfiles.entries()) {
   assert.equal(cargoPackage.name, identity.cargo);
   assert.equal(cargoPackage.version, version);
   assert(member(crateEntries, `${crateRoot}/seed.tar.zst`).data().equals(readFileSync(archive)));
-  assert.equal(
-    JSON.parse(member(crateEntries, `${crateRoot}/manifest.json`).data().toString()).runtime
-      .version,
-    runtimeVersion,
+  const crateManifest = JSON.parse(
+    member(crateEntries, `${crateRoot}/manifest.json`).data().toString(),
   );
+  assert.deepEqual(crateManifest.runtime, manifest.runtime);
+  assert.deepEqual(crateManifest.source, manifest.source);
   assert(statSync(cargo).size <= 10 * 1024 * 1024);
   const corrupted = path.join(root, profile, 'corrupted');
   cpSync(tree, corrupted, { recursive: true });

@@ -1,3 +1,5 @@
+import { WASIX_NAPI_PLATFORM_PACKAGES as NATIVE_PACKAGES } from '../../../node-addon/tools/carrier-contract.mts';
+export { assertWasixTypescriptNativeCarrier } from '../../../node-addon/tools/carrier-contract.mts';
 import path from 'node:path';
 import {
   assertNativeBrowserHostProvenance,
@@ -22,12 +24,7 @@ const RUNTIME_PACKAGE = '@oliphaunt/liboliphaunt-wasix';
 const FZSTD_PACKAGE = 'fzstd';
 const FZSTD_VERSION = '0.1.1';
 const NATIVE_PRODUCT = 'oliphaunt-wasix-napi';
-const NATIVE_PACKAGES = Object.freeze([
-  '@oliphaunt/wasix-napi-darwin-arm64',
-  '@oliphaunt/wasix-napi-linux-arm64-gnu',
-  '@oliphaunt/wasix-napi-linux-x64-gnu',
-  '@oliphaunt/wasix-napi-win32-x64-msvc',
-]);
+
 const NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
 
 function fail(message) {
@@ -101,36 +98,6 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
     fail(`${label} runtime compatibility metadata differs from its exact dependencies`);
   }
   return manifest;
-}
-
-export function assertWasixTypescriptNativeCarrier(manifest, carrier) {
-  const sdk = manifest.oliphaunt;
-  const native = carrier.oliphaunt;
-  if (
-    manifest.name !== PACKAGE_NAME ||
-    sdk?.runtimeProduct !== 'liboliphaunt-wasix' ||
-    sdk?.wasixNapiProduct !== NATIVE_PRODUCT ||
-    !/^\d+\.\d+\.\d+$/u.test(sdk?.runtimeVersion ?? '') ||
-    !/^\d+\.\d+\.\d+$/u.test(sdk?.wasixNapiVersion ?? '') ||
-    !Number.isSafeInteger(sdk?.wasixAddonAbiVersion) ||
-    sdk.wasixAddonAbiVersion < 1 ||
-    !Number.isSafeInteger(sdk?.nodeApiVersion) ||
-    sdk.nodeApiVersion < 1 ||
-    Object.hasOwn(sdk, 'qualificationOnly') ||
-    Object.hasOwn(native ?? {}, 'qualificationOnly') ||
-    !NATIVE_PACKAGES.includes(carrier.name) ||
-    carrier.version !== sdk?.wasixNapiVersion ||
-    manifest.optionalDependencies?.[carrier.name] !== carrier.version ||
-    native?.runtimeProduct !== sdk?.runtimeProduct ||
-    native?.runtimeVersion !== sdk?.runtimeVersion ||
-    native?.addonAbiVersion !== sdk?.wasixAddonAbiVersion ||
-    native?.nodeApiVersion !== sdk?.nodeApiVersion ||
-    JSON.stringify(native?.profiles) !== JSON.stringify(['standard', 'icu'])
-  ) {
-    fail(
-      `${carrier.name}@${carrier.version} is incompatible with ${PACKAGE_NAME}@${manifest.version}: SDK requires N-API ${sdk?.wasixNapiVersion} embedding runtime ${sdk?.runtimeVersion}, carrier embeds runtime ${native?.runtimeVersion}`,
-    );
-  }
 }
 
 export function prepareWasixTypescriptPackage(packageDir) {

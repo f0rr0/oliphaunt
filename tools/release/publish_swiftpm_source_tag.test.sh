@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-if [[ "${1:-}" != --with-projects ]]; then
-  exec bash tools/ci/with-projects.sh --exec bash "$0" --with-projects
-fi
 source_root="$PWD"
 bash tools/dev/bun.sh test ./tools/release/publish_swiftpm_source_tag.test.mts
 scratch="$(mktemp -d)"

@@ -61,6 +61,12 @@
   },
   "overrides": [
     {
+      "includes": ["**/*maven_install.json"],
+      "formatter": {
+        "enabled": false
+      }
+    },
+    {
       "includes": ["build_defs/release/native-*-npm-*.json"],
       "formatter": {
         "enabled": false

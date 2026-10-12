@@ -5,10 +5,11 @@ load("@oliphaunt_toolchain_metadata//:apple-platforms.bzl", "APPLE_DEPLOYMENT_TA
 load("@rules_apple//apple:apple.bzl", "apple_xcframework")
 load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
-load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
+load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
 load("//build_defs/native:platform_config.bzl", "NATIVE_BUILTIN_PLPGSQL_DEPS", "NATIVE_BUILTIN_SNOWBALL_DEPS", "NATIVE_LINKOPTS")
 load("//build_defs/native/carriers:defs.bzl", "native_carrier_legal_inputs")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "shipping_suppliers")
 
 _MAC = ["@platforms//os:macos", "@platforms//cpu:aarch64"]
 _MACOS_PROFILE = "@apple_support//platforms:macos_arm64_platform"
@@ -85,6 +86,7 @@ def _release_assets_impl(ctx):
         receipt_paths[target] = receipt.path
         receipt_outputs[target] = receipt
     outputs = {name: ctx.actions.declare_file(ctx.attr.asset_names[name]) for name in ["archive", "swiftpm", "resources", "macos_resources", "checksums"]}
+    outputs["ios_manifest"] = ctx.actions.declare_file(ctx.label.name + "/ios.json")
     tools = {"nm": ctx.file._nm.path, "otool": ctx.file._otool.path, "strip": ctx.file._strip.path,
              "install_name_tool": ctx.file._install_name_tool.path, "plutil": ctx.file._plutil.path}
     inputs += ctx.files._sdk_runtime + [ctx.file._nm, ctx.file._otool, ctx.file._strip, ctx.file._install_name_tool, ctx.file._plutil]
@@ -133,7 +135,7 @@ _release_assets = rule(implementation = _release_assets_impl, attrs = {
     "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
 })
 
-def native_apple_runtime_targets():
+def native_apple_runtime_targets(qualification):
     """Build the same dynamic device, simulator and macOS public framework."""
     _infoplist(name = "apple_framework_info")
     apple_xcframework(
@@ -170,15 +172,32 @@ def native_apple_runtime_targets():
                         "macos_resources": "apple-macos-runtime-resources.tar.gz",
                     },
                     notices = native_carrier_legal_inputs(), target_compatible_with = _MAC)
+    shipping_suppliers(name = "apple_suppliers", inputs = [])
     packages = []
     for name, row in selected.items():
         native.filegroup(name = "apple_" + name, srcs = [":apple_release_assets"], output_group = name, target_compatible_with = _MAC)
         shipping_package(name = "apple_" + name + "_shipping", owner = "@oliphaunt_metadata//:product_liboliphaunt-native", artifacts = [":apple_" + name],
-                         ecosystem = "github", package_name = row["asset"].replace("{version}", version), configuration = row["target"], role = "github-release-asset")
+                         ecosystem = "github", package_name = row["asset"].replace("{version}", version), configuration = row["target"], role = "github-release-asset", suppliers = ":apple_suppliers")
         packages.append(":apple_" + name + "_shipping")
-    for name in ["ios_device_abi", "ios_simulator_abi", "macos_abi", "macos_resources", "checksums"]:
+    for name in ["ios_device_abi", "ios_simulator_abi", "macos_abi", "macos_resources", "checksums", "ios_manifest"]:
         native.filegroup(name = "apple_" + name, srcs = [":apple_release_assets"], output_group = name, target_compatible_with = _MAC)
-    shipping_export(name = "apple_shipping_export", packages = packages)
+    shipping_package(name = "apple_ios_manifest_shipping", owner = "@oliphaunt_metadata//:product_liboliphaunt-native", artifacts = [":apple_ios_manifest"],
+                     ecosystem = "internal", package_name = "ios.json", configuration = "ios-xcframework", role = "apple-base-ios-manifest-input", suppliers = ":apple_suppliers")
+    packages.append(":apple_ios_manifest_shipping")
+    bun_script_test(
+        name = "apple_final_contract_test",
+        entry_point = "//build_defs/native/apple:runtime-final.test.mts",
+        args = ["$(location :apple_archive)", "$(location :apple_swiftpm)", "$(location :apple_resources)",
+                "$(location :apple_checksums)", "$(location include/oliphaunt.h)",
+                "$(location :apple_ios_manifest)", "$(location :apple_ios_device_abi)", "$(location :apple_ios_simulator_abi)", "$(location :apple_macos_abi)"],
+        data = [":apple_archive", ":apple_swiftpm", ":apple_resources", ":apple_checksums", "include/oliphaunt.h",
+                ":apple_ios_manifest", ":apple_ios_device_abi", ":apple_ios_simulator_abi", ":apple_macos_abi",
+                "//build_defs/native/apple:framework-envelope.mts", "//build_defs/native/apple:framework_helpers",
+                "//build_defs/resources:mobile_resource_contract.mts", "//build_defs/resources:helpers"],
+        target_compatible_with = _MAC + ["//build_defs/host:apple_package"],
+        size = "medium",
+    )
+    shipping_export(name = "apple_shipping_export", packages = packages, qualification = qualification, testonly = True, target_compatible_with = _MAC)
 
 def native_ios_runtime_targets():
     """Declare one real archive and its conventional public CcInfo consumer."""

@@ -3,7 +3,7 @@
 load("@cargo_crates//:defs.bzl", "all_crate_deps", "crate_deps")
 load("@native_cargo_metadata//:cargo.bzl", "CARGO")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script", "cargo_toml_env_vars")
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_doc_test", "rust_library", "rust_shared_library", "rust_static_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_common", "rust_doc_test", "rust_library", "rust_shared_library", "rust_static_library", "rust_test")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
 
 # These are the canonical first-party Cargo conditions currently in the workspace.
@@ -206,18 +206,20 @@ _isolated_cache_test = rule(
     toolchains = BUN_SOURCE_TOOLCHAINS,
 )
 
-def cargo_library_test(name = "unit_test", crate = ":lib", data = [], tags = [], isolated_cache = False, cargo_facts = CARGO, all_dependencies = all_crate_deps, package_name = None, cargo_env = ":cargo_env", path_dependencies = {}, **kwargs):
+def cargo_library_test(name = "unit_test", crate = ":lib", data = [], tags = [], isolated_cache = False, cargo_facts = CARGO, all_dependencies = all_crate_deps, package_name = None, cargo_env = ":cargo_env", path_dependencies = {}, rustc_env = {}, features = [], default_features = True, **kwargs):
     package_name = _package_name(package_name)
     facts = cargo_facts[package_name]
+    enabled = cargo_features(facts, features, default_features)
     rust_test(
         name = name + "_binary" if isolated_cache else name,
         crate = crate,
         edition = facts["edition"],
         version = facts["version"],
+        crate_features = enabled,
         deps = all_dependencies(normal_dev = True, package_name = package_name) + path_dependencies.values(),
         proc_macro_deps = all_dependencies(proc_macro_dev = True, package_name = package_name),
         rustc_env_files = [cargo_env],
-        rustc_env = {"CARGO_MANIFEST_DIR": package_name},
+        rustc_env = rustc_env | {"CARGO_MANIFEST_DIR": package_name},
         data = data,
         tags = tags + (["manual"] if isolated_cache else []),
         **kwargs
@@ -287,14 +289,17 @@ def cargo_binary(name, source, path_dependencies = {}, features = [], default_fe
     )
 
 def _napi_artifact_impl(ctx):
+    crate = ctx.attr.library[rust_common.test_crate_info].crate
+    if crate.type != "cdylib":
+        fail("Node-API artifacts require a Rust cdylib")
     output = ctx.actions.declare_file(ctx.attr.out)
-    ctx.actions.symlink(output = output, target_file = ctx.file.library)
+    ctx.actions.symlink(output = output, target_file = crate.output)
     return [DefaultInfo(files = depset([output]))]
 
 napi_artifact = rule(
     implementation = _napi_artifact_impl,
     attrs = {
-        "library": attr.label(allow_single_file = True, mandatory = True),
+        "library": attr.label(providers = [rust_common.test_crate_info], mandatory = True),
         "out": attr.string(mandatory = True),
     },
 )

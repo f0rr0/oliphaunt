@@ -5,7 +5,8 @@ load("@oliphaunt_kotlin_manifest//:metadata.bzl", "KOTLIN")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
 load("@rules_jvm_external//:providers.bzl", "MavenInfo")
 load("@rules_jvm_external//private/rules:has_maven_deps.bzl", "has_maven_deps")
-load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
+load("//build_defs/native/carriers:defs.bzl", "native_carrier_helpers")
 load("//build_defs/release:shipping.bzl", "shipping_package")
 
 _JAVA_RUNTIME = "@bazel_tools//tools/jdk:runtime_toolchain_type"
@@ -148,3 +149,42 @@ def kotlin_maven_package(name, coordinate, packaging, **kwargs):
         owner = "@oliphaunt_metadata//:product_oliphaunt-kotlin",
         artifacts = [":" + name], ecosystem = "maven", package_name = coordinate, configuration = "portable", role = carriers[0]["role"],
     )
+
+def _installed_maven_test_impl(ctx):
+    arguments = [PRODUCTS["oliphaunt-kotlin"]["version"]]
+    artifacts = ctx.files.packages
+    for file in artifacts:
+        parts = file.short_path.split("/maven/", 1)
+        if len(parts) != 2:
+            fail("Installed Kotlin package must provide declared Maven repository files: " + file.short_path)
+        arguments += ["maven", parts[1], file]
+    consumer = ctx.attr.consumer[JavaInfo].runtime_output_jars
+    if not consumer:
+        fail("Installed Kotlin public API consumer must provide compiled JARs")
+    for file in consumer:
+        arguments += ["consumer", file]
+    for file in ctx.files._legal:
+        arguments += ["legal", file.short_path, file]
+    return bun_test_entrypoint(ctx, ctx.file._runner, arguments, artifacts + consumer + ctx.files._helpers + ctx.files._legal,
+                              source_files = [ctx.file._runner] + ctx.files._helpers)
+
+_kotlin_installed_maven_test = rule(
+    implementation = _installed_maven_test_impl,
+    test = True,
+    toolchains = BUN_SOURCE_TOOLCHAINS,
+    attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
+        "packages": attr.label_list(mandatory = True),
+        "consumer": attr.label(mandatory = True, providers = [JavaInfo]),
+        "_runner": attr.label(default = "//build_defs/languages/jvm:installed-maven.test.mts", allow_single_file = True),
+        "_helpers": attr.label_list(default = native_carrier_helpers() + [
+            "//build_defs/languages:mobile-legal.mts",
+            "//src/native/sdks/kotlin:tools/check-package.mts", "//src/native/sdks/kotlin:tools/kotlin-maven-staging.mts",
+            "//:tools/packaging/maven-central-contract.mts",
+        ], allow_files = True),
+        "_legal": attr.label_list(default = ["//:LICENSE", "//:THIRD_PARTY_NOTICES.md", "//:Cargo.lock", "//src/native/mobile-bindings:license_inputs"], allow_files = True),
+    }),
+)
+
+def kotlin_installed_maven_test(name, **kwargs):
+    """Final Maven contract plus compilation of the imported public Android AAR."""
+    _kotlin_installed_maven_test(name = name, args = bun_test_entrypoint_args(name), **kwargs)

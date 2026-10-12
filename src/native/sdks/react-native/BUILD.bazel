@@ -16,7 +16,7 @@ load(":native-package.bzl", "react_native_bundle", "react_native_consumer_test",
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["package.json", "native-package.bzl"])
+exports_files(["package.json", "native-package.bzl", "ios/OliphauntAdapter.swift", "ios/OliphauntAdapter.h"])
 
 SDK = JAVASCRIPT["@oliphaunt/react-native"]
 QUERY = JAVASCRIPT["@oliphaunt/ts-query"]
@@ -35,6 +35,11 @@ sdk_extension_metadata(name = "extension_metadata", out = "src/generated/extensi
 COMPILER_DEPS = [":package_metadata", ":node_modules/@oliphaunt/ts-query"] + [":node_modules/" + name for name in SDK["types"]] + [":node_modules/" + name for name in COMPILER_INPUTS[SDK["name"]]]
 
 ts_config(name = "base_tsconfig", src = "tsconfig.json", deps = [":node_modules/@react-native/typescript-config"])
+js_library(
+    name = "source_inputs",
+    types = SDK_SRCS + [":extension_projections"],
+    deps = [":package_metadata", ":base_tsconfig", ":node_modules/react-native"] + [":node_modules/" + name for name in SDK["types"]],
+)
 ts_project(name = "module", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.module.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, out_dir = "lib/module", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
 ts_project(name = "commonjs", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.commonjs.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, out_dir = "lib/commonjs", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
 ts_project(name = "types", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.types.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, declaration = True, declaration_map = True, emit_declaration_only = True, out_dir = "lib/typescript", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
@@ -100,9 +105,11 @@ shipping_package(name = "construction", owner = "@oliphaunt_metadata//:product_o
 # Published RN0.3.2 intentionally consumes Swift0.8.2/native0.3.3. The held
 # source carrier supplies its historical legal metadata and exact native bytes.
 react_native_npm(name = "npm", out = "oliphaunt-react-native-" + SDK["version"] + ".tgz", source_archive = ":source_npm", manifest = "package.json")
-react_native_package_test(name = "package_test", archive = ":npm", source_archive = ":source_npm", manifest = "package.json", size = "small")
-shipping_package(name = "package", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":npm"], ecosystem = "npm", package_name = SDK["name"], configuration = "portable", role = "source-sdk")
-shipping_export(name = "shipping_export", packages = [":construction", ":package"])
+filegroup(name = "ios_carrier_input", srcs = [":npm"], output_group = "carrier")
+react_native_package_test(name = "package_test", archive = ":npm", carrier_output = ":ios_carrier_input", source_archive = ":source_npm", manifest = "package.json", size = "small")
+shipping_package(name = "ios_carrier_shipping", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":ios_carrier_input"], ecosystem = "github", package_name = "oliphaunt-react-native-ios-carriers.json", configuration = "portable", role = "release-input", suppliers = "@swift_frozen_native//:xcframework_supplier")
+shipping_package(name = "package", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":npm"], ecosystem = "npm", package_name = SDK["name"], configuration = "portable", role = "source-sdk", suppliers = "@swift_frozen_native//:xcframework_supplier")
+shipping_export(name = "shipping_export", packages = [":construction", ":package", ":ios_carrier_shipping"], qualification = [":package_test", ":installed_consumer_test"], testonly = True)
 
 CONSUMER_COMPILER_IDS = [key for root in COMPILER_INPUTS[SDK["name"]].values() for key in COMPILER_CLOSURES[root]]
 CONSUMER_COMPILER_PACKAGES = {key: row for key, row in COMPILER_PACKAGES.items() if key in CONSUMER_COMPILER_IDS}
@@ -146,3 +153,8 @@ cc_test(
 )
 
 source_quality_files()
+
+exports_files(["android/build.gradle", "android/src/main/AndroidManifest.xml"])
+filegroup(name = "android_kotlin_sources", srcs = glob(["android/src/main/java/**/*.kt"]) + glob(["android/src/main/java/**/*.java"], allow_empty = True))
+filegroup(name = "android_jsi_source", srcs = ["android/src/main/cpp/OliphauntJsiBindings.cpp"])
+filegroup(name = "cpp_headers", srcs = glob(["cpp/*.h"]))

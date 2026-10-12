@@ -1,0 +1,69 @@
+name: Acquire native release inputs
+description: Retain source-bound public inputs or authenticate the exact Prepare producer.
+
+inputs:
+  run-id:
+    description: Successful exact-source Release preparation run.
+    required: false
+  pull-number:
+    description: Canonical release PR whose reviewed tree is being qualified.
+    required: false
+  public-artifact-id:
+    description: Immutable public-input artifact ID produced by this qualification run.
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Validate input acquisition mode
+      shell: bash
+      env:
+        PREPARE_RUN_ID: ${{ inputs.run-id }}
+        PREPARED_PULL_NUMBER: ${{ inputs.pull-number }}
+        PUBLIC_ARTIFACT_ID: ${{ inputs.public-artifact-id }}
+      run: |
+        if [[ -n "$PUBLIC_ARTIFACT_ID" ]]; then
+          [[ "$PUBLIC_ARTIFACT_ID" =~ ^[1-9][0-9]*$ && -z "$PREPARE_RUN_ID" && -z "$PREPARED_PULL_NUMBER" ]]
+        else
+          [[ "$PREPARE_RUN_ID" =~ ^[1-9][0-9]*$ && "$PREPARED_PULL_NUMBER" =~ ^[1-9][0-9]*$ ]]
+        fi
+
+    - name: Download this run's public inputs
+      if: inputs.public-artifact-id != ''
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        artifact-ids: ${{ inputs.public-artifact-id }}
+        path: ${{ runner.temp }}/native-public-inputs
+
+    - name: Import source-bound public inputs
+      if: inputs.public-artifact-id != ''
+      shell: bash
+      run: | # zizmor: ignore[github-env] only a source-validated runner-temp snapshot path is exported.
+        snapshot="$(bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+          tools/release/native-release-inputs.mts \
+          --import-public-inputs "$RUNNER_TEMP/native-public-inputs")"
+        snapshot_fs="$snapshot"
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          snapshot_fs="$(cygpath -u "$snapshot")"
+        fi
+        test -f "$snapshot_fs"
+        printf 'OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=%s\n' "$snapshot" >> "$GITHUB_ENV"
+
+    - name: Retain authenticated prepared construction inputs
+      if: inputs.public-artifact-id == ''
+      shell: bash
+      env:
+        PREPARE_RUN_ID: ${{ inputs.run-id }}
+        PREPARED_PULL_NUMBER: ${{ inputs.pull-number }}
+        GH_TOKEN: ${{ github.token }}
+      run: | # zizmor: ignore[github-env] only an authenticated runner-temp snapshot path is exported.
+        snapshot="$(bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+          tools/release/native-release-inputs.mts \
+          --run-id "$PREPARE_RUN_ID" --pull-number "$PREPARED_PULL_NUMBER" \
+          --output-directory "$RUNNER_TEMP/native-prepared-inputs")"
+        snapshot_fs="$snapshot"
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          snapshot_fs="$(cygpath -u "$snapshot")"
+        fi
+        test -f "$snapshot_fs"
+        printf 'OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=%s\n' "$snapshot" >> "$GITHUB_ENV"

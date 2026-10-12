@@ -6,8 +6,11 @@ load("@wasix_adapter_crates//:defs.bzl", "all_crate_deps", "crate_deps")
 load("@wasix_release_cargo_metadata//:cargo.bzl", RELEASE_CARGO = "CARGO")
 load("@wasix_release_crates//:defs.bzl", release_crate_deps = "crate_deps")
 load("//build_defs/wasix:napi.bzl", "wasix_napi_carriers", "wasix_napi_inputs", "wasix_napi_installed_test", "wasix_napi_release")
+load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
 
 package(default_visibility = ["//visibility:public"])
+
+native_release_checksum_family(product = "oliphaunt-wasix-napi")
 exports_files(["Cargo.toml", "Cargo.lock", "package.json"] + glob(["tools/*.mts", "packages/*/package.json", "packages/*/README.md"]))
 
 PATH_DEPS = {

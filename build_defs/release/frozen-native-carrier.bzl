@@ -21,12 +21,20 @@ def _frozen_native_carrier_impl(ctx):
     checked = ctx.execute(command + [str(ctx.path("."))], timeout = 60)
     if checked.return_code:
         fail("published native asset verification failed:\n" + checked.stdout + checked.stderr)
-    ctx.file("BUILD.bazel", """package(default_visibility = ["//visibility:public"])
+    publication = json.decode(ctx.read(ctx.attr.native_completion))
+    origins = [{"kind": "completed-publication", "publication": publication, "artifact": "github-release:" + asset["name"]} for asset in assets]
+    ctx.file("BUILD.bazel", """load("@oliphaunt//build_defs/release:identity.bzl", "release_identity")
+load("@oliphaunt//build_defs/release:supplier.bzl", "file_shipping_supplier", "shipping_suppliers")
+package(default_visibility = ["//visibility:public"])
 exports_files(["carrier.json", "assets.json"])
 filegroup(name = "carrier", srcs = ["carrier.json"])
 filegroup(name = "xcframework_archive", srcs = [%s])
 filegroup(name = "runtime_resources_archive", srcs = [%s])
-""" % (repr(assets[0]["name"]), repr(assets[1]["name"])))
+release_identity(name = "native_owner", product_id = %s, version = %s)
+file_shipping_supplier(name = "xcframework_supplier", inputs = {":xcframework_archive": ""}, owner = ":native_owner", configuration = "apple-spm-xcframework", binding = "abi-contract", origin = %s)
+file_shipping_supplier(name = "runtime_resources_supplier", inputs = {":runtime_resources_archive": ""}, owner = ":native_owner", configuration = "ios-datum64", binding = "abi-contract", origin = %s)
+shipping_suppliers(name = "suppliers", inputs = [":xcframework_supplier", ":runtime_resources_supplier"])
+""" % (repr(assets[0]["name"]), repr(assets[1]["name"]), repr(publication["product"]), repr(publication["version"]), repr(json.encode(origins[0])), repr(json.encode(origins[1]))))
     return ctx.repo_metadata(reproducible = True)
 
 frozen_native_carrier_repository = repository_rule(

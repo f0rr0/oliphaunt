@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { loadProducts } from './release-graph.mts';
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from './release-please-bootstrap.mts';
 import {
   deriveReleaseProducts,
@@ -258,10 +259,22 @@ function prepareCompatibility(base) {
   };
   const producers = { [nativePath]: simple(native), 'src/native/broker': simple(broker) };
   json('release-please-config.json', { packages: { ...producers, ...consumers } });
-  const producerVersion = base || scenario === 'consumer-only' ? '0.3.1' : '0.3.2';
-  const consumerVersion = base || scenario === 'unselected-consumer' ? '0.1.0' : '0.2.0';
-  const pin = base ? '0.3.0' : producerVersion;
+  const heldProducers = ['consumer-only', 'supplier-map-isolation', 'authored'].includes(scenario);
+  const producerVersion = base || heldProducers ? '0.3.1' : '0.3.2';
+  const consumerVersion =
+    base || ['unselected-consumer', 'authored'].includes(scenario) ? '0.1.0' : '0.2.0';
+  const pin = base
+    ? '0.3.0'
+    : ['authored', 'authored-adoption'].includes(scenario)
+      ? '0.3.1'
+      : ['supplier-map-isolation', 'selected-held-supplier', 'registry-update'].includes(scenario)
+        ? '0.3.0'
+        : producerVersion;
   const consumerPin = scenario === 'consumer-only' ? '0.3.0' : pin;
+  const compiledBrokerPin =
+    !base && ['supplier-map-isolation', 'selected-held-supplier'].includes(scenario)
+      ? producerVersion
+      : consumerPin;
   json('.release-please-manifest.json', {
     ...Object.fromEntries(Object.keys(producers).map((folder) => [folder, producerVersion])),
     ...Object.fromEntries(Object.keys(consumers).map((folder) => [folder, consumerVersion])),
@@ -287,11 +300,12 @@ function prepareCompatibility(base) {
   write(
     'src/native/sdks/rust/Cargo.toml',
     cargo('oliphaunt', consumerVersion) +
-      `\n[package.metadata.oliphaunt]\nnative-version = "${consumerPin}"\nbroker-version = "${consumerPin}"\n`,
+      `\n[package.metadata.oliphaunt]\nnative-version = "${consumerPin}"\nbroker-version = "${compiledBrokerPin}"\n` +
+      `\n[dependencies]\noliphaunt-broker = { version = "${scenario === 'registry-update' ? producerVersion : consumerPin}", optional = true }\n`,
   );
   write(
     'src/native/sdks/rust/src/broker.rs',
-    `const BROKER_RELEASE_VERSION: &str = "${scenario === 'wrong-rust-const' ? '0.4.0' : consumerPin}";\n`,
+    `const BROKER_RELEASE_VERSION: &str = "${scenario === 'wrong-rust-const' ? '0.4.0' : compiledBrokerPin}";\n`,
   );
   write('src/native/sdks/swift/VERSION', `${consumerVersion}\n`);
   write(
@@ -336,7 +350,9 @@ if (phase === 'write') {
       ? ['oliphaunt-extension-vector']
       : family === 'compatibility'
         ? [
-            ...(scenario === 'consumer-only' ? [] : [native, broker]),
+            ...(['consumer-only', 'supplier-map-isolation'].includes(scenario)
+              ? []
+              : [native, broker]),
             ...(scenario === 'unselected-consumer'
               ? []
               : [
@@ -355,7 +371,21 @@ if (phase === 'write') {
               : scenario === 'hidden-version-config'
                 ? ['beta']
                 : [broker];
-  const verify = () => verifyReleaseCommit({ repo, headRef, products });
+  const supplierMap = () =>
+    new Map(Object.keys(loadProducts()).map((id) => [id, new Set<string>()]));
+  const compiled = supplierMap();
+  compiled.get('oliphaunt-rust').add(broker);
+  const verify = () =>
+    verifyReleaseCommit({
+      repo,
+      headRef,
+      products,
+      ...(['supplier-map-isolation', 'selected-held-supplier'].includes(scenario)
+        ? { buildBound: compiled }
+        : ['registry-update', 'authored-adoption'].includes(scenario)
+          ? { buildBound: supplierMap() }
+          : {}),
+    });
   if (scenario === 'base') assert.equal(latestVerifiedReleaseCommit({ repo, headRef }), null);
   else if (scenario === 'later-fix') {
     assert.equal(latestVerifiedReleaseCommit({ repo, headRef }).commit, releaseRef);
@@ -401,6 +431,13 @@ if (phase === 'write') {
     else {
       const result = verify();
       assert.deepEqual(result.products, products);
+      if (['supplier-map-isolation', 'selected-held-supplier'].includes(scenario)) {
+        assert.throws(
+          () => verifyReleaseCommit({ repo, headRef, products, buildBound: supplierMap() }),
+          /non-version semantic change/u,
+        );
+        assert.deepEqual(verify().products, products);
+      }
       if (family === 'basic' && scenario === 'clean') {
         assert.deepEqual(deriveReleaseProducts({ repo, headRef }).products, [broker]);
         assert.equal(result.versions[broker], '0.1.0');

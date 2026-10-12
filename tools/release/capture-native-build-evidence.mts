@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 /** Collect current configured contents after a successful build; this grants no release authority. */
 import { linkSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { SEED_CONSTRUCTION_RECEIPT_SUFFIX } from '../../build_defs/resources/seed_construction.mts';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import { buildShippingInputView, canonicalShippingLabel } from './bazel-shipping-inputs.mts';
 import { writeNativeBuildFinalFiles } from './native-build-files.mts';
@@ -26,7 +27,11 @@ export type NativeBuildCaptureCohort = {
   executionRoot: string;
   aquery: unknown;
   buildEvents: unknown[];
-} & ({ roots: NativeRoot[]; cquery: unknown } | { shippingRoots: string[]; aqueryFile: string });
+  analysis?: { workspace: string; rootInputs: { label: string; paths: string[] }[] };
+} & (
+  | { roots: NativeRoot[]; cquery: unknown }
+  | { shippingRoots: string[]; aqueryFile: string; shippingExport?: string }
+);
 
 function object(value: unknown): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -144,6 +149,34 @@ export function captureNativeBuildEvidence({
           label: root.label,
           configuration,
         }));
+        if (cohort.shippingExport !== undefined) {
+          const owner = canonicalShippingLabel(text(cohort.shippingExport));
+          const targets = bep.completed.filter(
+            (target) => canonicalShippingLabel(target.label) === owner,
+          );
+          if (targets.length !== 1 || targets[0].value.success !== true)
+            throw new Error('native producer requires one successful configured owner export');
+          const files = bep.filesOf(targets[0].value, 'shipping_policy');
+          if (files.size !== 1)
+            throw new Error('native producer requires one shipping_policy output');
+          const file = [...files.keys()][0];
+          const capture = captureNativeOutputMembers(cohort.executionRoot, file);
+          captures.push(capture);
+          const contents = readFileSync(nativeOutputPath(cohort.executionRoot, file), 'utf8');
+          const bytes = Buffer.from(contents, 'utf8');
+          const member = capture.members[0];
+          if (
+            capture.members.length !== 1 ||
+            member.type !== 'file' ||
+            member.size !== bytes.length ||
+            member.sha256 !== createHash('sha256').update(bytes).digest('hex')
+          )
+            throw new Error('native owner qualification changed during capture');
+          if (canonicalShippingLabel(JSON.parse(contents).owner) !== owner)
+            throw new Error('native owner qualification differs from selected export');
+          capture.assertUnchanged();
+          producerCapture.qualificationManifest = { path: file, contents };
+        }
       } else {
         roots = cohort.roots;
         rootConfigurations = nativeRootConfigurations(roots, cohort.cquery);
@@ -160,6 +193,12 @@ export function captureNativeBuildEvidence({
       const outputs = [
         ...new Set(roots.flatMap((root) => root.package.outputs.map((output) => output.path))),
       ].sort();
+      const seedConstructions = inputs
+        .filter((file) => file.endsWith(SEED_CONSTRUCTION_RECEIPT_SUFFIX))
+        .map((file) => ({
+          path: file,
+          contents: readFileSync(nativeOutputPath(cohort.executionRoot, file), 'utf8'),
+        }));
       const capture = (file: string, output: boolean) => {
         const value = output
           ? captureNativeOutputMembers(cohort.executionRoot, file)
@@ -167,6 +206,16 @@ export function captureNativeBuildEvidence({
         captures.push(value);
         return { path: file, members: value.members };
       };
+      const analysisInputs =
+        cohort.analysis === undefined
+          ? undefined
+          : [...new Set(cohort.analysis.rootInputs.flatMap((row) => row.paths))]
+              .sort()
+              .map((file) => {
+                const value = captureNativeInputMembers(cohort.analysis!.workspace, file);
+                captures.push(value);
+                return { path: file, members: value.members };
+              });
       return {
         executionRoot: cohort.executionRoot,
         roots,
@@ -176,6 +225,10 @@ export function captureNativeBuildEvidence({
         inputs: inputs.map((file) => capture(file, false)),
         outputs: outputs.map((file) => capture(file, true)),
         ...(producerCapture === undefined ? {} : { producerCapture }),
+        ...(seedConstructions.length ? { seedConstructions } : {}),
+        ...(analysisInputs === undefined
+          ? {}
+          : { analysisInputs, rootAnalysisInputPaths: cohort.analysis!.rootInputs }),
       };
     }),
   };
@@ -301,7 +354,8 @@ export function writeNativeBuildEvidence(
       })),
     };
     // The evidence remains the only inventory. Public regular leaves are copied
-    // before its immutable completion marker is installed; internal trees stay local.
+    // before its immutable completion marker is installed. Only authenticated
+    // reached seed constructor Files accompany public outputs for promotion.
     writeNativeBuildFinalFiles(evidence, parent);
     copiedFiles = true;
     writeFileSync(file, `${JSON.stringify(evidence)}\n`, { flag: 'wx', mode: 0o600 });
@@ -369,6 +423,18 @@ function main() {
         buildEvents: jsonLines(buildEvents),
         executionRoot,
       });
+    } else if (option === '--shipping-export') {
+      const cohort = cohorts.at(-1);
+      if (!cohort || !('shippingRoots' in cohort) || cohort.shippingExport !== undefined)
+        throw new Error('--shipping-export requires one preceding producer cohort');
+      cohort.shippingExport = value();
+    } else if (option === '--analysis-root-inputs') {
+      const cohort = cohorts.at(-1);
+      if (!cohort || cohort.analysis !== undefined)
+        throw new Error('--analysis-root-inputs requires one preceding cohort');
+      const inputs = value();
+      const workspace = value();
+      cohort.analysis = { workspace: path.resolve(workspace), rootInputs: json(inputs) };
     } else throw new Error(`unknown or repeated native capture argument: ${option}`);
   }
   if (metadata) {

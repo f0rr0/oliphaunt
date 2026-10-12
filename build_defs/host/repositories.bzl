@@ -2,11 +2,26 @@
 
 load(":sdk-tree.bzl", "apple_sdk_documentation_directories", "watch_sdk_directory")
 
+def apple_swift_test_runtime_files(component_files):
+    """Keep runtime dylibs and framework resources, excluding compile inputs."""
+    runtime = []
+    for component in ["toolchain", "platform_macosx/Library", "platform_macosx/usr/lib"]:
+        for source in component_files[component]:
+            if component == "toolchain":
+                parts = source.split("/")
+                if len(parts) < 5 or parts[:2] != ["toolchain", "lib"] or not (parts[2] == "swift" or parts[2].startswith("swift-")) or parts[3] != "macosx":
+                    continue
+            if ".framework/" in source and any([part in source for part in ["/Headers/", "/PrivateHeaders/", "/Modules/"]]):
+                continue
+            if source.endswith(".dylib") or ".framework/" in source:
+                runtime.append(source)
+    return sorted(runtime)
+
 def _host_sdk_impl(ctx):
     expected_os = "mac os x" if ctx.attr.family == "apple" else "windows"
     if not ctx.os.name.lower().startswith(expected_os):
         fail("The %s SDK profile requires its native %s client host; no cross-host SDK acquisition is declared." % (ctx.attr.family, expected_os))
-    for source in [ctx.attr.collector, ctx.attr.policy, ctx.attr.compatibility, ctx.attr.deployment_policy, ctx.attr._vc_runtime_contract, ctx.attr._vc_runtime_policy]:
+    for source in [ctx.attr.collector, ctx.attr.policy, ctx.attr.compatibility, ctx.attr.deployment_policy, ctx.attr._app_tools, ctx.attr._vc_runtime_contract, ctx.attr._vc_runtime_policy]:
         ctx.read(source)
     ctx.watch(ctx.path(ctx.attr.bun))
     result = ctx.execute([ctx.path(ctx.attr.bun), ctx.path(ctx.attr.collector), ctx.path(ctx.attr.policy), ctx.attr.family], timeout = 120, quiet = True)
@@ -69,11 +84,22 @@ def _host_sdk_impl(ctx):
         lines.append('filegroup(name = "runtime_dlls", srcs = %s)' % repr(sdk["runtimeDlls"]))
     lines.append("host_cc_profiles(HOST_SDK)")
     if ctx.attr.family == "apple":
+        lines.insert(0, 'load(%s, "declared_apple_app_tools")' % repr(str(ctx.attr.app_tools_profile)))
+        app_tools = [":receipt.json"] + [":" + sdk["tools"][name] + "_files" for name in ["actool", "ibtool", "codesign", "codesign_allocate", "ditto", "lipo", "swift-stdlib-tool", "simctl", "otool"]] + [":tools/xcrun_files"]
+        lines.append('declared_apple_app_tools(name = "app_tools", tools = %s, xcode_observation = %s, sdk_versions = %s)' % (repr(app_tools), repr(sdk["observations"]["xcode"]), repr({name: sdk["observations"][name + "_version"] for name in ["macosx", "iphoneos", "iphonesimulator"]})))
+        lines.append('exports_files(%s)' % repr([sdk["tools"][name] for name in ["actool", "ibtool", "codesign", "codesign_allocate", "ditto", "lipo", "swift-stdlib-tool", "simctl"]]))
+        lines.append('filegroup(name = "swift_interop_headers", srcs = %s)' % repr([file for file in component_files["toolchain"] if file.startswith("toolchain/include/swift/")]))
+        lines.append('exports_files(["toolchain/include/swift/bridging"])')
         lines.append("exports_files(%s)" % repr([sdk["tools"][name] for name in ["install_name_tool", "otool", "plutil"]]))
         lines.insert(0, 'load(%s, "declared_xcode_swift_toolchain")' % repr(str(ctx.attr.swift_profile)))
         prefix = "external/" + ctx.name + "/"
+        runtime_prefix = str(ctx.path(".")) + "/"
         tools = {":" + sdk["tools"][mode]: mode for mode in ["swiftc", "swift-symbolgraph-extract", "swift-synthesize-interface"]}
-        lines.append('declared_xcode_swift_toolchain(name = "swift", sdk = [":receipt.json", ":toolchain_files", ":sdk_macosx_files", ":platform_macosx/Library_files", ":platform_macosx/usr/lib_files", ":tools/xcrun_files"], tools = %s, sdkroot = %s, resource_directory = %s, prefix = %s, target_triple = %s)' % (repr(tools), repr(prefix + "sdk_macosx"), repr(prefix + "toolchain/lib/swift"), repr(prefix), repr("arm64-apple-macosx" + sdk["deploymentTargets"]["package_macos"])))
+        lines.append('filegroup(name = "swift_test_runtime", srcs = %s)' % repr(["receipt.json"] + apple_swift_test_runtime_files(component_files)))
+        lines.append('declared_xcode_swift_toolchain(name = "swift", sdk = [":receipt.json", ":toolchain_files", ":sdk_macosx_files", ":platform_macosx/Library_files", ":platform_macosx/usr/lib_files", ":tools/xcrun_files"], tools = %s, sdkroot = %s, resource_directory = %s, prefix = %s, runtime_prefix = %s, target_triple = %s)' % (repr(tools), repr(prefix + "sdk_macosx"), repr(prefix + "toolchain/lib/swift"), repr(prefix), repr(runtime_prefix), repr("arm64-apple-macosx" + sdk["deploymentTargets"]["package_macos"])))
+        for name, selected_sdk, suffix in [("swift_ios", "iphoneos", ""), ("swift_ios_simulator", "iphonesimulator", "-simulator")]:
+            inputs = [":receipt.json", ":toolchain_files", ":sdk_" + selected_sdk + "_files", ":platform_" + selected_sdk + "/Library_files", ":platform_" + selected_sdk + "/usr/lib_files", ":tools/xcrun_files"]
+            lines.append('declared_xcode_swift_toolchain(name = %s, sdk = %s, tools = %s, sdkroot = %s, sdk_name = %s, resource_directory = %s, prefix = %s, runtime_prefix = %s, target_triple = %s)' % (repr(name), repr(inputs), repr(tools), repr(prefix + "sdk_" + selected_sdk), repr(selected_sdk), repr(prefix + "toolchain/lib/swift"), repr(prefix), repr(runtime_prefix), repr("arm64-apple-ios" + sdk["deploymentTargets"]["ios"] + suffix)))
     ctx.file("BUILD.bazel", "\n".join(lines) + "\n")
     return ctx.repo_metadata(reproducible = False)
 
@@ -89,8 +115,10 @@ _host_sdk_repository = repository_rule(
         "deployment_policy": attr.label(default = Label("//build_defs/host:deployment-policy.mts"), allow_single_file = True),
         "cc_profiles": attr.label(default = Label("//build_defs/host:cc-profiles.bzl"), allow_single_file = True),
         "swift_profile": attr.label(default = Label("//build_defs/host:swift-profile.bzl"), allow_single_file = True),
+        "app_tools_profile": attr.label(default = Label("//build_defs/host:app-tool-inputs.bzl"), allow_single_file = True),
         "_vc_runtime_contract": attr.label(default = Label("//:tools/packaging/windows-vc-runtime-closure.mts"), allow_single_file = True),
         "_vc_runtime_policy": attr.label(default = Label("//:tools/packaging/windows-vc-runtime-policy.json"), allow_single_file = True),
+        "_app_tools": attr.label(default = Label("//build_defs/host:apple-app-tools.mts"), allow_single_file = True),
         "_wrapped_clang": attr.label(default = Label("@apple_support//crosstool:wrapped_clang.cc"), allow_single_file = True),
         "_libtool": attr.label(default = Label("@apple_support//crosstool:libtool.cc"), allow_single_file = True),
         "_driver_patch": attr.label(default = Label("//build_defs/host:declared-apple-drivers.patch"), allow_single_file = True),
@@ -105,6 +133,8 @@ def _host_toolchains_impl(ctx):
         ("apple_macos_package", "native_apple_sdk", "cc_package", "macos", "aarch64", [str(ctx.attr.apple_package)], "@bazel_tools//tools/cpp:toolchain_type"),
         ("apple_macos_runtime", "native_apple_sdk", "cc_native", "macos", "aarch64", [], "@bazel_tools//tools/cpp:toolchain_type"),
         ("apple_swift_package", "native_apple_sdk", "swift", "macos", "aarch64", [str(ctx.attr.apple_package)], str(ctx.attr.swift_type)),
+        ("apple_swift_ios", "native_apple_sdk", "swift_ios", "ios", "aarch64", [str(ctx.attr.apple_device)], str(ctx.attr.swift_type)),
+        ("apple_swift_ios_simulator", "native_apple_sdk", "swift_ios_simulator", "ios", "aarch64", [str(ctx.attr.apple_simulator)], str(ctx.attr.swift_type)),
         ("apple_ios", "native_apple_sdk", "cc_ios", "ios", "aarch64", [str(ctx.attr.apple_device)], "@bazel_tools//tools/cpp:toolchain_type"),
         ("apple_ios_simulator", "native_apple_sdk", "cc_ios_simulator", "ios", "aarch64", [str(ctx.attr.apple_simulator)], "@bazel_tools//tools/cpp:toolchain_type"),
     ]:

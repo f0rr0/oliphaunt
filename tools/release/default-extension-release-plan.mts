@@ -1,16 +1,11 @@
 import { extensionConsumerRequirements } from './consumer-compatibility.mts';
-import { buildBoundCompatibilityProducts } from './release-dependency-plan.mts';
+import { resolveBuildBoundCompatibilityProducts } from './release-dependency-plan.mts';
 import { productCompatibilityVersion } from './release-graph.mts';
 
 // Default installs constrain dependency requirements, not product version numbers.
-export function defaultExtensionReleasePlan(
-  products,
-  selectedProducts,
-  {
-    readCompatibility = productCompatibilityVersion,
-    buildBound = buildBoundCompatibilityProducts(products),
-  } = {},
-) {
+export function defaultExtensionReleasePlan(products, selectedProducts, options = {}) {
+  const { readCompatibility = productCompatibilityVersion } = options;
+  const buildBound = resolveBuildBoundCompatibilityProducts(products, options);
   const selected = new Set(selectedProducts);
   const required = new Set(selected);
   const requirements = new Map();
@@ -34,7 +29,7 @@ export function defaultExtensionReleasePlan(
     products,
     pin,
     buildBound,
-  ).filter(({ product, owner }) => !owner || products[owner].kind === 'sdk');
+  ).filter(({ owner }) => !owner || products[owner].kind === 'sdk');
   const runtimes = new Set(selectedConsumers.map(({ runtime }) => runtime));
   if (extensions.some((product) => selected.has(product))) {
     for (const product of sdks) {
@@ -45,7 +40,9 @@ export function defaultExtensionReleasePlan(
   const maximum = (versions) => versions.sort(Bun.semver.order).at(-1);
   for (const runtime of runtimes) {
     const hosts = extensions.map((product) =>
-      selected.has(product) ? products[runtime].version : pin(product, runtime),
+      selected.has(product) && buildBound.get(product).has(runtime)
+        ? products[runtime].version
+        : pin(product, runtime),
     );
     let target = maximum([
       ...hosts,
@@ -59,9 +56,22 @@ export function defaultExtensionReleasePlan(
       );
     const repackage = hosts.some((host) => host !== target);
     if (repackage) {
-      // Extension producers cannot recreate an older host with current compiler inputs.
-      target = products[runtime].version;
+      // Only current compiler inputs force adoption of the workspace host.
+      if (
+        extensions.some(
+          (product) => buildBound.get(product).has(runtime) && pin(product, runtime) !== target,
+        )
+      )
+        target = products[runtime].version;
       for (const product of extensions) {
+        if (
+          !buildBound.get(product).has(runtime) &&
+          readCompatibility(product, runtime, 'default-extension-release-plan', { ref: null }) !==
+            target
+        )
+          throw new Error(
+            `default-extension-release-plan: ${product} retains a held ${runtime} requirement; update its conventional runtime requirement before targeting ${runtime}@${target}`,
+          );
         if (pin(product, runtime) !== target || selected.has(product)) required.add(product);
       }
     }

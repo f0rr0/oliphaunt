@@ -862,6 +862,54 @@ export function extensionCarrierLegalContract(
   });
 }
 
+export function nativeExtensionCarrierLegal(
+  product,
+  members,
+  { target = null, carriesPayload, memberContracts = [] },
+) {
+  if (
+    typeof product !== 'string' ||
+    !Array.isArray(members) ||
+    members.length === 0 ||
+    members.some((member) => typeof member !== 'string' || !member) ||
+    new Set(members).size !== members.length ||
+    typeof carriesPayload !== 'boolean'
+  ) {
+    fail(
+      'native extension carrier legal lookup requires a product, unique members, and carriesPayload',
+    );
+  }
+  try {
+    const legal = extensionCarrierLegalContract(product, members, {
+      family: 'native',
+      target,
+      carriesPayload,
+      memberContracts,
+    });
+    const construction = memberContracts.flatMap((member) =>
+      validateNativeExtensionConstructionLicenseInventory(
+        member.sqlName,
+        target,
+        member.nativeConstructionLicenseFiles ?? [],
+      ),
+    );
+    const incorporatesCompilerRuntime = construction.some((file) =>
+      file.path.startsWith('share/licenses/llvm-compiler-rt/'),
+    );
+    return !incorporatesCompilerRuntime
+      ? legal
+      : Object.freeze({
+          ...legal,
+          packageSpdx: `${legal.packageSpdx} AND Apache-2.0 WITH LLVM-exception`,
+        });
+  } catch (cause) {
+    throw new Error(
+      `extension-upstream-licenses: cannot derive the canonical native extension carrier legal contract: ${cause.message}`,
+      { cause },
+    );
+  }
+}
+
 export function extensionCarrierLegalFileInventory(
   product,
   sqlNames,

@@ -19,6 +19,7 @@ import { requireSafeDirectoryChain as requireReleaseDirectoryChain } from './rel
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PREFIX = 'release-notices.mts';
+const OLIPHAUNT_LICENSE_SPDX = 'MIT';
 
 export const RELEASE_NOTICE_PRODUCTS = Object.freeze(['native', 'wasix']);
 export const RELEASE_LICENSE_COMPONENTS = Object.freeze(['postgresql', 'icu', 'openssl']);
@@ -431,6 +432,25 @@ function unexpectedNamespaceEntry(namespaceEntry, expectedMembers) {
   return true;
 }
 
+/** Names and license identifiers are delivery declarations, independently of
+ * the current checkout's notice contents. Historical byte inputs stay intact. */
+export function releaseNoticeDeclaration(profile) {
+  const selection = releaseCarrierProfile(profile);
+  return Object.freeze({
+    members: Object.freeze(
+      [
+        ...BASE_ROWS.map(({ member }) => member),
+        ...selection.products.map((product) => PRODUCT_NOTICE_ROWS[product].member),
+        ...selection.components.map((component) => LICENSE_COMPONENT_ROWS[component].member),
+      ].sort(compareText),
+    ),
+    spdx: [
+      OLIPHAUNT_LICENSE_SPDX,
+      ...selection.components.map((component) => LICENSE_COMPONENT_ROWS[component].spdx),
+    ].join(' AND '),
+  });
+}
+
 export function releaseNoticeRows(options = {}) {
   const selection = checkedSelection(options);
   const sourceRoot = options.sourceRoot;
@@ -481,7 +501,7 @@ export function releasePackageLicense({
     entries.push(
       Object.freeze({
         id: 'oliphaunt',
-        spdx: 'MIT',
+        spdx: OLIPHAUNT_LICENSE_SPDX,
         name: 'MIT License (Oliphaunt)',
         member: 'LICENSE',
         source: path.join(sourceRoot ?? ROOT, 'LICENSE'),

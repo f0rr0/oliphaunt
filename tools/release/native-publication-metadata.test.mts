@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fixture, source } from './completed-native-publication.fixture.mts';
 import {
+  assertAuthenticatedNativePublicBaseline,
   prepareNativePublicationMetadata,
   readCompletedNativePublicBaseline,
   writePreparedNativePublicationMetadata,
@@ -77,6 +78,26 @@ test('prepared metadata authenticates actual captured construction and excludes 
     expect(records[0].construction[0].inputs.every((input) => !input.path.includes('/beta/'))).toBe(
       true,
     );
+    const construction = records[0].construction[0];
+    expect(construction.leafInputPaths).toEqual([
+      'external/compiler/compiler',
+      'src/alpha/index.ts',
+    ]);
+    expect(construction.inputs.map(({ path }) => path)).toContain(
+      'bazel-out/k8-opt/bin/alpha/config.h',
+    );
+    for (const paths of [
+      ['bazel-out/k8-opt/bin/alpha/config.h'],
+      ['src/missing/index.ts'],
+      ['src/alpha/index.ts', 'src/alpha/index.ts'],
+    ]) {
+      const changed = structuredClone(records[0]);
+      changed.construction[0].leafInputPaths = paths;
+      expect(() => validateNativePublicationMetadata(changed)).toThrow(/causal leaf/);
+    }
+    const earlierObservation = structuredClone(records[0]);
+    delete earlierObservation.construction[0].leafInputPaths;
+    expect(validateNativePublicationMetadata(earlierObservation).baselineAdmission).toBe('unknown');
     for (const mutate of [
       (record) => {
         record.lockDigest = '9'.repeat(64);
@@ -99,6 +120,141 @@ test('prepared metadata authenticates actual captured construction and excludes 
       expect(() => validateNativePublicationMetadata(modified, { source })).toThrow();
     }
   });
+});
+
+test('post-version metadata preserves the exact Prepare bridge and Native run without granting parsed authority', async () => {
+  await fixture(async ({ input, transports }) => {
+    const [historical] = await prepareNativePublicationMetadata(preparation(input), transports);
+    const updates = [
+      {
+        path: '.release-please-manifest.json',
+        before: { size: 10, sha256: '1'.repeat(64) },
+        after: { size: 11, sha256: '2'.repeat(64) },
+      },
+    ];
+    const codeSource = { commit: '3'.repeat(40), tree: '4'.repeat(40) };
+    const build = historical.builds[0].github;
+    const qualification = {
+      source: historical.source,
+      prepare: {
+        runId: 88,
+        runAttempt: 1,
+        artifact: {
+          id: 99,
+          name: 'native-release-inputs',
+          digest: `sha256:${'5'.repeat(64)}`,
+          size: 1024,
+        },
+        codeSource,
+        preparedSource: historical.source,
+      },
+      bridge: {
+        source: codeSource,
+        updates,
+        updatesSha256: hash(Buffer.from(JSON.stringify(updates))),
+      },
+      selectedProducts: ['alpha'],
+      producer: {
+        runId: build.runId,
+        runAttempt: build.runAttempt,
+        event: 'push',
+        ref: 'refs/heads/main',
+        workflowPath: '.github/workflows/bazel.yml',
+      },
+      inventory: {
+        products: ['alpha', 'beta'],
+        artifactPhase: 'pre-version',
+        packageEnvelopeDigest: '6'.repeat(64),
+      },
+    };
+    const described = { ...structuredClone(historical), publicationQualification: qualification };
+    expect(validateNativePublicationMetadata(described).publicationQualification).toEqual(
+      qualification,
+    );
+    expect(described.scope).toBe('construction');
+    expect(historical.publicationQualification).toBeUndefined();
+    for (const mutate of [
+      (control) => {
+        control.source.commit = '7'.repeat(40);
+      },
+      (control) => {
+        control.prepare.preparedSource.tree = '7'.repeat(40);
+      },
+      (control) => {
+        control.bridge.updates[0].after.sha256 = '7'.repeat(64);
+      },
+      (control) => {
+        control.prepare.codeSource = { ...control.prepare.codeSource, commit: '7'.repeat(40) };
+      },
+      (control) => {
+        control.producer.runAttempt++;
+      },
+      (control) => {
+        control.selectedProducts = ['beta'];
+      },
+      (control) => {
+        control.inventory.products = ['alpha', 'alpha'];
+      },
+      (control) => {
+        control.inventory.artifactPhase = 'final';
+      },
+      (control) => {
+        control.prepare.artifact.name = 'arbitrary';
+      },
+    ]) {
+      const changed = structuredClone(described);
+      mutate(changed.publicationQualification);
+      expect(() => validateNativePublicationMetadata(changed)).toThrow();
+    }
+  });
+});
+
+test('prepared metadata preserves captured owner policy without upgrading older or incomplete observations', async () => {
+  await fixture(
+    async ({ input, transports }) => {
+      const records = await prepareNativePublicationMetadata(
+        { ...preparation(input), reviewedSource: source },
+        transports,
+      );
+      const record = records[0];
+      const policy = record.construction[0].qualificationPolicy;
+      expect(policy.owner).toBe('//fixture:shipping_export');
+      expect(policy.requiredTests).toHaveLength(2);
+      expect(record.baselineAdmission).toBe('unknown');
+      expect(record.releaseDecision).toBe('unverified');
+      const canonicalAlias = structuredClone(record);
+      canonicalAlias.construction[0].roots[0].label = `@@${canonicalAlias.construction[0].roots[0].label}`;
+      expect(validateNativePublicationMetadata(canonicalAlias).baselineAdmission).toBe('unknown');
+      const earlier = structuredClone(record);
+      delete earlier.construction[0].qualificationPolicy;
+      expect(validateNativePublicationMetadata(earlier).baselineAdmission).toBe('unknown');
+      for (const change of [
+        (policy) => {
+          policy.owner = 'outside';
+        },
+        (policy) => {
+          policy.configuration = 'foreign-config';
+        },
+        (policy) => {
+          policy.roots = ['//fixture:foreign'];
+        },
+        (policy) => {
+          policy.roots.push(policy.roots[0]);
+        },
+        (policy) => {
+          policy.requiredTests.push(policy.requiredTests[0]);
+        },
+        (policy) => {
+          policy.requiredTests[0].label = '//fixture:unqualified_test';
+        },
+      ]) {
+        const substituted = structuredClone(record);
+        change(substituted.construction[0].qualificationPolicy);
+        expect(() => validateNativePublicationMetadata(substituted)).toThrow();
+      }
+    },
+    { producerCapture: true, ownerPolicy: true },
+  );
 });
 
 test('explicit reviewed controller sealing retains authenticated main assurance without granting release authority', async () => {
@@ -394,6 +550,64 @@ test('public baseline joins completed source and signed public bytes without an 
       expect(result.metadata.builds[0].producerAssurance.ref).toBe('refs/heads/main');
       expect(result.publicOrigin.sha256).toBe(artifact.sha256);
       expect(result.baselineAdmission).toBe('unknown');
+      expect(() => assertAuthenticatedNativePublicBaseline(result)).toThrow(
+        'authenticated completed metadata origin',
+      );
+      const autoBundle = JSON.parse(readFileSync(bundlePath, 'utf8'));
+      const statement = JSON.parse(
+        Buffer.from(autoBundle.dsseEnvelope.payload, 'base64').toString('utf8'),
+      );
+      statement.predicate = {
+        buildDefinition: {
+          externalParameters: {
+            workflow: {
+              repository: 'https://github.com/f0rr0/oliphaunt',
+              ref: 'refs/heads/main',
+              path: '.github/workflows/release.yml',
+            },
+          },
+          resolvedDependencies: [
+            {
+              uri: 'git+https://github.com/f0rr0/oliphaunt@refs/heads/main',
+              digest: { gitCommit: 'e'.repeat(40) },
+            },
+          ],
+        },
+      };
+      autoBundle.dsseEnvelope.payload = Buffer.from(JSON.stringify(statement)).toString('base64');
+      const automatic = await readCompletedNativePublicBaseline(
+        { publication, file: artifact.path },
+        {
+          ...publicTransports,
+          readPages: async (endpoint, options) => {
+            if (endpoint.includes('/attestations/sha256:')) {
+              expect(options.itemsField).toBe('attestations');
+              expect(endpoint).toEndWith(artifact.sha256);
+              return [{ bundle: {} }, { bundle: autoBundle }, { bundle: autoBundle }];
+            }
+            return [asset];
+          },
+          verifyAttestation: async ({ publisherSha, bundlePaths }) => {
+            expect(publisherSha).toBe('e'.repeat(40));
+            expect(JSON.parse(readFileSync(bundlePaths[0], 'utf8'))).toEqual(autoBundle);
+            return { subjects: normalizedSubjects(subjects) };
+          },
+        },
+      );
+      expect(automatic.publicOrigin.publisherSha).toBe('e'.repeat(40));
+      await expect(
+        readCompletedNativePublicBaseline(
+          { publication, file: artifact.path },
+          {
+            ...publicTransports,
+            readPages: async (endpoint) =>
+              endpoint.includes('/attestations/') ? [{ bundle: autoBundle }] : [asset],
+            verifyAttestation: async () => {
+              throw new Error('actual signer differs from unsigned lookup');
+            },
+          },
+        ),
+      ).rejects.toThrow('authenticated exact attestation subject');
       for (const overrides of [
         {
           assertCompleted: async (requested) => ({ ...requested, publicationTree: '9'.repeat(40) }),

@@ -2,10 +2,11 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { parseArgs } from 'node:util';
+import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { createDeterministicTar } from '../../../tools/packaging/archive-directory.mts';
 import { releaseZstdCompressSync } from '../../../tools/packaging/portable-archive.mts';
 import { currentProductVersionSync } from '../../../tools/release/release-artifact-targets.mts';
+import { productCompatibilityVersion } from '../../../tools/release/release-graph.mts';
 import {
   filesystemTreeRows,
   logicalTreeSha256,
@@ -24,17 +25,26 @@ export async function packageClusterSeed({
   version,
   runtimeVersion,
   contract,
+  producer,
+  nativeSourceManifest,
 }) {
   if (
     !['native', 'wasix'].includes(family) ||
     !['standard', 'icu'].includes(profile) ||
     !pgdata ||
-    !runtime ||
+    (!runtime && !(family === 'native' && producer)) ||
     !target
   )
     throw new Error('family, profile, target, pgdata and runtime are required');
   if ((profile === 'icu') !== Boolean(icuData))
     throw new Error('only ICU seeds require --icu-data');
+  const originalNative =
+    nativeSourceManifest === undefined ? undefined : JSON.parse(nativeSourceManifest);
+  if (originalNative) {
+    if (family !== 'native' || !producer)
+      throw new Error('original native descriptor requires native producer facts');
+    runtimeVersion = originalNative.runtime?.version;
+  }
   if (
     ![version, runtimeVersion].every((value) =>
       /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(value),
@@ -51,8 +61,15 @@ export async function packageClusterSeed({
   const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
   const executable = (name) =>
     path.join(runtime, 'bin', `${name}${target.startsWith('windows-') ? '.exe' : ''}`);
-  const runtimeDigest = digest(readFileSync(executable('postgres')));
-  const initdbDigest = digest(readFileSync(executable('initdb')));
+  const runtimeDigest =
+    family === 'wasix' || !producer ? digest(readFileSync(executable('postgres'))) : undefined;
+  producer ??= {
+    postgresSha256: runtimeDigest,
+    initdbSha256: digest(readFileSync(executable('initdb'))),
+  };
+  for (const value of [producer.postgresSha256, producer.initdbSha256])
+    if (!/^[a-f0-9]{64}$/u.test(value))
+      throw new Error('seed original producer requires exact hashes');
   const name = `database-resources-${version}-seed-${family}${family === 'native' ? `-${target}` : ''}-${profile}`;
   const output = path.resolve(outputDir ?? 'target/database-resources/release-assets');
   const rows = filesystemTreeRows(pgdata);
@@ -75,11 +92,42 @@ export async function packageClusterSeed({
           dataTreeSha256: logicalTreeSha256(filesystemTreeRows(icuData)),
         }
       : null;
+  if (originalNative) {
+    const expectedRuntime = {
+      product: 'liboliphaunt-native',
+      engineFamily: 'native',
+      target,
+      physicalFormat: contract.physicalFormats.native,
+      postgresMajor,
+      compatibilityKey: nativeClusterSeedCompatibilityKey(target),
+    };
+    for (const [key, value] of Object.entries(expectedRuntime))
+      if (originalNative.runtime?.[key] !== value)
+        throw new Error(`original native descriptor physical identity differs: ${key}`);
+    if (
+      originalNative.schema !== contract.manifests.wasix.schema ||
+      originalNative.catalogProfile !== profile ||
+      originalNative.artifactRole !== contract.profiles[profile].artifactRole ||
+      originalNative.source?.producer !== 'native-initdb' ||
+      originalNative.source.postgresSha256 !== producer.postgresSha256 ||
+      originalNative.source.initdbSha256 !== producer.initdbSha256
+    )
+      throw new Error('original native descriptor producer/profile differs');
+    if (
+      !isDeepStrictEqual(originalNative.icu, icu) ||
+      !isDeepStrictEqual(
+        originalNative.requiredRuntimeFeatures,
+        contract.profiles[profile].requiredRuntimeFeatures,
+      ) ||
+      !isDeepStrictEqual(originalNative.extensions, { selected: [], startupConfiguration: [] })
+    )
+      throw new Error('original native descriptor catalog/ICU requirements differ');
+  }
   const manifest = {
     schema: contract.manifests.wasix.schema,
     artifactRole: contract.profiles[profile].artifactRole,
     catalogProfile: profile,
-    runtime: {
+    runtime: originalNative?.runtime ?? {
       product: `liboliphaunt-${family}`,
       version: runtimeVersion,
       engineFamily: family,
@@ -93,14 +141,14 @@ export async function packageClusterSeed({
       ...(family === 'wasix'
         ? {
             consumerSha256: runtimeDigest,
-            producerSha256: runtimeDigest,
-            initdbSha256: initdbDigest,
+            producerSha256: producer.postgresSha256,
+            initdbSha256: producer.initdbSha256,
           }
         : {}),
     },
-    source: {
+    source: originalNative?.source ?? {
       producer: `${family}-initdb`,
-      ...(family === 'native' ? { postgresSha256: runtimeDigest, initdbSha256: initdbDigest } : {}),
+      ...(family === 'native' ? producer : {}),
     },
     archive: {
       path: `${name}.tar.zst`,
@@ -137,7 +185,10 @@ if (import.meta.main) {
     icuData: values['icu-data'],
     outputDir: values['output-dir'],
     version: currentProductVersionSync('database-resources'),
-    runtimeVersion: currentProductVersionSync(`liboliphaunt-${values.family}`),
+    runtimeVersion:
+      values.family === 'wasix'
+        ? productCompatibilityVersion('database-resources', 'liboliphaunt-wasix')
+        : currentProductVersionSync('liboliphaunt-native'),
   });
   console.log(result.archive);
 }

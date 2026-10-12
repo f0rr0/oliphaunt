@@ -1,12 +1,38 @@
-load("//build_defs/extensions:wasix_carriers.bzl", "wasix_compiled_extension_carriers", "wasix_compiled_extension_installed_test", "wasix_compiled_extension_shipping", "wasix_extension_declared_host")
+load("//build_defs/extensions:wasix_carriers.bzl", "wasix_compiled_extension_carriers", "wasix_compiled_extension_installed_test", "wasix_compiled_extension_shipping", "wasix_extension_declared_host", "wasix_compiled_extension_qualification", "wasix_extension_current_host")
+load(":contrib_carriers.bzl", "wasix_contrib_extension_carriers", "wasix_contrib_extension_installed_test", "wasix_contrib_extension_shipping")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_RECIPES")
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load(":link_inputs_test.bzl", "wasix_extension_link_input_tests")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load("//build_defs/extensions:wasix_carriers.bzl", "wasix_sql_carrier_helpers")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["compiled_carriers.test.mts", "installed_consumer.mts"])
+exports_files(["compiled_carriers.test.mts", "installed_consumer.mts", "contrib_carriers.mts", "contrib_carriers.bzl", "contrib_installed.test.mts"])
+
+bun_test(
+    name = "resource_inputs_test",
+    entry_point = "resource_inputs.test.mts",
+    data = ["//build_defs/extensions:wasix_carriers.mts"] + wasix_sql_carrier_helpers(),
+    size = "small",
+)
 
 wasix_extension_declared_host(name = "declared_host", sql_name = "pg_hashids")
+wasix_extension_current_host(name = "current_host")
+wasix_contrib_extension_carriers(name = "contrib", host = ":current_host")
+wasix_contrib_extension_installed_test(name = "contrib_installed_test", leaf = ":contrib", host = ":current_host", size = "large", timeout = "long", tags = ["manual", "installed-consumer"])
+wasix_contrib_extension_shipping(
+    name = "contrib",
+    carriers = ":contrib",
+    qualification = [
+        ":contrib_installed_test",
+        ":link_inputs_test",
+        ":invalid_link_profile_test",
+        ":unhandled_linkopts_test",
+        ":resource_inputs_test",
+        "//src/wasix/runtime/tools/xtask:export_policy_test",
+    ],
+)
 
 wasix_compiled_extension_carriers(
     name = "pg_hashids",
@@ -18,6 +44,7 @@ wasix_compiled_extension_carriers(
 
 wasix_compiled_extension_installed_test(
     name = "pg_hashids_installed_test",
+    sql_name = "pg_hashids",
     leaf = ":pg_hashids",
     module = "//src/wasix/runtime:external_pg_hashids",
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
@@ -35,9 +62,68 @@ wasix_compiled_extension_shipping(
         ":link_inputs_test",
         ":invalid_link_profile_test",
         ":unhandled_linkopts_test",
+        ":resource_inputs_test",
         "//src/wasix/runtime/tools/xtask:export_policy_test",
     ],
 )
+
+wasix_extension_declared_host(name = "pg_uuidv7_declared_host", sql_name = "pg_uuidv7")
+wasix_compiled_extension_carriers(
+    name = "pg_uuidv7",
+    sql_name = "pg_uuidv7",
+    module = "//src/wasix/runtime:external_pg_uuidv7",
+    host = ":pg_uuidv7_declared_host",
+    resources = ["@pg_uuidv7//:sql_resources"],
+)
+
+wasix_extension_declared_host(name = "vector_declared_host", sql_name = "vector")
+wasix_compiled_extension_carriers(
+    name = "vector",
+    sql_name = "vector",
+    module = "//src/wasix/runtime:external_vector",
+    host = ":vector_declared_host",
+    resources = ["@pgvector//:sql_resources"],
+    main_sql = "@pgvector//:sql/vector.sql",
+)
+
+wasix_extension_declared_host(name = "pg_ivm_declared_host", sql_name = "pg_ivm")
+wasix_compiled_extension_carriers(
+    name = "pg_ivm",
+    sql_name = "pg_ivm",
+    module = "//src/wasix/runtime:external_pg_ivm",
+    host = ":pg_ivm_declared_host",
+    resources = ["@pg_ivm//:sql_resources"],
+)
+
+wasix_extension_declared_host(name = "pg_textsearch_declared_host", sql_name = "pg_textsearch")
+wasix_compiled_extension_carriers(
+    name = "pg_textsearch",
+    sql_name = "pg_textsearch",
+    module = "//src/wasix/runtime:external_pg_textsearch",
+    host = ":pg_textsearch_declared_host",
+    resources = ["@pg_textsearch//:sql_resources"],
+)
+
+_POSTGIS_DATA = EXTENSION_RECIPES["postgis"]["artifacts"]["data_files"]
+wasix_extension_declared_host(name = "postgis_declared_host", sql_name = "postgis")
+wasix_compiled_extension_carriers(
+    name = "postgis",
+    sql_name = "postgis",
+    module = "//build_defs/wasix/dependencies:postgis",
+    support_modules = ["//build_defs/wasix/dependencies:postgis_dependency_module"],
+    host = ":postgis_declared_host",
+    resources = ["//build_defs/wasix/dependencies:postgis_extension_sql", "//build_defs/wasix/dependencies:postgis_control"],
+    data_resources = {
+        "//build_defs/wasix/dependencies:postgis_data_sql": "/".join([path for path in _POSTGIS_DATA if path.endswith("/postgis.sql")][0].split("/")[:-1]),
+        "//build_defs/wasix/dependencies:proj_database": [path for path in _POSTGIS_DATA if path.endswith("/proj.db")][0],
+    },
+)
+wasix_compiled_extension_qualification(name = "postgis", sql_name = "postgis", module = "//build_defs/wasix/dependencies:postgis")
+
+[
+    wasix_compiled_extension_qualification(name = sql_name, sql_name = sql_name, module = "//src/wasix/runtime:external_" + sql_name)
+    for sql_name in ["pg_uuidv7", "vector", "pg_ivm", "pg_textsearch"]
+]
 
 source_quality_files()
 

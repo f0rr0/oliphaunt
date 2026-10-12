@@ -15,11 +15,230 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateNativeBuildEvidence } from './native-build-qualification.mts';
-import { type NativeShippingRequest, qualifyNativeShipping } from './qualify-native-shipping.mts';
+import {
+  type NativeShippingRequest,
+  nativeConfiguredRecipeGraph,
+  nativeRecipeInputPaths,
+  qualifyNativeShipping,
+} from './qualify-native-shipping.mts';
 
 const realCapture = fileURLToPath(new URL('./capture-native-build-evidence.mts', import.meta.url));
 const withSource = fileURLToPath(new URL('./with-source.sh', import.meta.url));
 const qualifiedReplay = fileURLToPath(new URL('./qualified-release-replay.sh', import.meta.url));
+
+function recipeFixture() {
+  const one = '1'.repeat(64),
+    two = '2'.repeat(64),
+    tool = '3'.repeat(64);
+  const rule = (name: string, config: number, deps: [string, number][]) => ({
+    configurationId: config,
+    target: {
+      rule: {
+        name,
+        configuredRuleInput: deps.map(([label, configurationId]) => ({
+          label,
+          ...(configurationId ? { configurationId } : {}),
+        })),
+      },
+    },
+  });
+  const query = {
+    configurations: [
+      { id: 1, checksum: one },
+      { id: 2, checksum: two },
+      { id: 3, checksum: tool },
+    ],
+    results: [
+      rule('//a:shipping', 1, [['//lib:adapter', 1]]),
+      rule('//b:shipping', 2, [['//lib:adapter', 2]]),
+      rule('//lib:adapter', 1, [
+        ['//left:implementation', 1],
+        ['//common:tool', 3],
+      ]),
+      rule('//lib:adapter', 2, [
+        ['//right:implementation', 2],
+        ['//common:tool', 3],
+      ]),
+      rule('//left:implementation', 1, []),
+      rule('//right:implementation', 2, []),
+      rule('//common:tool', 3, [['//common:header.h', 0]]),
+      {
+        configuration: { checksum: 'null' },
+        target: { sourceFile: { name: '//common:header.h' } },
+      },
+      rule('//unrelated:qualification_only', 2, []),
+    ],
+  };
+  const roots = [
+    { label: '//a:shipping', configuration: one },
+    { label: '//b:shipping', configuration: two },
+  ];
+  const files = ['a', 'b', 'lib', 'left', 'right', 'common', 'unrelated'].map((pkg) => ({
+    package: `//${pkg}`,
+    labels: [
+      `//${pkg}:BUILD.bazel`,
+      `//recipes:${pkg}.bzl`,
+      '//recipes:shared.bzl',
+      '@@external//:helper.bzl',
+    ],
+  }));
+  return { query, roots, files };
+}
+
+function queriedRecipes(graph, files) {
+  const sets = new Map<string, { packages: string[]; labels: string[] }>();
+  for (const root of graph.roots) {
+    sets.set(JSON.stringify(root.packages), {
+      packages: root.packages,
+      labels: root.packages.flatMap((pkg) =>
+        files.filter((row) => row.package === pkg).flatMap((row) => row.labels),
+      ),
+    });
+  }
+  return [...sets.values()].map((row) => ({ ...row, labels: [...new Set(row.labels)] }));
+}
+
+test('one configured recipe graph preserves shared loads, disconnected targets and transitions', () => {
+  const f = recipeFixture();
+  const graph = nativeConfiguredRecipeGraph(f.query, f.roots);
+  expect(graph.labels).not.toContain('//unrelated:qualification_only');
+  expect(graph.packages).toEqual(
+    ['a', 'b', 'common', 'left', 'lib', 'right'].map((pkg) => ({
+      package: `//${pkg}`,
+      label:
+        pkg === 'a' || pkg === 'b'
+          ? `//${pkg}:shipping`
+          : pkg === 'common'
+            ? '//common:header.h'
+            : pkg === 'lib'
+              ? '//lib:adapter'
+              : `//${pkg}:implementation`,
+    })),
+  );
+  const rows = nativeRecipeInputPaths(graph, queriedRecipes(graph, f.files));
+  expect(rows[0].paths).toEqual([
+    'a/BUILD.bazel',
+    'common/BUILD.bazel',
+    'left/BUILD.bazel',
+    'lib/BUILD.bazel',
+    'recipes/a.bzl',
+    'recipes/common.bzl',
+    'recipes/left.bzl',
+    'recipes/lib.bzl',
+    'recipes/shared.bzl',
+  ]);
+  expect(rows[1].paths).toEqual([
+    'b/BUILD.bazel',
+    'common/BUILD.bazel',
+    'lib/BUILD.bazel',
+    'recipes/b.bzl',
+    'recipes/common.bzl',
+    'recipes/lib.bzl',
+    'recipes/right.bzl',
+    'recipes/shared.bzl',
+    'right/BUILD.bazel',
+  ]);
+});
+
+test('generated Files follow their actual configured generating rule', () => {
+  const f = recipeFixture();
+  f.query.results[0].target.rule.configuredRuleInput = [
+    { label: '//generated:header.h', configurationId: 1 },
+  ];
+  f.query.results.push({
+    configurationId: 1,
+    target: {
+      generatedFile: { name: '//generated:header.h', generatingRule: '//left:implementation' },
+    },
+  } as any);
+  const graph = nativeConfiguredRecipeGraph(f.query, f.roots.slice(0, 1));
+  expect(graph.labels).toContain('//left:implementation');
+  expect(graph.labels).not.toContain('//right:implementation');
+});
+
+test('missing, substituted and cyclic configured recipes or loads reject', () => {
+  for (const mutate of [
+    (f) => {
+      f.roots[0].configuration = '4'.repeat(64);
+    },
+    (f) => {
+      f.query.results[0].target.rule.configuredRuleInput[0].configurationId = 999;
+    },
+    (f) => {
+      f.query.results[0].target.rule.configuredRuleInput[0].configurationChecksum = '4'.repeat(64);
+    },
+    (f) => {
+      f.query.results[0].target.rule.configuredRuleInput[0].label = '//missing:rule';
+    },
+    (f) => {
+      f.query.results[4].target.rule.configuredRuleInput = [
+        { label: '//a:shipping', configurationId: 1 },
+      ];
+    },
+    (f) => {
+      f.query.results.push(f.query.results[0]);
+    },
+    (f) => {
+      f.files = f.files.filter((row) => row.package !== '//common');
+    },
+    (f) => {
+      const common = f.files.find((row) => row.package === '//common');
+      if (!common) throw new Error('missing common fixture');
+      common.labels = ['//recipes:shared.bzl'];
+    },
+    (f) => {
+      f.files[0].labels.push('//recipes:../outside.bzl');
+    },
+    (f) => {
+      f.files[0].labels.push('//a:BUILD');
+    },
+  ]) {
+    const f = recipeFixture();
+    mutate(f);
+    expect(() =>
+      nativeRecipeInputPaths(
+        nativeConfiguredRecipeGraph(f.query, f.roots),
+        queriedRecipes(nativeConfiguredRecipeGraph(f.query, f.roots), f.files),
+      ),
+    ).toThrow();
+  }
+});
+
+test('external configured packages retain workspace loads and equal package sets share one result', () => {
+  const f = recipeFixture();
+  f.query.results[6].target.rule.configuredRuleInput.push({
+    label: '@@original//native:library',
+    configurationId: 3,
+  });
+  f.query.results.push({
+    configurationId: 3,
+    target: { rule: { name: '@@original//native:library', configuredRuleInput: [] } },
+  } as any);
+  f.files.push({
+    package: '@@original//native',
+    labels: ['@original//native:BUILD.bazel', '//private:original-runtime-contract.bzl'],
+  });
+  const graph = nativeConfiguredRecipeGraph(f.query, f.roots);
+  const queries = queriedRecipes(graph, f.files);
+  const result = nativeRecipeInputPaths(graph, queries);
+  expect(result.every((row) => row.paths.includes('private/original-runtime-contract.bzl'))).toBe(
+    true,
+  );
+  const same = nativeConfiguredRecipeGraph(f.query, [f.roots[0]]);
+  same.roots.push({ ...same.roots[0], label: '//alias:shipping' });
+  const shared = queriedRecipes(same, f.files);
+  expect(shared).toHaveLength(1);
+  expect(nativeRecipeInputPaths(same, shared)[1].paths).toEqual(
+    nativeRecipeInputPaths(same, shared)[0].paths,
+  );
+  for (const value of [
+    [],
+    [...queries, queries[0]],
+    [...queries, { packages: ['//injected'], labels: ['//injected:BUILD.bazel'] }],
+    queries.map((row) => ({ ...row, labels: [...row.labels, row.labels[0]] })),
+  ])
+    expect(() => nativeRecipeInputPaths(graph, value)).toThrow();
+});
 
 function fixture(mode = 'success') {
   const directory = mkdtempSync(path.join(tmpdir(), 'qualify-native-shipping-'));
@@ -32,6 +251,10 @@ function fixture(mode = 'success') {
     mkdirSync(path.join(workspace, name), { recursive: true });
   mkdirSync(path.join(executionRoot, 'bazel-out/k8-fastbuild/bin'), { recursive: true });
   writeFileSync(path.join(workspace, 'src/input.mts'), 'declared source');
+  mkdirSync(path.join(workspace, 'fixture'));
+  writeFileSync(path.join(workspace, 'fixture/BUILD.bazel'), 'declared shipping recipe');
+  writeFileSync(path.join(workspace, 'fixture/macro1.bzl'), 'load(":macro2.bzl", "macro2")');
+  writeFileSync(path.join(workspace, 'fixture/macro2.bzl'), 'def macro2(): pass');
   symlinkSync(path.join(workspace, 'src'), path.join(executionRoot, 'src'), 'dir');
   const output = 'bazel-out/k8-fastbuild/bin/native.tar.gz';
   const outputBytes = Buffer.from('final archive');
@@ -54,11 +277,13 @@ function fixture(mode = 'success') {
   writeFileSync(
     path.join(workspace, 'tools/dev/bazel-fixture.mts'),
     `import {appendFileSync,readFileSync,writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 const state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));
 const invocation=process.argv.slice(2);
 appendFileSync(${JSON.stringify(callsFile)},JSON.stringify(invocation)+'\\n');
-const args=invocation.slice(invocation.findIndex((arg:string)=>['test','cquery','info'].includes(arg)));
+const args=invocation.slice(invocation.findIndex((arg:string)=>['test','cquery','query','info'].includes(arg)));
+const expression=args[1]?.startsWith('--query_file=')?readFileSync(args[1].slice(13),'utf8'):args[1];
 if(args[0]==='test') {
   if(state.mode==='build-failure') process.exit(1);
   if(state.mode==='build-race') writeFileSync('src/input.mts','changed during build');
@@ -71,17 +296,34 @@ if(args[0]==='test') {
   const aquery=args.find((arg:string)=>arg.startsWith('--experimental_aquery_dump_after_build_output_file=')).split('=').slice(1).join('=');
   if(state.mode!=='dump-missing') writeFileSync(aquery,JSON.stringify(state.aquery));
   if(state.mode==='manifest-tamper') writeFileSync(state.manifest,JSON.stringify({...state.root,package:{...state.root.package,version:'1.0.1'}})+'\\n');
+  if(state.policy) {
+    const policy={...state.policy,qualification:(state.qualification.results??[]).map((result:any)=>result.target.rule.name.replace(/^@@?\\/\\//,'//'))};
+    const contents=JSON.stringify(policy)+'\\n';
+    writeFileSync(state.policyFile,contents);
+    const file=state.events.find((event:any)=>event.id?.namedSet?.id==='shipping-policy').namedSetOfFiles.files[0];
+    file.digest=createHash('sha256').update(contents).digest('hex');file.length=String(Buffer.byteLength(contents));
+  }
   const options=args.filter((arg:string)=>arg.startsWith('--')).map((arg:string)=>{const split=arg.indexOf('=');return {optionName:arg.slice(2,split<0?undefined:split),optionValue:split<0?'':arg.slice(split+1)};});
   const canonical={id:{structuredCommandLine:{commandLineLabel:'canonical'}},structuredCommandLine:{commandLineLabel:'canonical',sections:[{sectionLabel:'command options',optionList:{option:options}}]}};
   const events=[...state.events,...state.testEvents,canonical,{id:{buildMetadata:{}},buildMetadata:{metadata}},{id:{buildFinished:{}},finished:{exitCode:{name:'SUCCESS'}}},{id:{buildMetrics:{}},buildMetrics:{},lastMessage:true}];
   writeFileSync(args.find((arg:string)=>arg.startsWith('--build_event_json_file=')).slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
 } else if(args[0]==='info') console.log(state.executionRoot);
+else if(args[0]==='query') {
+  if(state.mode==='analysis-failure' || state.mode==='deleted-load') process.exit(1);
+  if(!expression.startsWith('buildfiles(set("//fixture:')) throw new Error('configured package label must be quoted');
+  console.log('//fixture:BUILD.bazel');
+  console.log('//fixture:macro1.bzl');
+  console.log('//fixture:macro2.bzl');
+  console.log('@@registry//:helper.bzl');
+}
 else {
   if(state.mode==='discovery-failure') process.exit(1);
-  if(args[1].startsWith('labels(qualification,')) {
+  if(expression.startsWith('deps(')) {
+    console.log(JSON.stringify(state.recipeGraph));
+  } else if(expression.startsWith('set(')) {
     if(state.mode==='incompatible-policy') process.exit(1);
     console.log(JSON.stringify(state.qualification));
-  } else console.log('@@//fixture:shipping');
+  } else console.log(JSON.stringify({roots:['@@//fixture:shipping'],qualification:(state.qualification.results??[]).map((result:any)=>result.target.rule.name)}));
 }
 `,
   );
@@ -114,7 +356,18 @@ else {
   const manifest = 'bazel-out/k8-fastbuild/bin/shipping.shipping.json';
   const manifestBytes = Buffer.from(`${JSON.stringify(root)}\n`);
   writeFileSync(path.join(executionRoot, manifest), manifestBytes);
-  const paths = ['src/input.mts', output, manifest];
+  const policyFile = 'bazel-out/k8-fastbuild/bin/shipping_export.json';
+  const policy = {
+    schema: 'oliphaunt-bazel-shipping-v1',
+    scope: 'construction',
+    owner: '//fixture:shipping_export',
+    roots: [root.label],
+    packages: [root.package],
+    qualification: ['//fixture:mandatory_test'],
+  };
+  const policyBytes = Buffer.from(`${JSON.stringify(policy)}\n`);
+  writeFileSync(path.join(executionRoot, policyFile), policyBytes);
+  const paths = ['src/input.mts', output, manifest, policyFile];
   const aquery = {
     pathFragments: paths.flatMap((file, index) =>
       file.split('/').map((name, part) => ({
@@ -130,6 +383,7 @@ else {
     targets: [
       { id: 1, label: '//fixture:package' },
       { id: 2, label: root.label },
+      { id: 3, label: '//fixture:shipping_export' },
     ],
     configuration: [{ id: 1, checksum: configuration }],
     depSetOfFiles: [{ id: 1, directArtifactIds: [1] }],
@@ -150,6 +404,14 @@ else {
         mnemonic: 'FileWrite',
         outputIds: [3],
         primaryOutputId: 3,
+      },
+      {
+        targetId: 3,
+        configurationId: 1,
+        actionKey: 'declared-owner-policy',
+        mnemonic: 'FileWrite',
+        outputIds: [4],
+        primaryOutputId: 4,
       },
     ],
   };
@@ -192,6 +454,32 @@ else {
       },
     },
   ];
+  events.push(
+    {
+      id: { namedSet: { id: 'shipping-policy' } },
+      namedSetOfFiles: {
+        files: [
+          {
+            name: policyFile,
+            digest: createHash('sha256').update(policyBytes).digest('hex'),
+            length: String(policyBytes.length),
+          },
+        ],
+      },
+    },
+    {
+      id: {
+        targetCompleted: {
+          label: '//fixture:shipping_export',
+          configuration: { id: configuration },
+        },
+      },
+      completed: {
+        success: true,
+        outputGroup: [{ name: 'shipping_policy', fileSets: [{ id: 'shipping-policy' }] }],
+      },
+    },
+  );
   const identity = {
     label: '//fixture:mandatory_test',
     configuration: { id: configuration },
@@ -234,6 +522,26 @@ else {
       events,
       testEvents,
       qualification,
+      recipeGraph: {
+        configurations: [{ id: 1, checksum: configuration }],
+        results: [
+          {
+            configurationId: 1,
+            target: {
+              rule: {
+                name: root.label,
+                configuredRuleInput: [{ label: '@@registry//:LICENSE (Apache)' }],
+              },
+            },
+          },
+          {
+            configuration: { checksum: 'null' },
+            target: { sourceFile: { name: '@@registry//:LICENSE (Apache)' } },
+          },
+        ],
+      },
+      policy,
+      policyFile: path.join(executionRoot, policyFile),
     }),
   );
   const request: NativeShippingRequest = {
@@ -289,16 +597,34 @@ for (const selection of ['explicit', 'export'])
       expect(builds).toHaveLength(1);
       expect(builds[0]).toContain('//fixture:shipping');
       expect(builds[0]).toContain('//fixture:consumer');
-      expect(builds[0]).toContain('--output_groups=+shipping_manifest');
+      expect(builds[0]).toContain('--output_groups=+shipping_manifest,+shipping_policy');
       expect(builds[0]).toContain('--experimental_aquery_dump_after_build_format=jsonproto');
       expect(builds[0]).toContain(
         `--experimental_aquery_dump_after_build_output_file=${path.join(f.outputDirectory, 'aquery.json')}`,
       );
       expect(calls.map((call) => call[0])).toEqual(
-        selection === 'export' ? ['cquery', 'cquery', 'test', 'info'] : ['test', 'info'],
+        selection === 'export'
+          ? ['cquery', 'cquery', 'test', 'info', 'cquery', 'query']
+          : ['test', 'info', 'cquery', 'query'],
       );
-      for (const call of calls)
+      expect(
+        calls.filter((call) => call[0] === 'cquery' && call[1].startsWith('--query_file=')),
+      ).toHaveLength(1);
+      expect(calls.filter((call) => call[0] === 'query')).toHaveLength(1);
+      for (const call of calls.filter((call) => call[0] !== 'query'))
         for (const flag of f.request.configuration) expect(call).toContain(flag);
+      expect(calls.find((call) => call[0] === 'query')).not.toContain(
+        '--platforms=//fixture:platform',
+      );
+      expect(evidence.cohorts[0].rootAnalysisInputPaths).toEqual([
+        {
+          label: '//fixture:shipping',
+          paths: ['fixture/BUILD.bazel', 'fixture/macro1.bzl', 'fixture/macro2.bzl'],
+        },
+      ]);
+      expect(evidence.cohorts[0].analysisInputs[0].members[0].sha256).toBe(
+        createHash('sha256').update('declared shipping recipe').digest('hex'),
+      );
       expect(existsSync(path.join(f.outputDirectory, 'build-events.jsonl'))).toBe(true);
       expect(existsSync(path.join(f.outputDirectory, 'cquery.json'))).toBe(false);
       expect(existsSync(path.join(f.outputDirectory, 'roots.jsonl'))).toBe(false);
@@ -320,6 +646,38 @@ for (const selection of ['explicit', 'export'])
     }
   });
 
+test('large configured graphs keep query expressions out of OS-limited argv', () => {
+  const f = fixture();
+  try {
+    f.update((state) => {
+      for (let i = 0; i < 1500; i++) {
+        const name = `@@registry//:${i}-${'x'.repeat(100)}`;
+        state.recipeGraph.results[0].target.rule.configuredRuleInput.push({ label: name });
+        state.recipeGraph.results.push({ target: { sourceFile: { name } } });
+      }
+      const representative = `//fixture:a-${'x'.repeat(130 * 1024)}`;
+      state.recipeGraph.results[0].target.rule.configuredRuleInput.push({ label: representative });
+      state.recipeGraph.results.push({ target: { sourceFile: { name: representative } } });
+    });
+    qualifyNativeShipping(f.request, f.workspace);
+    const query = readFileSync(path.join(f.outputDirectory, 'analysis-buildfiles-0.query'), 'utf8');
+    expect(Buffer.byteLength(query)).toBeGreaterThan(128 * 1024);
+    expect(query).toStartWith('buildfiles(set("//fixture:a-');
+    expect(readFileSync(path.join(f.outputDirectory, 'analysis-deps.json')).length).toBeGreaterThan(
+      128 * 1024,
+    );
+    const calls = f.calls();
+    expect(calls.find((call) => call[0] === 'query')?.[1]).toBe(
+      `--query_file=${path.join(f.outputDirectory, 'analysis-buildfiles-0.query')}`,
+    );
+    expect(calls.every((call) => call.every((arg) => Buffer.byteLength(arg) < 128 * 1024))).toBe(
+      true,
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
 for (const targets of [[], undefined])
   test(`source-owned manual tests remain mandatory with ${targets ? 'empty' : 'omitted'} caller targets`, () => {
     const f = fixture();
@@ -337,14 +695,16 @@ for (const targets of [[], undefined])
         requireShippingAnalysis: true,
       });
       expect(result.testQualification).toBe('passed');
+      expect(result.qualificationPolicy).toBe('bound');
       expect(result.requiredTests).toEqual([
         { ...requiredTests[0], invocationId: 'fixture-build' },
       ]);
       const calls = f.calls();
-      expect(calls[1]).toContain('labels(qualification, //fixture:shipping_export)');
+      expect(calls[1]).toContain('set(//fixture:mandatory_test)');
       expect(calls[1]).toContain('--universe_scope=//fixture:shipping_export');
       expect(calls[1]).toContain('--output=jsonproto');
       expect(calls.find((call) => call[0] === 'test')).toContain('//fixture:mandatory_test');
+      expect(calls.find((call) => call[0] === 'test')).toContain('//fixture:shipping_export');
       const events = readFileSync(path.join(f.outputDirectory, 'build-events.jsonl'), 'utf8')
         .trim()
         .split('\n')
@@ -401,7 +761,9 @@ for (const failure of ['missing-summary', 'failed-result', 'configuration-mismat
         else state.qualification.configurations[0].checksum = 'd'.repeat(64);
       });
       expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
-        failure === 'failed-result' ? /successful test results/ : /mandatory configured test/,
+        failure === 'configuration-mismatch'
+          ? /mandatory configured test/
+          : /with-source.sh failed/,
       );
       expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
         false,
@@ -479,7 +841,19 @@ test('complete-family validation rejects bytes changed after successful evidence
       false,
     );
     expect(existsSync(path.join(f.outputDirectory, 'evidence/files'))).toBe(false);
-    expect(f.calls().map((call) => call[0])).toEqual(['test', 'info']);
+    expect(f.calls().map((call) => call[0])).toEqual(['test', 'info', 'cquery', 'query']);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('caller query substitution is rejected before any process even beyond OS argv limits', () => {
+  const f = fixture();
+  try {
+    f.request.configuration.push(`--query_file=${'x'.repeat(130 * 1024)}`);
+    expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow('cannot override');
+    expect(f.calls()).toEqual([]);
+    expect(existsSync(f.outputDirectory)).toBe(false);
   } finally {
     f.cleanup();
   }
@@ -525,8 +899,9 @@ test('preserves startup argv before every command and configuration afterward', 
     expect(calls.filter((call) => call[2] === 'test')).toHaveLength(1);
     for (const call of calls) {
       expect(call.slice(0, 2)).toEqual(startup);
-      expect(['test', 'cquery', 'info']).toContain(call[2]);
-      for (const flag of f.request.configuration) expect(call.indexOf(flag)).toBeGreaterThan(2);
+      expect(['test', 'cquery', 'query', 'info']).toContain(call[2]);
+      if (call[2] !== 'query')
+        for (const flag of f.request.configuration) expect(call.indexOf(flag)).toBeGreaterThan(2);
     }
   } finally {
     f.cleanup();
@@ -543,7 +918,7 @@ for (const product of ['unknown-product', 'postgres-tools-wasix'])
           ? 'unknown selected product'
           : 'incomplete native shipping coverage',
       );
-      expect(f.calls().map((call) => call[0])).toEqual(['test', 'info']);
+      expect(f.calls().map((call) => call[0])).toEqual(['test', 'info', 'cquery', 'query']);
       expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
         false,
       );
@@ -558,6 +933,8 @@ for (const mode of [
   'head-race',
   'build-failure',
   'discovery-failure',
+  'analysis-failure',
+  'deleted-load',
   'capture-race',
   'dump-missing',
   'manifest-tamper',

@@ -7,10 +7,12 @@ import {
   type CoverageAuthority,
   checkShippingCoverage,
 } from '../bazel/shipping-coverage.mts';
+import type { NativeShippingSupplier } from './bazel-shipping-inputs.mts';
 import {
   assertWasixPublicationPackages,
   discoverProductArtifacts,
   discoverPublicationArtifacts,
+  expectedProductArtifactRows,
   validateCargoPayloadPartSets,
 } from './publication-lock.mts';
 
@@ -28,6 +30,7 @@ export type NativeRoot = {
     configuration: string;
     role: string;
     outputs: { path: string; owner: string }[];
+    supplierInputs?: NativeShippingSupplier[];
   };
 };
 
@@ -67,9 +70,21 @@ export function readNativePublicationArtifacts(
   {
     products,
     nativeSourceBasis,
-  }: { products?: string[]; nativeSourceBasis?: NativeLegalSourceBasis } = {},
+    artifactPhase = 'final',
+  }: {
+    products?: string[];
+    nativeSourceBasis?: NativeLegalSourceBasis;
+    artifactPhase?: 'pre-version' | 'final';
+  } = {},
 ) {
-  const coverage = checkShippingCoverage(authority, cohorts, {
+  const phaseAuthority =
+    artifactPhase === 'final'
+      ? authority
+      : {
+          ...authority,
+          artifactRows: expectedProductArtifactRows(authority.catalog.products, { artifactPhase }),
+        };
+  const coverage = checkShippingCoverage(phaseAuthority, cohorts, {
     products,
     includeReleaseInputs: true,
   });
@@ -134,9 +149,9 @@ export function readNativePublicationArtifacts(
   const productArtifacts = discoverProductArtifacts(
     [...new Set(roots.flatMap(({ paths }) => paths))],
     authority.catalog.products.filter(({ id }) => selected.has(id)),
-    { nativeSourceBasis },
+    { nativeSourceBasis, artifactPhase },
   );
-  const expectedIds = authority.artifactRows
+  const expectedIds = phaseAuthority.artifactRows
     .filter(({ product }) => selected.has(product))
     .map(({ product, id }) => `${product}:${id}`)
     .sort();
@@ -144,7 +159,7 @@ export function readNativePublicationArtifacts(
   if (JSON.stringify(expectedIds) !== JSON.stringify(actualIds))
     throw new Error('physical native product artifact inventory is incomplete');
   for (const artifact of productArtifacts) {
-    const declared = authority.artifactRows.find(
+    const declared = phaseAuthority.artifactRows.find(
       (row) => row.product === artifact.product && row.id === artifact.id,
     );
     if (

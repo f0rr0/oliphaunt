@@ -2,11 +2,12 @@ exports_files([
     "postgres/logical-tools.json",
     "protocol/query-response-cases.json",
     "protocol/structured-sql-cases.json",
+    "storage/database-root.json",
     "storage/physical-backup-wal-range-v1.properties",
 ])
 
 filegroup(
     name = "rust_fixtures",
-    srcs = glob(["**/*.json", "**/*.sql", "**/*.properties"]),
+    srcs = glob(["**/*.json", "**/*.sql", "**/*.properties"]) + ["//src/test-fixtures/extensions:sql"],
     visibility = ["//visibility:public"],
 )

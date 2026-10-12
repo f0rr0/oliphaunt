@@ -3,6 +3,7 @@
 load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "CONTRIB_OWNERS", "EXTENSIONS", "EXTENSION_RELEASE_METADATA", "POSTGRES_SOURCE", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action", "bun_script_test")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "merge_shipping_suppliers")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_identity")
 load(":final_leaf.bzl", "ExtensionFinalLeafInfo")
 load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extension_carrier_legal")
@@ -14,14 +15,14 @@ _TARGETS = {"//build_defs/native:linux_x86_64": "linux-x64-gnu", "//build_defs/n
 def native_contrib_carrier_legal():
     return ["//:LICENSE", "//:THIRD_PARTY_NOTICES.md", "//src/third-party/postgres:COPYRIGHT", "//src/third-party/postgres:source.toml", "//src/third-party/openssl:LICENSE.txt", "//src/third-party/openssl:source.toml"]
 
-def native_contrib_carrier_metadata(target):
+def native_contrib_carrier_metadata(target, family = "native"):
     rows = [row for row in EXTENSION_RELEASE_METADATA if row["class"] == "contrib"]
     expected = sorted([member["sql-name"] for member in CONTRIB_MEMBERS])
     if sorted([row["sqlName"] for row in rows]) != expected:
         fail("contrib carrier metadata must cover every canonical member exactly once")
     metadata = rows[0]
     product = metadata["artifactProduct"]
-    owner = CONTRIB_OWNERS["native"]
+    owner = CONTRIB_OWNERS[family]
     compatibility = metadata["compatibility"]
     common = {"product": product, "owner": owner, "version": PRODUCTS[owner]["version"], "runtimeVersion": PRODUCTS[owner]["version"], "target": target,
               "compatibility": {"extension_runtime_contract": compatibility["extensionRuntimeContract"], "native_runtime_product": compatibility["nativeRuntimeProduct"], "native_runtime_version": compatibility["nativeRuntimeVersion"], "postgres_major": compatibility["postgresMajor"], "wasix_runtime_product": compatibility["wasixRuntimeProduct"], "wasix_runtime_version": compatibility["wasixRuntimeVersion"]},
@@ -75,12 +76,13 @@ def _carriers_impl(ctx):
     bun_file_action(ctx, ctx.file._tool, arguments = [inputs.path], inputs = member_inputs + [inputs] + ctx.files.legal,
                     source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal,
                     outputs = [github, npm, cargo, manifest, frozen], mnemonic = "NativeContribEnvelopes")
-    return [DefaultInfo(files = depset([github, npm, cargo, manifest, frozen])),
+    suppliers = merge_shipping_suppliers([member[ShippingSupplierInfo] for member in ctx.attr.members])
+    return [DefaultInfo(files = depset([github, npm, cargo, manifest, frozen])), suppliers,
             ExtensionFinalLeafInfo(product = spec["product"], owner = spec["owner"], version = spec["version"], family = "native", target = spec["target"], metadata = spec, github = [github], npm = [npm], cargo = [cargo], manifest = manifest, frozen = frozen, spec = inputs, validation = None, receipt = None, origin = None),
             OutputGroupInfo(github = depset([github]), npm = depset([npm]), cargo = depset([cargo]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([inputs]))]
 
 _native_contrib_carriers = rule(implementation = _carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
-    attrs = {"members": attr.label_list(mandatory = True, providers = [ExtensionMemberInfo]), "legal": attr.label_list(allow_files = True),
+    attrs = {"members": attr.label_list(mandatory = True, providers = [ExtensionMemberInfo, ShippingSupplierInfo]), "legal": attr.label_list(allow_files = True),
              "_tool": attr.label(default = "//build_defs/extensions:contrib_carriers.mts", allow_single_file = True),
              "_helpers": attr.label_list(default = native_extension_carrier_helpers() + ["//build_defs/extensions:native_carriers.mts", "//:src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts"], allow_files = True)})
 
@@ -102,15 +104,20 @@ def native_contrib_carriers():
                 row = _leaf(spec, ecosystem)
                 names[condition], roles[condition] = row["name"], row["role"]
         shipping_package(name = name, owner = owner, artifacts = [":" + name + "_files"], ecosystem = ecosystem,
-                         package_name = select(names), configuration = select(_TARGETS), role = select(roles), target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+                         package_name = select(names), configuration = select(_TARGETS), role = select(roles), suppliers = ":native_carriers", target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
         packages.append(":" + name)
     for group in ["manifest", "frozen"]:
         name = "native_" + group + "_shipping"
         native.filegroup(name = name + "_files", srcs = [":native_carriers"], output_group = group)
         shipping_package(name = name, owner = owner, artifacts = [":" + name + "_files"], ecosystem = "internal",
-                         package_name = "contrib-native-" + group, configuration = select(_TARGETS), role = "extension-release-" + group + "-input", target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+                         package_name = "contrib-native-" + group, configuration = select(_TARGETS), role = "extension-release-" + group + "-input", suppliers = ":native_carriers", target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
         packages.append(":" + name)
-    shipping_export(name = "native_shipping_export", packages = packages, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+    shipping_export(name = "native_shipping_export", packages = packages, qualification = select({
+        condition: [":native_carriers_test"] if target.startswith("linux-") else [
+            "//build_defs/extensions:desktop_all_final_contract_test",
+            "//build_defs/extensions:desktop_all_members_frozen_sql_test",
+        ] for condition, target in _TARGETS.items()
+    }), testonly = True, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
     native.filegroup(name = "native_carrier_spec", srcs = [":native_carriers"], output_group = "spec")
     extension_smoke_plan(name = "native_final_plan", members = [":cube_native_payload", ":pg_trgm_native_payload", "//src/extensions/external/pgtap:native_payload"], fixtures = ["//src/test-fixtures/extensions:sql"])
     plans = []

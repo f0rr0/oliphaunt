@@ -81,13 +81,15 @@ jobs:
     name: Prepare release PR
     needs: validate-inputs
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     if: ${{ inputs.operation == 'prepare-release-pr' }}
     environment: release-pr
     permissions:
+      actions: read
       contents: read
       issues: read
       pull-requests: read
+      attestations: read
     steps:
       - name: Require main
         run: |
@@ -115,11 +117,18 @@ jobs:
           permission-contents: write
           permission-issues: write
           permission-pull-requests: write
-      - name: Set up Moon
-        uses: ./.github/actions/setup-moon
-        with:
-          task-cache: "false"
-          install-workspace: "true"
+      - name: Set up verified Node.js and Bun
+        uses: ./.github/actions/setup-node-bun
+      - name: Install locked release tooling
+        run: bun install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
+      - name: Require qualified native source
+        id: native_qualification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          bash .github/scripts/require-workflow-success.sh 'Native Bazel qualification' "$GITHUB_SHA" 900
+          --event push --event workflow_dispatch --job Required
       - name: Set up Rust for dependency metadata and manifest synchronization
         uses: ./.github/actions/setup-rust
         with:
@@ -128,10 +137,21 @@ jobs:
         id: prepare_candidate
         env:
           GH_TOKEN: ${{ steps.release_pr_token.outputs.token }}
+          NATIVE_QUALIFICATION_RUN_ID: ${{ steps.native_qualification.outputs.run_id }}
         run: bash tools/release/prepare-release-pr.sh "$RUNNER_TEMP/release-candidate"
       - name: Close and validate the local release candidate
         if: ${{ steps.prepare_candidate.outputs.required == 'true' }}
+        env:
+          NATIVE_QUALIFICATION_RUN_ID: ${{ steps.native_qualification.outputs.run_id }}
         run: bash tools/release/close-release-candidate.sh "$RUNNER_TEMP/release-candidate"
+      - name: Retain qualified native release inputs
+        if: ${{ steps.prepare_candidate.outputs.native_inputs == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-release-inputs
+          path: ${{ runner.temp }}/release-candidate/native-release-inputs/
+          if-no-files-found: error
+          retention-days: 30
       - name: Publish the completed release PR tree
         if: ${{ steps.prepare_candidate.outputs.required == 'true' }}
         env:
@@ -163,11 +183,8 @@ jobs:
         env:
           INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: .github/scripts/resolve-release-head.sh
-      - name: Set up Moon
-        uses: ./.github/actions/setup-moon
-        with:
-          task-cache: "false"
-          install-workspace: "true"
+      - name: Set up verified Node.js and Bun
+        uses: ./.github/actions/setup-node-bun
       - name: Set up Cargo for dependency metadata
         uses: ./.github/actions/setup-rust
         with:
@@ -187,48 +204,24 @@ jobs:
             status=$?
             [[ "$status" == 2 ]] || exit "$status"
           fi
-          bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
-      - name: Derive verified release scope
-        id: release_scope
+          bash .github/scripts/require-workflow-success.sh "Native Bazel qualification" "$GITHUB_SHA" 0 --job Required
+      - name: Derive verified Release Please publication scope
+        id: release_plan
         timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" "$RELEASE_HEAD_SHA" tools/dev/bun.sh tools/release/verify-publication-candidate.mts \
-            --derive-products \
+          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh \
+            tools/release/native-freeze-publication-candidate.mts --plan-publication \
             --head-ref "$RELEASE_HEAD_SHA" \
             --github-output "$GITHUB_OUTPUT"
-      - name: Plan product releases
-        id: release_plan
-        env:
-          PRODUCTS_JSON: ${{ steps.release_scope.outputs.products_json }}
-        run: |
-          release_plan_args=(
-            --from-product-tags
-            --include-current-tags
-            --products-json "$PRODUCTS_JSON"
-            --head-ref "$RELEASE_HEAD_SHA"
-            --format github-output
-          )
-          bash tools/release/release-plan.sh "${release_plan_args[@]}" >> "$GITHUB_OUTPUT"
-      - name: No package release planned
-        if: ${{ steps.release_plan.outputs.has_release_changes != 'true' }}
-        run: echo "No release-affecting product changes were found since the last product tag."
+          echo "has_release_changes=true" >> "$GITHUB_OUTPUT"
       - name: Resolve selected registry authentication needs
         id: registry_needs
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: bun .github/scripts/selected-registry-needs.mts
-      - name: Prove pending release identity
-        id: verify_publication_candidate
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
-        timeout-minutes: 2
-        env:
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: |
-          bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" "$RELEASE_HEAD_SHA" tools/dev/bun.sh tools/release/verify-publication-candidate.mts \
-            --products-json "$PRODUCTS_JSON" \
-            --head-ref "$RELEASE_HEAD_SHA" \
-            --github-output "$GITHUB_OUTPUT"
       - name: Prove Release Please PR can complete after publication
         id: assert_release_please_markable
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
@@ -238,84 +231,20 @@ jobs:
         run: |
           tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mts \
             assert-markable \
-            --release-sha "${{ steps.verify_publication_candidate.outputs.release_sha }}" \
+            --release-sha "${{ steps.release_plan.outputs.release_sha }}" \
             --base main
-      - name: Plan qualification reuse or request
-        id: ci_qualification
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          REQUIRES_WASIX_EVIDENCE: ${{ steps.release_plan.outputs.requires_wasix_release_regression_evidence }}
-          REQUIRES_NATIVE_EVIDENCE: ${{ steps.release_plan.outputs.requires_native_extension_lifecycle_evidence }}
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-          QUALIFICATION_RUN_ID: ${{ inputs.qualification_run_id }}
-        run: |
-          qualification_args=(
-            CI
-            "$RELEASE_HEAD_SHA"
-            0
-            --event push
-            --event workflow_dispatch
-            --job Builds
-            --job Required
-            --job Qualified
-            --artifact artifact-build-plan
-            --artifact oliphaunt-release-candidate
-          )
-          if [[ -n "$QUALIFICATION_RUN_ID" ]]; then
-            qualification_args+=(--run-id "$QUALIFICATION_RUN_ID" --qualification-products "$PRODUCTS_JSON")
-          else
-            qualification_args+=(--plan-qualification "$PRODUCTS_JSON")
-          fi
-          if [[ "$REQUIRES_NATIVE_EVIDENCE" == true ]]; then
-            qualification_args+=(--artifact native-extension-lifecycle-evidence)
-          fi
-          if [[ "$REQUIRES_WASIX_EVIDENCE" == true ]]; then
-            qualification_args+=(--artifact wasix-release-regression-evidence)
-          fi
-          if [[ "${{ steps.release_plan.outputs.has_extension_artifacts }}" == true ]]; then
-            qualification_args+=(--artifact oliphaunt-extension-package-artifacts)
-          fi
-          bash .github/scripts/require-workflow-success.sh "${qualification_args[@]}"
     outputs:
       release_plan: ${{ toJSON(steps.release_plan.outputs) }}
       release_head: ${{ toJSON(steps.release_head.outputs) }}
       registry_needs: ${{ toJSON(steps.registry_needs.outputs) }}
-      verify_publication_candidate: ${{ toJSON(steps.verify_publication_candidate.outputs) }}
-      qualification_request_required: ${{ steps.ci_qualification.outputs.qualification_request_required }}
-  request-qualification:
-    name: Request missing CI qualification
-    needs: plan-candidate
-    if: ${{ needs.plan-candidate.outputs.qualification_request_required == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-      - name: Set up Bun
-        uses: ./.github/actions/setup-bun
-      - name: Request or reuse the candidate CI run
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_HEAD_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
-          PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
-        run: bash .github/scripts/require-workflow-success.sh CI "$RELEASE_HEAD_SHA" 120 --dispatch-qualification "$PRODUCTS_JSON"
+      verify_publication_candidate: ${{ toJSON(steps.release_plan.outputs) }}
   prepare-candidate:
     name: Prepare frozen publication candidate
     needs:
       - plan-candidate
-      - request-qualification
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-    if: ${{ !cancelled() && needs.plan-candidate.result == 'success' && (needs.request-qualification.result == 'success' || needs.request-qualification.result == 'skipped') && fromJSON(needs.plan-candidate.outputs.release_plan).has_release_changes == 'true' }}
+    if: ${{ !cancelled() && needs.plan-candidate.result == 'success' && fromJSON(needs.plan-candidate.outputs.release_plan).has_release_changes == 'true' }}
     environment: release-dry-run
     permissions:
       actions: read
@@ -333,122 +262,28 @@ jobs:
         run: |
           .github/scripts/resolve-release-head.sh
           echo "OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR=$RUNNER_TEMP/oliphaunt-github-run-snapshots" >> "$GITHUB_ENV"
-      - name: Set up Moon
-        uses: ./.github/actions/setup-moon
-        with:
-          task-cache: "false"
-          install-workspace: "true"
-      - name: Require qualified release-commit CI run
+      - name: Set up verified Node.js and Bun
+        uses: ./.github/actions/setup-node-bun
+      - name: Require exact-source native qualification
         id: ci_qualification
         if: ${{ inputs.approval_run_id == '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          REQUIRES_WASIX_EVIDENCE: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).requires_wasix_release_regression_evidence }}
-          REQUIRES_NATIVE_EVIDENCE: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).requires_native_extension_lifecycle_evidence }}
-          PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
           QUALIFICATION_RUN_ID: ${{ inputs.qualification_run_id }}
         run: |
           qualification_args=(
-            CI
+            "Native Bazel qualification"
             "$RELEASE_HEAD_SHA"
             7200
-            --qualification-products "$PRODUCTS_JSON"
             --event push
             --event workflow_dispatch
-            --job Builds
             --job Required
-            --job Qualified
-            --artifact artifact-build-plan
-            --artifact oliphaunt-release-candidate
           )
           if [[ -n "$QUALIFICATION_RUN_ID" ]]; then
             qualification_args+=(--run-id "$QUALIFICATION_RUN_ID")
           fi
-          if [[ "$REQUIRES_NATIVE_EVIDENCE" == true ]]; then
-            qualification_args+=(--artifact native-extension-lifecycle-evidence)
-          fi
-          if [[ "$REQUIRES_WASIX_EVIDENCE" == true ]]; then
-            qualification_args+=(--artifact wasix-release-regression-evidence)
-          fi
-          if [[ "${{ fromJSON(needs.plan-candidate.outputs.release_plan).has_extension_artifacts }}" == true ]]; then
-            qualification_args+=(--artifact oliphaunt-extension-package-artifacts)
-          fi
           bash .github/scripts/require-workflow-success.sh "${qualification_args[@]}"
-      - name: Download exact-SHA qualification record
-        if: ${{ inputs.approval_run_id == '' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-        run: |
-          bash .github/scripts/download-build-artifacts.sh \
-            CI \
-            "$RELEASE_HEAD_SHA" \
-            target/release-candidate \
-            --run-id "$CI_RUN_ID" \
-            --job Qualified \
-            --artifact oliphaunt-release-candidate
-      - name: Download exact-SHA affected plan
-        if: ${{ inputs.approval_run_id == '' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-        run: |
-          bash .github/scripts/download-build-artifacts.sh \
-            CI \
-            "$RELEASE_HEAD_SHA" \
-            target/release-candidate/affected-plan \
-            --run-id "$CI_RUN_ID" \
-            --job "Planning / Affected Work" \
-            --artifact artifact-build-plan
-      - name: Download required exact-SHA WASIX evidence
-        if: ${{ inputs.approval_run_id == '' && fromJSON(needs.plan-candidate.outputs.release_plan).requires_wasix_release_regression_evidence == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-        run: |
-          bash .github/scripts/download-build-artifacts.sh \
-            CI \
-            "$RELEASE_HEAD_SHA" \
-            target/release-candidate/wasix-evidence \
-            --run-id "$CI_RUN_ID" \
-            --job "E2E / WASIX Extension Lifecycle" \
-            --artifact wasix-release-regression-evidence
-      - name: Download required exact-SHA native evidence
-        if: ${{ inputs.approval_run_id == '' && fromJSON(needs.plan-candidate.outputs.release_plan).requires_native_extension_lifecycle_evidence == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-        run: |
-          bash .github/scripts/download-build-artifacts.sh \
-            CI \
-            "$RELEASE_HEAD_SHA" \
-            target/release-candidate/native-evidence \
-            --run-id "$CI_RUN_ID" \
-            --job "E2E / Native Extension Lifecycle Evidence" \
-            --artifact native-extension-lifecycle-evidence
-      - name: Verify exact-SHA qualification record
-        id: verify_qualification
-        if: ${{ inputs.approval_run_id == '' }}
-        env:
-          PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-          WASIX_EVIDENCE_REQUIRED: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).requires_wasix_release_regression_evidence }}
-          NATIVE_EVIDENCE_REQUIRED: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).requires_native_extension_lifecycle_evidence }}
-        run: |
-          bash .github/scripts/release-candidate.sh verify \
-            target/release-candidate/oliphaunt-release-candidate.json \
-            --plan target/release-candidate/affected-plan/ci-plan.json \
-            --qualification-mode release \
-            --products-json "$PRODUCTS_JSON" \
-            --native-evidence-required "$NATIVE_EVIDENCE_REQUIRED" \
-            --native-evidence-root target/release-candidate/native-evidence \
-            --wasix-evidence-required "$WASIX_EVIDENCE_REQUIRED" \
-            --wasix-evidence-root target/release-candidate/wasix-evidence
       - name: Require the explicitly selected prepared candidate
         id: approved_publication_lock
         if: ${{ inputs.approval_run_id != '' }}
@@ -501,7 +336,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: |
-          bash tools/release/release-check-registries.sh \
+          bash tools/release/release-check-registries.sh --native-preparation \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
       - name: Checkout qualified source for unchanged packaging
@@ -510,375 +345,21 @@ jobs:
           bash tools/release/publication-controller.sh "$RELEASE_HEAD_SHA" "$GITHUB_SHA"
           git checkout --detach "$RELEASE_HEAD_SHA"
           bash tools/release/qualified-release-replay.sh "$RELEASE_HEAD_SHA" "$RELEASE_HEAD_SHA"
-      - name: Download WASIX runtime build artifacts
-        if: ${{ inputs.approval_run_id == '' && contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'liboliphaunt-wasix') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-          RELEASE_ARTIFACT_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
-        run: bash .github/scripts/download-wasix-runtime-build-artifacts.sh
-      - name: Download WASIX release assets
-        if: ${{ inputs.approval_run_id == '' && contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'liboliphaunt-wasix') }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-          RELEASE_ARTIFACT_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
-        run: |
-          bash .github/scripts/download-build-artifacts.sh \
-            CI \
-            "$RELEASE_ARTIFACT_SHA" \
-            target/oliphaunt-wasix/release-assets \
-            --run-id "$CI_RUN_ID" \
-            --job Builds \
-            --artifact liboliphaunt-wasix-release-assets
-      - name: Download WASIX postmaster release assets
-        if: ${{ inputs.approval_run_id == '' && contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'liboliphaunt-wasix-postmaster') }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-          RELEASE_ARTIFACT_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
-        run: |
-          bash .github/scripts/download-build-artifacts.sh \
-            CI \
-            "$RELEASE_ARTIFACT_SHA" \
-            target/oliphaunt-wasix-postmaster/release-assets \
-            --run-id "$CI_RUN_ID" \
-            --job Builds \
-            --artifact liboliphaunt-wasix-postmaster-release-assets
-      - name: Download exact-extension package artifacts
-        if: ${{ inputs.approval_run_id == '' && fromJSON(needs.plan-candidate.outputs.release_plan).has_extension_artifacts == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-          RELEASE_ARTIFACT_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
-        run: |
-          bash .github/scripts/download-build-artifacts.sh \
-            CI \
-            "$RELEASE_ARTIFACT_SHA" \
-            target/extension-artifacts \
-            --run-id "$CI_RUN_ID" \
-            --job Builds \
-            --artifact oliphaunt-extension-package-artifacts
-      - name: Download SDK package artifacts
-        if: ${{ inputs.approval_run_id == '' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-          RELEASE_ARTIFACT_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
-        run: |
-          download_sdk_artifact() {
-            local product="$1"
-            local artifact_args=()
-            while IFS= read -r artifact; do
-              artifact_args+=(--artifact "$artifact")
-            done < <(tools/dev/bun.sh tools/release/query.mts ci-artifact-names --product "$product" --family sdk-package --format lines)
-            bash .github/scripts/download-build-artifacts.sh \
-              CI \
-              "$RELEASE_ARTIFACT_SHA" \
-              "target/sdk-artifacts/$product" \
-              --run-id "$CI_RUN_ID" \
-              --job Builds \
-              "${artifact_args[@]}"
-          }
-          while IFS= read -r product; do
-            download_sdk_artifact "$product"
-          done < <(tools/dev/bun.sh tools/release/query.mts ci-products --family sdk-package --products-json "$PRODUCTS_JSON" --format lines)
-      - name: Download liboliphaunt release assets
-        if: ${{ inputs.approval_run_id == '' && contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'liboliphaunt-native') }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-          RELEASE_ARTIFACT_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
-        run: |
-          bash .github/scripts/download-build-artifacts.sh \
-            CI \
-            "$RELEASE_ARTIFACT_SHA" \
-            target/liboliphaunt/release-assets \
-            --run-id "$CI_RUN_ID" \
-            --job Builds \
-            --artifact liboliphaunt-native-release-assets
-      - name: Download canonical database resources
-        if: ${{ inputs.approval_run_id == '' && contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'database-resources') }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-          RELEASE_ARTIFACT_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
-        run: |
-          artifacts=()
-          for kind in icu-data native-seeds wasix-seeds; do
-            while IFS= read -r artifact; do
-              artifacts+=(--artifact "$artifact")
-            done < <(tools/dev/bun.sh tools/release/query.mts ci-artifact-names --product database-resources --kind "$kind" --family release-assets --format lines)
-          done
-          bash .github/scripts/download-build-artifacts.sh \
-            CI \
-            "$RELEASE_ARTIFACT_SHA" \
-            target/database-resources/release-assets \
-            --run-id "$CI_RUN_ID" \
-            --job Builds \
-            "${artifacts[@]}"
-      - name: Download native helper release assets
-        if: ${{ inputs.approval_run_id == '' && (contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-broker') || contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-node-direct') || contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-wasix-napi') || contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'postgres-tools-native') || contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'postgres-tools-wasix')) }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          PRODUCT_POSTGRES_TOOLS_WASIX: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'postgres-tools-wasix') }}
-          PRODUCT_POSTGRES_TOOLS_NATIVE: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'postgres-tools-native') }}
-          PRODUCT_OLIPHAUNT_BROKER: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-broker') }}
-          PRODUCT_OLIPHAUNT_NODE_DIRECT: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-node-direct') }}
-          PRODUCT_OLIPHAUNT_WASIX_NAPI: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-wasix-napi') }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-          RELEASE_ARTIFACT_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
-        run: |
-          download_helper_artifacts() {
-            local product="$1"
-            local kind="$2"
-            local destination="$3"
-            local artifact_args=()
-            while IFS= read -r artifact; do
-              artifact_args+=(--artifact "$artifact")
-            done < <(tools/dev/bun.sh tools/release/query.mts ci-artifact-names --product "$product" --kind "$kind" --family release-assets --format lines)
-            bash .github/scripts/download-build-artifacts.sh \
-              CI \
-              "$RELEASE_ARTIFACT_SHA" \
-              "$destination" \
-              --run-id "$CI_RUN_ID" \
-              --job Builds \
-              "${artifact_args[@]}"
-          }
-          if [ "$PRODUCT_POSTGRES_TOOLS_WASIX" = "true" ]; then
-            download_helper_artifacts postgres-tools-wasix wasix-tools target/postgres-tools/wasix/release-assets
-            download_helper_artifacts postgres-tools-wasix wasix-tools-aot target/postgres-tools/wasix/release-assets
-          fi
-          if [ "$PRODUCT_POSTGRES_TOOLS_NATIVE" = "true" ]; then
-            download_helper_artifacts postgres-tools-native native-tools target/postgres-tools/native/release-assets
-          fi
-          if [ "$PRODUCT_OLIPHAUNT_BROKER" = "true" ]; then
-            download_helper_artifacts \
-              oliphaunt-broker \
-              broker-helper \
-              target/oliphaunt-broker/release-assets
-          fi
-          if [ "$PRODUCT_OLIPHAUNT_NODE_DIRECT" = "true" ]; then
-            download_helper_artifacts \
-              oliphaunt-node-direct \
-              node-direct-addon \
-              target/oliphaunt-node-direct/release-assets
-          fi
-          if [ "$PRODUCT_OLIPHAUNT_WASIX_NAPI" = "true" ]; then
-            download_helper_artifacts \
-              oliphaunt-wasix-napi \
-              wasix-napi-addon \
-              target/oliphaunt-wasix-napi/release-assets
-          fi
-      - name: Download Node direct optional npm packages
-        if: ${{ inputs.approval_run_id == '' && contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-node-direct') }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-          RELEASE_ARTIFACT_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
-        run: |
-          artifact_args=()
-          while IFS= read -r artifact; do
-            artifact_args+=(--artifact "$artifact")
-          done < <(tools/dev/bun.sh tools/release/query.mts ci-artifact-names --product oliphaunt-node-direct --kind node-direct-addon --family npm-package --format lines)
-          bash .github/scripts/download-build-artifacts.sh \
-            CI \
-            "$RELEASE_ARTIFACT_SHA" \
-            target/oliphaunt-node-direct/npm-packages \
-            --run-id "$CI_RUN_ID" \
-            --job Builds \
-            "${artifact_args[@]}"
-      - name: Download WASIX Node-API optional npm packages
-        if: ${{ inputs.approval_run_id == '' && contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-wasix-napi') }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-          RELEASE_ARTIFACT_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
-        run: |
-          artifact_args=()
-          while IFS= read -r artifact; do
-            artifact_args+=(--artifact "$artifact")
-          done < <(tools/dev/bun.sh tools/release/query.mts ci-artifact-names --product oliphaunt-wasix-napi --kind wasix-napi-addon --family npm-package --format lines)
-          bash .github/scripts/download-build-artifacts.sh \
-            CI \
-            "$RELEASE_ARTIFACT_SHA" \
-            target/oliphaunt-wasix-napi/npm-packages \
-            --run-id "$CI_RUN_ID" \
-            --job Builds \
-            "${artifact_args[@]}"
-      - name: Freeze canonical Apple extension carrier input
-        if: ${{ inputs.approval_run_id == '' && (contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-swift') || contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-react-native')) }}
-        env:
-          PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
-          includes_swift: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-swift') }}
-          includes_react_native: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-react-native') }}
-        run: |
-          swift_source_carrier=target/sdk-artifacts/oliphaunt-swift/release-tree/src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json
-          react_native_source_carrier=target/sdk-artifacts/oliphaunt-react-native/ios-carriers/oliphaunt-react-native-ios-carriers.json
-          extension_manifest_args=()
-          extension_carrier_args=()
-          product_roots="$(tools/dev/bun.sh tools/release/query.mts \
-            ci-products \
-            --family extension-artifacts \
-            --carrier-family native \
-            --products-json "$PRODUCTS_JSON" \
-            --field artifact-root \
-            --format lines)"
-          while IFS= read -r product_root; do
-            [[ -n "$product_root" ]] || continue
-            product="$(basename "$product_root")"
-            manifest="$product_root/extension-artifacts.json"
-            if [[ ! -f "$manifest" ]]; then
-              echo "Selected extension product $product is missing $manifest" >&2
-              exit 1
-            fi
-            extension_manifest_args+=(--extension-manifest "$manifest")
-            product_carriers=()
-            while IFS= read -r carrier; do
-              product_carriers+=("$carrier")
-            done < <(find "$product_root/release-assets" -maxdepth 1 -type f -name '*-swift-extension-carrier.json' | LC_ALL=C sort)
-            if (( ${#product_carriers[@]} != 1 )); then
-              echo "Selected extension product $product must provide exactly one independent Swift carrier; found ${#product_carriers[@]}" >&2
-              exit 1
-            fi
-            extension_carrier_args+=(--extension-carrier "${product_carriers[0]}")
-          done <<< "$product_roots"
-          rm -rf target/release/ios-carriers target/release-work/ios-carriers
-          if [[ "$includes_swift" == true && "$includes_react_native" == true ]] && ! cmp -s "$swift_source_carrier" "$react_native_source_carrier"; then
-            echo 'Swift and React Native source carriers disagree for the same release plan.' >&2
-            diff --unified "$swift_source_carrier" "$react_native_source_carrier" || true
-            exit 1
-          fi
-
-          if [[ "$includes_react_native" == true ]]; then
-            mkdir -p target/release/ios-carriers
-            public_carrier=target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json
-            if (( ${#extension_manifest_args[@]} == 0 )); then
-              cp "$react_native_source_carrier" "$public_carrier"
-            else
-              public_args=(
-                --base-carrier "$react_native_source_carrier"
-                "${extension_manifest_args[@]}"
-                --output "$public_carrier"
-              )
-              tools/dev/bun.sh src/native/sdks/swift/tools/ios-carrier-manifest.mts "${public_args[@]}"
-            fi
-          fi
-
-          if [[ "$includes_swift" == true && ${#extension_manifest_args[@]} -gt 0 ]]; then
-            mkdir -p target/release-work/ios-carriers
-            local_aggregate_carrier=target/release-work/ios-carriers/oliphaunt-react-native-ios-carriers.json
-            local_args=(
-              --base-carrier "$swift_source_carrier"
-              "${extension_manifest_args[@]}"
-              --output "$local_aggregate_carrier"
-              --local-urls
-            )
-            tools/dev/bun.sh src/native/sdks/swift/tools/ios-carrier-manifest.mts "${local_args[@]}"
-            extensions_csv="$(bun src/native/sdks/swift/tools/ios-carrier-manifest.mts list-extensions "$local_aggregate_carrier")"
-            if [[ -z "$extensions_csv" || ${#extension_carrier_args[@]} == 0 ]]; then
-              echo 'Swift extension validation requires selected extension carrier assets.' >&2
-              exit 1
-            fi
-            swift_version="$(tools/dev/bun.sh tools/release/product-version.mts version oliphaunt-swift)"
-            cache=target/release-work/swiftpm-extension-cache
-            bun src/native/sdks/swift/tools/render-extension-products.mts \
-              --carrier "$local_aggregate_carrier" \
-              --extensions "$extensions_csv" \
-              --cache-dir "$cache" \
-              --allow-file-urls \
-              --base-package-version "$swift_version" \
-              --output-dir target/release-work/swiftpm-extension-cache-warm
-            bun src/native/sdks/swift/tools/render-extension-products.mts \
-              --carrier "$swift_source_carrier" \
-              "${extension_carrier_args[@]}" \
-              --extensions "$extensions_csv" \
-              --cache-dir "$cache" \
-              --offline \
-              --base-package-version "$swift_version" \
-              --output-dir target/release/swiftpm-extension-consumer-fixture
-          fi
-      - name: Set up pinned npm publisher
-        id: setup_github_stage_npm
-        if: ${{ fromJSON(needs.plan-candidate.outputs.registry_needs).needs_npm == 'true' }}
-        timeout-minutes: 3
-        uses: ./.github/actions/setup-npm-publisher
-        with:
-          npm-version: ${{ env.NPM_VERSION }}
-      - name: Verify unchanged candidate source before assembly
-        id: validate_release
-        if: ${{ inputs.approval_run_id == '' }}
-        env:
-          CANDIDATE_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
-        run: bash tools/release/qualified-release-replay.sh "$CANDIDATE_SHA" "$CANDIDATE_SHA"
-      - name: Package public release carriers
-        if: ${{ inputs.approval_run_id == '' }}
-        env:
-          OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-broker/release-assets
-          OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-node-direct/release-assets
-          OLIPHAUNT_WASIX_NAPI_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-wasix-napi/release-assets
-          PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
-        run: bash tools/release/package-release-carriers.sh --products-json "$PRODUCTS_JSON"
-      - name: Freeze exhaustive publication lock
+      - name: Freeze authenticated native publication outputs
         id: freeze_publication_lock
         if: ${{ inputs.approval_run_id == '' }}
         env:
+          GH_TOKEN: ${{ github.token }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
+          NATIVE_QUALIFICATION_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          lock_args=(
-            create
-            --products-json "$PRODUCTS_JSON"
-            --head-ref "$RELEASE_HEAD_SHA"
-            --output target/release/publication-lock.json
-          )
-          for artifact_root in \
-            target/release \
-            target/sdk-artifacts \
-            target/liboliphaunt/release-assets \
-            target/liboliphaunt/cargo-artifacts \
-            target/postgres-tools/native/release-assets \
-            target/postgres-tools/native/cargo-artifacts \
-            target/postgres-tools/wasix/release-assets \
-            target/postgres-tools/wasix/cargo-artifacts \
-            target/database-resources/release-assets \
-            target/database-resources/cargo-artifacts \
-            target/database-resources/seed-carriers \
-            target/oliphaunt-wasix/release-assets \
-            target/oliphaunt-wasix-postmaster/release-assets \
-            target/oliphaunt-broker/release-assets \
-            target/oliphaunt-broker/cargo-artifacts \
-            target/oliphaunt-wasix/cargo-artifacts \
-            target/oliphaunt-node-direct/release-assets \
-            target/oliphaunt-node-direct/npm-packages \
-            target/oliphaunt-wasix-napi/release-assets \
-            target/oliphaunt-wasix-napi/npm-packages; do
-            if [[ -e "$artifact_root" ]]; then
-              lock_args+=(--artifact-root "$artifact_root")
-            fi
-          done
-          while IFS= read -r artifact_root; do
-            if [[ ! -d "$artifact_root" ]]; then
-              echo "Selected extension artifacts are missing $artifact_root" >&2
-              exit 1
-            fi
-            lock_args+=(--artifact-root "$artifact_root")
-          done < <(tools/dev/bun.sh tools/release/query.mts \
-            ci-products \
-            --family extension-artifacts \
+          bash tools/release/qualified-release-replay.sh "$RELEASE_HEAD_SHA" "$RELEASE_HEAD_SHA"
+          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh \
+            tools/release/native-freeze-publication-candidate.mts \
+            --run-id "$NATIVE_QUALIFICATION_RUN_ID" \
             --products-json "$PRODUCTS_JSON" \
-            --field artifact-root \
-            --format lines)
-          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/publication-lock.mts "${lock_args[@]}"
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --output "$PUBLICATION_LOCK_PATH"
       - name: Freeze complete publication candidate
         id: freeze_publication_candidate
         if: ${{ inputs.approval_run_id == '' }}
@@ -1122,16 +603,13 @@ jobs:
         env:
           INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: .github/scripts/resolve-release-head.sh
-      - name: Set up Moon
-        uses: ./.github/actions/setup-moon
-        with:
-          task-cache: "false"
-          install-workspace: "false"
+      - name: Set up verified Node.js and Bun
+        uses: ./.github/actions/setup-node-bun
       - name: Require checked publishing code
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
+        run: bash .github/scripts/require-workflow-success.sh "Native Bazel qualification" "$GITHUB_SHA" 0 --job Required
       - name: Prove Release Please PR can complete after bootstrap
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1440,16 +918,13 @@ jobs:
         env:
           INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: .github/scripts/resolve-release-head.sh
-      - name: Set up Moon
-        uses: ./.github/actions/setup-moon
-        with:
-          task-cache: "false"
-          install-workspace: "true"
+      - name: Set up verified Node.js and Bun
+        uses: ./.github/actions/setup-node-bun
       - name: Require checked publishing code
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
+        run: bash .github/scripts/require-workflow-success.sh "Native Bazel qualification" "$GITHUB_SHA" 0 --job Required
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
       - name: Verify direct-workflow OIDC identity
@@ -1561,7 +1036,7 @@ jobs:
           GITHUB_TOKEN: ${{ steps.check_release_tag_app.outputs.token }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: |
-          bash tools/release/release-check-registries.sh \
+          bash tools/release/release-check-registries.sh --native-preparation \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
       - name: Set up pinned npm publisher

@@ -41,7 +41,7 @@ function usage() {
       `--output-dir <directory> [--cache-dir <directory>] [--offline] [--allow-file-urls] ` +
       `[--local-binary-targets] ` +
       `[--base-package-url <git-url>] [--base-package-version <semver>] ` +
-      `[--base-package-path <local-oliphaunt-checkout>]`,
+      `[--base-package-path <local-oliphaunt-checkout>] [--owner-catalog <catalog.json>]`,
   );
 }
 
@@ -74,6 +74,7 @@ function parseArgs(argv) {
         '--base-package-path',
         '--base-package-url',
         '--base-package-version',
+        '--owner-catalog',
       ].includes(arg)
     ) {
       usage();
@@ -96,6 +97,7 @@ function parseArgs(argv) {
     if (arg === '--base-package-path') args.basePackagePath = path.resolve(value);
     if (arg === '--base-package-url') args.basePackageUrl = value;
     if (arg === '--base-package-version') args.basePackageVersion = value;
+    if (arg === '--owner-catalog') args.ownerCatalogFile = path.resolve(value);
   }
   if (!args.outputDir || !args.extensions?.length) {
     usage();
@@ -954,6 +956,15 @@ async function writeGeneratedTree(selection, outputDir, basePackagePath, localBi
   const products = [];
   const targets = [];
   const selected = [];
+  const deliveredAsset = (asset, target) =>
+    asset == null
+      ? asset
+      : {
+          ...asset,
+          ...(asset.localPath === undefined
+            ? {}
+            : { localPath: `Artifacts/${target}.xcframework` }),
+        };
   for (const dependency of selection.nativeDependencies) {
     if (localBinaryTargets || dependency.asset.localPath !== undefined) {
       await copyLocalBinaryArtifact(dependency.asset, dependency.binaryTarget, outputDir);
@@ -987,10 +998,13 @@ async function writeGeneratedTree(selection, outputDir, basePackagePath, localBi
     });
     targets.push(...targetIR(extension, selection.bySqlName, localBinaryTargets));
     selected.push({
-      asset: extension.asset,
+      asset: deliveredAsset(extension.asset, extension.binaryTarget),
       createsExtension: extension.resources.createsExtension,
       dependencies: extension.dependencies,
-      nativeDependencies: extension.nativeDependencies,
+      nativeDependencies: extension.nativeDependencies.map((dependency) => ({
+        ...dependency,
+        asset: deliveredAsset(dependency.asset, dependency.binaryTarget),
+      })),
       nativeModuleStem: extension.nativeModuleStem,
       product: extension.product,
       releaseProduct: extension.releaseProduct,
@@ -1206,13 +1220,14 @@ export async function renderExtensionProducts(argv = process.argv.slice(2)) {
     extensions: args.extensions,
     offline: args.offline,
     localBinaryTargets: args.localBinaryTargets,
+    ownerCatalogFile: args.ownerCatalogFile,
   });
   const inputDirectory = process.cwd();
   const selection = validateSelection(input, inputDirectory, {
     allowFileUrls: args.allowFileUrls,
     localBinaryTargets: args.localBinaryTargets,
   });
-  const canonicalInventory = await loadSwiftExtensionInventoryCatalog();
+  const canonicalInventory = await loadSwiftExtensionInventoryCatalog(args.ownerCatalogFile);
   if (args.basePackagePath !== undefined) {
     const baseManifest = path.join(args.basePackagePath, 'Package.swift');
     const stat = await fs.stat(baseManifest).catch(() => null);

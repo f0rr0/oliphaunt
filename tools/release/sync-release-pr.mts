@@ -19,12 +19,11 @@ import {
   ROOT,
 } from './release-artifact-targets.mts';
 import {
-  buildBoundCompatibilityProducts,
   releaseDependencyPlan,
+  resolveBuildBoundCompatibilityProducts,
 } from './release-dependency-plan.mts';
 import {
   compatibilityVersionEntries,
-  loadGraph,
   loadProducts,
   productCompatibilityVersion,
 } from './release-graph.mts';
@@ -87,14 +86,16 @@ function jsonText(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function writeTextIfChanged(file, text, changes, detail, { write }) {
-  const before = readText(file);
+function writeTextIfChanged(file, text, changes, detail, { write, observeUpdate }) {
+  const beforeBytes = readFileSync(file);
+  const before = beforeBytes.toString('utf8');
   if (before === text) {
     return;
   }
   changes.push({ path: file, detail });
   if (write) {
     writeFileSync(file, text, 'utf8');
+    observeUpdate?.({ path: rel(file), before: beforeBytes, after: Buffer.from(text) });
   }
 }
 
@@ -240,7 +241,7 @@ function replaceTopLevelArrayAssignment(text, key, values, context) {
   return output.join('');
 }
 
-function syncExtensionRegistryMetadata(changes, { write }) {
+function syncExtensionRegistryMetadata(changes, { write, observeUpdate }) {
   const expectedPublishTargets = ['github-release-assets', 'npm', 'maven-central', 'crates-io'];
   for (const product of exactExtensionReleaseProducts(PREFIX)) {
     const releaseToml = path.join(ROOT, packagePath(product), 'release.toml');
@@ -267,13 +268,13 @@ function syncExtensionRegistryMetadata(changes, { write }) {
         updated,
         changes,
         'synced explicit extension registry metadata',
-        { write },
+        { write, observeUpdate },
       );
     }
   }
 }
 
-function syncReleasePleaseBootstrapBoundary(changes, { write }) {
+function syncReleasePleaseBootstrapBoundary(changes, { write, observeUpdate }) {
   const config = readJsonObject(RELEASE_PLEASE_CONFIG);
   const manifest = readJsonObject(RELEASE_PLEASE_MANIFEST);
   const updated = releasePleaseConfigAfterBootstrapConsumption(config, manifest);
@@ -283,18 +284,22 @@ function syncReleasePleaseBootstrapBoundary(changes, { write }) {
       jsonText(updated),
       changes,
       'removed the consumed one-time bootstrap-sha history boundary',
-      { write },
+      { write, observeUpdate },
     );
   }
 }
 
-async function syncCompatibilityVersions(changes, { write, transitions }) {
+async function syncCompatibilityVersions(
+  changes,
+  { write, observeUpdate, transitions, buildBound },
+) {
   const links = compatibilityEntriesForBumpedProducts(compatibilityVersionLinks(), transitions);
   const plan = releaseDependencyPlan(
     graphProducts(),
     transitions.map(({ product }) => product),
     {
       entries: links,
+      buildBound,
     },
   );
   for (const { id: specId, sourceProduct, path: pathText, parser, version: expected } of plan) {
@@ -305,7 +310,7 @@ async function syncCompatibilityVersions(changes, { write, transitions }) {
         `${expected}\n`,
         changes,
         `${specId} -> ${sourceProduct} ${expected}`,
-        { write },
+        { write, observeUpdate },
       );
       continue;
     }
@@ -313,21 +318,21 @@ async function syncCompatibilityVersions(changes, { write, transitions }) {
       const data = readJsonObject(file);
       const detail = setJsonPath(data, parser.split(':', 2)[1], expected, specId);
       if (detail !== undefined) {
-        writeTextIfChanged(file, jsonText(data), changes, detail, { write });
+        writeTextIfChanged(file, jsonText(data), changes, detail, { write, observeUpdate });
       }
       continue;
     }
     if (parser.startsWith('toml:')) {
       const [text, detail] = setTomlStringPath(file, parser.split(':', 2)[1], expected, specId);
       if (text !== undefined && detail !== undefined) {
-        writeTextIfChanged(file, text, changes, detail, { write });
+        writeTextIfChanged(file, text, changes, detail, { write, observeUpdate });
       }
       continue;
     }
     if (parser.startsWith('rust-const:')) {
       const [text, detail] = setRustConstString(file, parser.split(':', 2)[1], expected, specId);
       if (text !== undefined && detail !== undefined) {
-        writeTextIfChanged(file, text, changes, detail, { write });
+        writeTextIfChanged(file, text, changes, detail, { write, observeUpdate });
       }
       continue;
     }
@@ -343,9 +348,10 @@ async function expectedNativeToolsOptionalVersions() {
   return versions;
 }
 
-async function syncNativeToolsOptionalDependencies(changes, { write, transitions }) {
+async function syncNativeToolsOptionalDependencies(changes, { write, observeUpdate, transitions }) {
   return syncOptionalRuntimeDependencies(changes, {
     write,
+    observeUpdate,
     transitions,
     ownerProduct: 'postgres-tools-native',
     packageFile: NATIVE_TOOLS_FACADE_PACKAGE,
@@ -355,7 +361,7 @@ async function syncNativeToolsOptionalDependencies(changes, { write, transitions
 
 async function syncOptionalRuntimeDependencies(
   changes,
-  { write, transitions, ownerProduct, packageFile, runtimeVersions },
+  { write, observeUpdate, transitions, ownerProduct, packageFile, runtimeVersions },
 ) {
   if (!transitions.some(({ product }) => product === ownerProduct)) {
     return;
@@ -378,11 +384,11 @@ async function syncOptionalRuntimeDependencies(
     }
   }
   if (changed) {
-    writeTextIfChanged(file, jsonText(data), changes, details.join('; '), { write });
+    writeTextIfChanged(file, jsonText(data), changes, details.join('; '), { write, observeUpdate });
   }
 }
 
-function syncElectronExampleDependencies(changes, { write, transitions }) {
+function syncElectronExampleDependencies(changes, { write, observeUpdate, transitions }) {
   if (
     transitions.length &&
     !transitions.some(({ product }) => ['oliphaunt-js', 'postgres-tools-native'].includes(product))
@@ -410,6 +416,7 @@ function syncElectronExampleDependencies(changes, { write, transitions }) {
   if (changed) {
     writeTextIfChanged(ELECTRON_EXAMPLE_PACKAGE, jsonText(data), changes, details.join('; '), {
       write,
+      observeUpdate,
     });
   }
 }
@@ -533,10 +540,9 @@ export function cargoPathDependencyBindings(
   return desired;
 }
 
-function syncCargoPathDependencyPins(changes, { write, transitions }) {
+function syncCargoPathDependencyPins(changes, { write, observeUpdate, transitions, buildBound }) {
   const localPackages = localCargoPackagesByManifest();
   const products = graphProducts();
-  const compiled = buildBoundCompatibilityProducts(products);
   const selectedRoots = transitions
     .map(({ product }) => ({ product, root: path.join(ROOT, packagePath(product)) }))
     .sort(
@@ -564,7 +570,7 @@ function syncCargoPathDependencyPins(changes, { write, transitions }) {
             input.startsWith(path.join(ROOT, metadata.path) + path.sep),
         )
         .sort((left, right) => right[1].path.length - left[1].path.length)[0]?.[0];
-      return compiled.get(owner.product)?.has(producer);
+      return buildBound.get(owner.product)?.has(producer);
     });
     const result = syncExampleCargoManifestText(source, {
       policy: { crateDir: path.dirname(manifestPath) },
@@ -572,7 +578,10 @@ function syncCargoPathDependencyPins(changes, { write, transitions }) {
       label: rel(manifestPath),
     });
     if (result.details.length)
-      writeTextIfChanged(manifestPath, result.text, changes, result.details.join('; '), { write });
+      writeTextIfChanged(manifestPath, result.text, changes, result.details.join('; '), {
+        write,
+        observeUpdate,
+      });
   }
 }
 
@@ -763,7 +772,7 @@ export function syncExampleCargoManifestText(
   return { text: updated, details };
 }
 
-function syncExampleCargoRegistryPins(changes, { write, transitions }) {
+function syncExampleCargoRegistryPins(changes, { write, observeUpdate, transitions }) {
   const bindings = exampleCargoReleaseVersionBindings();
   for (const policy of exampleCargoPolicies()) {
     if (
@@ -787,7 +796,10 @@ function syncExampleCargoRegistryPins(changes, { write, transitions }) {
       fail(cause.message);
     }
     if (result.details.length > 0) {
-      writeTextIfChanged(file, result.text, changes, result.details.join('; '), { write });
+      writeTextIfChanged(file, result.text, changes, result.details.join('; '), {
+        write,
+        observeUpdate,
+      });
     }
   }
 }
@@ -815,7 +827,7 @@ function replaceVersionLine(line, version) {
   return `${match[1]}"${version}"${match[2]}${newline}`;
 }
 
-export function syncLockfile(lockfile, versions, changes, { write }) {
+export function syncLockfile(lockfile, versions, changes, { write, observeUpdate }) {
   const data = Bun.TOML.parse(readText(lockfile));
   if (!Array.isArray(data.package)) {
     fail(`${rel(lockfile)} is missing [[package]] entries`);
@@ -855,15 +867,18 @@ export function syncLockfile(lockfile, versions, changes, { write }) {
     }
   }
   if (fileChanges.length > 0) {
-    writeTextIfChanged(lockfile, lines.join(''), changes, fileChanges.join('; '), { write });
+    writeTextIfChanged(lockfile, lines.join(''), changes, fileChanges.join('; '), {
+      write,
+      observeUpdate,
+    });
   }
 }
 
-function syncLockfiles(changes, { write }) {
+function syncLockfiles(changes, { write, observeUpdate }) {
   const versions = localCargoPackageVersions();
   for (const lockfile of LOCKFILES) {
     if (lockfile !== LOCKFILES[0] && !existsSync(lockfile)) continue;
-    syncLockfile(lockfile, versions, changes, { write });
+    syncLockfile(lockfile, versions, changes, { write, observeUpdate });
   }
   // Bun can defer workspace dependency changes when their package versions also change.
   const lock = Bun.JSONC.parse(readText(BUN_LOCKFILE));
@@ -876,10 +891,13 @@ function syncLockfiles(changes, { write }) {
     }
   }
   if (updated.length > 0)
-    writeTextIfChanged(BUN_LOCKFILE, jsonText(lock), changes, 'npm workspace versions', { write });
+    writeTextIfChanged(BUN_LOCKFILE, jsonText(lock), changes, 'npm workspace versions', {
+      write,
+      observeUpdate,
+    });
 }
 
-function syncExtensionEvidenceSummary(changes, { write }) {
+function syncExtensionEvidenceSummary(changes, { write, observeUpdate }) {
   const identity = {
     commit: process.env.OLIPHAUNT_EVIDENCE_COMMIT,
     tree: process.env.OLIPHAUNT_EVIDENCE_TREE,
@@ -893,7 +911,7 @@ function syncExtensionEvidenceSummary(changes, { write }) {
     expected,
     changes,
     'extension evidence summary',
-    { write },
+    { write, observeUpdate },
   );
 }
 
@@ -930,13 +948,15 @@ function parseArgs(argv) {
   return args;
 }
 
-async function main(argv) {
+export async function syncReleasePr(argv = process.argv.slice(2), options = {}) {
   const args = parseArgs(argv);
+  const buildBound = resolveBuildBoundCompatibilityProducts(graphProducts(), options);
   const changes = [];
   const write = !args.check;
+  const observeUpdate = options.observeUpdate;
   const transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: PREFIX });
-  syncReleasePleaseBootstrapBoundary(changes, { write });
-  await syncCompatibilityVersions(changes, { write, transitions });
+  syncReleasePleaseBootstrapBoundary(changes, { write, observeUpdate });
+  await syncCompatibilityVersions(changes, { write, observeUpdate, transitions, buildBound });
   if (
     transitions.some(({ product }) => product === 'oliphaunt-wasix-ts') &&
     (write || changes.length === 0)
@@ -964,14 +984,14 @@ async function main(argv) {
       { prefix: PREFIX },
     );
   }
-  syncExtensionRegistryMetadata(changes, { write });
-  await syncNativeToolsOptionalDependencies(changes, { write, transitions });
-  syncElectronExampleDependencies(changes, { write, transitions });
-  syncCargoPathDependencyPins(changes, { write, transitions });
-  syncExampleCargoRegistryPins(changes, { write, transitions });
-  syncLockfiles(changes, { write });
+  syncExtensionRegistryMetadata(changes, { write, observeUpdate });
+  await syncNativeToolsOptionalDependencies(changes, { write, observeUpdate, transitions });
+  syncElectronExampleDependencies(changes, { write, observeUpdate, transitions });
+  syncCargoPathDependencyPins(changes, { write, observeUpdate, transitions, buildBound });
+  syncExampleCargoRegistryPins(changes, { write, observeUpdate, transitions });
+  syncLockfiles(changes, { write, observeUpdate });
   if (!args.generatedReleaseCheck) {
-    syncExtensionEvidenceSummary(changes, { write });
+    syncExtensionEvidenceSummary(changes, { write, observeUpdate });
   }
   if (changes.length === 0) {
     console.log('release PR derived files are in sync');
@@ -1022,5 +1042,5 @@ export function releaseDerivedPathInventory() {
 }
 
 if (import.meta.main) {
-  await main(Bun.argv.slice(2));
+  await syncReleasePr(Bun.argv.slice(2));
 }

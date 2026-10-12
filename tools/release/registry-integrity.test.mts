@@ -1,22 +1,389 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-
+import { createCratesIoReadGate } from './registry-http-retry.mts';
 import {
+  materializeRegistryCarrierIntegrity,
   validateLockedRegistryReceipts,
   validateRegistryReceiptEvidence,
   verifyLockedCarrierIntegrity,
   verifyLockedRegistryIntegrity,
+  verifyRegistryCarrierIntegrity,
   writeRegistryReceiptEvidence,
 } from './registry-integrity.mts';
-import { createCratesIoReadGate } from './registry-http-retry.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 const sha = (bytes, algorithm, encoding = 'hex') =>
   createHash(algorithm).update(bytes).digest(encoding);
+
+test('materializes exact Cargo/npm archives and all Maven companions once and reuses authenticated receipts', async () => {
+  mkdirSync(path.join(ROOT, 'target'), { recursive: true });
+  const root = mkdtempSync(path.join(ROOT, 'target', 'registry-materialization-test-'));
+  try {
+    const requested = [];
+    const payloads = new Map([
+      ['https://crates.io/api/v1/crates/alpha/1.0.0/download', Buffer.from('crate bytes')],
+      ['https://registry.npmjs.org/@example/alpha/-/alpha-1.0.0.tgz', Buffer.from('npm bytes')],
+      [
+        'https://repo1.maven.org/maven2/dev/example/alpha/1.0.0/alpha-1.0.0.pom',
+        Buffer.from('pom bytes'),
+      ],
+      [
+        'https://repo1.maven.org/maven2/dev/example/alpha/1.0.0/alpha-1.0.0.jar',
+        Buffer.from('jar bytes'),
+      ],
+      [
+        'https://repo1.maven.org/maven2/dev/example/alpha/1.0.0/alpha-1.0.0-sources.jar',
+        Buffer.from('sources bytes'),
+      ],
+    ]);
+    const crateBytes = payloads.get('https://crates.io/api/v1/crates/alpha/1.0.0/download');
+    const npmBytes = payloads.get('https://registry.npmjs.org/@example/alpha/-/alpha-1.0.0.tgz');
+    const fetchImpl = async (url) => {
+      requested.push(url);
+      if (url === 'https://crates.io/api/v1/crates/alpha/1.0.0') {
+        return Response.json({
+          version: {
+            crate: 'alpha',
+            num: '1.0.0',
+            checksum: sha(crateBytes, 'sha256'),
+            crate_size: crateBytes.length,
+          },
+        });
+      }
+      if (url === 'https://registry.npmjs.org/%40example%2Falpha/1.0.0') {
+        return Response.json({
+          name: '@example/alpha',
+          version: '1.0.0',
+          dist: {
+            integrity: `sha512-${sha(npmBytes, 'sha512', 'base64')}`,
+            tarball: 'https://registry.npmjs.org/@example/alpha/-/alpha-1.0.0.tgz',
+          },
+        });
+      }
+      const bytes = payloads.get(url);
+      assert.ok(bytes, `unexpected acquisition ${url}`);
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(bytes.subarray(0, 3));
+            controller.enqueue(bytes.subarray(3));
+            controller.close();
+          },
+        }),
+      );
+    };
+    const carriers = [
+      {
+        id: 'cargo:alpha',
+        product: 'alpha',
+        ecosystem: 'cargo',
+        name: 'alpha',
+        version: '1.0.0',
+        artifacts: [{ path: 'alpha.crate' }],
+      },
+      {
+        id: 'npm:@example/alpha',
+        product: 'alpha',
+        ecosystem: 'npm',
+        name: '@example/alpha',
+        version: '1.0.0',
+        artifacts: [{ path: 'alpha.tgz', size: npmBytes.length, sha256: sha(npmBytes, 'sha256') }],
+      },
+      {
+        id: 'maven:dev.example:alpha',
+        product: 'alpha',
+        ecosystem: 'maven',
+        name: 'dev.example:alpha',
+        version: '1.0.0',
+        artifacts: [
+          { path: 'alpha-1.0.0.pom' },
+          { path: 'alpha-1.0.0.jar' },
+          { path: 'alpha-1.0.0-sources.jar' },
+        ],
+      },
+    ];
+    const gateRequests = [];
+    const results = [];
+    for (const [publishOrder, carrier] of carriers.entries()) {
+      const result = await materializeRegistryCarrierIntegrity(
+        { ...carrier, publishOrder },
+        {
+          directory: root,
+          fetchImpl,
+          cratesIoReadGate: { beforeRequest: async (url) => gateRequests.push(url), defer() {} },
+        },
+      );
+      results.push(result);
+      for (const artifact of result.carrier.artifacts) {
+        assert.ok(path.isAbsolute(artifact.path));
+        assert.equal(sha(readFileSync(artifact.path), 'sha256'), artifact.sha256);
+        assert.equal(lstatSync(artifact.path).size, artifact.size);
+        assert.equal(lstatSync(artifact.path).mode & 0o222, 0);
+      }
+      assert.deepEqual(
+        await verifyRegistryCarrierIntegrity(result.carrier, {
+          cachedReceipt: result.receipt,
+          fetchImpl: () => assert.fail('cached receipt must not fetch'),
+        }),
+        result.receipt,
+      );
+      assert.deepEqual(
+        await verifyRegistryCarrierIntegrity(result.carrier, {
+          cachedReceipts: new Map([[result.carrier.id, result.receipt]]),
+          fetchImpl: () => assert.fail('mapped cached receipt must not fetch'),
+        }),
+        result.receipt,
+      );
+    }
+    assert.equal(requested.length, 7);
+    assert.equal(new Set(requested).size, requested.length);
+    await assert.rejects(
+      verifyRegistryCarrierIntegrity(results[0].carrier, {
+        cachedReceipt: { ...results[0].receipt, product: 'different' },
+        cachedReceipts: new Map([[results[0].carrier.id, results[0].receipt]]),
+      }),
+      /conflicting cached registry receipts/u,
+    );
+    assert.deepEqual(gateRequests, [
+      'https://crates.io/api/v1/crates/alpha/1.0.0',
+      'https://crates.io/api/v1/crates/alpha/1.0.0/download',
+    ]);
+    assert.deepEqual(
+      await verifyLockedRegistryIntegrity(
+        { carriers: results.map(({ carrier }) => carrier) },
+        {
+          cachedReceipts: new Map(results.map(({ receipt }) => [receipt.id, receipt])),
+          fetchImpl: () => assert.fail('bulk cached receipt must not fetch'),
+        },
+      ),
+      results.map(({ receipt }) => receipt),
+    );
+    await assert.rejects(
+      verifyRegistryCarrierIntegrity(
+        { ...results[0].carrier, version: '2.0.0' },
+        { cachedReceipt: results[0].receipt },
+      ),
+      /changed version/u,
+    );
+    const npmFile = results[1].carrier.artifacts[0].path;
+    chmodSync(npmFile, 0o600);
+    writeFileSync(npmFile, Buffer.from('changed!!'));
+    await assert.rejects(
+      verifyRegistryCarrierIntegrity(results[1].carrier, { cachedReceipt: results[1].receipt }),
+      /no longer matches/u,
+    );
+    const symlink = path.join(root, 'unrelated.tgz');
+    symlinkSync(results[1].carrier.artifacts[0].path, symlink);
+    await assert.rejects(
+      verifyRegistryCarrierIntegrity(
+        {
+          ...results[1].carrier,
+          artifacts: [{ ...results[1].carrier.artifacts[0], path: symlink }],
+        },
+        { cachedReceipt: results[1].receipt },
+      ),
+      /regular owned files/u,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('registry materialization rejects metadata, bounds, digest and descriptor conflicts without retaining partial files', async () => {
+  mkdirSync(path.join(ROOT, 'target'), { recursive: true });
+  const root = mkdtempSync(path.join(ROOT, 'target', 'registry-materialization-negative-'));
+  try {
+    const bytes = Buffer.from('archive bytes');
+    const npmCarrier = {
+      id: 'npm:alpha',
+      product: 'alpha',
+      ecosystem: 'npm',
+      name: 'alpha',
+      version: '1.0.0',
+      artifacts: [{ path: 'alpha.tgz' }],
+    };
+    const metadata = {
+      name: 'alpha',
+      version: '1.0.0',
+      dist: {
+        integrity: `sha512-${sha(bytes, 'sha512', 'base64')}`,
+        tarball: 'https://registry.npmjs.org/alpha/-/alpha-1.0.0.tgz',
+      },
+    };
+    const cases = [
+      {
+        metadata: { ...metadata, version: '2.0.0' },
+        match: /exact package version identity/u,
+        calls: 1,
+      },
+      {
+        metadata: {
+          ...metadata,
+          dist: { ...metadata.dist, tarball: 'https://example.com/alpha.tgz' },
+        },
+        match: /canonical package version URL/u,
+        calls: 1,
+      },
+      { bytes: Buffer.from('wrong bytes'), match: /SHA512/u, calls: 2 },
+      { maximumBytes: 3, match: /exceeds locked size/u, calls: 2 },
+      {
+        artifacts: [{ path: 'alpha.tgz', size: bytes.length + 1 }],
+        match: /does not match expected size/u,
+        calls: 2,
+      },
+      { artifacts: [{ path: 'alpha.tgz', sha256: '0'.repeat(64) }], match: /SHA256/u, calls: 2 },
+      {
+        artifacts: [{ path: 'alpha.tgz', sha256: 'bad' }],
+        match: /invalid expected artifact SHA256/u,
+        calls: 0,
+      },
+      {
+        artifacts: [{ path: 'alpha.tgz' }, { path: 'other.tgz' }],
+        match: /exactly one/u,
+        calls: 0,
+      },
+      { name: '../alpha', match: /invalid exact registry package name/u, calls: 0 },
+    ];
+    for (const scenario of cases) {
+      let calls = 0;
+      await assert.rejects(
+        materializeRegistryCarrierIntegrity(
+          {
+            ...npmCarrier,
+            name: scenario.name ?? npmCarrier.name,
+            artifacts: scenario.artifacts ?? npmCarrier.artifacts,
+          },
+          {
+            directory: root,
+            maximumBytes: scenario.maximumBytes ?? 1024,
+            fetchImpl: async () => {
+              calls += 1;
+              return calls === 1
+                ? Response.json(scenario.metadata ?? metadata)
+                : new Response(scenario.bytes ?? bytes);
+            },
+          },
+        ),
+        scenario.match,
+      );
+      assert.equal(calls, scenario.calls);
+      assert.deepEqual(readdirSync(root), []);
+    }
+    const cargo = {
+      ...npmCarrier,
+      id: 'cargo:alpha',
+      ecosystem: 'cargo',
+      artifacts: [{ path: 'alpha.crate', sha256: '0'.repeat(64) }],
+    };
+    await assert.rejects(
+      materializeRegistryCarrierIntegrity(cargo, {
+        directory: root,
+        cratesIoReadGate: null,
+        fetchImpl: async () =>
+          Response.json({
+            version: { crate: 'alpha', num: '1.0.0', checksum: sha(bytes, 'sha256') },
+          }),
+      }),
+      /registry checksum mismatch/u,
+    );
+    assert.deepEqual(readdirSync(root), []);
+    let mavenCalls = 0;
+    await assert.rejects(
+      materializeRegistryCarrierIntegrity(
+        {
+          ...npmCarrier,
+          id: 'maven:alpha',
+          ecosystem: 'maven',
+          name: 'dev.example:alpha',
+          artifacts: [
+            { path: 'alpha-1.0.0.pom' },
+            { path: 'alpha-1.0.0.jar', sha256: '0'.repeat(64) },
+          ],
+        },
+        {
+          directory: root,
+          fetchImpl: async () => {
+            mavenCalls += 1;
+            return new Response(bytes);
+          },
+        },
+      ),
+      /SHA256/u,
+    );
+    assert.equal(mavenCalls, 2);
+    assert.deepEqual(readdirSync(root), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('registry materialization retries a transient partial stream with a fresh owned file', async () => {
+  mkdirSync(path.join(ROOT, 'target'), { recursive: true });
+  const root = mkdtempSync(path.join(ROOT, 'target', 'registry-materialization-retry-'));
+  try {
+    const bytes = Buffer.from('complete archive');
+    let calls = 0;
+    let reads = 0;
+    let cancels = 0;
+    const result = await materializeRegistryCarrierIntegrity(
+      {
+        id: 'maven:alpha',
+        product: 'alpha',
+        ecosystem: 'maven',
+        name: 'dev.example:alpha',
+        version: '1.0.0',
+        artifacts: [{ path: 'alpha-1.0.0.jar', size: bytes.length, sha256: sha(bytes, 'sha256') }],
+      },
+      {
+        directory: root,
+        fetchImpl: async () => {
+          calls += 1;
+          if (calls === 2) return new Response(bytes);
+          return {
+            ok: true,
+            headers: new Headers(),
+            body: {
+              getReader: () => ({
+                read: async () => {
+                  reads += 1;
+                  if (reads === 1) return { done: false, value: bytes.subarray(0, 3) };
+                  throw new Error('transient interrupted stream');
+                },
+                cancel: async () => {
+                  cancels += 1;
+                },
+                releaseLock() {},
+              }),
+            },
+          };
+        },
+      },
+    );
+    assert.equal(calls, 2);
+    assert.equal(cancels, 1);
+    assert.deepEqual(readFileSync(result.carrier.artifacts[0].path), bytes);
+    assert.deepEqual(readdirSync(path.dirname(result.carrier.artifacts[0].path)), [
+      'alpha-1.0.0.jar',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('proves Cargo checksum and npm SRI against frozen archive bytes and rejects same-version byte conflicts', async () => {
   mkdirSync(path.join(ROOT, 'target'), { recursive: true });

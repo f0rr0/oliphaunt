@@ -10,6 +10,7 @@ load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
 load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_LINUX_COMPATIBLE", _native_configuration = "NATIVE_EXTENSION_CONFIGURATION")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
 
 ExtensionMemberInfo = provider(fields = ["sql_name", "configuration", "owner", "inventory", "archive"])
 NATIVE_EXTENSION_CONFIGURATION = _native_configuration
@@ -260,7 +261,10 @@ def _payload_impl(ctx):
         mnemonic = "ExtensionMemberPayload",
         progress_message = "Assemble %s native member payload" % ctx.attr.sql_name,
     )
-    return [DefaultInfo(files = depset([archive, inventory])),
+    # The same actual library File is reached through the embedded linker.
+    # SQL-only and server headers do not claim incorporation of the core.
+    supplier = ctx.attr.core_supplier[ShippingSupplierInfo] if ctx.attr.core_supplier else ShippingSupplierInfo(suppliers = [], files = depset())
+    return [DefaultInfo(files = depset([archive, inventory])), supplier,
             OutputGroupInfo(archive = depset([archive]), inventory = depset([inventory])),
             ExtensionMemberInfo(sql_name = ctx.attr.sql_name, owner = identity.id,
                                 configuration = configuration, inventory = inventory, archive = archive)]
@@ -277,12 +281,14 @@ _extension_member_payload = rule(
         "dependency_modules": attr.label_list(allow_files = True),
         "data_resources": attr.label_keyed_string_dict(allow_files = True),
         "construction_licenses": attr.label_keyed_string_dict(allow_files = True),
+        "core_supplier": attr.label(providers = [ShippingSupplierInfo]),
         "_assembler": attr.label(default = "//build_defs/extensions:member_payload", providers = [BunScriptInfo], cfg = "exec"),
     }),
 )
 
 def extension_member_payload(name, **kwargs):
-    _extension_member_payload(name = name, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE, **kwargs)
+    compiled = bool(_descriptor(kwargs["sql_name"]).get("native-module-file"))
+    _extension_member_payload(name = name, core_supplier = "//build_defs/release:current_native_core_supplier" if compiled else None, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE, **kwargs)
 
 def extension_member_validation_test(name, payload, sql_name):
     """Validate the actual archive with a reader independent of its assembler."""

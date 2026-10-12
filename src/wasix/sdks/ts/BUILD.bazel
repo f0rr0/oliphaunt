@@ -1,19 +1,18 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@aspect_rules_js//js:defs.bzl", "js_library")
 load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
-load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@oliphaunt_metadata//:metadata.bzl", "PUBLICATION_CARRIERS")
 load("@javascript_packages//:defs.bzl", "javascript_type_links", RUNTIME_PACKAGES = "PACKAGES")
-load("@javascript_consumer_packages//:defs.bzl", CONSUMER_PACKAGES = "PACKAGES")
-load("@javascript_consumer_packages//:roots.bzl", "CONSUMER_TOOLS")
+load("@javascript_consumer_packages//:roots.bzl", "CONSUMER_ACQUISITIONS", "CONSUMER_CLOSURES", "CONSUMER_TOOLS")
 load("//build_defs/languages/ts:defs.bzl", "npm_archive_package", "source_sdk_publish_files")
 load("//build_defs/query:defs.bzl", "query_envelope")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/wasix/browser:defs.bzl", "browser_host_assets", "browser_sql_consumer", "browser_sql_lifecycle")
 
 package(default_visibility = ["//visibility:public"])
-exports_files(["package.json", "tools/package.mts", "tools/frozen-browser-consumer.mts", "tools/browser-cdp.mts"])
+exports_files(["package.json", "tsconfig.json", "tools/package.mts", "tools/frozen-browser-consumer.mts", "tools/browser-cdp.mts"])
 exports_files(["tools/pgwire-client.mts"])
 exports_files([
     "src/resources/extensions.ts",
@@ -26,6 +25,7 @@ exports_files([
 SDK = JAVASCRIPT["@oliphaunt/wasix-ts"]
 QUERY = JAVASCRIPT["@oliphaunt/ts-query"]
 SDK_SRCS = glob(["src/**/*.ts"], exclude = ["src/__tests__/**"])
+BROWSER_PACKAGES = {"@javascript_packages//:" + key: key for key in RUNTIME_PACKAGES} | {"@javascript_consumer_packages//:" + key: key for key in CONSUMER_CLOSURES[SDK["name"]]}
 
 javascript_type_links(SDK["types"] | SDK["packages"])
 
@@ -37,6 +37,15 @@ npm_archive_package(
 )
 npm_link_package(name = "node_modules/@oliphaunt/ts-query", src = ":query_package")
 js_library(name = "package_metadata", srcs = ["package.json"])
+ts_config(name = "source_config", src = "tsconfig.json")
+
+# Source-mapped examples need the SDK's declared files and typings without its
+# emitted module, browser host or runtime carriers.
+js_library(
+    name = "source_inputs",
+    types = SDK_SRCS,
+    deps = [":package_metadata", "//src/wasix/sdks/ts/src/host:declaration"] + [":node_modules/" + name for name in SDK["types"] | SDK["packages"]],
+)
 
 ts_project(
     name = "module",
@@ -99,7 +108,7 @@ shipping_package(
     role = [carrier["role"] for carrier in PUBLICATION_CARRIERS if carrier["product"] == "oliphaunt-wasix-ts" and carrier["ecosystem"] == "npm" and carrier["name"] == SDK["name"]][0],
 )
 
-shipping_export(name = "shipping_export", packages = [":shipping_package"])
+shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = [":browser_sql_consumer"], testonly = True)
 
 browser_sql_consumer(
     name = "browser_sql_consumer",
@@ -109,7 +118,8 @@ browser_sql_consumer(
     manifest = ":publish_manifest",
     fixture = "tools/frozen-browser-consumer.mts",
     cdp = "tools/browser-cdp.mts",
-    packages = {"@javascript_packages//:" + key: key for key in RUNTIME_PACKAGES} | {"@javascript_consumer_packages//:" + key: key for key in CONSUMER_PACKAGES},
+    packages = BROWSER_PACKAGES,
+    acquisition = CONSUMER_ACQUISITIONS[SDK["name"]],
     roots = CONSUMER_TOOLS[SDK["name"]],
     runtime_packages = SDK["packages"],
     size = "large",
@@ -126,7 +136,8 @@ browser_sql_lifecycle(
     manifest = ":publish_manifest",
     fixture = "tools/frozen-browser-consumer.mts",
     cdp = "tools/browser-cdp.mts",
-    packages = {"@javascript_packages//:" + key: key for key in RUNTIME_PACKAGES} | {"@javascript_consumer_packages//:" + key: key for key in CONSUMER_PACKAGES},
+    packages = BROWSER_PACKAGES,
+    acquisition = CONSUMER_ACQUISITIONS[SDK["name"]],
     roots = CONSUMER_TOOLS[SDK["name"]],
     runtime_packages = SDK["packages"],
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],

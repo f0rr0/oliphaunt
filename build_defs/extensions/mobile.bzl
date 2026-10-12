@@ -1,6 +1,6 @@
 """Actual target static archives; desktop producers retain their existing graph."""
 
-load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_SOURCES", "NATIVE_COMPONENTS", "NATIVE_MOBILE_MEMBER_ALIASES", "POSTGRES_SOURCE", "PRODUCTS")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILITY", "EXTENSION_SOURCES", "NATIVE_COMPONENTS", "NATIVE_MOBILE_MEMBER_ALIASES", "POSTGRES_SOURCE")
 load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
@@ -78,7 +78,7 @@ def _member_impl(ctx):
     return [DefaultInfo(files = depset([ctx.file.archive, registration])),
             OutputGroupInfo(archive = depset([ctx.file.archive]), registration = depset([registration]), registry_source = depset([unit])),
             MobileExtensionInfo(sql_name = ctx.attr.sql_name, stem = ctx.attr.stem, owner = identity.id, version = identity.version,
-                                runtime_version = PRODUCTS["liboliphaunt-native"]["version"], configuration = ctx.attr.configuration, source = source, archive = ctx.file.archive, registration = registration,
+                                runtime_version = EXTENSION_COMPATIBILITY[ctx.attr.sql_name]["native_runtime_version"], configuration = ctx.attr.configuration, source = source, archive = ctx.file.archive, registration = registration,
                                 nm = ctx.file.nm, tools = depset([ctx.file.nm] + ctx.files.nm_runtime, transitive = [toolchain.all_files]), apple = ctx.attr.apple, aliases = ctx.attr.aliases)]
 
 def _component_impl(ctx):

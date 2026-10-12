@@ -3,6 +3,7 @@
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILITY", "EXTENSION_DEPENDENCIES", "EXTENSION_RECIPES", "EXTENSION_RELEASE_METADATA", "EXTENSION_SOURCES", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action", "bun_script_test")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_identity")
 load(":final_leaf.bzl", "ExtensionFinalLeafInfo")
 load(":platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_LINUX_COMPATIBLE")
@@ -69,12 +70,12 @@ def native_extension_carrier_legal(sql_name):
     inputs += [package + "dependencies/" + name + "/source.toml" for name in EXTENSION_DEPENDENCIES.get(sql_name, {})]
     return inputs
 
-def native_external_carrier_metadata(sql_name, target):
+def native_external_carrier_metadata(sql_name, target, products = PRODUCTS):
     product = EXTENSION_SOURCES[sql_name]["product"]
     release = [row for row in EXTENSION_RELEASE_METADATA if row["sqlName"] == sql_name]
     if len(release) != 1:
         fail("external final carrier requires exactly one canonical release metadata row")
-    return {"product": product, "version": PRODUCTS[product]["version"], "sqlName": sql_name, "target": target, "runtimeVersion": PRODUCTS["liboliphaunt-native"]["version"],
+    return {"product": product, "version": products[product]["version"], "sqlName": sql_name, "target": target, "runtimeVersion": EXTENSION_COMPATIBILITY[sql_name]["native_runtime_version"],
             "descriptor": EXTENSIONS[sql_name], "recipe": EXTENSION_RECIPES.get(sql_name, {}), "source": EXTENSION_SOURCES[sql_name],
             "selectedDependencies": sorted([name for name in EXTENSIONS[sql_name].get("dependencies", []) if name in EXTENSIONS]),
             "compatibility": EXTENSION_COMPATIBILITY[sql_name], "releaseMetadata": release[0], "carriers": [row for row in PUBLICATION_CARRIERS if row["product"] == product]}
@@ -105,12 +106,12 @@ def _carriers_impl(ctx):
     bun_file_action(ctx, ctx.file._tool, arguments = [inputs.path], inputs = [member.archive, member.inventory, inputs] + ctx.files.legal,
                     source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal,
                     outputs = [github, npm, cargo, manifest, frozen], mnemonic = "NativeExtensionEnvelopes")
-    return [DefaultInfo(files = depset([github, npm, cargo, manifest, frozen])),
+    return [DefaultInfo(files = depset([github, npm, cargo, manifest, frozen])), ctx.attr.member[ShippingSupplierInfo],
             ExtensionFinalLeafInfo(product = spec["product"], owner = member.owner, version = spec["version"], family = "native", target = member.configuration, metadata = spec, github = [github], npm = [npm], cargo = [cargo], manifest = manifest, frozen = frozen, spec = inputs, validation = None, receipt = None, origin = None),
             OutputGroupInfo(github = depset([github]), npm = depset([npm]), cargo = depset([cargo]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([inputs]))]
 
 _native_extension_carriers = rule(implementation = _carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
-    attrs = {"member": attr.label(mandatory = True, providers = [ExtensionMemberInfo]), "legal": attr.label_list(allow_files = True),
+    attrs = {"member": attr.label(mandatory = True, providers = [ExtensionMemberInfo, ShippingSupplierInfo]), "legal": attr.label_list(allow_files = True),
              "_tool": attr.label(default = "//build_defs/extensions:native_carriers.mts", allow_single_file = True),
              "_helpers": attr.label_list(default = native_extension_carrier_helpers(), allow_files = True)})
 
@@ -133,7 +134,7 @@ def native_external_extension_carriers(sql_name, member = ":native_payload"):
                 row = _leaf(spec, ecosystem)
                 names[condition], roles[condition] = row["name"], row["role"]
         shipping_package(name = name, owner = extension_identity(sql_name), artifacts = [":" + name + "_files"], ecosystem = ecosystem,
-                         package_name = select(names), configuration = select(targets), role = select(roles), target_compatible_with = compatible)
+                         package_name = select(names), configuration = select(targets), role = select(roles), suppliers = ":native_carriers", target_compatible_with = compatible)
         packages.append(":" + name)
     # These selected-target rows are inputs to owner-wide release assembly. A
     # single target's manifest cannot advertise the complete release asset set.
@@ -141,9 +142,14 @@ def native_external_extension_carriers(sql_name, member = ":native_payload"):
         name = "native_" + group + "_shipping"
         native.filegroup(name = name + "_files", srcs = [":native_carriers"], output_group = group)
         shipping_package(name = name, owner = extension_identity(sql_name), artifacts = [":" + name + "_files"], ecosystem = "internal",
-                         package_name = sql_name + "-native-" + group, configuration = select(targets), role = "extension-release-" + group + "-input", target_compatible_with = compatible)
+                         package_name = sql_name + "-native-" + group, configuration = select(targets), role = "extension-release-" + group + "-input", suppliers = ":native_carriers", target_compatible_with = compatible)
         packages.append(":" + name)
-    shipping_export(name = "native_shipping_export", packages = packages, target_compatible_with = compatible)
+    shipping_export(name = "native_shipping_export", packages = packages, qualification = select({
+        condition: [":native_carriers_test"] if target.startswith("linux-") else [
+            "//build_defs/extensions:desktop_all_final_contract_test",
+            "//build_defs/extensions:desktop_all_members_frozen_sql_test",
+        ] for condition, target in targets.items()
+    }), testonly = True, target_compatible_with = compatible)
     native.filegroup(name = "native_carrier_spec", srcs = [":native_carriers"], output_group = "spec")
     extension_smoke_plan(name = "native_final_plan", members = [member], fixtures = ["//src/test-fixtures/extensions:sql"])
     plans = []
@@ -161,6 +167,12 @@ def _unit_inputs_impl(ctx):
     output = ctx.actions.declare_file(ctx.label.name + ".json")
     metadata = native_external_carrier_metadata("pgtap", "linux-x64-gnu")
     metadata["compiledMember"] = native_external_carrier_metadata("pg_uuidv7", "linux-x64-gnu")
+    products = dict(PRODUCTS)
+    runtime = dict(products["liboliphaunt-native"])
+    parts = runtime["version"].split(".")
+    runtime["version"] = ".".join(parts[:2] + [str(int(parts[2]) + 1)])
+    products["liboliphaunt-native"] = runtime
+    metadata["newCoreMember"] = native_external_carrier_metadata("pg_uuidv7", "linux-x64-gnu", products = products)
     ctx.actions.write(output, json.encode(metadata))
     return [DefaultInfo(files = depset([output]))]
 

@@ -58,6 +58,8 @@ import {
   assertReleaseNoticesInArchive,
   releaseNoticeRows,
 } from '../../tools/packaging/release-notices.mts';
+import type { ExtensionFinalInput } from '../../tools/release/native-extension-final-inputs.mts';
+import { safeRelative } from '../../tools/release/native-file-identity.mts';
 import {
   type NativeCarrierSpec,
   stageNativeRegistryCarriers,
@@ -69,7 +71,7 @@ export interface FinalLeaf {
   product: string;
   owner: string;
   version: string;
-  family: 'native';
+  family: 'native' | 'wasix';
   target: string;
   github: string[];
   npm: string[];
@@ -79,6 +81,8 @@ export interface FinalLeaf {
   receipt?: string;
   expectedOrigin?: Record<string, unknown>;
   validation?: string;
+  /** The existing controller-authenticated File map checked by the importer. */
+  originalFiles?: string;
 }
 export interface NativeOwnerSpec {
   schema: string;
@@ -98,7 +102,84 @@ export interface NativeOwnerSpec {
   leaves: FinalLeaf[];
   operation: 'import' | 'collect' | 'compose';
   baseCarrierManifest?: string;
+  baseArchiveInputs?: Record<string, { path: string; size: number; sha256: string }>;
   outputs: Record<string, string>;
+}
+
+/** Stage the original qualified constructor bytes, without requalifying foreign binaries. */
+export function stageDeclaredFinalLeaf(spec: NativeOwnerSpec, leaf: FinalLeaf, root: string) {
+  assert(leaf.originalFiles, 'declared final leaf requires its original File map');
+  const original = json(leaf.originalFiles) as ExtensionFinalInput;
+  for (const name of ['product', 'owner', 'version', 'family', 'target'] as const)
+    assert.equal(
+      original[name],
+      leaf[name],
+      'imported final leaf differs from its original constructor',
+    );
+  for (const name of ['github', 'npm', 'cargo'] as const)
+    assert.deepEqual(
+      original[name].map((file) => file.path),
+      leaf[name],
+    );
+  assert.equal(original.manifest.path, leaf.manifest);
+  assert.equal(original.frozen.path, leaf.frozen);
+  assert.equal(leaf.product, spec.product);
+  assert.equal(leaf.owner, spec.owner);
+  assert.equal(leaf.version, spec.version);
+  const frozen = json(leaf.frozen);
+  const members = frozen.extensions ?? [frozen];
+  const assets = frozen.carrierAssets ?? members[0].assets;
+  const physical = new Map(leaf.github.map((file) => [path.basename(file), file]));
+  assert.equal(physical.size, leaf.github.length, 'repeated imported GitHub File');
+  const productRoot = path.join(root, 'product');
+  mkdirSync(path.join(productRoot, 'release-assets'), { recursive: true });
+  const direct = assets.map((asset) =>
+    copyAsset(
+      asset,
+      physical.get(asset.name)!,
+      path.join(productRoot, 'release-assets', safeRelative(asset.name)),
+      root,
+    ),
+  );
+  const bundles = new Map<string, ReturnType<typeof readPortableArchiveEntries>>();
+  const staged = members.map((member) => ({
+    ...member,
+    assets: member.assets.map((asset) => {
+      if (!asset.carrierAsset)
+        return {
+          ...asset,
+          path: relative(root, path.join(productRoot, 'release-assets', asset.name)),
+        };
+      // Facade metadata needs the closed bundle's original nested archive, not a
+      // newly packaged replacement. Parsing this index is part of composition.
+      const outerFile = physical.get(asset.carrierAsset);
+      assert(outerFile, 'nested member lacks its actual closed bundle File');
+      const prefix = safeRelative(asset.carrierRoot);
+      const memberPath = safeRelative(asset.memberPath);
+      if (!bundles.has(outerFile)) bundles.set(outerFile, readPortableArchiveEntries(outerFile));
+      const entries = bundles.get(outerFile)!;
+      const bytes = entries.get(`${prefix}/${memberPath}`)?.data();
+      assert(bytes, 'nested member is absent from the original closed bundle');
+      assert.equal(digest(bytes), asset.sha256);
+      assert.equal(bytes.length, asset.bytes);
+      const destination = path.join(
+        productRoot,
+        'member-assets',
+        member.sqlName,
+        safeRelative(asset.name),
+      );
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, bytes);
+      return { ...asset, path: relative(root, destination) };
+    }),
+  }));
+  return {
+    leaf,
+    members: staged,
+    directAssets: direct,
+    inventory: finalFileInventory(leaf),
+    productRoot,
+  };
 }
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 const json = (file: string) => JSON.parse(readFileSync(file, 'utf8'));
@@ -708,6 +789,34 @@ export function nativeFamilyCompleteness(spec: NativeOwnerSpec, targets: string[
   };
 }
 
+export function ownerFamilyCompleteness(spec: NativeOwnerSpec, leaves: FinalLeaf[]) {
+  const slots = leaves.map((leaf) => `${leaf.family}/${leaf.target}`);
+  assert.equal(new Set(slots).size, slots.length, 'repeated final owner cohort');
+  const native = nativeFamilyCompleteness(
+    spec,
+    leaves.filter((leaf) => leaf.family === 'native').map((leaf) => leaf.target),
+  );
+  const families = new Set(leaves.map((leaf) => leaf.family));
+  assert(
+    leaves.every((leaf) => spec.ownerFamilies.includes(leaf.family)),
+    'undeclared final owner family',
+  );
+  assert(
+    leaves
+      .filter((leaf) => leaf.family === 'wasix')
+      .every((leaf) => leaf.target === 'wasix-portable'),
+    'WASIX final cohort must come from its portable constructor',
+  );
+  const missingOwnerFamilies = spec.ownerFamilies.filter(
+    (family) => !families.has(family as FinalLeaf['family']),
+  );
+  return {
+    ...native,
+    missingOwnerFamilies,
+    completeExtensionDistribution: native.completeNativeFamily && missingOwnerFamilies.length === 0,
+  };
+}
+
 /** Keep common SQL metadata once and bind construction facts to their payload. */
 export function mergeNativeFinalMembers(spec: NativeOwnerSpec, cohorts: { members: any[] }[]) {
   return spec.members.map((canonical) => {
@@ -715,10 +824,30 @@ export function mergeNativeFinalMembers(spec: NativeOwnerSpec, cohorts: { member
       cohort.members.find((member: any) => member.sqlName === canonical.sqlName),
     );
     assert(rows.every(Boolean), 'final join is missing a canonical SQL member');
+    for (const field of [
+      'createsExtension',
+      'nativeModuleStem',
+      'dependencies',
+      'dataFiles',
+      'extensionSqlFileNames',
+      'extensionSqlFilePrefixes',
+      'sharedPreloadLibraries',
+    ]) {
+      const value = rows[0][field];
+      for (const row of rows.slice(1))
+        assert.deepEqual(
+          row[field],
+          value,
+          `final ${canonical.sqlName}.${field} differs across original constructor cohorts`,
+        );
+    }
     const ios = rows.find((member: any) =>
       member.assets.some((asset: any) => asset.target === 'ios-xcframework'),
     );
     const base = { ...(ios ?? rows[0]) };
+    const wasix = rows.filter((member) => member.wasixInstall != null);
+    assert(wasix.length <= 1, 'final member repeats its original WASIX install contract');
+    base.wasixInstall = wasix[0]?.wasixInstall ?? null;
     delete base.nativeConstructionLicenseFiles;
     delete base.nativeDependencyModules;
     const assets = rows.flatMap((member: any) =>
@@ -737,6 +866,11 @@ export function mergeNativeFinalMembers(spec: NativeOwnerSpec, cohorts: { member
         return result;
       }),
     );
+    assert.equal(
+      new Set(assets.map(role)).size,
+      assets.length,
+      'repeated final member role across constructors',
+    );
     return { ...base, assets };
   });
 }
@@ -744,19 +878,23 @@ export function mergeNativeFinalMembers(spec: NativeOwnerSpec, cohorts: { member
 export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
   assert.equal(spec.schema, 'oliphaunt-native-extension-final-join-inputs-v1');
   assert(spec.leaves.length > 0, 'final join requires actual declared final files');
-  const completeness = nativeFamilyCompleteness(
-    spec,
-    spec.leaves.map((leaf) => leaf.target),
-  );
-  if (spec.operation === 'compose')
+  const completeness = ownerFamilyCompleteness(spec, spec.leaves);
+  if (spec.operation === 'compose') {
     assert(
       completeness.completeNativeFamily,
       `missing native final targets: ${completeness.missingNativeTargets.join(', ')}`,
     );
+    assert(
+      completeness.completeExtensionDistribution,
+      `missing owner families: ${completeness.missingOwnerFamilies.join(', ')}`,
+    );
+  }
   const root = mkdtempSync(path.join(tmpdir(), 'native-extension-final-join-'));
   try {
     const validated = spec.leaves.map((leaf, index) =>
-      validateNativeFinalLeaf(spec, leaf, path.join(root, String(index))),
+      leaf.originalFiles
+        ? stageDeclaredFinalLeaf(spec, leaf, path.join(root, String(index)))
+        : validateNativeFinalLeaf(spec, leaf, path.join(root, String(index))),
     );
     const collection = {
       schema: 'oliphaunt-native-extension-final-collection-v1',
@@ -777,11 +915,14 @@ export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
       ),
     };
     if (spec.operation === 'compose') {
-      assert(
-        spec.baseCarrierManifest,
-        'complete native npm facade requires actual frozen base Apple carriers',
-      );
-      const productRoot = path.resolve(spec.outputs.github);
+      if (spec.outputs.npm)
+        assert(
+          spec.baseCarrierManifest,
+          'complete native npm facade requires actual frozen base Apple carriers',
+        );
+      // Host payloads remain original shipping roots. Only the resulting
+      // facade/control Files leave this temporary composition directory.
+      const productRoot = path.resolve(spec.outputs.github ?? path.join(root, 'family', 'product'));
       const outputRoot = path.dirname(productRoot);
       mkdirSync(path.join(productRoot, 'release-assets'), { recursive: true });
       const directAssets = validated.flatMap((cohort) =>
@@ -809,10 +950,11 @@ export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
           );
         }),
       }));
+      const family = spec.ownerFamilies.length > 1 ? null : spec.ownerFamilies[0];
       const documents = composeExtensionReleaseDocuments({
         product: spec.product,
         releaseProduct: spec.owner,
-        family: 'native',
+        family,
         version: spec.version,
         members,
         directAssets,
@@ -821,7 +963,7 @@ export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
       const controls = writeReleaseControls({
         product: spec.product,
         releaseProduct: spec.owner,
-        family: 'native',
+        family,
         version: spec.version,
         productRoot,
         root: outputRoot,
@@ -830,46 +972,82 @@ export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
         directAssets,
         swiftOptions: { ...declaredApple(spec), assetRoot: outputRoot },
       });
-      const iosCarrier = buildIosCarrierManifest({
-        assetRoot: outputRoot,
-        baseCarrierManifest: spec.baseCarrierManifest,
-        baseRuntimeVersion: spec.runtimeVersion,
-        extensionManifests: [path.join(productRoot, 'extension-artifacts.json')],
-        ...declaredApple(spec),
-      });
-      const result = { staged: [], skipped: [] };
-      const facade = stageExtensionNativeNpmFacade(
-        path.join(root, 'npm-source'),
-        spec.outputs.npm,
-        {
-          product: spec.product,
-          version: spec.version,
-          members: members.map((member) => member.sqlName),
-          targets: spec.profiles
-            .filter((profile) => profile.kind === 'native-dynamic')
-            .map((profile) => profile.target)
-            .sort(),
-          iosCarrier,
-          liboliphauntVersion: spec.runtimeVersion,
-          runtimeBound: spec.releaseMetadata.versioning === 'runtime-bound',
-        },
-        result,
-      );
-      assert(facade, 'canonical npm facade exceeded the shipping size cap');
+      if (spec.outputs.npm) {
+        const iosCarrier = buildIosCarrierManifest({
+          assetRoot: outputRoot,
+          baseCarrierManifest: spec.baseCarrierManifest,
+          baseArchiveInputs: spec.baseArchiveInputs ?? undefined,
+          baseRuntimeVersion: spec.runtimeVersion,
+          extensionManifests: [path.join(productRoot, 'extension-artifacts.json')],
+          ...declaredApple(spec),
+        });
+        const result = { staged: [], skipped: [] };
+        const facade = stageExtensionNativeNpmFacade(
+          path.join(root, 'npm-source'),
+          path.dirname(spec.outputs.npm),
+          {
+            product: spec.product,
+            version: spec.version,
+            members: members.map((member) => member.sqlName),
+            targets: spec.profiles
+              .filter((profile) => profile.kind === 'native-dynamic')
+              .map((profile) => profile.target)
+              .sort(),
+            iosCarrier,
+            liboliphauntVersion: spec.runtimeVersion,
+            runtimeBound: spec.releaseMetadata.versioning === 'runtime-bound',
+          },
+          result,
+        );
+        assert(facade, 'canonical npm facade exceeded the shipping size cap');
+        assert.equal(
+          path.basename(facade),
+          path.basename(spec.outputs.npm),
+          'npm facade output differs from canonical identity',
+        );
+        if (path.resolve(facade) !== path.resolve(spec.outputs.npm))
+          copyFileSync(facade, spec.outputs.npm);
+      }
       if (spec.outputs.cargo) {
         assert(
           completeness.completeExtensionDistribution,
           'external Cargo facade also requires the genuine WASIX final leaves',
         );
-        packageExtensionCargoFacades([spec.product], spec.outputs.cargo, {
-          metadataByProduct: { [spec.product]: spec.cargoFacadeMetadata },
-        });
+        const packages = packageExtensionCargoFacades(
+          [spec.product],
+          path.join(root, 'cargo-facade'),
+          {
+            metadataByProduct: { [spec.product]: spec.cargoFacadeMetadata },
+          },
+        );
+        assert.equal(packages.length, 1);
+        assert.equal(
+          path.basename(packages[0].cratePath),
+          path.basename(spec.outputs.cargo),
+          'Cargo facade output differs from canonical identity',
+        );
+        mkdirSync(path.dirname(spec.outputs.cargo), { recursive: true });
+        copyFileSync(packages[0].cratePath, spec.outputs.cargo);
       }
       collection['controls'] = Object.fromEntries(
         Object.entries(controls)
           .filter(([, file]) => file !== null)
           .map(([kind, file]) => [kind, path.basename(file as string)]),
       );
+      for (const [kind, field] of Object.entries({
+        'manifest-json': 'releaseManifest',
+        'manifest-properties': 'propertiesManifest',
+        'swift-extension-carrier': 'swiftCarrier',
+        checksums: 'checksumManifest',
+      })) {
+        const file = controls[field];
+        const output = spec.outputs[`control_${kind}`];
+        if (output) {
+          assert(file, `canonical control ${kind} is absent`);
+          mkdirSync(path.dirname(output), { recursive: true });
+          copyFileSync(file, output);
+        }
+      }
     }
     writeJson(spec.outputs.collection, collection);
     return collection;

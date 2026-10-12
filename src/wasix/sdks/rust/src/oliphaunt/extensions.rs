@@ -369,7 +369,7 @@ mod extension_tests {
     use crate::DatabaseStorage;
     use crate::Oliphaunt;
     use anyhow::{Context, Result, ensure};
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -380,6 +380,226 @@ mod extension_tests {
     #[test]
     fn public_extensions_materialize_only_requested_libraries() -> Result<()> {
         run_lifecycle_materialization_set(Extension::ALL)
+    }
+
+    #[test]
+    #[ignore = "requires declared Bazel packet"]
+    #[allow(unsafe_code)]
+    fn declared_contrib_carriers_pass_full_lifecycle() -> Result<()> {
+        use serde::Deserialize;
+        use sha2::{Digest, Sha256};
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Packet {
+            product: String,
+            version: String,
+            runtime_version: String,
+            archives: Vec<Archive>,
+            aot_manifest: PathBuf,
+            aot_artifacts: Vec<AotArtifact>,
+            core_module_sha256: String,
+            core_manifest: PathBuf,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Archive {
+            sql_name: String,
+            path: PathBuf,
+            sha256: String,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct AotArtifact {
+            path: String,
+            source: PathBuf,
+        }
+
+        let packet_path = std::env::var_os("OLIPHAUNT_DECLARED_EXTENSION_PACKET")
+            .context("declared contrib lifecycle requires OLIPHAUNT_DECLARED_EXTENSION_PACKET")?;
+        let packet: Packet = serde_json::from_slice(&std::fs::read(packet_path)?)?;
+        ensure!(packet.product == "oliphaunt-extension-contrib-pg18");
+        ensure!(packet.version == packet.runtime_version);
+        ensure!(packet.runtime_version == liboliphaunt_wasix_portable::PACKAGE_VERSION);
+        let runtime = crate::oliphaunt::assets::asset_manifest_metadata()?;
+        ensure!(
+            packet.core_module_sha256 == runtime.runtime_module_sha256,
+            "declared contrib must execute its exact current source-built core"
+        );
+        let core_manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&packet.core_manifest)?)?;
+        ensure!(
+            core_manifest["runtime"]["module-sha256"].as_str()
+                == Some(packet.core_module_sha256.as_str()),
+            "declared core manifest differs from its physical module identity"
+        );
+        ensure!(
+            core_manifest["source-fingerprint"].as_str() == runtime.source_fingerprint.as_deref()
+                && core_manifest["runtime"]["postgres-version"].as_str()
+                    == Some(runtime.postgres_version.as_str()),
+            "declared core manifest differs from the SDK's compiled runtime supplier"
+        );
+        let canonical_names: Vec<String> = serde_json::from_str(
+            option_env!("OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES")
+                .context("declared contrib test requires its compiled canonical member names")?,
+        )?;
+        let canonical_extensions: Vec<_> = canonical_names
+            .iter()
+            .map(|name| {
+                Extension::by_sql_name(name)
+                    .context("declared contrib source member has no canonical SDK metadata")
+            })
+            .collect::<Result<_>>()?;
+        let expected_names: BTreeSet<_> = canonical_extensions
+            .iter()
+            .map(|extension| extension.sql_name())
+            .collect();
+        let archive_names: BTreeSet<_> = packet
+            .archives
+            .iter()
+            .map(|archive| archive.sql_name.as_str())
+            .collect();
+        ensure!(
+            expected_names.len() == 32
+                && canonical_names.len() == expected_names.len()
+                && packet.archives.len() == expected_names.len()
+                && archive_names == expected_names,
+            "declared contrib packet must contain all 32 canonical members exactly once"
+        );
+
+        let aot_manifest_text = std::fs::read_to_string(&packet.aot_manifest)?;
+        let aot_manifest: serde_json::Value = serde_json::from_str(&aot_manifest_text)?;
+        ensure!(
+            aot_manifest["source-fingerprint"].as_str() == runtime.source_fingerprint.as_deref()
+                && aot_manifest["postgres-version"].as_str()
+                    == Some(runtime.postgres_version.as_str()),
+            "declared contrib AOT differs from its exact core supplier"
+        );
+        let manifest_artifacts = aot_manifest["artifacts"]
+            .as_array()
+            .context("declared contrib AOT manifest has no artifacts")?;
+        let expected_aot_names: BTreeSet<_> = canonical_extensions
+            .iter()
+            .map(|extension| {
+                extension
+                    .aot_name()
+                    .context("declared contrib member must have an AOT identity")
+            })
+            .collect::<Result<_>>()?;
+        let actual_aot_names: BTreeSet<_> = manifest_artifacts
+            .iter()
+            .map(|artifact| {
+                artifact["name"]
+                    .as_str()
+                    .context("declared contrib AOT artifact has no name")
+            })
+            .collect::<Result<_>>()?;
+        let actual_aot_paths: BTreeSet<_> = manifest_artifacts
+            .iter()
+            .map(|artifact| {
+                artifact["path"]
+                    .as_str()
+                    .context("declared contrib AOT artifact has no path")
+            })
+            .collect::<Result<_>>()?;
+        let packet_aot_paths: BTreeSet<_> = packet
+            .aot_artifacts
+            .iter()
+            .map(|artifact| artifact.path.as_str())
+            .collect();
+        ensure!(
+            manifest_artifacts.len() == expected_aot_names.len()
+                && actual_aot_names == expected_aot_names
+                && actual_aot_paths.len() == manifest_artifacts.len()
+                && packet.aot_artifacts.len() == manifest_artifacts.len()
+                && packet_aot_paths == actual_aot_paths,
+            "declared contrib AOT packet must contain its exact 32-member host cohort"
+        );
+
+        let archives: Vec<(&'static str, &'static [u8], &'static str)> = packet
+            .archives
+            .into_iter()
+            .map(|archive| {
+                let bytes = std::fs::read(&archive.path)?;
+                ensure!(
+                    format!("{:x}", Sha256::digest(&bytes)) == archive.sha256,
+                    "declared {} archive differs from its final npm identity",
+                    archive.sql_name
+                );
+                Ok((
+                    &*Box::leak(archive.sql_name.into_boxed_str()),
+                    &*Box::leak(bytes.into_boxed_slice()),
+                    &*Box::leak(archive.sha256.into_boxed_str()),
+                ))
+            })
+            .collect::<Result<_>>()?;
+        let aot_artifacts: Vec<(&'static str, &'static [u8])> = packet
+            .aot_artifacts
+            .into_iter()
+            .map(|artifact| {
+                let bytes = std::fs::read(&artifact.source)?;
+                let metadata = manifest_artifacts
+                    .iter()
+                    .find(|entry| entry["path"].as_str() == Some(artifact.path.as_str()))
+                    .context("declared AOT input has no manifest identity")?;
+                ensure!(
+                    Some(format!("{:x}", Sha256::digest(&bytes)).as_str())
+                        == metadata["sha256"].as_str(),
+                    "declared AOT input differs from its final Cargo identity"
+                );
+                Ok((
+                    &*Box::leak(
+                        metadata["name"]
+                            .as_str()
+                            .context("declared AOT input has no module name")?
+                            .to_owned()
+                            .into_boxed_str(),
+                    ),
+                    &*Box::leak(bytes.into_boxed_slice()),
+                ))
+            })
+            .collect::<Result<_>>()?;
+        // The declared Bazel packet supplies trusted final-carrier AOT bytes; leaks stay in this test.
+        let package = Box::leak(Box::new(unsafe {
+            ExtensionPackage::from_trusted_release(
+                Box::leak(packet.product.into_boxed_str()),
+                Box::leak(packet.version.into_boxed_str()),
+                Box::leak(packet.runtime_version.into_boxed_str()),
+                Box::leak(archives.into_boxed_slice()),
+                Box::leak(aot_manifest_text.into_boxed_str()),
+                Box::leak(aot_artifacts.into_boxed_slice()),
+            )
+        }));
+        let extensions: Vec<_> = canonical_extensions
+            .iter()
+            .map(|extension| extension.with_package(package))
+            .collect();
+        run_direct_and_restart_smoke_set(&extensions)?;
+        run_lifecycle_materialization_set(&extensions)?;
+
+        let cube = Extension::by_sql_name("cube")
+            .context("canonical contrib feature set lacks cube")?
+            .with_package(package);
+        let earthdistance = Extension::by_sql_name("earthdistance")
+            .context("canonical contrib feature set lacks earthdistance")?
+            .with_package(package);
+        let root = tempfile::TempDir::new()?;
+        let mut selected = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .extension(cube)
+            .extension(earthdistance)
+            .open()?;
+        let runtime_root = selected
+            .runtime_storage()
+            .host_path()
+            .context("selected contrib must use a host runtime workspace")?;
+        assert_only_resolved_extension_libraries_are_materialized(runtime_root, earthdistance)?;
+        ensure!(relative_files(&runtime_root.join("lib/postgresql")).len() == 2);
+        run_direct_smoke(&mut selected, earthdistance)?;
+        selected.close()?;
+        Ok(())
     }
 
     #[test]
@@ -461,7 +681,14 @@ mod extension_tests {
             .iter()
             .copied()
             .filter(|extension| {
-                crate::oliphaunt::assets::extension_archive(extension.sql_name()).is_some()
+                if let Some(package) = extension.package() {
+                    package
+                        .archives()
+                        .iter()
+                        .any(|(name, _, _)| *name == extension.sql_name())
+                } else {
+                    crate::oliphaunt::assets::extension_archive(extension.sql_name()).is_some()
+                }
             })
             .collect();
         let embedded_names: BTreeSet<_> = embedded
@@ -475,7 +702,7 @@ mod extension_tests {
             .collect();
         ensure!(
             missing.is_empty(),
-            "required WASIX extension archives are not embedded: {}",
+            "required WASIX extension archives are unavailable: {}",
             missing.join(", ")
         );
         Ok(embedded)
@@ -621,13 +848,27 @@ mod extension_tests {
     }
 
     fn verify_persisted_fixture(db: &mut Oliphaunt, extension: Extension) -> Result<()> {
-        let recipe = extension_smoke_sql(extension.sql_name());
-        if let Some((_, verification)) = recipe.split_once("-- oliphaunt-verify") {
-            for statement in extension_smoke_statements(verification) {
+        if !generated::creates_database_object_for_test(extension) {
+            for statement in extension_activation_sql_for_test(extension)? {
                 db.exec(statement).with_context(|| {
-                    format!("verify persisted state for {}", extension.sql_name())
+                    format!(
+                        "reactivate session-local extension {}",
+                        extension.sql_name()
+                    )
                 })?;
             }
+        }
+        let recipe = extension_smoke_sql(extension.sql_name());
+        let verification = recipe
+            .split_once("-- oliphaunt-verify")
+            .map_or(recipe.as_str(), |(_, verification)| verification);
+        for statement in extension_smoke_statements(verification) {
+            db.exec(statement).with_context(|| {
+                format!(
+                    "verify reopened or restored extension {}",
+                    extension.sql_name()
+                )
+            })?;
         }
         Ok(())
     }

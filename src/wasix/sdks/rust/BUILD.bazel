@@ -1,7 +1,9 @@
 load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
 load("//build_defs/languages:rust.bzl", "cargo_doc_test", "cargo_generator", "cargo_integration_test", "cargo_library", "cargo_library_test", "cargo_package_env")
 load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
-load("//build_defs/languages:source.bzl", "cargo_source_package")
+load("//build_defs/languages:source.bzl", "cargo_source_contract_test", "cargo_source_package")
+load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS")
+load("//build_defs/resources:resources.bzl", "wasix_sdk_resource_test")
 
 package(default_visibility = ["//visibility:public"])
 exports_files(["Cargo.toml", "THIRD_PARTY_NOTICES.md"])
@@ -21,6 +23,11 @@ cargo_generator(name = "napi_build_script", path_dependencies = PATH_DEPS, featu
 cargo_library(name = "napi_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":napi_build_script", features = ["__internal-napi"])
 cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"])
 
+_CONTRIB_FEATURES = ["extension-" + member["sql-name"].replace("_", "-") for member in CONTRIB_MEMBERS]
+cargo_generator(name = "extension_carrier_build_script", path_dependencies = PATH_DEPS, features = _CONTRIB_FEATURES, proc_macro_names = ["async-trait"])
+cargo_library(name = "extension_carrier_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":extension_carrier_build_script", features = _CONTRIB_FEATURES)
+cargo_library_test(name = "extension_carrier_unit_test", crate = ":extension_carrier_lib", features = _CONTRIB_FEATURES, rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode([member["sql-name"] for member in CONTRIB_MEMBERS])}, path_dependencies = PATH_DEPS, data = ["//src/test-fixtures:rust_fixtures"], tags = ["manual"])
+
 _QUALITY_PATH_DEPS = {
     name: "//" + label.split("//", 1)[1].removesuffix(":lib") + ":quality_lib"
     for name, label in PATH_DEPS.items()
@@ -36,7 +43,12 @@ cargo_generator(name = "quality_build_script", path_dependencies = _QUALITY_PATH
 cargo_library(name = "quality_lib", path_dependencies = _QUALITY_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":quality_build_script")
 cargo_library_test(name = "quality_unit_test", crate = ":quality_lib", data = ["//src/test-fixtures:rust_fixtures"])
 cargo_generator(name = "tools_build_script", path_dependencies = _TOOLS_PATH_DEPS, proc_macro_names = ["async-trait"], features = ["tools"])
-cargo_library(name = "tools_lib", path_dependencies = _TOOLS_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":tools_build_script", features = ["tools"])
+cargo_library(name = "tools_lib", path_dependencies = _TOOLS_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":tools_build_script", features = ["extensions", "tools", "extension-vector"])
+# Runtime integration consumes the genuine constructed payloads. The quality
+# library deliberately permits absent payloads and cannot qualify execution.
+cargo_library(name = "runtime_test_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":build_script", features = ["extensions"])
+_RESOURCE_PATH_DEPS = PATH_DEPS | {"oliphaunt-icu": "//src/database-resources/icu:icu_cargo_lib"}
+cargo_library(name = "resource_test_lib", path_dependencies = _RESOURCE_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":build_script", features = ["icu"])
 cargo_doc_test(crate = ":quality_lib", size = "small")
 cargo_doc_test(name = "tools_doc_test", crate = ":tools_lib", features = ["tools"], size = "small")
 _INTEGRATION_ROOTS = glob(["tests/*.rs"])
@@ -44,8 +56,9 @@ _INTEGRATION_ROOTS = glob(["tests/*.rs"])
     cargo_integration_test(
         name = "quality_" + source.removeprefix("tests/").removesuffix(".rs") + "_test",
         source = source,
-        crate = ":quality_lib",
-        path_dependencies = _QUALITY_PATH_DEPS,
+        crate = ":tools_lib" if source == "tests/public_api.rs" else ":runtime_test_lib" if source == "tests/runtime_smoke.rs" else ":resource_test_lib" if source == "tests/resources.rs" else ":quality_lib",
+        features = ["extensions", "tools", "extension-vector"] if source == "tests/public_api.rs" else ["extensions"] if source == "tests/runtime_smoke.rs" else ["icu"] if source == "tests/resources.rs" else [],
+        path_dependencies = _TOOLS_PATH_DEPS if source == "tests/public_api.rs" else _RESOURCE_PATH_DEPS if source == "tests/resources.rs" else PATH_DEPS if source == "tests/runtime_smoke.rs" else _QUALITY_PATH_DEPS,
         proc_macro_names = ["async-trait"],
         data = ["//src/test-fixtures:rust_fixtures"],
         tags = ["manual"],
@@ -68,7 +81,29 @@ cargo_integration_test(
     timeout = "long",
     tags = ["manual"],
 )
-cargo_source_package(product = "oliphaunt-wasix-rust", fixtures = "src/testdata/")
+wasix_sdk_resource_test(name = "resource_api_test")
+
+cargo_source_package(
+    product = "oliphaunt-wasix-rust",
+    fixtures = "src/testdata/",
+    qualification = [
+        ":source_package_test",
+        "//build_defs/languages/installed:wasix_sdk_source_compile_test",
+        ":quality_unit_test",
+        ":quality_public_api_test",
+        ":doc_test",
+        ":tools_doc_test",
+        ":quality_runtime_smoke_test",
+        ":postgres_regression_test",
+        ":resource_api_test",
+    ],
+)
+cargo_source_contract_test(
+    name = "source_package_test",
+    packages = [":crate"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "small",
+)
 
 source_quality_files()
 

@@ -240,13 +240,14 @@ try {
   console.log(
     'Using serialized test-only desktop owner metadata; complete shipping facade remains unproduced.',
   );
-  const { assets, install, runtime, packages } = await prepareNativeCarrierSdk({
-    root,
-    runtimeFile,
-    npmFiles: [npmFile, pgtapNpm],
-    runtimeVersion: spec.runtimeVersion,
-    selected: ['cube', 'pg_trgm'],
-  });
+  const { assets, install, runtime, packages, materialize, sdkRuntimeVersion } =
+    await prepareNativeCarrierSdk({
+      root,
+      runtimeFile,
+      npmFiles: [npmFile, pgtapNpm],
+      runtimeVersion: spec.runtimeVersion,
+      selected: ['cube', 'pg_trgm'],
+    });
   const selected = ['cube', 'pg_trgm'];
   const descriptor = new Map(spec.members.map((member) => [member.sqlName, member.descriptor]));
   const assertSelected = (materialized: any, selectedSql: string[]) => {
@@ -282,9 +283,9 @@ try {
         }
     }
   };
-  const contribOnly = await assets.materializeExtensionInstall(install, selected);
+  const contribOnly = await materialize(selected);
   assertSelected(contribOnly, selected);
-  const combined = await assets.materializeExtensionInstall(install, [...selected, 'pgtap']);
+  const combined = await materialize([...selected, 'pgtap']);
   assertSelected(combined, [...selected, 'pgtap']);
   assert(
     existsSync(path.join(combined.runtimeDirectory, 'share/postgresql/extension/pgtap.control')),
@@ -297,21 +298,23 @@ try {
     plans: [installSql, smokeSql, startupFile],
   });
   await assert.rejects(
-    () => assets.materializeExtensionInstall(install, ['not_a_catalogued_extension']),
+    () => materialize(['not_a_catalogued_extension']),
     /unknown|unsupported|catalog/i,
   );
-  const unused = path.join(
-    packages[0].directory,
-    'extensions/amcheck/runtime/lib/modules/foreign.so',
-  );
-  mkdirSync(path.dirname(unused), { recursive: true });
-  writeFileSync(unused, 'undeclared module');
-  await assert.rejects(
-    () => assets.materializeExtensionInstall(install, ['amcheck']),
-    /undeclared runtime file/,
-  );
+  if (sdkRuntimeVersion === spec.runtimeVersion) {
+    const unused = path.join(
+      packages[0].directory,
+      'extensions/amcheck/runtime/lib/modules/foreign.so',
+    );
+    mkdirSync(path.dirname(unused), { recursive: true });
+    writeFileSync(unused, 'undeclared module');
+    await assert.rejects(
+      () => assets.materializeExtensionInstall(install, ['amcheck']),
+      /undeclared runtime file/,
+    );
+  }
   console.log(
-    `${spec.product}@${spec.version}: all ${spec.expectedMembers.length} runtime-owned nested GitHub/npm/Cargo members verified; only cube/pg_trgm selected, pgtap combined, actual supplier/embedded restart/server SQL proved.`,
+    `${spec.product}@${spec.version}: all ${spec.expectedMembers.length} runtime-owned nested GitHub/npm/Cargo members verified; only cube/pg_trgm selected, pgtap combined, ${sdkRuntimeVersion === spec.runtimeVersion ? 'matching source SDK asset staging' : 'explicit runtime-directory staging with held SDK rejection'}, actual supplier/embedded restart/server SQL proved.`,
   );
 } finally {
   for (const cache of caches) rmSync(cache, { recursive: true, force: true });

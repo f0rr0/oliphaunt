@@ -86,7 +86,7 @@ export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<strin
   assert.equal(
     spec.runtimeVersion,
     spec.compatibility.native_runtime_version,
-    'built native supplier version differs from the declared extension host',
+    'public native host differs from the declared extension compatibility',
   );
   assert.equal(actual.source_kind, spec.descriptor['source-kind']);
   assert.deepEqual(

@@ -6,6 +6,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { release } from 'node:os';
 import path from 'node:path';
 import { windowsVcRuntimeProfileNames } from '../../tools/packaging/windows-vc-runtime-closure.mts';
+import { captureAppleAppTools } from './apple-app-tools.mts';
 import { appleDeploymentTargets } from './deployment-policy.mts';
 
 export { appleDeploymentTargets } from './deployment-policy.mts';
@@ -308,6 +309,12 @@ function captureApple(policy: HostPolicy, env: NodeJS.ProcessEnv): HostSdk {
   );
   observations.swift = run('/usr/bin/xcrun', ['swiftc', '--version'], env);
   components.push(component('tools/xcrun', '/usr/bin/xcrun', false, ['compile', 'link', 'swift']));
+  const appTools = captureAppleAppTools(developer, (name) =>
+    name === 'ditto' ? '/usr/bin/ditto' : run('/usr/bin/xcrun', ['--find', name], env),
+  );
+  components.push(...appTools.components);
+  Object.assign(tools, appTools.tools);
+  Object.assign(observations, appTools.observations);
   // Standard Apple strip actions invoke the operating-system tool directly.
   components.push(component('system/strip', '/usr/bin/strip', false, ['link']));
   return {

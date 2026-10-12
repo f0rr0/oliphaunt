@@ -2,6 +2,7 @@ load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE")
+load("//build_defs/native/carriers:defs.bzl", "native_carrier_legal_inputs")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -9,6 +10,7 @@ exports_files(glob(["*.bzl", "*.mts"]))
 
 filegroup(name = "helpers", srcs = [
     "shared.mts",
+    "seed_construction.mts",
     "wasix_inputs.mts",
     "//build_defs/native:host-runtime-test-helpers.mts",
     "//src/database-resources:contracts/contract.json",
@@ -58,13 +60,15 @@ filegroup(name = "helpers", srcs = [
     "//tools/release:extension-release-metadata.mts",
     "//tools/release:platform-compatibility-policy.mts",
     "//tools/release:product-version.mts",
+    "//tools/release:native-file-identity.mts",
     "//tools/release:release-artifact-targets.mts",
     "//tools/release:release-graph.mts",
     "//tools/release:release-history.mts",
 ])
 
 BOOTSTRAP_HELPERS = [
-    "shared.mts", "//build_defs/native:host-runtime-test-helpers.mts",
+    "shared.mts", "seed_construction.mts", "//build_defs/native:host-runtime-test-helpers.mts",
+    "//tools/release:native-file-identity.mts", "//:tools/packaging/release-directory-safety.mts",
     "//:tools/packaging/portable-archive.mts",
     "//:tools/packaging/archive-directory.mts",
     "//:tools/packaging/platform-binary-contract.mts",
@@ -94,7 +98,7 @@ bun_binary(name = "abi_receipt", entry_point = "abi_receipt.mts", data = [
 cc_binary(
     name = "seed_consumer",
     srcs = ["seed_consumer.c"],
-    deps = ["//src/native/runtime:liboliphaunt"],
+    deps = ["//src/native/runtime:liboliphaunt", "@postgres//:server_headers", "@postgres//:port_frontend"],
     copts = select({"//build_defs/native:windows_x64": ["/std:c11", "/W4", "/WX"], "//conditions:default": ["-std=c11", "-Wall", "-Wextra", "-Werror"]}),
     target_compatible_with = NATIVE_COMPATIBLE,
 )
@@ -103,5 +107,12 @@ bun_test(name = "resource_contract_test", entry_point = "resource_contract.test.
     ":helpers", "seed_domain.mts", "//src/database-resources:cluster_seed_contract_fixtures",
     "//:LICENSE", "//src/third-party/icu:LICENSE", "//src/third-party/icu:source.toml",
 ], size = "small")
+
+bun_test(name = "seed_construction_test", entry_point = "seed_construction.test.mts", data = [":helpers"], size = "small")
+bun_test(name = "seed_domain_test", entry_point = "seed_domain.test.mts", data = [":helpers", "seed_domain.mts"], size = "small")
+
+bun_test(name = "mobile_resource_contract_test", entry_point = "mobile_resource_contract.test.mts", data = [
+    ":helpers", "mobile_resource_contract.mts", "//:tools/packaging/testdata/tar-fixture.mts",
+] + native_carrier_legal_inputs().keys(), size = "small")
 
 source_quality_files()

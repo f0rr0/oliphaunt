@@ -61,7 +61,7 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
         );
       configure(inputs);
       const git = (args) => execFileSync('git', args, { cwd: scratch, stdio: 'pipe' });
-      git(['init', '--quiet']);
+      git(['init', '--quiet', '--initial-branch=main']);
       git(['add', '.']);
       git([
         '-c',

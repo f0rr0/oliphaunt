@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -13,7 +13,9 @@ export function runBiome(
   options: { capture?: boolean } = {},
 ) {
   if (mode !== 'format' && mode !== 'lint') throw new Error('Expected Biome format or lint');
-  const root = mkdtempSync(join(process.env.TEST_TMPDIR ?? tmpdir(), 'oliphaunt-biome-'));
+  const root = realpathSync(
+    mkdtempSync(join(process.env.TEST_TMPDIR ?? tmpdir(), 'oliphaunt-biome-')),
+  );
   try {
     const paths = new Set<string>();
     for (const file of sources) {

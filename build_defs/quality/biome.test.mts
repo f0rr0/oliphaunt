@@ -1,5 +1,13 @@
 import { expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runBiome } from './biome.mts';
@@ -70,10 +78,39 @@ test('applies conventional Biome directory exclusions and root/nested Git ignore
         'src/generated/bad.ts',
         'src/fixtures/bad.ts',
       ];
-      expect(check(root, 'format', paths).status).toBe(0);
-      expect(check(root, 'lint', paths).status).toBe(0);
+      expect(check(root, 'format', paths)).toMatchObject({ status: 0 });
+      expect(check(root, 'lint', paths)).toMatchObject({ status: 0 });
     },
   );
+});
+
+test('applies root Git ignores through a symlinked test temporary directory', () => {
+  const scratch = mkdtempSync(
+    join(process.env.TEST_TMPDIR ?? tmpdir(), 'oliphaunt-biome-aliased-'),
+  );
+  const previous = process.env.TEST_TMPDIR;
+  try {
+    const physical = join(scratch, 'physical');
+    const logical = join(scratch, 'logical');
+    mkdirSync(physical);
+    symlinkSync(physical, logical, 'dir');
+    process.env.TEST_TMPDIR = logical;
+    fixture(
+      {
+        '.gitignore': '/ignored.ts\n',
+        'ignored.ts': 'syntax error \\\n',
+        'good.ts': 'export const value = 1;\n',
+      },
+      (root) => {
+        expect(check(root, 'format', ['ignored.ts', 'good.ts'])).toMatchObject({ status: 0 });
+        expect(check(root, 'lint', ['ignored.ts', 'good.ts'])).toMatchObject({ status: 0 });
+      },
+    );
+  } finally {
+    if (previous === undefined) delete process.env.TEST_TMPDIR;
+    else process.env.TEST_TMPDIR = previous;
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });
 
 test('detects actual lint errors and refuses path escape or duplicate members', () => {

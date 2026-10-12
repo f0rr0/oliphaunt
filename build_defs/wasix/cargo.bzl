@@ -109,7 +109,7 @@ def wasix_runtime_cargo(payload, target_id = ""):
     _runtime_cargo(name = "crate", payload = payload, product = owner, package_name = package,
                    target_id = target_id, sources = {file: file for file in sources})
     shipping_package(name = "shipping_package", owner = owner, artifacts = [":crate"], ecosystem = "cargo",
-                     package_name = package, configuration = target_id or "portable", role = rows[0]["role"])
+                     package_name = package, configuration = target_id or "portable", role = rows[0]["role"], suppliers = "//src/wasix/runtime:runtime_public_suppliers")
     shipping_export(name = "shipping_export", packages = [":shipping_package"])
 
 def wasix_runtime_cargo_exports():

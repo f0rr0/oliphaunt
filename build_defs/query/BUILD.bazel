@@ -18,7 +18,7 @@ bun_test(
     name = "cargo_link_environment_test",
     size = "small",
     entry_point = "cargo-consumer-test.test.mts",
-    data = ["cargo-consumer-test.mts", "//build_defs/languages:cargo-environment.mts", "//:tools/packaging/portable-archive.mts"],
+    data = ["cargo-consumer-test.mts", "package.mts", "//build_defs/languages:cargo-environment.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/package-archive.mts", "//:tools/packaging/portable-archive.mts"],
 )
 
 bun_test(

@@ -222,58 +222,60 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "CREATE TEMP TABLE oliphaunt_bloom (id int, value int);",
     "CREATE INDEX oliphaunt_bloom_idx ON oliphaunt_bloom USING bloom (id, value);",
     "INSERT INTO oliphaunt_bloom SELECT i, i % 3 FROM generate_series(1, 20) AS i;",
-    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_bloom WHERE id = 7 AND value = 1; IF n <> 1 THEN RAISE EXCEPTION 'bloom lookup failed: %', n; END IF; END $$;"
+    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_bloom WHERE id = 7 AND value = 1; IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'bloom lookup failed: %', n; END IF; END $$;"
   ],
   "btree_gin": [
     "CREATE TEMP TABLE oliphaunt_btree_gin (id int);",
     "CREATE INDEX oliphaunt_btree_gin_idx ON oliphaunt_btree_gin USING gin (id);",
     "INSERT INTO oliphaunt_btree_gin SELECT generate_series(1, 10);",
-    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_btree_gin WHERE id = 5; IF n <> 1 THEN RAISE EXCEPTION 'btree_gin lookup failed: %', n; END IF; END $$;"
+    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_btree_gin WHERE id = 5; IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'btree_gin lookup failed: %', n; END IF; END $$;"
   ],
   "btree_gist": [
     "CREATE TEMP TABLE oliphaunt_btree_gist (id int);",
     "CREATE INDEX oliphaunt_btree_gist_idx ON oliphaunt_btree_gist USING gist (id);",
     "INSERT INTO oliphaunt_btree_gist SELECT generate_series(1, 10);",
-    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_btree_gist WHERE id = 5; IF n <> 1 THEN RAISE EXCEPTION 'btree_gist lookup failed: %', n; END IF; END $$;"
+    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_btree_gist WHERE id = 5; IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'btree_gist lookup failed: %', n; END IF; END $$;"
   ],
   "citext": [
     "CREATE TEMP TABLE oliphaunt_citext (value citext);",
     "INSERT INTO oliphaunt_citext VALUES ('Postgres');",
-    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_citext WHERE value = 'postgres'; IF n <> 1 THEN RAISE EXCEPTION 'citext comparison failed: %', n; END IF; END $$;"
+    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_citext WHERE value = 'postgres'; IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'citext comparison failed: %', n; END IF; END $$;"
   ],
   "cube": [
-    "DO $$ DECLARE d float8; BEGIN SELECT cube(array[1,2,3]) <-> cube(array[1,2,4]) INTO d; IF d <> 1 THEN RAISE EXCEPTION 'cube distance failed: %', d; END IF; END $$;"
+    "DO $$ DECLARE d float8; BEGIN SELECT cube(array[1,2,3]) <-> cube(array[1,2,4]) INTO d; IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'cube distance failed: %', d; END IF; END $$;"
   ],
   "dict_int": [
-    "DO $$ DECLARE lex text; BEGIN SELECT array_to_string(ts_lexize('intdict', '40865854'), ',') INTO lex; IF lex <> '408658' THEN RAISE EXCEPTION 'dict_int lexize failed: %', lex; END IF; END $$;"
+    "DO $$ DECLARE lex text; BEGIN SELECT array_to_string(ts_lexize('intdict', '40865854'), ',') INTO lex; IF lex IS DISTINCT FROM '408658' THEN RAISE EXCEPTION 'dict_int lexize failed: %', lex; END IF; END $$;"
   ],
   "dict_xsyn": [
     "ALTER TEXT SEARCH DICTIONARY xsyn (RULES = 'xsyn_sample', KEEPORIG = true, MATCHORIG = true, KEEPSYNONYMS = true, MATCHSYNONYMS = false);",
     "DO $$ DECLARE lex text; BEGIN SELECT array_to_string(ts_lexize('xsyn', 'supernova'), ',') INTO lex; IF lex IS NULL OR lex !~ 'sn' THEN RAISE EXCEPTION 'dict_xsyn lexize failed: %', lex; END IF; END $$;"
   ],
   "earthdistance": [
-    "DO $$ DECLARE d float8; BEGIN SELECT earth_distance(ll_to_earth(0, 0), ll_to_earth(0, 1)) INTO d; IF d <= 0 THEN RAISE EXCEPTION 'earthdistance failed: %', d; END IF; END $$;"
+    "DO $$ DECLARE d float8; BEGIN SELECT earth_distance(ll_to_earth(0, 0), ll_to_earth(0, 1)) INTO d; IF d IS NULL OR d <= 0 THEN RAISE EXCEPTION 'earthdistance failed: %', d; END IF; END $$;"
   ],
   "file_fdw": [
+    "DROP FOREIGN TABLE IF EXISTS oliphaunt_file_version_probe;",
     "DROP SERVER IF EXISTS oliphaunt_file_server;",
     "CREATE SERVER oliphaunt_file_server FOREIGN DATA WRAPPER file_fdw;",
-    "-- oliphaunt-verify\nDO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_foreign_server WHERE srvname = 'oliphaunt_file_server') THEN RAISE EXCEPTION 'file_fdw server missing'; END IF; END $$;"
+    "DO $$\nBEGIN\n  EXECUTE format(\n    'CREATE FOREIGN TABLE oliphaunt_file_version_probe(version integer) SERVER oliphaunt_file_server OPTIONS (filename %L, format %L)',\n    current_setting('data_directory') || '/PG_VERSION', 'text'\n  );\nEND\n$$;",
+    "-- oliphaunt-verify\nDO $$\nDECLARE\n  file_rows bigint;\n  postgres_major integer;\nBEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_foreign_server WHERE srvname = 'oliphaunt_file_server') THEN\n    RAISE EXCEPTION 'file_fdw server missing';\n  END IF;\n  EXECUTE format(\n    'ALTER FOREIGN TABLE oliphaunt_file_version_probe OPTIONS (SET filename %L)',\n    current_setting('data_directory') || '/PG_VERSION'\n  );\n  SELECT count(*), min(version) INTO file_rows, postgres_major FROM oliphaunt_file_version_probe;\n  IF file_rows IS DISTINCT FROM 1::bigint OR postgres_major IS DISTINCT FROM 18 THEN\n    RAISE EXCEPTION 'file_fdw did not read the expected database version: rows %, version %', file_rows, postgres_major;\n  END IF;\nEND\n$$;"
   ],
   "fuzzystrmatch": [
-    "DO $$ BEGIN IF levenshtein('kitten', 'sitting') <> 3 THEN RAISE EXCEPTION 'levenshtein failed'; END IF; IF soundex('kitten') <> 'K350' THEN RAISE EXCEPTION 'soundex failed'; END IF; END $$;"
+    "DO $$ BEGIN IF levenshtein('kitten', 'sitting') IS DISTINCT FROM 3 THEN RAISE EXCEPTION 'levenshtein failed'; END IF; IF soundex('kitten') IS DISTINCT FROM 'K350' THEN RAISE EXCEPTION 'soundex failed'; END IF; END $$;"
   ],
   "hstore": [
     "CREATE TEMP TABLE oliphaunt_hstore (attrs hstore);",
     "INSERT INTO oliphaunt_hstore VALUES ('a=>1,b=>2'::hstore);",
-    "DO $$ DECLARE v text; BEGIN SELECT attrs -> 'b' INTO v FROM oliphaunt_hstore; IF v <> '2' THEN RAISE EXCEPTION 'hstore lookup failed: %', v; END IF; END $$;"
+    "DO $$ DECLARE v text; BEGIN SELECT attrs -> 'b' INTO v FROM oliphaunt_hstore; IF v IS DISTINCT FROM '2' THEN RAISE EXCEPTION 'hstore lookup failed: %', v; END IF; END $$;"
   ],
   "intarray": [
     "CREATE TEMP TABLE oliphaunt_intarray (tags int[]);",
     "INSERT INTO oliphaunt_intarray VALUES (ARRAY[1, 2, 5]), (ARRAY[3, 4]);",
-    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_intarray WHERE tags && ARRAY[2, 9]; IF n <> 1 THEN RAISE EXCEPTION 'intarray overlap failed: %', n; END IF; SELECT count(*) INTO n FROM oliphaunt_intarray WHERE tags @@ '1 & (2|3)'::query_int; IF n <> 1 THEN RAISE EXCEPTION 'intarray query_int failed: %', n; END IF; END $$;"
+    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_intarray WHERE tags && ARRAY[2, 9]; IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'intarray overlap failed: %', n; END IF; SELECT count(*) INTO n FROM oliphaunt_intarray WHERE tags @@ '1 & (2|3)'::query_int; IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'intarray query_int failed: %', n; END IF; END $$;"
   ],
   "isn": [
-    "DO $$ BEGIN IF isbn('978-0-393-04002-9')::text <> '0-393-04002-X' THEN RAISE EXCEPTION 'isbn failed'; END IF; IF isbn13('0901690546')::text <> '978-0-901690-54-8' THEN RAISE EXCEPTION 'isbn13 failed'; END IF; IF issn('1436-4522')::text <> '1436-4522' THEN RAISE EXCEPTION 'issn failed'; END IF; END $$;"
+    "DO $$ BEGIN IF isbn('978-0-393-04002-9')::text IS DISTINCT FROM '0-393-04002-X' THEN RAISE EXCEPTION 'isbn failed'; END IF; IF isbn13('0901690546')::text IS DISTINCT FROM '978-0-901690-54-8' THEN RAISE EXCEPTION 'isbn13 failed'; END IF; IF issn('1436-4522')::text IS DISTINCT FROM '1436-4522' THEN RAISE EXCEPTION 'issn failed'; END IF; END $$;"
   ],
   "lo": [
     "CREATE TEMP TABLE oliphaunt_lo (id int, data oid);",
@@ -283,7 +285,7 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
   "ltree": [
     "CREATE TEMP TABLE oliphaunt_ltree (path ltree);",
     "INSERT INTO oliphaunt_ltree VALUES ('Top.Science.Astronomy'), ('Top.Collections.Pictures');",
-    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_ltree WHERE path <@ 'Top.Science'; IF n <> 1 THEN RAISE EXCEPTION 'ltree ancestor query failed: %', n; END IF; END $$;"
+    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_ltree WHERE path <@ 'Top.Science'; IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'ltree ancestor query failed: %', n; END IF; END $$;"
   ],
   "pageinspect": [
     "CREATE TEMP TABLE oliphaunt_pageinspect (id int);",
@@ -301,7 +303,7 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "SELECT * FROM pg_freespace('oliphaunt_fsm') LIMIT 1;"
   ],
   "pg_hashids": [
-    "DO $$ BEGIN IF id_encode(1001) <> 'jNl' THEN RAISE EXCEPTION 'pg_hashids encode failed'; END IF; IF id_decode_once('jNl') <> 1001 THEN RAISE EXCEPTION 'pg_hashids decode failed'; END IF; END $$;"
+    "DO $$ BEGIN IF id_encode(1001) IS DISTINCT FROM 'jNl' THEN RAISE EXCEPTION 'pg_hashids encode failed'; END IF; IF id_decode_once('jNl') IS DISTINCT FROM 1001 THEN RAISE EXCEPTION 'pg_hashids decode failed'; END IF; END $$;"
   ],
   "pg_ivm": [
     "DROP TABLE IF EXISTS oliphaunt_ivm_summary;",
@@ -309,10 +311,13 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "CREATE TABLE oliphaunt_ivm_orders (id int, amount int);",
     "INSERT INTO oliphaunt_ivm_orders VALUES (1, 10), (2, 20);",
     "SELECT pgivm.create_immv('oliphaunt_ivm_summary', $$ SELECT id, amount FROM oliphaunt_ivm_orders $$);",
-    "-- oliphaunt-verify\nDO $$\nDECLARE n int;\nBEGIN\n  SELECT count(*) INTO n FROM oliphaunt_ivm_summary;\n  IF n <> 2 THEN RAISE EXCEPTION 'pg_ivm count failed: %', n; END IF;\n  UPDATE oliphaunt_ivm_orders SET amount = 11 WHERE id = 1;\n  SELECT amount INTO n FROM oliphaunt_ivm_summary WHERE id = 1;\n  IF n IS DISTINCT FROM 11 THEN RAISE EXCEPTION 'pg_ivm maintenance failed: %', n; END IF;\n  UPDATE oliphaunt_ivm_orders SET amount = 10 WHERE id = 1;\nEND $$;"
+    "-- oliphaunt-verify\nDO $$\nDECLARE n int;\nBEGIN\n  SELECT count(*) INTO n FROM oliphaunt_ivm_summary;\n  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'pg_ivm count failed: %', n; END IF;\n  UPDATE oliphaunt_ivm_orders SET amount = 11 WHERE id = 1;\n  SELECT amount INTO n FROM oliphaunt_ivm_summary WHERE id = 1;\n  IF n IS DISTINCT FROM 11 THEN RAISE EXCEPTION 'pg_ivm maintenance failed: %', n; END IF;\n  UPDATE oliphaunt_ivm_orders SET amount = 10 WHERE id = 1;\nEND $$;"
   ],
   "pg_surgery": [
-    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'heap_force_kill') THEN RAISE EXCEPTION 'pg_surgery function missing'; END IF; END $$;"
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'heap_force_kill') THEN RAISE EXCEPTION 'pg_surgery function missing'; END IF; END $$;",
+    "CREATE TEMP TABLE oliphaunt_pg_surgery_probe(value integer);",
+    "INSERT INTO oliphaunt_pg_surgery_probe VALUES (1), (2);",
+    "DO $$\nDECLARE\n  target_tid tid;\nBEGIN\n  SELECT ctid INTO STRICT target_tid FROM oliphaunt_pg_surgery_probe WHERE value = 1;\n  PERFORM heap_force_freeze('oliphaunt_pg_surgery_probe'::regclass, ARRAY[target_tid]::tid[]);\n  IF (SELECT xmin::text FROM oliphaunt_pg_surgery_probe WHERE value = 1) IS DISTINCT FROM '2' THEN\n    RAISE EXCEPTION 'pg_surgery did not freeze the temporary tuple';\n  END IF;\n  PERFORM heap_force_kill('oliphaunt_pg_surgery_probe'::regclass, ARRAY[target_tid]::tid[]);\n  IF (SELECT count(*) FROM oliphaunt_pg_surgery_probe) IS DISTINCT FROM 1::bigint\n    OR (SELECT sum(value) FROM oliphaunt_pg_surgery_probe) IS DISTINCT FROM 2::bigint THEN\n    RAISE EXCEPTION 'pg_surgery did not retain only the expected temporary tuple';\n  END IF;\nEND\n$$;"
   ],
   "pg_textsearch": [
     "-- A nonempty English index must resolve PostgreSQL's Snowball runtime-support\n-- module and stopword data. An empty index does not load the dictionary and\n-- therefore cannot prove the packaged runtime closure.\nDROP TABLE IF EXISTS oliphaunt_pg_textsearch_english;",
@@ -322,10 +327,10 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "-- oliphaunt-verify\nDO $oliphaunt$\nDECLARE\n  hit bigint;\nBEGIN\n  SELECT id\n  INTO hit\n  FROM oliphaunt_pg_textsearch_english\n  ORDER BY body <@> to_bm25query(\n    'running database',\n    'oliphaunt_pg_textsearch_english_bm25'\n  )\n  LIMIT 1;\n  IF hit IS DISTINCT FROM 1 THEN\n    RAISE EXCEPTION 'pg_textsearch English BM25 smoke returned id %, expected 1', hit;\n  END IF;\nEND\n$oliphaunt$;"
   ],
   "pg_trgm": [
-    "DO $$ DECLARE score float8; BEGIN SELECT similarity('postgres', 'postgrex') INTO score; IF score <= 0 THEN RAISE EXCEPTION 'pg_trgm similarity failed: %', score; END IF; END $$;"
+    "DO $$ DECLARE score float8; BEGIN SELECT similarity('postgres', 'postgrex') INTO score; IF score IS NULL OR score <= 0 THEN RAISE EXCEPTION 'pg_trgm similarity failed: %', score; END IF; END $$;"
   ],
   "pg_uuidv7": [
-    "DO $$ DECLARE id uuid; ts timestamptz; BEGIN SELECT uuid_generate_v7() INTO id; IF length(id::text) <> 36 THEN RAISE EXCEPTION 'uuidv7 length failed'; END IF; SELECT uuid_v7_to_timestamptz('018570bb-4a7d-7c7e-8df4-6d47afd8c8fc') INTO ts; IF ts IS NULL THEN RAISE EXCEPTION 'uuidv7 timestamp failed'; END IF; END $$;"
+    "DO $$ DECLARE id uuid; ts timestamptz; BEGIN SELECT uuid_generate_v7() INTO id; IF length(id::text) IS DISTINCT FROM 36 THEN RAISE EXCEPTION 'uuidv7 length failed'; END IF; SELECT uuid_v7_to_timestamptz('018570bb-4a7d-7c7e-8df4-6d47afd8c8fc') INTO ts; IF ts IS NULL THEN RAISE EXCEPTION 'uuidv7 timestamp failed'; END IF; END $$;"
   ],
   "pg_visibility": [
     "CREATE TEMP TABLE oliphaunt_visibility (id int);",
@@ -340,10 +345,10 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "SELECT * FROM pg_get_wal_block_info((SELECT before_lsn FROM oliphaunt_walinspect_lsn), pg_current_wal_lsn()) ORDER BY start_lsn, block_id LIMIT 20;"
   ],
   "pgcrypto": [
-    "DO $$ DECLARE hashed text; encrypted bytea; BEGIN IF encode(digest('abc', 'sha256'), 'hex') <> 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' THEN RAISE EXCEPTION 'sha256 digest failed'; END IF; IF length(gen_random_bytes(16)) <> 16 THEN RAISE EXCEPTION 'random bytes length failed'; END IF; SELECT crypt('secret', gen_salt('bf', 4)) INTO hashed; IF crypt('secret', hashed) <> hashed THEN RAISE EXCEPTION 'password hash verify failed'; END IF; SELECT pgp_sym_encrypt('oliphaunt secret', 'passphrase') INTO encrypted; IF pgp_sym_decrypt(encrypted, 'passphrase') <> 'oliphaunt secret' THEN RAISE EXCEPTION 'PGP symmetric decrypt failed'; END IF; END $$;",
-    "DO $$ BEGIN IF encode(hmac('test', 'key', 'sha1'), 'hex') <> '671f54ce0c540f78ffe1e26dcf9c2a047aea4fda' THEN RAISE EXCEPTION 'hmac failed'; END IF; IF gen_random_uuid()::text !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN RAISE EXCEPTION 'random uuid format failed'; END IF; END $$;",
-    "DO $$ DECLARE armored text; header_count int; BEGIN SELECT armor(digest('test', 'sha1'), ARRAY['Version'], ARRAY['oliphaunt']) INTO armored; IF position('Version: oliphaunt' in armored) = 0 THEN RAISE EXCEPTION 'armor header failed'; END IF; SELECT count(*) INTO header_count FROM pgp_armor_headers(armored); IF header_count <> 1 THEN RAISE EXCEPTION 'armor header count failed: %', header_count; END IF; END $$;",
-    "DO $$ DECLARE encrypted bytea; crypto_key bytea := decode('000102030405060708090a0b0c0d0e0f', 'hex'); crypto_iv bytea := decode('101112131415161718191a1b1c1d1e1f', 'hex'); BEGIN SELECT pgp_sym_encrypt('oliphaunt secret', 'passphrase') INTO encrypted; IF pgp_key_id(encrypted) <> 'SYMKEY' THEN RAISE EXCEPTION 'PGP symmetric key id failed'; END IF; SELECT encrypt(convert_to('oliphaunt raw cipher', 'UTF8'), crypto_key, 'aes') INTO encrypted; IF convert_from(decrypt(encrypted, crypto_key, 'aes'), 'UTF8') <> 'oliphaunt raw cipher' THEN RAISE EXCEPTION 'raw decrypt failed'; END IF; SELECT encrypt_iv(convert_to('oliphaunt iv cipher', 'UTF8'), crypto_key, crypto_iv, 'aes-cbc') INTO encrypted; IF convert_from(decrypt_iv(encrypted, crypto_key, crypto_iv, 'aes-cbc'), 'UTF8') <> 'oliphaunt iv cipher' THEN RAISE EXCEPTION 'raw iv decrypt failed'; END IF; END $$;"
+    "DO $$ DECLARE hashed text; encrypted bytea; BEGIN IF encode(digest('abc', 'sha256'), 'hex') IS DISTINCT FROM 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' THEN RAISE EXCEPTION 'sha256 digest failed'; END IF; IF length(gen_random_bytes(16)) IS DISTINCT FROM 16 THEN RAISE EXCEPTION 'random bytes length failed'; END IF; SELECT crypt('secret', gen_salt('bf', 4)) INTO hashed; IF hashed IS NULL OR crypt('secret', hashed) IS DISTINCT FROM hashed THEN RAISE EXCEPTION 'password hash verify failed'; END IF; SELECT pgp_sym_encrypt('oliphaunt secret', 'passphrase') INTO encrypted; IF pgp_sym_decrypt(encrypted, 'passphrase') IS DISTINCT FROM 'oliphaunt secret' THEN RAISE EXCEPTION 'PGP symmetric decrypt failed'; END IF; END $$;",
+    "DO $$ BEGIN IF encode(hmac('test', 'key', 'sha1'), 'hex') IS DISTINCT FROM '671f54ce0c540f78ffe1e26dcf9c2a047aea4fda' THEN RAISE EXCEPTION 'hmac failed'; END IF; IF (gen_random_uuid()::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') IS DISTINCT FROM true THEN RAISE EXCEPTION 'random uuid format failed'; END IF; END $$;",
+    "DO $$ DECLARE armored text; header_count int; BEGIN SELECT armor(digest('test', 'sha1'), ARRAY['Version'], ARRAY['oliphaunt']) INTO armored; IF armored IS NULL OR position('Version: oliphaunt' in armored) = 0 THEN RAISE EXCEPTION 'armor header failed'; END IF; SELECT count(*) INTO header_count FROM pgp_armor_headers(armored); IF header_count IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'armor header count failed: %', header_count; END IF; END $$;",
+    "DO $$ DECLARE encrypted bytea; crypto_key bytea := decode('000102030405060708090a0b0c0d0e0f', 'hex'); crypto_iv bytea := decode('101112131415161718191a1b1c1d1e1f', 'hex'); BEGIN SELECT pgp_sym_encrypt('oliphaunt secret', 'passphrase') INTO encrypted; IF pgp_key_id(encrypted) IS DISTINCT FROM 'SYMKEY' THEN RAISE EXCEPTION 'PGP symmetric key id failed'; END IF; SELECT encrypt(convert_to('oliphaunt raw cipher', 'UTF8'), crypto_key, 'aes') INTO encrypted; IF convert_from(decrypt(encrypted, crypto_key, 'aes'), 'UTF8') IS DISTINCT FROM 'oliphaunt raw cipher' THEN RAISE EXCEPTION 'raw decrypt failed'; END IF; SELECT encrypt_iv(convert_to('oliphaunt iv cipher', 'UTF8'), crypto_key, crypto_iv, 'aes-cbc') INTO encrypted; IF convert_from(decrypt_iv(encrypted, crypto_key, crypto_iv, 'aes-cbc'), 'UTF8') IS DISTINCT FROM 'oliphaunt iv cipher' THEN RAISE EXCEPTION 'raw iv decrypt failed'; END IF; END $$;"
   ],
   "pgtap": [
     "SELECT plan(2);",
@@ -356,13 +361,13 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "CREATE TABLE oliphaunt_postgis_points(id int PRIMARY KEY, geom geometry(Point, 4326));",
     "INSERT INTO oliphaunt_postgis_points VALUES\n  (1, ST_SetSRID(ST_MakePoint(-71.060316, 48.432044), 4326)),\n  (2, ST_SetSRID(ST_MakePoint(-71.061, 48.433), 4326));",
     "CREATE INDEX oliphaunt_postgis_points_gix ON oliphaunt_postgis_points USING GIST (geom);",
-    "-- oliphaunt-verify\nDO $$\nDECLARE\n  distance float8;\n  srid int;\n  area float8;\n  polygons int;\n  nearby int;\nBEGIN\n  SELECT ST_Distance(ST_GeomFromText('POINT(0 0)'), ST_GeomFromText('POINT(3 4)')) INTO distance;\n  IF distance <> 5 THEN\n    RAISE EXCEPTION 'postgis geometry distance failed: %', distance;\n  END IF;\n  IF ST_AsText(ST_Buffer(ST_GeomFromText('POINT(0 0)'), 1, 'quad_segs=1')) IS NULL THEN\n    RAISE EXCEPTION 'postgis buffer failed';\n  END IF;\n  IF NOT ST_Within(\n    ST_GeomFromText('POINT(0.5 0.5)'),\n    ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))')\n  ) THEN\n    RAISE EXCEPTION 'postgis within failed';\n  END IF;\n  SELECT ST_SRID(ST_Transform(ST_SetSRID(ST_MakePoint(-71.060316, 48.432044), 4326), 3857)) INTO srid;\n  IF srid <> 3857 THEN\n    RAISE EXCEPTION 'postgis transform failed: %', srid;\n  END IF;\n  SELECT ST_Area(ST_Transform(ST_SetSRID(ST_MakePolygon(ST_GeomFromText('LINESTRING(-71.1776848522251 42.3902896512902,-71.1776843766797 42.3903701743239,-71.1775844305465 42.3903829478009,-71.1775825927231 42.3902893647987,-71.1776848522251 42.3902896512902)')), 4326), 26986)) INTO area;\n  IF area <= 0 THEN\n    RAISE EXCEPTION 'postgis projected area failed: %', area;\n  END IF;\n  SELECT ST_NumGeometries(ST_Polygonize(ARRAY[\n    ST_GeomFromText('LINESTRING(0 0, 1 0)'),\n    ST_GeomFromText('LINESTRING(1 0, 1 1)'),\n    ST_GeomFromText('LINESTRING(1 1, 0 1)'),\n    ST_GeomFromText('LINESTRING(0 1, 0 0)')\n  ])) INTO polygons;\n  IF polygons <> 1 THEN\n    RAISE EXCEPTION 'postgis polygonize failed: %', polygons;\n  END IF;\n  SELECT count(*) INTO nearby\n  FROM oliphaunt_postgis_points\n  WHERE ST_DWithin(\n    geom::geography,\n    ST_SetSRID(ST_MakePoint(-71.060316, 48.432044), 4326)::geography,\n    200\n  );\n  IF nearby <> 2 THEN\n    RAISE EXCEPTION 'postgis dwithin failed: %', nearby;\n  END IF;\nEND $$;"
+    "-- oliphaunt-verify\nDO $$\nDECLARE\n  distance float8;\n  srid int;\n  area float8;\n  polygons int;\n  nearby int;\nBEGIN\n  SELECT ST_Distance(ST_GeomFromText('POINT(0 0)'), ST_GeomFromText('POINT(3 4)')) INTO distance;\n  IF distance IS DISTINCT FROM 5 THEN\n    RAISE EXCEPTION 'postgis geometry distance failed: %', distance;\n  END IF;\n  IF ST_AsText(ST_Buffer(ST_GeomFromText('POINT(0 0)'), 1, 'quad_segs=1')) IS NULL THEN\n    RAISE EXCEPTION 'postgis buffer failed';\n  END IF;\n  IF ST_Within(\n    ST_GeomFromText('POINT(0.5 0.5)'),\n    ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))')\n  ) IS DISTINCT FROM true THEN\n    RAISE EXCEPTION 'postgis within failed';\n  END IF;\n  SELECT ST_SRID(ST_Transform(ST_SetSRID(ST_MakePoint(-71.060316, 48.432044), 4326), 3857)) INTO srid;\n  IF srid IS DISTINCT FROM 3857 THEN\n    RAISE EXCEPTION 'postgis transform failed: %', srid;\n  END IF;\n  SELECT ST_Area(ST_Transform(ST_SetSRID(ST_MakePolygon(ST_GeomFromText('LINESTRING(-71.1776848522251 42.3902896512902,-71.1776843766797 42.3903701743239,-71.1775844305465 42.3903829478009,-71.1775825927231 42.3902893647987,-71.1776848522251 42.3902896512902)')), 4326), 26986)) INTO area;\n  IF area IS NULL OR area <= 0 THEN\n    RAISE EXCEPTION 'postgis projected area failed: %', area;\n  END IF;\n  SELECT ST_NumGeometries(ST_Polygonize(ARRAY[\n    ST_GeomFromText('LINESTRING(0 0, 1 0)'),\n    ST_GeomFromText('LINESTRING(1 0, 1 1)'),\n    ST_GeomFromText('LINESTRING(1 1, 0 1)'),\n    ST_GeomFromText('LINESTRING(0 1, 0 0)')\n  ])) INTO polygons;\n  IF polygons IS DISTINCT FROM 1 THEN\n    RAISE EXCEPTION 'postgis polygonize failed: %', polygons;\n  END IF;\n  SELECT count(*) INTO nearby\n  FROM oliphaunt_postgis_points\n  WHERE ST_DWithin(\n    geom::geography,\n    ST_SetSRID(ST_MakePoint(-71.060316, 48.432044), 4326)::geography,\n    200\n  );\n  IF nearby IS DISTINCT FROM 2 THEN\n    RAISE EXCEPTION 'postgis dwithin failed: %', nearby;\n  END IF;\nEND $$;"
   ],
   "seg": [
-    "DO $$ BEGIN IF '7(+-)1'::seg::text <> '6 .. 8' THEN RAISE EXCEPTION 'seg cast failed'; END IF; END $$;"
+    "DO $$ BEGIN IF '7(+-)1'::seg::text IS DISTINCT FROM '6 .. 8' THEN RAISE EXCEPTION 'seg cast failed'; END IF; END $$;"
   ],
   "tablefunc": [
-    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM normal_rand(10, 5, 3); IF n <> 10 THEN RAISE EXCEPTION 'normal_rand failed: %', n; END IF; END $$;",
+    "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM normal_rand(10, 5, 3); IF n IS DISTINCT FROM 10 THEN RAISE EXCEPTION 'normal_rand failed: %', n; END IF; END $$;",
     "SELECT * FROM crosstab('SELECT 1, 1, 10 UNION ALL SELECT 1, 2, 20') AS ct(rowid int, c1 int, c2 int);"
   ],
   "tcn": [
@@ -379,12 +384,12 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "SELECT * FROM oliphaunt_tsm_time TABLESAMPLE SYSTEM_TIME(50);"
   ],
   "unaccent": [
-    "DO $$ DECLARE lex text; BEGIN SELECT array_to_string(ts_lexize('unaccent', 'H\u00f4tel'), ',') INTO lex; IF lex <> 'Hotel' THEN RAISE EXCEPTION 'unaccent failed: %', lex; END IF; END $$;"
+    "DO $$ DECLARE lex text; BEGIN SELECT array_to_string(ts_lexize('unaccent', 'H\u00f4tel'), ',') INTO lex; IF lex IS DISTINCT FROM 'Hotel' THEN RAISE EXCEPTION 'unaccent failed: %', lex; END IF; END $$;"
   ],
   "uuid-ossp": [
-    "DO $$ DECLARE id uuid; BEGIN SELECT uuid_generate_v1() INTO id; IF length(id::text) <> 36 THEN RAISE EXCEPTION 'uuid-ossp v1 length failed'; END IF; SELECT uuid_generate_v4() INTO id; IF length(id::text) <> 36 THEN RAISE EXCEPTION 'uuid-ossp v4 length failed'; END IF; END $$;",
-    "DO $$ BEGIN IF uuid_generate_v3(uuid_ns_dns(), 'www.example.com')::text <> '5df41881-3aed-3515-88a7-2f4a814cf09e' THEN RAISE EXCEPTION 'uuid-ossp v3 failed'; END IF; IF uuid_generate_v5(uuid_ns_dns(), 'www.example.com')::text <> '2ed6657d-e927-568b-95e1-2665a8aea6a2' THEN RAISE EXCEPTION 'uuid-ossp v5 failed'; END IF; END $$;",
-    "DO $$ BEGIN IF uuid_nil()::text <> '00000000-0000-0000-0000-000000000000' THEN RAISE EXCEPTION 'uuid-ossp nil failed'; END IF; IF uuid_ns_dns()::text <> '6ba7b810-9dad-11d1-80b4-00c04fd430c8' THEN RAISE EXCEPTION 'uuid-ossp dns namespace failed'; END IF; IF uuid_ns_oid()::text <> '6ba7b812-9dad-11d1-80b4-00c04fd430c8' THEN RAISE EXCEPTION 'uuid-ossp oid namespace failed'; END IF; END $$;"
+    "DO $$ DECLARE id uuid; BEGIN SELECT uuid_generate_v1() INTO id; IF length(id::text) IS DISTINCT FROM 36 THEN RAISE EXCEPTION 'uuid-ossp v1 length failed'; END IF; SELECT uuid_generate_v4() INTO id; IF length(id::text) IS DISTINCT FROM 36 THEN RAISE EXCEPTION 'uuid-ossp v4 length failed'; END IF; END $$;",
+    "DO $$ BEGIN IF uuid_generate_v3(uuid_ns_dns(), 'www.example.com')::text IS DISTINCT FROM '5df41881-3aed-3515-88a7-2f4a814cf09e' THEN RAISE EXCEPTION 'uuid-ossp v3 failed'; END IF; IF uuid_generate_v5(uuid_ns_dns(), 'www.example.com')::text IS DISTINCT FROM '2ed6657d-e927-568b-95e1-2665a8aea6a2' THEN RAISE EXCEPTION 'uuid-ossp v5 failed'; END IF; END $$;",
+    "DO $$ BEGIN IF uuid_nil()::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000000' THEN RAISE EXCEPTION 'uuid-ossp nil failed'; END IF; IF uuid_ns_dns()::text IS DISTINCT FROM '6ba7b810-9dad-11d1-80b4-00c04fd430c8' THEN RAISE EXCEPTION 'uuid-ossp dns namespace failed'; END IF; IF uuid_ns_oid()::text IS DISTINCT FROM '6ba7b812-9dad-11d1-80b4-00c04fd430c8' THEN RAISE EXCEPTION 'uuid-ossp oid namespace failed'; END IF; END $$;"
   ],
   "vector": [
     "DROP TABLE IF EXISTS oliphaunt_vector;",

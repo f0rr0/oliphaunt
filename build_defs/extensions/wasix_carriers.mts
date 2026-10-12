@@ -215,7 +215,7 @@ export function assembleSqlOnlyWasixMember(
     loadOrder: spec.descriptor['load-order'] ?? [],
     lifecycle: {
       createExtension: lifecycle['create-extension'],
-      createSchema: lifecycle['create-schema'],
+      createSchema: lifecycle['create-schema'] ?? null,
       loadSql: lifecycle['load-sql'],
       postCreateSql: lifecycle['post-create-sql'],
       startupConfig: lifecycle['startup-config'],
@@ -349,6 +349,14 @@ export function stageDeclaredWasixExtensionHost(spec: {
   const cargo = Bun.TOML.parse(readFileSync(spec.files['Cargo.toml'], 'utf8'));
   assert.equal(cargo.package.name, 'liboliphaunt-wasix-portable');
   assert.equal(cargo.package.version, spec.version);
+  stageWasixExtensionHostPayload(spec);
+}
+
+export function stageWasixExtensionHostPayload(spec: {
+  files: Record<string, string>;
+  module: string;
+  manifest: string;
+}) {
   const manifest = JSON.parse(readFileSync(spec.files['payload/manifest.json'], 'utf8'));
   assert.equal(manifest['format-version'], 2);
   assert.equal(manifest['source-lane'], 'stable');
@@ -369,16 +377,32 @@ export function stageDeclaredWasixExtensionHost(spec: {
 }
 
 /** Package only the declared compiled member; the canonical writers own registry bytes. */
-export async function packageCompiledWasixCarriers(
+export function assertDeclaredWasixResource(entry: { source: string; destination: string }) {
+  assert(
+    /^(?:lib\/postgresql\/|share\/postgresql\/)/u.test(entry.destination) &&
+      !entry.destination.split('/').some((part) => !part || part === '.' || part === '..'),
+    'unsafe member destination',
+  );
+  const file = statSync(entry.source);
+  assert(file.isFile(), 'member input must be a declared regular file');
+  // PostgreSQL delivers empty upgrade scripts when a version needs no SQL changes.
+  // Keep those exact files; compiled modules, control files and data remain nonempty.
+  assert(
+    file.size > 0 ||
+      (entry.destination.startsWith('share/postgresql/extension/') &&
+        entry.destination.endsWith('.sql')),
+    'member input must be nonempty',
+  );
+}
+
+export async function stageCompiledWasixMember(
   spec: WasixCompiledCarrierSpec,
   files: string[],
+  productRoot: string,
+  releaseAssets: string,
 ) {
-  assert.equal(spec.product, `oliphaunt-extension-${spec.sqlName.replaceAll('_', '-')}`);
   assert.equal(spec.target, 'wasix-portable');
-  assert.equal(spec.releaseMetadata.versioning, 'upstream-bound');
-  assert.equal(spec.releaseMetadata.sqlName, spec.sqlName);
   const compatibility = extensionCompatibilityMetadata(spec.compatibility);
-  assert.deepEqual(spec.releaseMetadata.compatibility, compatibility);
   const link = JSON.parse(readFileSync(spec.link, 'utf8'));
   assert.equal(link.schema, 'oliphaunt-declared-wasix-extension-link-v1');
   assert.equal(link.sqlName, spec.sqlName);
@@ -388,8 +412,6 @@ export async function packageCompiledWasixCarriers(
     path.join(process.env.TEST_TMPDIR ?? tmpdir(), 'wasix-compiled-envelopes-'),
   );
   try {
-    const productRoot = path.join(root, 'product');
-    const releaseAssets = path.join(productRoot, 'release-assets');
     const stage = path.join(root, 'member');
     mkdirSync(releaseAssets, { recursive: true });
     const destinations = new Set<string>();
@@ -398,41 +420,39 @@ export async function packageCompiledWasixCarriers(
       ...spec.modules.map((row) => ({ source: row.path, destination: row.runtime_path })),
     ];
     for (const entry of entries) {
-      assert(
-        /^(?:lib\/postgresql\/|share\/postgresql\/)/u.test(entry.destination),
-        'member destination is outside PostgreSQL resources',
-      );
-      assert(
-        !entry.destination.split('/').some((part) => !part || part === '.' || part === '..'),
-        'unsafe member destination',
-      );
+      assertDeclaredWasixResource(entry);
       assert(!destinations.has(entry.destination), 'duplicate member destination');
       destinations.add(entry.destination);
-      assert(
-        statSync(entry.source).isFile() && statSync(entry.source).size > 0,
-        'member input must be a nonempty declared file',
-      );
       const destination = path.join(stage, entry.destination);
       mkdirSync(path.dirname(destination), { recursive: true });
       copyFileSync(entry.source, destination);
       chmodSync(destination, 0o644);
     }
-    const version = spec.source['extension-control']['default-version'];
-    for (const name of [`${spec.sqlName}.control`, `${spec.sqlName}--${version}.sql`])
+    const lifecycle = spec.descriptor.lifecycle;
+    if (lifecycle['create-extension']) {
+      const version = spec.source['extension-control']['default-version'];
+      const controlName = `share/postgresql/extension/${spec.sqlName}.control`;
+      assert(destinations.has(controlName), 'missing canonical compiled control resource');
+      const control = readFileSync(path.join(stage, controlName), 'utf8');
+      assert.equal(/^default_version\s*=\s*'([^']+)'\s*$/mu.exec(control)?.[1], version);
+      const modulePath = /^module_pathname\s*=\s*'([^']+)'\s*$/mu.exec(control)?.[1];
+      if (modulePath !== undefined)
+        assert.equal(modulePath, `$libdir/${spec.descriptor['native-module-file'].slice(0, -3)}`);
+      // PostgreSQL may reach default_version through delivered upgrade scripts.
       assert(
-        destinations.has(`share/postgresql/extension/${name}`),
-        `missing canonical compiled SQL resource ${name}`,
+        entries.some((entry) => {
+          const name = path.posix.basename(entry.destination);
+          return (
+            name.startsWith(`${spec.sqlName}--`) &&
+            name.endsWith('.sql') &&
+            name.slice(spec.sqlName.length + 2, -4).split('--').length === 1 &&
+            statSync(entry.source).size > 0
+          );
+        }),
+        'missing nonempty compiled base installation SQL',
       );
-    const control = readFileSync(
-      path.join(stage, `share/postgresql/extension/${spec.sqlName}.control`),
-      'utf8',
-    );
-    assert.equal(/^default_version\s*=\s*'([^']+)'\s*$/mu.exec(control)?.[1], version);
-    assert.equal(
-      /^module_pathname\s*=\s*'([^']+)'\s*$/mu.exec(control)?.[1],
-      `$libdir/${spec.descriptor['native-module-file'].slice(0, -3)}`,
-    );
-    const archiveName = `${spec.product}-${spec.version}-wasix-portable.tar.zst`;
+    }
+    const archiveName = `${spec.product}-${spec.version}-${spec.product === 'oliphaunt-extension-contrib-pg18' ? `${spec.sqlName}-` : ''}wasix-portable.tar.zst`;
     const archive = path.join(releaseAssets, archiveName);
     const bytes = releaseZstdCompressSync(await payloadTar(stage));
     writeFileSync(archive, bytes);
@@ -445,7 +465,6 @@ export async function packageCompiledWasixCarriers(
       bytes: bytes.length,
       sha256: createHash('sha256').update(bytes).digest('hex'),
     };
-    const lifecycle = spec.descriptor.lifecycle;
     const wasixInstall = {
       schema: WASIX_EXTENSION_INSTALL_SCHEMA,
       name: spec.sqlName,
@@ -456,7 +475,7 @@ export async function packageCompiledWasixCarriers(
       loadOrder: spec.descriptor['load-order'] ?? [],
       lifecycle: {
         createExtension: lifecycle['create-extension'],
-        createSchema: lifecycle['create-schema'],
+        createSchema: lifecycle['create-schema'] ?? null,
         loadSql: lifecycle['load-sql'],
         postCreateSql: lifecycle['post-create-sql'],
         startupConfig: lifecycle['startup-config'],
@@ -481,32 +500,27 @@ export async function packageCompiledWasixCarriers(
       createsExtension: lifecycle['create-extension'],
       nativeModuleStem: spec.descriptor['native-module-file'].slice(0, -3),
       dependencies: spec.selectedDependencies,
-      dataFiles: spec.recipe.artifacts?.data_files ?? [],
+      dataFiles: (spec.recipe.artifacts?.data_files ?? [])
+        .map((file: string) => {
+          assert(file.startsWith('share/postgresql/'), 'data resource must use PostgreSQL share');
+          return file.slice('share/postgresql/'.length);
+        })
+        .sort(),
       extensionSqlFileNames: spec.recipe.artifacts?.extension_sql_file_names ?? [],
       extensionSqlFilePrefixes: spec.recipe.artifacts?.extension_sql_file_prefixes ?? [],
-      sharedPreloadLibraries: [],
+      sharedPreloadLibraries: lifecycle['startup-config']
+        .flatMap((value: string) =>
+          value.startsWith('shared_preload_libraries=')
+            ? value.slice('shared_preload_libraries='.length).split(',')
+            : [],
+        )
+        .sort(),
       wasixInstall,
       assets: [asset],
     };
-    const frozen = {
-      schema: 'oliphaunt-extension-ci-artifacts-v1',
-      product: spec.product,
-      version: spec.version,
-      ...member,
-    };
-    const manifest = {
-      schema: 'oliphaunt-extension-release-manifest-v1',
-      product: spec.product,
-      version: spec.version,
-      extensionClass: 'external',
-      versioning: 'upstream-bound',
-      sourceIdentity: spec.releaseMetadata.sourceIdentity,
-      ...member,
-    };
-    writeJson(path.join(productRoot, 'extension-artifacts.json'), frozen);
-    writeJson(path.join(releaseAssets, path.basename(spec.outputs.manifest)), manifest);
     const canonical = canonicalWasixAotMetadata();
     const targets = Object.entries(AOT_TARGET_TRIPLES);
+    const bundle = spec.product === 'oliphaunt-extension-contrib-pg18';
     assert.equal(
       spec.aot.length,
       targets.length * spec.modules.length,
@@ -516,7 +530,12 @@ export async function packageCompiledWasixCarriers(
       const images = spec.aot.filter((row) => row.target === triple);
       assert.equal(images.length, spec.modules.length, `incomplete AOT closure for ${targetId}`);
       assert.equal(new Set(images.map((row) => row.name)).size, images.length);
-      const sourceDir = path.join(productRoot, 'wasix-aot', targetId);
+      const sourceDir = path.join(
+        productRoot,
+        'wasix-aot',
+        targetId,
+        ...(bundle ? [spec.sqlName] : []),
+      );
       mkdirSync(sourceDir, { recursive: true });
       const artifacts = images
         .map((row) => {
@@ -556,6 +575,53 @@ export async function packageCompiledWasixCarriers(
       });
       writeJson(path.join(sourceDir, 'manifest.json'), aotManifest);
     }
+    return { member, archive, archiveName, asset, wasixInstall };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+export async function packageCompiledWasixCarriers(
+  spec: WasixCompiledCarrierSpec,
+  files: string[],
+) {
+  assert.equal(spec.product, `oliphaunt-extension-${spec.sqlName.replaceAll('_', '-')}`);
+  assert.equal(spec.releaseMetadata.versioning, 'upstream-bound');
+  assert.equal(spec.releaseMetadata.sqlName, spec.sqlName);
+  const compatibility = extensionCompatibilityMetadata(spec.compatibility);
+  assert.deepEqual(spec.releaseMetadata.compatibility, compatibility);
+  const root = mkdtempSync(
+    path.join(process.env.TEST_TMPDIR ?? tmpdir(), 'wasix-final-envelopes-'),
+  );
+  try {
+    const productRoot = path.join(root, 'product');
+    const { member, archive, archiveName, asset, wasixInstall } = await stageCompiledWasixMember(
+      spec,
+      files,
+      productRoot,
+      path.join(productRoot, 'release-assets'),
+    );
+    const frozen = {
+      schema: 'oliphaunt-extension-ci-artifacts-v1',
+      product: spec.product,
+      version: spec.version,
+      ...member,
+    };
+    const manifest = {
+      schema: 'oliphaunt-extension-release-manifest-v1',
+      product: spec.product,
+      version: spec.version,
+      extensionClass: 'external',
+      versioning: 'upstream-bound',
+      sourceIdentity: spec.releaseMetadata.sourceIdentity,
+      ...member,
+    };
+    writeJson(path.join(productRoot, 'extension-artifacts.json'), frozen);
+    writeJson(
+      path.join(productRoot, 'release-assets', path.basename(spec.outputs.manifest)),
+      manifest,
+    );
+    const targets = Object.entries(AOT_TARGET_TRIPLES);
     const result = { staged: [] as string[], skipped: [] as string[] };
     assert(stageExtensionWasixNpmPackages([productRoot], path.join(root, 'npm-stage'), result));
     assert.equal(
@@ -635,6 +701,7 @@ if (import.meta.main) {
   const [input, leaves] = process.argv.slice(2);
   const spec = JSON.parse(readFileSync(input, 'utf8'));
   if (spec.operation === 'host') stageDeclaredWasixExtensionHost(spec);
+  else if (spec.operation === 'current-host') stageWasixExtensionHostPayload(spec);
   else if (spec.operation === 'compiled') {
     assert(leaves?.startsWith('--resource-files='));
     const inventory = readFileSync(leaves.slice('--resource-files='.length), 'utf8').trim();

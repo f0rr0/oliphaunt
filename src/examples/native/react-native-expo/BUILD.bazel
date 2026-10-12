@@ -1,0 +1,169 @@
+load("@javascript_android_app_packages//:roots.bzl", "CONSUMER_CLOSURES", "CONSUMER_PACKAGES", "CONSUMER_TOOLS")
+load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
+load("@expo_android_sources//:metadata.bzl", "ANDROID_NATIVE")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "PRODUCTS")
+load("@rules_android//android:rules.bzl", "aar_import", "android_binary", "android_library")
+load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
+load("//build_defs/android:app.bzl", "android_aar_native", "android_apk_proof", "android_app_runtime_assets", "android_extension_receipt", "android_final_aar", "android_header_tree", "android_jni_aar", "android_workspace_npm", "expo_android_bundle", "expo_android_project", "react_native_android_codegen")
+load("//build_defs/android:native-cpp.bzl", "REACT_NATIVE_RELEASE_DEFINES")
+load("//build_defs/extensions:mobile.bzl", "mobile_extension_registry")
+load("//build_defs/extensions:mobile_members.bzl", "MOBILE_MEMBER_LIBRARIES", "MOBILE_MEMBER_TARGETS")
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["package.json", "app.json"])
+
+APP_NAME = "react-native-oliphaunt-expo"
+# The previous mandatory example compiler selected vector. Bundle expectations
+# and the real native registration share this exact source-owned cohort.
+SELECTED_EXTENSIONS = ["vector"]
+CATALOG_PROFILE = "standard"
+ROOTS = CONSUMER_TOOLS[APP_NAME]
+PACKAGES = {key: CONSUMER_PACKAGES[key] for key in CONSUMER_CLOSURES[APP_NAME]}
+INPUTS = {"@javascript_android_app_packages//:" + key: key for key in PACKAGES}
+IDENTITIES = {key: json.encode(row) for key, row in PACKAGES.items()}
+
+android_workspace_npm(name = "react_native_sdk", archive = "//src/native/sdks/react-native:npm",
+                    package_name = JAVASCRIPT["@oliphaunt/react-native"]["name"], version = JAVASCRIPT["@oliphaunt/react-native"]["version"])
+android_workspace_npm(name = "query_sdk", archive = "//src/query/ts:npm",
+                    package_name = JAVASCRIPT["@oliphaunt/ts-query"]["name"], version = JAVASCRIPT["@oliphaunt/ts-query"]["version"])
+
+WORKSPACE_INPUTS = {":react_native_sdk": "workspace_react_native", ":query_sdk": "workspace_query"}
+WORKSPACE_IDENTITIES = {
+    "workspace_react_native": json.encode({"package": "@oliphaunt/react-native", "version": JAVASCRIPT["@oliphaunt/react-native"]["version"], "dependencies": {"@oliphaunt/ts-query": "workspace_query"}}),
+    "workspace_query": json.encode({"package": "@oliphaunt/ts-query", "version": JAVASCRIPT["@oliphaunt/ts-query"]["version"], "dependencies": {}}),
+}
+
+filegroup(name = "app_sources", srcs = ["app.json", "package.json", "index.ts", "metro.config.cts"] + glob(["src/**/*.ts", "src/**/*.tsx", "assets/**"]))
+
+COMMON_INPUTS = {
+    "sources": {":app_sources": ""},
+    "package_inputs": INPUTS, "package_identities": IDENTITIES, "package_roots": ROOTS,
+    "workspace_inputs": WORKSPACE_INPUTS, "workspace_identities": WORKSPACE_IDENTITIES,
+    "exec_compatible_with": ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+}
+
+expo_android_project(name = "android_project", sources = COMMON_INPUTS["sources"], package_inputs = INPUTS, package_identities = IDENTITIES,
+    package_roots = ROOTS, workspace_inputs = WORKSPACE_INPUTS, workspace_identities = WORKSPACE_IDENTITIES,
+    exec_compatible_with = COMMON_INPUTS["exec_compatible_with"])
+expo_android_bundle(name = "android_bundle", sources = COMMON_INPUTS["sources"], package_inputs = INPUTS, package_identities = IDENTITIES,
+    package_roots = ROOTS, workspace_inputs = WORKSPACE_INPUTS, workspace_identities = WORKSPACE_IDENTITIES,
+    selected_extensions = SELECTED_EXTENSIONS, catalog_profile = CATALOG_PROFILE,
+    catalog_profile_probe = "//src/database-resources:contracts/profile-probe.json",
+    exec_compatible_with = COMMON_INPUTS["exec_compatible_with"])
+react_native_android_codegen(
+    name = "android_codegen", library_name = "OliphauntReactNativeSpec",
+    java_package_name = "dev.oliphaunt.reactnative",
+    specs = ["node_modules/@oliphaunt/react-native/src/specs/NativeOliphaunt.ts"],
+    sources = COMMON_INPUTS["sources"], package_inputs = INPUTS, package_identities = IDENTITIES,
+    package_roots = ROOTS, workspace_inputs = WORKSPACE_INPUTS, workspace_identities = WORKSPACE_IDENTITIES,
+    exec_compatible_with = COMMON_INPUTS["exec_compatible_with"]
+)
+
+react_native_android_codegen(
+    name = "safe_area_codegen", library_name = "safeareacontext", java_package_name = "com.th3rdwave.safeareacontext",
+    specs = ["node_modules/react-native-safe-area-context/src/specs"],
+    sources = COMMON_INPUTS["sources"], package_inputs = INPUTS, package_identities = IDENTITIES,
+    package_roots = ROOTS, workspace_inputs = WORKSPACE_INPUTS, workspace_identities = WORKSPACE_IDENTITIES,
+    exec_compatible_with = COMMON_INPUTS["exec_compatible_with"]
+)
+
+[filegroup(name = name, srcs = [target], output_group = group) for name, target, group in [
+    ("android_manifest", ":android_project", "manifest"),
+    ("android_resources", ":android_project", "resources"),
+    ("android_keystore", ":android_project", "keystore"),
+    ("android_expo_registry", ":android_project", "expo_registry"),
+    ("android_expo_assets", ":android_project", "expo_assets"),
+    ("android_autolinking_cpp", ":android_project", "native_cpp"),
+    ("android_autolinking_headers", ":android_project", "native_headers"),
+    ("android_codegen_cpp", ":android_codegen", "cpp"),
+    ("android_codegen_headers", ":android_codegen", "headers"),
+    ("safe_area_codegen_cpp", ":safe_area_codegen", "cpp"),
+    ("safe_area_codegen_headers", ":safe_area_codegen", "headers"),
+    ("android_bundle_assets", ":android_bundle", "assets"),
+    ("android_bundle_resources", ":android_bundle", "resources"),
+]]
+[android_header_tree(name = name, headers = headers, include_suffixes = suffixes) for name, headers, suffixes in [
+    ("android_autolinking_includes", ":android_autolinking_headers", [""]),
+    ("android_codegen_includes", ":android_codegen_headers", ["", "react/renderer/components/OliphauntReactNativeSpec"]),
+    ("safe_area_codegen_includes", ":safe_area_codegen_headers", ["", "react/renderer/components/safeareacontext"]),
+]]
+
+_ARM64 = "@platforms//cpu:aarch64"
+_X64 = "@platforms//cpu:x86_64"
+_ABI = select({_ARM64: "arm64-v8a", _X64: "x86_64"})
+_SHARED = ["-static_link_cpp_runtimes"]
+_RN_NATIVE = ["@expo_android_sources//:react_native_prefab", "@expo_android_sources//:fbjni", "@expo_android_sources//:shared_cxx_runtime"]
+_JNA = ANDROID_NATIVE["reactNativeSdk"]["jna"]
+_RN_JVM_RUNTIME = ["@expo_android_maven//:" + coordinate.split(":")[0].replace(".", "_").replace("-", "_") + "_" + coordinate.split(":")[1].replace(".", "_").replace("-", "_") for coordinate in ANDROID_NATIVE["reactNativeDependencies"]]
+
+android_final_aar(name = "kotlin_final_aar", source = "//src/native/sdks/kotlin:android_maven_archive")
+aar_import(name = "kotlin_installed", aar = ":kotlin_final_aar", package = "dev.oliphaunt", deps = [
+    "@oliphaunt_kotlin_maven//:net_java_dev_jna_jna", "@oliphaunt_kotlin_maven//:org_jetbrains_annotations",
+    "@oliphaunt_kotlin_maven//:org_jetbrains_kotlin_kotlin_stdlib", "@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core_jvm",
+])
+[android_final_aar(name = "runtime_" + name + "_aar", source = "//src/native/runtime:android_maven_liboliphaunt_android_" + name,
+    kind = "runtime", package = "dev.oliphaunt.runtime", abi = abi) for name, abi in [("arm64_v8a", "arm64-v8a"), ("x86_64", "x86_64")]]
+android_final_aar(name = "seed_final_aar", source = "//src/database-resources:android_datum64_standard_carriers_maven_files", kind = "seed", package = "dev.oliphaunt.resources")
+aar_import(name = "seed_installed", aar = ":seed_final_aar", package = "dev.oliphaunt.resources")
+aar_import(name = "runtime_installed", aar = select({_ARM64: ":runtime_arm64_v8a_aar", _X64: ":runtime_x86_64_aar"}), package = "dev.oliphaunt.runtime")
+android_aar_native(name = "runtime_library", aar = select({_ARM64: ":runtime_arm64_v8a_aar", _X64: ":runtime_x86_64_aar"}), abi = _ABI, library = "liboliphaunt.so")
+cc_import(name = "runtime_cc", shared_library = ":runtime_library")
+cc_library(name = "runtime_headers", hdrs = ["//src/native/runtime:include/oliphaunt.h"], strip_include_prefix = "/src/native/runtime/include")
+android_aar_native(name = "jna_library", aar = "@expo_android_jna_maven//:net_java_dev_jna_jna_aar_" + _JNA.replace(".", "_") + "_extension", abi = _ABI, library = "libjnidispatch.so")
+
+kt_android_library(
+    name = "oliphaunt_android_classes",
+    srcs = ["//src/native/sdks/react-native:android_kotlin_sources", ":android_codegen", "@expo_android_sources//:generated/oliphaunt_react_native/BuildConfig.java"],
+    manifest = "//src/native/sdks/react-native:android/src/main/AndroidManifest.xml", custom_package = "dev.oliphaunt.reactnative",
+    deps = [":kotlin_installed", "@expo_android_maven//:com_facebook_react_react_android_release", "@expo_android_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_android"] + _RN_JVM_RUNTIME,
+)
+cc_library(name = "oliphaunt_reactnative_sources", srcs = ["//src/native/sdks/react-native:android_jsi_source"],
+    hdrs = ["//src/native/sdks/react-native:cpp_headers"], deps = _RN_NATIVE,
+    copts = ["-std=c++20", "-O2", "-fexceptions", "-frtti"], local_defines = REACT_NATIVE_RELEASE_DEFINES, features = _SHARED,
+    alwayslink = True, target_compatible_with = ["@platforms//os:android"])
+cc_binary(name = "liboliphauntreactnative.so", deps = [":oliphaunt_reactnative_sources"], features = _SHARED,
+    linkshared = True, linkstatic = True, linkopts = ["-Wl,-z,defs", "-Wl,-z,max-page-size=16384", "-Wl,-z,common-page-size=16384", "-Wl,-soname,liboliphauntreactnative.so"],
+    target_compatible_with = ["@platforms//os:android"])
+
+# Static registration consumes the actual ABI-specific archive; final proof
+# binds its definitions to the same cohort embedded in the Hermes bundle.
+_DESCRIPTORS = {row["sql-name"]: row for row in EXTENSIONS.values()}
+_MEMBERS = [MOBILE_MEMBER_TARGETS[name] for name in SELECTED_EXTENSIONS]
+mobile_extension_registry(name = "selected_registry", members = _MEMBERS, sql_names = SELECTED_EXTENSIONS)
+cc_binary(name = "liboliphaunt_extensions.so", srcs = [":selected_registry"],
+    deps = [":runtime_cc", ":runtime_headers", "@expo_android_sources//:shared_cxx_runtime"] + [MOBILE_MEMBER_LIBRARIES[name] for name in SELECTED_EXTENSIONS],
+    features = _SHARED, linkshared = True, linkstatic = True,
+    linkopts = ["-Wl,-z,defs", "-Wl,-z,max-page-size=16384", "-Wl,-z,common-page-size=16384", "-Wl,-soname,liboliphaunt_extensions.so"], target_compatible_with = ["@platforms//os:android"])
+android_extension_receipt(name = "extension_receipt", library = ":liboliphaunt_extensions.so", registry = ":selected_registry", members = _MEMBERS, selected_extensions = SELECTED_EXTENSIONS, abi = _ABI)
+android_app_runtime_assets(name = "selected_runtime_assets", receipt = ":extension_receipt", selected_extensions = SELECTED_EXTENSIONS,
+    mobile_static_modules = [_DESCRIPTORS[name]["native-module-file"][:-3] for name in SELECTED_EXTENSIONS], version = PRODUCTS["liboliphaunt-native"]["version"])
+
+_LIBRARIES = {
+    ":liboliphauntreactnative.so": "liboliphauntreactnative.so", ":liboliphaunt_extensions.so": "liboliphaunt_extensions.so",
+    ":jna_library": "libjnidispatch.so", "@expo_android_sources//:libexpo-modules-core.so": "libexpo-modules-core.so",
+    "@expo_android_sources//:libreact_codegen_safeareacontext.so": "libreact_codegen_safeareacontext.so", "@expo_android_sources//:libappmodules.so": "libappmodules.so",
+}
+android_jni_aar(name = "source_jni_aar", package = "dev.oliphaunt.reactnative.jni",
+    libraries = select({_ARM64: {target: "jni/arm64-v8a/" + name for target, name in _LIBRARIES.items()}, _X64: {target: "jni/x86_64/" + name for target, name in _LIBRARIES.items()}}))
+aar_import(name = "source_jni", aar = ":source_jni_aar", package = "dev.oliphaunt.reactnative.jni")
+
+android_library(name = "bundle_assets", manifest = ":android_manifest", custom_package = "dev.oliphaunt.reactnative.example", assets = [":android_bundle_assets"], assets_dir = "android_bundle/assets")
+android_library(name = "expo_config_assets", manifest = ":android_manifest", custom_package = "dev.oliphaunt.reactnative.example", assets = [":android_expo_assets"], assets_dir = "android_project/expo-assets")
+android_library(name = "runtime_assets", manifest = ":android_manifest", custom_package = "dev.oliphaunt.reactnative.example", assets = [":selected_runtime_assets"], assets_dir = "selected_runtime_assets/assets")
+kt_android_library(name = "app_release_classes", srcs = [":android_project", ":android_expo_registry"], manifest = ":android_manifest",
+    custom_package = "dev.oliphaunt.reactnative.example", resource_files = [":android_resources", ":android_bundle_resources"],
+    deps = [":oliphaunt_android_classes", "@expo_android_sources//:expo_modules", "@expo_android_maven//:com_facebook_react_react_android_release"] + _RN_JVM_RUNTIME)
+android_binary(name = "release_binary", manifest = ":android_manifest", custom_package = "dev.oliphaunt.reactnative.example",
+    manifest_values = {"minSdkVersion": "24", "targetSdkVersion": "36", "versionCode": "1", "versionName": "0.0.0"},
+    deps = [":app_release_classes", ":bundle_assets", ":expo_config_assets", ":runtime_assets", ":seed_installed", ":runtime_installed", ":source_jni", "@expo_android_maven//:com_facebook_hermes_hermes_android_release"],
+    multidex = "native", incremental_dexing = 0, nocompress_extensions = ["so", "bundle"])
+[android_apk_proof(name = name, apk = ":release_binary", abi = abi, keystore = ":android_keystore", selected_extensions = SELECTED_EXTENSIONS,
+    catalog_profile = CATALOG_PROFILE, catalog_profile_probe = "//src/database-resources:contracts/profile-probe.json",
+    expected_classes = ["dev.oliphaunt.reactnative.example.MainApplication", "dev.oliphaunt.reactnative.example.MainActivity", "expo.modules.splashscreen.SplashScreenModule", "expo.modules.sqlite.SQLiteModule", "com.th3rdwave.safeareacontext.SafeAreaContextPackage", "com.facebook.soloader.SoLoader", "com.facebook.drawee.backends.pipeline.Fresco"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
+ for name, abi in [("android_release", "arm64-v8a"), ("android_release_x86_64", "x86_64")]]
+
+source_quality_files()

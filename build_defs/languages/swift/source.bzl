@@ -118,7 +118,7 @@ def swift_source_package(name, sources, bindings_archive, bindings_release_asset
         suffix = artifact_name.replace(".", "_")
         native.filegroup(name = "release_input_" + suffix, srcs = [":" + name], output_group = group)
         package = "shipping_" + suffix
-        shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_input_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = "portable", role = "release-input")
+        shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_input_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = "portable", role = "release-input", suppliers = "@swift_frozen_native//:suppliers")
         packages.append(":" + package)
     for group, suffix, artifact_name, configuration in [
         ("archive", "bindings", "oliphaunt-swift-" + descriptor["version"] + "-bindings.xcframework.zip", "apple-xcframework"),
@@ -128,4 +128,14 @@ def swift_source_package(name, sources, bindings_archive, bindings_release_asset
         package = "shipping_" + suffix
         shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_asset_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = configuration, role = "github-release-asset")
         packages.append(":" + package)
-    shipping_export(name = "shipping_export", packages = packages)
+    shipping_export(
+        name = "shipping_export",
+        packages = packages,
+        qualification = [
+            "//src/native/sdks/swift:unit_test",
+            "//src/native/sdks/swift:public_api_consumer_test",
+            "//src/native/sdks/swift:installed_consumer_test",
+            "//src/native/sdks/swift:ios_compile_test",
+        ],
+        testonly = True,
+    )

@@ -1,0 +1,237 @@
+diff --git a/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/GradleBuildScriptGenerator.java b/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/GradleBuildScriptGenerator.java
+--- a/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/GradleBuildScriptGenerator.java
++++ b/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/GradleBuildScriptGenerator.java
+@@ -102,6 +102,10 @@
+     Map<String, Object> contextMap = new HashMap<>();
+ 
+     contextMap.put("isUsingM2Local", isUsingM2Local);
++    // An explicitly requested AAR declares an Android consumer. Preserve JVM
++    // defaults for acquisition requests containing only JVM artifacts.
++    contextMap.put("isAndroidConsumer",
++        dependencies.stream().anyMatch(dep -> "aar".equals(dep.getExtension())));
+     contextMap.put(
+         "repositories",
+         repositories.stream()
+diff --git a/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/data/build.gradle.hbs b/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/data/build.gradle.hbs
+--- a/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/data/build.gradle.hbs
++++ b/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/data/build.gradle.hbs
+@@ -1,5 +1,50 @@
+ apply plugin: 'java'
+ 
++{{~#if isAndroidConsumer}}
++// Exact matching policy from KotlinPlatformType in the pinned Kotlin 2.2.21 API:
++// https://github.com/JetBrains/kotlin/blob/v2.2.21/libraries/tools/kotlin-gradle-plugin-api/src/common/kotlin/org/jetbrains/kotlin/gradle/plugin/KotlinPlatformType.kt
++class KotlinPlatformCompatibility implements org.gradle.api.attributes.AttributeCompatibilityRule<String> {
++    void execute(org.gradle.api.attributes.CompatibilityCheckDetails<String> details) {
++        if (details.producerValue == 'jvm' && details.consumerValue == 'androidJvm') details.compatible()
++        if (details.consumerValue == 'common') details.compatible()
++    }
++}
++class KotlinPlatformDisambiguation implements org.gradle.api.attributes.AttributeDisambiguationRule<String> {
++    void execute(org.gradle.api.attributes.MultipleCandidatesDetails<String> details) {
++        if (details.candidateValues.contains(details.consumerValue)) {
++            details.closestMatch(details.consumerValue)
++        } else if (details.consumerValue == null && details.candidateValues.containsAll(['androidJvm', 'jvm'])) {
++            details.closestMatch('jvm')
++        } else if (details.candidateValues.contains('common') && !details.candidateValues.contains('jvm') &&
++                !details.candidateValues.contains('androidJvm')) {
++            details.closestMatch('common')
++        }
++    }
++}
++def kotlinPlatform = org.gradle.api.attributes.Attribute.of('org.jetbrains.kotlin.platform.type', String)
++dependencies.attributesSchema.attribute(kotlinPlatform) {
++    compatibilityRules.add(KotlinPlatformCompatibility)
++    disambiguationRules.add(KotlinPlatformDisambiguation)
++}
++configurations.create('bazelAndroidRuntimeClasspath') {
++    canBeResolved = true
++    canBeConsumed = false
++    extendsFrom(configurations.implementation)
++    attributes {
++        attribute(kotlinPlatform, 'androidJvm')
++        attribute(org.gradle.api.attributes.Usage.USAGE_ATTRIBUTE,
++            objects.named(org.gradle.api.attributes.Usage,
++                org.gradle.api.attributes.Usage.JAVA_RUNTIME))
++        attribute(org.gradle.api.attributes.Category.CATEGORY_ATTRIBUTE,
++            objects.named(org.gradle.api.attributes.Category,
++                org.gradle.api.attributes.Category.LIBRARY))
++        attribute(org.gradle.api.attributes.java.TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE,
++            objects.named(org.gradle.api.attributes.java.TargetJvmEnvironment,
++                org.gradle.api.attributes.java.TargetJvmEnvironment.ANDROID))
++    }
++}
++{{~/if}}
++
+ repositories {
+ {{~#if isUsingM2Local}}
+     mavenLocal()
+diff --git a/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/plugin/GradleDependencyModelBuilder.java b/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/plugin/GradleDependencyModelBuilder.java
+--- a/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/plugin/GradleDependencyModelBuilder.java
++++ b/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/plugin/GradleDependencyModelBuilder.java
+@@ -82,7 +82,10 @@
+     GradleDependencyModel gradleDependencyModel = new GradleDependencyModelImpl();
+     // We only resolve dependencies and fetch artifacts for this configuration
+     // similar to how we do in the Maven resolver
+-    Configuration cfg = project.getConfigurations().getByName("runtimeClasspath");
++    Configuration cfg = project.getConfigurations().findByName("bazelAndroidRuntimeClasspath");
++    if (cfg == null) {
++      cfg = project.getConfigurations().getByName("runtimeClasspath");
++    }
+ 
+     List<GradleDependency> declaredDeps = collectDeclaredDependencies(cfg);
+     // This stores the mapping between coordinates to the GradleResolvedDependency interface
+@@ -120,6 +123,10 @@
+ 
+     Configuration detachedCfg =
+         project.getConfigurations().detachedConfiguration(detachedDeps.toArray(new Dependency[0]));
++    // The retry must consume the same platform variants as the requested graph.
++    for (Attribute attribute : cfg.getAttributes().keySet()) {
++      detachedCfg.getAttributes().attribute(attribute, cfg.getAttributes().getAttribute(attribute));
++    }
+     // Ensure the detached configuration respects the same exclude rules as the original
+     // configuration
+     if (!cfg.getExcludeRules().isEmpty()) {
+diff --git a/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/GradleResolver.java b/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/GradleResolver.java
+--- a/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/GradleResolver.java
++++ b/private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/GradleResolver.java
+@@ -206,7 +206,8 @@
+         artifactsByNode.computeIfAbsent(coordinates, k -> new ArrayList<>()).add(artifact);
+ 
+         File artifactFile = artifact.getFile();
+-        if (artifactFile != null && artifactFile.exists()) {
++        if (artifactFile != null && artifactFile.exists()
++            && !artifactFile.getName().endsWith(".pom")) {
+           paths.put(coordinates, artifactFile.toPath());
+         }
+ 
+@@ -306,11 +307,12 @@
+           break;
+         }
+       }
+-      // Fallback: any existing file (including pom)
++      // POM files describe the graph; their bytes are never a binary artifact.
++      // Metadata-only nodes are acquired by Downloader from their real coordinate.
+       if (bestFile == null) {
+         for (GradleResolvedArtifact artifact : entry.getValue()) {
+           File file = artifact.getFile();
+-          if (file != null && file.exists()) {
++          if (file != null && file.exists() && !file.getName().endsWith(".pom")) {
+             bestFile = file;
+             break;
+           }
+@@ -318,6 +320,8 @@
+       }
+       if (bestFile != null) {
+         paths.put(coords, bestFile.toPath());
++      } else {
++        paths.remove(coords);
+       }
+     }
+ 
+diff --git a/tests/com/github/bazelbuild/rules_jvm_external/resolver/gradle/GradleResolverTest.java b/tests/com/github/bazelbuild/rules_jvm_external/resolver/gradle/GradleResolverTest.java
+--- a/tests/com/github/bazelbuild/rules_jvm_external/resolver/gradle/GradleResolverTest.java
++++ b/tests/com/github/bazelbuild/rules_jvm_external/resolver/gradle/GradleResolverTest.java
+@@ -75,10 +75,11 @@
+     String jvmMetadata = Files.readString(jvmMetadataPath);
+     moduleMetadataHelper.addToMavenRepo(jvmCoordinates, jvmMetadata);
+ 
+-    Graph<Coordinates> resolved =
+-        resolver
+-            .resolve(prepareRequestFor(mavenRepo.getPath().toUri(), baseCoordinates))
+-            .getResolution();
++    ResolutionResult result =
++        resolver.resolve(prepareRequestFor(mavenRepo.getPath().toUri(), baseCoordinates));
++    Graph<Coordinates> resolved = result.getResolution();
++    assertFalse(result.getPaths().values().stream()
++        .anyMatch(path -> path.getFileName().toString().endsWith(".pom")));
+ 
+     assertEquals(2, resolved.nodes().size());
+     // sample-jvm resolves indirectly through sample using the gradle module metadata redirect
+@@ -137,6 +138,44 @@
+   }
+ 
+   @Test
++  public void explicitAarConsumerResolvesAndroidGraphAndBinaryPaths()
++      throws IOException, XMLStreamException {
++    Coordinates base = new Coordinates("com.example:sample:1.0");
++    Coordinates jvm = new Coordinates("com.example:sample-jvm:1.0");
++    Coordinates android = new Coordinates("com.example:sample-android:aar:1.0");
++    Coordinates release = new Coordinates("com.example:android-marker:aar:release:1.0");
++    Coordinates javaUtil = new Coordinates("com.example:java-util:1.0");
++    MavenRepo repo = MavenRepo.create().add(release).add(javaUtil);
++    GradleModuleMetadataHelper helper = new GradleModuleMetadataHelper(repo);
++    Runfiles runfiles = Runfiles.preload()
++        .withSourceRepository(AutoBazelRepository_GradleResolverTest.NAME);
++    String fixtureRoot = "rules_jvm_external/tests/com/github/bazelbuild/"
++        + "rules_jvm_external/resolver/gradle/fixtures/jvmAndAndroidVariants/";
++    // This older GMM has no JVM environment attributes. Select Android through
++    // the official Kotlin platform scheme, while accepting a genuine JVM fallback.
++    String baseMetadata = Files.readString(Paths.get(runfiles.rlocation(
++        fixtureRoot + "sample-1.0.module")));
++    helper.addToMavenRepo(base, baseMetadata);
++    helper.addToMavenRepo(jvm, Files.readString(Paths.get(runfiles.rlocation(
++        fixtureRoot + "sample-jvm-1.0.module"))));
++    helper.addToMavenRepo(javaUtil, Files.readString(Paths.get(runfiles.rlocation(
++        fixtureRoot + "sample-jvm-1.0.module"))).replace("sample-jvm", "java-util"));
++    helper.addToMavenRepo(android, Files.readString(Paths.get(runfiles.rlocation(
++        fixtureRoot + "sample-android-1.0.module"))));
++    ResolutionResult result = resolver.resolve(prepareRequestFor(repo.getPath().toUri(), base, release, javaUtil));
++    Graph<Coordinates> graph = result.getResolution();
++    assertTrue(graph.nodes().contains(android));
++    assertTrue(graph.nodes().contains(release));
++    assertTrue(graph.nodes().contains(javaUtil));
++    assertFalse(graph.nodes().contains(jvm));
++    assertTrue(graph.successors(base).contains(android));
++    assertFalse(result.getPaths().values().stream()
++        .anyMatch(path -> path.getFileName().toString().endsWith(".pom")));
++    assertTrue(result.getPaths().get(android).getFileName().toString().endsWith(".aar"));
++    assertTrue(result.getPaths().get(javaUtil).getFileName().toString().endsWith(".jar"));
++  }
++
++  @Test
+   public void throwsAnExceptionIfASingleDependencyWasNotResolved() throws IOException {
+     Coordinates validCoordinates = new Coordinates("com.example:sample:1.0");
+     Coordinates invalidCoordinates = new Coordinates("com.example:does-not-exist:1.0");
+diff --git a/tests/com/github/bazelbuild/rules_jvm_external/resolver/BUILD b/tests/com/github/bazelbuild/rules_jvm_external/resolver/BUILD
+--- a/tests/com/github/bazelbuild/rules_jvm_external/resolver/BUILD
++++ b/tests/com/github/bazelbuild/rules_jvm_external/resolver/BUILD
+@@ -24,10 +24,7 @@
+             "com.google.guava:guava",
+             repository_name = "rules_jvm_external_deps",
+         ),
+-        artifact(
+-            "junit:junit",
+-            repository_name = "regression_testing_coursier",
+-        ),
++        "@@//build_defs/android:resolver_junit",
+         artifact(
+             "org.apache.maven:maven-model",
+             repository_name = "rules_jvm_external_deps",
+diff --git a/tests/com/github/bazelbuild/rules_jvm_external/resolver/gradle/BUILD b/tests/com/github/bazelbuild/rules_jvm_external/resolver/gradle/BUILD
+--- a/tests/com/github/bazelbuild/rules_jvm_external/resolver/gradle/BUILD
++++ b/tests/com/github/bazelbuild/rules_jvm_external/resolver/gradle/BUILD
+@@ -8,10 +8,7 @@
+     deps = [
+         "//private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle",
+         "//private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/models",
+-        artifact(
+-            "junit:junit",
+-            repository_name = "regression_testing_coursier",
+-        ),
++        "@@//build_defs/android:resolver_junit",
+     ],
+ )
+ 
+@@ -39,10 +36,7 @@
+         "//private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/gradle/models",
+         "//private/tools/java/com/github/bazelbuild/rules_jvm_external/resolver/netrc",
+         "//tests/com/github/bazelbuild/rules_jvm_external/resolver",
+-        artifact(
+-            "junit:junit",
+-            repository_name = "regression_testing_coursier",
+-        ),
++        "@@//build_defs/android:resolver_junit",
+         artifact(
+             "com.google.guava:guava",
+             repository_name = "rules_jvm_external_deps",

@@ -24,8 +24,10 @@ import { captureNativeBuildEvidence } from './capture-native-build-evidence.mts'
 import { fixture as observationFixture } from './completed-native-publication.fixture.mts';
 import { createCompletedPublicationChecker } from './completed-release-publication.mts';
 import { nativeBuildMetadata } from './native-build-qualification.mts';
+import { nativePublicationMetadataArtifactRow } from './native-publication-metadata-contract.mts';
 import {
   captureCompletedNativePublicArtifacts,
+  captureCompletedNativeRegistryCarriers,
   compareNativeCompletedPhysicalDelivery,
   nativeArchiveDeliveryMembers,
   nativeCarrierDeliveryMembers,
@@ -314,7 +316,7 @@ async function publicFixture(directory: string, id: string, version = '9.8.7') {
     const file = path.join(directory, 'release-assets', row.name);
     files[row.id] = file;
     if (row.kind === 'checksums') continue;
-    if (row.role === 'github-release-metadata') {
+    if (row.role === 'github-release-metadata' || row.name.endsWith('.json')) {
       mkdirSync(path.dirname(file), { recursive: true });
       writeFileSync(
         file,
@@ -322,7 +324,16 @@ async function publicFixture(directory: string, id: string, version = '9.8.7') {
       );
       continue;
     }
-    const payload = path.join(directory, 'members', row.target);
+    const payload = path.join(directory, 'members', row.name);
+    if (['native-seeds', 'wasix-seeds'].includes(row.kind)) {
+      mkdirSync(path.join(payload, 'global'), { recursive: true });
+      mkdirSync(path.join(payload, 'pg_wal'), { recursive: true });
+      writeFileSync(path.join(payload, 'PG_VERSION'), '18\n');
+      writeFileSync(path.join(payload, 'global/pg_control'), 'frozen control identity');
+      writeFileSync(path.join(payload, 'pg_wal/000000010000000000000001'), 'frozen WAL identity');
+      await archiveDirectory(payload, file);
+      continue;
+    }
     mkdirSync(path.join(payload, 'runtime/bin'), { recursive: true });
     writeFileSync(
       path.join(payload, 'runtime/bin/psql'),
@@ -420,7 +431,7 @@ test('canonical native and WASIX public inventory binds actual archive writer by
     }
   }));
 
-test('public baseline rejects source/asset substitutions and preserves missing, extra and seed contracts as unknown', async () =>
+test('public baseline rejects source/asset substitutions and preserves missing or extra deliveries as unknown', async () =>
   asyncScratch(async (directory) => {
     const fixture = await publicFixture(directory, 'postgres-tools-wasix');
     const row = fixture.rows.find(
@@ -482,8 +493,72 @@ test('public baseline rejects source/asset substitutions and preserves missing, 
         readPages: async () => rows.map(({ name }) => ({ name })),
       },
     );
-    expect(seeds.unknowns).toContain('unsupported-public-delivery-contract:native-seeds');
-    expect(seeds.unknowns).toContain('unsupported-public-delivery-contract:wasix-seeds');
+    for (const row of rows.filter(({ kind }) => ['native-seeds', 'wasix-seeds'].includes(kind)))
+      expect(seeds.unknowns).toContain(`completed-public-artifact-missing:${row.id}`);
+  }));
+
+test('completed seed deliveries preserve every control and WAL byte rather than normalizing initdb entropy', async () =>
+  asyncScratch(async (directory) => {
+    const fixture = await publicFixture(directory, 'database-resources');
+    const baseline = await captureCompletedNativePublicArtifacts(fixture.input, fixture.options);
+    expect(baseline.unknowns).toEqual([]);
+    for (const kind of ['native-seeds', 'wasix-seeds']) {
+      const row = baseline.archives.find(
+        (artifact) => artifact.kind === kind && artifact.name.endsWith('.tar.zst'),
+      )!;
+      expect(row).toBeDefined();
+      const original = fixture.input.files[row.id];
+      expect(
+        differentNativeDeliveredMembers(row.members, nativeArchiveDeliveryMembers(original)),
+      ).toEqual([]);
+      const changed = path.join(directory, `${kind}-fresh.tar.gz`);
+      writeFileSync(
+        changed,
+        tarArchive([
+          { name: 'PG_VERSION', data: '18\n' },
+          { name: 'global', type: '5', mode: 0o755 },
+          { name: 'global/pg_control', data: 'fresh initdb control identity' },
+          { name: 'pg_wal', type: '5', mode: 0o755 },
+          { name: 'pg_wal/000000010000000000000001', data: 'fresh initdb WAL identity' },
+        ]),
+      );
+      expect(
+        differentNativeDeliveredMembers(row.members, nativeArchiveDeliveryMembers(changed)),
+      ).toEqual(['global/pg_control', 'pg_wal/000000010000000000000001']);
+      await expect(
+        captureCompletedNativePublicArtifacts(
+          { ...fixture.input, files: { ...fixture.input.files, [row.id]: changed } },
+          fixture.options,
+        ),
+      ).rejects.toThrow('archive bytes differ');
+    }
+    expect(baseline.scope).toBe('construction');
+  }));
+
+test('separately authenticated controller metadata stays outside seed delivery while extra or duplicate assets remain unknown', async () =>
+  asyncScratch(async (directory) => {
+    const fixture = await publicFixture(directory, 'database-resources');
+    const before = await captureCompletedNativePublicArtifacts(fixture.input, fixture.options);
+    const metadata = nativePublicationMetadataArtifactRow({
+      id: fixture.input.publication.product,
+      version: fixture.input.publication.version,
+    });
+    fixture.assets.push({ name: metadata.name });
+    const withMetadata = await captureCompletedNativePublicArtifacts(
+      fixture.input,
+      fixture.options,
+    );
+    expect(withMetadata.unknowns).toEqual([]);
+    expect(withMetadata.archives).toEqual(before.archives);
+    fixture.assets.push({ name: metadata.name });
+    expect(
+      (await captureCompletedNativePublicArtifacts(fixture.input, fixture.options)).unknowns,
+    ).toContain('completed-public-asset-inventory-differs');
+    fixture.assets.pop();
+    fixture.assets.push({ name: 'database-resources-99.0.0-native-baseline.json' });
+    expect(
+      (await captureCompletedNativePublicArtifacts(fixture.input, fixture.options)).unknowns,
+    ).toContain('completed-public-asset-inventory-differs');
   }));
 
 const sourceFixture = path.join(import.meta.dir, 'testdata/native-source-carriers');
@@ -536,6 +611,85 @@ async function origins(options) {
     })),
   );
 }
+
+test('completed registry supplier capture retains genuine raw source and provenance bytes', async () => {
+  const options = originEnvironment();
+  const input = (await origins(options))[0];
+  const result = await captureCompletedNativeRegistryCarriers(input, options);
+  expect(result.unknowns).toEqual([]);
+  expect(result.archives).toHaveLength(1);
+  expect(result.archives[0].name).toBe('cargo:oliphaunt-query');
+  const entries = readPortableArchiveEntries(input.carriers['cargo:oliphaunt-query'][0]);
+  for (const name of ['Cargo.toml', 'Cargo.toml.orig', '.cargo_vcs_info.json', 'src/lib.rs']) {
+    const entry = entries.get(`oliphaunt-query-0.1.1/${name}`)!;
+    const member = result.archives[0].members.find((member) => member.path === name)!;
+    expect(member.sha256).toBe(createHash('sha256').update(entry.data()).digest('hex'));
+    expect(member.size).toBe(entry.size);
+  }
+});
+
+test('completed registry suppliers reject substituted ownership, checksum and companions', async () => {
+  const options = originEnvironment();
+  const input = (await origins(options))[0];
+  await expect(
+    captureCompletedNativeRegistryCarriers(
+      { ...input, carriers: { 'cargo:foreign': input.carriers['cargo:oliphaunt-query'] } },
+      options,
+    ),
+  ).rejects.toThrow('not declared');
+  await expect(
+    captureCompletedNativeRegistryCarriers(input, {
+      ...options,
+      registryOptions: {
+        cratesIoReadGate: null,
+        fetchImpl: async () => Response.json({ version: { checksum: '0'.repeat(64) } }),
+      },
+    }),
+  ).rejects.toThrow('registry checksum mismatch');
+  const endpoint = `repos/f0rr0/oliphaunt/contents/src/query/rust/release.toml?ref=${publicationSha}`;
+  const descriptor = Buffer.from('id="oliphaunt-query"\nregistry_packages=[]\n');
+  await expect(
+    captureCompletedNativeRegistryCarriers(input, {
+      ...options,
+      readJson: async (request) =>
+        request !== endpoint
+          ? options.readJson(request)
+          : {
+              type: 'file',
+              path: 'src/query/rust/release.toml',
+              encoding: 'base64',
+              content: descriptor.toString('base64'),
+              sha: createHash('sha1')
+                .update(`blob ${descriptor.length}\0`)
+                .update(descriptor)
+                .digest('hex'),
+            },
+    }),
+  ).rejects.toThrow('historical registry ownership');
+});
+
+test('completed registry suppliers reject an archive mutated during authentication', async () =>
+  asyncScratch(async (directory) => {
+    const options = originEnvironment();
+    const input = (await origins(options))[0];
+    const original = input.carriers['cargo:oliphaunt-query'][0];
+    const file = path.join(directory, 'oliphaunt-query.crate');
+    copyFileSync(original, file);
+    input.carriers['cargo:oliphaunt-query'] = [file];
+    await expect(
+      captureCompletedNativeRegistryCarriers(input, {
+        ...options,
+        registryOptions: {
+          cratesIoReadGate: null,
+          fetchImpl: async (url) => {
+            const response = await options.registryOptions.fetchImpl(url);
+            writeFileSync(file, 'substituted after registry checksum lookup');
+            return response;
+          },
+        },
+      }),
+    ).rejects.toThrow('changed during registry authentication');
+  }));
 
 test('authentic completed query archives enter the one pre-version comparison, never admission', async () => {
   const candidate = {

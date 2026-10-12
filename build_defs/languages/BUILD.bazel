@@ -1,5 +1,6 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
+load(":napi-artifact-test.bzl", "napi_artifact_tests")
 load(":source.bzl", "cargo_source_contract_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -40,3 +41,5 @@ bun_test(
 )
 
 source_quality_files()
+
+napi_artifact_tests()

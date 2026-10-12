@@ -221,11 +221,11 @@ def mobile_final_carrier_targets():
     for target in _TARGETS:
         suffix = target.replace("-", "_")
         compatible = _MAC if target == "ios-xcframework" else _LINUX
-        shipping_export(name = suffix + "_shipping_export", packages = packages[target], target_compatible_with = compatible)
+        shipping_export(name = suffix + "_shipping_export", packages = packages[target], qualification = [":" + suffix + "_final_contract_test"], testonly = True, target_compatible_with = compatible)
         native_extension_final_contract_test(name = suffix + "_final_contract_test", products = products,
             leaves = [":" + product.replace("-", "_") + "_" + suffix for product in products], target_compatible_with = compatible, size = "medium")
         selected = sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in ["pg_uuidv7", "pgtap"]}.keys())
         native_extension_final_contract_test(name = suffix + "_small_final_contract_test", products = selected,
             leaves = [":" + product.replace("-", "_") + "_" + suffix for product in selected], target_compatible_with = compatible, size = "medium")
-    shipping_export(name = "android_shipping_export", packages = {label: True for target in _TARGETS if target.startswith("android-") for label in packages[target]}.keys(), target_compatible_with = _LINUX)
+    shipping_export(name = "android_shipping_export", packages = {label: True for target in _TARGETS if target.startswith("android-") for label in packages[target]}.keys(), qualification = [":" + target.replace("-", "_") + "_final_contract_test" for target in _TARGETS if target.startswith("android-")], testonly = True, target_compatible_with = _LINUX)
     native.filegroup(name = "android_maven_carriers", srcs = [":" + product.replace("-", "_") + "_maven" for product in products], target_compatible_with = _LINUX)

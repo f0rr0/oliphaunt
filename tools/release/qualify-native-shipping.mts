@@ -11,6 +11,7 @@ import {
   type NativeBuildEvidence,
   type NativeBuildGithub,
   type NativeRequiredTest,
+  nativeBuildEventIndex,
   nativeBuildMetadata,
   validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
@@ -56,6 +57,180 @@ function label(value: string): string {
 
 function json(file: string): unknown {
   return JSON.parse(readFileSync(file, 'utf8'));
+}
+
+type RecipeRoot = { label: string; configuration: string };
+type RecipeGraph = {
+  labels: string[];
+  packages: { package: string; label: string }[];
+  roots: { label: string; packages: string[] }[];
+};
+
+/** Index Bazel's configured edges once; do not expand selects in the loading graph. */
+export function nativeConfiguredRecipeGraph(raw: any, roots: RecipeRoot[]): RecipeGraph {
+  assert(
+    Array.isArray(raw?.results) && Array.isArray(raw.configurations),
+    'configured recipe graph is missing',
+  );
+  const configurations = new Map<string, string>();
+  for (const config of raw.configurations) {
+    assert(/^[a-f0-9]{64}$/u.test(config.checksum), 'configured recipe checksum is invalid');
+    assert(!configurations.has(String(config.id)), 'duplicate configured recipe ID');
+    configurations.set(String(config.id), config.checksum);
+  }
+  const checksum = (value: any) => {
+    const id = value.configurationId;
+    const declared = value.configurationChecksum ?? value.configuration?.checksum;
+    if (id === undefined || id === 0) {
+      assert(
+        declared === undefined || declared === 'null',
+        'configured recipe reference lacks an ID',
+      );
+      return 'null';
+    }
+    const result = configurations.get(String(id));
+    assert(result, 'configured recipe reference is missing');
+    assert(declared === undefined || declared === result, 'configured recipe checksum differs');
+    return result;
+  };
+  const targetLabel = (value: unknown) => {
+    assert(
+      typeof value === 'string' && !/[\u0000-\u001f\u007f]/u.test(value),
+      'configured recipe label is invalid',
+    );
+    const result = canonicalShippingLabel(value);
+    assert(/^(?:@@?[^/]+)?\/\/[^:]*:.+$/u.test(result), 'configured recipe label is not explicit');
+    return result;
+  };
+  const key = (name: string, config: string) => `${name}\0${config}`;
+  const nodes = new Map<string, { label: string; edges: string[] }>();
+  for (const result of raw.results) {
+    const target = result.target;
+    const config = checksum(result);
+    const name = targetLabel(
+      target?.rule?.name ??
+        target?.sourceFile?.name ??
+        target?.generatedFile?.name ??
+        target?.packageGroup?.name,
+    );
+    const id = key(name, config);
+    assert(!nodes.has(id), 'duplicate configured recipe target');
+    const edges = (target.rule?.configuredRuleInput ?? []).map((dep: any) =>
+      key(targetLabel(dep.label), checksum(dep)),
+    );
+    if (target.generatedFile)
+      edges.push(key(targetLabel(target.generatedFile.generatingRule), config));
+    if (target.packageGroup)
+      edges.push(
+        ...(target.packageGroup.includedPackageGroup ?? []).map((name: string) =>
+          key(targetLabel(name), 'null'),
+        ),
+      );
+    nodes.set(id, { label: name, edges });
+  }
+  const labels = new Set<string>();
+  const names = new Set<string>();
+  const mapped = roots.map((root) => {
+    const name = label(root.label);
+    assert(
+      !names.has(name) && /^[a-f0-9]{64}$/u.test(root.configuration),
+      'configured recipe roots are ambiguous',
+    );
+    names.add(name);
+    const visited = new Set<string>();
+    const active = new Set<string>();
+    const packages = new Set<string>();
+    const pending = [{ id: key(name, root.configuration), exit: false }];
+    while (pending.length) {
+      const current = pending.pop();
+      assert(current);
+      if (current.exit) {
+        active.delete(current.id);
+        visited.add(current.id);
+        continue;
+      }
+      if (visited.has(current.id)) continue;
+      assert(!active.has(current.id), 'cycle in configured recipe dependencies');
+      const node = nodes.get(current.id);
+      assert(node, 'configured recipe dependency is missing');
+      active.add(current.id);
+      labels.add(node.label);
+      packages.add(node.label.slice(0, node.label.indexOf(':')));
+      pending.push(
+        { id: current.id, exit: true },
+        ...node.edges.map((id) => ({ id, exit: false })),
+      );
+    }
+    return { label: name, packages: [...packages].sort() };
+  });
+  const ordered = [...labels].sort();
+  const packages = new Map<string, string>();
+  for (const name of ordered) {
+    const pkg = name.slice(0, name.indexOf(':'));
+    if (!packages.has(pkg)) packages.set(pkg, name);
+  }
+  return {
+    labels: ordered,
+    packages: [...packages].map(([pkg, name]) => ({ package: pkg, label: name })),
+    roots: mapped,
+  };
+}
+
+/** Use real buildfiles label results: Bazel 8 omits BUILD.bazel subinclude in proto output. */
+export function nativeRecipeInputPaths(
+  graph: RecipeGraph,
+  queries: { packages: string[]; labels: string[] }[],
+) {
+  const key = (packages: string[]) => JSON.stringify(packages);
+  const expected = new Set(graph.roots.map((root) => key(root.packages)));
+  const loaded = new Map<string, string[]>();
+  const workspacePath = (name: string) => {
+    assert(
+      typeof name === 'string' && !/[\u0000-\u001f\u007f]/u.test(name),
+      'recipe source label is invalid',
+    );
+    name = canonicalShippingLabel(name);
+    assert(/^(?:@@?[^/]+)?\/\/[^:]*:.+$/u.test(name), 'recipe source label is not explicit');
+    if (!name.startsWith('//')) return undefined;
+    const separator = name.indexOf(':');
+    const result = [name.slice(2, separator), name.slice(separator + 1)].filter(Boolean).join('/');
+    assert(
+      result &&
+        !name.includes('\\') &&
+        !result.split('/').some((part) => part === '..' || part === '.' || !part),
+      'recipe source path escapes',
+    );
+    return result;
+  };
+  for (const query of queries) {
+    assert(Array.isArray(query.packages), 'recipe package set is missing');
+    const id = key(query.packages);
+    assert(expected.has(id) && !loaded.has(id), 'recipe package-set query is ambiguous');
+    assert(Array.isArray(query.labels), 'recipe package sources are missing');
+    const names = query.labels.map((name) => canonicalShippingLabel(name));
+    assert(new Set(names).size === names.length, 'duplicate recipe source File');
+    for (const pkg of query.packages.filter((pkg) => pkg.startsWith('//'))) {
+      const buildNames = names.filter(
+        (name) => name === `${pkg}:BUILD` || name === `${pkg}:BUILD.bazel`,
+      );
+      assert(buildNames.length === 1, 'configured package BUILD File is missing or ambiguous');
+    }
+    loaded.set(
+      id,
+      names.flatMap((name) => {
+        const file = workspacePath(name);
+        return file === undefined ? [] : [file];
+      }),
+    );
+  }
+  assert(loaded.size === expected.size, 'configured package-set recipe query is missing');
+  return graph.roots.map((root) => {
+    const files = loaded.get(key(root.packages));
+    assert(files, 'configured package-set recipe query is missing');
+    const paths = new Set(files);
+    assert(paths.size, 'shipping analysis has no loaded workspace recipe sources');
+    return { label: root.label, paths: [...paths].sort() };
+  });
 }
 
 /** Policy edges name actual tests; cquery cannot expand test_suite or tests(). */
@@ -204,7 +379,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     configuration.some(
       (item) =>
         item === '--' ||
-        /^--(?:build_metadata|build_event_json_file|output|output_groups|starlark:file|starlark:expr|experimental_aquery_dump_after_build_format|experimental_aquery_dump_after_build_output_file)(?:=|$)/u.test(
+        /^--(?:build_metadata|build_event_json_file|output|output_groups|query_file|starlark:file|starlark:expr|experimental_aquery_dump_after_build_format|experimental_aquery_dump_after_build_output_file)(?:=|$)/u.test(
           item,
         ),
     )
@@ -244,51 +419,83 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
   const bazel = (args: string[], stdout?: string) =>
     run('bash', ['tools/dev/bazel.sh', ...startup, ...args], stdout);
   let roots: string[];
+  let shippingExport: string | undefined;
   let requiredTests: NativeRequiredTest[] = [];
   if ('export' in request.shipping) {
     const owner = label(request.shipping.export);
+    shippingExport = owner;
     bazel(
       [
         'cquery',
-        `kind("shipping_package", deps(${owner}, 1))`,
+        owner,
         ...configuration,
         `--universe_scope=${owner}`,
         '--output=starlark',
-        '--starlark:expr=str(target.label)',
+        '--starlark:expr=json.encode({"roots": [str(value.label) for value in providers(target)["//build_defs/release:shipping.bzl%ShippingExportInfo"].packages], "qualification": [str(value.label) for value in providers(target)["//build_defs/release:shipping.bzl%ShippingExportInfo"].qualification]})',
       ],
-      file('selected-roots.txt'),
+      file('selected-owner.json'),
     );
-    roots = readFileSync(file('selected-roots.txt'), 'utf8')
-      .split(/\r?\n/u)
-      .filter(Boolean)
-      .map(label);
+    const selected = json(file('selected-owner.json')) as {
+      roots: unknown;
+      qualification: unknown;
+    };
+    if (
+      !selected ||
+      typeof selected !== 'object' ||
+      Array.isArray(selected) ||
+      Object.keys(selected).sort().join(',') !== 'qualification,roots'
+    )
+      throw new Error('shipping qualification requires its configured export provider');
+    roots = argv(selected.roots, 'source-owned shipping roots').map(label);
+    const tests = argv(selected.qualification, 'source-owned qualification').map(label);
+    if (new Set(tests).size !== tests.length)
+      throw new Error('shipping qualification requires unique source-owned tests');
     // These graph edges are source-owned, independently of caller targets.
     // An incompatible declared test fails analysis rather than disappearing.
-    bazel(
-      [
-        'cquery',
-        `labels(qualification, ${owner})`,
-        ...configuration,
-        `--universe_scope=${owner}`,
-        '--output=jsonproto',
-        '--proto:include_configurations',
-      ],
-      file('qualification-targets.json'),
-    );
-    requiredTests = configuredQualificationTests(json(file('qualification-targets.json')));
+    if (tests.length)
+      bazel(
+        [
+          'cquery',
+          `set(${tests.join(' ')})`,
+          ...configuration,
+          `--universe_scope=${owner}`,
+          '--output=jsonproto',
+          '--proto:include_configurations',
+        ],
+        file('qualification-targets.json'),
+      );
+    if (tests.length) {
+      requiredTests = configuredQualificationTests(json(file('qualification-targets.json')));
+      assert.deepStrictEqual(
+        requiredTests.map((test) => test.label).sort(),
+        [...tests].sort(),
+        'configured source-owned test coverage',
+      );
+    }
   } else roots = argv(request.shipping.roots, 'shipping roots').map(label);
   if (!roots.length || new Set(roots).size !== roots.length)
     throw new Error('shipping qualification requires nonempty unique shipping roots');
   roots.sort();
   writeFileSync(file('selected-roots.json'), `${JSON.stringify(roots)}\n`, { flag: 'wx' });
+  // Only loading options apply to the buildfiles query below.
+  const loadingFlags = configuration.filter((flag) =>
+    /^--(?:lockfile_mode|enable_bzlmod|repo_env|override_repository|repository_cache|registry)(?:=|$)/u.test(
+      flag,
+    ),
+  );
   assertSource();
   bazel([
     'test',
-    ...new Set([...roots, ...requiredTests.map((test) => test.label), ...targets]),
+    ...new Set([
+      ...roots,
+      ...(shippingExport ? [shippingExport] : []),
+      ...requiredTests.map((test) => test.label),
+      ...targets,
+    ]),
     ...configuration,
     ...metadata,
     `--build_event_json_file=${file('build-events.jsonl')}`,
-    '--output_groups=+shipping_manifest',
+    '--output_groups=+shipping_manifest,+shipping_policy',
     '--experimental_aquery_dump_after_build_format=jsonproto',
     `--experimental_aquery_dump_after_build_output_file=${file('aquery.json')}`,
   ]);
@@ -297,6 +504,69 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
   const executionRoot = readFileSync(file('execution-root.txt'), 'utf8').trim();
   if (!path.isAbsolute(executionRoot) || /[\u0000-\u001f\u007f]/u.test(executionRoot))
     throw new Error('shipping qualification requires one absolute execution root');
+  assertSource();
+  const buildEvents = readFileSync(file('build-events.jsonl'), 'utf8')
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  const bep = nativeBuildEventIndex(
+    { executionRoot, buildEvents },
+    readFileSync(new URL('../../.bazelversion', import.meta.url), 'utf8').trim(),
+    nativeBuildMetadata(source, request.github),
+  );
+  const rootConfigurations = roots.map((root) => {
+    const matches = bep.completed.filter((target) => canonicalShippingLabel(target.label) === root);
+    assert(
+      matches.length === 1 && matches[0].value.success === true,
+      'shipping recipe root has no unique successful configuration',
+    );
+    return { label: root, configuration: matches[0].configuration };
+  });
+  const depsFile = file('analysis-deps.json');
+  const depsQuery = file('analysis-deps.query');
+  writeFileSync(depsQuery, `deps(set(${roots.map((root) => JSON.stringify(root)).join(' ')}))`, {
+    flag: 'wx',
+  });
+  bazel(
+    [
+      'cquery',
+      `--query_file=${depsQuery}`,
+      ...configuration,
+      '--output=jsonproto',
+      '--transitions=lite',
+      '--proto:include_configurations',
+      '--proto:output_rule_attrs=',
+    ],
+    depsFile,
+  );
+  const graph = nativeConfiguredRecipeGraph(json(depsFile), rootConfigurations);
+  // Query each distinct configured package set once, including external
+  // packages: their BUILD files can load workspace Starlark. Representatives
+  // are actual reached labels. Bazel 8 proto omits BUILD.bazel subinclude, so
+  // use the real buildfiles label inventory in this frozen source context.
+  const packageLabels = new Map(graph.packages.map((row) => [row.package, row.label]));
+  const recipeQueries = new Map<string, { packages: string[]; labels: string[] }>();
+  for (const root of graph.roots) {
+    const key = JSON.stringify(root.packages);
+    if (recipeQueries.has(key)) continue;
+    const index = recipeQueries.size;
+    const recipeFile = file(`analysis-buildfiles-${index}.txt`);
+    const recipeQuery = file(`analysis-buildfiles-${index}.query`);
+    writeFileSync(
+      recipeQuery,
+      `buildfiles(set(${root.packages.map((pkg) => JSON.stringify(packageLabels.get(pkg))).join(' ')}))`,
+      { flag: 'wx' },
+    );
+    bazel(['query', `--query_file=${recipeQuery}`, ...loadingFlags, '--output=label'], recipeFile);
+    recipeQueries.set(key, {
+      packages: root.packages,
+      labels: readFileSync(recipeFile, 'utf8').split(/\r?\n/u).filter(Boolean),
+    });
+  }
+  const rootInputs = nativeRecipeInputPaths(graph, [...recipeQueries.values()]);
+  writeFileSync(file('analysis-root-inputs.json'), `${JSON.stringify(rootInputs)}\n`, {
+    flag: 'wx',
+  });
   assertSource();
   run('bash', [
     'tools/release/with-source.sh',
@@ -311,6 +581,10 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     file('aquery.json'),
     file('build-events.jsonl'),
     executionRoot,
+    ...(shippingExport ? ['--shipping-export', shippingExport] : []),
+    '--analysis-root-inputs',
+    file('analysis-root-inputs.json'),
+    workspace,
     '--output-directory',
     file('evidence'),
     '--source-ref',

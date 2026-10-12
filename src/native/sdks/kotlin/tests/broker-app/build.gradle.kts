@@ -14,5 +14,5 @@ kotlin { jvmToolchain(17) }
 dependencies {
     implementation(files(providers.gradleProperty("aar").get()))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-    implementation("net.java.dev.jna:jna:5.14.0@aar")
+    implementation("net.java.dev.jna:jna:5.18.1@aar")
 }

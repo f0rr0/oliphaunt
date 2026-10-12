@@ -27,6 +27,25 @@ export { PLATFORM_COMPATIBILITY_POLICY };
 
 export const ROOT = path.resolve(import.meta.dir, '../..');
 
+export function extensionReleaseMetadataRows(product, family) {
+  if (family !== null && family !== 'native' && family !== 'wasix') {
+    throw new Error(`release-artifact-targets.mts: unsupported extension family ${family}`);
+  }
+  return [
+    ['manifest-json', `${product.id}-${product.version}-manifest.json`],
+    ['manifest-properties', `${product.id}-${product.version}-manifest.properties`],
+    ...(family === null || family === 'native'
+      ? [
+          [
+            'swift-extension-carrier',
+            `${product.id}-${product.version}-swift-extension-carrier.json`,
+          ],
+        ]
+      : []),
+    ['checksums', `${product.id}-${product.version}-release-assets.sha256`],
+  ];
+}
+
 export const DESKTOP_TARGETS = {
   'linux-arm64-gnu': {
     triple: 'aarch64-unknown-linux-gnu',

@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const cache = new URL('../../../target/docs/published-releases.json', import.meta.url);
+const defaultRepoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
 export function selectProducts(releases, ids) {
   return Object.fromEntries(
@@ -33,14 +35,17 @@ export function selectProducts(releases, ids) {
   );
 }
 
-export async function publishedProducts(routes) {
+export async function publishedProducts(
+  routes,
+  { repoRoot = defaultRepoRoot, releasesFile = process.env.OLIPHAUNT_DOCS_RELEASES_FILE } = {},
+) {
   // Release ownership supplies identities only; candidate versions are never read.
   const releaseConfig = JSON.parse(
-    await fs.readFile(new URL('../../../release-please-config.json', import.meta.url), 'utf8'),
+    await fs.readFile(path.join(repoRoot, 'release-please-config.json'), 'utf8'),
   );
   const ids = Object.values(releaseConfig.packages).map((product) => product.component);
   // Offline builds must explicitly select a previously resolved input or fixture.
-  const input = process.env.OLIPHAUNT_DOCS_RELEASES_FILE;
+  const input = releasesFile;
   const releases = input ? JSON.parse(await fs.readFile(input, 'utf8')) : [];
   if (!input) {
     for (let page = 1; ; page++) {
@@ -64,11 +69,23 @@ export async function publishedProducts(routes) {
       releases.push(...batch);
       if (batch.length < 100) break;
     }
-    await fs.mkdir(new URL('./', cache), { recursive: true });
+    const cache = path.join(repoRoot, 'target/docs/published-releases.json');
+    await fs.mkdir(path.dirname(cache), { recursive: true });
     await fs.writeFile(cache, JSON.stringify(releases, null, 2) + '\n');
   }
   if (!Array.isArray(releases))
     throw new Error('Docs release input must be a GitHub releases array');
+  for (const release of releases)
+    if (
+      !release ||
+      typeof release !== 'object' ||
+      typeof release.tag_name !== 'string' ||
+      typeof release.draft !== 'boolean' ||
+      typeof release.prerelease !== 'boolean' ||
+      (release.published_at !== null && typeof release.published_at !== 'string') ||
+      release.html_url !== `https://github.com/f0rr0/oliphaunt/releases/tag/${release.tag_name}`
+    )
+      throw new Error('Docs release input contains an invalid GitHub release record');
   return selectProducts(releases, [
     ...ids,
     ...routes.flatMap((route) => (route.product_id ? [route.product_id] : [])),
@@ -89,10 +106,10 @@ export function selectSourceProducts(config, versions) {
   );
 }
 
-export async function sourceProducts() {
+export async function sourceProducts(repoRoot = defaultRepoRoot) {
   const [config, versions] = await Promise.all([
-    fs.readFile(new URL('../../../release-please-config.json', import.meta.url), 'utf8'),
-    fs.readFile(new URL('../../../.release-please-manifest.json', import.meta.url), 'utf8'),
+    fs.readFile(path.join(repoRoot, 'release-please-config.json'), 'utf8'),
+    fs.readFile(path.join(repoRoot, '.release-please-manifest.json'), 'utf8'),
   ]);
   return selectSourceProducts(JSON.parse(config), JSON.parse(versions));
 }
