@@ -384,6 +384,15 @@ ${metadataRows.map((row) => `    public static let ${row.id.replace(/[-_]([a-z])
       metadataRows.map((row) => ({
         ...row,
         'rust-constant': extensions.find((extension) => extension.id === row.id)!['rust-constant'],
+        'native-dependency-module-stems': unique(
+          (recipes.get(row['sql-name'])?.artifacts?.native_dependency_modules ?? []).map(
+            (file: string) => {
+              const match = /^lib\/postgresql\/([A-Za-z0-9_-]+)\.so$/u.exec(file);
+              assert(match, `${row['sql-name']} requires a canonical native dependency module`);
+              return match[1];
+            },
+          ),
+        ),
       })),
     ),
   );
@@ -551,6 +560,9 @@ function rustModule(rows: Row[]): string {
     match('sql_name', "&'static str", (row) => literal(row['sql-name'])),
     match('artifact_product', "&'static str", (row) => literal(row['artifact-product'])),
     match('native_module_stem', "Option<&'static str>", (row) => option(row['native-module-stem'])),
+    match('native_dependency_module_stems', "&'static [&'static str]", (row) =>
+      array(row['native-dependency-module-stems'].map(literal)),
+    ),
     match('creates_extension', 'bool', (row) => String(row['creates-extension'])),
     match('dependencies', "&'static [Extension]", (row) =>
       array(

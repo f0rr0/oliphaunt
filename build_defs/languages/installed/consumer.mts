@@ -146,7 +146,7 @@ async function main(args: string[]) {
         ['oliphaunt', 'oliphaunt-build'].includes(candidate.name),
       ),
     ],
-    ...['oliphaunt-broker', 'oliphaunt-query'].map((name) => [
+    ...['liboliphaunt-native-bindings', 'oliphaunt-broker', 'oliphaunt-query'].map((name) => [
       name,
       candidates.filter((candidate: any) => candidate.name === name),
     ]),
@@ -210,6 +210,8 @@ async function main(args: string[]) {
       const selected = lock.package.find((pkg: any) => pkg.name === candidate.name && !pkg.source);
       if (['oliphaunt', 'oliphaunt-build'].includes(candidate.name))
         assert(selected, `consumer root candidate not selected: ${candidate.name}`);
+      if (name === 'liboliphaunt-native-bindings')
+        assert(selected, `Core-only consumer did not select candidate: ${candidate.name}`);
       if (selected)
         assert.equal(
           selected.version,

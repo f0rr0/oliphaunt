@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, closed]
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
 
@@ -50,22 +52,6 @@ jobs:
       - name: Check every used module extension before producer fanout
         run: bash tools/dev/bazel.sh mod deps --lockfile_mode=error
 
-      - name: Check release-owned source versions
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && format('{0}^', github.sha)) || 'origin/main' }}
-          HEAD_REF: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
-          HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
-          CI_EVENT_NAME: ${{ github.event_name }}
-          CI_FULL_REF: ${{ github.ref }}
-        run: |
-          subject="${PR_TITLE:-}"
-          if [[ -z "$subject" ]]; then
-            subject="$(git log -1 --pretty=%s "$HEAD_REF")"
-          fi
-          bash .github/scripts/check-release-intent.sh "$subject" "$BASE_REF" "$HEAD_REF" \
-            "$HEAD_BRANCH" "$CI_EVENT_NAME" "$CI_FULL_REF" --source-policy-only
-
       - name: Resolve canonical prepared release tree
         id: context
         env:
@@ -78,6 +64,37 @@ jobs:
           fi
           bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
             tools/release/native-release-inputs.mts "${context_args[@]}"
+
+      - name: Check release-owned source versions
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && format('{0}^', github.sha)) || 'origin/main' }}
+          HEAD_REF: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_FULL_REF: ${{ github.ref }}
+          SOURCE_POLICY_SUBJECT: ${{ steps.context.outputs.source_policy_subject }}
+          SOURCE_POLICY_BASE: ${{ steps.context.outputs.source_policy_base }}
+          SOURCE_POLICY_HEAD: ${{ steps.context.outputs.source_policy_head }}
+          SOURCE_POLICY_BRANCH: ${{ steps.context.outputs.source_policy_branch }}
+        run: |
+          subject="${PR_TITLE:-}"
+          if [[ "$CI_EVENT_NAME" == merge_group && -n "$SOURCE_POLICY_HEAD" ]]; then
+            subject="$SOURCE_POLICY_SUBJECT"
+            BASE_REF="$SOURCE_POLICY_BASE"
+            HEAD_REF="$SOURCE_POLICY_HEAD"
+            HEAD_BRANCH="$SOURCE_POLICY_BRANCH"
+            for commit in "$BASE_REF" "$HEAD_REF"; do
+              if ! git cat-file -e "$commit^{commit}"; then
+                git fetch --no-tags origin "$commit"
+              fi
+            done
+          fi
+          if [[ -z "$subject" ]]; then
+            subject="$(git log -1 --pretty=%s "$HEAD_REF")"
+          fi
+          bash .github/scripts/check-release-intent.sh "$subject" "$BASE_REF" "$HEAD_REF" \
+            "$HEAD_BRANCH" "$CI_EVENT_NAME" "$CI_FULL_REF" --source-policy-only
 
       - name: Require the exact completed Prepare producer
         if: steps.context.outputs.native_inputs == 'true'
@@ -116,8 +133,8 @@ jobs:
     name: Portable packages (${{ matrix.platform }})
     needs: release-inputs
     runs-on: ${{ matrix.runner }}
-    # Native addon and Apple package qualification share this job's compiler base.
-    timeout-minutes: 120
+    # Allow complete cold native and Apple construction in the shared compiler base.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -187,7 +204,7 @@ jobs:
         uses: ./.github/actions/setup-msvc
 
       - name: Qualify packages and native host behavior
-        timeout-minutes: 70
+        timeout-minutes: 150
         env:
           TARGET_PLATFORM: ${{ matrix.platform }}
         run: |
@@ -528,6 +545,7 @@ jobs:
       - name: Save bounded standard Bazel caches
         if: ${{ !cancelled() }}
         continue-on-error: true
+        timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
         with:
           phase: save
@@ -543,7 +561,7 @@ jobs:
     needs: release-inputs
     runs-on: ${{ matrix.runner }}
     # Cold native, Android and installed-package construction shares one base.
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -653,6 +671,7 @@ jobs:
           //build_defs/extensions:native_frozen_extension_sql_test
           //src/native/rust-bindings:unit_test
           //build_defs/native/carriers:package_test
+          //src/native/runtime/packaging:source_tests
           //build_defs/extensions:native_carriers_test
           //build_defs/extensions:wasix_sql_carriers_test
           //src/extensions/external/pgtap:wasix_carriers_test
@@ -714,6 +733,7 @@ jobs:
       - name: Save bounded standard Bazel caches
         if: ${{ !cancelled() }}
         continue-on-error: true
+        timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
         with:
           phase: save
@@ -831,6 +851,7 @@ jobs:
       - name: Save bounded standard Bazel caches
         if: ${{ !cancelled() }}
         continue-on-error: true
+        timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
         with:
           phase: save
@@ -941,6 +962,7 @@ jobs:
       - name: Save bounded standard Bazel caches
         if: ${{ !cancelled() }}
         continue-on-error: true
+        timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
         with:
           phase: save
@@ -1068,6 +1090,7 @@ jobs:
       - name: Save bounded standard Bazel caches
         if: ${{ !cancelled() }}
         continue-on-error: true
+        timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
         with:
           phase: save
@@ -1158,6 +1181,7 @@ jobs:
       - name: Save bounded standard Bazel caches
         if: ${{ !cancelled() }}
         continue-on-error: true
+        timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
         with:
           phase: save
@@ -1236,6 +1260,7 @@ jobs:
       - name: Save bounded standard Bazel caches
         if: ${{ !cancelled() }}
         continue-on-error: true
+        timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
         with:
           phase: save
@@ -1329,6 +1354,7 @@ jobs:
       - name: Save bounded standard Bazel caches
         if: ${{ !cancelled() }}
         continue-on-error: true
+        timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
         with:
           phase: save

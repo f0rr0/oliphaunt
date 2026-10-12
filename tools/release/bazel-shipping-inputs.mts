@@ -528,3 +528,125 @@ export function selectShippingChanges(
     unclassifiedPaths: [...unclassified].sort(),
   };
 }
+
+type ObservedShippingProduct = {
+  product: { id: string; version: string };
+  construction: readonly Row[];
+};
+
+/** Project existing captured facts; this cannot authenticate a historical baseline.
+ * Shipping affectedness requests construction checks. Bazel independently schedules
+ * each action and test from its own declared inputs, including test-only changes.
+ */
+export function selectObservedShippingChanges(
+  current: readonly ObservedShippingProduct[],
+  baselines: Readonly<Record<string, ObservedShippingProduct>>,
+  deliveries: readonly { product: string; deliveryStatus: string }[] = [],
+) {
+  const project = ({ product, construction }: ObservedShippingProduct) => {
+    if (
+      !construction.length ||
+      construction.some(
+        (view) =>
+          !Array.isArray(view.leafInputPaths) ||
+          !Array.isArray(view.analysisInputPaths) ||
+          !Array.isArray(view.analysisInputs),
+      )
+    )
+      return undefined;
+    const content = new Map<string, Set<string>>();
+    const packages: Row[] = [];
+    const actions = new Set<string>();
+    for (const view of construction) {
+      const roots = array(view.roots).map(row);
+      const context = createHash('sha256')
+        .update(
+          canonical(
+            roots
+              .map((root) => canonical({ label: root.label, configuration: root.configuration }))
+              .sort(),
+          ),
+        )
+        .digest('hex');
+      packages.push(...roots.map((root) => row(root.package)));
+      for (const action of array(view.actions)) actions.add(text(action));
+      const paths = new Set([
+        ...array(view.leafInputPaths).map(text),
+        ...array(view.analysisInputPaths).map(text),
+      ]);
+      const captures = new Map<string, Row[]>();
+      for (const raw of [...array(view.inputs), ...array(view.analysisInputs)]) {
+        const file = row(raw);
+        const path = text(file.path);
+        captures.set(path, [...(captures.get(path) ?? []), file]);
+      }
+      for (const path of paths) {
+        const capture = captures.get(path);
+        if (!capture?.length) throw new Error(`shipping causal File was not captured: ${path}`);
+        const identities = content.get(path) ?? new Set<string>();
+        for (const file of capture)
+          identities.add(
+            createHash('sha256')
+              .update(canonical({ context, members: file.members }))
+              .digest('hex'),
+          );
+        content.set(path, identities);
+      }
+    }
+    packages.sort((left, right) => {
+      const a = canonical(left);
+      const b = canonical(right);
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+    return {
+      view: {
+        version: product.version,
+        packages,
+        inputs: [...content.keys()].sort(),
+        actions: [...actions].sort(),
+      },
+      content: new Map(
+        [...content].map(([path, identities]) => [path, canonical([...identities].sort())]),
+      ),
+    };
+  };
+  const before: Record<string, ShippingProductInputs> = {};
+  const after: ShippingInputView = {
+    schema: 'oliphaunt-bazel-construction-inputs-v2',
+    products: {},
+    physicalInputs: [],
+  };
+  const deltas: Record<string, string[]> = {};
+  const unknownProducts: string[] = [];
+  for (const product of current) {
+    const id = text(product.product.id);
+    if (Object.hasOwn(after.products, id)) throw new Error('duplicate observed shipping product');
+    const baseline = baselines[id];
+    if (baseline && baseline.product.id !== id)
+      throw new Error('shipping baseline owner differs from its lookup');
+    const previous = baseline && project(baseline);
+    const observed = project(product);
+    if (!previous || !observed) unknownProducts.push(id);
+    if (previous) before[id] = previous.view;
+    after.products[id] = observed?.view ?? {
+      version: product.product.version,
+      packages: [],
+      inputs: [],
+      actions: [],
+    };
+    deltas[id] = previous
+      ? [...new Set([...previous.content.keys(), ...(observed?.content.keys() ?? [])])]
+          .filter((path) => previous.content.get(path) !== observed?.content.get(path))
+          .sort()
+      : [];
+  }
+  const selection = selectShippingChanges(before, after, deltas);
+  const affectedProducts = [...new Set([...selection.affectedProducts, ...unknownProducts])].sort();
+  for (const delivery of deliveries) {
+    if (!Object.hasOwn(after.products, delivery.product))
+      throw new Error('shipping delivery exceeds the observed product inventory');
+    if (delivery.deliveryStatus === 'different' && !affectedProducts.includes(delivery.product))
+      throw new Error(`unchanged shipping inputs produced different delivery: ${delivery.product}`);
+  }
+  return { ...selection, affectedProducts, unknownProducts: unknownProducts.sort() };
+}

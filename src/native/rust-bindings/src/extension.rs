@@ -42,6 +42,17 @@ impl Extension {
             .map(|stem| format!("{}{}", stem, std::env::consts::DLL_SUFFIX))
     }
 
+    pub(crate) fn native_module_files(self) -> impl Iterator<Item = String> {
+        self.native_module_stem()
+            .into_iter()
+            .chain(
+                generated_extensions::native_dependency_module_stems(self)
+                    .iter()
+                    .copied(),
+            )
+            .map(|stem| format!("{}{}", stem, std::env::consts::DLL_SUFFIX))
+    }
+
     pub const fn creates_extension(self) -> bool {
         generated_extensions::creates_extension(self)
     }

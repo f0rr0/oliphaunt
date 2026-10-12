@@ -24,8 +24,14 @@ export function nativeSeedHost(
   };
 }
 
-export function readSpecification() {
-  assert.equal(process.argv.length, 3, 'expected one declared action specification');
+export function readSpecification(extraArguments = 0) {
+  assert.equal(
+    process.argv.length,
+    3 + extraArguments,
+    extraArguments
+      ? 'expected declared action arguments'
+      : 'expected one declared action specification',
+  );
   return JSON.parse(readFileSync(process.argv[2], 'utf8'));
 }
 

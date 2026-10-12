@@ -217,89 +217,6 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  graph-unit:
-    tags:
-      - quality
-      - unit
-      - requires-rust
-    inputs:
-      - "@group(package-test-metadata)"
-      - /.moon/tasks/**/*
-      - /.moon/toolchains.yml
-      - /.moon/workspace.yml
-      - /src/benchmarks/moon.yml
-      - /src/examples/moon.yml
-      - /moon.yml
-      - /.release-please-manifest.json
-      - /Cargo.toml
-      - /Cargo.lock
-      - /src/wasix/node-addon/Cargo.lock
-      - /rust-toolchain.toml
-      - /**/Cargo.toml
-      - /src/**/*.rs
-      - /Package.swift
-      - /package.json
-      - /release-please-config.json
-      - /**/release.toml
-      - /**/targets/**/*.toml
-      - /**/moon.yml
-      - /tools/ci/**/*
-      - /tools/**/moon.yml
-      - /src/third-party/tools/source-fetch-core.mts
-      - /tools/release/artifact-target-matrix.mts
-      - /src/extensions/artifacts/packages/tools/contrib-carriers.mts
-      - /src/extensions/tools/extension-artifact-archive-policy.mts
-      - project: extension-runtime-contract
-        group: contract
-      - /src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts
-      - /src/extensions/artifacts/packages/tools/extension-registry-packages.mts
-      - /src/extensions/contracts/extension-target-profiles.mts
-      - /src/extensions/tools/extension-upstream-licenses.mts
-      - /src/extensions/artifacts/native/tools/native-extension-asset-index-contract.mts
-      - /src/native/runtime/tools/native-runtime-payload.mts
-      - /tools/release/platform-compatibility-policy.mts
-      - /tools/release/release-artifact-targets.mts
-      - /tools/release/prepare-release-candidate.mts
-      - /tools/release/prepare-release-candidate.test.mts
-      - /tools/release/completed-release-publication.mts
-      - /tools/release/commit-paths.mts
-      - /tools/release/snapshot-commit-paths.sh
-      - /tools/release/github-read.mts
-      - /tools/release/release-please-pr-lifecycle.mts
-      - /tools/release/close-release-candidate.sh
-      - /tools/release/sync-release-pr.{mts,sh}
-      - /tools/release/release-metadata-check.sh
-      - /tools/release/check_artifact_targets.mts
-      - /tools/release/check-release-metadata.mts
-      - /tools/release/check_release_please_config.mts
-      - /tools/release/verify-release-commit.mts
-      - /tools/release/release-please-state.sh
-      - /tools/release/with-{product,release}-history.sh
-      - /tools/release/release-dependency-plan.mts
-      - /tools/release/frozen-consumer.mts
-      - /tools/release/frozen-extension-consumer.mts
-      - /tools/release/publication-catalog.mts
-      - /tools/release/publication-consumer-proof.mts
-      - /tools/release/consumer-compatibility.mts
-      - /tools/release/default-extension-release-plan.mts
-      - /src/native/sdks/swift/tools/ios-carrier-manifest.mts
-      - /src/native/sdks/swift/tools/native-legal-source-basis.mts
-      - /src/native/sdks/swift/tools/swift-native-carrier-contract.mts
-      - /src/native/sdks/swift/tools/pinned-native-carrier.mts
-      - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
-      - /src/native/sdks/swift/tools/prepare-swift-release-consumer.mts
-      - /src/native/sdks/swift/tools/swift-carrier-resolver.mts
-      - /tools/release/testdata/extension-release-fixture.mts
-      - "@group(release-archive-contract)"
-      - /tools/release/release-graph.mts
-      - /src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts
-      - /tools/packaging/windows-vc-runtime-closure.mts
-      - package.json
-      - /bun.lock
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-    command: bash tools/ci/with-projects.sh test ./tools/release/prepare-release-candidate.test.mts
   check:
     tags:
       - policy
@@ -308,7 +225,6 @@ tasks:
     deps:
       - release-tools:metadata
       - release-tools:test
-      - release-tools:graph-unit
       - release-tools:version-pins-unit
     inputs:
       []

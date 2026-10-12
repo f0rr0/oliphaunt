@@ -170,3 +170,34 @@ test('native source envelopes are deterministic, retain manifests and reject und
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('adding explicit workspace source composition leaves public dependency bytes and installed pins held', () => {
+  const source =
+    '[package]\nname="sdk"\nversion="0.3.2"\n[dependencies]\nbindings.workspace=true\n';
+  const held =
+    '[workspace.dependencies]\nbindings={version="0.2.0",features=["resource-loading"]}\n';
+  const composed = held.replace('version="0.2.0"', 'path="bindings",version="0.2.0"');
+  const delivery = {
+    ...metadata,
+    nativeArtifacts: [
+      { sourceProduct: 'runtime', target: 'linux-x64-gnu', packageName: 'runtime-linux-x64-gnu' },
+    ],
+    brokerArtifacts: [
+      { sourceProduct: 'broker', target: 'linux-x64-gnu', packageName: 'broker-linux-x64-gnu' },
+    ],
+  };
+  expect(sourceManifest(source, composed, delivery)).toEqual(
+    sourceManifest(source, held, delivery),
+  );
+  const direct = source.replace(
+    'bindings.workspace=true',
+    'bindings={path="../bindings",version="0.2.0",features=["resource-loading"]}',
+  );
+  expect(sourceManifest(direct, composed, delivery)).toEqual(
+    sourceManifest(source, held, delivery),
+  );
+  expect(sourceManifest(source, composed, delivery).dependencies.bindings).toEqual({
+    version: '0.2.0',
+    features: ['resource-loading'],
+  });
+});

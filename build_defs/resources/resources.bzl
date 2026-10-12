@@ -62,12 +62,19 @@ _NOTICES = [
 def _input_map(files):
     return {file.short_path: file.path for file in files}
 
-def _action(ctx, specification, inputs, outputs, mnemonic, **kwargs):
+def _action(ctx, specification, inputs, outputs, mnemonic, tree_inputs = None, **kwargs):
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(spec, json.encode(specification) + "\n")
     arguments = ctx.actions.args()
     arguments.add(spec)
-    bun_action(ctx, ctx.attr._tool, arguments = [arguments], inputs = inputs + [spec], outputs = outputs, mnemonic = mnemonic, **kwargs)
+    action_arguments = [arguments]
+    if tree_inputs != None:
+        tree_arguments = ctx.actions.args()
+        tree_arguments.add_all(depset(tree_inputs), expand_directories = True)
+        tree_arguments.use_param_file("--construction-tree-files=%s", use_always = True)
+        tree_arguments.set_param_file_format("multiline")
+        action_arguments.append(tree_arguments)
+    bun_action(ctx, ctx.attr._tool, arguments = action_arguments, inputs = inputs + [spec], outputs = outputs, mnemonic = mnemonic, **kwargs)
     return spec
 
 def _tool(label):
@@ -213,6 +220,7 @@ def _wasix_seed_impl(ctx):
     frozen = ctx.actions.declare_file(ctx.label.name + ".tar")
     construction = ctx.actions.declare_file(ctx.label.name + ".seed-construction.json")
     constructor_inputs = [ctx.file.runtime] + ([ctx.file.icu] if ctx.file.icu else []) + ctx.attr._runner[DefaultInfo].files.to_list() + ctx.attr._runner[DefaultInfo].default_runfiles.files.to_list()
+    constructor_trees = [file for file in constructor_inputs if file.is_directory]
     reuse, reuse_inputs = seed_reuse(ctx)
     promotion, promotion_inputs = seed_promotion(ctx)
     _action(ctx, {
@@ -225,10 +233,12 @@ def _wasix_seed_impl(ctx):
         "contract": DATABASE_RESOURCE_CONTRACT,
         "constructionInputs": seed_constructor_inputs(ctx, constructor_inputs),
         "constructionTreeMembers": seed_constructor_tree_members(ctx),
+        "constructionTrees": [file.path for file in depset(constructor_trees).to_list()],
         "constructionOutput": construction.path,
         "reuse": reuse,
         "promotion": promotion,
     }, constructor_inputs + reuse_inputs + promotion_inputs, [frozen, construction], "WasixClusterSeed",
+            tree_inputs = constructor_trees,
             tools = [ctx.attr._runner[DefaultInfo].files_to_run], resource_set = _wasix_resources,
             env = {"LC_ALL": "C", "RAYON_NUM_THREADS": "2"})
     return [DefaultInfo(files = depset([frozen, construction])),
@@ -482,7 +492,7 @@ def native_resource_slice(name, templates, qualification):
             native.filegroup(name = prefix + "_specification", srcs = [":" + prefix + "_seed"], output_group = "specification")
             selected.extend(native_seed_envelopes(prefix, target, profile, ":" + prefix + "_seed", icu = icu, compatible = compatible))
         platform_packages[condition] = selected
-    shipping_export(name = "icu_shipping_export", packages = packages, qualification = qualification, testonly = True)
+    shipping_export(name = "icu_shipping_export", packages = packages, qualification = qualification + ["//src/database-resources/icu:icu_cargo_unit_test"], testonly = True)
     shipping_export(name = "native_target_shipping_export", packages = select(platform_packages), qualification = qualification, testonly = True, target_compatible_with = NATIVE_COMPATIBLE)
     shipping_export(name = name, packages = packages + select(platform_packages), qualification = qualification, testonly = True, target_compatible_with = NATIVE_COMPATIBLE)
 

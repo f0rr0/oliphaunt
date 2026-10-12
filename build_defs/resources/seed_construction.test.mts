@@ -20,6 +20,7 @@ import {
   captureSeedConstructionIntent,
   captureSeedContentIntent,
   captureSeedProducerIdentity,
+  expandSeedConstructionTrees,
   SEED_CONSTRUCTION_ANCHOR_SCHEMA,
   seedConstructionFileBinding,
   seedConstructionInvocation,
@@ -682,7 +683,7 @@ test.skipIf(process.platform === 'win32')(
         captureSeedConstructionIntent(slot, { command: 'initdb' }, inputs(output), declared),
       );
       expect(() => captureSeedConstructionIntent(slot, {}, inputs(sandbox))).toThrow(
-        'actual Files',
+        'actual Files: tools/copied/tools/seed.mts',
       );
       writeFileSync(path.join(sandbox, 'extra.mts'), 'undeclared source');
       expect(intent).toThrow('undeclared member');
@@ -717,6 +718,98 @@ test.skipIf(process.platform === 'win32')(
       expect(() =>
         captureSeedConstructionIntent(slot, {}, inputs(output), { 'tools/copied': {} }),
       ).toThrow('declared members');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'Bazel expanded runtime leaves preserve constructor intent and reject missing, unknown and substituted Files',
+  () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'seed-runtime-tree-'));
+    try {
+      const producer = path.join(root, 'producer');
+      const sandbox = path.join(root, 'sandbox');
+      const members = ['bin/postgres', 'share/postgresql/postgres.bki'];
+      for (const member of members) {
+        for (const base of [producer, sandbox])
+          mkdirSync(path.dirname(path.join(base, member)), { recursive: true });
+        writeFileSync(path.join(producer, member), `declared runtime ${member}`);
+        symlinkSync(path.join(producer, member), path.join(sandbox, member));
+      }
+      const logical = 'src/wasix/runtime/portable_payload_files';
+      const inputs = (directory: string) => ({ [logical]: directory });
+      const leaves = (directory: string) => members.map((member) => path.join(directory, member));
+      const expanded = (directory: string, files = leaves(directory)) =>
+        expandSeedConstructionTrees(inputs(directory), [directory], files);
+      const capture = (profile: 'standard' | 'icu', declared: ReturnType<typeof expanded>) =>
+        captureSeedConstructionIntent(
+          { family: 'wasix', target: 'portable', profile },
+          {},
+          declared.inputs,
+          declared.treeMembers,
+        );
+      const declared = expanded(sandbox);
+      expect(declared.inputs[`${logical}/bin/postgres`]).toBe(path.join(producer, 'bin/postgres'));
+      for (const profile of ['standard', 'icu'] as const) {
+        expect(capture(profile, declared)).toEqual(capture(profile, expanded(producer)));
+        expect(capture(profile, expanded(sandbox, leaves(sandbox).reverse()))).toEqual(
+          capture(profile, declared),
+        );
+      }
+      expect(() =>
+        captureSeedConstructionIntent(
+          { family: 'wasix', target: 'portable', profile: 'standard' },
+          {},
+          inputs(sandbox),
+        ),
+      ).toThrow('actual Files');
+      expect(() => capture('standard', expanded(sandbox, leaves(sandbox).slice(0, 1)))).toThrow(
+        'undeclared directory',
+      );
+      expect(() =>
+        expandSeedConstructionTrees(
+          inputs(sandbox),
+          [sandbox],
+          [...leaves(sandbox), leaves(sandbox)[0]],
+        ),
+      ).toThrow('more than once');
+      expect(() => expanded(sandbox, leaves(producer))).toThrow('exact declared input root');
+      expect(() => expanded(sandbox, [path.join(sandbox, 'share/postgresql')])).toThrow(
+        'actual regular primary File',
+      );
+      expect(() =>
+        expandSeedConstructionTrees(inputs(sandbox), [producer], leaves(producer)),
+      ).toThrow('declared logical File');
+      expect(() => expandSeedConstructionTrees(inputs(sandbox), [sandbox], [])).toThrow(
+        'no declared leaf Files',
+      );
+      expect(() =>
+        expandSeedConstructionTrees(inputs(sandbox), [sandbox], leaves(sandbox), {
+          [logical]: { [members[0]]: path.join(producer, members[0]) },
+        }),
+      ).toThrow('already has a declared member inventory');
+      expect(() =>
+        expandSeedConstructionTrees(
+          { ...inputs(sandbox), nested: path.join(sandbox, 'bin') },
+          [sandbox, path.join(sandbox, 'bin')],
+          leaves(sandbox),
+        ),
+      ).toThrow('must not overlap');
+      writeFileSync(path.join(sandbox, 'extra'), 'unlisted runtime');
+      expect(() => capture('standard', declared)).toThrow('undeclared member');
+      rmSync(path.join(sandbox, 'extra'));
+      const alias = path.join(sandbox, members[0]);
+      rmSync(alias);
+      expect(() => capture('standard', declared)).toThrow('missing a declared File');
+      const wrong = path.join(root, 'wrong');
+      writeFileSync(wrong, 'substituted runtime');
+      symlinkSync(wrong, alias);
+      expect(() => capture('standard', declared)).toThrow('differs from its declared File');
+      rmSync(path.join(sandbox, 'bin'), { recursive: true });
+      symlinkSync(path.join(producer, 'bin'), path.join(sandbox, 'bin'), 'dir');
+      expect(() => expanded(sandbox)).toThrow('aliased parent directory');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

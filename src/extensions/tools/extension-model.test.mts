@@ -204,6 +204,38 @@ test('extension projections retain dependency and runtime data while deriving mo
     JSON.parse(outputs.get('src/extensions/generated/sdk/extensions.json')!),
     metadata,
   );
+  const rustPath = 'src/native/rust-bindings/src/generated/extensions.rs';
+  assert.match(outputs.get(rustPath)!, /ExtensionId::Postgis => &\["liboliphaunt_postgis_deps"\]/u);
+  const postgisRecipe = context.recipes.get('postgis')!;
+  const dependencyRecipes = new Map(context.recipes);
+  dependencyRecipes.set('postgis', {
+    ...postgisRecipe,
+    artifacts: {
+      ...postgisRecipe.artifacts,
+      native_dependency_modules: ['lib/postgresql/lib_fixture_dependency.so'],
+    },
+  });
+  const dependencyOutputs = extensionProjections(source, releases, {
+    context: { ...context, recipes: dependencyRecipes },
+  });
+  assert.match(
+    dependencyOutputs.get(rustPath)!,
+    /ExtensionId::Postgis => &\["lib_fixture_dependency"\]/u,
+  );
+  for (const [file, text] of outputs) {
+    if (file !== rustPath) assert.equal(dependencyOutputs.get(file), text, file);
+  }
+  dependencyRecipes.set('postgis', {
+    ...postgisRecipe,
+    artifacts: { ...postgisRecipe.artifacts, native_dependency_modules: ['../undeclared.so'] },
+  });
+  assert.throws(
+    () =>
+      extensionProjections(source, releases, {
+        context: { ...context, recipes: dependencyRecipes },
+      }),
+    /requires a canonical native dependency module/u,
+  );
   const extension = source.extensions.find((row: any) => row.id === 'pg_textsearch');
   extension.control['default-version'] = '9.8.7';
   const updated = extensionProjections(source, releases).get(

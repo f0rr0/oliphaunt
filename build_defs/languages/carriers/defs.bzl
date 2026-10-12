@@ -4,6 +4,8 @@ load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_PUBLICATIONS", "N
 load("@native_cargo_metadata//:cargo.bzl", "CARGO")
 load("@cargo_crates//:defs.bzl", "crate_deps")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "use_cc_toolchain")
+load("@bazel_skylib//lib:paths.bzl", "paths")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_CONFIGURATION")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/languages:cargo-toolchain.bzl", "cargo_test_toolchain")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
@@ -93,28 +95,39 @@ _native_helper_package = rule(
     },
 )
 
-def _registry_suppliers(name):
+def _compiled_suppliers(name, path_dependencies):
     inputs = []
     for dependency, declaration in CARGO[native.package_name()]["dependencies"].items():
         rows = [row for row in PUBLICATION_CARRIERS if row["ecosystem"] == "cargo" and row["name"] == dependency]
         if not rows:
             continue
-        if len(rows) != 1 or (type(declaration) == "dict" and "path" in declaration):
-            fail("native helper supplier must identify one conventional registry carrier: " + dependency)
+        if len(rows) != 1:
+            fail("native helper supplier must identify one conventional Cargo owner: " + dependency)
         row = rows[0]
+        supplier = name + "_" + dependency.replace("-", "_")
+        if type(declaration) == "dict" and "path" in declaration:
+            source = paths.normalize(paths.join(native.package_name(), declaration["path"]))
+            owner = PRODUCTS[row["product"]]
+            if source != owner["path"] or source not in CARGO or CARGO[source]["name"] != dependency or CARGO[source]["version"] != owner["version"]:
+                fail("native helper path supplier differs from its conventional release owner: " + dependency)
+            if dependency not in path_dependencies:
+                fail("native helper path supplier needs the same declared compiler dependency: " + dependency)
+            rust_shipping_supplier(name = supplier, producer = path_dependencies[dependency], owner = "@oliphaunt_metadata//:product_" + row["product"],
+                                   current_source = True, source_package = source, configuration = NATIVE_EXTENSION_CONFIGURATION)
+            inputs.append(":" + supplier)
+            continue
         version = declaration if type(declaration) == "string" else declaration["version"]
         key = row["product"] + "@" + version.removeprefix("=")
         producers = crate_deps([dependency], package_name = native.package_name())
         if len(producers) != 1:
             fail("native helper supplier must identify one actual registry crate target")
-        supplier = name + "_" + dependency.replace("-", "_")
         rust_shipping_supplier(name = supplier, producer = producers[0], owner = "@oliphaunt_metadata//:product_" + row["product"],
                                origin = json.encode({"kind": "completed-publication", "publication": COMPLETED_SUPPLIER_PUBLICATIONS[key], "artifact": "cargo:" + dependency}) if key in COMPLETED_SUPPLIER_PUBLICATIONS else "")
         inputs.append(":" + supplier)
     shipping_suppliers(name = name, inputs = inputs)
 
-def native_helper_carriers(product, binary, qualification):
-    _registry_suppliers("native_compiled_suppliers")
+def native_helper_carriers(product, binary, qualification, path_dependencies = {}):
+    _compiled_suppliers("native_compiled_suppliers", path_dependencies)
     suppliers = ":native_compiled_suppliers"
     descriptor = PRODUCTS[product]
     rows = [row for row in NATIVE_HELPER_ARTIFACTS if row["product"] == product and row["kind"] in ["broker-helper", "node-direct-addon"]]

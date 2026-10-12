@@ -218,6 +218,9 @@ async function fixture(run: (root: string) => Promise<void>, kind = '') {
     'PATH',
     'FAKE_NATIVE_ORIGIN',
     'FAKE_NATIVE_CASE',
+    'FAKE_NATIVE_EVENT',
+    'FAKE_NATIVE_HEAD_BRANCH',
+    'FAKE_RUN_STATUS',
     'FAKE_ARTIFACT_ARCHIVE',
     'FAKE_GH_LOG',
     'FAKE_GH_STATE',
@@ -605,6 +608,59 @@ test('owned native acquisition authenticates and retains one download without ac
       /new owned directory/,
     );
   });
+});
+
+test('an exact merge queue authenticates completed producer transport during construction without reviewed-main assurance', async () => {
+  await fixture(async (root) => {
+    const branch = 'gh-readonly-queue/main/pr-295-aabbcc';
+    const queued = { ...expected, event: 'merge_group' as const, ref: `refs/heads/${branch}` };
+    process.env.FAKE_NATIVE_EVENT = queued.event;
+    process.env.FAKE_NATIVE_HEAD_BRANCH = branch;
+    process.env.FAKE_RUN_STATUS = 'in_progress';
+    const origin = await acquireAuthenticatedNativeBuildEvidence(path.join(root, 'queued'), queued);
+    expect(assertAuthenticatedNativeBuildOrigin(origin)).toBe(origin);
+    expect(origin.evidence).toEqual({ synthetic: true });
+    const requests = () =>
+      readFileSync(path.join(root, 'api.log'), 'utf8').trim().split('\n').map(JSON.parse);
+    expect(requests().filter((url) => url.endsWith('/actions/artifacts/101/zip'))).toHaveLength(1);
+    const reviewed = syntheticReviewedProducer().request;
+    reviewed.expected = queued;
+    await expect(
+      assureReviewedNativeBuildProducer(path.join(root, 'queued'), reviewed, {
+        authenticate: async () => origin,
+      }),
+    ).rejects.toThrow('canonical main workflow');
+    expect(requests().filter((url) => url.endsWith('/actions/artifacts/101/zip'))).toHaveLength(1);
+  });
+});
+
+test('merge queue transport rejects wrong queue branch, base, and source before downloading archive bytes', async () => {
+  for (const fault of ['branch', 'base', 'source', 'tree'] as const) {
+    await fixture(
+      async (root) => {
+        process.env.FAKE_NATIVE_EVENT = 'merge_group';
+        process.env.FAKE_NATIVE_HEAD_BRANCH = 'gh-readonly-queue/main/pr-295-aabbcc';
+        const queued = {
+          ...expected,
+          event: 'merge_group' as const,
+          ref:
+            fault === 'base'
+              ? 'refs/heads/gh-readonly-queue/develop/pr-295-aabbcc'
+              : fault === 'branch'
+                ? 'refs/heads/gh-readonly-queue/main/pr-296-other'
+                : `refs/heads/${process.env.FAKE_NATIVE_HEAD_BRANCH}`,
+        };
+        await expect(
+          acquireAuthenticatedNativeBuildEvidence(path.join(root, 'queued'), queued),
+        ).rejects.toThrow();
+        const requests = existsSync(path.join(root, 'api.log'))
+          ? readFileSync(path.join(root, 'api.log'), 'utf8')
+          : '';
+        expect(requests).not.toContain('/actions/artifacts/101/zip');
+      },
+      fault === 'source' || fault === 'tree' ? fault : '',
+    );
+  }
 });
 
 test('one controller session shares only its owned origin metadata and still authenticates every archive', async () => {

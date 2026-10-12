@@ -123,7 +123,14 @@ export async function resolveNativeReleaseInputContext(
     event = process.env.GITHUB_EVENT_NAME,
   }: { source: NativeBuildSource; pullNumber?: number; event?: string },
   { read = requestGithubRepositoryJson, pages = requestGithubPages, gitDirectory = ROOT } = {},
-) {
+): Promise<
+  | {
+      pullNumber: number;
+      prepareSourceCommit: string;
+      sourcePolicy?: { subject: string; base: string; head: string; branch: string };
+    }
+  | undefined
+> {
   source(currentSource);
   let pull;
   if (pullNumber !== undefined) {
@@ -164,6 +171,20 @@ export async function resolveNativeReleaseInputContext(
           : row.merged_at && row.merge_commit_sha === currentSource.commit) &&
         row.head?.ref === 'release-please--branches--main',
     );
+    if (
+      event === 'merge_group' &&
+      matches.length === 0 &&
+      parents.length > 0 &&
+      !git(
+        'diff',
+        '--name-only',
+        parents[0],
+        currentSource.commit,
+        '--',
+        '.release-please-manifest.json',
+      )
+    )
+      return undefined; // Ordinary queues use the source-bound public input path.
     assert.equal(
       matches.length,
       1,
@@ -195,7 +216,22 @@ export async function resolveNativeReleaseInputContext(
     'native prepared PR requires one exact source parent',
   );
   assert.match(commit.parents[0].sha, /^[a-f0-9]{40}$/u);
-  return { pullNumber: pull.number, prepareSourceCommit: commit.parents[0].sha };
+  const result = { pullNumber: pull.number, prepareSourceCommit: commit.parents[0].sha };
+  if (event !== 'merge_group') return result;
+  const subject = commit.message?.split(/\r?\n/u)[0];
+  assert.ok(
+    typeof subject === 'string' && subject && !/[\u0000-\u001f\u007f]/u.test(subject),
+    'queued release commit requires an exact safe source policy subject',
+  );
+  return {
+    ...result,
+    sourcePolicy: {
+      subject,
+      base: commit.parents[0].sha,
+      head: preparedSource.commit,
+      branch: pull.head.ref,
+    },
+  };
 }
 
 /** Structural parsing alone grants neither supplier nor producer authority. */
@@ -844,7 +880,18 @@ if (import.meta.main) {
       source: sourceIdentity('HEAD'),
       ...(values['pull-number'] === undefined ? {} : { pullNumber: Number(values['pull-number']) }),
     });
-    const output = `native_inputs=${Boolean(context)}\n${context ? `pull_number=${context.pullNumber}\nprepare_source_sha=${context.prepareSourceCommit}\n` : ''}`;
+    const output = [
+      `native_inputs=${Boolean(context)}`,
+      ...(context
+        ? [`pull_number=${context.pullNumber}`, `prepare_source_sha=${context.prepareSourceCommit}`]
+        : []),
+      ...(context?.sourcePolicy
+        ? Object.entries(context.sourcePolicy).map(
+            ([key, value]) => `source_policy_${key}=${value}`,
+          )
+        : []),
+      '',
+    ].join('\n');
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, output);
     else process.stdout.write(output);
   } else {

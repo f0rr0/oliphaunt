@@ -950,9 +950,8 @@ test('WASIX N-API production helpers keep the release builder affected', () => {
   }
 });
 
-test('CI planner changes select the focused graph proof', () => {
+test('CI planner changes do not run release mutation tests', () => {
   const result = effects(paths.toolsGraphCiPlanMts);
-  assert.equal(result.tasks.includes('release-tools:graph-unit'), true);
   assert.equal(result.tasks.includes('release-tools:test'), false);
 });
 
@@ -963,7 +962,6 @@ test('release mutation tests follow release helpers, not policy or workflow file
   }
   const result = effects(paths.githubScriptsReleaseCandidateLibMts);
   assert.equal(result.tasks.includes('release-tools:test'), true);
-  assert.equal(result.tasks.includes('release-tools:graph-unit'), false);
 });
 
 test('workflow changes run workflow checks without rebuilding product artifacts', () => {
@@ -1002,10 +1000,9 @@ test('release helper changes invalidate only their product artifacts', () => {
   );
 });
 
-test('product Moon topology selects the focused release graph proof', () => {
+test('product Moon topology preserves its consumer scope', () => {
   const result = effects(paths.sdksTsSdkMoonYml);
   assert.deepEqual(result.jobs, NATIVE_TS_CONSUMER_JOBS);
-  assert.equal(result.tasks.includes('release-tools:graph-unit'), true);
   assert.equal(result.tasks.includes('release-tools:test'), false);
 });
 
@@ -1013,7 +1010,6 @@ test('JavaScript release metadata does not rebuild unrelated products', () => {
   const result = effects(paths.sdksTsSdkReleaseToml);
   assert.deepEqual(result.jobs, NATIVE_TS_CONSUMER_JOBS);
   assert.deepEqual(result.releaseProducts, ['oliphaunt-js']);
-  assert.equal(result.tasks.includes('release-tools:graph-unit'), true);
   assert.equal(result.tasks.includes('release-tools:metadata'), true);
   assert.equal(result.tasks.includes('release-tools:test'), false);
   assert.equal(result.tasks.includes('release-tools:version-pins-unit'), true);
@@ -1034,7 +1030,6 @@ test('JavaScript release metadata does not rebuild unrelated products', () => {
 test('release-please bookkeeping does not rebuild product artifacts', () => {
   const result = effects(paths.releasePleaseManifestJson);
   assert.deepEqual(result.jobs, ['affected']);
-  assert.equal(result.tasks.includes('release-tools:graph-unit'), true);
   assert.equal(result.tasks.includes('release-tools:metadata'), true);
   assert.equal(result.tasks.includes('release-tools:test'), false);
   assert.equal(result.tasks.includes('release-tools:version-pins-unit'), true);

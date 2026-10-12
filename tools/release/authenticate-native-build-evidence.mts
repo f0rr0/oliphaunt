@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
+import { matchesGithubWorkflowRef } from './github-read.mts';
 import { readNativeBuildFinalFiles } from './native-build-files.mts';
 import {
   assertNativeBuildGithub,
@@ -149,7 +150,7 @@ export function reviewedNativeProducerUnknowns(unverified: string[]) {
 type NativeBuildOriginExpectation = {
   source: NativeBuildSource;
   github: NativeBuildGithub;
-  event: 'push' | 'pull_request' | 'workflow_dispatch';
+  event: 'push' | 'pull_request' | 'workflow_dispatch' | 'merge_group';
   ref: string;
   artifactName: string;
 };
@@ -220,14 +221,7 @@ async function readAuthenticatedNativeBuildEvidence(
     expected.github.workflowPath !== '.github/workflows/bazel.yml'
   )
     throw new Error('native origin requires the canonical Native Bazel qualification workflow');
-  if (
-    !['push', 'pull_request', 'workflow_dispatch'].includes(expected.event) ||
-    !(
-      expected.event === 'pull_request'
-        ? /^refs\/pull\/[1-9][0-9]*\/merge$/u
-        : /^refs\/heads\/[^\s\u0000-\u001f\u007f]+$/u
-    ).test(expected.ref)
-  )
+  if (!matchesGithubWorkflowRef(expected.event, expected.ref))
     throw new Error('native origin requires an eligible exact workflow event and ref');
   if (!/^[A-Za-z0-9_.-]+$/u.test(expected.artifactName))
     throw new Error('native origin artifact name is invalid');
@@ -454,7 +448,7 @@ if (import.meta.main) {
       {
         source: { commit: required('source-commit'), tree: required('source-tree') },
         github: JSON.parse(readFileSync(required('github-json'), 'utf8')),
-        event: required('event') as 'push' | 'pull_request' | 'workflow_dispatch',
+        event: required('event') as NativeBuildOriginExpectation['event'],
         ref: required('ref'),
         artifactName: required('artifact-name'),
       },

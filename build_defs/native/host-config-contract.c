@@ -12,7 +12,12 @@
 #error "Host ABI facts are missing: inspect the native compiler probe diagnostics"
 #else
 
-#define ALIGNOF(type) offsetof(struct { char byte; type value; }, value)
+struct oliphaunt_double_alignment { char byte; double value; };
+struct oliphaunt_int_alignment { char byte; int value; };
+struct oliphaunt_int64_t_alignment { char byte; int64_t value; };
+struct oliphaunt_long_alignment { char byte; long value; };
+struct oliphaunt_short_alignment { char byte; short value; };
+#define ALIGNOF(type) offsetof(struct oliphaunt_##type##_alignment, value)
 #define ASSERT(name, condition) typedef char name[(condition) ? 1 : -1]
 ASSERT(long_size, SIZEOF_LONG == sizeof(long));
 ASSERT(long_long_size, SIZEOF_LONG_LONG == sizeof(long long));

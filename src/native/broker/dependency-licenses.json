@@ -20,7 +20,6 @@
         "itoa@1.0.18",
         "libc@0.2.186",
         "libloading@0.8.9",
-        "liboliphaunt-native-bindings@0.2.0",
         "linux-raw-sys@0.12.1",
         "memchr@2.8.1",
         "oliphaunt-query@0.1.1",
@@ -59,7 +58,6 @@
         "itoa@1.0.18",
         "libc@0.2.186",
         "libloading@0.8.9",
-        "liboliphaunt-native-bindings@0.2.0",
         "linux-raw-sys@0.12.1",
         "memchr@2.8.1",
         "oliphaunt-query@0.1.1",
@@ -99,7 +97,6 @@
         "itoa@1.0.18",
         "libc@0.2.186",
         "libloading@0.8.9",
-        "liboliphaunt-native-bindings@0.2.0",
         "memchr@2.8.1",
         "oliphaunt-query@0.1.1",
         "proc-macro2@1.0.106",
@@ -135,7 +132,6 @@
         "getrandom@0.3.4",
         "itoa@1.0.18",
         "libloading@0.8.9",
-        "liboliphaunt-native-bindings@0.2.0",
         "memchr@2.8.1",
         "oliphaunt-query@0.1.1",
         "proc-macro2@1.0.106",
@@ -426,26 +422,6 @@
           "name": "LICENSE",
           "sha256": "b29f8b01452350c20dd1af16ef83b598fea3053578ccc1c7a0ef40e57be2620f",
           "bytes": 736
-        }
-      ]
-    },
-    {
-      "name": "liboliphaunt-native-bindings",
-      "version": "0.2.0",
-      "checksum": "7b0e758a0af81e354205e9ba8e668175357c974f3c3ad3421e681ad7e07d1ed8",
-      "declaredLicense": "MIT",
-      "selectedLicense": "MIT",
-      "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
-      "licenseFiles": [
-        {
-          "name": "LICENSE",
-          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
-          "bytes": 1085
-        },
-        {
-          "name": "THIRD_PARTY_NOTICES.md",
-          "sha256": "20fd67487d1a631ba959cf7ec3fdbaf4977997ed624c0188dcb3c8870eded830",
-          "bytes": 821
         }
       ]
     },

@@ -857,6 +857,7 @@ test('merge queue reuses only the exact canonical open release tree and rejects 
         sha: f.record.preparedSource.commit,
         tree: { sha: f.record.preparedSource.tree },
         parents: [{ sha: f.record.bridge.source.commit }],
+        message: 'chore(release): publish prepared products\n\nRelease body',
       }),
     };
     const request = {
@@ -866,6 +867,12 @@ test('merge queue reuses only the exact canonical open release tree and rejects 
     expect(await resolveNativeReleaseInputContext(request, options)).toEqual({
       pullNumber: 17,
       prepareSourceCommit: f.record.bridge.source.commit,
+      sourcePolicy: {
+        subject: 'chore(release): publish prepared products',
+        base: f.record.bridge.source.commit,
+        head: f.record.preparedSource.commit,
+        branch: 'release-please--branches--main',
+      },
     });
     await expect(
       resolveNativeReleaseInputContext(request, { ...options, pages: async () => [pull, pull] }),
@@ -895,6 +902,64 @@ test('merge queue reuses only the exact canonical open release tree and rejects 
         }),
       }),
     ).rejects.toThrow('one exact source parent');
+    await expect(
+      resolveNativeReleaseInputContext(request, {
+        ...options,
+        read: async () => ({
+          ...(await options.read()),
+          message: 'chore(release): unsafe\toutput',
+        }),
+      }),
+    ).rejects.toThrow('safe source policy subject');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('ordinary merge queues retain source version checks and do not request release producers', async () => {
+  const f = await fixture();
+  try {
+    const queued = execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.invalid',
+        'commit-tree',
+        f.record.bridge.source.tree,
+        '-p',
+        f.record.bridge.source.commit,
+        '-m',
+        'Merge queue feature changes',
+      ],
+      { cwd: f.root, encoding: 'utf8' },
+    ).trim();
+    const options = {
+      gitDirectory: f.root,
+      pages: async () => [{ state: 'open', merged_at: null, head: { ref: 'feature' } }],
+      read: async () => {
+        throw new Error('ordinary queue must not read a Prepare source');
+      },
+    };
+    expect(
+      await resolveNativeReleaseInputContext(
+        {
+          source: { commit: queued, tree: f.record.bridge.source.tree },
+          event: 'merge_group',
+        },
+        options,
+      ),
+    ).toBeUndefined();
+    await expect(
+      resolveNativeReleaseInputContext(
+        {
+          source: f.record.preparedSource,
+          event: 'merge_group',
+        },
+        options,
+      ),
+    ).rejects.toThrow('one canonical open');
   } finally {
     f.cleanup();
   }

@@ -91,4 +91,12 @@ bun_script_test(
     tags = ["manual"],
 )
 
+bun_test(
+    name = "rust_runtime_runner_test",
+    entry_point = "rust-runtime-test.test.mts",
+    data = ["rust-runtime-test.mts", "host-runtime-test-helpers.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/release-directory-safety.mts"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "small",
+)
+
 source_quality_files()

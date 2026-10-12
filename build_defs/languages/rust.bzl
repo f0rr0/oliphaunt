@@ -236,7 +236,7 @@ def cargo_library_test(name = "unit_test", crate = ":lib", data = [], tags = [],
         proc_macro_deps = all_dependencies(proc_macro_dev = True, package_name = package_name),
         rustc_env_files = [cargo_env],
         rustc_env = rustc_env | {"CARGO_MANIFEST_DIR": package_name},
-        data = data,
+        data = data + [_source_prefix(package_name) + "Cargo.toml"],
         tags = tags + (["manual"] if isolated_cache else []),
         **kwargs
     )
@@ -260,7 +260,7 @@ def cargo_integration_test(name, source, crate = ":lib", srcs = [], data = [], r
         proc_macro_deps = macros,
         rustc_env_files = [cargo_env],
         rustc_env = {"CARGO_MANIFEST_DIR": package_name} | rustc_env,
-        data = data,
+        data = data + [_source_prefix(package_name) + "Cargo.toml"],
         **kwargs
     )
 

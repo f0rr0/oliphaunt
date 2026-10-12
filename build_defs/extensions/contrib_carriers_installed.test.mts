@@ -97,7 +97,8 @@ try {
   assert.equal(packageJson.version, spec.version);
   assert.equal(packageJson.oliphaunt.liboliphauntVersion, spec.runtimeVersion);
   assert.deepEqual(packageJson.os, ['linux']);
-  assert.deepEqual(packageJson.cpu, ['x64']);
+  assert(['linux-x64-gnu', 'linux-arm64-gnu'].includes(spec.target));
+  assert.deepEqual(packageJson.cpu, [spec.target === 'linux-arm64-gnu' ? 'arm64' : 'x64']);
   assert.deepEqual(packageJson.libc, ['glibc']);
   const contracts = JSON.parse(npm.get('package/extension-contract.json')!.data().toString('utf8'));
   assert.deepEqual(

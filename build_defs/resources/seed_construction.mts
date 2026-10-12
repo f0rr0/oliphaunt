@@ -163,6 +163,103 @@ const safeName = (name: string) => {
   );
 };
 
+/** Bind Bazel's expanded TreeArtifact leaves to their original regular Files.
+ * This is an execution inventory, never a recursive discovery of link targets.
+ */
+export function expandSeedConstructionTrees(
+  inputs: Record<string, string>,
+  trees: string[],
+  files: string[],
+  knownMembers: Record<string, Record<string, string>> = {},
+) {
+  assert.ok(
+    Array.isArray(trees) && Array.isArray(files),
+    'declared constructor Trees require a leaf inventory',
+  );
+  const expanded: Record<string, string> = Object.assign(Object.create(null), inputs);
+  const treeMembers: Record<string, Record<string, string>> = Object.assign(
+    Object.create(null),
+    knownMembers,
+  );
+  const seenTrees = new Set<string>();
+  const roots = trees.map((file) => {
+    assert.ok(typeof file === 'string' && file, 'constructor Tree requires a declared File path');
+    const resolved = path.resolve(file);
+    assert.ok(!seenTrees.has(resolved), 'constructor Tree is declared more than once');
+    seenTrees.add(resolved);
+    const name = seedConstructionFileBinding(inputs, file);
+    safeName(name);
+    assert.ok(
+      !Object.hasOwn(treeMembers, name),
+      'constructor Tree already has a declared member inventory',
+    );
+    const physical = realpathSync(file);
+    assert.ok(lstatSync(physical).isDirectory(), 'constructor Tree must be a directory');
+    const members: Record<string, string> = Object.create(null);
+    treeMembers[name] = members;
+    return { name, resolved, physical, members };
+  });
+  for (const root of roots)
+    for (const other of roots)
+      if (root !== other) {
+        const relative = path.relative(root.resolved, other.resolved);
+        assert.ok(
+          relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative),
+          'constructor Tree roots must not overlap',
+        );
+      }
+  const seenFiles = new Set<string>();
+  for (const file of files) {
+    assert.ok(
+      typeof file === 'string' &&
+        file &&
+        !/[\u0000-\u001f\u007f]/u.test(file) &&
+        !file.split(path.sep).some((part) => part === '.' || part === '..'),
+      'constructor Tree leaf requires a safe File path',
+    );
+    const resolved = path.resolve(file);
+    assert.ok(!seenFiles.has(resolved), 'constructor Tree leaf is declared more than once');
+    seenFiles.add(resolved);
+    const owners = roots.filter((root) => {
+      const relative = path.relative(root.resolved, resolved);
+      return (
+        relative &&
+        relative !== '..' &&
+        !relative.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relative)
+      );
+    });
+    assert.equal(owners.length, 1, 'constructor Tree leaf requires one exact declared input root');
+    const root = owners[0];
+    const member = path.relative(root.resolved, resolved).split(path.sep).join('/');
+    safeName(member);
+    let directory = root.physical;
+    for (const part of member.split('/').slice(0, -1)) {
+      directory = path.join(directory, part);
+      const stat = lstatSync(directory);
+      assert.ok(
+        stat.isDirectory() && !stat.isSymbolicLink(),
+        'constructor Tree leaf has an aliased parent directory',
+      );
+    }
+    const primary = realpathSync(path.join(root.physical, member));
+    assert.ok(
+      lstatSync(primary).isFile(),
+      'constructor Tree leaf requires an actual regular primary File',
+    );
+    const logical = `${root.name}/${member}`;
+    assert.ok(
+      !Object.hasOwn(expanded, logical),
+      'constructor Tree leaf collides with a declared File name',
+    );
+    expanded[logical] = primary;
+    root.members[member] = primary;
+  }
+  for (const root of roots)
+    assert.ok(Object.keys(root.members).length > 0, 'constructor Tree has no declared leaf Files');
+  return { inputs: expanded, treeMembers };
+}
+
 /** Physical names are transport locations; logical File names and all bytes remain exact. */
 export function captureSeedConstructionIntent(
   slot: Slot,
@@ -189,6 +286,7 @@ export function captureSeedConstructionIntent(
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, file]) => {
       safeName(name);
+      const logicalName = name;
       const physical = realpathSync(file);
       const members: Record<string, unknown>[] = [];
       const expected = Object.hasOwn(toolTreeMembers, name) ? toolTreeMembers[name] : undefined;
@@ -204,7 +302,7 @@ export function captureSeedConstructionIntent(
         const stat = lstatSync(file);
         assert.ok(
           expected || !stat.isSymbolicLink(),
-          'constructor input tree must contain actual Files',
+          `constructor input tree must contain actual Files: ${logicalName}/${name || '.'}`,
         );
         let actual: FileIdentity | undefined;
         if (expected) {

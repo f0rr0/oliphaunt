@@ -432,65 +432,67 @@ test('PR family construction uses finite completed producer transport and never 
   }
 });
 
-test('feature dispatch family construction binds its exact branch while release preparation remains main-only', async () => {
-  const directory = mkdtempSync(path.join(tmpdir(), 'native-family-dispatch-'));
-  try {
-    const row = expectedProductArtifactRows(
-      loadPublicationCatalog('dispatch family test').products,
-    ).find((row) => row.product === 'liboliphaunt-native' && row.role === 'github-release-asset');
-    if (!row) throw new Error('missing canonical dispatch test asset');
-    const run = {
-      ...eligible,
-      status: 'in_progress',
-      conclusion: null,
-      event: 'workflow_dispatch',
-      head_branch: 'feature/native',
-    };
-    const requests: any[] = [];
-    await acquireNativeReleaseArchives(
-      {
-        source,
-        runId: 77,
-        ref: 'refs/heads/feature/native',
-        directory: path.join(directory, 'input'),
-      },
-      {
-        readJson: async () => run,
-        readPages: async () => [{ name: 'native-build-evidence-x86_64', expired: false }],
-        acquire: async (evidenceRoot, expected) => {
-          requests.push(expected);
-          return producer(evidenceRoot, row, 'dispatch construction').origin;
+for (const event of ['workflow_dispatch', 'merge_group'] as const)
+  test(`${event} family construction binds its exact branch while release preparation remains main-only`, async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'native-family-context-'));
+    try {
+      const row = expectedProductArtifactRows(
+        loadPublicationCatalog('dispatch family test').products,
+      ).find((row) => row.product === 'liboliphaunt-native' && row.role === 'github-release-asset');
+      if (!row) throw new Error('missing canonical dispatch test asset');
+      const run = {
+        ...eligible,
+        status: 'in_progress',
+        conclusion: null,
+        event,
+        head_branch:
+          event === 'merge_group' ? 'gh-readonly-queue/main/pr-295-aabbcc' : 'feature/native',
+      };
+      const requests: any[] = [];
+      await acquireNativeReleaseArchives(
+        {
+          source,
+          runId: 77,
+          ref: `refs/heads/${run.head_branch}`,
+          directory: path.join(directory, 'input'),
         },
-      },
-    );
-    expect(requests[0].ref).toBe('refs/heads/feature/native');
-    expect(requests[0].event).toBe('workflow_dispatch');
-    await expect(
-      acquireNativeReleaseArchives(
-        { source, runId: 77, ref: 'refs/heads/main', directory: path.join(directory, 'wrong') },
         {
           readJson: async () => run,
-          readPages: async () => {
-            throw new Error('no artifact reads');
+          readPages: async () => [{ name: 'native-build-evidence-x86_64', expired: false }],
+          acquire: async (evidenceRoot, expected) => {
+            requests.push(expected);
+            return producer(evidenceRoot, row, 'dispatch construction').origin;
           },
         },
-      ),
-    ).rejects.toThrow('exact eligible qualification');
-    await expect(
-      prepareNativeReleaseDelivery(
-        { source, runId: 77, directory: path.join(directory, 'release'), completedVersions: {} },
-        {
-          readJson: async () => ({ ...run, status: 'completed', conclusion: 'success' }),
-          readPages: async () => {
-            throw new Error('no artifact reads');
+      );
+      expect(requests[0].ref).toBe(`refs/heads/${run.head_branch}`);
+      expect(requests[0].event).toBe(event);
+      await expect(
+        acquireNativeReleaseArchives(
+          { source, runId: 77, ref: 'refs/heads/main', directory: path.join(directory, 'wrong') },
+          {
+            readJson: async () => run,
+            readPages: async () => {
+              throw new Error('no artifact reads');
+            },
           },
-        },
-      ),
-    ).rejects.toThrow('successful exact reviewed-main');
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+        ),
+      ).rejects.toThrow('exact eligible qualification');
+      await expect(
+        prepareNativeReleaseDelivery(
+          { source, runId: 77, directory: path.join(directory, 'release'), completedVersions: {} },
+          {
+            readJson: async () => ({ ...run, status: 'completed', conclusion: 'success' }),
+            readPages: async () => {
+              throw new Error('no artifact reads');
+            },
+          },
+        ),
+      ).rejects.toThrow('successful exact reviewed-main');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 
 test('producer seed snapshot adopts all genuine completed slots without claiming historical constructor intent', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'native-seed-baseline-'));

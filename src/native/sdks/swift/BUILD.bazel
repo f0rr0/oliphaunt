@@ -2,6 +2,7 @@ load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/languages/swift:bindings.bzl", "uniffi_swift", "uniffi_output")
 load("//build_defs/languages/swift:xcframework.bzl", "bindings_xcframework", "bindings_envelope")
 load("//build_defs/languages/swift:source.bzl", "swift_source_package")
+load("//build_defs/languages/swift:compiled-inputs-test.bzl", "swift_compiled_inputs_test")
 load("//build_defs/languages/swift:consumer.bzl", "swift_package_consumer_test")
 load("//build_defs/languages/swift:ios-compile.bzl", "swift_ios_compile_test")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
@@ -66,6 +67,13 @@ swift_source_package(
     generated_swift = ":generated_swift",
     bindings_archive = ":bindings_archive",
     bindings_release_assets = ":bindings_release_assets",
+)
+swift_compiled_inputs_test(
+    name = "compiled_supplier_analysis_test",
+    target_under_test = ":source_package_compiled_shipping_export",
+    bindings = ":bindings_release_assets",
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
+    size = "small",
 )
 filegroup(name = "generator_sources", srcs = ["tools/extension-resource-inventory.mts", "tools/render-extension-products.mts", "tools/swift-carrier-resolver.mts"])
 swift_package_consumer_test(

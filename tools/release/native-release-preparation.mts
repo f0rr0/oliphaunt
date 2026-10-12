@@ -36,15 +36,21 @@ import {
   nativePublicationInputProjection,
   type ReleaseMetadata,
 } from './bazel-release-metadata.mts';
+import { selectObservedShippingChanges } from './bazel-shipping-inputs.mts';
 import {
   type CompletedPublication,
   createCompletedPublicationChecker,
 } from './completed-release-publication.mts';
 import { captureCompletedSwiftSourceTag } from './completed-swift-source-delivery.mts';
-import { requestGithubPages, requestGithubRepositoryJson } from './github-read.mts';
+import {
+  matchesGithubWorkflowRef,
+  requestGithubPages,
+  requestGithubRepositoryJson,
+} from './github-read.mts';
 import {
   assertNativeSwiftShippingPhase,
   type NativeBuildSource,
+  nativeShippingRootsHaveQualification,
   validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
 import {
@@ -668,15 +674,12 @@ export async function acquireNativePublicationBuilds(
   assert.ok(Number.isSafeInteger(runId) && runId > 0, 'native construction requires an exact run');
   const repository = 'f0rr0/oliphaunt';
   const run = await readJson(`repos/${repository}/actions/runs/${runId}`);
-  const pullRequest = /^refs\/pull\/([1-9][0-9]*)\/merge$/u.exec(ref);
   const contextMatches =
-    run.event === 'pull_request'
-      ? pullRequest &&
-        run.pull_requests?.some((request) => request.number === Number(pullRequest[1]))
-      : ['push', 'workflow_dispatch'].includes(run.event) &&
-        (run.event === 'workflow_dispatch' || run.head_branch === 'main') &&
-        /^refs\/heads\/[^\s\u0000-\u001f\u007f]+$/u.test(ref) &&
-        ref === `refs/heads/${run.head_branch}`;
+    matchesGithubWorkflowRef(run.event, ref, {
+      headBranch: run.head_branch,
+      pullRequestNumbers: run.pull_requests?.map((request) => request.number),
+    }) &&
+    (run.event !== 'push' || run.head_branch === 'main');
   assert.ok(
     run.id === runId &&
       run.head_sha === source.commit &&
@@ -744,7 +747,7 @@ export async function acquireNativePublicationBuilds(
           runAttempt: run.run_attempt,
           job,
         },
-        event: run.event as 'push' | 'pull_request' | 'workflow_dispatch',
+        event: run.event as NativePublicationBuild['expected']['event'],
         ref,
         artifactName,
       };
@@ -1224,6 +1227,10 @@ export async function prepareNativeReleaseDelivery(
     return proof;
   };
   let signedSeedBaseline: NativeSeedConstructionBaseline | undefined;
+  const shippingBaselines: Record<
+    string,
+    ReturnType<typeof assertAuthenticatedNativePublicBaseline>['metadata']
+  > = {};
   for (const product of candidate.products) {
     const tagName = `${product.id}-v${completedVersions[product.id]}`;
     const release = await read(`repos/${repository}/releases/tags/${encodeURIComponent(tagName)}`);
@@ -1274,26 +1281,40 @@ export async function prepareNativeReleaseDelivery(
       publicProofs.set(asset.url, { bytes: proof.bytes, sha256: proof.sha256 });
     }
     baselines.push({ publication, carriers, productArtifacts });
-    if (product.id === 'database-resources') {
-      const metadata = nativePublicationMetadataArtifactRow(product);
-      const matching = assets.filter((asset) => asset.name === metadata.name);
-      assert.ok(matching.length <= 1, 'completed resource metadata is ambiguous');
-      if (matching.length) {
-        const asset = matching[0];
-        const file = path.join(directory, 'completed', product.id, 'public', metadata.name);
-        await retainPublic(asset.url, metadata.name, asset.size, {
-          retainedPath: file,
-          ...(typeof asset.digest === 'string'
-            ? { expectedSha256: asset.digest.replace(/^sha256:/u, '') }
-            : {}),
-        });
+    const metadata = nativePublicationMetadataArtifactRow(product);
+    const matching = assets.filter((asset) => asset.name === metadata.name);
+    assert.ok(matching.length <= 1, `completed ${product.id} metadata is ambiguous`);
+    if (matching.length) {
+      const asset = matching[0];
+      const file = path.join(directory, 'completed', product.id, 'public', metadata.name);
+      await retainPublic(asset.url, metadata.name, asset.size, {
+        retainedPath: file,
+        ...(typeof asset.digest === 'string'
+          ? { expectedSha256: asset.digest.replace(/^sha256:/u, '') }
+          : {}),
+      });
+      const baseline = assertAuthenticatedNativePublicBaseline(
+        await readCompletedNativePublicBaseline({ publication, file }),
+      );
+      // Authentication preserves historical facts. A construction diagnostic
+      // cannot prove an unchanged qualified footprint or authorize held CI.
+      if (
+        baseline.metadata.publicationQualification &&
+        baseline.metadata.construction.every(
+          (view) =>
+            view.shippingAnalysis === 'bound' &&
+            baseline.metadata.builds.some(
+              (build) => build.evidenceDigest === view.evidenceDigest && build.producerAssurance,
+            ) &&
+            nativeShippingRootsHaveQualification(view.qualificationPolicy, view.roots),
+        )
+      )
+        shippingBaselines[product.id] = baseline.metadata;
+      if (product.id === 'database-resources')
         signedSeedBaseline = {
-          metadata: assertAuthenticatedNativePublicBaseline(
-            await readCompletedNativePublicBaseline({ publication, file }),
-          ),
+          metadata: baseline,
           files: productArtifacts,
         };
-      }
     }
   }
   const completed = await compareNativeCompletedPhysicalDelivery(candidate, baselines, {
@@ -1316,10 +1337,16 @@ export async function prepareNativeReleaseDelivery(
     seedConstructionBaseline,
     'native release preparation requires authenticated completed constructor metadata or the immutable reviewed seed adoption contract',
   );
+  const shippingChanges = selectObservedShippingChanges(
+    observation.products,
+    shippingBaselines,
+    completed.products,
+  );
   const decision = compareNativePreVersionDelivery({
     source,
     products,
     completed,
+    affectedProducts: shippingChanges.affectedProducts,
     observation,
     seedConstructionBaseline,
   });
@@ -1468,6 +1495,7 @@ export async function prepareNativeReleaseDelivery(
     candidate,
     observation,
     completed,
+    shippingChanges,
     decision,
     suppliers,
     baselines,

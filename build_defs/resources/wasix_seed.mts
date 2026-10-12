@@ -9,6 +9,7 @@ import {
   captureSeedConstructionIntent,
   captureSeedContentIntent,
   captureSeedProducerIdentity,
+  expandSeedConstructionTrees,
   seedConstructionFileBinding,
   seedConstructionInvocation,
   selectCompletedSeed,
@@ -19,7 +20,26 @@ import {
 import { materializeArchive, privateWork, readSpecification, run } from './shared.mts';
 import { extractWasixRuntime } from './wasix_inputs.mts';
 
-const specification = readSpecification();
+const specification = readSpecification(process.argv.length === 4 ? 1 : 0);
+if (Object.hasOwn(specification, 'constructionTrees')) {
+  const flag = '--construction-tree-files=';
+  assert.ok(
+    process.argv[3]?.startsWith(flag),
+    'seed constructor requires its declared Tree leaf inventory',
+  );
+  const leaves = readFileSync(process.argv[3].slice(flag.length), 'utf8')
+    .split(/\r?\n/u)
+    .filter(Boolean);
+  const declared = expandSeedConstructionTrees(
+    specification.constructionInputs,
+    specification.constructionTrees,
+    leaves,
+    specification.constructionTreeMembers,
+  );
+  specification.constructionInputs = declared.inputs;
+  specification.constructionTreeMembers = declared.treeMembers;
+} else
+  assert.equal(process.argv.length, 3, 'seed constructor has an undeclared Tree leaf argument');
 assert.equal(specification.target, 'portable');
 const work = privateWork(path.resolve(specification.output));
 try {

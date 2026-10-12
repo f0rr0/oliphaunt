@@ -469,6 +469,53 @@ pub(super) const fn native_module_stem(extension: Extension) -> Option<&'static 
 }
 
 /// Generated extension metadata accessor.
+pub(super) const fn native_dependency_module_stems(
+    extension: Extension,
+) -> &'static [&'static str] {
+    match extension.id {
+        ExtensionId::Amcheck => &[],
+        ExtensionId::AutoExplain => &[],
+        ExtensionId::Bloom => &[],
+        ExtensionId::BtreeGin => &[],
+        ExtensionId::BtreeGist => &[],
+        ExtensionId::Citext => &[],
+        ExtensionId::Cube => &[],
+        ExtensionId::DictInt => &[],
+        ExtensionId::DictXsyn => &[],
+        ExtensionId::Earthdistance => &[],
+        ExtensionId::FileFdw => &[],
+        ExtensionId::Fuzzystrmatch => &[],
+        ExtensionId::Hstore => &[],
+        ExtensionId::Intarray => &[],
+        ExtensionId::Isn => &[],
+        ExtensionId::Lo => &[],
+        ExtensionId::Ltree => &[],
+        ExtensionId::Pageinspect => &[],
+        ExtensionId::PgBuffercache => &[],
+        ExtensionId::PgFreespacemap => &[],
+        ExtensionId::PgHashids => &[],
+        ExtensionId::PgIvm => &[],
+        ExtensionId::PgSurgery => &[],
+        ExtensionId::PgTextsearch => &[],
+        ExtensionId::PgTrgm => &[],
+        ExtensionId::PgUuidv7 => &[],
+        ExtensionId::PgVisibility => &[],
+        ExtensionId::PgWalinspect => &[],
+        ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgtap => &[],
+        ExtensionId::Postgis => &["liboliphaunt_postgis_deps"],
+        ExtensionId::Seg => &[],
+        ExtensionId::Tablefunc => &[],
+        ExtensionId::Tcn => &[],
+        ExtensionId::TsmSystemRows => &[],
+        ExtensionId::TsmSystemTime => &[],
+        ExtensionId::Unaccent => &[],
+        ExtensionId::UuidOssp => &[],
+        ExtensionId::Vector => &[],
+    }
+}
+
+/// Generated extension metadata accessor.
 pub(super) const fn creates_extension(extension: Extension) -> bool {
     match extension.id {
         ExtensionId::Amcheck => true,

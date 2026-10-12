@@ -30,7 +30,11 @@ bun_test(
 bun_test(
     name = "workflow_native_bazel_test",
     entry_point = "workflow-native-bazel.test.mts",
-    data = ["//:workflow_policy_sources"],
+    data = [
+        "//:workflow_policy_sources",
+        "//:.github/scripts/check-release-intent.sh",
+        "//:.github/scripts/release-intent-data.mts",
+    ],
     tags = ["source-check"],
     size = "small",
 )
@@ -56,6 +60,17 @@ bun_test(
     size = "small",
 )
 
+_WORKFLOW_LINTERS = ["@actionlint_linux_x64//:actionlint", "@zizmor_linux_x64//:zizmor", "@shellcheck_linux_x64//:shellcheck"]
+[bun_script_test(
+    name = name,
+    entry_point = entry,
+    args = ["$(location " + tool + ")" for tool in _WORKFLOW_LINTERS],
+    data = _WORKFLOW_LINTERS + (["workflow-lint.mts"] if name == "workflow_lint_contract_test" else ["//:workflow_policy_sources", "//:.github/zizmor.yml", "//:.gitignore"]),
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    tags = ["source-check"],
+    size = "small",
+) for name, entry in [("workflow_lint_test", "workflow-lint.mts"), ("workflow_lint_contract_test", "workflow-lint.test.mts")]]
+
 test_suite(
     name = "source_checks",
     tests = [
@@ -65,6 +80,8 @@ test_suite(
         ":workflow_native_bazel_test",
         ":workflow_security_check",
         ":workflow_security_test",
+        ":workflow_lint_test",
+        ":workflow_lint_contract_test",
     ],
 )
 

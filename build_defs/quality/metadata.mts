@@ -54,15 +54,62 @@ export function importBiomeMetadata(root: PackageManifest, lock: BunLock) {
   return { ...platform, wrapper, platform: { os: 'linux', cpu: 'x64' } };
 }
 
+type WorkflowToolPin = {
+  version: string;
+  repository: string;
+  assets: { 'linux-amd64': { url: string; sha256: string; binary_path: string } };
+};
+
+export function importWorkflowMetadata(manifest: Record<string, WorkflowToolPin>) {
+  return Object.fromEntries(
+    ['actionlint', 'zizmor', 'shellcheck'].map((name) => {
+      const pin = manifest[name];
+      const asset = pin?.assets?.['linux-amd64'];
+      if (
+        !pin ||
+        !/^\d+[.]\d+[.]\d+$/u.test(pin.version) ||
+        !/^[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/u.test(pin.repository) ||
+        !asset ||
+        !asset.url.startsWith(
+          'https://github.com/' + pin.repository + '/releases/download/v' + pin.version + '/',
+        ) ||
+        !/^[0-9a-f]{64}$/u.test(asset.sha256) ||
+        !asset.binary_path ||
+        asset.binary_path.split('/').some((part) => !part || part === '.' || part === '..') ||
+        asset.binary_path.includes('\\')
+      )
+        throw new Error('Expected an exact conventional Linux x64 workflow tool pin: ' + name);
+      const parts = asset.binary_path.split('/');
+      const binary = parts.pop();
+      if (binary !== name)
+        throw new Error('Workflow tool binary must match its declared identity: ' + name);
+      return [
+        name,
+        {
+          version: pin.version,
+          url: asset.url,
+          sha256: asset.sha256,
+          stripPrefix: parts.join('/'),
+          binary,
+        },
+      ];
+    }),
+  );
+}
+
 if (import.meta.main) {
-  const [manifest, lockfile] = Bun.argv.slice(2);
-  if (!manifest || !lockfile) throw new Error('Expected root package.json and bun.lock');
+  const [manifest, lockfile, tools] = Bun.argv.slice(2);
+  if (!manifest || !lockfile || !tools)
+    throw new Error('Expected root package.json, bun.lock and maintainer-tools.toml');
   console.log(
-    JSON.stringify(
-      importBiomeMetadata(
+    JSON.stringify({
+      biome: importBiomeMetadata(
         JSON.parse(readFileSync(manifest, 'utf8')),
         Bun.JSONC.parse(readFileSync(lockfile, 'utf8')),
       ),
-    ),
+      workflow: importWorkflowMetadata(
+        Bun.TOML.parse(readFileSync(tools, 'utf8')) as Record<string, WorkflowToolPin>,
+      ),
+    }),
   );
 }

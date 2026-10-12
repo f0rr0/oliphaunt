@@ -1964,22 +1964,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "liboliphaunt-native-bindings"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b0e758a0af81e354205e9ba8e668175357c974f3c3ad3421e681ad7e07d1ed8"
-dependencies = [
- "fs2",
- "getrandom 0.3.4",
- "libloading 0.8.9",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tar",
- "zstd",
-]
-
-[[package]]
 name = "liboliphaunt-wasix-aot-aarch64-apple-darwin"
 version = "0.3.2"
 dependencies = [
@@ -2465,8 +2449,8 @@ version = "0.3.2"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
- "liboliphaunt-native-bindings 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "oliphaunt-broker 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "liboliphaunt-native-bindings",
+ "oliphaunt-broker",
  "oliphaunt-build 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "oliphaunt-query 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
@@ -2480,18 +2464,7 @@ version = "0.3.1"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
- "liboliphaunt-native-bindings 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "oliphaunt-query 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "oliphaunt-broker"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76788356082fcb1e935fc13c16d8f3fff3d240867291229d0714a982ee2a53a9"
-dependencies = [
- "getrandom 0.3.4",
- "liboliphaunt-native-bindings 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "liboliphaunt-native-bindings",
  "oliphaunt-query 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -2529,7 +2502,7 @@ dependencies = [
 name = "oliphaunt-mobile-bindings"
 version = "0.0.0"
 dependencies = [
- "liboliphaunt-native-bindings 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "liboliphaunt-native-bindings",
  "oliphaunt",
  "thiserror",
  "uniffi",
@@ -2548,7 +2521,7 @@ name = "oliphaunt-native-packaging"
 version = "0.0.0"
 dependencies = [
  "flate2",
- "liboliphaunt-native-bindings 0.2.0",
+ "liboliphaunt-native-bindings",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2571,7 +2544,7 @@ dependencies = [
 name = "oliphaunt-node-direct"
 version = "0.0.0"
 dependencies = [
- "liboliphaunt-native-bindings 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "liboliphaunt-native-bindings",
  "napi",
  "napi-build",
  "napi-derive",

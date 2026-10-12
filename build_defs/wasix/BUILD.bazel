@@ -115,7 +115,6 @@ platform(
 # This internal execution profile does not set the native product ABI floor.
 platform(
     name = "llvm_serializer_linux_x86_64",
-    flags = ["--@rules_rust//rust/settings:experimental_use_allocator_libraries_with_mangled_symbols=true"],
     constraint_values = [
         "@platforms//os:linux",
         "@platforms//cpu:x86_64",

@@ -115,8 +115,12 @@ globalThis.fetch = async (input, options) => {
               nativeCase === 'run-workflow'
                 ? '.github/workflows/other.yml'
                 : '.github/workflows/bazel.yml',
-            event: nativeCase === 'event' ? 'pull_request' : 'workflow_dispatch',
-            head_branch: nativeCase === 'ref' ? 'other' : 'main',
+            event:
+              nativeCase === 'event'
+                ? 'pull_request'
+                : process.env.FAKE_NATIVE_EVENT || 'workflow_dispatch',
+            head_branch:
+              nativeCase === 'ref' ? 'other' : process.env.FAKE_NATIVE_HEAD_BRANCH || 'main',
             pull_requests: [],
           }
         : {}),

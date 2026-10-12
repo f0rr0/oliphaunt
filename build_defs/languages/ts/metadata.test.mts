@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { importJavascriptMetadata, validateJavascriptDependencyArchive } from './metadata.mts';
 
 test('installed tools fixture acquires the public held SDK closure and rejects stale pins', () => {
@@ -696,7 +697,7 @@ function heldQueryFixture() {
     value.lock.packages['@oliphaunt/query/@types/node'];
   value.lock.packages[`${original.name}/@types/node/undici-types`] =
     value.lock.packages['@oliphaunt/query/@types/node/undici-types'];
-  const file = new URL('./testdata/ts-query-0.1.1.tgz', import.meta.url).pathname;
+  const file = fileURLToPath(new URL('./testdata/ts-query-0.1.1.tgz', import.meta.url));
   const bytes = readFileSync(file);
   const row = {
     publication: {
@@ -789,8 +790,7 @@ test('held File digest and packed identity reject same-version byte substitution
   const directory = mkdtempSync(path.join(tmpdir(), 'ts-held-query-'));
   try {
     const file = path.join(directory, 'query.tgz');
-    copyFileSync(row.file.path, file);
-    const bytes = gzipSync(gunzipSync(readFileSync(file)), { level: 1 });
+    const bytes = gzipSync(gunzipSync(readFileSync(row.file.path)), { level: 1 });
     writeFileSync(file, bytes);
     expect(validateJavascriptDependencyArchive(file, '@oliphaunt/ts-query', '0.1.1').version).toBe(
       '0.1.1',
@@ -820,7 +820,7 @@ test('declared dependency worker preserves retained archive bytes and rejects po
     const run = (file = row.file.path) =>
       Bun.spawnSync([
         process.execPath,
-        new URL('./metadata.mts', import.meta.url).pathname,
+        fileURLToPath(new URL('./metadata.mts', import.meta.url)),
         '--verify-dependency',
         file,
         output,

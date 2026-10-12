@@ -586,6 +586,8 @@ test('qualifies singleton and bundled workspace bytes without changing release p
   const value = fixture(t);
   const aggregate = value.installAggregate();
   const leaf = value.installLeaf();
+  leaf.manifest.releaseProduct = VECTOR;
+  leaf.manifest.family = 'native';
   leaf.manifest.compatibility = {
     ...COMPATIBILITY,
     nativeRuntimeVersion: '0.0.0',
@@ -639,6 +641,33 @@ test('qualifies singleton and bundled workspace bytes without changing release p
   manifest.compatibility.nativeRuntimeVersion = '0.0.0';
   writeJson(manifestFile, manifest);
   await assert.rejects(resolveMobileExtensionArtifactPaths(args), /must exactly match/);
+});
+
+test('singleton manifests retain independent versions and validate paired explicit native ownership', async (t) => {
+  const value = fixture(t);
+  const leaf = value.installLeaf();
+  assert.notEqual(VERSION, NATIVE_RUNTIME_VERSION);
+  const options = {
+    extensions: 'vector',
+    assetKind: 'runtime',
+    assetTarget: 'android-arm64-v8a',
+  };
+  const contents = [leaf.contents.get('android-arm64-v8a:runtime')];
+  assertContents(outputPaths(await value.resolve(options)), contents);
+  const canonical = { ...leaf.manifest, releaseProduct: VECTOR, family: 'native' };
+  value.writeManifest(VECTOR, canonical);
+  assertContents(outputPaths(await value.resolve(options)), contents);
+  for (const mutation of [
+    { releaseProduct: CONTRIB },
+    { family: 'wasix' },
+    { releaseProduct: undefined },
+    { family: undefined },
+  ]) {
+    value.writeManifest(VECTOR, { ...canonical, ...mutation });
+    const result = await value.resolve(options);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /must be owned by|fields must be exactly/u);
+  }
 });
 
 test('rejects outer and nested carrier tampering independently', async (t) => {

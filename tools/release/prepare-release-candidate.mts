@@ -9,8 +9,6 @@ import { GitHub, Manifest, registerChangelogNotes } from 'release-please';
 import { DefaultChangelogNotes } from 'release-please/build/src/changelog-notes/default.js';
 import { parseConventionalCommits } from 'release-please/build/src/commit.js';
 import { ManifestPlugin } from 'release-please/build/src/plugin.js';
-import { NodeWorkspace } from 'release-please/build/src/plugins/node-workspace.js';
-import { appendDependenciesSectionToChangelog } from 'release-please/build/src/plugins/workspace.js';
 import { Changelog } from 'release-please/build/src/updaters/changelog.js';
 import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
 import { GenericJson } from 'release-please/build/src/updaters/generic-json.js';
@@ -41,12 +39,17 @@ import {
 import {
   buildPlan,
   compatibilityVersionEntries,
-  loadGraph,
   loadProducts,
   productCompatibilityVersion,
 } from './release-graph.mts';
 import { syncReleasePr, syncTomlStringPath } from './sync-release-pr.mts';
 import { releaseProductsFromManifests } from './verify-release-commit.mts';
+
+// Initialize RP's public CommonJS entrypoint before its circular workspace modules.
+const { NodeWorkspace } = await import('release-please/build/src/plugins/node-workspace.js');
+const { appendDependenciesSectionToChangelog } = await import(
+  'release-please/build/src/plugins/workspace.js'
+);
 
 // Supply source ownership and public host support intent. Release Please
 // owns version policy, changelog text and ecosystem updaters in both cases.
@@ -673,6 +676,9 @@ async function main() {
   const repository = process.env.GITHUB_REPOSITORY;
   if (!destination || !/^[0-9a-f]{40}$/u.test(sha ?? '') || repository !== 'f0rr0/oliphaunt')
     throw new Error('candidate generation requires an exact canonical source and output directory');
+  const nativeRun = process.env.NATIVE_QUALIFICATION_RUN_ID;
+  if (!/^[1-9][0-9]*$/u.test(nativeRun ?? '') || !Number.isSafeInteger(Number(nativeRun)))
+    throw new Error('native preparation requires an exact positive qualification run ID');
   useSourceDate(process.env.RELEASE_SOURCE_DATE);
   const [owner, repo] = repository.split('/');
   const github = await GitHub.create({
@@ -694,101 +700,82 @@ async function main() {
   const commitHistory = readCommitHistory();
   bindReleaseSourceHistory(github, commitHistory, sha);
   const manifest = await Manifest.fromManifest(github, 'main');
-  const nativeRun = process.env.NATIVE_QUALIFICATION_RUN_ID;
-  const graph =
-    nativeRun === undefined
-      ? loadGraph('prepare-release-candidate')
-      : { products: loadProducts('prepare-release-candidate') };
+  const graph = { products: loadProducts('prepare-release-candidate') };
   const versionUpdates = collectNativeVersionUpdates();
-  let native;
   let nativeFinalProducts: string[] | undefined;
-  let nativeCurrentExactInputs: ReturnType<typeof deriveQualifiedNativeCurrentExactInputs> = [];
-  if (nativeRun !== undefined) {
-    if (!/^[1-9][0-9]*$/u.test(nativeRun))
-      throw new Error('native preparation requires an exact positive qualification run ID');
-    native = await prepareNativeReleaseDelivery({
-      source: sourceIdentity(sha),
-      runId: Number(nativeRun),
-      completedVersions: Object.fromEntries(
-        Object.entries(graph.products).map(([product, metadata]) => [
-          product,
-          manifest.releasedVersions[metadata.path]?.toString(),
-        ]),
-      ),
-      directory: path.join(destination, 'native'),
-    });
-    nativeCurrentExactInputs = deriveQualifiedNativeCurrentExactInputs(
-      native,
-      loadReleaseMetadata(root),
-    );
-  }
+  const native = await prepareNativeReleaseDelivery({
+    source: sourceIdentity(sha),
+    runId: Number(nativeRun),
+    completedVersions: Object.fromEntries(
+      Object.entries(graph.products).map(([product, metadata]) => [
+        product,
+        manifest.releasedVersions[metadata.path]?.toString(),
+      ]),
+    ),
+    directory: path.join(destination, 'native'),
+  });
+  const nativeCurrentExactInputs = deriveQualifiedNativeCurrentExactInputs(
+    native,
+    loadReleaseMetadata(root),
+  );
   includeOwnedSourceCommits(manifest, github, graph, undefined, {
     readCommitFiles: readCommitPaths,
     commitHistory,
-    ...(native
-      ? {
-          buildBound: native.suppliers.buildBound,
-          nativeNecessaryProducts: native.decision.selectedProducts,
-          nativeObservation: native.observation,
-          nativeCurrentExactInputs,
-          observeNativePlan: async ({ selectedProducts, requirements }) => {
-            const necessary = new Set(native.decision.selectedProducts);
-            if (
-              !Array.isArray(selectedProducts) ||
-              new Set(selectedProducts).size !== selectedProducts.length ||
-              selectedProducts.some((product) => !graph.products[product]) ||
-              [...necessary].some((product) => !selectedProducts.includes(product))
-            )
-              throw new Error(
-                'native final release set differs from the qualified necessary products',
-              );
-            for (const product of selectedProducts.filter((product) => !necessary.has(product))) {
-              const declaredRetarget = [...requirements.values()].some(
-                (entry) => entry.product === product,
-              );
-              const currentEmbedding = [...native.suppliers.buildBound.get(product)].some(
-                (supplier) => selectedProducts.includes(supplier),
-              );
-              if (!declaredRetarget && !currentEmbedding)
-                throw new Error(
-                  `native ${product} has no explicit default-install or current-embedding adoption`,
-                );
-            }
-            for (const requirement of requirements.values()) {
-              if (
-                requirement.product !== 'database-resources' ||
-                requirement.sourceProduct !== 'liboliphaunt-wasix'
-              )
-                continue;
-              if (
-                !nativeCurrentExactInputs.some(
-                  (pair) =>
-                    pair.product === requirement.product &&
-                    pair.sourceProduct === requirement.sourceProduct,
-                ) ||
-                !selectedProducts.includes(requirement.product) ||
-                !selectedProducts.includes(requirement.sourceProduct)
-              )
-                throw new Error(
-                  'native current exact requirement lacks its authenticated two-profile consumer contract',
-                );
-            }
-            const selected = [...selectedProducts].sort();
-            if (
-              nativeFinalProducts &&
-              JSON.stringify(nativeFinalProducts) !== JSON.stringify(selected)
-            )
-              throw new Error('native final release set changed after its fixed point');
-            nativeFinalProducts = selected;
-          },
-        }
-      : {}),
+    buildBound: native.suppliers.buildBound,
+    nativeNecessaryProducts: native.decision.selectedProducts,
+    nativeObservation: native.observation,
+    nativeCurrentExactInputs,
+    observeNativePlan: async ({ selectedProducts, requirements }) => {
+      const necessary = new Set(native.decision.selectedProducts);
+      if (
+        !Array.isArray(selectedProducts) ||
+        new Set(selectedProducts).size !== selectedProducts.length ||
+        selectedProducts.some((product) => !graph.products[product]) ||
+        [...necessary].some((product) => !selectedProducts.includes(product))
+      )
+        throw new Error('native final release set differs from the qualified necessary products');
+      for (const product of selectedProducts.filter((product) => !necessary.has(product))) {
+        const declaredRetarget = [...requirements.values()].some(
+          (entry) => entry.product === product,
+        );
+        const currentEmbedding = [...native.suppliers.buildBound.get(product)].some((supplier) =>
+          selectedProducts.includes(supplier),
+        );
+        if (!declaredRetarget && !currentEmbedding)
+          throw new Error(
+            `native ${product} has no explicit default-install or current-embedding adoption`,
+          );
+      }
+      for (const requirement of requirements.values()) {
+        if (
+          requirement.product !== 'database-resources' ||
+          requirement.sourceProduct !== 'liboliphaunt-wasix'
+        )
+          continue;
+        if (
+          !nativeCurrentExactInputs.some(
+            (pair) =>
+              pair.product === requirement.product &&
+              pair.sourceProduct === requirement.sourceProduct,
+          ) ||
+          !selectedProducts.includes(requirement.product) ||
+          !selectedProducts.includes(requirement.sourceProduct)
+        )
+          throw new Error(
+            'native current exact requirement lacks its authenticated two-profile consumer contract',
+          );
+      }
+      const selected = [...selectedProducts].sort();
+      if (nativeFinalProducts && JSON.stringify(nativeFinalProducts) !== JSON.stringify(selected))
+        throw new Error('native final release set changed after its fixed point');
+      nativeFinalProducts = selected;
+    },
   });
   const candidates = await manifest.buildPullRequests();
   if (candidates.length > 1) throw new Error('expected one grouped Release Please candidate');
   mkdirSync(destination, { recursive: true });
   if (!candidates.length) {
-    if (native?.decision.selectedProducts.length)
+    if (native.decision.selectedProducts.length)
       throw new Error('native necessary delivery produced no release candidate');
     writeFileSync(path.join(destination, 'required'), 'false\n');
     return;
@@ -799,101 +786,96 @@ async function main() {
     candidate.title.toString() !== 'chore(release): prepare main releases'
   )
     throw new Error('unexpected Release Please branch/title');
-  if (native && !nativeFinalProducts)
+  if (!nativeFinalProducts)
     throw new Error('native candidate did not freeze its compatible product set');
-  applyCandidate(root, candidate, native ? versionUpdates.observe : undefined);
-  if (native)
-    await syncReleasePr([], {
-      buildBound: native.suppliers.buildBound,
-      observeUpdate: versionUpdates.observe,
-    });
-  if (native) {
-    const bridge = versionUpdates.freeze(native.candidate.source);
-    const before = JSON.parse(
-      execFileSync('git', ['show', `${bridge.source.commit}:.release-please-manifest.json`], {
-        cwd: root,
-        encoding: 'utf8',
-      }),
+  applyCandidate(root, candidate, versionUpdates.observe);
+  await syncReleasePr([], {
+    buildBound: native.suppliers.buildBound,
+    observeUpdate: versionUpdates.observe,
+  });
+  const bridge = versionUpdates.freeze(native.candidate.source);
+  const before = JSON.parse(
+    execFileSync('git', ['show', `${bridge.source.commit}:.release-please-manifest.json`], {
+      cwd: root,
+      encoding: 'utf8',
+    }),
+  );
+  const after = JSON.parse(readFileSync(path.join(root, '.release-please-manifest.json'), 'utf8'));
+  const config = JSON.parse(readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
+  if (
+    JSON.stringify(releaseProductsFromManifests(config, before, after)) !==
+    JSON.stringify(nativeFinalProducts)
+  )
+    throw new Error('native generated manifest differs from the frozen release set');
+  const preparedSource = commitNativeVersionUpdates(bridge, candidate.title.toString(), root);
+  const record = {
+    bridge,
+    selectedProducts: nativeFinalProducts,
+    preparedSource,
+    buildBound: [...native.suppliers.buildBound]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([consumer, suppliers]) => [consumer, [...suppliers].sort()] as [string, string[]]),
+  };
+  const supplierArtifacts = [...(native.publicationInputs.snapshot.supplierArtifacts ?? [])];
+  const finalConsumer = loadReleaseMetadata(root).databaseResourceWasixConsumer;
+  if (nativeCurrentExactInputs.length && finalConsumer?.source === 'completed') {
+    // An independent core-only release leaves the resource's old exact request
+    // held. Its genuine baseline archive was already acquired and proved.
+    const baseline = native.baselines.find(
+      ({ publication }) =>
+        publication.product === 'liboliphaunt-wasix' &&
+        publication.version === finalConsumer.version,
     );
-    const after = JSON.parse(
-      readFileSync(path.join(root, '.release-please-manifest.json'), 'utf8'),
+    const rows = native.candidate.productArtifacts.filter(
+      (artifact) =>
+        artifact.product === 'liboliphaunt-wasix' &&
+        artifact.kind === 'wasix-runtime' &&
+        artifact.target === 'portable',
     );
-    const config = JSON.parse(readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
+    if (!baseline || rows.length !== 1)
+      throw new Error('native held WASIX consumer has no exact completed baseline');
+    const artifact = rows[0];
+    const original = native.completedPublicFiles.filter(
+      (file) => file.path === baseline.productArtifacts?.[artifact.id],
+    );
+    if (original.length !== 1)
+      throw new Error('native held WASIX archive is absent from its original public transport');
+    const actual = fileIdentity(original[0].path);
+    if (actual.size !== original[0].size || actual.sha256 !== original[0].sha256)
+      throw new Error('native held WASIX archive changed after public authentication');
     if (
-      JSON.stringify(releaseProductsFromManifests(config, before, after)) !==
-      JSON.stringify(nativeFinalProducts)
-    )
-      throw new Error('native generated manifest differs from the frozen release set');
-    const preparedSource = commitNativeVersionUpdates(bridge, candidate.title.toString(), root);
-    const record = {
-      bridge,
-      selectedProducts: nativeFinalProducts,
-      preparedSource,
-      buildBound: [...native.suppliers.buildBound]
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([consumer, suppliers]) => [consumer, [...suppliers].sort()] as [string, string[]]),
-    };
-    const supplierArtifacts = [...(native.publicationInputs.snapshot.supplierArtifacts ?? [])];
-    const finalConsumer = loadReleaseMetadata(root).databaseResourceWasixConsumer;
-    if (nativeCurrentExactInputs.length && finalConsumer?.source === 'completed') {
-      // An independent core-only release leaves the resource's old exact request
-      // held. Its genuine baseline archive was already acquired and proved.
-      const baseline = native.baselines.find(
-        ({ publication }) =>
-          publication.product === 'liboliphaunt-wasix' &&
-          publication.version === finalConsumer.version,
-      );
-      const rows = native.candidate.productArtifacts.filter(
-        (artifact) =>
-          artifact.product === 'liboliphaunt-wasix' &&
-          artifact.kind === 'wasix-runtime' &&
-          artifact.target === 'portable',
-      );
-      if (!baseline || rows.length !== 1)
-        throw new Error('native held WASIX consumer has no exact completed baseline');
-      const artifact = rows[0];
-      const original = native.completedPublicFiles.filter(
-        (file) => file.path === baseline.productArtifacts?.[artifact.id],
-      );
-      if (original.length !== 1)
-        throw new Error('native held WASIX archive is absent from its original public transport');
-      const actual = fileIdentity(original[0].path);
-      if (actual.size !== original[0].size || actual.sha256 !== original[0].sha256)
-        throw new Error('native held WASIX archive changed after public authentication');
-      if (
-        !supplierArtifacts.some(
-          (row) =>
-            row.publication.product === baseline.publication.product &&
-            row.publication.version === baseline.publication.version &&
-            row.artifact === artifact.id,
-        )
+      !supplierArtifacts.some(
+        (row) =>
+          row.publication.product === baseline.publication.product &&
+          row.publication.version === baseline.publication.version &&
+          row.artifact === artifact.id,
       )
-        supplierArtifacts.push({
-          publication: baseline.publication,
-          artifact: artifact.id,
-          file: { path: original[0].path, size: actual.size, sha256: actual.sha256 },
-        });
-    }
-    writeNativeReleaseInputs(
-      path.join(destination, 'native-release-inputs'),
-      record,
-      qualifiedNativeSeedControls(native, bridge, preparedSource, root),
-      [
-        ...new Map(
-          [
-            ...native.baselines.map(({ publication }) => publication),
-            ...native.publicationInputs.snapshot.supplierPublications,
-          ].map((publication) => [`${publication.product}@${publication.version}`, publication]),
-        ).values(),
-      ],
-      supplierArtifacts,
-    );
-    writeFileSync(
-      path.join(destination, 'native-version-source.json'),
-      `${JSON.stringify(record)}\n`,
-      { flag: 'wx' },
-    );
+    )
+      supplierArtifacts.push({
+        publication: baseline.publication,
+        artifact: artifact.id,
+        file: { path: original[0].path, size: actual.size, sha256: actual.sha256 },
+      });
   }
+  writeNativeReleaseInputs(
+    path.join(destination, 'native-release-inputs'),
+    record,
+    qualifiedNativeSeedControls(native, bridge, preparedSource, root),
+    [
+      ...new Map(
+        [
+          ...native.baselines.map(({ publication }) => publication),
+          ...native.publicationInputs.snapshot.supplierPublications,
+        ].map((publication) => [`${publication.product}@${publication.version}`, publication]),
+      ).values(),
+    ],
+    supplierArtifacts,
+  );
+  writeFileSync(
+    path.join(destination, 'native-version-source.json'),
+    `${JSON.stringify(record)}\n`,
+    { flag: 'wx' },
+  );
   writeFileSync(path.join(destination, 'required'), 'true\n');
   writeFileSync(path.join(destination, 'title'), `${candidate.title.toString()}\n`);
   writeFileSync(path.join(destination, 'body.md'), `${candidate.body.toString()}\n`);

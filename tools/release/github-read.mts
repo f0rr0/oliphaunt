@@ -45,6 +45,29 @@ function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+/** Match a requested Actions ref, optionally against the acquired run facts.
+ * A queue ref remains construction context; it cannot establish reviewed main.
+ */
+export function matchesGithubWorkflowRef(
+  event: string,
+  ref: string,
+  origin?: { headBranch?: string; pullRequestNumbers?: number[] },
+) {
+  const pattern =
+    event === 'pull_request'
+      ? /^refs\/pull\/[1-9][0-9]*\/merge$/u
+      : event === 'merge_group'
+        ? /^refs\/heads\/gh-readonly-queue\/main\/[^\s\u0000-\u001f\u007f]+$/u
+        : ['push', 'workflow_dispatch'].includes(event)
+          ? /^refs\/heads\/[^\s\u0000-\u001f\u007f]+$/u
+          : undefined;
+  if (!pattern?.test(ref)) return false;
+  if (origin === undefined) return true;
+  return event === 'pull_request'
+    ? origin.pullRequestNumbers?.includes(Number(ref.split('/')[2])) === true
+    : ref === `refs/heads/${origin.headBranch}`;
+}
+
 export class GitHubReadError extends Error {
   constructor(
     message,

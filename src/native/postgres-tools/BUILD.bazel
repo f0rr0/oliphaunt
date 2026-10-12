@@ -5,6 +5,7 @@ load("//build_defs/native/carriers:defs.bzl", "native_desktop_carriers", "native
 load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
 load("//build_defs/native/carriers:tests.bzl", "native_cargo_consumer_test", "native_installed_carrier_test")
 load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE")
+load("//build_defs/native:rust-runtime-test.bzl", "native_rust_runtime_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -20,7 +21,12 @@ native_desktop_carriers(
     qualification = [":installed_cargo_test", ":installed_carrier_test"],
 )
 
-native_tools_facades(qualification = [":installed_carrier_test"])
+native_tools_facades(qualification = [
+    ":tools_cargo_unit_test",
+    ":tools_build_support_test",
+    ":logical_round_trip_test",
+    ":installed_carrier_test",
+])
 
 cargo_package_env(name = "tools_cargo_env", package_name = "src/native/postgres-tools/crates/tools")
 cargo_generator(
@@ -70,6 +76,16 @@ cargo_library_test(
     },
     data = ["//src/test-fixtures:rust_fixtures"],
     tags = ["manual"],
+)
+
+native_rust_runtime_test(
+    name = "logical_round_trip_test",
+    binary = ":proof_cargo_unit_test",
+    extensions = ["//src/extensions/external/pgtap:native_payload"],
+    test_args = ["--ignored", "--test-threads=1", "--nocapture"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "large",
+    timeout = "long",
 )
 
 rust_clippy_test(

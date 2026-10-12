@@ -76,6 +76,6 @@ biome_test(
 bun_test(
     name = "metadata_test",
     entry_point = "metadata.test.mts",
-    data = ["metadata.mts", "//:package.json", "//:bun.lock"],
+    data = ["metadata.mts", "//:package.json", "//:bun.lock", "//tools/dev:maintainer-tools.toml"],
     size = "small",
 )

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { importBiomeMetadata } from './metadata.mts';
+import { importBiomeMetadata, importWorkflowMetadata } from './metadata.mts';
 
 const root = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
 const lock = Bun.JSONC.parse(readFileSync(new URL('../../bun.lock', import.meta.url), 'utf8'));
@@ -37,4 +37,38 @@ test('rejects substituted, unbound, or non-integrity-bearing native binaries', (
   const unsigned = copy();
   unsigned.packages[platform][3] = '';
   expect(() => importBiomeMetadata(root, unsigned)).toThrow('integrity-bearing');
+});
+
+const workflowPins = Bun.TOML.parse(
+  readFileSync(new URL('../../tools/dev/maintainer-tools.toml', import.meta.url), 'utf8'),
+) as any;
+test('workflow tools use the same conventional version pins and checksum-bearing archives', () => {
+  const metadata = importWorkflowMetadata(workflowPins);
+  expect(Object.keys(metadata)).toEqual(['actionlint', 'zizmor', 'shellcheck']);
+  for (const [name, tool] of Object.entries(metadata)) {
+    expect(tool.version).toBe(workflowPins[name].version);
+    expect(tool.sha256).toBe(workflowPins[name].assets['linux-amd64'].sha256);
+    expect(tool.binary).toBe(name);
+  }
+  for (const mutate of [
+    (pin: any) => {
+      pin.version = 'latest';
+    },
+    (pin: any) => {
+      pin.assets['linux-amd64'].sha256 = '';
+    },
+    (pin: any) => {
+      pin.assets['linux-amd64'].url = 'https://example.com/tool.tgz';
+    },
+    (pin: any) => {
+      pin.assets['linux-amd64'].binary_path = '../actionlint';
+    },
+    (pin: any) => {
+      pin.assets['linux-amd64'].binary_path = 'other';
+    },
+  ]) {
+    const invalid = structuredClone(workflowPins);
+    mutate(invalid.actionlint);
+    expect(() => importWorkflowMetadata(invalid)).toThrow();
+  }
 });

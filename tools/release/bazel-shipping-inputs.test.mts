@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   buildShippingInputView,
   isNativeAppleBaseInputRoot,
+  selectObservedShippingChanges,
   selectShippingChanges,
 } from './bazel-shipping-inputs.mts';
 
@@ -104,6 +105,165 @@ function fixture() {
   };
   return { exported, graph };
 }
+
+function observedFixture(product = 'alpha', configuration = 'a'.repeat(64)) {
+  const { exported, graph } = fixture();
+  for (const pkg of exported.packages) pkg.product = product;
+  const view = buildShippingInputView(exported, graph);
+  const capture = (path: string) => ({
+    path,
+    members: [{ path: '', type: 'file', mode: 0o644, size: 1, sha256: '1'.repeat(64) }],
+  });
+  return {
+    product: { id: product, version: view.products[product].version },
+    construction: [
+      {
+        roots: exported.packages.map((pkg) => ({
+          label: pkg.outputs[0].owner,
+          configuration,
+          package: pkg,
+        })),
+        actions: view.products[product].actions,
+        inputs: view.physicalInputs.map(capture),
+        leafInputPaths: view.products[product].inputs,
+        analysisInputPaths: ['BUILD.bazel', 'build_defs/package.bzl'],
+        analysisInputs: ['BUILD.bazel', 'build_defs/package.bzl'].map(capture),
+      },
+    ],
+  };
+}
+
+function capturedMember(
+  view: ReturnType<typeof observedFixture>['construction'][number],
+  path: string,
+) {
+  const capture = view.inputs.find((file) => file.path === path);
+  if (!capture) throw new Error(`fixture has no captured input: ${path}`);
+  return capture.members[0];
+}
+
+test('captured shipping footprints leave docs and test-only changes to Bazel execution', () => {
+  const before = observedFixture();
+  const current = structuredClone(before);
+  // The execution graph can contain other test inputs. Shipping leaf projection
+  // must neither classify them as payload changes nor suppress their Bazel test.
+  current.construction[0].inputs.push({
+    path: 'test/alpha.test.ts',
+    members: [{ path: '', type: 'file', mode: 0o644, size: 2, sha256: '2'.repeat(64) }],
+  });
+  expect(selectObservedShippingChanges([current], { alpha: before })).toEqual({
+    affectedProducts: [],
+    unclassifiedPaths: [],
+    unknownProducts: [],
+  });
+  capturedMember(current.construction[0], 'bazel-out/alpha.o').sha256 = '3'.repeat(64);
+  expect(selectObservedShippingChanges([current], { alpha: before }).affectedProducts).toEqual([]);
+});
+
+test('source and external tool bytes request checks without directory ownership', () => {
+  for (const changed of ['src/alpha.c', 'tools/packager', 'external/toolchain/compiler']) {
+    const before = observedFixture();
+    if (changed.startsWith('external/')) {
+      before.construction[0].leafInputPaths.push(changed);
+      before.construction[0].inputs.push({
+        path: changed,
+        members: [{ path: '', type: 'file', mode: 0o755, size: 1, sha256: '1'.repeat(64) }],
+      });
+    }
+    const current = structuredClone(before);
+    capturedMember(current.construction[0], changed).sha256 = '2'.repeat(64);
+    expect(selectObservedShippingChanges([current], { alpha: before })).toEqual({
+      affectedProducts: ['alpha'],
+      unclassifiedPaths: [],
+      unknownProducts: [],
+    });
+  }
+});
+
+test('loaded recipe content and configured action changes request construction checks', () => {
+  const before = observedFixture();
+  const recipe = structuredClone(before);
+  recipe.construction[0].analysisInputs[1].members[0].sha256 = '2'.repeat(64);
+  expect(selectObservedShippingChanges([recipe], { alpha: before }).affectedProducts).toEqual([
+    'alpha',
+  ]);
+  const action = structuredClone(before);
+  action.construction[0].actions[0] = action.construction[0].actions[0].replace('cc', 'clang');
+  expect(selectObservedShippingChanges([action], { alpha: before }).affectedProducts).toEqual([
+    'alpha',
+  ]);
+});
+
+test('missing historical metadata or causal maps remain required and unknown', () => {
+  const current = observedFixture();
+  expect(selectObservedShippingChanges([current], {})).toEqual({
+    affectedProducts: ['alpha'],
+    unclassifiedPaths: [],
+    unknownProducts: ['alpha'],
+  });
+  const legacy = structuredClone(current) as any;
+  delete legacy.construction[0].analysisInputPaths;
+  delete legacy.construction[0].analysisInputs;
+  expect(selectObservedShippingChanges([current], { alpha: legacy }).unknownProducts).toEqual([
+    'alpha',
+  ]);
+  const incomplete = structuredClone(current);
+  incomplete.construction[0].inputs = [];
+  expect(() => selectObservedShippingChanges([incomplete], { alpha: current })).toThrow(
+    'shipping causal File was not captured',
+  );
+});
+
+test('configured captures preserve context when one logical tool path has different host bytes', () => {
+  const before = observedFixture();
+  const other = observedFixture('alpha', 'b'.repeat(64));
+  capturedMember(other.construction[0], 'src/alpha.c').sha256 = '2'.repeat(64);
+  before.construction.push(other.construction[0]);
+  const current = structuredClone(before);
+  current.construction.reverse();
+  expect(selectObservedShippingChanges([current], { alpha: before }).affectedProducts).toEqual([]);
+  // Swapping the same two byte identities between configured roots is a change.
+  capturedMember(current.construction[0], 'src/alpha.c').sha256 = '1'.repeat(64);
+  capturedMember(current.construction[1], 'src/alpha.c').sha256 = '2'.repeat(64);
+  expect(selectObservedShippingChanges([current], { alpha: before }).affectedProducts).toEqual([
+    'alpha',
+  ]);
+});
+
+test('few and many owners compare their own completed footprints coherently', () => {
+  const before = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'].map((id) => observedFixture(id));
+  const baselines = Object.fromEntries(before.map((product) => [product.product.id, product]));
+  for (const changed of [
+    [],
+    ['beta'],
+    ['alpha', 'gamma', 'epsilon'],
+    before.map((p) => p.product.id),
+  ]) {
+    const current = structuredClone(before);
+    for (const product of current)
+      if (changed.includes(product.product.id))
+        capturedMember(product.construction[0], 'src/alpha.c').sha256 = '2'.repeat(64);
+    expect(selectObservedShippingChanges(current, baselines).affectedProducts).toEqual(
+      [...changed].sort(),
+    );
+  }
+});
+
+test('a proven unchanged footprint cannot explain changed delivered bytes', () => {
+  const current = observedFixture();
+  const different = [{ product: 'alpha', deliveryStatus: 'different' }];
+  expect(() => selectObservedShippingChanges([current], { alpha: current }, different)).toThrow(
+    'unchanged shipping inputs produced different delivery: alpha',
+  );
+  expect(selectObservedShippingChanges([current], {}, different).affectedProducts).toEqual([
+    'alpha',
+  ]);
+  expect(
+    selectObservedShippingChanges([current], { alpha: current }, [
+      { product: 'alpha', deliveryStatus: 'identical' },
+    ]).affectedProducts,
+  ).toEqual([]);
+});
 
 test('shipping source and packager inputs follow actual producer edges', () => {
   const { exported, graph } = fixture();

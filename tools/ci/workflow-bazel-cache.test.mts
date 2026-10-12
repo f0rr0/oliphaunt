@@ -83,6 +83,23 @@ function fixture(run: (directory: string, env: FixtureEnvironment) => void) {
 const execute = (directory: string, env: NodeJS.ProcessEnv, source: string) =>
   execFileSync('bash', ['-eu', '-c', source], { cwd: directory, env, encoding: 'utf8' });
 
+test('optional cache saves are bounded independently of qualification results', () => {
+  const workflow = Bun.YAML.parse(
+    readFileSync(path.join(root, '.github/workflows/bazel.yml'), 'utf8'),
+  );
+  const saves = Object.values(workflow.jobs).flatMap((job: any) =>
+    job.steps.filter(
+      (step: any) => step.with?.phase === 'save' && step.uses === './.github/actions/bazel-cache',
+    ),
+  );
+  assert.equal(saves.length, 8);
+  for (const step of saves) {
+    assert.equal(step['timeout-minutes'], 10);
+    assert.equal(step['continue-on-error'], true);
+    assert.equal(step.if, '$' + '{{ !cancelled() }}');
+  }
+});
+
 test('cache identity follows the actual source, pinned Bazel and independent cohort', () => {
   fixture((directory, env) => {
     const identities = [];

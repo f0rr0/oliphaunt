@@ -6,6 +6,8 @@ load("//build_defs/extensions:final_leaf.bzl", "NativeAppleBaseInfo")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/foundation:bun-sources.bzl", "bun_source_path", "bun_source_tree")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "shipping_suppliers")
+load(":xcframework.bzl", "SWIFT_BINDINGS_COMPILE_OWNERS", "SWIFT_BINDINGS_COMPILE_SLOTS", "swift_bindings_compile_group", "swift_bindings_compiled_supplier")
 
 def _swift_source_impl(ctx):
     base = ctx.attr.native_base[NativeAppleBaseInfo]
@@ -96,6 +98,8 @@ def swift_source_package(name, sources, bindings_archive, bindings_release_asset
     descriptor = PRODUCTS[product]
     native_requirement = name + "_native_requirement"
     native_declared_apple_base(name = native_requirement, version = descriptor["compatibility_versions"]["liboliphaunt-native"], local_current = True)
+    source_suppliers = name + "_suppliers"
+    shipping_suppliers(name = source_suppliers, inputs = [":" + native_requirement, bindings_release_assets])
     _swift_source(
         name = name,
         version = descriptor["version"],
@@ -122,7 +126,7 @@ def swift_source_package(name, sources, bindings_archive, bindings_release_asset
         suffix = artifact_name.replace(".", "_")
         native.filegroup(name = "release_input_" + suffix, srcs = [":" + name], output_group = group)
         package = "shipping_" + suffix
-        shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_input_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = "portable", role = "release-input", suppliers = ":" + native_requirement)
+        shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_input_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = "portable", role = "release-input", suppliers = ":" + source_suppliers)
         packages.append(":" + package)
     for group, suffix, artifact_name, configuration in [
         ("archive", "bindings", "oliphaunt-swift-" + descriptor["version"] + "-bindings.xcframework.zip", "apple-xcframework"),
@@ -130,18 +134,39 @@ def swift_source_package(name, sources, bindings_archive, bindings_release_asset
     ]:
         native.filegroup(name = "release_asset_" + suffix, srcs = [bindings_release_assets], output_group = group)
         package = "shipping_" + suffix
-        shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_asset_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = configuration, role = "github-release-asset")
+        shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_asset_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = configuration, role = "github-release-asset", suppliers = bindings_release_assets)
         packages.append(":" + package)
-    source_checks = ["//src/native/sdks/swift:unit_test", "//src/native/sdks/swift:public_api_consumer_test", "//src/native/sdks/swift:ios_compile_test"]
+    compiled_exports = []
+    for owner, producer in SWIFT_BINDINGS_COMPILE_OWNERS.items():
+        compiled = []
+        for slot in SWIFT_BINDINGS_COMPILE_SLOTS:
+            group = swift_bindings_compile_group(owner, slot)
+            native.filegroup(name = name + "_" + group, srcs = [bindings_release_assets], output_group = group)
+            supplier = name + "_" + owner + "_suppliers_" + slot.replace("-", "_")
+            swift_bindings_compiled_supplier(name = supplier, inputs = bindings_release_assets, owner = owner, configuration = slot)
+            package = "shipping_" + group
+            shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + producer, artifacts = [":" + name + "_" + group],
+                             ecosystem = "internal", package_name = producer + "-swift-bindings", configuration = slot, role = "compiled-source", suppliers = ":" + supplier)
+            compiled.append(":" + package)
+        export = name + "_" + owner + "_compiled_shipping_export"
+        tests = {"core": "//src/native/rust-bindings:unit_test", "sdk": "//src/native/sdks/rust:mobile_unit_test", "broker": "//src/native/broker:unit_test"}
+        shipping_export(name = export, packages = compiled,
+                        qualification = [tests[owner]],
+                        testonly = True)
+        compiled_exports.append(":" + export)
+    shipping_export(name = name + "_compiled_shipping_export", exports = compiled_exports, testonly = True)
+    source_checks = ["//src/native/sdks/swift:unit_test", "//src/native/sdks/swift:public_api_consumer_test", "//src/native/sdks/swift:ios_compile_test", "//src/native/sdks/swift:compiled_supplier_analysis_test"]
     shipping_export(
         name = "preparation_shipping_export",
         packages = packages,
+        exports = [":" + name + "_compiled_shipping_export"],
         qualification = source_checks,
         testonly = True,
     )
     shipping_export(
         name = "shipping_export",
         packages = packages,
+        exports = [":" + name + "_compiled_shipping_export"],
         qualification = source_checks + ["//src/native/sdks/swift:installed_consumer_test"],
         testonly = True,
     )

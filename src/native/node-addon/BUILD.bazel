@@ -12,7 +12,7 @@ filegroup(name = "carrier_legal_sources", srcs = ["dependency-licenses.json"] + 
 filegroup(name = "carrier_template_sources", srcs = glob(["packages/*/package.json", "packages/*/README.md"]))
 
 cargo_package_env()
-PATH_DEPS = {}
+PATH_DEPS = {"liboliphaunt-native-bindings": "//src/native/rust-bindings:lib"}
 cargo_generator(path_dependencies = PATH_DEPS, proc_macro_names = ["napi-derive"])
 cargo_napi_library(
     name = "addon_library",
@@ -29,7 +29,7 @@ napi_artifact(
 cargo_library_test(crate = ":addon_library", tags = ["manual"])
 rust_clippy_test(name = "clippy_test", targets = [":addon_library", ":unit_test", ":build_script_"], transitive = False, size = "small")
 
-native_helper_carriers(product = "oliphaunt-node-direct", binary = ":addon", qualification = ["//build_defs/languages/carriers:installed_sql_test"])
+native_helper_carriers(product = "oliphaunt-node-direct", binary = ":addon", qualification = ["//build_defs/languages/carriers:installed_sql_test"], path_dependencies = PATH_DEPS)
 
 source_quality_files()
 

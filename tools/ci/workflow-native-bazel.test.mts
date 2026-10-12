@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -55,6 +64,140 @@ test('native package consumers follow their producers and remain required for ad
   for (const name of ['package_test', 'installed_consumer_test'])
     assert.ok(!linux.includes(`//src/native/sdks/react-native:${name}`));
   assert.ok(linux.includes('//src/native/sdks/react-native:lifecycle_test'));
+});
+
+test('private Rust packaging source tests execute once on Linux x64', () => {
+  const label = '//src/native/runtime/packaging:source_tests';
+  const callers = Object.entries(jobs).flatMap(([id, job]) =>
+    job.steps.filter((step: any) => step.run?.includes(label)).map((step: any) => ({ id, step })),
+  );
+  assert.equal(callers.length, 1);
+  assert.equal(callers[0].id, 'linux');
+  const { step } = callers[0];
+  assert.equal(step.if, "matrix.platform == 'x86_64'");
+  assert.equal(step['continue-on-error'], undefined);
+  const directory = mkdtempSync(path.join(process.env.TEST_TMPDIR ?? tmpdir(), 'native-source-'));
+  const argsFile = path.join(directory, 'args');
+  try {
+    mkdirSync(path.join(directory, 'tools/dev'), { recursive: true });
+    writeFileSync(
+      path.join(directory, 'tools/dev/bazel.sh'),
+      `#!/usr/bin/env bash
+printf "%s\\0" "$@" > "$SOURCE_ARGS"
+exit "\${SOURCE_STATUS:-0}"
+`,
+    );
+    const execute = (status = '0') =>
+      spawnSync('bash', ['-eu', '-c', step.run], {
+        cwd: directory,
+        env: { PATH: process.env.PATH, SOURCE_ARGS: argsFile, SOURCE_STATUS: status },
+      });
+    const passed = execute();
+    assert.equal(passed.status, 0, passed.stderr.toString());
+    const args = readFileSync(argsFile, 'utf8').split('\0');
+    assert.equal(args[0], 'test');
+    assert.equal(args.filter((value) => value === label).length, 1);
+    assert.ok(args.includes('--platforms=//build_defs/native:linux_x86_64_glibc_2_28'));
+    assert.equal(execute('7').status, 7);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('merge queue guards use resolved release commit facts and still reject unauthorized version changes', () => {
+  const steps = jobs['release-inputs'].steps;
+  const contextIndex = steps.findIndex((step: any) => step.id === 'context');
+  const guardIndex = steps.findIndex(
+    (step: any) => step.name === 'Check release-owned source versions',
+  );
+  const acquireIndex = steps.findIndex(
+    (step: any) => step.name === 'Acquire completed public inputs once',
+  );
+  assert.ok(contextIndex >= 0 && contextIndex < guardIndex && guardIndex < acquireIndex);
+  const step = steps[guardIndex];
+  assert.equal(step.if, undefined);
+  assert.equal(step.env.SOURCE_POLICY_HEAD, '$' + '{{ steps.context.outputs.source_policy_head }}');
+  qualifierFixture((directory, env) => {
+    mkdirSync(path.join(directory, '.github/scripts'), { recursive: true });
+    mkdirSync(path.join(directory, 'bin'));
+    symlinkSync(process.execPath, path.join(directory, 'bin/bun'));
+    for (const file of ['check-release-intent.sh', 'release-intent-data.mts'])
+      cpSync(
+        path.resolve(import.meta.dir, '../../.github/scripts', file),
+        path.join(directory, '.github/scripts', file),
+      );
+    const git = (...args: string[]) =>
+      execFileSync('git', args, { cwd: directory, encoding: 'utf8' }).trim();
+    const commit = (subject: string) => {
+      git('add', '.');
+      git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@invalid', 'commit', '-qm', subject);
+      return git('rev-parse', 'HEAD');
+    };
+    writeFileSync(
+      path.join(directory, 'release-please-config.json'),
+      JSON.stringify({ 'changelog-sections': [{ type: 'fix' }] }),
+    );
+    writeFileSync(
+      path.join(directory, '.release-please-manifest.json'),
+      JSON.stringify({ owner: '1.0.0' }),
+    );
+    const base = commit('fix: source');
+    const baseTree = git('rev-parse', 'HEAD^{tree}');
+    writeFileSync(
+      path.join(directory, '.release-please-manifest.json'),
+      JSON.stringify({ owner: '1.0.1' }),
+    );
+    const prepared = commit('chore(release): owner 1.0.1');
+    const queued = (tree: string) =>
+      git(
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@invalid',
+        'commit-tree',
+        tree,
+        '-p',
+        base,
+        '-m',
+        'Merge queue synthetic title',
+      );
+    const releaseQueue = queued(git('rev-parse', 'HEAD^{tree}'));
+    const ordinaryQueue = queued(baseTree);
+    const execute = (head: string, policy = {}) =>
+      spawnSync('bash', ['-eu', '-c', step.run], {
+        cwd: directory,
+        env: {
+          ...env,
+          PATH: `${path.join(directory, 'bin')}${path.delimiter}${env.PATH}`,
+          PR_TITLE: '',
+          BASE_REF: base,
+          HEAD_REF: head,
+          HEAD_BRANCH: 'gh-readonly-queue/main/pr-295-aabbcc',
+          CI_EVENT_NAME: 'merge_group',
+          CI_FULL_REF: 'refs/heads/gh-readonly-queue/main/pr-295-aabbcc',
+          SOURCE_POLICY_SUBJECT: '',
+          SOURCE_POLICY_BASE: '',
+          SOURCE_POLICY_HEAD: '',
+          SOURCE_POLICY_BRANCH: '',
+          ...policy,
+        },
+      });
+    const ordinary = execute(ordinaryQueue);
+    assert.equal(ordinary.status, 0, ordinary.stderr.toString());
+    assert.notEqual(execute(releaseQueue).status, 0);
+    const policy = {
+      SOURCE_POLICY_SUBJECT: 'chore(release): owner 1.0.1',
+      SOURCE_POLICY_BASE: base,
+      SOURCE_POLICY_HEAD: prepared,
+      SOURCE_POLICY_BRANCH: 'release-please--branches--main',
+    };
+    const release = execute(releaseQueue, policy);
+    assert.equal(release.status, 0, release.stderr.toString());
+    assert.notEqual(
+      execute(releaseQueue, { ...policy, SOURCE_POLICY_BRANCH: 'feature' }).status,
+      0,
+    );
+  });
 });
 
 type FixtureEnvironment = NodeJS.ProcessEnv & {
@@ -299,4 +442,13 @@ test('the Linux installed APK owns its emulator and requires provisioned KVM', (
   assert.ok(step.run.includes('test -c /dev/kvm'));
   assert.ok(step.run.includes('test -r /dev/kvm && test -w /dev/kvm'));
   assert.ok(!step.run.includes('sdkmanager') && !step.run.includes('emulator -'));
+});
+
+test('native qualification supports protected merge groups with the same required construction gate', () => {
+  const source = Bun.YAML.parse(
+    readFileSync(path.resolve(import.meta.dir, '../../.github/workflows/bazel.yml'), 'utf8'),
+  ) as any;
+  assert.deepEqual(source.on.merge_group.types, ['checks_requested']);
+  assert.equal(jobs.required.name, 'Required');
+  assert.ok(predecessors('required').has('release-inputs'));
 });

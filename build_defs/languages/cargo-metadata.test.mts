@@ -331,3 +331,74 @@ test('Cargo dependency version checks ignore registry build metadata', () => {
   for (const item of lock.package) if (item.name === 'serde') item.version = '1.0.228+upstream';
   expect(project().files['Cargo.lock']).toContain('1.0.228+upstream');
 });
+
+test('workspace source composition resolves inherited paths and rejects an unadopted incompatible API', () => {
+  const { workspace, manifests, lock } = fixture();
+  Object.assign(workspace.workspace, {
+    dependencies: { core: { path: 'core', version: '0.2.0' } },
+  });
+  manifests['sdk/Cargo.toml'].dependencies.core = { workspace: true, optional: true };
+  const project = () =>
+    projectCargoWorkspace(
+      workspace,
+      lock,
+      ['sdk'],
+      (relative) => manifests[relative],
+      (relative) => relative.endsWith('/src/lib.rs') || relative === 'sdk/build.rs',
+    );
+  const result = project();
+  expect(Object.keys(result.facts).sort()).toEqual(['core', 'sdk']);
+  expect(result.facts.sdk.dependencies.core).toEqual({
+    path: '../core',
+    version: '=0.0.0',
+    optional: true,
+  });
+  expect(
+    Bun.TOML.parse(result.files['Cargo.lock']).package.find((item) => item.name === 'core'),
+  ).toEqual({ name: 'core', version: '0.0.0', dependencies: ['serde'] });
+  // Selecting workspace source does not relax the authored public API requirement.
+  manifests['core/Cargo.toml'].package.version = '1.0.0';
+  for (const item of lock.package) if (item.name === 'core') item.version = '1.0.0';
+  expect(project).toThrow('Cargo path/version mismatch');
+});
+
+test('optional source adapters keep one shared Rust dependency identity throughout their closure', () => {
+  const { workspace, manifests, lock } = fixture();
+  workspace.workspace.members.push('broker');
+  manifests['broker/Cargo.toml'] = {
+    ...manifests['core/Cargo.toml'],
+    package: { ...manifests['core/Cargo.toml'].package, name: 'broker', version: '0.3.1' },
+    dependencies: { core: { path: '../core', version: '0.2.0' } },
+  };
+  manifests['sdk/Cargo.toml'].dependencies.broker = {
+    path: '../broker',
+    version: '0.3.1',
+    optional: true,
+  };
+  manifests['sdk/Cargo.toml'].features.desktop.push('dep:broker');
+  lock.package.find((item) => item.name === 'sdk').dependencies.push('broker');
+  lock.package.push({ name: 'broker', version: '0.3.1', dependencies: ['core'] });
+  const project = () =>
+    projectCargoWorkspace(
+      workspace,
+      lock,
+      ['sdk'],
+      (relative) => manifests[relative],
+      (relative) => relative.endsWith('/src/lib.rs') || relative === 'sdk/build.rs',
+    );
+  const result = project();
+  expect(Object.keys(result.facts).sort()).toEqual(['broker', 'core', 'sdk']);
+  const selected = Bun.TOML.parse(result.files['Cargo.lock']).package;
+  expect(selected.filter((item) => item.name === 'core')).toHaveLength(1);
+  expect(selected.find((item) => item.name === 'broker').dependencies).toEqual(['core']);
+  expect(result.facts.sdk.dependencies.broker.optional).toBe(true);
+  expect(result.facts.sdk.features.desktop).toContain('dep:broker');
+  expect(Bun.TOML.parse(result.files['sdk/Cargo.toml']).dependencies.broker).toEqual({
+    path: '../broker',
+    version: '=0.0.0',
+    optional: true,
+  });
+  // An adapter API requirement cannot be bypassed by the local source projection.
+  manifests['sdk/Cargo.toml'].dependencies.broker.version = '=9.0.0';
+  expect(project).toThrow('Cargo path/version mismatch');
+});

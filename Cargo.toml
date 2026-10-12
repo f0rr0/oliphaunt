@@ -39,7 +39,7 @@ license = "MIT"
 
 [workspace.dependencies]
 # These adapters exchange Rust types/state with the SDK they adopt.
-liboliphaunt-native-bindings = { version = "0.2.0" }
+liboliphaunt-native-bindings = { path = "src/native/rust-bindings", version = "0.2.0" }
 
 [profile.release]
 strip = "symbols"

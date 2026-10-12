@@ -6,8 +6,21 @@ load(":identity.bzl", "ReleaseIdentityInfo")
 
 ShippingSupplierInfo = provider(fields = ["suppliers", "files"])
 
-def _rust_supplier_impl(ctx):
-    crate = ctx.attr.producer[rust_common.crate_info]
+def current_rust_shipping_supplier(crate, producer, owner, source_package, configuration):
+    """Observe the existing configured crate output; callers validate its conventional owner."""
+    if producer.package != source_package or not crate.root.short_path.startswith(source_package + "/"):
+        fail("current Rust supplier differs from its conventional source package")
+    file = crate.output
+    if file.is_source or file.is_directory or not file.path.startswith("bazel-out/") or file.owner != producer:
+        fail("current Rust supplier requires the actual generated library owned by its producer")
+    return ShippingSupplierInfo(
+        suppliers = [{"product": owner.id, "version": owner.version, "configuration": configuration,
+                      "binding": "compiled-input", "origin": {"kind": "current-source"}, "files": [{"path": file.path}]}],
+        files = depset([file]),
+    )
+
+def held_rust_shipping_supplier(crate, owner, origin = None):
+    """Keep registry source incorporation bound to its genuine completed origin, or unknown."""
     # Registry source incorporation is separate from the core loaded at runtime.
     files = {file.path: file for file in crate.srcs.to_list()}
     manifests = [file for file in crate.compile_data.to_list() if file.basename == "Cargo.toml" and file.dirname == crate.root.dirname.removesuffix("/src")]
@@ -20,15 +33,24 @@ def _rust_supplier_impl(ctx):
             fail("held Rust supplier requires actual external source Files")
         declarations.append({"path": file.path, "member": "/".join(file.short_path.split("/")[2:])})
     suppliers = None
-    if ctx.attr.origin:
-        owner = ctx.attr.owner[ReleaseIdentityInfo]
-        origin = json.decode(ctx.attr.origin)
+    if origin:
         publication = origin.get("publication", {})
         if origin.get("kind") != "completed-publication" or publication.get("product") != owner.id:
             fail("held Rust supplier requires its exact completed release owner")
         suppliers = [{"product": owner.id, "version": publication["version"], "configuration": "portable",
                       "binding": "compiled-input", "origin": origin, "files": declarations}]
-    info = ShippingSupplierInfo(suppliers = suppliers, files = depset(files.values()))
+    return ShippingSupplierInfo(suppliers = suppliers, files = depset(files.values()))
+
+def _rust_supplier_impl(ctx):
+    crate = ctx.attr.producer[rust_common.crate_info]
+    if ctx.attr.current_source:
+        if ctx.attr.origin or not ctx.attr.source_package:
+            fail("current Rust supplier needs its declared source package and cannot claim a completed origin")
+        info = current_rust_shipping_supplier(crate, ctx.attr.producer.label, ctx.attr.owner[ReleaseIdentityInfo], ctx.attr.source_package, ctx.attr.configuration)
+        return [DefaultInfo(files = info.files), info]
+    if ctx.attr.source_package:
+        fail("a held Rust supplier cannot declare current source ownership")
+    info = held_rust_shipping_supplier(crate, ctx.attr.owner[ReleaseIdentityInfo], json.decode(ctx.attr.origin) if ctx.attr.origin else None)
     return [DefaultInfo(files = info.files), info]
 
 rust_shipping_supplier = rule(
@@ -37,6 +59,9 @@ rust_shipping_supplier = rule(
         "producer": attr.label(providers = [rust_common.crate_info], mandatory = True),
         "owner": attr.label(providers = [ReleaseIdentityInfo], mandatory = True),
         "origin": attr.string(doc = "Completed registry carrier facts from the authenticated per-run snapshot; omission stays unknown."),
+        "current_source": attr.bool(doc = "Observe the same locally compiled library File used by the consumer; never substitutes a dependency."),
+        "source_package": attr.string(doc = "Conventional Cargo source package, validated against the release owner by the carrier macro."),
+        "configuration": attr.string(default = "portable"),
     },
 )
 

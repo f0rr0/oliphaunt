@@ -1411,3 +1411,57 @@ test('completed Git source context binds exact retained members and never become
     );
   }, 'held');
 });
+
+test('a current compiled Rust library needs its own configured producer and cannot masquerade as source or completed bytes', async () => {
+  await fixture(async ({ input, project, roots, cohort, executionRoot }) => {
+    const rlib = roots[3].package.outputs[0].path.replace('source.crate', 'libbindings.rlib');
+    writeFileSync(path.join(executionRoot, rlib), 'controlled compiled binding bytes');
+    const artifact = cohort.aquery.artifacts.find(
+      (row) => row.id === cohort.aquery.actions[3].outputIds[0],
+    );
+    const fragment = cohort.aquery.pathFragments.find((row) => row.id === artifact.pathFragmentId);
+    fragment.label = 'libbindings.rlib';
+    roots[3].package.outputs[0].path = rlib;
+    roots[2].package.supplierInputs = [
+      {
+        product: 'fixture-source',
+        version: '2.0.0',
+        configuration,
+        binding: 'compiled-input',
+        origin: { kind: 'current-source' },
+        files: [{ path: rlib }],
+      },
+    ];
+    // The consumer's actual action now incorporates the same generated library File.
+    cohort.aquery.depSetOfFiles[2].directArtifactIds = [
+      cohort.aquery.depSetOfFiles[2].directArtifactIds[1],
+      artifact.id,
+    ];
+    cohort.inputs.push({
+      path: rlib,
+      members: captureNativeInputMembers(executionRoot, rlib).members,
+    });
+    const result = await project();
+    expect([...result.buildBound.get(consumer)]).toEqual(['fixture-source']);
+    expect(result.suppliers.find((row) => row.product === 'fixture-source').origin).toEqual({
+      kind: 'current-source',
+    });
+    roots[3].package.configuration = 'wrong-profile';
+    await expect(project()).rejects.toThrow('own configured shipping producer');
+    roots[3].package.configuration = configuration;
+    roots[3].package.product = consumer;
+    roots[3].package.version = input.products[consumer].version;
+    await expect(project()).rejects.toThrow('own configured shipping producer');
+    roots[3].package.product = 'fixture-source';
+    roots[3].package.version = input.products['fixture-source'].version;
+    roots[2].package.supplierInputs[0].files[0].path = 'source/README.md';
+    cohort.aquery.depSetOfFiles[2].directArtifactIds.push(
+      cohort.aquery.depSetOfFiles[3].directArtifactIds[0],
+    );
+    await expect(project()).rejects.toThrow('actual generated File');
+    roots[2].package.supplierInputs[0].files[0].path = rlib;
+    roots[2].package.supplierInputs[0].version = '9.0.0';
+    await expect(project()).rejects.toThrow('current supplier version');
+    expect(input.products['fixture-source'].version).toBe('2.0.0');
+  });
+});

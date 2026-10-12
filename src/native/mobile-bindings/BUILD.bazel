@@ -14,6 +14,7 @@ filegroup(
 # broker implementation. Keep this variant explicit in the native graph.
 PATH_DEPS = {
     "oliphaunt": "//src/native/sdks/rust:mobile_lib",
+    "liboliphaunt-native-bindings": "//src/native/rust-bindings:lib",
 }
 
 cargo_package_env()

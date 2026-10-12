@@ -31,6 +31,7 @@ import {
 import { validateZipEntryTypes } from '../../tools/packaging/portable-archive.mts';
 import {
   isRetryableGitHubReadError,
+  matchesGithubWorkflowRef,
   RetryableReadError,
   requestGithubDownload,
   requestGithubJsonWithRetry,
@@ -519,12 +520,7 @@ function assertRunIdentity(snapshot, args) {
     if (expected && observed !== expected)
       throw new Error(`workflow run ${snapshot.runId} ${context} mismatch`);
   if (args.ref) {
-    const matches =
-      snapshot.event === 'pull_request'
-        ? /^refs\/pull\/[1-9][0-9]*\/merge$/u.test(args.ref) &&
-          snapshot.pullRequestNumbers?.includes(Number(args.ref.split('/')[2]))
-        : ['push', 'workflow_dispatch'].includes(snapshot.event) &&
-          args.ref === `refs/heads/${snapshot.headBranch}`;
+    const matches = matchesGithubWorkflowRef(snapshot.event, args.ref, snapshot);
     if (!matches) throw new Error(`workflow run ${snapshot.runId} ref mismatch`);
   }
   if (args.jobSuccessOnly) {
