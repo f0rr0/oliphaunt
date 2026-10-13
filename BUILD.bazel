@@ -284,6 +284,7 @@ test_suite(
         "//build_defs/wasix/postmaster:postgres_overlay_backslash_test",
         "//build_defs/wasix/postmaster:postgres_overlay_duplicate_test",
         "//build_defs/android:metadata_test",
+        "//build_defs/android:android_min_sdk_test",
         "//build_defs/android:installed_app_contract_test",
         "//build_defs/languages:cargo_metadata_test",
         "//build_defs/languages:napi_artifact_projection_test",

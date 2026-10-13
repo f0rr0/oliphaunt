@@ -360,12 +360,17 @@ android_jni_aar = rule(implementation = _jni_aar_impl, toolchains = BUN_SOURCE_T
                        attrs = dict(_RUNNER, **{"libraries": attr.label_keyed_string_dict(allow_files = True, mandatory = True),
                                                 "package": attr.string(mandatory = True)}))
 
+_ANDROID_MIN_SDK = str(Label("@rules_android//rules:min_sdk_version"))
+
 def _apk_abi_impl(settings, attr):
     platform = "//build_defs/android:android_" + ("arm64" if attr.abi == "arm64-v8a" else "x86_64")
-    return {"//command_line_option:android_platforms": [platform], "//command_line_option:compilation_mode": "opt"}
+    return {"//command_line_option:android_platforms": [platform], "//command_line_option:compilation_mode": "opt",
+            _ANDROID_MIN_SDK: attr.min_sdk_version}
 
 _apk_abi = transition(implementation = _apk_abi_impl, inputs = [],
-    outputs = ["//command_line_option:android_platforms", "//command_line_option:compilation_mode"])
+    outputs = ["//command_line_option:android_platforms", "//command_line_option:compilation_mode", _ANDROID_MIN_SDK])
+
+android_app_configuration = _apk_abi_impl
 
 def _verify_impl(ctx):
     sdk = ctx.attr._sdk[AndroidSdkInfo]
@@ -393,6 +398,7 @@ android_apk_proof = rule(
     attrs = dict(_RUNNER, **{
         "apk": attr.label(providers = [ApkInfo], mandatory = True, cfg = _apk_abi),
         "abi": attr.string(mandatory = True, values = ["arm64-v8a", "x86_64"]),
+        "min_sdk_version": attr.int(mandatory = True),
         "selected_extensions": attr.string_list(mandatory = True),
         "catalog_profile": attr.string(mandatory = True, values = ["standard", "icu"]),
         "catalog_profile_probe": attr.label(mandatory = True, allow_single_file = [".json"]),

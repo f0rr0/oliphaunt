@@ -1,0 +1,27 @@
+--- a/rules/min_sdk_version.bzl
++++ b/rules/min_sdk_version.bzl
+@@ -23,7 +23,7 @@
+ 
+ visibility(PROJECT_VISIBILITY)
+ 
+-_SETTING = "//rules/flags:min_sdk_version"
++_SETTING = "//rules:min_sdk_version"
+ _DEPOT_FLOOR = 23
+ _MIN_SDK_LEVELS = sorted([_DEPOT_FLOOR, 24])
+ 
+@@ -49,12 +49,9 @@
+     # This is the case when an android_binary target does not set a value explicitly.
+     # The configuration value defaults to 0
+     # So in this case we use the depot floor.
+-    # TODO(asinclair): Uncomment this once android_binary is Starlarkified and the order of the
+-    # Android Platforms Transition and Feature Flags transition is swapped.
+-    # if not ctx.attr._min_sdk_version[BuildSettingInfo].value:
+-    #     return _DEPOT_FLOOR
+-    # return ctx.attr._min_sdk_version[BuildSettingInfo].value
+-    return _DEPOT_FLOOR
++    # An explicit app transition supplies the existing minimum-SDK setting.
++    # Preserve the upstream depot floor for unrelated/default configurations.
++    return ctx.attr._min_sdk_version[BuildSettingInfo].value or _DEPOT_FLOOR
+ 
+ min_sdk_version = struct(
+     attrs = _ATTRS,

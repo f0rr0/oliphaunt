@@ -1,13 +1,14 @@
 import { expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { androidNdkMetadata } from './metadata.mts';
 import {
+  androidAppMinimumSdk,
   androidReleaseDependencies,
   nativeAndroidPackages,
   reactNativeRuntimeDependencies,
 } from './native-metadata.mts';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 
 const input = {
   packages: { ndk: '27.0.12077973', expo_ndk: '27.1.12297006' },
@@ -19,6 +20,21 @@ const input = {
     },
   },
 };
+
+test('app desugar SDK follows its original catalog and respects the native SDK floor', () => {
+  const sdk = 'android {\n defaultConfig {\n  minSdk = 24\n }\n}';
+  for (const minimum of [24, 26])
+    expect(androidAppMinimumSdk('[versions]\nminSdk = "' + minimum + '"', sdk)).toBe(minimum);
+  expect(() => androidAppMinimumSdk('[versions]\nminSdk = "23"', sdk)).toThrow('supported minimum');
+  for (const value of ['0', '-1', '24.5', 'latest'])
+    expect(() => androidAppMinimumSdk('[versions]\nminSdk = "' + value + '"', sdk)).toThrow(
+      'valid minimum',
+    );
+  expect(() => androidAppMinimumSdk('[versions]')).toThrow('valid minimum');
+  expect(() =>
+    androidAppMinimumSdk('[versions]\nminSdk = "24"', 'minSdk = project.minimum'),
+  ).toThrow('supported minimum');
+});
 
 test('native Android reads the canonical NDK and minimum platform API', () => {
   expect(androidNdkMetadata(input)).toEqual({

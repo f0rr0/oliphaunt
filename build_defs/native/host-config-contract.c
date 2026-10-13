@@ -37,6 +37,8 @@ ASSERT(constant_memory_context_name, __builtin_constant_p("memory context"));
 #endif
 #ifdef _WIN32
 ASSERT(windows_llp64, SIZEOF_LONG == 4 && SIZEOF_OFF_T == 4);
+/* Match PG18 Windows policy and the backend executable /STACK reserve. */
+ASSERT(windows_stack_rlimit, WIN32_STACK_RLIMIT == 4194304);
 #else
 ASSERT(apple_lp64, SIZEOF_LONG == 8 && SIZEOF_OFF_T == 8);
 #endif

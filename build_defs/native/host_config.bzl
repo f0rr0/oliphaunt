@@ -162,7 +162,11 @@ def postgres_host_configuration_targets(version):
         # switches must be integers: "1" would emit a C string literal, which
         # conflicts with MSVC's /D_CRT_SECURE_NO_DEPRECATE=1 under /WX.
         autoconf(name = name + "_facts", checks = [checks.AC_DEFINE(d, 1) for d in definitions + ["__STDC_WANT_LIB_EXT1__"]] + tests + [checks.AC_DEFINE(key, value) for key, value in policy.items()], target_compatible_with = compatible)
-        autoconf_hdr(name = name + "_config", out = name + "/src/include/pg_config.h", template = "src/include/pg_config.h.in", deps = [":" + name + "_facts"], defaults = False, target_compatible_with = compatible)
+        # PG Meson emits WIN32_STACK_RLIMIT, but the Autoconf template has no
+        # placeholder: its Makefile.win32 supplies the value through CPPFLAGS.
+        # Resolve this Windows-only placeholder from the existing policy fact.
+        autoconf_hdr(name = name + "_config", out = name + "/src/include/pg_config.h", template = "src/include/pg_config.h.in", deps = [":" + name + "_facts"], defaults = False,
+                     substitutions = {"#undef BLCKSZ": "#undef BLCKSZ\n#undef WIN32_STACK_RLIMIT"} if windows else {}, target_compatible_with = compatible)
         pg_config_layout(name = name + "_layout", os_header = "src/include/port/" + ("win32.h" if windows else "darwin.h"), output_directory = name + "/src/include", target_compatible_with = compatible)
         cc_binary(name = name + "_sanity", srcs = ["@oliphaunt//build_defs/native:probe-sanity.c"], copts = opts, target_compatible_with = compatible)
         abi_sources = ["@oliphaunt//build_defs/native:host-config-contract.c"]

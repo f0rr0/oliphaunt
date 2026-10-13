@@ -189,7 +189,36 @@ const sourceSets: Record<string, string[]> = {
   'react-native-safe-area-context': ['src/main/java', 'src/main/kotlin', 'src/fabric/java'],
 };
 
-export function androidNativeMetadata(packages: Package[], kotlin: string) {
+export function androidAppMinimumSdk(catalogSource: string, sdkGradleSource?: string) {
+  const value = (Bun.TOML.parse(catalogSource).versions as Record<string, unknown> | undefined)
+    ?.minSdk;
+  if (
+    typeof value !== 'string' ||
+    !/^\d+$/.test(value) ||
+    !Number.isSafeInteger(Number(value)) ||
+    Number(value) < 1
+  )
+    throw new Error('Conventional React Native catalog lacks a valid minimum SDK');
+  const minimum = Number(value);
+  if (sdkGradleSource) {
+    const supportedMinimum = Number(
+      required(
+        sdkGradleSource,
+        /^\s*minSdk\s*=\s*(\d+)\s*$/m,
+        'React Native SDK supported minimum',
+      ),
+    );
+    if (minimum < supportedMinimum)
+      throw new Error('Expo app minimum SDK is below its native SDK supported minimum');
+  }
+  return minimum;
+}
+
+export function androidNativeMetadata(
+  packages: Package[],
+  kotlin: string,
+  sdkGradleSource?: string,
+) {
   packages = nativeAndroidPackages(packages);
   const byName = new Map(packages.map((row) => [row.package, row]));
   const rn = byName.get('react-native');
@@ -199,6 +228,7 @@ export function androidNativeMetadata(packages: Package[], kotlin: string) {
   if (rnProperties.VERSION_NAME !== rn.version)
     throw new Error('React Native package/Android release version differs');
   const rnCatalog = text(path.join(rn.root, 'gradle/libs.versions.toml'));
+  const minSdkVersion = androidAppMinimumSdk(rnCatalog, sdkGradleSource);
   const reactNativeDependencies = reactNativeRuntimeDependencies(
     text(path.join(rn.root, 'ReactAndroid/build.gradle.kts')),
     rnCatalog,
@@ -330,6 +360,7 @@ export function androidNativeMetadata(packages: Package[], kotlin: string) {
     modules,
     maven: [...maven].sort(),
     reactNative: rn.version,
+    minSdkVersion,
     reactNativeDependencies,
     hermes: hermes.HERMES_V1_VERSION_NAME,
     kotlin,
@@ -354,9 +385,9 @@ export function emitAndroidNativeMetadata(
   output: string,
   sdkGradle?: string,
 ) {
-  const metadata = androidNativeMetadata(packages, kotlin);
-  if (sdkGradle) {
-    const source = text(sdkGradle);
+  const source = sdkGradle ? text(sdkGradle) : undefined;
+  const metadata = androidNativeMetadata(packages, kotlin, source);
+  if (source) {
     const jna = required(
       source,
       /net\.java\.dev\.jna:jna:([^"']+)@aar/,

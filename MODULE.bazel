@@ -64,7 +64,7 @@ single_version_override(
 single_version_override(
     module_name = "rules_android",
     version = "0.6.6",
-    patches = ["//build_defs/languages/jvm:aar-import-android-bootclasspath.patch"],
+    patches = ["//build_defs/languages/jvm:aar-import-android-bootclasspath.patch", "//build_defs/android:rules-android-min-sdk.patch"],
     patch_strip = 1,
 )
 single_version_override(

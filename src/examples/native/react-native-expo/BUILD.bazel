@@ -116,6 +116,7 @@ _ABI = select({_ARM64: "arm64-v8a", _X64: "x86_64"})
 _SHARED = ["-static_link_cpp_runtimes"]
 _RN_NATIVE = ["@expo_android_sources//:react_native_prefab", "@expo_android_sources//:fbjni", "@expo_android_sources//:shared_cxx_runtime"]
 _JNA = ANDROID_NATIVE["reactNativeSdk"]["jna"]
+_MIN_SDK = ANDROID_NATIVE["minSdkVersion"]
 
 android_final_aar(name = "kotlin_final_aar", source = "//src/native/sdks/kotlin:android_maven_archive")
 aar_import(name = "kotlin_installed", aar = ":kotlin_final_aar", package = "dev.oliphaunt", deps = [
@@ -178,11 +179,12 @@ kt_android_library(name = "app_release_classes", srcs = [":android_project", ":a
     deps = [":oliphaunt_android_classes", "@expo_android_sources//:expo_modules", "@expo_android_sources//:react_android_release"])
 android_binary(name = "release_binary", manifest = ":android_manifest", custom_package = "dev.oliphaunt.reactnative.example",
     resource_files = [":android_resources", ":android_bundle_resources"],
-    manifest_values = {"applicationId": "dev.oliphaunt.reactnative.example", "minSdkVersion": "24", "targetSdkVersion": "36", "versionCode": "1", "versionName": "0.0.0"},
+    manifest_values = {"applicationId": "dev.oliphaunt.reactnative.example", "minSdkVersion": str(_MIN_SDK), "targetSdkVersion": "36", "versionCode": "1", "versionName": "0.0.0"},
     deps = [":app_release_classes", ":bundle_assets", ":expo_config_assets", ":runtime_assets", ":seed_installed", ":runtime_installed", ":source_jni", "@expo_android_maven//:com_facebook_hermes_hermes_android_release"],
     multidex = "native", incremental_dexing = 0, nocompress_extensions = ["so", "bundle"])
 [android_apk_proof(name = name, apk = ":release_binary", abi = abi, keystore = ":android_keystore", selected_extensions = SELECTED_EXTENSIONS,
     catalog_profile = CATALOG_PROFILE, catalog_profile_probe = "//src/database-resources:contracts/profile-probe.json",
+    min_sdk_version = _MIN_SDK,
     expected_classes = ["dev.oliphaunt.reactnative.example.MainApplication", "dev.oliphaunt.reactnative.example.MainActivity", "expo.modules.splashscreen.SplashScreenModule", "expo.modules.sqlite.SQLiteModule", "com.th3rdwave.safeareacontext.SafeAreaContextPackage", "com.facebook.soloader.SoLoader", "com.facebook.drawee.backends.pipeline.Fresco"],
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
  for name, abi in [("android_release", "arm64-v8a"), ("android_release_x86_64", "x86_64")]]
