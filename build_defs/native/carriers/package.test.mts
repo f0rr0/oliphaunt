@@ -147,6 +147,32 @@ try {
       readFileSync(path.join(root, 'physical-tree/nested/data'), 'utf8'),
       'declared tree bytes',
     );
+    const runfiles = path.join(root, 'runfiles/maven');
+    mkdirSync(path.dirname(runfiles), { recursive: true });
+    symlinkSync(projected, runfiles);
+    copyDeclaredTree(runfiles, path.join(root, 'runfiles-tree'), undefined, 'declared/tree');
+    assert.equal(
+      readFileSync(path.join(root, 'runfiles-tree/nested/data'), 'utf8'),
+      'declared tree bytes',
+    );
+    assert.throws(
+      () => copyDeclaredTree(runfiles, path.join(root, 'undeclared-runfiles-tree')),
+      /execroot-relative/,
+    );
+    assert.throws(
+      () =>
+        copyDeclaredTree(runfiles, path.join(root, 'wrong-runfiles-tree'), undefined, 'other/tree'),
+      /escapes/,
+    );
+    const otherRoot = path.join(root, 'other-producer/declared/tree');
+    mkdirSync(otherRoot, { recursive: true });
+    writeFileSync(path.join(otherRoot, 'second'), 'other producer bytes');
+    symlinkSync(path.join(otherRoot, 'second'), path.join(projected, 'second'));
+    assert.throws(
+      () => copyDeclaredTree(runfiles, path.join(root, 'mixed-roots'), undefined, 'declared/tree'),
+      /mixed physical roots/,
+    );
+    rmSync(path.join(projected, 'second'));
     chmodSync(path.join(generated, 'nested/data'), 0o755);
     copyDeclaredTree('declared/tree', path.join(root, 'normalized-tree'), []);
     assert.equal(statSync(path.join(root, 'normalized-tree/nested/data')).mode & 0o777, 0o644);

@@ -32,6 +32,7 @@ bun_test(
     entry_point = "workflow-native-bazel.test.mts",
     data = [
         "//:workflow_policy_sources",
+        "//:BUILD.bazel",
         "//:.github/scripts/check-release-intent.sh",
         "//:.github/scripts/release-intent-data.mts",
     ],

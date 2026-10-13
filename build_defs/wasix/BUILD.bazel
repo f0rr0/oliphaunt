@@ -11,6 +11,7 @@ load(":napi.bzl", "NAPI_HELPERS", "NAPI_NOTICES")
 package(default_visibility = ["//visibility:public"])
 
 exports_files(glob(["*.bzl", "*.bazel", "*.mts", "*.patch"]))
+exports_files(["config_probe.c"], visibility = ["@postgres_wasix//:__pkg__"])
 
 bun_test(
     name = "napi_inputs_test",
@@ -194,12 +195,9 @@ toolchain(
     target_compatible_with = ["@platforms//os:wasi", "@platforms//cpu:wasm32"],
 )
 
-cc_library(
+alias(
     name = "config_probe",
-    linkstatic = True,
-    srcs = ["config_probe.c"],
-    deps = ["@postgres_wasix//:server_headers"],
-    copts = ["-std=gnu11", "-Werror=implicit-function-declaration", "-Werror=ignored-attributes"],
+    actual = "@postgres_wasix//:configuration_contract",
     target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
 )
 

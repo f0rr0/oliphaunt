@@ -5,6 +5,7 @@ load("//build_defs/languages:source.bzl", "cargo_source_package")
 load("//build_defs/languages/carriers:defs.bzl", "native_helper_carriers")
 load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
 load("//build_defs/native:rust-runtime-test.bzl", "native_rust_runtime_test")
+load("@oliphaunt_metadata//:metadata.bzl", "NATIVE_CURRENT_ARTIFACTS")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -24,8 +25,8 @@ cargo_integration_test(
     name = "postgres_client_test",
     source = "tests/postgres_client.rs",
     path_dependencies = PATH_DEPS,
-    rustc_env = {"CARGO_BIN_EXE_oliphaunt-broker": "$(rootpath :broker)"},
-    data = [":broker"],
+    rustc_env = {"CARGO_BIN_EXE_oliphaunt-broker": "$(rootpath :broker)" if NATIVE_CURRENT_ARTIFACTS == None else ""},
+    data = [":broker"] if NATIVE_CURRENT_ARTIFACTS == None else [],
     tags = ["manual"],
 )
 rust_clippy_test(name = "clippy_test", targets = [":lib", ":unit_test", ":broker", ":binary_test", ":postgres_client_test"], transitive = False, size = "small")

@@ -31,6 +31,34 @@ export function resolveCargoWorkspaceInheritance(manifest: Table, workspace: Tab
   return result;
 }
 
+export function cargoSatisfies(version: string, requirement: string): boolean {
+  // Cargo ignores build metadata for version requirements; Bun does not.
+  const range = requirement.replaceAll(',', ' ');
+  return Bun.semver.satisfies(version.split('+', 1)[0], /^\d/.test(range) ? `^${range}` : range);
+}
+
+/** The exact stable floor satisfying an owner's internal Cargo requirements. */
+export function cargoDependencyMinimum(requirement: string | string[]): string {
+  if (Array.isArray(requirement)) {
+    if (!requirement.length)
+      throw new Error('Internal Cargo minimum needs an authored requirement');
+    const floor = requirement.map(cargoDependencyMinimum).sort(Bun.semver.order).at(-1)!;
+    if (!requirement.every((range) => cargoSatisfies(floor, range.trim())))
+      throw new Error(`Internal Cargo minimum requirements conflict: ${requirement.join(', ')}`);
+    return floor;
+  }
+  const match =
+    /^(?:\^|~|=|>=)?\s*(\d+(?:\.\d+){0,2})(?:\s*,\s*<={0,1}\s*\d+(?:\.\d+){0,2})?$/u.exec(
+      requirement.trim(),
+    );
+  if (!match)
+    throw new Error(`Internal Cargo minimum needs an explicit stable floor: ${requirement}`);
+  const floor = [...match[1].split('.'), '0', '0'].slice(0, 3).join('.');
+  if (!cargoSatisfies(floor, requirement.trim()))
+    throw new Error(`Internal Cargo minimum is excluded by its requirement: ${requirement}`);
+  return floor;
+}
+
 function tomlValue(value: unknown): string {
   if (typeof value === 'string') return JSON.stringify(value);
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);

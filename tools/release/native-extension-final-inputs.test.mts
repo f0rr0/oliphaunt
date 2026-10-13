@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   type ExtensionFinalInput,
   projectNativeAppleBaseInput,
+  projectNativeCurrentArtifacts,
   projectNativeExtensionFinalInputs,
   projectNativeSwiftSourceInput,
 } from './native-extension-final-inputs.mts';
@@ -220,6 +221,48 @@ test('requires GH Files for mobile and all registry groups for desktop/WASIX', (
         { ...leaf, target: 'android-arm64-v8a', npm: [], cargo: [] },
       ]).files,
     ).toHaveLength(3);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('current payload aliases retain exact source/File tuples and reject source, identity and byte substitutions', () => {
+  const { directory, file } = fixture();
+  try {
+    const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
+    const row = {
+      product: 'liboliphaunt-native',
+      version: '0.3.3',
+      artifact: 'cargo:liboliphaunt-native-linux-x64-gnu',
+      configuration: 'linux-x64-gnu',
+      source,
+      file: {
+        ...file('liboliphaunt-native-linux-x64-gnu-0.3.3.crate'),
+        member: 'liboliphaunt-native-linux-x64-gnu-0.3.3.crate',
+      },
+    };
+    const projected = projectNativeCurrentArtifacts([row], source);
+    const key = `${row.product}/${row.version}/${row.artifact}`;
+    expect(projected.artifacts[key].file.producer).toEqual(row.file.producer);
+    expect(projected.artifacts[key].file.member).toBe(row.file.member);
+    expect(projected.artifacts[key].file.path).toStartWith(
+      '@oliphaunt_metadata//:native-current-artifacts/',
+    );
+    expect(projected.files[0].source).toBe(row.file.path);
+    expect(projectNativeCurrentArtifacts([], source).artifacts).toEqual({});
+    for (const change of [
+      (value) => (value.source.commit = 'c'.repeat(40)),
+      (value) => (value.version = '0.3.4'),
+      (value) => (value.artifact = 'cargo:wrong-name'),
+      (value) => (value.file.sha256 = '0'.repeat(64)),
+      (value) => (value.file.producer.output = '../output'),
+      (value) => (value.authenticated = true),
+    ]) {
+      const changed = structuredClone(row);
+      change(changed);
+      expect(() => projectNativeCurrentArtifacts([changed], source)).toThrow();
+    }
+    expect(() => projectNativeCurrentArtifacts([row, row], source)).toThrow('repeats');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -287,6 +287,13 @@ install_and_launch() {
   while [ "$SECONDS" -lt "$deadline" ]; do
     if [ "$runner" = smoke ]; then
       logs="$(cat "$android_log_file")"
+      # Readiness is emitted only after native proofs; reject a failed capture/app before waiting.
+      if mobile_log_has_failure "$android_log_file" ||
+        ! kill -0 "$android_log_pid" 2>/dev/null ||
+        ! "$adb" shell pidof "$app_id" >/dev/null 2>&1; then
+        wait_for_android_smoke_receipt "$adb" "$android_log_file"
+        return
+      fi
     else
       logs="$("$adb" logcat -d)"
     fi

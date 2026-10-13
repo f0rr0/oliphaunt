@@ -904,7 +904,7 @@ fn validate_declared_source_facts(
     );
     ensure_eq(
         postgres_version,
-        &format!("{}-wasix-oliphaunt", fingerprint[0]),
+        fingerprint[0],
         "declared PostgreSQL version",
     )?;
     let names = sources
@@ -1237,7 +1237,7 @@ fn declared_aot_modules(file: &Path) -> Result<DeclaredAotModules> {
                         .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())),
             "declared tools AOT requires the portable source fingerprint"
         );
-        let postgres_version = format!("{}-wasix-oliphaunt", parts[0]);
+        let postgres_version = parts[0].to_owned();
         let mut modules = BTreeMap::new();
         let mut paths = BTreeMap::new();
         for (name, identity) in [("pg_dump", portable.pg_dump), ("psql", portable.psql)] {
@@ -3650,7 +3650,7 @@ mod tests {
         let patch_hash = "b".repeat(64);
         let spec = serde_json::json!({
             "runtime": runtime, "initdb": initdb, "archive": archive, "export_policy": policy, "support": support,
-            "source_fingerprint": format!("42.8:{source_hash}:{patch_hash}"), "postgres_version": "42.8-wasix-oliphaunt",
+            "source_fingerprint": format!("42.8:{source_hash}:{patch_hash}"), "postgres_version": "42.8",
             "sources": [
                 {"name": "postgresql", "url": "https://source.test/pg.tar.bz2", "branch": "v42.8", "commit": source_hash},
                 {"name": "oliphaunt-wasix-stable-patches", "url": POSTGRES_PATCH_SERIES_PATH, "branch": "series", "commit": patch_hash},
@@ -3673,7 +3673,7 @@ mod tests {
             sha256_file(&runtime).unwrap()
         );
         assert_eq!(manifest.runtime.sha256, sha256_file(&archive).unwrap());
-        assert_eq!(manifest.runtime.postgres_version, "42.8-wasix-oliphaunt");
+        assert_eq!(manifest.runtime.postgres_version, "42.8");
         assert_eq!(manifest.runtime_support.len(), 2);
         assert_eq!(
             manifest.initdb.unwrap().module_sha256,
@@ -3685,6 +3685,7 @@ mod tests {
             "unknown",
             "source-digest",
             "version",
+            "version-label",
             "support-path",
             "missing-support",
             "missing-input",
@@ -3695,8 +3696,9 @@ mod tests {
                 "source-digest" => {
                     invalid["sources"][0]["commit"] = serde_json::json!("c".repeat(64))
                 }
-                "version" => {
-                    invalid["postgres_version"] = serde_json::json!("42.9-wasix-oliphaunt")
+                "version" => invalid["postgres_version"] = serde_json::json!("42.9"),
+                "version-label" => {
+                    invalid["postgres_version"] = serde_json::json!("42.8-wasix-oliphaunt")
                 }
                 "support-path" => invalid["support"][0]["path"] = serde_json::json!("../outside"),
                 "missing-support" => invalid["support"]
@@ -3734,7 +3736,7 @@ mod tests {
         let patch_hash = "b".repeat(64);
         let spec = serde_json::json!({
             "pg_dump": pg_dump, "psql": psql, "version": "2.3.4", "runtime_version": "7.8.9",
-            "source_fingerprint": format!("42.8:{source_hash}:{patch_hash}"), "postgres_version": "42.8-wasix-oliphaunt",
+            "source_fingerprint": format!("42.8:{source_hash}:{patch_hash}"), "postgres_version": "42.8",
             "sources": [
                 {"name": "postgresql", "url": "https://source.test/pg.tar.bz2", "branch": "v42.8", "commit": source_hash},
                 {"name": "oliphaunt-wasix-stable-patches", "url": POSTGRES_PATCH_SERIES_PATH, "branch": "series", "commit": patch_hash},
@@ -3854,10 +3856,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["tool:pg_dump", "tool:psql"]
         );
-        assert_eq!(
-            manifest.postgres_version.as_deref(),
-            Some("18.4-wasix-oliphaunt")
-        );
+        assert_eq!(manifest.postgres_version.as_deref(), Some("18.4"));
         assert_eq!(manifest.target_triple, "aarch64-apple-darwin");
         generate_declared_aot_manifest(&args).unwrap();
         assert_eq!(first, fs::read(&output).unwrap());

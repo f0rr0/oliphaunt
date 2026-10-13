@@ -26,9 +26,22 @@ exports_files(["final_leaf.bzl", "owner_carriers.bzl", "owner_carriers.mts", "fi
 exports_files(["wasix_carriers.bzl", "wasix_carriers.mts", "wasix_carriers.test.mts"])
 exports_files(["mobile.bzl", "mobile_carriers.bzl", "mobile_carriers.mts", "mobile_registration.mts", "mobile_members.bzl", "mobile_consumer.c", "mobile_maven.mts"])
 exports_files(["declared_final_inputs.bzl", "declared_final_inputs.mts", "family_carriers.bzl", "family_contract.test.mts"])
+exports_files(["imported_members.bzl", "imported_member.mts"])
 
 native_declared_apple_base(name = "declared_native_apple_base")
 native_extension_final_families(base_carrier_manifest = ":declared_native_apple_base")
+
+bun_test(
+    name = "imported_member_test",
+    entry_point = "imported_member.test.mts",
+    data = {label: True for label in ["imported_member.mts", "member_payload.mts", "owner_carriers.mts", "declared_final_inputs.mts",
+            "//build_defs/native:rust-runtime-test.mts", "//build_defs/native:host-runtime-test-helpers.mts",
+            "//:tools/packaging/testdata/release-fixture-utils.mts",
+            "//src/extensions/catalog:extensions.source.json", "//src/extensions/contrib:postgres18.toml"] +
+           native_owner_carrier_helpers() + native_owner_carrier_legal("oliphaunt-extension-vector") +
+           native_owner_carrier_legal("oliphaunt-extension-contrib-pg18")}.keys(),
+    size = "small",
+)
 
 bun_test(
     name = "declared_final_inputs_test",

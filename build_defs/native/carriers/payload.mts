@@ -109,11 +109,13 @@ export function stageLegalSources(sources: Record<string, string>, output: strin
 /** Materialize one declared TreeArtifact's one-hop sandbox file aliases.
  * Original tree files must be regular, belong to the same logical tree, and
  * share one physical root. Authored symlinks and directory links stay invalid.
+ * declaredPath retains File.path identity for absolute runfiles inputs.
  */
 export function copyDeclaredTree(
   source: string,
   output: string,
   executableFiles?: readonly string[],
+  declaredPath = source,
 ): void {
   const root = realpathSync(source);
   let physicalRoot: string | undefined;
@@ -133,13 +135,13 @@ export function copyDeclaredTree(
       let owner = root;
       if (metadata.isSymbolicLink()) {
         assert(
-          !path.isAbsolute(source) && !source.split('/').includes('..'),
+          !path.isAbsolute(declaredPath) && !declaredPath.split('/').includes('..'),
           'sandbox tree aliases require the declared execroot-relative TreeArtifact path',
         );
         original = path.resolve(path.dirname(child), readlinkSync(child));
         owner = path.resolve(original, ...destination.split('/').map(() => '..'));
         assert(
-          owner.endsWith(path.sep + path.normalize(source)),
+          owner.endsWith(path.sep + path.normalize(declaredPath)),
           `sandbox file alias escapes the declared tree: ${child}`,
         );
       }

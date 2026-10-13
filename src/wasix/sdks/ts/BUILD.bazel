@@ -9,6 +9,7 @@ load("//build_defs/languages/ts:defs.bzl", "workspace_dependency_package", "work
 load("//build_defs/query:defs.bzl", "query_envelope")
 load("//build_defs/languages/ts:unit-tests.bzl", "sdk_unit_test")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/resources:resources.bzl", "wasix_current_seed_assets")
 load("//build_defs/wasix/browser:defs.bzl", "browser_host_assets", "browser_sql_consumer", "browser_sql_lifecycle")
 
 package(default_visibility = ["//visibility:public"])
@@ -105,11 +106,15 @@ shipping_package(
 
 shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = [":browser_sql_consumer", ":unit_test", ":package_policy_test"], testonly = True)
 
+wasix_current_seed_assets(name = "browser_seed")
+
 browser_sql_consumer(
     name = "browser_sql_consumer",
     sdk = ":npm",
     query = ":query_package",
     runtime = "//src/wasix/runtime:npm",
+    seed_archive = ":browser_seed_archive",
+    seed_manifest = ":browser_seed_manifest",
     manifest = ":publish_manifest",
     fixture = "tools/frozen-browser-consumer.mts",
     cdp = "tools/browser-cdp.mts",

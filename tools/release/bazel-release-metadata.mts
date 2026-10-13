@@ -23,12 +23,13 @@ import {
 } from './extension-release-metadata.mts';
 import {
   projectNativeAppleBaseInput,
+  projectNativeCurrentArtifacts,
   projectNativeExtensionFinalInputs,
   projectNativeSwiftSourceInput,
 } from './native-extension-final-inputs.mts';
 import { projectNativeSeedInputs } from './native-seed-inputs.mts';
 import { projectNativeSupplierArtifacts } from './native-supplier-artifacts.mts';
-import { loadPublicationCatalog } from './publication-catalog.mts';
+import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
 import {
   databaseResourceArtifactRows,
   expectedExtensionGithubReleaseAssetRows,
@@ -798,6 +799,7 @@ export function nativePublicationInputProjection(value: unknown, _metadata?: Rel
           'extensionFinalInputs',
           'nativeAppleBase',
           'nativeSwiftSource',
+          'nativeCurrentArtifacts',
           'selectedProducts',
           'supplierArtifacts',
         ].includes(key),
@@ -828,6 +830,41 @@ export function nativePublicationInputProjection(value: unknown, _metadata?: Rel
     snapshot.nativeSwiftSource === undefined
       ? { input: null, files: [] }
       : projectNativeSwiftSourceInput(snapshot.nativeSwiftSource);
+  const current =
+    snapshot.nativeCurrentArtifacts === undefined
+      ? { artifacts: null, files: [] }
+      : projectNativeCurrentArtifacts(
+          snapshot.nativeCurrentArtifacts,
+          source as { commit: string; tree: string },
+        );
+  if (_metadata && current.artifacts) {
+    const catalog = {
+      carriers: _metadata.publicationCarriers.map((row) => ({
+        ...row,
+        id: `${row.ecosystem}:${row.name}`,
+        declared: true,
+      })),
+    };
+    const github = nativeSupplierGithubArtifactDeclarations(_metadata);
+    for (const row of Object.values(current.artifacts)) {
+      if (_metadata.products[row.product]?.version !== row.version)
+        throw new Error('current native artifact differs from its source owner version');
+      if (row.artifact.startsWith('cargo:')) {
+        const carrier = resolveActualCarrier(catalog, 'cargo', row.artifact.slice(6));
+        if (carrier.product !== row.product)
+          throw new Error('current native Cargo artifact owner differs');
+      } else if (
+        !github.some(
+          (declaration) =>
+            declaration.product === row.product &&
+            `github-release:${declaration.asset.replaceAll('{version}', row.version)}` ===
+              row.artifact,
+        )
+      ) {
+        throw new Error('current native GitHub artifact is not declared');
+      }
+    }
+  }
   const selectedProducts = snapshot.selectedProducts === undefined ? [] : snapshot.selectedProducts;
   if (
     !Array.isArray(selectedProducts) ||
@@ -848,6 +885,7 @@ export function nativePublicationInputProjection(value: unknown, _metadata?: Rel
   return {
     selectedProducts: [...selectedProducts],
     nativeSwiftSource: swift.input,
+    nativeCurrentArtifacts: current.artifacts,
     supplierArtifacts: suppliers.artifacts,
     supplierPublications: Object.fromEntries(
       supplierPublications.map((publication) => [
@@ -863,6 +901,7 @@ export function nativePublicationInputProjection(value: unknown, _metadata?: Rel
       ...extensions.files,
       ...apple.files,
       ...swift.files,
+      ...current.files,
       ...suppliers.files,
     ],
   };
@@ -877,6 +916,7 @@ export function renderReleaseMetadata(
     extensionFinalInputs: {},
     nativeAppleBase: null,
     nativeSwiftSource: null,
+    nativeCurrentArtifacts: null,
     selectedProducts: [],
     supplierArtifacts: {},
     files: [],
@@ -919,6 +959,7 @@ export function renderReleaseMetadata(
     EXTENSION_FINAL_INPUTS: publicationInputs.extensionFinalInputs,
     NATIVE_APPLE_BASE_INPUT: publicationInputs.nativeAppleBase,
     NATIVE_SWIFT_SOURCE_INPUT: publicationInputs.nativeSwiftSource,
+    NATIVE_CURRENT_ARTIFACTS: publicationInputs.nativeCurrentArtifacts,
     PREPARED_NATIVE_SELECTED_PRODUCTS: publicationInputs.selectedProducts,
     COMPLETED_SUPPLIER_ARTIFACTS: publicationInputs.supplierArtifacts,
   };
@@ -945,10 +986,9 @@ export function renderReleaseMetadata(
     Object.entries(metadata.extensionSources).map(([sqlName, source]) => [
       sqlName,
       Object.fromEntries(
-        ['name', 'url', 'commit'].map((key) => [
-          key,
-          string(source[key], `${sqlName} acquisition ${key}`),
-        ]),
+        ['name', 'url', 'commit', ...(source.mirror_url === undefined ? [] : ['mirror_url'])].map(
+          (key) => [key, string(source[key], `${sqlName} acquisition ${key}`)],
+        ),
       ),
     ]),
   );

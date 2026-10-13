@@ -194,7 +194,7 @@ def postgres_native_targets(version):
     cc_library(name = "tools_headers", hdrs = native.glob(["src/bin/pg_dump/*.h", "src/bin/pg_basebackup/*.h", "src/bin/psql/*.h"]) + ["src/bin/psql/sql_help.h"],
                deps = [":server_headers"], includes = ["src/bin/pg_dump", "src/bin/pg_basebackup", "src/bin/psql"], target_compatible_with = _COMPATIBLE)
     frontend_deps = [":server_headers", ":common_frontend", ":port_frontend", ":libpq", ":frontend_utils"]
-    cc_binary(name = "pg_ctl", srcs = ["src/bin/pg_ctl/pg_ctl.c"], deps = [":server_headers", ":common_frontend", ":port_frontend"],
+    cc_binary(name = "pg_ctl", srcs = ["src/bin/pg_ctl/pg_ctl.c"], deps = [":server_headers", ":common_frontend", ":port_frontend"] + select({"@oliphaunt//build_defs/native:windows_x64": [":libpq"], "//conditions:default": []}),
               defines = ["FRONTEND"], copts = _COPTS, linkopts = NATIVE_RELEASE_LINKOPTS, target_compatible_with = _COMPATIBLE)
     cc_binary(name = "pg_config", srcs = POSTGRES_PG_CONFIG_SOURCES, deps = [":server_headers", ":common_frontend", ":port_frontend"],
               defines = ["FRONTEND"], copts = _COPTS, target_compatible_with = _COMPATIBLE)

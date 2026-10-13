@@ -256,6 +256,8 @@ wasix_seed = rule(implementation = _wasix_seed_impl, attrs = dict(SEED_REUSE_ATT
 def _seed_assets_impl(ctx):
     family = "native" if NativeSeedInfo in ctx.attr.seed else "wasix"
     seed = ctx.attr.seed[NativeSeedInfo] if family == "native" else ctx.attr.seed[WasixSeedInfo]
+    if ctx.attr.consumer_version and (family != "wasix" or not ctx.attr.testonly):
+        fail("an explicit seed consumer version requires private WASIX qualification")
     _action(ctx, {
         "family": family,
         "seed": seed.frozen.path,
@@ -265,7 +267,7 @@ def _seed_assets_impl(ctx):
         "target": seed.target,
         "icu": ctx.file.icu.path if ctx.file.icu else None,
         "version": _VERSION,
-        "runtimeVersion": _wasix_consumer_version() if family == "wasix" else PRODUCTS["liboliphaunt-native"]["version"],
+        "runtimeVersion": (ctx.attr.consumer_version or _wasix_consumer_version()) if family == "wasix" else PRODUCTS["liboliphaunt-native"]["version"],
         "contract": DATABASE_RESOURCE_CONTRACT,
         "archive": ctx.outputs.archive.path,
         "manifest": ctx.outputs.manifest.path,
@@ -277,6 +279,7 @@ def _seed_assets_impl(ctx):
 seed_assets = rule(implementation = _seed_assets_impl, attrs = {
     "seed": attr.label(providers = [[NativeSeedInfo], [WasixSeedInfo]], mandatory = True),
     "consumer_runtime": attr.label(allow_single_file = True),
+    "consumer_version": attr.string(doc = "Explicit WASIX consuming runtime version; omission retains public resource admission."),
     "icu": attr.label(allow_single_file = True),
     "archive": attr.output(mandatory = True),
     "manifest": attr.output(mandatory = True),
@@ -340,14 +343,28 @@ def _shipping(name, rows, suppliers = None, observation_inputs = []):
         packages.append(":" + label)
     return packages
 
-def seed_envelopes(prefix, family, target, profile, seed, icu = None, compatible = [], consumer_runtime = None, suppliers = None):
-    """Use the one canonical row expansion and existing writers for one seed."""
+def _seed_artifact_rows(family, target, profile):
     rows = [row for row in DATABASE_RESOURCE_ARTIFACTS if row["kind"] == family + "-seeds" and row["target"] == target and ("." + profile + ".") in row["id"]]
     archives = [row for row in rows if row["asset"].endswith(".tar.zst")]
     manifests = [row for row in rows if row["asset"].endswith(".json")]
     if len(archives) != 1 or len(manifests) != 1:
         fail("seed envelopes require exactly the canonical archive and manifest")
-    archive, manifest = archives[0], manifests[0]
+    return archives[0], manifests[0]
+
+def wasix_current_seed_assets(name, profile = "standard"):
+    """Private current-module admission preserves the original seed and creator."""
+    archive, manifest = _seed_artifact_rows("wasix", "portable", profile)
+    seed_assets(name = name, seed = "//src/database-resources:wasix_" + profile + "_seed",
+                icu = "//src/database-resources:icu_payload" if profile == "icu" else None,
+                consumer_runtime = "//src/wasix/runtime:portable_payload", consumer_version = PRODUCTS["liboliphaunt-wasix"]["version"],
+                archive = name + "/" + archive["asset"].replace("{version}", _VERSION), manifest = name + "/" + manifest["asset"].replace("{version}", _VERSION),
+                target_compatible_with = _LINUX_X64, testonly = True)
+    for group in ["archive", "manifest"]:
+        native.filegroup(name = name + "_" + group, srcs = [":" + name], output_group = group, testonly = True)
+
+def seed_envelopes(prefix, family, target, profile, seed, icu = None, compatible = [], consumer_runtime = None, suppliers = None):
+    """Use the one canonical row expansion and existing writers for one seed."""
+    archive, manifest = _seed_artifact_rows(family, target, profile)
     seed_assets(name = prefix + "_assets", seed = seed, icu = icu, consumer_runtime = consumer_runtime,
                 archive = archive["asset"].replace("{version}", _VERSION), manifest = manifest["asset"].replace("{version}", _VERSION), target_compatible_with = compatible)
     packages = []
@@ -465,6 +482,7 @@ def wasix_sdk_resource_test(name):
     bun_script_test(name = name, entry_point = "//build_defs/resources:wasix_sdk_resource.test.mts",
         args = ["$(location " + label + ")" for label in labels] + [_VERSION, PRODUCTS["liboliphaunt-wasix"]["version"]] + ["$(location " + label + ")" for label in seeds],
         data = labels + seeds + ["//build_defs/resources:helpers"],
+        source_files = ["//build_defs/resources:helpers"],
         size = "large", timeout = "long", target_compatible_with = _LINUX_X64,
         exec_compatible_with = _LINUX_X64 + ["@zig_sdk//libc:gnu.2.34"])
 

@@ -23,21 +23,26 @@ def _layout(ctx, output_directory):
     ctx.actions.write(paths, "".join(['#define ' + key + ' "' + prefix + '/' + value + '"\n' for key, value in _DIRECTORIES.items()]))
     return [os_header, paths]
 
-def _pg_config_impl(ctx):
-    parts = ctx.attr.version.split(".")
+def postgres_configuration_values(version, values, profile):
+    """Combine explicit product policy and conventional PostgreSQL version fields."""
+    parts = version.split(".")
     major = int(parts[0])
     minor = int(parts[1])
-    values = dict(ctx.attr.values)
+    values = dict(values)
     values.update({
-        "PACKAGE_STRING": '"PostgreSQL ' + ctx.attr.version + '"',
-        "PACKAGE_VERSION": '"' + ctx.attr.version + '"',
+        "PACKAGE_STRING": '"PostgreSQL ' + version + '"',
+        "PACKAGE_VERSION": '"' + version + '"',
         "PG_MAJORVERSION": '"' + parts[0] + '"',
         "PG_MAJORVERSION_NUM": str(major),
         "PG_MINORVERSION_NUM": str(minor),
-        "PG_VERSION": '"' + ctx.attr.version + '"',
+        "PG_VERSION": '"' + version + '"',
         "PG_VERSION_NUM": str(major * 10000 + minor),
-        "PG_VERSION_STR": '"PostgreSQL ' + ctx.attr.version + ' ' + ctx.attr.profile + ', ' + str(int(values["SIZEOF_VOID_P"]) * 8) + '-bit"',
+        "PG_VERSION_STR": '"PostgreSQL ' + version + ' ' + profile + ', ' + str(int(values["SIZEOF_VOID_P"]) * 8) + '-bit"',
     })
+    return values
+
+def _pg_config_impl(ctx):
+    values = postgres_configuration_values(ctx.attr.version, ctx.attr.values, ctx.attr.profile)
     config = ctx.actions.declare_file("src/include/pg_config.h")
     ctx.actions.expand_template(
         template = ctx.file.template,

@@ -187,6 +187,7 @@ test('source receipt hashes only the declared series in order and normalizes CRL
   const patchSha = digest(`${digest(series)}\n${digest(bytes)}\n`);
   const result = await sourceFacts(facts);
   expect(result.source_fingerprint).toBe(`18.4:${sourceSha}:${patchSha}`);
+  expect(result.postgres_version).toBe('18.4');
   expect(result.sources.at(-1)?.commit).toBe(patchSha);
   await writeFile(postgresSeries, series.replaceAll('\n', '\r\n'));
   await writeFile(patch, bytes.replaceAll('\n', '\r\n'));

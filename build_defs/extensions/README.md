@@ -10,9 +10,13 @@ module and dependency recipes are implemented and tested.
 
 Source pins, SQL defaults, release identities, carrier ownership and permitted
 resources come from `@oliphaunt_metadata`, imported from existing descriptors.
-External source repositories use full immutable Git commits. The pgTAP tool
-expands the pinned SQL inputs and compatibility patches with TypeScript using
-pinned Bun, then invokes the exact upstream gencore and uninstall Perl code
+External source repositories use full immutable Git commits. The Bazel importer
+uses the reviewed Git mirror as the fetch remote when one is declared,
+while preserving the canonical upstream URL and exact commit as source identity.
+Stock Bazel Git repository rules accept one remote; they do not implement
+canonical-to-mirror failover. Archive sources retain their declared URL list.
+The pgTAP tool expands the pinned SQL inputs and compatibility patches with
+TypeScript using pinned Bun, then invokes the exact upstream gencore and uninstall Perl code
 through the declared Perl toolchain. It does not invoke PGXS, Make or pg_config.
 Its Makefile recipe fingerprint fails closed when installation semantics change.
 The per-pin parity test compares all installed bytes with real upstream

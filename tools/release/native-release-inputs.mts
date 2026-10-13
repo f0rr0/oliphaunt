@@ -24,8 +24,10 @@ import {
   type ExtensionFinalInput,
   type ExtensionFinalInputFile,
   type NativeAppleBaseInput,
+  type NativeCurrentArtifact,
   type NativeSwiftSourceInput,
   projectNativeAppleBaseInput,
+  projectNativeCurrentArtifacts,
   projectNativeExtensionFinalInputs,
   projectNativeSwiftSourceInput,
 } from './native-extension-final-inputs.mts';
@@ -92,10 +94,11 @@ export type NativeReleaseFinalInputs = {
   extensionFinalInputs?: ExtensionFinalInput[];
   nativeAppleBase?: NativeAppleBaseInput;
   nativeSwiftSource?: NativeSwiftSourceInput;
+  nativeCurrentArtifacts?: NativeCurrentArtifact[];
 };
 const finalInputFields = (value: NativeReleaseFinalInputs) =>
-  ['extensionFinalInputs', 'nativeAppleBase', 'nativeSwiftSource'].filter((name) =>
-    Object.hasOwn(value, name),
+  ['extensionFinalInputs', 'nativeAppleBase', 'nativeSwiftSource', 'nativeCurrentArtifacts'].filter(
+    (name) => Object.hasOwn(value, name),
   );
 const fields = (value: unknown, names: string[]) => {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value));
@@ -346,7 +349,11 @@ function assertSupplierFiles(value: unknown, publications: CompletedPublication[
   return rows;
 }
 
-function assertFinalInputFiles(inputs: NativeReleaseFinalInputs) {
+function assertFinalInputFiles(inputs: NativeReleaseFinalInputs & { source?: NativeBuildSource }) {
+  if (inputs.nativeCurrentArtifacts !== undefined) {
+    const source = inputs.source ?? inputs.nativeCurrentArtifacts[0]?.source;
+    projectNativeCurrentArtifacts(inputs.nativeCurrentArtifacts, source);
+  }
   if (inputs.extensionFinalInputs !== undefined)
     projectNativeExtensionFinalInputs(inputs.extensionFinalInputs);
   if (inputs.nativeAppleBase !== undefined) projectNativeAppleBaseInput(inputs.nativeAppleBase);
@@ -358,6 +365,14 @@ function mapFinalInputFiles(
   map: (file: ExtensionFinalInputFile) => ExtensionFinalInputFile,
 ): NativeReleaseFinalInputs {
   return {
+    ...(inputs.nativeCurrentArtifacts === undefined
+      ? {}
+      : {
+          nativeCurrentArtifacts: inputs.nativeCurrentArtifacts.map((row) => ({
+            ...row,
+            file: map(row.file),
+          })),
+        }),
     ...(inputs.extensionFinalInputs === undefined
       ? {}
       : {

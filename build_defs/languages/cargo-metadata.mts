@@ -1,11 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+  cargoSatisfies,
   renderCargoToml as renderToml,
   resolveCargoWorkspaceInheritance,
 } from '../../tools/packaging/cargo-manifest.mts';
 
-export { renderCargoToml as renderToml } from '../../tools/packaging/cargo-manifest.mts';
+export {
+  cargoSatisfies,
+  renderCargoToml as renderToml,
+} from '../../tools/packaging/cargo-manifest.mts';
 
 type Table = Record<string, any>;
 const dependencySections = ['dependencies', 'dev-dependencies', 'build-dependencies'];
@@ -25,16 +29,6 @@ function inheritedPackage(manifest: Table, workspace: Table): Table {
         : value,
     ]),
   );
-}
-
-function cargoRequirement(requirement: string): string {
-  const range = requirement.replaceAll(',', ' ');
-  return /^\d/.test(range) ? `^${range}` : range;
-}
-
-export function cargoSatisfies(version: string, requirement: string): boolean {
-  // Cargo ignores build metadata for version requirements; Bun does not.
-  return Bun.semver.satisfies(version.split('+', 1)[0], cargoRequirement(requirement));
 }
 
 export function projectCargoWorkspace(

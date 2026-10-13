@@ -1213,10 +1213,14 @@ export function assertNativeFinalShippingPhase(
 ) {
   if (selectedProducts.includes('oliphaunt-swift'))
     assertNativeSwiftShippingPhase(qualification, 'final');
-  if (!selectedProducts.includes('oliphaunt-rust')) return;
   for (const cohort of qualification.cohorts)
     for (const root of cohort.roots.filter(
-      (root) => root.package.product === 'oliphaunt-rust' && root.package.ecosystem === 'cargo',
+      (root) =>
+        selectedProducts.includes(root.package.product) &&
+        root.package.ecosystem === 'cargo' &&
+        ((root.package.product === 'oliphaunt-rust' && root.package.name === 'oliphaunt') ||
+          (root.package.product === 'oliphaunt-broker' &&
+            root.package.name === 'oliphaunt-broker')),
     )) {
       const policies = (cohort.qualificationPolicy?.policies ?? []).filter((policy) =>
         policy.roots.includes(canonicalShippingLabel(root.label)),
@@ -1228,7 +1232,7 @@ export function assertNativeFinalShippingPhase(
         )
       )
         throw new Error(
-          'final selected Rust SDK requires its configured declared-minimum consumer test',
+          'final selected Cargo source requires its configured declared-minimum consumer test',
         );
     }
 }

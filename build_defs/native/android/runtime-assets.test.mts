@@ -1,20 +1,12 @@
 import assert from 'node:assert/strict';
-import {
-  copyFileSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  statSync,
-} from 'node:fs';
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { bindNativeRuntimeResourceManifest } from '../../../src/native/runtime/tools/native-runtime-carrier-contract.mts';
 import {
   compareNativeMobileAbiReceipts,
   NATIVE_MOBILE_ABI_TARGETS_BY_DOMAIN,
 } from '../../../src/native/runtime/tools/native-mobile-abi-contract.mts';
+import { bindNativeRuntimeResourceManifest } from '../../../src/native/runtime/tools/native-runtime-carrier-contract.mts';
 import { validateMavenCentralPublication } from '../../../tools/packaging/maven-central-contract.mts';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
 import { copyDeclaredTree } from '../carriers/payload.mts';
@@ -82,14 +74,17 @@ if (import.meta.main) {
   try {
     const artifacts = new Map<string, string>();
     const maven = new Map<string, string>();
-    for (let index = 0; index < arguments_.length; index += 3) {
-      const [kind, identity, source] = arguments_.slice(index, index + 3);
-      assert(identity && source, 'Android runtime test requires complete declared final inputs');
+    for (let index = 0; index < arguments_.length; index += 4) {
+      const [kind, identity, source, declaredPath] = arguments_.slice(index, index + 4);
+      assert(
+        identity && source && declaredPath,
+        'Android runtime test requires complete declared final inputs',
+      );
       const target = kind === 'asset' ? artifacts : maven;
       assert(['asset', 'maven'].includes(kind) && !target.has(identity));
       const destination = path.join(root, `input-${index}`);
       if (kind === 'asset') copyFileSync(source, destination);
-      else copyDeclaredTree(realpathSync(source), destination);
+      else copyDeclaredTree(source, destination, undefined, declaredPath);
       target.set(identity, destination);
     }
     checkAndroidRuntimeAssets(metadata, artifacts, maven);

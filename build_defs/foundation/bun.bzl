@@ -60,7 +60,8 @@ def bun_test_entrypoint_args(name):
 
 def _bun_impl(ctx):
     runtime = ctx.toolchains[BUN_TOOLCHAIN_TYPE]
-    result = _bun_test_entrypoint(ctx, ctx.file.entry_point, [], ctx.files.data, test_runner = ctx.attr.test_runner)
+    result = _bun_test_entrypoint(ctx, ctx.file.entry_point, [], ctx.files.data, test_runner = ctx.attr.test_runner,
+                                  source_files = ctx.files.source_files if ctx.attr.source_files else None)
     info = result.info
     runfiles = info.default_runfiles
     for dep in ctx.attr.data:
@@ -100,6 +101,8 @@ def bun_file_action(ctx, entry_point, arguments = [], inputs = [], source_files 
 _ATTRS = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
     "entry_point": attr.label(allow_single_file = [".ts", ".mts"], mandatory = True),
     "data": attr.label_list(allow_files = True),
+    # An empty list preserves the existing data-as-module-inputs default.
+    "source_files": attr.label_list(allow_files = True),
     "test_runner": attr.bool(default = False),
 })
 

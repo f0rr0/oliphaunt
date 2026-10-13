@@ -64,6 +64,62 @@ test('native package consumers follow their producers and remain required for ad
   for (const name of ['package_test', 'installed_consumer_test'])
     assert.ok(!linux.includes(`//src/native/sdks/react-native:${name}`));
   assert.ok(linux.includes('//src/native/sdks/react-native:lifecycle_test'));
+  const source = readFileSync(path.resolve(import.meta.dir, '../../BUILD.bazel'), 'utf8');
+  const exports = (owner: string) => {
+    const declaration = source.match(
+      new RegExp(`shipping_export\\(\\n\\s*name = "${owner}",\\n([\\s\\S]*?)\\n\\)`, 'u'),
+    );
+    assert.ok(declaration, `Missing source-owned shipping export: ${owner}`);
+    return new Set([...declaration[1].matchAll(/"(\/\/[^"\n]+)"/gu)].map((row) => row[1]));
+  };
+  const early = exports('native_shipping_export');
+  const family = exports('release_family_shipping_export');
+  for (const owner of [
+    '//src/native/rust-bindings:shipping_export',
+    '//src/native/sdks/rust:shipping_export',
+    '//src/native/sdks/rust/crates/oliphaunt-build:shipping_export',
+    '//src/native/broker:shipping_export',
+  ]) {
+    assert.ok(
+      !early.has(owner),
+      `Cargo installed consumer requested before all carriers: ${owner}`,
+    );
+    assert.ok(family.has(owner), `Cargo source owner lost its final qualification: ${owner}`);
+  }
+  for (const producer of ['portable', 'linux', 'release-inputs'])
+    assert.ok(predecessors('release-families').has(producer));
+  for (const owner of [
+    '//src/native/rust-bindings:compiled_shipping_export',
+    '//src/native/broker:native_shipping_export',
+    '//src/query/rust:shipping_export',
+    '//src/query/ts:shipping_export',
+  ])
+    assert.ok(early.has(owner), `Early source/compiled owner was unnecessarily deferred: ${owner}`);
+  for (const [id, job] of Object.entries(jobs)) {
+    if (id === 'release-families') continue;
+    const commands = job.steps.map((step: any) => step.run ?? '').join('\n');
+    assert.ok(!commands.includes('//build_defs/languages/installed:consumer_test'));
+    assert.ok(!commands.includes('//build_defs/languages/installed:consumer_minimum_test'));
+  }
+  qualifierFixture((directory, env) => {
+    const step = jobs['release-families'].steps.find((step: any) =>
+      step.run?.includes('--shipping-export //:release_family_shipping_export'),
+    );
+    const result = spawnSync('bash', ['-eu', '-c', step.run], { cwd: directory, env });
+    assert.equal(result.status, 0, result.stderr.toString());
+    const args = readFileSync(env.QUALIFIER_ARGS, 'utf8').split('\0');
+    assert.equal(args[args.indexOf('--shipping-export') + 1], '//:release_family_shipping_export');
+    const configuration = JSON.parse(
+      readFileSync(
+        path.join(env.RUNNER_TEMP, 'release-family-build-inputs/configuration.json'),
+        'utf8',
+      ),
+    );
+    assert.ok(configuration.includes('--platforms=//build_defs/native:linux_x86_64_glibc_2_28'));
+    assert.ok(
+      configuration.includes('--host_platform=//build_defs/native:linux_x86_64_glibc_2_28'),
+    );
+  });
 });
 
 test('private Rust packaging source tests execute once on Linux x64', () => {

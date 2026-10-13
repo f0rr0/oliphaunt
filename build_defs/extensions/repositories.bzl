@@ -42,7 +42,9 @@ def _extension_sources_impl(module_ctx):
         _git_commit(commit, "extension " + sql_name)
         new_git_repository(
             name = source["name"],
-            remote = source["url"],
+            # Stock Git rules accept one remote. Prefer the reviewed mirror;
+            # canonical source attribution and the exact commit stay unchanged.
+            remote = source.get("mirror_url", source["url"]),
             commit = commit,
             build_file_content = _BUILD + (_POSTGIS_INPUTS if sql_name == "postgis" else ""),
         )
@@ -54,7 +56,7 @@ def _extension_sources_impl(module_ctx):
                 _git_commit(source.get("commit", ""), "dependency %s/%s" % (sql_name, directory))
                 new_git_repository(
                     name = name,
-                    remote = source["url"],
+                    remote = source.get("mirror_url", source["url"]),
                     commit = source["commit"],
                     build_file_content = _DEPENDENCY_BUILD + _DEPENDENCY_INPUTS.get(directory, ""),
                 )

@@ -3,7 +3,7 @@ load("//build_defs/languages:rust.bzl", "cargo_doc_test", "cargo_generator", "ca
 load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
 load("//build_defs/languages:source.bzl", "cargo_source_package")
 load("//build_defs/native:rust-runtime-test.bzl", "native_rust_runtime_test")
-load("//build_defs/extensions:construction.bzl", "desktop_member_payloads")
+load("//build_defs/extensions:imported_members.bzl", "desktop_runtime_member_payloads")
 
 package(default_visibility = ["//visibility:public"])
 exports_files(["Cargo.toml", "release.toml"])
@@ -73,7 +73,7 @@ native_rust_runtime_test(
 native_rust_runtime_test(
     name = "native_extensions_runtime_test",
     binary = ":native_extensions_test",
-    extensions = desktop_member_payloads(include_postgis = True),
+    extensions = desktop_runtime_member_payloads(name = "native_extensions_runtime_members", include_postgis = True),
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
     size = "large",
     timeout = "long",

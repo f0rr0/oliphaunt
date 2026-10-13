@@ -24,22 +24,30 @@ import {
 } from './native-build-qualification.mts';
 import { captureNativeOutputMembers } from './native-publication-staging.mts';
 
-test('selected Rust source final admission requires the actual minimum test on every source carrier', () => {
+test('selected SDK and Broker final sources require minimum proof, without a helper-only or held trigger', () => {
   const common = '//build_defs/languages/installed:consumer_test';
   const minimum = '//build_defs/languages/installed:consumer_minimum_test';
-  const labels = [
-    '//src/native/sdks/rust:shipping_package',
-    '//src/native/sdks/rust/crates/oliphaunt-build:shipping_package',
+  const descriptors = [
+    ['//src/native/sdks/rust:shipping_package', 'oliphaunt-rust', 'oliphaunt'],
+    [
+      '//src/native/sdks/rust/crates/oliphaunt-build:shipping_package',
+      'oliphaunt-rust',
+      'oliphaunt-build',
+    ],
+    ['//src/native/broker:shipping_package', 'oliphaunt-broker', 'oliphaunt-broker'],
   ];
   const qualification = {
     cohorts: [
       {
-        roots: labels.map((label) => ({
+        roots: descriptors.map(([label, product, name]) => ({
           label,
-          package: { product: 'oliphaunt-rust', ecosystem: 'cargo' },
+          package: { product, name, ecosystem: 'cargo' },
         })),
         qualificationPolicy: {
-          policies: labels.map((label) => ({ roots: [label], requiredTests: [{ label: common }] })),
+          policies: descriptors.map(([label]) => ({
+            roots: [label],
+            requiredTests: [{ label: common }],
+          })),
         },
       },
     ],
@@ -50,14 +58,20 @@ test('selected Rust source final admission requires the actual minimum test on e
   expect(() => assertNativeFinalShippingPhase(qualification, ['oliphaunt-rust'])).toThrow(
     'declared-minimum',
   );
-  qualification.cohorts[0].qualificationPolicy.policies[0].requiredTests.push({ label: minimum });
-  expect(() => assertNativeFinalShippingPhase(qualification, ['oliphaunt-rust'])).toThrow(
+  expect(() => assertNativeFinalShippingPhase(qualification, ['oliphaunt-broker'])).toThrow(
     'declared-minimum',
   );
-  qualification.cohorts[0].qualificationPolicy.policies[1].requiredTests.push({ label: minimum });
+  qualification.cohorts[0].qualificationPolicy.policies[0].requiredTests.push({ label: minimum });
   expect(() => assertNativeFinalShippingPhase(qualification, ['oliphaunt-rust'])).not.toThrow();
-  qualification.cohorts[0].qualificationPolicy.policies[1].requiredTests[1].label = `${minimum}_fixture`;
-  expect(() => assertNativeFinalShippingPhase(qualification, ['oliphaunt-rust'])).toThrow(
+  expect(() =>
+    assertNativeFinalShippingPhase(qualification, ['oliphaunt-rust', 'oliphaunt-broker']),
+  ).toThrow('declared-minimum');
+  qualification.cohorts[0].qualificationPolicy.policies[2].requiredTests.push({ label: minimum });
+  expect(() =>
+    assertNativeFinalShippingPhase(qualification, ['oliphaunt-rust', 'oliphaunt-broker']),
+  ).not.toThrow();
+  qualification.cohorts[0].qualificationPolicy.policies[2].requiredTests[1].label = `${minimum}_fixture`;
+  expect(() => assertNativeFinalShippingPhase(qualification, ['oliphaunt-broker'])).toThrow(
     'declared-minimum',
   );
 });

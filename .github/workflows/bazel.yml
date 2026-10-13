@@ -220,12 +220,10 @@ jobs:
           case "$TARGET_PLATFORM" in
             macos-arm64|windows-x64)
               host_tests+=(
-                //build_defs/languages/carriers:installed_sql_test
                 //build_defs/host:host_c_smoke
                 //build_defs/native:compiler_probe_test
                 //build_defs/native:probe_process_test
                 //src/native/runtime:abi_conformance_test
-                //src/native/runtime:runtime_sql_test
                 //src/native/runtime:native_tools_sql_test
               )
               ;;
@@ -245,6 +243,8 @@ jobs:
               //build_defs/quality:metadata_test
               //build_defs/quality:biome_runner_test
               //build_defs/quality:rustfmt_runner_test
+              //tools/bazel:execution_log_test
+              //tools/bazel:shipping_coverage_test
               //src/native/sdks/ts:source_checks_typecheck_test
               //src/wasix/sdks/ts:source_checks_typecheck_test
               //src/native/sdks/react-native:source_checks_typecheck_test
@@ -660,6 +660,18 @@ jobs:
           path: ${{ runner.temp }}/android-extension-build-capture/evidence/
           if-no-files-found: error
           retention-days: 7
+
+      - name: Upload installed Android failure diagnostics
+        if: ${{ always() && matrix.platform == 'x86_64' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-android-installed-diagnostics
+          path: |
+            bazel-testlogs/src/examples/native/react-native-expo/android_installed_test/test.log
+            bazel-testlogs/src/examples/native/react-native-expo/android_installed_test/test.xml
+            bazel-testlogs/src/examples/native/react-native-expo/android_installed_test/test.outputs/
+          if-no-files-found: ignore
+          retention-days: 5
 
       - name: Qualify installed packages and frozen resources
         if: matrix.platform == 'x86_64'

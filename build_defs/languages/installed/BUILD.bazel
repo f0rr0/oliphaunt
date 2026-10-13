@@ -1,7 +1,7 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":defs.bzl", "installed_cargo_tests")
-load(":source-compile.bzl", "source_compile_test")
+load(":source-compile.bzl", "source_compile_selection_test", "source_compile_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -39,7 +39,7 @@ exports_files([
     "wasix/query/Cargo.lock", "wasix/query/registry-index.json",
 ])
 
-bun_test(
+source_compile_selection_test(
     name = "source_compile_selection_test",
     entry_point = "source-compile.test.mts",
     data = [
@@ -49,6 +49,7 @@ bun_test(
         "//:tools/packaging/cargo-manifest.mts", "//:tools/packaging/frozen-cargo.mts",
         "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts",
     ],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 )
 
 source_compile_test(

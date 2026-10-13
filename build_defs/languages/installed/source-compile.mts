@@ -12,20 +12,86 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { renderCargoToml } from '../../../tools/packaging/cargo-manifest.mts';
-import { stageCargoCarrierInputs } from '../../../tools/packaging/frozen-cargo.mts';
+import {
+  cargoDependencyMinimum,
+  renderCargoToml,
+  resolveCargoWorkspaceInheritance,
+} from '../../../tools/packaging/cargo-manifest.mts';
+import {
+  assertCargoSourceArtifacts,
+  stageCargoCarrierInputs,
+} from '../../../tools/packaging/frozen-cargo.mts';
 import { type CargoLinkConfiguration, cargoLinkEnvironment } from '../cargo-environment.mts';
-import { cargoCandidate } from './consumer.mts';
+import { cargoSatisfies } from '../cargo-metadata.mts';
+import { cargoCandidate, cargoPayloadInputs, cargoPayloadPool } from './consumer.mts';
 import { type RegistryContext, validateRegistryContext, writeRegistryIndex } from './context.mts';
 
 type Candidate = ReturnType<typeof cargoCandidate>;
 
-/** Select only actual local envelopes; the captured lock keeps compatible held identities. */
+type SourceInput = { manifest: string; workspace: string };
+
+/** Original path intent must identify one of the explicitly supplied source packages. */
+export function currentPathDependencies(
+  sources: Record<string, SourceInput>,
+  localNames = new Set(Object.keys(sources)),
+) {
+  const result: Record<string, string[]> = {};
+  for (const [name, source] of Object.entries(sources)) {
+    const original = Bun.TOML.parse(readFileSync(source.manifest, 'utf8'));
+    const workspace = Bun.TOML.parse(readFileSync(source.workspace, 'utf8')).workspace ?? {};
+    const manifest = resolveCargoWorkspaceInheritance(original, workspace);
+    assert.equal(manifest.package.name, name);
+    const adopted = new Set<string>();
+    for (const [target, table] of [['', manifest], ...Object.entries(manifest.target ?? {})] as [
+      string,
+      any,
+    ][]) {
+      const authored = target ? original.target[target] : original;
+      for (const section of ['dependencies', 'dev-dependencies', 'build-dependencies']) {
+        for (const [alias, dependency] of Object.entries(table[section] ?? {}) as [string, any][]) {
+          if (!dependency?.path) continue;
+          const packageName = dependency.package ?? alias;
+          // Linked payload carriers remain genuine registry inputs in this worker.
+          if (!localNames.has(packageName)) continue;
+          const supplier = sources[packageName];
+          assert(supplier, `Missing explicit current path archive: ${packageName}`);
+          const base =
+            authored[section]?.[alias]?.workspace === true ? source.workspace : source.manifest;
+          assert.equal(
+            realpathSync(
+              path.resolve(path.dirname(realpathSync(base)), dependency.path, 'Cargo.toml'),
+            ),
+            realpathSync(supplier.manifest),
+            `Current path does not identify the declared source archive: ${packageName}`,
+          );
+          adopted.add(packageName);
+        }
+      }
+    }
+    result[name] = [...adopted];
+  }
+  return result;
+}
+
+/** Retain published requirements; explicit paths qualify current construction before versioning. */
 export function sourceCandidates(
   root: Candidate,
   pool: Candidate[],
   lockText: string,
   heldPool: Candidate[] = [],
+  {
+    minimum = false,
+    currentPaths = {},
+    includeDev = true,
+    sourceOwners = {},
+    selectedProducts = [],
+  }: {
+    minimum?: boolean;
+    currentPaths?: Record<string, string[]>;
+    includeDev?: boolean;
+    sourceOwners?: Record<string, { product: string; version: string }>;
+    selectedProducts?: string[];
+  } = {},
 ) {
   const lock = Bun.TOML.parse(lockText);
   assert.equal(lock.version, 4);
@@ -55,14 +121,16 @@ export function sourceCandidates(
   const current = available([root, ...pool]),
     completed = available(heldPool);
   const selected = new Map([[root.name, root]]);
+  const currentOwners = new Set([root.name]);
   const pending = [root];
-  const satisfies = (version: string, requirement: string) => {
-    const range = requirement.replaceAll(',', ' ');
-    return Bun.semver.satisfies(version.split('+', 1)[0], /^\d/u.test(range) ? `^${range}` : range);
-  };
   for (const owner of pending) {
+    const requirements = new Map<string, string[]>();
     for (const table of [owner.manifest, ...Object.values(owner.manifest.target ?? {})] as any[]) {
-      for (const section of ['dependencies', 'dev-dependencies', 'build-dependencies']) {
+      for (const section of [
+        'dependencies',
+        ...(includeDev ? ['dev-dependencies'] : []),
+        'build-dependencies',
+      ]) {
         for (const [alias, declaration] of Object.entries(table[section] ?? {})) {
           const dependency =
             typeof declaration === 'string' ? { version: declaration } : (declaration as any);
@@ -75,38 +143,64 @@ export function sourceCandidates(
               !dependency.workspace,
             `Local requirement is not conventional: ${name}`,
           );
-          const already = selected.get(name);
-          if (already) {
-            assert(
-              satisfies(already.version, dependency.version),
-              `Conflicting packaged local requirement: ${name} ${dependency.version}`,
-            );
-            continue;
-          }
-          const matching = [...current.values()].filter(
-            (row) => row.name === name && satisfies(row.version, dependency.version),
-          );
-          const heldVersion = locals.get(name).version;
-          const held = completed.get(`${name}@${heldVersion}`);
-          const retainsHeld = satisfies(heldVersion, dependency.version);
-          assert(!retainsHeld || held, `Missing actual held local archive: ${name}@${heldVersion}`);
-          assert(
-            retainsHeld || matching.length === 1,
-            `Missing or ambiguous actual local archive: ${name} ${dependency.version}`,
-          );
-          const chosen = retainsHeld ? held : matching[0];
-          assert(chosen);
-          selected.set(name, chosen);
-          pending.push(chosen);
+          requirements.set(name, [...(requirements.get(name) ?? []), dependency.version]);
         }
       }
     }
+    for (const [name, ranges] of requirements) {
+      const already = selected.get(name);
+      if (already) {
+        assert(
+          ranges.every((range) => cargoSatisfies(already.version, range)),
+          `Conflicting packaged local requirement: ${name} ${ranges.join(', ')}`,
+        );
+        if (!minimum && currentOwners.has(owner.name) && currentPaths[owner.name]?.includes(name))
+          assert(currentOwners.has(name), `Current path overlaps a held source identity: ${name}`);
+        continue;
+      }
+      const matching = [...current.values()].filter(
+        (row) => row.name === name && ranges.every((range) => cargoSatisfies(row.version, range)),
+      );
+      let chosen: Candidate | undefined;
+      let fromCurrent = false;
+      if (minimum) {
+        const floor = cargoDependencyMinimum(ranges);
+        const key = `${name}@${floor}`;
+        const held = completed.get(key);
+        chosen = held ?? current.get(key);
+        const owner = sourceOwners[name];
+        assert(
+          chosen &&
+            (held || (owner?.version === floor && selectedProducts.includes(owner.product))),
+          `Missing actual local dependency minimum: ${key}`,
+        );
+      } else if (currentOwners.has(owner.name) && currentPaths[owner.name]?.includes(name)) {
+        assert.equal(matching.length, 1, `Missing or ambiguous current path archive: ${name}`);
+        chosen = matching[0];
+        fromCurrent = true;
+      } else {
+        const heldVersion = locals.get(name).version;
+        const retainsHeld = ranges.every((range) => cargoSatisfies(heldVersion, range));
+        chosen = retainsHeld ? completed.get(`${name}@${heldVersion}`) : matching[0];
+        fromCurrent = !retainsHeld;
+        assert(!retainsHeld || chosen, `Missing actual held local archive: ${name}@${heldVersion}`);
+        assert(
+          retainsHeld || matching.length === 1,
+          `Missing or ambiguous actual local archive: ${name} ${ranges.join(', ')}`,
+        );
+      }
+      assert(chosen);
+      selected.set(name, chosen);
+      if (fromCurrent) currentOwners.add(name);
+      pending.push(chosen);
+    }
   }
-  assert.equal(
-    selected.size,
-    locals.size,
-    'Captured local package closure differs from actual source manifests',
-  );
+  if (includeDev)
+    assert.equal(
+      selected.size,
+      locals.size,
+      'Captured local package closure differs from actual source manifests',
+    );
   return [...selected.values()];
 }
 
@@ -180,19 +274,53 @@ export async function sourceCompile(
       return candidate;
     });
     const capturedLock = readFileSync(file(spec.lock), 'utf8');
-    const candidates = sourceCandidates(
+    const sourceInputs = Object.fromEntries(
+      Object.entries(spec.sources ?? {}).map(([archive, source]: [string, any]) => {
+        const candidate = archivePool[spec.archives.indexOf(archive)];
+        assert(candidate, 'Original source manifest is outside the explicit archive pool');
+        return [
+          candidate.name,
+          { manifest: file(source.manifest), workspace: file(source.workspace) },
+        ];
+      }),
+    );
+    const currentPaths = currentPathDependencies(
+      sourceInputs,
+      new Set(
+        Bun.TOML.parse(capturedLock)
+          .package.filter((row: any) => !row.source)
+          .map((row: any) => row.name),
+      ),
+    );
+    const sourcePool = sourceCandidates(
       archivePool[0],
       archivePool.slice(1),
       capturedLock,
       heldPool,
+      { currentPaths },
     );
-    const candidate = candidates[0];
+    const payloadPool = cargoPayloadPool(
+      spec.payloadPool ?? { completed: [], current: [], owners: {} },
+      spec.sourceOwners ?? {},
+      file,
+      archiveDirectory,
+    );
+    const payloadOptions = {
+      currentSources: archivePool,
+      sourceOwners: spec.sourceOwners ?? {},
+      selectedProducts: spec.selectedProducts ?? [],
+    };
+    const candidates = [
+      ...sourcePool,
+      ...cargoPayloadInputs(sourcePool, payloadPool, payloadOptions),
+    ];
+    const candidate = sourcePool[0];
     const config = stageCargoCarrierInputs(candidates, output);
     const directory = path.join(output, 'crates', `${candidate.name}-${candidate.version}`);
     const manifest = path.join(directory, 'Cargo.toml');
-    const lockText = sourceLock(capturedLock, candidates);
+    const seedLockText = sourceLock(capturedLock, sourcePool);
     const context = JSON.parse(readFileSync(file(spec.index), 'utf8')) as RegistryContext;
-    const archives = validateRegistryContext(lockText, context);
+    const archives = validateRegistryContext(seedLockText, context);
     const cargoHome = path.join(output, 'cargo-home');
     writeRegistryIndex(context, cargoHome);
     const expected = new Set<string>();
@@ -240,7 +368,7 @@ export async function sourceCompile(
     }
     assert.equal(supplied.size, expected.size, 'Captured Cargo repository is incomplete');
     const lock = path.join(directory, 'Cargo.lock');
-    writeFileSync(lock, lockText);
+    writeFileSync(lock, seedLockText);
     const env = {
       ...cargoLinkEnvironment(
         JSON.parse(readFileSync(file(spec.compiler), 'utf8')) as CargoLinkConfiguration,
@@ -270,11 +398,11 @@ export async function sourceCompile(
       context.target,
       'Installed source compilation requires the captured native host',
     );
-    async function cargo(name: string, command: string[]) {
+    async function cargo(name: string, command: string[], cwd = directory, configuration = config) {
       const stdout = path.join(diagnostics, `${name}.stdout`),
         stderr = path.join(diagnostics, `${name}.stderr`);
-      const child = Bun.spawn([file(spec.cargo), '--config', config, ...command], {
-        cwd: directory,
+      const child = Bun.spawn([file(spec.cargo), '--config', configuration, ...command], {
+        cwd,
         env,
         stdin: 'ignore',
         stdout: Bun.file(stdout),
@@ -298,6 +426,26 @@ export async function sourceCompile(
         await child.exited;
       }
     }
+    await cargo('generate-lock', ['generate-lockfile', '--offline', '--manifest-path', manifest]);
+    const lockText = readFileSync(lock, 'utf8');
+    const capturedRegistry = new Map(
+      Bun.TOML.parse(capturedLock)
+        .package.filter((row: any) => row.source)
+        .map((row: any) => [`${row.name}@${row.version}`, row]),
+    );
+    const assertCapturedRegistry = (text: string) => {
+      for (const row of Bun.TOML.parse(text).package.filter((row: any) => row.source)) {
+        const original = capturedRegistry.get(`${row.name}@${row.version}`) as any;
+        assert(
+          original && original.source === row.source && original.checksum === row.checksum,
+          'Cargo resolved outside the captured original registry identities: ' +
+            row.name +
+            '@' +
+            row.version,
+        );
+      }
+    };
+    assertCapturedRegistry(lockText);
     const metadata = JSON.parse(
       await cargo('metadata', [
         'metadata',
@@ -378,6 +526,204 @@ export async function sourceCompile(
         2,
       )}\n`,
     );
+    if (compile && spec.minimum) {
+      // The original package's tests can elevate normal dependencies through
+      // dev requirements. A dependent compiles the production source without them.
+      const minimumSources = sourceCandidates(
+        archivePool[0],
+        archivePool.slice(1),
+        capturedLock,
+        heldPool,
+        {
+          minimum: true,
+          includeDev: false,
+          sourceOwners: spec.sourceOwners ?? {},
+          selectedProducts: spec.selectedProducts ?? [],
+        },
+      );
+      const minimumCandidates = [
+        ...minimumSources,
+        ...cargoPayloadInputs(minimumSources, payloadPool, {
+          ...payloadOptions,
+          includeDev: false,
+        }),
+      ];
+      const minimumRoot = path.join(output, 'minimum');
+      const minimumConfig = stageCargoCarrierInputs(minimumCandidates, minimumRoot);
+      const minimumSource = path.join(
+        minimumRoot,
+        'crates',
+        `${candidate.name}-${candidate.version}`,
+      );
+      const enabledFeatures = new Set(
+        metadata.resolve.nodes.find((node: any) => node.id === selected.id).features,
+      );
+      const binaries = selected.targets.filter(
+        (target: any) =>
+          target.kind.includes('bin') &&
+          (target['required-features'] ?? []).every((feature: string) =>
+            enabledFeatures.has(feature),
+          ),
+      );
+      const hasBinary = binaries.length > 0;
+      let minimumLockText: string | undefined;
+      let compiled: { name: string; version: string; manifestPath: string }[];
+      const staged = minimumCandidates.map(({ name, version }) => ({
+        name,
+        version,
+        manifestPath: path.join(minimumRoot, 'crates', `${name}-${version}`, 'Cargo.toml'),
+      }));
+      if (hasBinary) {
+        // Cargo install compiles original library and binary production targets;
+        // root tests and --locked would admit the root's development constraints.
+        compiled = assertCargoSourceArtifacts(
+          await cargo(
+            'minimum-install',
+            [
+              'install',
+              '--path',
+              minimumSource,
+              '--root',
+              path.join(minimumRoot, 'installed'),
+              '--debug',
+              '--offline',
+              '--jobs',
+              '2',
+              '--message-format',
+              'json',
+              ...binaries.flatMap((target: any) => ['--bin', target.name]),
+              ...spec.flags,
+            ],
+            minimumSource,
+            minimumConfig,
+          ),
+          staged,
+          [candidate.name],
+        );
+      } else {
+        const consumer = path.join(minimumRoot, 'consumer');
+        mkdirSync(path.join(consumer, 'src'), { recursive: true });
+        writeFileSync(path.join(consumer, 'src/lib.rs'), 'pub fn qualification() {}\n');
+        writeFileSync(
+          path.join(consumer, 'Cargo.toml'),
+          renderCargoToml({
+            package: { name: 'source-floor-consumer', version: '0.0.0', edition: '2021' },
+            dependencies: {
+              [candidate.name]: { version: `=${candidate.version}`, 'default-features': false },
+            },
+            features: Object.fromEntries(
+              Object.keys(candidate.manifest.features ?? {}).map((feature) => [
+                feature,
+                [`${candidate.name}/${feature}`],
+              ]),
+            ),
+          }),
+        );
+        const minimumLock = path.join(consumer, 'Cargo.lock');
+        writeFileSync(minimumLock, sourceLock(capturedLock, minimumSources));
+        await cargo('minimum-lock', ['generate-lockfile', '--offline'], consumer, minimumConfig);
+        const minimumMetadata = JSON.parse(
+          await cargo(
+            'minimum-metadata',
+            [
+              'metadata',
+              '--locked',
+              '--offline',
+              '--format-version',
+              '1',
+              '--filter-platform',
+              context.target,
+              ...spec.flags,
+            ],
+            consumer,
+            minimumConfig,
+          ),
+        );
+        for (const pkg of minimumMetadata.packages.filter(
+          (pkg: any) => pkg.source === null && pkg.id !== minimumMetadata.resolve.root,
+        )) {
+          const declared = minimumCandidates.find(
+            (row) => row.name === pkg.name && row.version === pkg.version,
+          );
+          assert(
+            declared,
+            `Cargo selected an undeclared minimum source: ${pkg.name}@${pkg.version}`,
+          );
+          assert.equal(
+            realpathSync(pkg.manifest_path),
+            realpathSync(
+              path.join(
+                minimumRoot,
+                'crates',
+                `${declared.name}-${declared.version}`,
+                'Cargo.toml',
+              ),
+            ),
+          );
+        }
+        assert(
+          minimumMetadata.packages.some(
+            (pkg: any) =>
+              pkg.source === null &&
+              pkg.name === candidate.name &&
+              pkg.version === candidate.version,
+          ),
+          'Dependent did not compile the actual source envelope',
+        );
+        minimumLockText = readFileSync(minimumLock, 'utf8');
+        assertCapturedRegistry(minimumLockText);
+        compiled = assertCargoSourceArtifacts(
+          await cargo(
+            'minimum-build',
+            [
+              'build',
+              '--locked',
+              '--offline',
+              '--jobs',
+              '2',
+              '--message-format',
+              'json',
+              ...spec.flags,
+            ],
+            consumer,
+            minimumConfig,
+          ),
+          staged,
+          [candidate.name],
+        );
+        assert.equal(
+          readFileSync(minimumLock, 'utf8'),
+          minimumLockText,
+          'Minimum compilation changed its resolved lock',
+        );
+      }
+      writeFileSync(
+        path.join(diagnostics, 'source-minimum-result.json'),
+        `${JSON.stringify(
+          {
+            scope: 'installed-source-dependent-minimum',
+            status: 'passed',
+            level: hasBinary
+              ? 'offline-production-install'
+              : 'locked-offline-dependent-compilation',
+            name: candidate.name,
+            version: candidate.version,
+            target: context.target,
+            flags: spec.flags,
+            archiveSha256: candidate.sha256,
+            ...(minimumLockText ? { cargoLockSha256: digest(minimumLockText) } : {}),
+            capturedCargoLockSha256: digest(capturedLock),
+            selectedCandidates: minimumCandidates
+              .filter((row) =>
+                compiled.some((pkg: any) => pkg.name === row.name && pkg.version === row.version),
+              )
+              .map(({ name, version, sha256 }) => ({ name, version, sha256 })),
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    }
   } finally {
     rmSync(output, { recursive: true, force: true });
   }
@@ -386,7 +732,7 @@ if (import.meta.main) {
   const [specification, runfiles] = Bun.argv.slice(2);
   if (specification === '--help')
     console.log(
-      'Declared compile-only qualification: SPEC RUNFILES. Genuine Cargo lock/index/cache and actual source archives required. No source rewriting or resolution.',
+      'Declared compile-only qualification: SPEC RUNFILES. Genuine Cargo lock/index/cache and actual source archives required. No source rewriting or network resolution.',
     );
   else {
     assert(specification && runfiles && Bun.argv.length === 4);

@@ -1,13 +1,18 @@
 """Actual wasm32 PostgreSQL compilation, with separate backend/frontend roles."""
 
 load("@rules_cc//cc:defs.bzl", _cc_library = "cc_library")
-load("//build_defs/native:config.bzl", "pg_config")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_srcs.bzl", "autoconf_srcs")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("//build_defs/native:config.bzl", "pg_config_layout", "postgres_configuration_values")
+load("//build_defs/native:host_config.bzl", "postgres_capability_checks")
 load("//build_defs/native:postgres.bzl", "postgres_generated_targets", "postgres_frontend_generated_targets", "postgres_resource_targets")
 load("//build_defs/native:resources.bzl", "timezone_database")
 load("//build_defs/native:frontend_sources.bzl", "POSTGRES_DUMP_COMMON_SOURCES", "POSTGRES_DUMP_SOURCES", "POSTGRES_PSQL_SOURCES")
 load("//build_defs/native:postgres_sources.bzl", "POSTGRES_FRONTEND_UTIL_SOURCES")
 load("//build_defs/native:postgres_sources.bzl", "POSTGRES_BACKEND_SOURCES", "POSTGRES_BACKEND_LINUX_SOURCES", "POSTGRES_BACKEND_GENERATED_SOURCES", "POSTGRES_BACKEND_TEXTUAL_SOURCES", "POSTGRES_BACKEND_INCLUDE_DIRECTORIES", "POSTGRES_CATALOG_GENERATED_HEADERS", "POSTGRES_NODE_GENERATED_TEXTUAL_SOURCES", "POSTGRES_WAIT_EVENT_GENERATED_TEXTUAL_SOURCES", "POSTGRES_BACKEND_GENERATED_HEADERS", "POSTGRES_COMMON_GENERATED_HEADERS", "POSTGRES_PLPGSQL_GENERATED_HEADERS", "POSTGRES_COMMON_SOURCES", "POSTGRES_COMMON_RYU_SOURCES", "POSTGRES_COMMON_CONFIG_INFO_SOURCES", "POSTGRES_COMMON_BUILTIN_CRYPTO_SOURCES", "POSTGRES_COMMON_FRONTEND_SHARED_ADDITIONAL_SOURCES", "POSTGRES_COMMON_FRONTEND_STATIC_ADDITIONAL_SOURCES", "POSTGRES_PORT_SOURCES", "POSTGRES_PORT_REPLACEMENT_SOURCES", "POSTGRES_PORT_CRC_GENERIC_SOURCES", "POSTGRES_TIMEZONE_SOURCES", "POSTGRES_MAIN_SOURCES", "POSTGRES_PLPGSQL_SOURCES", "POSTGRES_PLPGSQL_GENERATED_SOURCES", "POSTGRES_SNOWBALL_SOURCES", "POSTGRES_LIBPQ_SOURCES", "POSTGRES_INITDB_SOURCES")
-load(":config.bzl", "WASIX_CONFIG", "WASIX_COPTS", "WASIX_DEFINES")
+load(":config.bzl", "WASIX_POLICY", "WASIX_COPTS", "WASIX_DEFINES")
 
 _COMPATIBLE = ["@platforms//cpu:wasm32", "@platforms//os:wasi"]
 _INITDB_IDENTITY_DEFINES = [name + "=oliphaunt_wasix_" + name for name in ["geteuid", "getuid", "getegid", "getgid", "getpwuid", "getpwuid_r"]]
@@ -16,7 +21,17 @@ def cc_library(**kwargs):
     _cc_library(linkstatic = True, **kwargs)
 
 def postgres_wasix_targets(version):
-    pg_config(name = "configuration", template = "src/include/pg_config.h.in", os_header = "src/include/port/wasix-dl.h", version = version, values = WASIX_CONFIG, profile = "wasm32 WASIX", prefix = "")
+    # Probe libc itself, before the backend's host-I/O symbol redirections.
+    definitions = ["_GNU_SOURCE"]
+    policy = postgres_configuration_values(version, WASIX_POLICY, "wasm32 WASIX")
+    facts = postgres_capability_checks(WASIX_COPTS, definitions, abi = False, excluded = ["HAVE_SYSLOG", "HAVE_PTHREAD_PRIO_INHERIT"])
+    facts += [checks.AC_TRY_LINK(code = "#include <math.h>\ndouble (*volatile required_math)(double) = exp; int main(void) { return required_math(1.0) > 0; }", define = "HAVE_LIBM", copts = WASIX_COPTS, linkopts = ["-lm"], if_false = None)]
+    autoconf(name = "configuration_facts", checks = [checks.AC_DEFINE(d, 1) for d in definitions + ["__STDC_WANT_LIB_EXT1__"]] + facts + [checks.AC_DEFINE(key, value) for key, value in policy.items()], visibility = ["//visibility:private"], target_compatible_with = _COMPATIBLE)
+    autoconf_hdr(name = "configuration_header", out = "src/include/pg_config.h", template = "src/include/pg_config.h.in", deps = [":configuration_facts"], defaults = False, visibility = ["//visibility:private"], target_compatible_with = _COMPATIBLE)
+    pg_config_layout(name = "configuration_layout", os_header = "src/include/port/wasix-dl.h", output_directory = "src/include", prefix = "", visibility = ["//visibility:private"], target_compatible_with = _COMPATIBLE)
+    native.filegroup(name = "configuration", srcs = [":configuration_header", ":configuration_layout"], target_compatible_with = _COMPATIBLE)
+    _cc_library(name = "configuration_contract", srcs = ["@oliphaunt//build_defs/wasix:config_probe.c"], hdrs = [":configuration"], includes = ["src/include"], copts = WASIX_COPTS, linkstatic = True, visibility = ["@oliphaunt//build_defs/wasix:__pkg__"], target_compatible_with = _COMPATIBLE)
+    autoconf_srcs(name = "conditional_port_replacements", srcs = {source: "!ac_cv_func_" + macro[len("HAVE_"):].lower() for macro, source in POSTGRES_PORT_REPLACEMENT_SOURCES.items()}, deps = [":configuration_facts"], defaults = False, visibility = ["//visibility:private"], target_compatible_with = _COMPATIBLE)
     postgres_generated_targets(version)
     postgres_frontend_generated_targets()
     postgres_resource_targets()
@@ -31,11 +46,11 @@ def postgres_wasix_targets(version):
             textual_hdrs = POSTGRES_BACKEND_TEXTUAL_SOURCES,
             includes = ["src/include/port/wasix-dl"] + POSTGRES_BACKEND_INCLUDE_DIRECTORIES + ["src/common", "src/pl/plpgsql/src", "src/interfaces/libpq", "src/include/snowball", "src/timezone"],
             defines = definitions,
-            deps = ["@icu_wasix//:i18n_headers"],
+            deps = ["@icu_wasix//:i18n_headers", ":configuration_contract"],
             target_compatible_with = _COMPATIBLE,
         )
     common = POSTGRES_COMMON_SOURCES + POSTGRES_COMMON_RYU_SOURCES + POSTGRES_COMMON_CONFIG_INFO_SOURCES + POSTGRES_COMMON_BUILTIN_CRYPTO_SOURCES
-    port = POSTGRES_PORT_SOURCES + POSTGRES_PORT_CRC_GENERIC_SOURCES + [source for macro, source in POSTGRES_PORT_REPLACEMENT_SOURCES.items() if macro not in WASIX_CONFIG]
+    port = POSTGRES_PORT_SOURCES + POSTGRES_PORT_CRC_GENERIC_SOURCES + [":conditional_port_replacements"]
     for role, definitions, additions in [
         ("server", [], []),
         ("frontend", ["FRONTEND", "USE_PRIVATE_ENCODING_FUNCS"] + _INITDB_IDENTITY_DEFINES, POSTGRES_COMMON_FRONTEND_SHARED_ADDITIONAL_SOURCES + POSTGRES_COMMON_FRONTEND_STATIC_ADDITIONAL_SOURCES),

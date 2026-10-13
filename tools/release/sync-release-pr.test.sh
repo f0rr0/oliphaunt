@@ -46,11 +46,13 @@ repo="$scratch/suppliers"
 git clone --quiet --shared "$source_root" "$repo"
 fixture_files=(
   build_defs/languages/cargo-metadata.mts
+  tools/packaging/cargo-manifest.mts
   tools/release/bazel-release-metadata.mts
   tools/release/bazel-shipping-inputs.mts
   tools/release/compatibility-version-parser.mts
   tools/release/example-cargo-versions.mts
   tools/release/native-supplier-artifacts.mts
+  tools/release/native-extension-final-inputs.mts
   tools/release/release-artifact-targets.mts
   tools/release/release-dependency-plan.mts
   tools/release/sync-release-pr.mts

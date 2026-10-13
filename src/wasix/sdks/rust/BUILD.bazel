@@ -21,15 +21,16 @@ cargo_generator(path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"
 cargo_library(path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":build_script")
 cargo_generator(name = "napi_build_script", path_dependencies = PATH_DEPS, features = ["__internal-napi"], proc_macro_names = ["async-trait"])
 cargo_library(name = "napi_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":napi_build_script", features = ["__internal-napi"])
-cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"])
+_UNIT_TEST_DATA = ["//src/test-fixtures:rust_fixtures", "//src/database-resources:cluster_seed_contract_fixtures"]
+cargo_library_test(data = _UNIT_TEST_DATA)
 
 _CONTRIB_FEATURES = ["extension-" + member["sql-name"].replace("_", "-") for member in CONTRIB_MEMBERS]
 cargo_generator(name = "extension_carrier_build_script", path_dependencies = PATH_DEPS, features = _CONTRIB_FEATURES, proc_macro_names = ["async-trait"])
 cargo_library(name = "extension_carrier_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":extension_carrier_build_script", features = _CONTRIB_FEATURES)
-cargo_library_test(name = "extension_carrier_unit_test", crate = ":extension_carrier_lib", features = _CONTRIB_FEATURES, rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode([member["sql-name"] for member in CONTRIB_MEMBERS])}, path_dependencies = PATH_DEPS, data = ["//src/test-fixtures:rust_fixtures"], tags = ["manual"])
+cargo_library_test(name = "extension_carrier_unit_test", crate = ":extension_carrier_lib", features = _CONTRIB_FEATURES, rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode([member["sql-name"] for member in CONTRIB_MEMBERS])}, path_dependencies = PATH_DEPS, data = _UNIT_TEST_DATA, tags = ["manual"])
 _CONTRIB_TOOLS_FEATURES = _CONTRIB_FEATURES + ["tools-execution"]
 cargo_library(name = "extension_carrier_tools_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":extension_carrier_build_script", features = _CONTRIB_TOOLS_FEATURES)
-cargo_library_test(name = "extension_carrier_tools_unit_test", crate = ":extension_carrier_tools_lib", features = _CONTRIB_TOOLS_FEATURES, rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode([member["sql-name"] for member in CONTRIB_MEMBERS]), "OLIPHAUNT_DECLARED_TOOLS_VERSION": PRODUCTS["postgres-tools-wasix"]["version"]}, path_dependencies = PATH_DEPS, data = ["//src/test-fixtures:rust_fixtures"], tags = ["manual"])
+cargo_library_test(name = "extension_carrier_tools_unit_test", crate = ":extension_carrier_tools_lib", features = _CONTRIB_TOOLS_FEATURES, rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode([member["sql-name"] for member in CONTRIB_MEMBERS]), "OLIPHAUNT_DECLARED_TOOLS_VERSION": PRODUCTS["postgres-tools-wasix"]["version"]}, path_dependencies = PATH_DEPS, data = _UNIT_TEST_DATA, tags = ["manual"])
 
 _QUALITY_PATH_DEPS = {
     name: "//" + label.split("//", 1)[1].removesuffix(":lib") + ":quality_lib"
@@ -44,7 +45,7 @@ _TOOLS_PATH_DEPS = _QUALITY_PATH_DEPS | {
 }
 cargo_generator(name = "quality_build_script", path_dependencies = _QUALITY_PATH_DEPS, proc_macro_names = ["async-trait"])
 cargo_library(name = "quality_lib", path_dependencies = _QUALITY_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":quality_build_script")
-cargo_library_test(name = "quality_unit_test", crate = ":quality_lib", data = ["//src/test-fixtures:rust_fixtures"])
+cargo_library_test(name = "quality_unit_test", crate = ":quality_lib", data = _UNIT_TEST_DATA)
 cargo_generator(name = "tools_build_script", path_dependencies = _TOOLS_PATH_DEPS, proc_macro_names = ["async-trait"], features = ["tools"])
 cargo_library(name = "tools_lib", path_dependencies = _TOOLS_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":tools_build_script", features = ["extensions", "tools", "extension-vector"])
 # Runtime integration consumes the genuine constructed payloads. The quality

@@ -303,14 +303,13 @@ test_suite(
         "//src/query/ts:consumer_test",
         "//src/native/sdks/ts:consumer_test",
         "//build_defs/extensions:declared_final_inputs_test",
-        "//tools/bazel:execution_log_test",
-        "//tools/bazel:shipping_coverage_test",
     ],
 )
 
 test_suite(
     name = "native_linux_tests",
     tests = [
+        "//build_defs/languages/installed:source_compile_selection_test",
         "//src/native/runtime:unix_abi_conformance_test",
         "//src/native/runtime:unix_runtime_sql_test",
         "//src/native/runtime:native_tools_sql_test",
@@ -348,10 +347,6 @@ shipping_export(
             "//src/database-resources:icu_shipping_export",
             "//src/query/rust:shipping_export",
             "//src/query/ts:shipping_export",
-            "//src/native/rust-bindings:shipping_export",
-            "//src/native/sdks/rust:shipping_export",
-            "//src/native/sdks/rust/crates/oliphaunt-build:shipping_export",
-            "//src/native/broker:shipping_export",
             "//src/native/sdks/ts:shipping_export",
             "//src/native/sdks/kotlin:shipping_export",
         ],
@@ -411,6 +406,10 @@ shipping_export(
     name = "release_family_shipping_export",
     testonly = True,
     exports = [
+        "//src/native/rust-bindings:shipping_export",
+        "//src/native/sdks/rust:shipping_export",
+        "//src/native/sdks/rust/crates/oliphaunt-build:shipping_export",
+        "//src/native/broker:shipping_export",
         "//src/native/runtime:checksum_shipping_export",
         "//src/native/postgres-tools:checksum_shipping_export",
         "//src/native/broker:checksum_shipping_export",

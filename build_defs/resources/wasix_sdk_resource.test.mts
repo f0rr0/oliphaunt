@@ -15,7 +15,7 @@ assert.equal(seeds.length, 4);
 const root = mkdtempSync(path.join(process.env.TEST_TMPDIR ?? tmpdir(), 'wasix-sdk-seeds-'));
 try {
   const runtime = extractWasixRuntime(portable, root);
-  const icuRoot = path.join(root, 'icu');
+  const icuRoot = path.join(root, 'icu-data');
   extractPortableArchiveTree(materializeArchive(icu, path.join(root, 'inputs')), icuRoot);
   const outputs: string[] = [];
   for (const [index, profile] of ['standard', 'icu'].entries()) {
@@ -40,7 +40,7 @@ try {
     });
     outputs.push(packaged.archive);
   }
-  const result = Bun.spawnSync([sdkTest, '--include-ignored', '--test-threads=1'], {
+  const result = Bun.spawnSync([realpathSync(sdkTest), '--include-ignored', '--test-threads=1'], {
     cwd: root,
     env: {
       LC_ALL: 'C',

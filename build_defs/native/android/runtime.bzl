@@ -68,9 +68,9 @@ def _assets_test_impl(ctx):
     info = ctx.attr.assets[_AndroidRuntimeAssetsInfo]
     arguments = [info.metadata]
     for target, file in info.assets.items():
-        arguments += ["asset", target, file]
+        arguments += ["asset", target, file, file.path]
     for coordinate, file in info.maven.items():
-        arguments += ["maven", coordinate, file]
+        arguments += ["maven", coordinate, file, file.path]
     return bun_test_entrypoint(ctx, ctx.file._runner, arguments,
                                info.assets.values() + info.maven.values() + ctx.files._helpers,
                                source_files = [ctx.file._runner] + ctx.files._helpers)

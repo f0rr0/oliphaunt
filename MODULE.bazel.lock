@@ -315,7 +315,7 @@
   "moduleExtensions": {
     "//build_defs/extensions:repositories.bzl%extension_sources": {
       "general": {
-        "bzlTransitiveDigest": "I8irMOcVNVfnvRaVALcyWf49q9gxBn7uVOmAO3yguds=",
+        "bzlTransitiveDigest": "PBah3X431NEvxJn8AKLqmPNwpN4MIVMr8aOlV3PXCeA=",
         "usagesDigest": "Tut2HerGPqUSZPlpLEwzkw93ZjcmZpcPTu5KYnSIT3A=",
         "recordedInputs": [
           "REPO_MAPPING:,bazel_tools bazel_tools",
@@ -409,7 +409,7 @@
           "postgis_libxml2": {
             "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
             "attributes": {
-              "remote": "https://gitlab.gnome.org/GNOME/libxml2.git",
+              "remote": "https://github.com/GNOME/libxml2.git",
               "commit": "d23960a130c5bb82779c9405fbbf85e65fb3c57c",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(name = \"all_sources\", srcs = glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(name = \"headers\", srcs = glob([\"**/*.h\", \"**/*.hpp\", \"**/*.inl\", \"**/*.inc\"], allow_empty = True))\n"
             }

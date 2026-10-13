@@ -122,6 +122,35 @@ export function assertLifecycleReceipt(log: string) {
   );
 }
 
+/** Retain device diagnostics before the owned emulator and ADB server are stopped. */
+export function captureInstalledAndroidFailure(
+  adb: string,
+  serverPort: number,
+  serial: string,
+  output: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+) {
+  for (const [name, args] of [
+    ['failure-logcat.log', ['logcat', '-d', '-v', 'threadtime', '-t', '2000']],
+    ['failure-activity.txt', ['shell', 'dumpsys', 'activity', 'top']],
+  ] as const) {
+    const file = Bun.file(path.join(output, name));
+    try {
+      Bun.spawnSync([adb, '-P', String(serverPort), '-s', serial, ...args], {
+        cwd,
+        env,
+        stdout: file,
+        stderr: file,
+        timeout: 5000,
+        killSignal: 'SIGKILL',
+      });
+    } catch (error) {
+      writeFileSync(path.join(output, name), `${String(error)}\n`);
+    }
+  }
+}
+
 async function unusedPort(port = 0) {
   const server = net.createServer();
   await new Promise<void>((resolve, reject) => {
@@ -360,7 +389,7 @@ export async function runInstalledAndroid(args: string[]) {
         OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE: '1',
         OLIPHAUNT_EXPO_ANDROID_SCRATCH: output,
         OLIPHAUNT_EXPO_ANDROID_PACK_DIR: pack,
-        OLIPHAUNT_EXPO_ANDROID_TIMEOUT_SECONDS: String(spec.timeoutSeconds),
+        OLIPHAUNT_EXPO_ANDROID_TIMEOUT_SECONDS: String(Math.floor(remaining() / 1000)),
       });
       const child = Bun.spawn(
         [
@@ -418,6 +447,10 @@ export async function runInstalledAndroid(args: string[]) {
           2,
         ) + '\n',
       );
+    } catch (error) {
+      captureInstalledAndroidFailure(adb, serverPort, serial, output, scratch, env);
+      console.error(`Installed Android failure diagnostics retained in ${output}`);
+      throw error;
     } finally {
       Bun.spawnSync([adb, '-P', String(serverPort), '-s', `emulator-${port}`, 'emu', 'kill'], {
         cwd: scratch,

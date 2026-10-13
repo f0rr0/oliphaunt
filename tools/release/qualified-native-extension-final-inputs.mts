@@ -12,13 +12,17 @@ import {
   type ExtensionFinalInput,
   type ExtensionFinalInputFile,
   type NativeAppleBaseInput,
+  type NativeCurrentArtifact,
   type NativeSwiftSourceInput,
   projectNativeAppleBaseInput,
+  projectNativeCurrentArtifacts,
   projectNativeExtensionFinalInputs,
   projectNativeSwiftSourceInput,
 } from './native-extension-final-inputs.mts';
 import { fileIdentity } from './native-file-identity.mts';
 import type { prepareNativeReleaseDelivery } from './native-release-preparation.mts';
+import { resolveActualCarrier } from './publication-catalog.mts';
+import { discoverPublicationArtifacts, validateCargoPayloadPartSets } from './publication-lock.mts';
 
 type NativeFinalInputPreparation = {
   observation: Pick<
@@ -47,7 +51,7 @@ export function qualifiedNativeFinalInputs(
       requiredTests: build.qualification.requiredTests,
     });
   }
-  return constructionNativeFinalInputs(preparation, metadata);
+  return collectNativeFinalInputs(preparation, metadata, false);
 }
 
 /** Same-source construction imports retain actual configured provenance.
@@ -56,7 +60,23 @@ export function constructionNativeFinalInputs(
   preparation: NativeFinalInputPreparation,
   metadata: ReleaseMetadata,
 ) {
+  return collectNativeFinalInputs(preparation, metadata, true);
+}
+
+function collectNativeFinalInputs(
+  preparation: NativeFinalInputPreparation,
+  metadata: ReleaseMetadata,
+  currentArtifacts: boolean,
+) {
   const inputs: ExtensionFinalInput[] = [];
+  const current = new Map<string, NativeCurrentArtifact>();
+  const catalog = {
+    carriers: metadata.publicationCarriers.map((row) => ({
+      ...row,
+      id: `${row.ecosystem}:${row.name}`,
+      declared: true,
+    })),
+  };
   const apple: Partial<NativeAppleBaseInput> = {};
   const swift: Partial<NativeSwiftSourceInput> = {};
   for (const [evidenceRoot, origin] of preparation.origins) {
@@ -164,6 +184,135 @@ export function constructionNativeFinalInputs(
             });
         });
       };
+      const frozenRoots = cohort.roots.filter(
+        (root) => root.package.role === 'extension-release-frozen-input',
+      );
+      const extensionConstructors = new Set(
+        frozenRoots.flatMap((root) =>
+          root.package.outputs.map((output) => canonicalShippingLabel(output.owner)),
+        ),
+      );
+      if (currentArtifacts) {
+        for (const root of cohort.roots) {
+          const pkg = root.package;
+          // Canonical payload roots retain their original registry Files. Extension
+          // constructors already preserve their complete tuple below.
+          const cargo =
+            pkg.ecosystem === 'cargo' &&
+            pkg.configuration !== 'source' &&
+            metadata.publicationCarriers.some(
+              (row) =>
+                row.product === pkg.product && row.ecosystem === 'cargo' && row.name === pkg.name,
+            ) &&
+            !pkg.outputs.some((output) =>
+              extensionConstructors.has(canonicalShippingLabel(output.owner)),
+            );
+          const github =
+            pkg.ecosystem === 'github' &&
+            pkg.role === 'github-release-asset' &&
+            [
+              ...metadata.nativeRuntimeArtifacts,
+              ...metadata.nativeHelperArtifacts,
+              ...metadata.wasixArtifacts,
+            ].some(
+              (row) =>
+                row.product === pkg.product &&
+                typeof row.asset === 'string' &&
+                row.asset.replaceAll('{version}', pkg.version) === pkg.name,
+            );
+          if (!(cargo || github)) continue;
+          assert.equal(
+            pkg.version,
+            metadata.products[pkg.product]?.version,
+            'current carrier version differs from source owner',
+          );
+          const files = records(root);
+          const retain = (artifact: string, file: ExtensionFinalInputFile) => {
+            const key = `${pkg.product}/${pkg.version}/${artifact}`;
+            const row: NativeCurrentArtifact = {
+              product: pkg.product,
+              version: pkg.version,
+              artifact,
+              configuration: pkg.configuration,
+              source: { ...build.evidence.source },
+              file,
+            };
+            const prior = current.get(key);
+            if (prior)
+              assert.deepEqual(prior, row, 'current carrier has conflicting original producers');
+            else current.set(key, row);
+          };
+          if (pkg.ecosystem === 'github') {
+            const selected = files.filter((file) => path.basename(file.path) === pkg.name);
+            assert.equal(
+              selected.length,
+              1,
+              'current GitHub carrier needs its exact original regular File',
+            );
+            retain(`github-release:${pkg.name}`, selected[0]);
+            continue;
+          }
+          const crates = files.filter((file) => file.path.endsWith('.crate'));
+          assert.ok(crates.length, 'current Cargo carrier lacks its original package Files');
+          const index = files.filter((file) => path.basename(file.path) === 'packages.json');
+          let indexed: Record<string, any>[] | undefined;
+          if (files.some((file) => file.member !== undefined)) {
+            assert.equal(
+              index.length,
+              1,
+              'current Cargo Tree needs its original package inventory',
+            );
+            const document = JSON.parse(readFileSync(index[0].path, 'utf8'));
+            assert.equal(document.schema, 'oliphaunt-liboliphaunt-cargo-artifacts-v1');
+            assert.ok(Array.isArray(document.packages));
+            indexed = document.packages;
+            assert.deepEqual(
+              indexed.map((row) => path.basename(row.cratePath)).sort(),
+              crates.map((file) => path.basename(file.path)).sort(),
+              'current Cargo Tree differs from its original package inventory',
+            );
+          }
+          const published = [];
+          for (const file of crates) {
+            const discovered = discoverPublicationArtifacts([file.path]);
+            assert.equal(
+              discovered.length,
+              1,
+              'current Cargo File needs exactly one package identity',
+            );
+            const record = discovered[0];
+            assert.equal(record.ecosystem, 'cargo');
+            assert.equal(record.version, pkg.version, 'current Cargo package version differs');
+            assert.equal(
+              path.basename(file.path),
+              `${record.name}-${record.version}.crate`,
+              'current Cargo package filename differs',
+            );
+            const carrier = resolveActualCarrier(catalog, 'cargo', record.name);
+            assert.equal(carrier.product, pkg.product, 'current Cargo package owner differs');
+            if (indexed) {
+              const rows = indexed.filter(
+                (row) => path.basename(row.cratePath) === path.basename(file.path),
+              );
+              assert.equal(rows.length, 1);
+              assert.equal(rows[0].name, record.name, 'current Cargo inventory name differs');
+              assert.equal(
+                rows[0].role,
+                carrier.role === 'payload-part' ? 'part' : 'aggregator',
+                'current Cargo inventory role differs',
+              );
+            }
+            published.push({ ...carrier, packageDependencies: record.dependencies });
+            retain(carrier.id, file);
+          }
+          assert.deepEqual(
+            published.filter((row) => row.declared).map((row) => row.name),
+            [pkg.name],
+            'current Cargo Tree differs from its declared parent identity',
+          );
+          validateCargoPayloadPartSets(published);
+        }
+      }
       const nativeVersion = metadata.products['liboliphaunt-native'].version;
       const appleNames = {
         'ios.json': [
@@ -245,9 +394,6 @@ export function constructionNativeFinalInputs(
         apple.owner = 'liboliphaunt-native';
         apple.version = root.package.version;
       }
-      const frozenRoots = cohort.roots.filter(
-        (root) => root.package.role === 'extension-release-frozen-input',
-      );
       for (const frozenRoot of frozenRoots) {
         assert.equal(
           frozenRoot.package.outputs.length,
@@ -352,6 +498,8 @@ export function constructionNativeFinalInputs(
     finalFiles.assertUnchanged?.();
   }
   projectNativeExtensionFinalInputs(inputs);
+  if (current.size)
+    projectNativeCurrentArtifacts([...current.values()], [...current.values()][0].source);
   const nativeAppleBase = Object.keys(apple).length ? (apple as NativeAppleBaseInput) : undefined;
   if (nativeAppleBase) projectNativeAppleBaseInput(nativeAppleBase);
   const nativeSwiftSource = Object.keys(swift).length
@@ -360,6 +508,7 @@ export function constructionNativeFinalInputs(
   if (nativeSwiftSource) projectNativeSwiftSourceInput(nativeSwiftSource);
   return {
     extensionFinalInputs: inputs,
+    ...(currentArtifacts ? { nativeCurrentArtifacts: [...current.values()] } : {}),
     ...(nativeAppleBase ? { nativeAppleBase } : {}),
     ...(nativeSwiftSource ? { nativeSwiftSource } : {}),
   };

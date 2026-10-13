@@ -42,6 +42,12 @@ test('a new source owner selects its first release and keeps registry libraries 
         path.join(repository, 'tools/release', file),
         path.join(snapshot, 'tools/release', file),
       );
+    // The shared parser has no file dependencies; use its actual current
+    // implementation with the checked-out acquisition readers above.
+    copyFileSync(
+      path.join(repository, 'tools/packaging/cargo-manifest.mts'),
+      path.join(snapshot, 'tools/packaging/cargo-manifest.mts'),
+    );
     symlinkSync(
       path.join(repository, 'node_modules'),
       path.join(snapshot, 'node_modules'),
@@ -157,6 +163,7 @@ import path from 'node:path';
 import { acquireNativePublicationInputs } from './tools/release/native-release-preparation.mts';
 import { fileIdentity } from './tools/release/native-file-identity.mts';
 import { fixtureCompletedNativeInventory } from './tools/release/testdata/prepare-release-candidate-fixtures.mts';
+import { tarArchive } from './tools/packaging/testdata/tar-fixture.mts';
 const downloads = [];
 const registries = [];
 const publication = { product: 'oliphaunt-broker', version: '0.3.2', tagName: 'oliphaunt-broker-v0.3.2', publicationSha: 'c'.repeat(40), publicationTree: 'd'.repeat(40), releaseSha: 'c'.repeat(40) };
@@ -171,7 +178,7 @@ const transports = {
     registries.push(carrier.id + '@' + carrier.version);
     mkdirSync(options.directory, { recursive: true });
     const file = path.join(options.directory, carrier.artifacts[0].path);
-    writeFileSync(file, carrier.id + '@' + carrier.version);
+    writeFileSync(file, tarArchive([{ name: carrier.name + '-' + carrier.version + '/Cargo.toml', data: '[package]\\nname = ' + JSON.stringify(carrier.name) + '\\nversion = ' + JSON.stringify(carrier.version) + '\\n' }]));
     const { size, sha256 } = fileIdentity(file);
     return { carrier: { ...carrier, artifacts: [{ path: file, size, sha256 }] }, receipt: {}, metadata: {} };
   },

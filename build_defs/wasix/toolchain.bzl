@@ -35,7 +35,10 @@ def _wasix_cc_toolchain_config_impl(ctx):
             feature(name = "prefer_pic_for_opt_binaries", enabled = True),
             feature(name = "supports_dynamic_linker", enabled = True),
             feature(name = "wasix_environment", enabled = True, env_sets = [env_set(actions = _COMPILE + _LINK + [ACTION_NAMES.cpp_link_static_library], env_entries = environment)]),
-            feature(name = "wasix_compile_flags", enabled = True, flag_sets = [flag_set(actions = _COMPILE, flag_groups = [flag_group(flags = ["-sWASM_EXCEPTIONS=yes", "-sPIC=yes", "-Wno-unused-command-line-argument", "-no-canonical-prefixes", "-resource-dir=" + llvm + "/lib/clang/21"])])]),
+            feature(name = "wasix_compile_flags", enabled = True, flag_sets = [
+                flag_set(actions = _COMPILE + _LINK, flag_groups = [flag_group(flags = ["-sWASM_EXCEPTIONS=yes", "-sPIC=yes"])]),
+                flag_set(actions = _COMPILE, flag_groups = [flag_group(flags = ["-Wno-unused-command-line-argument", "-no-canonical-prefixes", "-resource-dir=" + llvm + "/lib/clang/21"])]),
+            ]),
         ],
         artifact_name_patterns = [artifact_name_pattern(category_name = "dynamic_library", prefix = "", extension = ".wasm")],
         tool_paths = [

@@ -18,6 +18,15 @@ export type ExtensionFinalInputFile = {
   /** Existing captured TreeArtifact member path; absent for a regular output. */
   member?: string;
 };
+/** Original payload carriers from the existing same-source producer handoff. */
+export type NativeCurrentArtifact = {
+  product: string;
+  version: string;
+  artifact: string;
+  configuration: string;
+  source: { commit: string; tree: string };
+  file: ExtensionFinalInputFile;
+};
 export type ExtensionFinalInput = {
   product: string;
   owner: string;
@@ -91,6 +100,46 @@ export function projectOriginalNativeFinalFile(file: ExtensionFinalInputFile, pr
     file: { ...structuredClone(file), path: `@oliphaunt_metadata//:${output}` },
     alias: { source: file.path, path: output, size: file.size, sha256: file.sha256 },
   };
+}
+
+/** This projection preserves File facts; acquisition authenticates their original producer. */
+export function projectNativeCurrentArtifacts(
+  value: unknown,
+  source?: { commit: string; tree: string },
+) {
+  assert.ok(Array.isArray(value), 'current native artifacts need an array');
+  const artifacts: Record<string, NativeCurrentArtifact> = {};
+  const files: ReturnType<typeof projectOriginalNativeFinalFile>['alias'][] = [];
+  for (const row of value as NativeCurrentArtifact[]) {
+    fields(
+      row,
+      ['product', 'version', 'artifact', 'configuration', 'source', 'file'],
+      'current native artifact',
+    );
+    assert.match(row.product, /^[a-z][a-z0-9-]*$/u);
+    assert.match(row.version, /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/u);
+    assert.match(row.configuration, /^[A-Za-z0-9][A-Za-z0-9._-]*$/u);
+    fields(row.source, ['commit', 'tree'], 'current native artifact source');
+    for (const sha of [row.source.commit, row.source.tree]) assert.match(sha, /^[a-f0-9]{40}$/u);
+    assert.deepEqual(row.source, source, 'current native artifact source differs');
+    const match = row.artifact.match(/^(cargo|github-release):([A-Za-z0-9][A-Za-z0-9._-]*)$/u);
+    assert.ok(match, 'current native artifact needs a canonical carrier identity');
+    const expected = match[1] === 'cargo' ? `${match[2]}-${row.version}.crate` : match[2];
+    assert.equal(
+      path.basename(row.file.path),
+      expected,
+      'current native artifact filename differs',
+    );
+    const key = `${row.product}/${row.version}/${row.artifact}`;
+    assert.ok(!Object.hasOwn(artifacts, key), 'current native artifact repeats');
+    const projected = projectOriginalNativeFinalFile(
+      row.file,
+      `native-current-artifacts/${row.product}/${row.version}`,
+    );
+    artifacts[key] = { ...structuredClone(row), file: projected.file };
+    files.push(projected.alias);
+  }
+  return { artifacts, files };
 }
 
 export function projectNativeAppleBaseInput(value: unknown) {

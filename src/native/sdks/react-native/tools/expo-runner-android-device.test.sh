@@ -54,7 +54,7 @@ case "$*" in
   devices) printf 'List of devices attached\nfixture\tdevice\n' ;;
   'install -r '*|'shell am force-stop '*|'shell pm clear '*) ;;
   'shell pidof dev.oliphaunt.fixture')
-    [ "$ADB_SCENARIO" != lifecycle-dead-app ] || exit 1
+    [ "$ADB_SCENARIO" != lifecycle-dead-app ] && [ "$ADB_SCENARIO" != lifecycle-pre-ready-dead-app ] || exit 1
     cat "$ADB_CURRENT_PID"
     ;;
   'shell pm list packages -U --user current dev.oliphaunt.fixture')
@@ -75,7 +75,7 @@ case "$*" in
     done
     while [ ! -s "$ADB_RECEIPT" ]; do sleep 0.05; done
     awk -v uid="$uid_filter" 'uid == "" || $1 == uid {sub(/^[0-9]+ /, ""); print}' "$ADB_RECEIPT"
-    [ "$ADB_SCENARIO" != lifecycle-dead-capture ] || exit 7
+    [ "$ADB_SCENARIO" != lifecycle-dead-capture ] && [ "$ADB_SCENARIO" != lifecycle-pre-ready-dead-capture ] || exit 7
     while :; do sleep 0.05; done
     ;;
   'shell am start -W '*)
@@ -86,6 +86,10 @@ case "$*" in
         packet="$(mktemp "${ADB_RECEIPT}.XXXXXX")"
         {
           case "$ADB_SCENARIO" in
+            lifecycle-pre-ready-*)
+              printf '10042 OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"open:start"}\n'
+              [ "$ADB_SCENARIO" != lifecycle-pre-ready-fatal ] || printf '10042 FATAL EXCEPTION: main\n'
+              ;;
             lifecycle-*)
               printf '10042 OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:ready","state":"active"}\n'
               printf '10042 OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:state","state":"background"}\n'
@@ -104,7 +108,10 @@ case "$*" in
               printf '10042 Process: dev.oliphaunt.fixture\n'
               ;;
           esac
-          [ "$ADB_SCENARIO" = benchmark-own-fatal ] || printf '10042 %s\n' "$ADB_CURRENT_RECEIPT"
+          case "$ADB_SCENARIO" in
+            benchmark-own-fatal|lifecycle-pre-ready-*) ;;
+            *) printf '10042 %s\n' "$ADB_CURRENT_RECEIPT" ;;
+          esac
           [ "$ADB_SCENARIO" != lifecycle-fatal ] || printf '10042 FATAL EXCEPTION: main\n'
         } > "$packet"
         mv "$packet" "$ADB_RECEIPT"
@@ -133,7 +140,7 @@ write_android_process_metrics() { :; }
 write_android_e2e_diagnostics() { :; }
 write_runner_report() { [ "$1" = "$ADB_CURRENT_RECEIPT" ]; }
 exercise_android_lifecycle() { printf '67890\n' > "$ADB_CURRENT_PID"; }
-for scenario in pass unrelated-crash app-crash stale unrelated-pass missing-uid invalid-uid benchmark-pass benchmark-unrelated-crash benchmark-own-fatal lifecycle-pass lifecycle-unrelated-crash lifecycle-fatal lifecycle-dead-capture lifecycle-dead-app; do
+for scenario in pass unrelated-crash app-crash stale unrelated-pass missing-uid invalid-uid benchmark-pass benchmark-unrelated-crash benchmark-own-fatal lifecycle-pass lifecycle-unrelated-crash lifecycle-fatal lifecycle-dead-capture lifecycle-dead-app lifecycle-pre-ready-fatal lifecycle-pre-ready-dead-capture lifecycle-pre-ready-dead-app; do
   runner=smoke
   success_tag=OLIPHAUNT_EXPO_SMOKE_PASS
   failure_tag=OLIPHAUNT_EXPO_SMOKE_FAIL
@@ -142,6 +149,7 @@ for scenario in pass unrelated-crash app-crash stale unrelated-pass missing-uid 
   printf '10042 %s stale-launch\n' "$success_tag" > "$ADB_RECEIPT"
   printf '12345\n' > "$ADB_CURRENT_PID"
   case "$scenario" in lifecycle-*) lifecycle_smoke=1; timeout_seconds=10 ;; *) lifecycle_smoke=0; timeout_seconds=3 ;; esac
+  case "$scenario" in lifecycle-pre-ready-*) timeout_seconds=5 ;; esac
   export ADB_SCENARIO="$scenario"
   status=0
   (
@@ -154,9 +162,9 @@ for scenario in pass unrelated-crash app-crash stale unrelated-pass missing-uid 
     *) [ "$status" != 0 ] ;;
   esac || { cat "$scratch/$scenario-launch.log" >&2; echo "unexpected $scenario status: $status" >&2; exit 1; }
   case "$scenario" in
-    lifecycle-fatal) grep -Fq 'receipt failed (status 2:' "$scratch/$scenario-launch.log" ;;
-    lifecycle-dead-capture) grep -Fq 'receipt failed (status 3:' "$scratch/$scenario-launch.log" ;;
-    lifecycle-dead-app) grep -Fq 'receipt failed (status 4:' "$scratch/$scenario-launch.log" ;;
+    lifecycle-fatal|lifecycle-pre-ready-fatal) grep -Fq 'receipt failed (status 2:' "$scratch/$scenario-launch.log" ;;
+    lifecycle-dead-capture|lifecycle-pre-ready-dead-capture) grep -Fq 'receipt failed (status 3:' "$scratch/$scenario-launch.log" ;;
+    lifecycle-dead-app|lifecycle-pre-ready-dead-app) grep -Fq 'receipt failed (status 4:' "$scratch/$scenario-launch.log" ;;
     lifecycle-pass|lifecycle-unrelated-crash) [ "$(cat "$ADB_CURRENT_PID")" = 67890 ] ;;
     benchmark-own-fatal) grep -Fq 'Expo Android benchmark failed' "$scratch/$scenario-launch.log" ;;
   esac || { cat "$scratch/$scenario-launch.log" >&2; echo "$scenario: terminal guard assertion failed" >&2; exit 1; }
@@ -164,3 +172,4 @@ done
 echo 'Android installed-app capture scopes receipts and crashes to the current app and launch'
 echo 'Android lifecycle PASS rejects fatal logs, failed capture and dead current app; current app PID may change'
 echo 'Android benchmark retains PASS ordering for unrelated prefix fatal and rejects its own fatal without PASS'
+echo 'Android pre-readiness guards reject current-app fatal, capture death and app death without requiring a PASS'

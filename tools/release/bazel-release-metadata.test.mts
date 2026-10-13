@@ -45,6 +45,7 @@ test('one per-run metadata snapshot projects exact completed suppliers without a
     extensionFinalInputs: {},
     nativeAppleBase: null,
     nativeSwiftSource: null,
+    nativeCurrentArtifacts: null,
     supplierArtifacts: {},
     selectedProducts: [],
     files: [],
@@ -67,6 +68,7 @@ test('one per-run metadata snapshot projects exact completed suppliers without a
     extensionFinalInputs: {},
     nativeAppleBase: null,
     nativeSwiftSource: null,
+    nativeCurrentArtifacts: null,
     supplierArtifacts: {},
     selectedProducts: [],
     files: [],
@@ -1006,10 +1008,23 @@ test('metadata paths cannot escape; rendered identities have no construction dep
     const ownershipChanged = renderReleaseMetadata(bumped, '@//build_defs/release:identity.bzl');
     expect(ownershipChanged.bzl).not.toBe(next.bzl);
     expect(ownershipChanged.extensionSourcesBzl).toBe(rendered.extensionSourcesBzl);
+    bumped.extensionSources.example.mirror_url = 'https://mirror.example.invalid/example.git';
+    const mirrored = renderReleaseMetadata(bumped, '@//build_defs/release:identity.bzl');
+    expect(mirrored.extensionSourcesBzl).toContain(
+      '"mirror_url": "https://mirror.example.invalid/example.git"',
+    );
+    expect(mirrored.extensionSourcesBzl).toContain('"url": "https://example.invalid/example.git"');
+    expect(mirrored.extensionSourcesBzl).toContain(
+      '"commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"',
+    );
+    expect(mirrored.extensionSourcesBzl).not.toBe(ownershipChanged.extensionSourcesBzl);
+    bumped.extensionSources.example.mirror_url = 'https://other.example.invalid/example.git';
+    const mirrorChanged = renderReleaseMetadata(bumped, '@//build_defs/release:identity.bzl');
+    expect(mirrorChanged.extensionSourcesBzl).not.toBe(mirrored.extensionSourcesBzl);
     bumped.extensionSources.example.commit = 'b'.repeat(40);
     expect(
       renderReleaseMetadata(bumped, '@//build_defs/release:identity.bzl').extensionSourcesBzl,
-    ).not.toBe(rendered.extensionSourcesBzl);
+    ).not.toBe(mirrorChanged.extensionSourcesBzl);
     expect(() => renderReleaseMetadata(metadata, '//build_defs/release:identity.bzl')).toThrow(
       'repository-qualified',
     );
@@ -1230,4 +1245,85 @@ test('supplied-root supplier projection includes declared Swift and extension ca
     expect(Object.values(retained.supplierArtifacts)[0].publication).toEqual(binding.publication);
     expect(Object.values(retained.supplierArtifacts)[0]).not.toHaveProperty('authenticated');
   });
+});
+
+test('late current carrier projection distinguishes absent transport from partial Mac Files and checks the canonical source catalog', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'native-current-metadata-'));
+  try {
+    const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
+    fixture((root) => {
+      const metadata = loadReleaseMetadata(root);
+      const version = metadata.products.native.version;
+      const name = `runtime-${version}-macos.tar.gz`;
+      const physical = path.join(directory, name);
+      const bytes = Buffer.from('original physical protocol fixture');
+      writeFileSync(physical, bytes);
+      const row = {
+        product: 'native',
+        version,
+        artifact: `github-release:${name}`,
+        configuration: 'macos-arm64',
+        source,
+        file: {
+          path: physical,
+          size: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          producer: {
+            evidenceDigest: 'sha256:' + 'c'.repeat(64),
+            invocationId: 'original-mac-producer',
+            root: '//src/native/runtime:native_github_shipping',
+            configuration: 'd'.repeat(64),
+            output: `bazel-out/cfg/bin/${name}`,
+          },
+        },
+      };
+      // The supplied snapshot's canonical row renderer owns this test declaration.
+      metadata.nativeRuntimeArtifacts = [
+        {
+          product: 'native',
+          asset: 'runtime-{version}-macos.tar.gz',
+          surfaces: ['github-release'],
+        },
+      ];
+      metadata.products.native.publish_targets = ['github-release'];
+      expect(
+        nativePublicationInputProjection({ source }, metadata).nativeCurrentArtifacts,
+      ).toBeNull();
+      const absent = renderReleaseMetadata(metadata, '@//build_defs/release:identity.bzl');
+      expect(absent.bzl).toContain('NATIVE_CURRENT_ARTIFACTS = None');
+      const projected = nativePublicationInputProjection(
+        { source, nativeCurrentArtifacts: [row] },
+        metadata,
+      );
+      const key = `native/${version}/github-release:${name}`;
+      expect(Object.keys(projected.nativeCurrentArtifacts!)).toEqual([key]);
+      expect(projected.files[0].source).toBe(physical);
+      expect(projected.nativeCurrentArtifacts![key].file.producer).toEqual(row.file.producer);
+      expect(
+        projected.nativeCurrentArtifacts![`native/${version}/github-release:missing-linux.tar.gz`],
+      ).toBeUndefined();
+      expect(
+        renderReleaseMetadata(metadata, '@//build_defs/release:identity.bzl', projected).bzl,
+      ).toContain('NATIVE_CURRENT_ARTIFACTS = {');
+      expect(
+        nativePublicationInputProjection({ source, nativeCurrentArtifacts: [] }, metadata)
+          .nativeCurrentArtifacts,
+      ).toEqual({});
+      for (const change of [
+        (value) => (value.version = '9.0.0'),
+        (value) => (value.product = 'wasix'),
+        (value) => (value.source.tree = 'e'.repeat(40)),
+        (value) => (value.file.sha256 = '0'.repeat(64)),
+        (value) => (value.artifact = 'github-release:unknown.tar.gz'),
+      ]) {
+        const changed = structuredClone(row);
+        change(changed);
+        expect(() =>
+          nativePublicationInputProjection({ source, nativeCurrentArtifacts: [changed] }, metadata),
+        ).toThrow();
+      }
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

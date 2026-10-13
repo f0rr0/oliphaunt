@@ -13,17 +13,23 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { sourceManifest } from '../../build_defs/languages/source-package.mts';
 import {
   SEED_CONSTRUCTION_RECEIPT_SUFFIX,
   selectCompletedSeed,
   validateSeedConstructionReceipt,
 } from '../../build_defs/resources/seed_construction.mts';
 import { wasixSeedConsumerDeclaration } from '../../src/database-resources/seeds/wasix/consumer-contract.mts';
+import {
+  cargoDependencyMinimum,
+  resolveCargoWorkspaceInheritance,
+} from '../packaging/cargo-manifest.mts';
 import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
 import {
   removeOwnedDirectory,
   requireSafeDirectoryChain,
 } from '../packaging/release-directory-safety.mts';
+import { nativeCargoArtifactRows } from '../packaging/rust-native-targets.mts';
 import {
   acquireAuthenticatedNativeBuildEvidence,
   assertAuthenticatedNativeBuildOrigin,
@@ -111,6 +117,204 @@ import {
 } from './release-graph.mts';
 import { requestReleaseAssetProof } from './verify_github_release_attestations.mts';
 
+/** Actual SDK declarations request exact internal source floors for installed qualification. */
+export function nativeCargoMinimumBindings(
+  catalog: ReturnType<typeof loadPublicationCatalog>,
+  consumerProducts: string[],
+  readText: (file: string) => string,
+) {
+  const requests = new Map<
+    string,
+    {
+      consumer: string;
+      producer: string;
+      producerVersion: string;
+      requestedCarrier: string;
+    }
+  >();
+  const consumers = ['oliphaunt-rust', 'oliphaunt-broker'].filter((id) =>
+    consumerProducts.includes(id),
+  );
+  if (!consumers.length) return [];
+  const workspace = Bun.TOML.parse(readText('Cargo.toml')).workspace ?? {};
+  for (const id of consumers) {
+    const consumer = catalog.products.find((product) => product.id === id);
+    assert(consumer, 'installed minimum needs its canonical source owner');
+    const manifest = resolveCargoWorkspaceInheritance(
+      Bun.TOML.parse(readText(path.posix.join(consumer.path, 'Cargo.toml'))),
+      workspace,
+    );
+    const dependencies = new Map<
+      string,
+      { carrier: (typeof catalog.carriers)[number]; requirements: string[] }
+    >();
+    for (const table of [manifest, ...Object.values(manifest.target ?? {})] as any[])
+      for (const section of ['dependencies', 'build-dependencies'])
+        for (const [alias, declaration] of Object.entries(table[section] ?? {})) {
+          const dependency =
+            typeof declaration === 'string' ? { version: declaration } : (declaration as any);
+          const carrier = catalog.carriers.find(
+            (row) =>
+              row.ecosystem === 'cargo' &&
+              row.target === null &&
+              row.name === (dependency.package ?? alias),
+          );
+          if (!carrier) continue;
+          assert.equal(
+            typeof dependency.version,
+            'string',
+            `Internal Cargo minimum needs its authored requirement: ${alias}`,
+          );
+          const group = dependencies.get(carrier.name) ?? { carrier, requirements: [] };
+          group.requirements.push(dependency.version);
+          dependencies.set(carrier.name, group);
+        }
+    for (const { carrier, requirements } of dependencies.values()) {
+      const producerVersion = cargoDependencyMinimum(requirements);
+      // An initial same-source dependency has no publication to acquire. Its
+      // final qualification still requires the exact prepared selected File.
+      if (producerVersion === '0.0.0' && carrier.version === '0.0.0') continue;
+      const request = {
+        consumer: consumer.id,
+        producer: carrier.product,
+        producerVersion,
+        requestedCarrier: carrier.id,
+      };
+      requests.set(`${consumer.id}/${carrier.id}@${producerVersion}`, request);
+    }
+  }
+  return [...requests.values()];
+}
+
+/** Request the payload identities written into the public source package. */
+export function nativeCargoPayloadBindings(
+  catalog: ReturnType<typeof loadPublicationCatalog>,
+  consumerProducts: string[],
+  readText: (file: string) => string,
+  products = loadProducts(),
+) {
+  const requests: {
+    consumer: string;
+    producer: string;
+    producerVersion: string;
+    requestedCarrier: string;
+  }[] = [];
+  for (const id of ['oliphaunt-rust', 'oliphaunt-wasix-rust'].filter((id) =>
+    consumerProducts.includes(id),
+  )) {
+    const consumer = catalog.products.find((row) => row.id === id);
+    assert(consumer, 'Source payload request needs its canonical consumer');
+    const compatibility: Record<string, string> = {};
+    for (const entry of compatibilityVersionEntries(products, { requireSourceProduct: true })) {
+      if (entry.product !== id) continue;
+      const text = readText(entry.path);
+      const dependency = cargoCompatibilityDependency(entry, text);
+      if (dependency?.path !== undefined) continue;
+      const carrier =
+        dependency &&
+        catalog.carriers.find(
+          (row) =>
+            row.product === entry.sourceProduct &&
+            row.ecosystem === 'cargo' &&
+            row.name === dependency.packageName,
+        );
+      if (
+        carrier?.target === null &&
+        catalog.carriers.some(
+          (row) =>
+            row.product === entry.sourceProduct && row.ecosystem === 'cargo' && row.target !== null,
+        )
+      )
+        continue;
+      const version = compatibilityVersionFromText(entry, text);
+      assert(
+        !compatibility[entry.sourceProduct] || compatibility[entry.sourceProduct] === version,
+        'Source payload compatibility versions conflict',
+      );
+      compatibility[entry.sourceProduct] = version;
+    }
+    const artifacts = (producer: string) =>
+      nativeCargoArtifactRows(
+        producer,
+        products[producer].artifact_targets.targets,
+        products[producer].registry_packages,
+      );
+    const manifest = sourceManifest(
+      readText(path.posix.join(consumer.path, 'Cargo.toml')),
+      readText('Cargo.toml'),
+      {
+        product: id,
+        version: consumer.version,
+        compatibility,
+        dependencyOwners: Object.fromEntries(
+          catalog.carriers
+            .filter((row) => row.ecosystem === 'cargo')
+            .map((row) => [row.name, row.product]),
+        ),
+        ...(id === 'oliphaunt-rust'
+          ? {
+              nativeArtifacts: artifacts('liboliphaunt-native'),
+              brokerArtifacts: artifacts('oliphaunt-broker'),
+            }
+          : {}),
+      },
+    );
+    for (const { carrier, version: producerVersion } of cargoPayloadRequests(
+      manifest,
+      catalog,
+      products,
+    )) {
+      if (producerVersion === '0.0.0' && carrier.version === '0.0.0') continue;
+      requests.push({
+        consumer: id,
+        producer: carrier.product,
+        producerVersion,
+        requestedCarrier: carrier.id,
+      });
+    }
+  }
+  return requests;
+}
+
+function isCargoPayloadCarrier(carrier, products) {
+  return (
+    carrier.ecosystem === 'cargo' &&
+    (carrier.product === 'liboliphaunt-native' || carrier.product === 'oliphaunt-broker'
+      ? carrier.target !== null &&
+        products[carrier.product].registry_packages.includes(`crates:${carrier.name}`)
+      : (['liboliphaunt-wasix', 'postgres-tools-wasix'].includes(carrier.product) &&
+          products[carrier.product].registry_packages.includes(`crates:${carrier.name}`)) ||
+        (carrier.product === 'database-resources' && carrier.name === 'oliphaunt-icu'))
+  );
+}
+
+function exactCargoPayloadVersion(requirement: string) {
+  const exact =
+    typeof requirement === 'string' &&
+    /^=\s*(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/u.exec(requirement.trim());
+  assert(exact, 'Cargo payload requires its exact authored version');
+  return exact[1];
+}
+
+function cargoPayloadRequests(manifest, catalog, products) {
+  const requests = new Map();
+  for (const table of [manifest, ...Object.values(manifest.target ?? {})] as any[])
+    for (const section of ['dependencies', 'build-dependencies'])
+      for (const [alias, declaration] of Object.entries(table[section] ?? {}) as [string, any][]) {
+        const carrier = catalog.carriers.find(
+          (row) => row.ecosystem === 'cargo' && row.name === (declaration.package ?? alias),
+        );
+        if (!carrier || !isCargoPayloadCarrier(carrier, products)) continue;
+        const version = exactCargoPayloadVersion(
+          typeof declaration === 'string' ? declaration : declaration.version,
+        );
+        const prior = requests.get(carrier.id);
+        assert(!prior || prior.version === version, 'Cargo payload versions conflict');
+        requests.set(carrier.id, { carrier, version });
+      }
+  return [...requests.values()];
+}
+
 /** Construct the existing importer snapshot only from authenticated acquisition.
  * Old public seeds are explicit adoptions; they supply no historical recipe.
  */
@@ -185,6 +389,12 @@ export async function acquireNativePublicationInputs(
       conventionalFiles.set(file, readFileSync(path.join(ROOT, file), 'utf8'));
     return conventionalFiles.get(file)!;
   };
+  const payloadBindings = nativeCargoPayloadBindings(
+    catalog,
+    consumerProducts,
+    conventionalText,
+    authoredProducts,
+  );
   const bindings = [
     ...new Map(
       compatibilityVersionEntries(authoredProducts, { requireSourceProduct: true })
@@ -197,7 +407,9 @@ export async function acquireNativePublicationInputs(
             {
               consumer: entry.product,
               producer: entry.sourceProduct,
-              producerVersion: compatibilityVersionFromText(entry, text),
+              producerVersion: dependency
+                ? cargoDependencyMinimum(compatibilityVersionFromText(entry, text))
+                : compatibilityVersionFromText(entry, text),
               ...(dependency ? { requestedCarrier: `cargo:${dependency.packageName}` } : {}),
             },
           ];
@@ -210,6 +422,23 @@ export async function acquireNativePublicationInputs(
               binding.producer === 'liboliphaunt-wasix'
             ),
         )
+        .filter(
+          (binding) =>
+            !(
+              ['oliphaunt-rust', 'oliphaunt-wasix-rust'].includes(binding.consumer) &&
+              binding.producerVersion === '0.0.0' &&
+              catalog.products.some((row) => row.id === binding.producer && row.version === '0.0.0')
+            ) &&
+            (binding.requestedCarrier ||
+              !payloadBindings.some(
+                (payload) =>
+                  payload.consumer === binding.consumer &&
+                  payload.producer === binding.producer &&
+                  payload.producerVersion === binding.producerVersion,
+              )),
+        )
+        .concat(nativeCargoMinimumBindings(catalog, consumerProducts, conventionalText))
+        .concat(payloadBindings)
         .map((binding) => [
           `${binding.consumer}/${binding.producer}@${binding.producerVersion}/${binding.requestedCarrier ?? 'installed'}`,
           binding,
@@ -313,9 +542,11 @@ export async function acquireNativePublicationInputs(
       product: string;
       ecosystem: string;
       name: string;
+      declared?: boolean;
       artifacts?: { path: string; size: number; sha256: string }[];
     },
-  ) => {
+    payloadClosure = isCargoPayloadCarrier(carrier, authoredProducts),
+  ): Promise<NativeSupplierArtifact> => {
     assert.ok(
       ['npm', 'cargo'].includes(carrier.ecosystem),
       'supplier source carrier must be npm or Cargo',
@@ -355,12 +586,107 @@ export async function acquireNativePublicationInputs(
       1,
       'completed supplier carrier must retain one actual registry archive',
     );
+    const records =
+      carrier.ecosystem === 'cargo'
+        ? discoverPublicationArtifacts([retained.carrier.artifacts[0].path])
+        : [];
+    if (carrier.ecosystem === 'cargo') {
+      assert.ok(
+        records.length === 1 &&
+          records[0].ecosystem === carrier.ecosystem &&
+          records[0].name === carrier.name &&
+          records[0].version === completed.version,
+        'Completed supplier archive differs from its requested identity',
+      );
+      assert.equal(
+        records[0].artifacts[0].sha256,
+        retained.carrier.artifacts[0].sha256,
+        'Completed supplier archive SHA differs from retained bytes',
+      );
+      assert.equal(
+        records[0].artifacts[0].size,
+        retained.carrier.artifacts[0].size,
+        'Completed supplier archive size differs from retained bytes',
+      );
+    }
     const row = {
       publication: completed,
       artifact: carrier.id,
       file: retained.carrier.artifacts[0],
     };
     supplierArtifacts.push(row);
+    if (carrier.ecosystem === 'cargo' && carrier.declared) {
+      const historical = await completedInventory(completed);
+      const parts = [];
+      for (const dependency of records[0].dependencies.filter(
+        (dependency) =>
+          dependency.ecosystem === 'cargo' && dependency.name.startsWith(`${carrier.name}-part-`),
+      )) {
+        assert.equal(
+          exactCargoPayloadVersion(dependency.requirement),
+          completed.version,
+          'Completed Cargo part version differs from its parent',
+        );
+        const frozenPart = historical.carriers.find(
+          (part) => part.id === `cargo:${dependency.name}`,
+        );
+        assert(
+          !supplierMetadata.has(`${completed.product}@${completed.version}`) || frozenPart,
+          'Completed Cargo part is absent from frozen inventory',
+        );
+        const part =
+          frozenPart ?? resolveActualCarrier(historical.catalog, 'cargo', dependency.name);
+        const retainedPart = await retainCarrier(completed, part);
+        const partRecords = discoverPublicationArtifacts([retainedPart.file.path]);
+        parts.push({ ...part, packageDependencies: partRecords[0].dependencies });
+      }
+      if (parts.length)
+        validateCargoPayloadPartSets([
+          { ...carrier, packageDependencies: records[0].dependencies },
+          ...parts,
+        ]);
+      if (payloadClosure)
+        for (const dependency of records[0].dependencies) {
+          if (
+            dependency.ecosystem !== 'cargo' ||
+            dependency.name.startsWith(`${carrier.name}-part-`)
+          )
+            continue;
+          const internal = historical.carriers.find(
+            (entry) =>
+              entry.id === `cargo:${dependency.name}` &&
+              entry.product === completed.product &&
+              entry.version === completed.version &&
+              entry.declared,
+          );
+          if (!internal) continue;
+          assert.equal(
+            exactCargoPayloadVersion(dependency.requirement),
+            completed.version,
+            'Completed internal payload version differs from its publication',
+          );
+          await retainCarrier(completed, internal, true);
+        }
+    }
+    // Server qualification follows the authentic held SDK's payload pins.
+    if (carrier.ecosystem === 'cargo' && ['oliphaunt', 'oliphaunt-wasix'].includes(carrier.name)) {
+      const manifest = readPortableArchiveEntries(row.file.path).get(
+        `${carrier.name}-${completed.version}/Cargo.toml`,
+      );
+      assert(manifest?.isFile, 'Completed SDK archive needs its conventional manifest');
+      for (const { carrier: payload, version } of cargoPayloadRequests(
+        Bun.TOML.parse(manifest.data().toString('utf8')),
+        catalog,
+        authoredProducts,
+      )) {
+        const origin = await completeSupplier(payload.product, version);
+        const original = (await completedInventory(origin)).carriers.find(
+          (entry) => entry.id === payload.id,
+        );
+        assert(original, 'Requested Cargo payload is absent from its completed inventory');
+        await retainCarrier(origin, original);
+      }
+    }
     return row;
   };
   const retainPublicAssets = async (completed: CompletedPublication, expected) => {
@@ -1053,6 +1379,7 @@ export function writeNativeConstructionInputSnapshot(
   delete next.extensionFinalInputs;
   delete next.nativeAppleBase;
   delete next.nativeSwiftSource;
+  delete next.nativeCurrentArtifacts;
   Object.assign(next, finalInputs);
   nativePublicationInputProjection(next, metadata);
   assert.deepEqual(fileIdentity(file), before, 'native construction input snapshot changed');

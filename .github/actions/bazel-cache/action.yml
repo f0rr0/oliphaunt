@@ -117,11 +117,15 @@ runs:
         [[ -z "$OUTPUT_BASE" ]] || startup+=("--output_base=$OUTPUT_BASE")
         [[ -z "$JVM_ARGS" ]] || startup+=("--host_jvm_args=$JVM_ARGS")
         [[ -z "$SERVER_LOG" ]] || startup+=("--server_jvm_out=$SERVER_LOG")
+        # Stop the writer before measuring; shutdown does not certify idle GC completion.
         if ! "${startup[@]}" shutdown; then
+          printf 'Bazel cache writer shutdown: failure\n' >&2
           exit 0
         fi
+        printf 'Bazel cache writer shutdown: success\n'
         # Repository downloads have no size GC. Bound them independently so
         # their growth cannot discard an otherwise valid action cache.
+        cache_limit_kib=2097152
         for family in disk repositories; do
           if [[ "$family" == disk && "$DISK_CACHE_HIT" == true ]] || \
              [[ "$family" == repositories && "$REPOSITORY_CACHE_HIT" == true ]]; then
@@ -129,10 +133,15 @@ runs:
           fi
           cache_root="$HOME/.cache/oliphaunt/bazel-ci/$family"
           if [[ -d "$cache_root" ]]; then
+            printf 'Bazel cache %s: present=true\n' "$family"
             cache_kib="$(du -sk "$cache_root" | cut -f1)"
-            if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib <= 2097152 )); then
+            printf 'Bazel cache %s: allocated_kib=%s limit_kib=%s\n' \
+              "$family" "$cache_kib" "$cache_limit_kib"
+            if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib <= cache_limit_kib )); then
               printf '%s=true\n' "$family" >> "$GITHUB_OUTPUT"
             fi
+          else
+            printf 'Bazel cache %s: present=false\n' "$family"
           fi
         done
 

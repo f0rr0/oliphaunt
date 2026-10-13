@@ -136,6 +136,15 @@ def cargo_source_package(product, fixtures = "", native_sdk = False, cargo_facts
     shipping_suppliers(name = "source_suppliers", inputs = [])
     shipping_package(name = "shipping_package", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":crate"], ecosystem = "cargo", package_name = facts["name"], configuration = "source", role = carriers[0]["role"], suppliers = ":source_suppliers")
     common_consumer = "//build_defs/languages/installed:consumer_test"
-    if product == "oliphaunt-rust" and product in PREPARED_NATIVE_SELECTED_PRODUCTS and common_consumer in qualification:
+    minimum_dependencies = dict(facts["dependencies"])
+    minimum_dependencies.update(facts["build_dependencies"])
+    for table in facts["target_dependencies"].values():
+        minimum_dependencies.update(table.get("dependencies", {}))
+        minimum_dependencies.update(table.get("build-dependencies", {}))
+    internal_minimum = any([
+        (declaration.get("package", name) if type(declaration) == "dict" else name) in dependency_owners
+        for name, declaration in minimum_dependencies.items()
+    ])
+    if product in ["oliphaunt-rust", "oliphaunt-broker"] and product in PREPARED_NATIVE_SELECTED_PRODUCTS and common_consumer in qualification and internal_minimum:
         qualification = qualification + ["//build_defs/languages/installed:consumer_minimum_test"]
     shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = qualification, testonly = True)

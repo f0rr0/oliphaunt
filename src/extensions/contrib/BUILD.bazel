@@ -3,7 +3,7 @@ load("//build_defs/extensions:contrib_carriers.bzl", "native_contrib_carriers")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["carriers.toml"])
+exports_files(["carriers.toml", "postgres18.toml"])
 
 native_contrib_members(crypto = "@openssl//:crypto")
 native_contrib_carriers()

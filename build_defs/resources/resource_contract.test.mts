@@ -1,7 +1,9 @@
 import { expect, test } from 'bun:test';
+import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -25,11 +27,122 @@ import { buildMavenArtifactManifest } from '../../tools/packaging/build-maven-ar
 import {
   canonicalGzipSync,
   readPortableArchiveEntries,
+  releaseZstdCompressSync,
 } from '../../tools/packaging/portable-archive.mts';
 import { releaseProfilePackageLicense } from '../../tools/packaging/release-notices.mts';
+import {
+  assertSeedPublicData,
+  selectCompletedSeed,
+  writeSeedConstructionReceipt,
+} from './seed_construction.mts';
 import { bindSeedDomain } from './seed_domain.mts';
+import { fixture, identity, publication } from './seed-construction-fixture.mts';
 import { materializeInputs, nativeSeedHost, seedEnvironment } from './shared.mts';
 import { wasixRuntimeInputs } from './wasix_inputs.mts';
+
+test('private WASIX assets admit current module bytes while preserving the held seed and creator', async () => {
+  // Opaque PGDATA and module bytes exercise the actual formatter, not PostgreSQL execution.
+  const f = await fixture('wasix');
+  try {
+    const publicManifest = readFileSync(f.assets.manifest);
+    const held = JSON.parse(publicManifest.toString('utf8'));
+    const selected = selectCompletedSeed(
+      f.intent,
+      {
+        operation: 'adopt',
+        publication,
+        archive: identity(f.assets.archive),
+        manifest: identity(f.assets.manifest),
+      },
+      f.intent,
+    );
+    assert.ok(selected);
+    writeSeedConstructionReceipt(
+      f.receiptPath,
+      f.intent,
+      f.frozen,
+      f.pgdata,
+      selected.origin,
+      f.intent,
+      selected.sourceManifest,
+    );
+    const receiptBytes = readFileSync(f.receiptPath);
+    const frozen = readFileSync(f.frozen);
+    const currentModule = Buffer.from('current consuming module bytes');
+    const current = path.join(f.root, 'current', 'oliphaunt', 'bin');
+    mkdirSync(current, { recursive: true });
+    writeFileSync(path.join(current, 'postgres'), currentModule);
+    copyFileSync(f.inputs.initdb, path.join(current, 'initdb'));
+    const runtimeBytes = releaseZstdCompressSync(
+      await createDeterministicTar(path.join(f.root, 'current')),
+    );
+    const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+    const runtime = path.join(f.root, 'portable');
+    mkdirSync(runtime);
+    writeFileSync(path.join(runtime, 'oliphaunt.wasix.tar.zst'), runtimeBytes);
+    writeFileSync(
+      path.join(runtime, 'manifest.json'),
+      JSON.stringify({
+        'format-version': 2,
+        'source-fingerprint': 'controlled current module fixture',
+        runtime: {
+          archive: 'oliphaunt.wasix.tar.zst',
+          sha256: sha(runtimeBytes),
+          size: runtimeBytes.length,
+          'module-sha256': sha(currentModule),
+          'postgres-version': '18.4',
+          link: { exports: [] },
+        },
+        'runtime-support': [],
+        extensions: [],
+      }),
+    );
+    const privateArchive = path.join(f.root, 'private', path.basename(f.assets.archive));
+    const privateManifest = path.join(f.root, 'private', path.basename(f.assets.manifest));
+    const specification = path.join(f.root, 'private-inputs.json');
+    writeFileSync(
+      specification,
+      JSON.stringify({
+        family: 'wasix',
+        seed: f.frozen,
+        construction: f.receiptPath,
+        runtime,
+        profile: 'standard',
+        target: 'portable',
+        icu: null,
+        version: publication.version,
+        runtimeVersion: '0.3.3',
+        contract: f.invocation.contract,
+        archive: privateArchive,
+        manifest: privateManifest,
+      }),
+    );
+    const result = Bun.spawnSync(
+      [
+        process.execPath,
+        '--no-install',
+        '--no-env-file',
+        path.join(import.meta.dir, 'seed_assets.mts'),
+        specification,
+      ],
+      { stdout: 'pipe', stderr: 'pipe' },
+    );
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    const admitted = JSON.parse(readFileSync(privateManifest, 'utf8'));
+    expect(held.runtime.consumerSha256).not.toBe(sha(currentModule));
+    expect(admitted.runtime.consumerSha256).toBe(sha(currentModule));
+    expect(admitted.runtime.version).toBe('0.3.3');
+    expect(admitted.runtime.producerSha256).toBe(held.runtime.producerSha256);
+    expect(admitted.runtime.initdbSha256).toBe(held.runtime.initdbSha256);
+    expect(readFileSync(privateArchive)).toEqual(readFileSync(f.assets.archive));
+    expect(readFileSync(f.assets.manifest)).toEqual(publicManifest);
+    expect(readFileSync(f.receiptPath)).toEqual(receiptBytes);
+    expect(readFileSync(f.frozen)).toEqual(frozen);
+    assertSeedPublicData(privateArchive, JSON.parse(receiptBytes.toString('utf8')));
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
 
 test('WASIX resource archive aliases preserve declared bytes and reject non-file members', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'wasix-resource-archive-alias-'));

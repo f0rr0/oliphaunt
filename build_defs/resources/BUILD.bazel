@@ -104,7 +104,7 @@ cc_binary(
 )
 
 bun_test(name = "resource_contract_test", entry_point = "resource_contract.test.mts", data = [
-    ":helpers", "seed_domain.mts", "//src/database-resources:cluster_seed_contract_fixtures",
+    ":helpers", "seed_domain.mts", "seed_assets.mts", "seed-construction-fixture.mts", "//src/database-resources:cluster_seed_contract_fixtures",
     "//:LICENSE", "//src/third-party/icu:LICENSE", "//src/third-party/icu:source.toml",
 ], size = "small")
 

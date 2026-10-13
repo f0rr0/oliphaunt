@@ -126,6 +126,29 @@ def _policy(version, windows, ios = False):
         "STDC_HEADERS": "1",
     }
 
+def postgres_capability_checks(copts, definitions, abi = True, excluded = []):
+    """Use one maintained upstream check set for target compiler/libc facts."""
+    tests = macros.AC_CHECK_HEADERS(_HEADERS) + macros.AC_CHECK_FUNCS(_FUNCTIONS)
+    tests += [checks.AC_CHECK_DECL(symbol, includes = ["#include <" + header + ">"], define = "HAVE_DECL_" + symbol.upper(), if_false = "0") for symbol, header in _DECLARATIONS.items()]
+    if abi:
+        tests += [checks.AC_CHECK_SIZEOF(t, includes = ["#include <stdint.h>", "#include <sys/types.h>"], define = d) for t, d in [
+            ("long", "SIZEOF_LONG"), ("long long", "SIZEOF_LONG_LONG"), ("off_t", "SIZEOF_OFF_T"), ("size_t", "SIZEOF_SIZE_T"), ("void *", "SIZEOF_VOID_P"),
+        ]]
+        tests += [checks.AC_CHECK_ALIGNOF(t, includes = ["#include <stdint.h>"], define = d) for t, d in [
+            ("double", "ALIGNOF_DOUBLE"), ("int", "ALIGNOF_INT"), ("int64_t", "ALIGNOF_INT64_T"), ("long", "ALIGNOF_LONG"), ("short", "ALIGNOF_SHORT"),
+        ]]
+    tests += [checks.AC_CHECK_TYPE("struct option", includes = ["#include <getopt.h>"], define = "HAVE_STRUCT_OPTION"),
+              checks.AC_CHECK_TYPE("socklen_t", includes = ["#include <sys/types.h>", "#include <sys/socket.h>"], define = "HAVE_SOCKLEN_T"),
+              checks.AC_CHECK_MEMBER("struct sockaddr.sa_len", includes = ["#include <sys/types.h>", "#include <sys/socket.h>"], define = "HAVE_STRUCT_SOCKADDR_SA_LEN"),
+              checks.AC_CHECK_MEMBER("struct tm.tm_zone", includes = ["#include <time.h>"], define = "HAVE_STRUCT_TM_TM_ZONE")]
+    tests += [checks.AC_TRY_COMPILE(code = code, define = define) for define, code in _COMPILE_FEATURES.items()]
+    tests += [checks.AC_TRY_LINK(code = code, define = define, if_false = None) for define, code in _LINK_FEATURES.items()]
+    tests += [checks.AC_DEFINE("PG_INT128_TYPE", condition = "HAVE_PG_INT128", if_true = "__int128", if_false = None),
+              checks.AC_CHECK_ALIGNOF("__int128", define = "ALIGNOF_PG_INT128_TYPE", requires = ["HAVE_PG_INT128"])]
+    # Compilation flags and SDK feature visibility must match production.
+    tests = [test for test in tests if json.decode(test).get("define") not in excluded]
+    return [json.encode(json.decode(test) | {"copts": copts, "compile_defines": definitions + ["__STDC_WANT_LIB_EXT1__"]}) for test in tests]
+
 def postgres_host_configuration_targets(version):
     """Declare facts, header, positive admission and conditional port units."""
     for suffix, windows, setting, simulator in _PROFILES:
@@ -134,24 +157,7 @@ def postgres_host_configuration_targets(version):
         opts = WINDOWS_COPTS + ["/WX"] if windows else ["-std=gnu11", "-Werror=unguarded-availability-new", "-Werror=incompatible-pointer-types", "-Werror=implicit-function-declaration"]
         definitions = WINDOWS_DEFINES if windows else ["_DARWIN_C_SOURCE"]
         policy = _policy(version, windows, ios = simulator != None)
-        tests = macros.AC_CHECK_HEADERS(_HEADERS) + macros.AC_CHECK_FUNCS(_FUNCTIONS)
-        tests += [checks.AC_CHECK_DECL(symbol, includes = ["#include <" + header + ">"], define = "HAVE_DECL_" + symbol.upper(), if_false = "0") for symbol, header in _DECLARATIONS.items()]
-        tests += [checks.AC_CHECK_SIZEOF(t, includes = ["#include <stdint.h>", "#include <sys/types.h>"], define = d) for t, d in [
-            ("long", "SIZEOF_LONG"), ("long long", "SIZEOF_LONG_LONG"), ("off_t", "SIZEOF_OFF_T"), ("size_t", "SIZEOF_SIZE_T"), ("void *", "SIZEOF_VOID_P"),
-        ]]
-        tests += [checks.AC_CHECK_ALIGNOF(t, includes = ["#include <stdint.h>"], define = d) for t, d in [
-            ("double", "ALIGNOF_DOUBLE"), ("int", "ALIGNOF_INT"), ("int64_t", "ALIGNOF_INT64_T"), ("long", "ALIGNOF_LONG"), ("short", "ALIGNOF_SHORT"),
-        ]]
-        tests += [checks.AC_CHECK_TYPE("struct option", includes = ["#include <getopt.h>"], define = "HAVE_STRUCT_OPTION"),
-                  checks.AC_CHECK_TYPE("socklen_t", includes = ["#include <sys/types.h>", "#include <sys/socket.h>"], define = "HAVE_SOCKLEN_T"),
-                  checks.AC_CHECK_MEMBER("struct sockaddr.sa_len", includes = ["#include <sys/types.h>", "#include <sys/socket.h>"], define = "HAVE_STRUCT_SOCKADDR_SA_LEN"),
-                  checks.AC_CHECK_MEMBER("struct tm.tm_zone", includes = ["#include <time.h>"], define = "HAVE_STRUCT_TM_TM_ZONE")]
-        tests += [checks.AC_TRY_COMPILE(code = code, define = define) for define, code in _COMPILE_FEATURES.items()]
-        tests += [checks.AC_TRY_LINK(code = code, define = define, if_false = None) for define, code in _LINK_FEATURES.items()]
-        tests += [checks.AC_DEFINE("PG_INT128_TYPE", condition = "HAVE_PG_INT128", if_true = "__int128", if_false = None),
-                  checks.AC_CHECK_ALIGNOF("__int128", define = "ALIGNOF_PG_INT128_TYPE", requires = ["HAVE_PG_INT128"])]
-        # Compilation flags and SDK feature visibility must match production.
-        tests = [json.encode(json.decode(test) | {"copts": opts, "compile_defines": definitions + ["__STDC_WANT_LIB_EXT1__"]}) for test in tests]
+        tests = postgres_capability_checks(opts, definitions)
         # AC_DEFINE preserves the value's JSON type in probe preambles. Feature
         # switches must be integers: "1" would emit a C string literal, which
         # conflicts with MSVC's /D_CRT_SECURE_NO_DEPRECATE=1 under /WX.

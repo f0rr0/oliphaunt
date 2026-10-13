@@ -205,7 +205,7 @@ export async function sourceFacts(
   }
   return {
     source_fingerprint: `${postgres.version}:${postgres.sha256}:${patchHash}`,
-    postgres_version: `${postgres.version}-wasix-oliphaunt`,
+    postgres_version: postgres.version,
     sources: [
       icu,
       {

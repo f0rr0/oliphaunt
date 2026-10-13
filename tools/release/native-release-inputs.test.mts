@@ -232,6 +232,7 @@ function finalInputsFixture(root: string): Required<NativeReleaseFinalInputs> {
 
 function finalFiles(inputs: NativeReleaseFinalInputs): ExtensionFinalInputFile[] {
   return [
+    ...(inputs.nativeCurrentArtifacts ?? []).map((row) => row.file),
     ...(inputs.extensionFinalInputs ?? []).flatMap((row) => [
       ...row.github,
       ...row.npm,
@@ -1160,6 +1161,32 @@ test('same final source constructor facts replace stale tuples and survive the e
   const f = await fixture();
   try {
     const finalInputs = finalInputsFixture(f.root);
+    const name = 'liboliphaunt-native-linux-x64-gnu-0.3.3.crate';
+    const currentFile = path.join(f.root, name);
+    writeFileSync(currentFile, 'original current carrier protocol fixture');
+    const identity = fileIdentity(currentFile);
+    finalInputs.nativeCurrentArtifacts = [
+      {
+        product: 'liboliphaunt-native',
+        version: '0.3.3',
+        artifact: 'cargo:liboliphaunt-native-linux-x64-gnu',
+        configuration: 'linux-x64-gnu',
+        source: f.record.preparedSource,
+        file: {
+          path: currentFile,
+          size: identity.size,
+          sha256: identity.sha256,
+          producer: {
+            evidenceDigest: 'sha256:' + 'c'.repeat(64),
+            invocationId: 'same-candidate-native',
+            root: '//src/native/runtime:native_cargo_shipping',
+            configuration: 'd'.repeat(64),
+            output: 'bazel-out/cfg/bin/cargo-packages',
+          },
+          member: name,
+        },
+      },
+    ];
     const inherited = path.join(f.root, 'source-inputs.json');
     const snapshot = {
       source: f.record.preparedSource,
@@ -1187,6 +1214,7 @@ test('same final source constructor facts replace stale tuples and survive the e
     expect(written.nativeSwiftSource).toEqual(current.nativeSwiftSource);
     expect(written.extensionFinalInputs).toEqual(current.extensionFinalInputs);
     expect(written.nativeAppleBase).toEqual(current.nativeAppleBase);
+    expect(written.nativeCurrentArtifacts).toEqual(current.nativeCurrentArtifacts);
     expect(written.nativeSwiftSource.archive.producer.evidenceDigest).not.toBe(
       snapshot.nativeSwiftSource.archive.producer.evidenceDigest,
     );
@@ -1209,6 +1237,17 @@ test('same final source constructor facts replace stale tuples and survive the e
       expect(file.producer).toEqual(originalFiles[index].producer);
       expect(file.member).toEqual(originalFiles[index].member);
     }
+    const wrongCurrent = structuredClone(written);
+    wrongCurrent.nativeCurrentArtifacts[0].source.commit = 'f'.repeat(40);
+    const forged = path.join(f.root, 'wrong-current-source.json');
+    writeFileSync(forged, JSON.stringify(wrongCurrent));
+    expect(() =>
+      transportPublicNativePublicationInputs(
+        forged,
+        path.join(f.root, 'wrong-current-export'),
+        f.record.preparedSource,
+      ),
+    ).toThrow('current native artifact source differs');
     const missing = structuredClone(current);
     delete missing.nativeSwiftSource.bindingsArchive;
     expect(() =>

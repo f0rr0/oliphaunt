@@ -29,6 +29,7 @@ import {
   readPortableArchiveEntries,
   readPortableTarStream,
 } from '../../tools/packaging/portable-archive.mts';
+import { seedProducerIdentity, validateSeedConstructionReceipt } from './seed_construction.mts';
 
 type Entries = ReturnType<typeof readPortableArchiveEntries>;
 
@@ -79,6 +80,7 @@ type SeedFiles = {
   manifest: string;
   npm: string;
   cargo: string;
+  construction: string;
   maven?: string;
 };
 
@@ -101,6 +103,7 @@ export async function verifyMobileResourceFiles({
   root: string;
 }): Promise<void> {
   assert(['android-datum64', 'ios-datum64'].includes(target));
+  assert.match(runtimeVersion, /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u);
   assert.deepEqual(seeds.map(({ profile }) => profile).sort(), ['icu', 'standard']);
   assert.equal(Boolean(swift), target === 'ios-datum64');
   // Bazel's declared outer Files may be runfiles aliases. Archive members retain
@@ -114,6 +117,7 @@ export async function verifyMobileResourceFiles({
     manifest: realpathSync(seed.manifest),
     npm: realpathSync(seed.npm),
     cargo: realpathSync(seed.cargo),
+    construction: realpathSync(seed.construction),
     ...(seed.maven ? { maven: realpathSync(seed.maven) } : {}),
   }));
   const icuRoot = path.join(root, 'icu');
@@ -131,6 +135,17 @@ export async function verifyMobileResourceFiles({
   const identities = seedCarrierIdentities();
   for (const seed of seeds) {
     assert.equal(Boolean(seed.maven), target === 'android-datum64');
+    const construction = validateSeedConstructionReceipt(
+      JSON.parse(readFileSync(seed.construction, 'utf8')),
+    );
+    assert.equal(construction.intent.family, 'native');
+    assert.equal(construction.intent.target, target);
+    assert.equal(construction.intent.profile, seed.profile);
+    const frozenBytes = readFileSync(seed.frozen);
+    assert.deepEqual(construction.frozen, {
+      size: frozenBytes.length,
+      sha256: createHash('sha256').update(frozenBytes).digest('hex'),
+    });
     const frozenRoot = path.join(root, seed.profile, 'frozen');
     mkdirSync(frozenRoot, { recursive: true });
     const stream = createReadStream(seed.frozen);
@@ -169,7 +184,29 @@ export async function verifyMobileResourceFiles({
       profile: seed.profile,
       icuData: seed.profile === 'icu' ? icuData : undefined,
     });
-    assert.equal(manifest.runtime.version, runtimeVersion);
+    assert.equal(manifest.runtime.product, 'liboliphaunt-native');
+    assert.match(manifest.runtime.version, /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u);
+    if (construction.sourceManifest) {
+      const original = JSON.parse(construction.sourceManifest.contents);
+      assert.deepEqual(manifest.runtime, original.runtime, 'retain the admitted seed runtime');
+      assert.deepEqual(manifest.source, original.source, 'retain the admitted seed source');
+    } else assert.equal(manifest.runtime.version, runtimeVersion);
+    assert.deepEqual(
+      {
+        postgresSha256: manifest.source?.postgresSha256,
+        initdbSha256: manifest.source?.initdbSha256,
+      },
+      seedProducerIdentity(construction),
+      'mobile seed hashes must identify its original constructor',
+    );
+    assert.equal(
+      construction.pgdata.treeSha256,
+      logicalTreeSha256(archiveLogicalTreeRows(archiveEntries, seed.archive, '')),
+    );
+    assert.deepEqual(
+      construction.pgdata.emptyDirectories,
+      emptyDirectoryPaths(path.join(stage, 'files')),
+    );
     const identity = identities.find(
       (row) => row.family === 'native' && row.target === target && row.profile === seed.profile,
     );
@@ -241,14 +278,14 @@ export async function verifyMobileResourceFiles({
 if (import.meta.main) {
   const [target, version, runtimeVersion, icu, swift, ...inputs] = process.argv.slice(2);
   assert(process.env.TEST_TMPDIR, 'test requires a private Bazel scratch directory');
-  const stride = target === 'android-datum64' ? 6 : 5;
+  const stride = target === 'android-datum64' ? 7 : 6;
   assert.equal(inputs.length, stride * 2, 'test requires both complete actual seed packages');
   const seeds = (['icu', 'standard'] as const).map((profile, index) => {
-    const [frozen, archive, manifest, npm, cargo, maven] = inputs.slice(
+    const [frozen, archive, manifest, npm, cargo, construction, maven] = inputs.slice(
       index * stride,
       (index + 1) * stride,
     );
-    return { profile, frozen, archive, manifest, npm, cargo, maven };
+    return { profile, frozen, archive, manifest, npm, cargo, construction, maven };
   });
   await verifyMobileResourceFiles({
     target: target as 'android-datum64' | 'ios-datum64',

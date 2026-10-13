@@ -135,6 +135,7 @@ sdk_unit_test(
     tests = ["tools/published-consumer.test.mts"],
     sources = [
         "//build_defs/languages/swift:source-delivery-contract.mts",
+        "//build_defs/languages:source-package.mts",
         "//build_defs/resources:seed_construction.mts",
         "//build_defs/wasix/browser:metadata.mts",
         "//build_defs/wasix/browser:provenance.mts",
@@ -170,6 +171,9 @@ sdk_unit_test(
         "//src/wasix/sdks/ts:tools/wasix-typescript-package.mts",
         "//tools/bazel:shipping-coverage.mts",
         "//:tools/packaging/archive-directory.mts",
+        "//:tools/packaging/cargo-manifest.mts",
+        "//:tools/packaging/cargo-source-package.mts",
+        "//:tools/packaging/package-archive.mts",
         "//:tools/packaging/emit-javascript.mts",
         "//:tools/packaging/frozen-cargo.mts",
         "//:tools/packaging/maven-artifact-manifest.mts",

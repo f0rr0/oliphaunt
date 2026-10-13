@@ -150,6 +150,7 @@ def android_resource_slice(name, qualification):
                            domain = "android-datum64", icu = icu, target_compatible_with = compatible,
                            **SEED_REUSE_CONTROLS.get("native/android-datum64/" + profile, {}))
         native.filegroup(name = prefix + "_frozen", srcs = [":" + prefix + "_seed"], output_group = "frozen")
+        native.filegroup(name = prefix + "_construction", srcs = [":" + prefix + "_seed"], output_group = "construction")
         packages.extend(native_seed_envelopes(prefix, "android-datum64", profile, ":" + prefix + "_seed", icu = icu, compatible = compatible))
     shipping_export(name = name, packages = packages, qualification = qualification, testonly = True, target_compatible_with = compatible)
 
@@ -193,6 +194,7 @@ def ios_resource_slice(name, qualification):
                            domain = "ios-datum64", icu = icu, target_compatible_with = compatible,
                            **SEED_REUSE_CONTROLS.get("native/ios-datum64/" + profile, {}))
         native.filegroup(name = prefix + "_frozen", srcs = [":" + prefix + "_seed"], output_group = "frozen")
+        native.filegroup(name = prefix + "_construction", srcs = [":" + prefix + "_seed"], output_group = "construction")
         packages.extend(native_seed_envelopes(prefix, "ios-datum64", profile, ":" + prefix + "_seed", icu = icu, compatible = compatible))
         assets.append(":" + prefix + "_assets")
         seeds.append(":" + prefix + "_seed")
@@ -215,7 +217,7 @@ def mobile_resource_test(name, target):
     seed_files = []
     for profile in sorted(DATABASE_RESOURCE_CONTRACT["profiles"]):
         prefix = target.replace("-", "_") + "_" + profile
-        seed_files.extend([":" + prefix + "_" + suffix for suffix in ["frozen", "archive", "manifest", "carriers_npm_files", "carriers_cargo_files"]])
+        seed_files.extend([":" + prefix + "_" + suffix for suffix in ["frozen", "archive", "manifest", "carriers_npm_files", "carriers_cargo_files", "construction"]])
         if android:
             seed_files.append(":" + prefix + "_carriers_maven_files")
     bun_script_test(
