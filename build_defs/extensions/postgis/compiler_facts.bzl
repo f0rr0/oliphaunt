@@ -53,7 +53,6 @@ _FUNCTIONS = [
 
 _COMPILE_FEATURES = {
     # Expressions used by the pinned json-c and libxml2 configurations.
-    "HAVE_ATOMIC_BUILTINS": "int main(void) { int x = 0; return __sync_add_and_fetch(&x, 1); }",
     "HAVE_FUNC_ATTRIBUTE_DESTRUCTOR": "void __attribute__((destructor)) f(void) {} int main(void) { return 0; }",
     "HAVE_VISIBILITY": "__attribute__((visibility(\"hidden\"))) int f(void) { return 0; }",
     "HAVE___THREAD": "__thread int v; int main(void) { return v; }",
@@ -81,6 +80,12 @@ def _compiler_checks(windows, mobile_target = None):
         checks.AC_CHECK_TYPE("mode_t", includes = ["#include <sys/types.h>"], define = "HAVE_MODE_T"),
         checks.AC_CHECK_TYPE("ssize_t", includes = ["#include <sys/types.h>"], define = "HAVE_SSIZE_T"),
         checks.AC_COMPUTE_INT("EILSEQ", "EILSEQ", includes = ["#include <errno.h>"]),
+        # json-c's check_c_source_compiles links the atomic operation.
+        checks.AC_TRY_LINK(
+            code = "int main(void) { int x = 0; return __sync_add_and_fetch(&x, 1); }",
+            define = "HAVE_ATOMIC_BUILTINS",
+            if_false = None,
+        ),
         checks.AC_TRY_LINK(
             code = utils.AC_LANG_PROGRAM(["#include <langinfo.h>"], "return nl_langinfo(CODESET) == 0;"),
             define = "HAVE_LANGINFO_CODESET",

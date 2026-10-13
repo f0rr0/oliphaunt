@@ -125,6 +125,40 @@ test('applies root Git ignores through a symlinked test temporary directory', ()
   }
 });
 
+test('preserves nested Git ignores when Bazel temporary inputs are under .cache', () => {
+  const scratch = mkdtempSync(
+    join(process.env.TEST_TMPDIR ?? tmpdir(), 'oliphaunt-biome-cache-parent-'),
+  );
+  const previous = process.env.TEST_TMPDIR;
+  try {
+    const cached = join(scratch, '.cache', 'bazel-tests');
+    mkdirSync(cached, { recursive: true });
+    process.env.TEST_TMPDIR = cached;
+    fixture(
+      {
+        '.gitignore': '/root-ignored.ts\n',
+        'src/.gitignore': 'local-ignored.ts\n',
+        'src/good.ts': 'export const value = 1;\n',
+        'root-ignored.ts': 'syntax error \\\n',
+        'src/local-ignored.ts': 'syntax error \\\n',
+        'src/format-bad.ts': 'export const value=1;\n',
+        'src/lint-bad.ts': 'export const value = undeclaredIdentifier;\n',
+      },
+      (root) => {
+        const paths = ['src/.gitignore', 'src/good.ts', 'root-ignored.ts', 'src/local-ignored.ts'];
+        expect(check(root, 'format', paths)).toMatchObject({ status: 0 });
+        expect(check(root, 'lint', paths)).toMatchObject({ status: 0 });
+        expect(check(root, 'format', [...paths, 'src/format-bad.ts']).status).toBe(1);
+        expect(check(root, 'lint', [...paths, 'src/lint-bad.ts']).status).toBe(1);
+      },
+    );
+  } finally {
+    if (previous === undefined) delete process.env.TEST_TMPDIR;
+    else process.env.TEST_TMPDIR = previous;
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 test('detects actual lint errors and refuses path escape or duplicate members', () => {
   fixture({ 'src/bad.ts': 'export const value = undeclaredIdentifier;\n' }, (root) => {
     expect(check(root, 'lint', ['src/bad.ts']).status).toBe(1);

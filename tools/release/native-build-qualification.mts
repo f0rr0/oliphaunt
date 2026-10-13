@@ -389,7 +389,7 @@ export function nativeBuildEventIndex(
       });
     }
   }
-  const filesOf = (target: Row, groupName?: string) => {
+  const filesOf = (target: Row, groupName: string) => {
     const files = new Map<string, { sha256: string; size: number }>();
     const visitFile = (raw: unknown) => {
       const file = object(raw);
@@ -410,7 +410,7 @@ export function nativeBuildEventIndex(
       visited.add(key);
     };
     for (const group of list(target.outputGroup ?? [])) {
-      if (groupName !== undefined && group.name !== groupName) continue;
+      if (group.name !== groupName) continue;
       if (group.incomplete === true) throw new Error('native BEP output group is incomplete');
       for (const set of list(group.fileSets ?? [])) visit(text(set.id));
       for (const file of list(group.inlineFiles ?? [])) visitFile(file);
@@ -1051,7 +1051,7 @@ export function validateNativeBuildEvidence(
             target.value.success === true,
         )
         .filter((target) => {
-          const files = bep.filesOf(target.value);
+          const files = bep.filesOf(target.value, 'default');
           return expectedFiles.every((file) => files.has(file.path));
         });
       if (matches.length !== 1)
@@ -1066,7 +1066,7 @@ export function validateNativeBuildEvidence(
         rootConfigurations.get(root.label),
         'native BEP/cquery shipping configuration',
       );
-      const files = bep.filesOf(target.value);
+      const files = bep.filesOf(target.value, 'default');
       for (const { path: file, ...identity } of expectedFiles)
         equal(files.get(file), identity, 'native BEP/physical output digest');
       return {

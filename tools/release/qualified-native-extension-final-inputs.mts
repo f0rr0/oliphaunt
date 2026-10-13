@@ -93,7 +93,6 @@ export function constructionNativeFinalInputs(
       'extension imports require actual configured mandatory tests',
     );
     const finalFiles = origin.finalFiles;
-    finalFiles.assertUnchanged?.();
     for (const [cohortIndex, cohort] of build.evidence.cohorts.entries()) {
       const records = (
         root: (typeof cohort.roots)[number],

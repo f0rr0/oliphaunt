@@ -31,6 +31,10 @@ ASSERT(long_align, ALIGNOF_LONG == ALIGNOF(long));
 ASSERT(short_align, ALIGNOF_SHORT == ALIGNOF(short));
 ASSERT(pg_alignment, MAXIMUM_ALIGNOF >= ALIGNOF(int64_t));
 ASSERT(profile_pointer_size, SIZEOF_VOID_P == 8);
+/* PG uses this fact in StaticAssertExpr for memory-context names. */
+#ifdef HAVE__BUILTIN_CONSTANT_P
+ASSERT(constant_memory_context_name, __builtin_constant_p("memory context"));
+#endif
 #ifdef _WIN32
 ASSERT(windows_llp64, SIZEOF_LONG == 4 && SIZEOF_OFF_T == 4);
 #else

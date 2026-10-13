@@ -13,9 +13,8 @@ export function runBiome(
   options: { capture?: boolean } = {},
 ) {
   if (mode !== 'format' && mode !== 'lint') throw new Error('Expected Biome format or lint');
-  const root = realpathSync(
-    mkdtempSync(join(process.env.TEST_TMPDIR ?? tmpdir(), 'oliphaunt-biome-')),
-  );
+  // Biome's scanner rejects .cache ancestors, including Bazel's default TEST_TMPDIR.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'oliphaunt-biome-')));
   try {
     const paths = new Set<string>();
     for (const file of sources) {

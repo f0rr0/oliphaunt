@@ -268,6 +268,62 @@ test('successful cache-backed target binds configured output bytes and all curre
   }
 });
 
+// Real stock Bazel 8.8.1 NAPI capture had distinct external source-root Cargo.toml
+// Files with no pathPrefix in observation_inputs. ShippingInfo outputs are the
+// package's DefaultInfo, so input-only observations must not collide with finals.
+test('shipping default outputs remain bound with real observation source-name collisions', () => {
+  const f = fixture();
+  try {
+    const cohort = f.evidence.cohorts[0];
+    const observations = [
+      {
+        name: 'Cargo.toml',
+        uri: 'file:///diagnostic-output/external/registry-package-0/Cargo.toml',
+        digest: 'c4f4ae997dce02e055a1ce5df6f5dc289d7297702ef54e39a32d61f9d27d4fe6',
+        length: '7483',
+      },
+      {
+        name: 'Cargo.toml',
+        uri: 'file:///diagnostic-output/external/registry-package-1/Cargo.toml',
+        digest: 'e17cb588cdea3490bc7cde3a145426e6097075b82879e0cb9eca0e0c8b735b90',
+        length: '11202',
+      },
+    ];
+    cohort.buildEvents.splice(3, 0, {
+      id: { namedSet: { id: 'observation' } },
+      namedSetOfFiles: { files: observations },
+    });
+    const completed = (cohort.buildEvents as any[]).find((event) => event.id?.targetCompleted);
+    completed.completed.outputGroup.push({
+      name: 'observation_inputs',
+      fileSets: [{ id: 'observation' }],
+    });
+    const result = validateNativeBuildEvidence(f.evidence, f.expected);
+    expect(result.cohorts[0].roots[0].outputs).toEqual(cohort.outputs);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('shipping default outputs reject conflicting repeated final identities', () => {
+  const f = fixture();
+  try {
+    const cohort = f.evidence.cohorts[0];
+    const output = (cohort.buildEvents as any[]).find(
+      (event) => event.id?.namedSet?.id === 'nested',
+    );
+    output.namedSetOfFiles.files.push({
+      ...output.namedSetOfFiles.files[0],
+      digest: 'f'.repeat(64),
+    });
+    expect(() => validateNativeBuildEvidence(f.evidence, f.expected)).toThrow(
+      'native BEP duplicate file mismatch',
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('loaded-source facts bind each shipping root and remain optional for old diagnostic packets', () => {
   const f = fixture();
   try {

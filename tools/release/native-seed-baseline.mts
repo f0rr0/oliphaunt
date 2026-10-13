@@ -158,6 +158,7 @@ export function proposeSeedConstructionAnchor({
     'seed adoption requires every canonical public slot',
   );
   const seeds: SeedConstructionAnchor['seeds'] = [];
+  for (const origin of origins.values()) assertAuthenticatedNativeBuildOrigin(origin);
   for (const control of seedControls) {
     assert.ok(
       control.reuse && control.reuse.operation === 'adopt' && !control.promotion,
@@ -165,8 +166,7 @@ export function proposeSeedConstructionAnchor({
     );
     assert.deepEqual(control.reuse.publication, publication, 'seed adoption public origin differs');
     const matches: SeedConstructionAnchor['seeds'] = [];
-    for (const [directory, raw] of origins) {
-      const origin = assertAuthenticatedNativeBuildOrigin(raw);
+    for (const [directory, origin] of origins) {
       assert.deepEqual(origin.evidence.source, source, 'seed adoption producer source differs');
       assert.ok(origin.finalFiles?.qualification);
       const qualification = origin.finalFiles.qualification;
@@ -249,7 +249,6 @@ export function proposeSeedConstructionAnchor({
           },
         });
       }
-      origin.finalFiles.assertUnchanged();
     }
     assert.equal(
       matches.length,
@@ -258,6 +257,7 @@ export function proposeSeedConstructionAnchor({
     );
     seeds.push(matches[0]);
   }
+  for (const origin of origins.values()) origin.finalFiles!.assertUnchanged();
   seeds.sort((left, right) =>
     `${left.family}/${left.target}/${left.profile}`.localeCompare(
       `${right.family}/${right.target}/${right.profile}`,

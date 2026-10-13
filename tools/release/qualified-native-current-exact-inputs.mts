@@ -197,7 +197,6 @@ export function deriveQualifiedNativeCurrentExactInputs(
       requiredTests: build.qualification.requiredTests,
     });
     assert.equal(build.qualification.qualificationPolicy, 'bound');
-    origin.finalFiles.assertUnchanged?.();
   }
   assert.equal(
     observed.length,

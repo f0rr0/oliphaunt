@@ -59,31 +59,33 @@ _DECLARATIONS = {
 
 # These are PG's compiler features, not guesses based on a compiler name. The
 # probes keep the exact expressions which the corresponding PG code requires.
+# See PostgreSQL config/c-compiler.m4 and config/c-library.m4: constant
+# expressions need static bounds; referenced external variables need linking.
 _COMPILE_FEATURES = {
     "HAVE_COMPUTED_GOTO": "int main(void) { void *p = &&label; goto *p; label: return 0; }",
     "HAVE_TYPEOF": "int main(void) { int x; typeof(x) y = 0; return y; }",
     "HAVE__STATIC_ASSERT": "int main(void) { return ({ _Static_assert(1, \"ok\"); 0; }); }",
-    "HAVE__BUILTIN_CONSTANT_P": "int main(void) { return __builtin_constant_p(1); }",
-    "HAVE__BUILTIN_TYPES_COMPATIBLE_P": "int main(void) { return __builtin_types_compatible_p(int, int); }",
+    "HAVE__BUILTIN_CONSTANT_P": "static int x; static int y[__builtin_constant_p(x) ? x : 1]; static int z[__builtin_constant_p(\"string literal\") ? 1 : x];",
+    "HAVE__BUILTIN_TYPES_COMPATIBLE_P": "int main(void) { int x; static int y[__builtin_types_compatible_p(__typeof__(x), int)]; return 0; }",
     "HAVE_VISIBILITY_ATTRIBUTE": "__attribute__((visibility(\"hidden\"))) int f(void) { return 0; }",
-    "HAVE_INT_OPTERR": "#include <unistd.h>\nextern int opterr; int main(void) { return opterr; }",
-    "HAVE_INT_OPTRESET": "#include <unistd.h>\nextern int optreset; int main(void) { return optreset; }",
-    "HAVE_INT_TIMEZONE": "#include <time.h>\nint main(void) { int *p = &timezone; return *p; }",
     "HAVE_PTHREAD_PRIO_INHERIT": "#include <pthread.h>\nint main(void) { return PTHREAD_PRIO_INHERIT; }",
-    "STRERROR_R_INT": "#include <string.h>\nint main(void) { char b[64]; int (*p)(int, char *, size_t) = strerror_r; return p(0, b, sizeof(b)); }",
+    "STRERROR_R_INT": "#include <string.h>\nint main(void) { char b[100]; switch (strerror_r(1, b, sizeof(b))) { case 0: break; default: break; } return 0; }",
     "HAVE_UNION_SEMUN": "#include <sys/types.h>\n#include <sys/ipc.h>\n#include <sys/sem.h>\nint main(void) { union semun u; return sizeof(u); }",
     "HAVE__CPUID": "#include <intrin.h>\nint main(void) { int x[4]; __cpuid(x, 0); return x[0]; }",
     "HAVE__CPUIDEX": "#include <intrin.h>\nint main(void) { int x[4]; __cpuidex(x, 0, 0); return x[0]; }",
 }
 
 _LINK_FEATURES = {
+    "HAVE_INT_OPTERR": "#include <unistd.h>\nint main(void) { extern int opterr; opterr = 1; return 0; }",
+    "HAVE_INT_OPTRESET": "#include <unistd.h>\nint main(void) { extern int optreset; optreset = 1; return 0; }",
+    "HAVE_INT_TIMEZONE": "#include <time.h>\nint res; int main(void) { res = timezone / 60; return 0; }",
     "HAVE__BUILTIN_BSWAP16": "int main(void) { return __builtin_bswap16(1); }",
     "HAVE__BUILTIN_BSWAP32": "int main(void) { return __builtin_bswap32(1); }",
     "HAVE__BUILTIN_BSWAP64": "int main(void) { return __builtin_bswap64(1); }",
     "HAVE__BUILTIN_CLZ": "int main(void) { return __builtin_clz(1); }",
     "HAVE__BUILTIN_CTZ": "int main(void) { return __builtin_ctz(1); }",
     "HAVE__BUILTIN_FRAME_ADDRESS": "int main(void) { return __builtin_frame_address(0) == 0; }",
-    "HAVE__BUILTIN_OP_OVERFLOW": "int main(void) { int x; return __builtin_add_overflow(1, 1, &x); }",
+    "HAVE__BUILTIN_OP_OVERFLOW": "#include <stdint.h>\nint64_t a = 1, b = 1, result; int oflo; int main(void) { oflo = __builtin_mul_overflow(a, b, &result); return 0; }",
     "HAVE__BUILTIN_POPCOUNT": "int main(void) { return __builtin_popcount(1); }",
     "HAVE__BUILTIN_UNREACHABLE": "int main(void) { __builtin_unreachable(); }",
     "HAVE_GCC__SYNC_CHAR_TAS": "int main(void) { char x = 0; return __sync_lock_test_and_set(&x, 1); }",
@@ -92,7 +94,8 @@ _LINK_FEATURES = {
     "HAVE_GCC__SYNC_INT64_CAS": "#include <stdint.h>\nint main(void) { int64_t x = 0; return __sync_val_compare_and_swap(&x, 0, 1); }",
     "HAVE_GCC__ATOMIC_INT32_CAS": "#include <stdint.h>\nint main(void) { int32_t x = 0, y = 0; return __atomic_compare_exchange_n(&x, &y, 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }",
     "HAVE_GCC__ATOMIC_INT64_CAS": "#include <stdint.h>\nint main(void) { int64_t x = 0, y = 0; return __atomic_compare_exchange_n(&x, &y, 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }",
-    "HAVE_PG_INT128": "int main(void) { __int128 x = 1; return (x * x / x) != 1; }",
+    # Volatile reads retain upstream's runtime-helper check under optimization.
+    "HAVE_PG_INT128": "volatile __int128 a = 48828125, b = 97656250; int main(void) { __int128 c, d; a = (a << 12) + 1; b = (b << 12) + 5; c = a * b; d = (c + b) / b; if (d != a + 1) return 1; return 0; }",
     "HAVE_PTHREAD": "#include <pthread.h>\nstatic void *f(void *p) { return p; } int main(void) { pthread_t t; return pthread_create(&t, 0, f, 0); }",
 }
 
