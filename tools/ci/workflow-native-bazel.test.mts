@@ -122,6 +122,84 @@ test('native package consumers follow their producers and remain required for ad
   });
 });
 
+test('WASIX probes share the complete opt qualification invocation', () => {
+  const steps = jobs.wasix.steps.filter(
+    (step: any) =>
+      step.run?.includes('qualify-native-shipping.mts') ||
+      step.run?.includes('tools/dev/bazel.sh test'),
+  );
+  qualifierFixture((directory, env) => {
+    const calls = path.join(directory, 'wasix-calls');
+    const chrome = path.join(directory, 'chrome');
+    mkdirSync(env.RUNNER_TEMP, { recursive: true });
+    writeFileSync(path.join(directory, 'tools/dev/bazel.sh'), 'exit 71\n');
+    writeFileSync(
+      path.join(directory, 'tools/dev/bun.sh'),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$1" >> "$WASIX_CALLS"
+case "$1" in
+  build_defs/wasix/browser/chrome-receipt.mts)
+    printf '{}\\n' > "$2"
+    printf '%s\\n' "$WASIX_CHROME" ;;
+  tools/release/qualify-native-shipping.mts)
+    printf '%s\\0' "$@" > "$QUALIFIER_ARGS"
+    printf '%s\\n' "$OLIPHAUNT_NATIVE_PUBLICATION_INPUTS" > "$QUALIFIER_SOURCE"
+    exit "\${QUALIFIER_STATUS:-0}" ;;
+  *) exit 72 ;;
+esac
+`,
+    );
+    const execute = (status = '0') =>
+      spawnSync('bash', ['-eu', '-c', steps.map((step: any) => step.run).join('\n')], {
+        cwd: directory,
+        env: {
+          ...env,
+          QUALIFICATION_JOB_NAME: jobs.wasix.name,
+          WASIX_CALLS: calls,
+          WASIX_CHROME: chrome,
+          QUALIFIER_STATUS: status,
+          OLIPHAUNT_NATIVE_PUBLICATION_INPUTS: path.join(directory, 'native-inputs.json'),
+          ImageOS: 'ubuntu24',
+          ImageVersion: 'fixture',
+        },
+      });
+    const result = execute();
+    assert.equal(result.status, 0, result.stderr.toString());
+    assert.deepEqual(readFileSync(calls, 'utf8').trim().split('\n'), [
+      'build_defs/wasix/browser/chrome-receipt.mts',
+      'tools/release/qualify-native-shipping.mts',
+    ]);
+    const args = readFileSync(env.QUALIFIER_ARGS, 'utf8').split('\0');
+    const argument = (flag: string) => args[args.indexOf(flag) + 1];
+    assert.equal(argument('--shipping-export'), '//:wasix_shipping_export');
+    assert.deepEqual(JSON.parse(readFileSync(argument('--complete-products-json'), 'utf8')), [
+      'postgres-tools-wasix',
+    ]);
+    assert.deepEqual(JSON.parse(readFileSync(argument('--targets-json'), 'utf8')), [
+      '//build_defs/wasix:bridge_abi_test',
+      '//build_defs/wasix:initdb_shim_abi_test',
+      '//build_defs/wasix/postmaster:source_modes_test',
+    ]);
+    const configuration = JSON.parse(readFileSync(argument('--configuration-json'), 'utf8'));
+    assert.deepEqual(configuration.slice(0, 3), ['-c', 'opt', '--config=wasix-aot']);
+    for (const flag of [
+      '--platforms=//build_defs/native:linux_x86_64_glibc_2_28',
+      '--host_platform=//build_defs/native:linux_x86_64_glibc_2_28',
+      '--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full',
+      `--test_env=OLIPHAUNT_BROWSER_CHROME=${chrome}`,
+      '--test_env=OLIPHAUNT_BROWSER_CHROME_RECEIPT=' +
+        path.join(env.RUNNER_TEMP, 'chrome-host.json'),
+    ])
+      assert.ok(configuration.includes(flag), `Missing WASIX qualification option: ${flag}`);
+    assert.ok(existsSync(path.join(env.RUNNER_TEMP, 'chrome-host.json')));
+    assert.equal(
+      readFileSync(env.QUALIFIER_SOURCE, 'utf8').trim(),
+      path.join(directory, 'native-inputs.json'),
+    );
+    assert.equal(execute('7').status, 7);
+  });
+});
+
 test('private Rust packaging source tests execute once on Linux x64', () => {
   const label = '//src/native/runtime/packaging:source_tests';
   const callers = Object.entries(jobs).flatMap(([id, job]) =>

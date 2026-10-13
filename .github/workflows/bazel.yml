@@ -784,14 +784,6 @@ jobs:
           phase: restore
           cohort: wasix
 
-      - name: Qualify bridge, initdb shim ABI and source mode handling
-        run: >-
-          bash tools/dev/bazel.sh test --config=wasix-aot //build_defs/wasix:bridge_abi_test
-          //build_defs/wasix:initdb_shim_abi_test
-          //build_defs/wasix/postmaster:source_modes_test
-          --platforms=//build_defs/native:linux_x86_64_glibc_2_28
-          --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
-
       - name: Construct platform AOT packages and qualify Linux SDK, resources and browser
         env:
           QUALIFICATION_JOB_NAME: Linux WASIX and installed browser
@@ -811,10 +803,16 @@ jobs:
             "--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full","--test_env=XDG_CACHE_HOME="+$cache,"--test_env=RUST_TEST_THREADS=1",
             "--test_env=OLIPHAUNT_BROWSER_CHROME="+$chrome,"--test_env=OLIPHAUNT_BROWSER_CHROME_RECEIPT="+$chromeReceipt
           ]' > "$input_root/configuration.json"
+          jq -nc '[
+            "//build_defs/wasix:bridge_abi_test",
+            "//build_defs/wasix:initdb_shim_abi_test",
+            "//build_defs/wasix/postmaster:source_modes_test"
+          ]' > "$input_root/targets.json"
           jq -nc '["postgres-tools-wasix"]' > "$input_root/complete-products.json"
           bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
             --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
             --shipping-export //:wasix_shipping_export \
+            --targets-json "$input_root/targets.json" \
             --complete-products-json "$input_root/complete-products.json" \
             --output-directory "$RUNNER_TEMP/wasix-tools-build-capture"
 
