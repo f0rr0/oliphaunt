@@ -312,7 +312,7 @@ if(args[0]==='test') {
   if(state.mode==='aquery-failure') process.exit(1);
   if(state.mode==='aquery-race') writeFileSync('src/input.mts','changed during analysis');
   const metadata=Object.fromEntries(args.filter((arg:string)=>arg.startsWith('--build_metadata=')).map((arg:string)=>{const value=arg.slice(17);const split=value.indexOf('=');return [value.slice(0,split),value.slice(split+1)];}));
-  const options=args.filter((arg:string)=>arg.startsWith('--')).map((arg:string)=>{const split=arg.indexOf('=');const value=split<0?'':arg.slice(split+1);return {optionName:arg.slice(2,split<0?undefined:split),optionValue:value==='true'?'1':value==='false'?'0':value};});
+  const options=args.filter((arg:string)=>arg.startsWith('--')).map((arg:string)=>{const split=arg.indexOf('=');const value=split<0?'':arg.slice(split+1);return {optionName:arg.slice(2,split<0?undefined:split),optionValue:value};});
   const canonical={id:{structuredCommandLine:{commandLineLabel:'canonical'}},structuredCommandLine:{commandLineLabel:'canonical',sections:[{sectionLabel:'command',chunkList:{chunk:['aquery']}},{sectionLabel:'command options',optionList:{option:[...options,{optionName:'client_env',optionValue:'PRIVATE=not-for-retention'}]}},{sectionLabel:'residual',chunkList:{chunk:[expression]}}]}};
   const prefix=structuredClone(state.events.filter((event:any)=>event.started||event.workspaceInfo||event.configuration));
   prefix.find((event:any)=>event.started).started.uuid='fixture-aquery';
@@ -703,6 +703,9 @@ test('scoped action capture binds full requested scope, output, source and confi
       requireShippingAnalysis: true,
     };
     expect(validateNativeBuildEvidence(evidence, checks).shippingAnalysis).toBe('bound');
+    expect(option(evidence, 'include_commandline').optionValue).toBe('false');
+    expect(option(evidence, 'include_artifacts').optionValue).toBe('true');
+    expect(option(evidence, 'include_pruned_inputs').optionValue).toBe('true');
     for (const mutate of [
       (packet: any) => {
         delete packet.cohorts[0].producerCapture.aqueryBuildEvents;
@@ -745,13 +748,16 @@ test('scoped action capture binds full requested scope, output, source and confi
         option(packet, 'output_file').optionValue += '.other';
       },
       (packet: any) => {
-        option(packet, 'include_pruned_inputs').optionValue = '0';
+        option(packet, 'include_pruned_inputs').optionValue = 'false';
       },
       (packet: any) => {
-        option(packet, 'include_artifacts').optionValue = '0';
+        option(packet, 'include_commandline').optionValue = 'true';
       },
       (packet: any) => {
-        option(packet, 'include_aspects').optionValue = '0';
+        option(packet, 'include_artifacts').optionValue = 'false';
+      },
+      (packet: any) => {
+        option(packet, 'include_aspects').optionValue = 'false';
       },
     ]) {
       const tampered = structuredClone(evidence);

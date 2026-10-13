@@ -525,8 +525,7 @@ export function nativeShippingManifestBindings(
       list(object(section).optionList?.option ?? []),
     );
     for (const flag of NATIVE_AQUERY_FLAGS) {
-      const [name, literal] = flag.slice(2).split('=');
-      const value = literal === 'true' ? '1' : literal === 'false' ? '0' : literal;
+      const [name, value] = flag.slice(2).split('=');
       const matches = queryOptions.filter((option) => option.optionName === name);
       if (matches.length !== 1 || matches[0].optionValue !== value)
         throw new Error(`native scoped aquery command requires ${name}=${value}`);

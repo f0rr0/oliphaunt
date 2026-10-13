@@ -355,7 +355,7 @@ test('reviewed execution assumptions retain immutable dump readback and describe
                   const [optionName, value] = flag.slice(2).split('=');
                   return {
                     optionName,
-                    optionValue: value === 'true' ? '1' : value === 'false' ? '0' : value,
+                    optionValue: value,
                   };
                 }),
                 { optionName: 'output_file', optionValue: producer.aqueryFile },
