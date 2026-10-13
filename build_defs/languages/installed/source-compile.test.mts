@@ -345,7 +345,7 @@ test('failure removes only owned work and retains diagnostics outside it', async
   }
 });
 
-test('real offline Cargo distinguishes current path preparation, source tests and selected production floors', async () => {
+async function qualifyOfflineCargoScenarios() {
   const runfiles = process.env.RUNFILES_DIR ?? process.env.TEST_SRCDIR;
   assert(
     runfiles && process.env.OLIPHAUNT_SOURCE_COMPILE_TEST_TOOLS && process.env.TEST_TMPDIR,
@@ -876,4 +876,10 @@ test('real offline Cargo distinguishes current path preparation, source tests an
       expectedError: /generate-lock failed/,
     },
   );
-}, 180_000);
+}
+
+test(
+  'real offline Cargo distinguishes current path preparation, source tests and selected production floors',
+  qualifyOfflineCargoScenarios,
+  Number(process.env.TEST_TIMEOUT ?? 180) * 1_000,
+);

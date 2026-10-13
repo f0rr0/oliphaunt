@@ -14,6 +14,8 @@ load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 
 package(default_visibility = ["//visibility:public"])
 
+_MODULE_OUT_DIR = "lib"
+
 exports_files(["package.json", "release.toml"])
 exports_files(["src/native/extension-contract.ts"])
 
@@ -49,7 +51,7 @@ ts_project(
     extends = "tsconfig.json",
     declaration = True,
     declaration_map = True,
-    out_dir = "lib",
+    out_dir = _MODULE_OUT_DIR,
     root_dir = "src",
     transpiler = "tsc",
     supports_workers = 0,
@@ -67,7 +69,7 @@ ts_project(
     no_emit = True,
     declaration = True,
     declaration_map = True,
-    out_dir = "lib",
+    out_dir = _MODULE_OUT_DIR,
     root_dir = "src",
     supports_workers = 0,
     deps = [":package_metadata", ":node_modules/@oliphaunt/ts-query"] + [":node_modules/" + name for name in SDK["types"]] + [":node_modules/" + name for name in COMPILER_INPUTS[SDK["name"]]],
@@ -126,7 +128,7 @@ sdk_unit_test(
     size = "small",
 )
 
-source_quality_files()
+source_quality_files(exclude = [_MODULE_OUT_DIR + "/**"])
 
 # Existing operational package policy tests use only this declared source closure.
 sdk_unit_test(

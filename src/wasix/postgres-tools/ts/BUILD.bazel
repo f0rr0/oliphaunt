@@ -13,6 +13,8 @@ load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 
 package(default_visibility = ["//visibility:public"])
 
+_MODULE_OUT_DIR = "lib"
+
 exports_files(["package.json", "tools/package.mts"])
 
 SDK = JAVASCRIPT["@oliphaunt/wasix-tools"]
@@ -58,7 +60,7 @@ ts_project(
     extends = "tsconfig.json",
     declaration = True,
     declaration_map = False,
-    out_dir = "lib",
+    out_dir = _MODULE_OUT_DIR,
     root_dir = "src",
     transpiler = "tsc",
     supports_workers = 0,
@@ -73,7 +75,7 @@ ts_project(
     tsconfig = "tsconfig.json",
     no_emit = True,
     declaration = True,
-    out_dir = "lib",
+    out_dir = _MODULE_OUT_DIR,
     root_dir = "src",
     supports_workers = 0,
     deps = [":package_metadata", ":node_modules/@oliphaunt/wasix-ts"] + [":node_modules/" + name for name in SDK["types"]],
@@ -143,4 +145,4 @@ installed_npm_consumer_test(
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 )
 
-source_quality_files()
+source_quality_files(exclude = [_MODULE_OUT_DIR + "/**"])

@@ -5,6 +5,8 @@ load(":defs.bzl", "npm_consumer_test", "query_envelope")
 
 package(default_visibility = ["//visibility:public"])
 
+_MODULE_OUT_DIR = "dist"
+
 exports_files([
     "defs.bzl",
     "package.mts",
@@ -47,7 +49,7 @@ ts_project(
         "types": [],
     }},
     declaration = True,
-    out_dir = "dist/module",
+    out_dir = _MODULE_OUT_DIR + "/module",
     root_dir = "test-fixtures/src",
     transpiler = "tsc",
     supports_workers = 0,
@@ -64,7 +66,7 @@ ts_project(
         "types": [],
     }},
     declaration = True,
-    out_dir = "dist/commonjs",
+    out_dir = _MODULE_OUT_DIR + "/commonjs",
     root_dir = "test-fixtures/src",
     transpiler = "tsc",
     supports_workers = 0,
@@ -90,4 +92,4 @@ npm_consumer_test(
     consumer = "test-fixtures/consumer.mts",
 )
 
-source_quality_files()
+source_quality_files(exclude = [_MODULE_OUT_DIR + "/**"])

@@ -114,21 +114,32 @@ test('private emulator launch always uses KVM and requires actual lifecycle rece
   );
 });
 
-test('failure diagnostics retain bounded device output and tolerate a failed adb', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'android-installed-failure-'));
+test.skipIf(process.platform !== 'linux')(
+  'failure diagnostics retain bounded Linux device output from a failed adb',
+  () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'android-installed-failure-'));
+    try {
+      const adb = path.join(root, 'fixture-adb');
+      writeFileSync(adb, '#!/bin/sh\nprintf "%s\\n" "$*"\nexit 7\n');
+      chmodSync(adb, 0o755);
+      captureInstalledAndroidFailure(adb, 56789, '127.0.0.1:5555', root, root, {});
+      assert.equal(
+        readFileSync(path.join(root, 'failure-logcat.log'), 'utf8'),
+        '-P 56789 -s 127.0.0.1:5555 logcat -d -v threadtime -t 2000\n',
+      );
+      assert.equal(
+        readFileSync(path.join(root, 'failure-activity.txt'), 'utf8'),
+        '-P 56789 -s 127.0.0.1:5555 shell dumpsys activity top\n',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test('failure diagnostics retain a missing adb error on every host', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'android-installed-missing-adb-'));
   try {
-    const adb = path.join(root, 'fixture-adb');
-    writeFileSync(adb, '#!/bin/sh\nprintf "%s\\n" "$*"\nexit 7\n');
-    chmodSync(adb, 0o755);
-    captureInstalledAndroidFailure(adb, 56789, '127.0.0.1:5555', root, root, {});
-    assert.equal(
-      readFileSync(path.join(root, 'failure-logcat.log'), 'utf8'),
-      '-P 56789 -s 127.0.0.1:5555 logcat -d -v threadtime -t 2000\n',
-    );
-    assert.equal(
-      readFileSync(path.join(root, 'failure-activity.txt'), 'utf8'),
-      '-P 56789 -s 127.0.0.1:5555 shell dumpsys activity top\n',
-    );
     captureInstalledAndroidFailure(
       path.join(root, 'missing-adb'),
       56789,

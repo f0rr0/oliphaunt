@@ -15,6 +15,17 @@ load(":native-package.bzl", "react_native_bundle", "react_native_consumer_test",
 
 package(default_visibility = ["//visibility:public"])
 
+_LIB_OUT_DIR = "lib"
+_TOOLS_OUT_DIR = "native-tools"
+_DELIVERED_HELPERS = {
+    "app_plugin": "app.plugin.js",
+    "react_native_config": "react-native.config.js",
+    "codegen_check": "tools/codegen-check.cjs",
+    "resource_closure": "tools/native-resource-closure.mjs",
+    "ios_verifier": "tools/verify-ios-package.mjs",
+    "ios_stager": "tools/stage-ios-app.mjs",
+}
+
 exports_files(["package.json", "native-package.bzl", "ios/OliphauntAdapter.swift", "ios/OliphauntAdapter.h"])
 
 SDK = JAVASCRIPT["@oliphaunt/react-native"]
@@ -39,9 +50,9 @@ js_library(
     types = SDK_SRCS + [":extension_projections"],
     deps = [":package_metadata", ":base_tsconfig", ":node_modules/react-native"] + [":node_modules/" + name for name in SDK["types"]],
 )
-ts_project(name = "module", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.module.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, out_dir = "lib/module", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
-ts_project(name = "commonjs", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.commonjs.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, out_dir = "lib/commonjs", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
-ts_project(name = "types", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.types.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, declaration = True, declaration_map = True, emit_declaration_only = True, out_dir = "lib/typescript", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
+ts_project(name = "module", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.module.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, out_dir = _LIB_OUT_DIR + "/module", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
+ts_project(name = "commonjs", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.commonjs.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, out_dir = _LIB_OUT_DIR + "/commonjs", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
+ts_project(name = "types", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.types.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, declaration = True, declaration_map = True, emit_declaration_only = True, out_dir = _LIB_OUT_DIR + "/typescript", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
 
 ts_project(
     name = "source_checks",
@@ -52,7 +63,7 @@ ts_project(
     no_emit = True,
     declaration = True,
     declaration_map = True,
-    out_dir = "lib/typescript",
+    out_dir = _LIB_OUT_DIR + "/typescript",
     root_dir = "src",
     supports_workers = 0,
     deps = COMPILER_DEPS,
@@ -62,16 +73,16 @@ ts_project(
     name = "helpers",
     srcs = ["app.plugin.cts", "react-native.config.cts", "tools/codegen-check.cts", "tools/native-resource-closure.mts", "tools/verify-ios-package.mts"],
     tsconfig = {"compilerOptions": {"target": "ES2022", "module": "NodeNext", "rewriteRelativeImportExtensions": True, "noCheck": True}},
-    root_dir = ".", out_dir = "native-tools", transpiler = "tsc", supports_workers = 0,
+    root_dir = ".", out_dir = _TOOLS_OUT_DIR, transpiler = "tsc", supports_workers = 0,
     deps = [":package_metadata"] + [":node_modules/" + name for name in SDK["types"]],
 )
-copy_file(name = "app_plugin", src = "native-tools/app.plugin.cjs", out = "app.plugin.js")
-copy_file(name = "react_native_config", src = "native-tools/react-native.config.cjs", out = "react-native.config.js")
-copy_file(name = "codegen_check", src = "native-tools/tools/codegen-check.cjs", out = "tools/codegen-check.cjs")
-copy_file(name = "resource_closure", src = "native-tools/tools/native-resource-closure.mjs", out = "tools/native-resource-closure.mjs")
-copy_file(name = "ios_verifier", src = "native-tools/tools/verify-ios-package.mjs", out = "tools/verify-ios-package.mjs")
+copy_file(name = "app_plugin", src = _TOOLS_OUT_DIR + "/app.plugin.cjs", out = _DELIVERED_HELPERS["app_plugin"])
+copy_file(name = "react_native_config", src = _TOOLS_OUT_DIR + "/react-native.config.cjs", out = _DELIVERED_HELPERS["react_native_config"])
+copy_file(name = "codegen_check", src = _TOOLS_OUT_DIR + "/tools/codegen-check.cjs", out = _DELIVERED_HELPERS["codegen_check"])
+copy_file(name = "resource_closure", src = _TOOLS_OUT_DIR + "/tools/native-resource-closure.mjs", out = _DELIVERED_HELPERS["resource_closure"])
+copy_file(name = "ios_verifier", src = _TOOLS_OUT_DIR + "/tools/verify-ios-package.mjs", out = _DELIVERED_HELPERS["ios_verifier"])
 react_native_bundle(
-    name = "ios_stager", out = "tools/stage-ios-app.mjs",
+    name = "ios_stager", out = _DELIVERED_HELPERS["ios_stager"],
     sources = {
         "tools/stage-ios-app.mts": "src/native/sdks/react-native/tools/stage-ios-app.mts",
         "tools/native-resource-closure.mts": "src/native/sdks/react-native/tools/native-resource-closure.mts",
@@ -146,7 +157,7 @@ cc_test(
     size = "small",
 )
 
-source_quality_files()
+source_quality_files(exclude = [_LIB_OUT_DIR + "/**", _TOOLS_OUT_DIR + "/**"] + _DELIVERED_HELPERS.values())
 
 exports_files(["android/build.gradle", "android/src/main/AndroidManifest.xml"])
 filegroup(name = "android_kotlin_sources", srcs = glob(["android/src/main/java/**/*.kt"]) + glob(["android/src/main/java/**/*.java"], allow_empty = True))

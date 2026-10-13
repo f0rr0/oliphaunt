@@ -1,0 +1,10 @@
+--- a/src/include/c.h
++++ b/src/include/c.h
+@@ -392,6 +392,6 @@
+  * definition that also works on older compilers.
+  */
+-#ifdef _MSC_VER
++#if defined(_MSC_VER) && (!defined(_MSVC_TRADITIONAL) || _MSVC_TRADITIONAL)
+ #define EXPAND(args) args
+ #define VA_ARGS_NARGS(...) \
+ 	VA_ARGS_NARGS_ EXPAND((__VA_ARGS__, \
