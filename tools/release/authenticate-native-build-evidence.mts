@@ -6,12 +6,13 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { parseArgs, promisify } from 'node:util';
+import { isDeepStrictEqual, parseArgs, promisify } from 'node:util';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import { matchesGithubWorkflowRef } from './github-read.mts';
 import { readNativeBuildFinalFiles } from './native-build-files.mts';
 import {
   assertNativeBuildGithub,
+  type NativeBuildEvidence,
   type NativeBuildGithub,
   type NativeBuildSource,
   type NativeRequiredTest,
@@ -62,6 +63,10 @@ export function reviewedNativeProducerArtifacts() {
 const acceptedExecutionAssumptions = [
   'producer inputs remained immutable through capture in the reviewed isolated job',
   'the reviewed coordinator retained the native after-build dump from its producer invocation',
+];
+const scopedExecutionAssumptions = [
+  acceptedExecutionAssumptions[0],
+  'the reviewed coordinator retained each native action graph from its producing build or corresponding scoped analysis in the same immutable producer window',
 ];
 
 /** Shape validation does not authenticate JSON; its public use requires the signed metadata origin. */
@@ -123,11 +128,12 @@ export function validateReviewedNativeProducerAssurance(
       !/^[0-9a-f]{64}$/u.test(test.configuration)
     )
       throw new Error('reviewed native producer assurance requires exact configured tests');
-  deepStrictEqual(
-    value.acceptedExecutionAssumptions,
-    acceptedExecutionAssumptions,
-    'reviewed native producer execution assumptions',
-  );
+  if (
+    ![acceptedExecutionAssumptions, scopedExecutionAssumptions].some((assumptions) =>
+      isDeepStrictEqual(value.acceptedExecutionAssumptions, assumptions),
+    )
+  )
+    throw new Error('reviewed native producer execution assumptions differ');
   for (const key of ['github', 'artifact', 'evidenceDigest', 'requiredTests'] as const)
     if (expected[key] !== undefined)
       deepStrictEqual(value[key], expected[key], `reviewed native producer ${key}`);
@@ -414,7 +420,13 @@ export async function assureReviewedNativeBuildProducer(
         shippingAnalysis: qualification.shippingAnalysis,
         testQualification: qualification.testQualification,
         requiredTests: qualification.requiredTests,
-        acceptedExecutionAssumptions: [...acceptedExecutionAssumptions],
+        acceptedExecutionAssumptions: [
+          ...((origin.evidence as NativeBuildEvidence).cohorts.some(
+            (cohort) => cohort.producerCapture?.aqueryBuildEvents !== undefined,
+          )
+            ? scopedExecutionAssumptions
+            : acceptedExecutionAssumptions),
+        ],
       },
       { source: reviewedSource },
     ),

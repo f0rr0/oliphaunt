@@ -8,9 +8,11 @@ import { parseArgs } from 'node:util';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import { canonicalShippingLabel } from './bazel-shipping-inputs.mts';
 import {
+  NATIVE_AQUERY_FLAGS,
   type NativeBuildEvidence,
   type NativeBuildGithub,
   type NativeRequiredTest,
+  nativeAqueryExpression,
   nativeBuildEventIndex,
   nativeBuildMetadata,
   validateNativeBuildEvidence,
@@ -379,7 +381,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     configuration.some(
       (item) =>
         item === '--' ||
-        /^--(?:build_metadata|build_event_json_file|output|output_groups|query_file|starlark:file|starlark:expr|experimental_aquery_dump_after_build_format|experimental_aquery_dump_after_build_output_file)(?:=|$)/u.test(
+        /^--(?:build_metadata|build_event_json_file|output|output_file|output_groups|query_file|starlark:file|starlark:expr|experimental_aquery_dump_after_build_format|experimental_aquery_dump_after_build_output_file)(?:=|$)/u.test(
           item,
         ),
     )
@@ -497,20 +499,31 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     ),
   );
   assertSource();
-  bazel([
-    'test',
+  const buildTargets = [
     ...new Set([
       ...roots,
       ...(shippingExport ? [shippingExport] : []),
       ...requiredTests.map((test) => test.label),
       ...targets,
     ]),
+  ];
+  bazel([
+    'test',
+    ...buildTargets,
     ...configuration,
     ...metadata,
     `--build_event_json_file=${file('build-events.jsonl')}`,
     '--output_groups=+shipping_manifest,+shipping_policy,+observation_inputs',
-    '--experimental_aquery_dump_after_build_format=jsonproto',
-    `--experimental_aquery_dump_after_build_output_file=${file('aquery.json')}`,
+  ]);
+  assertSource();
+  bazel([
+    'aquery',
+    nativeAqueryExpression(buildTargets),
+    ...configuration,
+    ...metadata,
+    ...NATIVE_AQUERY_FLAGS,
+    `--output_file=${file('aquery.json')}`,
+    `--build_event_json_file=${file('aquery-build-events.jsonl')}`,
   ]);
   assertSource();
   bazel(['info', ...configuration, 'execution_root'], file('execution-root.txt'));
@@ -594,6 +607,8 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     file('aquery.json'),
     file('build-events.jsonl'),
     executionRoot,
+    '--aquery-build-events',
+    file('aquery-build-events.jsonl'),
     ...(shippingExport ? ['--shipping-export', shippingExport] : []),
     '--analysis-root-inputs',
     file('analysis-root-inputs.json'),

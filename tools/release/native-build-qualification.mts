@@ -34,10 +34,37 @@ export type NativeQualificationInputs = NativeRequiredTest & {
 };
 export type NativeProducerCapture = {
   aqueryFile: string;
+  /** Successful scoped analysis in the same frozen producer window; no byte-authentication claim. */
+  aqueryBuildEvents?: unknown[];
   shippingManifests: { path: string; contents: string }[];
   /** The existing owner export, delivered by the same producing invocation. */
   qualificationManifest?: { path: string; contents: string };
 };
+
+export const NATIVE_AQUERY_FLAGS = [
+  '--output=jsonproto',
+  '--include_commandline=false',
+  '--include_artifacts=true',
+  '--include_pruned_inputs=true',
+  '--include_aspects=true',
+  '--include_param_files=false',
+  '--include_file_write_contents=false',
+  '--tool_deps=true',
+  '--implicit_deps=true',
+  '--nodep_deps=true',
+  '--skyframe_state=false',
+] as const;
+
+/** The complete requested configured closure, including owner policy and tests. */
+export function nativeAqueryExpression(targets: string[]) {
+  const labels = targets.map((value) => canonicalShippingLabel(text(value)));
+  if (!labels.length || labels.some((label) => !/^\/\/[^\s]*:[^\s]+$/u.test(label)))
+    throw new Error('native scoped aquery requires explicit workspace target labels');
+  return `deps(set(${[...new Set(labels)]
+    .sort()
+    .map((label) => JSON.stringify(label))
+    .join(' ')}))`;
+}
 export type NativeBuildCohortEvidence = {
   executionRoot: string;
   roots: NativeRoot[];
@@ -420,7 +447,7 @@ export function nativeBuildEventIndex(
   return { invocationId, configs, completed, filesOf, events };
 }
 
-/** Native metadata is content-bound by BEP; the separate action dump has no native digest receipt. */
+/** Native metadata is content-bound by BEP; the separate action graph has no native digest receipt. */
 export function nativeShippingManifestBindings(
   raw: NativeProducerCapture,
   bep: ReturnType<typeof nativeBuildEventIndex>,
@@ -430,6 +457,7 @@ export function nativeShippingManifestBindings(
     capture,
     [
       'aqueryFile',
+      ...(capture.aqueryBuildEvents === undefined ? [] : ['aqueryBuildEvents']),
       'shippingManifests',
       ...(capture.qualificationManifest ? ['qualificationManifest'] : []),
     ],
@@ -439,7 +467,7 @@ export function nativeShippingManifestBindings(
     !path.posix.isAbsolute(text(capture.aqueryFile)) &&
     !path.win32.isAbsolute(capture.aqueryFile)
   )
-    throw new Error('native producer requires an absolute after-build aquery file');
+    throw new Error('native producer requires an absolute aquery file');
   const commands = bep.events.filter(
     (event) => event.structuredCommandLine?.commandLineLabel === 'canonical',
   );
@@ -447,13 +475,65 @@ export function nativeShippingManifestBindings(
   const options = list(commands[0].structuredCommandLine.sections).flatMap((section) =>
     list(object(section).optionList?.option ?? []),
   );
-  for (const [name, value] of [
-    ['experimental_aquery_dump_after_build_format', 'jsonproto'],
-    ['experimental_aquery_dump_after_build_output_file', capture.aqueryFile],
-  ]) {
-    const matches = options.filter((option) => option.optionName === name);
-    if (matches.length !== 1 || matches[0].optionValue !== value)
-      throw new Error(`native producer command line requires ${name}=${value}`);
+  let query: ReturnType<typeof nativeBuildEventIndex> | undefined;
+  if (capture.aqueryBuildEvents === undefined) {
+    // Historical immutable packets used Bazel's whole-server after-build dump.
+    for (const [name, value] of [
+      ['experimental_aquery_dump_after_build_format', 'jsonproto'],
+      ['experimental_aquery_dump_after_build_output_file', capture.aqueryFile],
+    ]) {
+      const matches = options.filter((option) => option.optionName === name);
+      if (matches.length !== 1 || matches[0].optionValue !== value)
+        throw new Error(`native producer command line requires ${name}=${value}`);
+    }
+  } else {
+    const event = (field: string) => {
+      const matches = bep.events.filter((event) => event[field] !== undefined);
+      if (matches.length !== 1) throw new Error(`native producing BEP requires one ${field}`);
+      return object(matches[0][field]);
+    };
+    query = nativeBuildEventIndex(
+      {
+        executionRoot: text(event('workspaceInfo').localExecRoot),
+        buildEvents: capture.aqueryBuildEvents,
+      },
+      text(event('started').buildToolVersion),
+      object(event('buildMetadata').metadata),
+    );
+    if (query.invocationId === bep.invocationId)
+      throw new Error('native scoped aquery requires its separate analysis invocation');
+    const chunk = (command: Row, name: string) => {
+      const matches = list(command.sections).filter((section) => section.sectionLabel === name);
+      if (matches.length !== 1) throw new Error(`native command requires one ${name} section`);
+      return list(object(matches[0]).chunkList?.chunk).map(text);
+    };
+    const queryCommands = query.events.filter(
+      (event) => event.structuredCommandLine?.commandLineLabel === 'canonical',
+    );
+    if (queryCommands.length !== 1)
+      throw new Error('native scoped aquery requires one canonical command');
+    const producerCommand = object(commands[0].structuredCommandLine);
+    const queryCommand = object(queryCommands[0].structuredCommandLine);
+    equal(chunk(producerCommand, 'command'), ['test'], 'native producing command');
+    equal(chunk(queryCommand, 'command'), ['aquery'], 'native scoped analysis command');
+    equal(
+      chunk(queryCommand, 'residual'),
+      [nativeAqueryExpression(chunk(producerCommand, 'residual'))],
+      'native scoped aquery requested closure',
+    );
+    const queryOptions = list(queryCommand.sections).flatMap((section) =>
+      list(object(section).optionList?.option ?? []),
+    );
+    for (const flag of NATIVE_AQUERY_FLAGS) {
+      const [name, literal] = flag.slice(2).split('=');
+      const value = literal === 'true' ? '1' : literal === 'false' ? '0' : literal;
+      const matches = queryOptions.filter((option) => option.optionName === name);
+      if (matches.length !== 1 || matches[0].optionValue !== value)
+        throw new Error(`native scoped aquery command requires ${name}=${value}`);
+    }
+    const outputs = queryOptions.filter((option) => option.optionName === 'output_file');
+    if (outputs.length !== 1 || outputs[0].optionValue !== capture.aqueryFile)
+      throw new Error('native scoped aquery output file differs from its captured graph');
   }
   const paths = new Set<string>();
   const labels = new Set<string>();
@@ -514,6 +594,12 @@ export function nativeShippingManifestBindings(
     return { root, configuration: target.configuration, path: file };
   });
   if (!bindings.length) throw new Error('native producer requires shipping manifests');
+  if (query)
+    for (const binding of bindings)
+      if (!query.configs.has(binding.configuration))
+        throw new Error(
+          'native scoped aquery shipping configuration differs from its producing build',
+        );
   return bindings;
 }
 

@@ -8,6 +8,7 @@ import { requireSafeDirectoryChain } from '../packaging/release-directory-safety
 import { buildShippingInputView, canonicalShippingLabel } from './bazel-shipping-inputs.mts';
 import { writeNativeBuildFinalFiles } from './native-build-files.mts';
 import {
+  NATIVE_AQUERY_FLAGS,
   type NativeBuildEvidence,
   type NativeBuildGithub,
   type NativeBuildSource,
@@ -33,7 +34,12 @@ export type NativeBuildCaptureCohort = {
   analysis?: { workspace: string; rootInputs: { label: string; paths: string[] }[] };
 } & (
   | { roots: NativeRoot[]; cquery: unknown }
-  | { shippingRoots: string[]; aqueryFile: string; shippingExport?: string }
+  | {
+      shippingRoots: string[];
+      aqueryFile: string;
+      shippingExport?: string;
+      aqueryBuildEvents?: unknown[];
+    }
 );
 
 function object(value: unknown): Record<string, any> {
@@ -137,7 +143,13 @@ export function captureNativeBuildEvidence({
           capture.assertUnchanged();
           return { path: file, contents };
         });
-        producerCapture = { aqueryFile: cohort.aqueryFile, shippingManifests };
+        producerCapture = {
+          aqueryFile: cohort.aqueryFile,
+          shippingManifests,
+          ...(cohort.aqueryBuildEvents === undefined
+            ? {}
+            : { aqueryBuildEvents: cohort.aqueryBuildEvents }),
+        };
         const bindings = nativeShippingManifestBindings(producerCapture, bep);
         if (
           JSON.stringify(bindings.map(({ root }) => canonicalShippingLabel(root.label)).sort()) !==
@@ -257,7 +269,7 @@ export function captureNativeBuildEvidence({
 }
 
 /** Retain the native event index's protocol, excluding ambient invocation options and logs. */
-function retainedBuildEvents(evidence: NativeBuildEvidence, events: unknown[]) {
+function retainedBuildEvents(evidence: NativeBuildEvidence, events: unknown[], scoped = false) {
   const pick = (raw: unknown, fields: string[]) => {
     const value = object(raw);
     return Object.fromEntries(
@@ -280,6 +292,9 @@ function retainedBuildEvents(evidence: NativeBuildEvidence, events: unknown[]) {
     'experimental_aquery_dump_after_build_format',
     'experimental_aquery_dump_after_build_output_file',
     'output_groups',
+    ...(scoped
+      ? ['output_file', ...NATIVE_AQUERY_FLAGS.map((flag) => flag.slice(2).split('=')[0])]
+      : []),
   ]);
   return events.map((raw) => {
     const event = object(raw);
@@ -332,6 +347,14 @@ function retainedBuildEvents(evidence: NativeBuildEvidence, events: unknown[]) {
       retained.structuredCommandLine = {
         commandLineLabel: 'canonical',
         sections: [
+          ...(scoped
+            ? array(event.structuredCommandLine.sections)
+                .filter((section) => ['command', 'residual'].includes(section.sectionLabel))
+                .map((section) => ({
+                  sectionLabel: section.sectionLabel,
+                  chunkList: { chunk: array(section.chunkList?.chunk).map(text) },
+                }))
+            : []),
           {
             sectionLabel: 'command options',
             optionList: {
@@ -364,7 +387,23 @@ export function writeNativeBuildEvidence(
       ...captured.evidence,
       cohorts: captured.evidence.cohorts.map((cohort) => ({
         ...cohort,
-        buildEvents: retainedBuildEvents(captured.evidence, cohort.buildEvents),
+        buildEvents: retainedBuildEvents(
+          captured.evidence,
+          cohort.buildEvents,
+          cohort.producerCapture?.aqueryBuildEvents !== undefined,
+        ),
+        ...(cohort.producerCapture?.aqueryBuildEvents === undefined
+          ? {}
+          : {
+              producerCapture: {
+                ...cohort.producerCapture,
+                aqueryBuildEvents: retainedBuildEvents(
+                  captured.evidence,
+                  cohort.producerCapture.aqueryBuildEvents,
+                  true,
+                ),
+              },
+            }),
       })),
     };
     // The evidence remains the only inventory. Public regular leaves are copied
@@ -437,6 +476,11 @@ function main() {
         buildEvents: jsonLines(buildEvents),
         executionRoot,
       });
+    } else if (option === '--aquery-build-events') {
+      const cohort = cohorts.at(-1);
+      if (!cohort || !('shippingRoots' in cohort) || cohort.aqueryBuildEvents !== undefined)
+        throw new Error('--aquery-build-events requires one preceding producer cohort');
+      cohort.aqueryBuildEvents = jsonLines(value());
     } else if (option === '--shipping-export') {
       const cohort = cohorts.at(-1);
       if (!cohort || !('shippingRoots' in cohort) || cohort.shippingExport !== undefined)

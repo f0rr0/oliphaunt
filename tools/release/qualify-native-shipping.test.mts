@@ -14,7 +14,10 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateNativeBuildEvidence } from './native-build-qualification.mts';
+import {
+  nativeAqueryExpression,
+  validateNativeBuildEvidence,
+} from './native-build-qualification.mts';
 import {
   type NativeShippingRequest,
   nativeConfiguredRecipeGraph,
@@ -282,7 +285,7 @@ import {execFileSync} from 'node:child_process';
 const state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));
 const invocation=process.argv.slice(2);
 appendFileSync(${JSON.stringify(callsFile)},JSON.stringify(invocation)+'\\n');
-const args=invocation.slice(invocation.findIndex((arg:string)=>['test','build','cquery','query','info'].includes(arg)));
+const args=invocation.slice(invocation.findIndex((arg:string)=>['test','build','cquery','query','aquery','info'].includes(arg)));
 const expression=args[1]?.startsWith('--query_file=')?readFileSync(args[1].slice(13),'utf8'):args[1];
 if(args[0]==='test') {
   if(state.mode==='build-failure') process.exit(1);
@@ -293,8 +296,6 @@ if(args[0]==='test') {
     execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','changed source']);
   }
   const metadata=Object.fromEntries(args.filter((arg:string)=>arg.startsWith('--build_metadata=')).map((arg:string)=>{const value=arg.slice(17);const split=value.indexOf('=');return [value.slice(0,split),value.slice(split+1)];}));
-  const aquery=args.find((arg:string)=>arg.startsWith('--experimental_aquery_dump_after_build_output_file=')).split('=').slice(1).join('=');
-  if(state.mode!=='dump-missing') writeFileSync(aquery,JSON.stringify(state.aquery));
   if(state.mode==='manifest-tamper') writeFileSync(state.manifest,JSON.stringify({...state.root,package:{...state.root.package,version:'1.0.1'}})+'\\n');
   if(state.policy) {
     const policy={...state.policy,qualification:(state.qualification.results??[]).map((result:any)=>result.target.rule.name.replace(/^@@?\\/\\//,'//'))};
@@ -304,9 +305,20 @@ if(args[0]==='test') {
     file.digest=createHash('sha256').update(contents).digest('hex');file.length=String(Buffer.byteLength(contents));
   }
   const options=args.filter((arg:string)=>arg.startsWith('--')).map((arg:string)=>{const split=arg.indexOf('=');return {optionName:arg.slice(2,split<0?undefined:split),optionValue:split<0?'':arg.slice(split+1)};});
-  const canonical={id:{structuredCommandLine:{commandLineLabel:'canonical'}},structuredCommandLine:{commandLineLabel:'canonical',sections:[{sectionLabel:'command options',optionList:{option:options}}]}};
+  const canonical={id:{structuredCommandLine:{commandLineLabel:'canonical'}},structuredCommandLine:{commandLineLabel:'canonical',sections:[{sectionLabel:'command',chunkList:{chunk:['test']}},{sectionLabel:'command options',optionList:{option:options}},{sectionLabel:'residual',chunkList:{chunk:args.filter((arg:string)=>arg.startsWith('//'))}}]}};
   const events=[...state.events,...state.testEvents,canonical,{id:{buildMetadata:{}},buildMetadata:{metadata}},{id:{buildFinished:{}},finished:{exitCode:{name:'SUCCESS'}}},{id:{buildMetrics:{}},buildMetrics:{},lastMessage:true}];
   writeFileSync(args.find((arg:string)=>arg.startsWith('--build_event_json_file=')).slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
+} else if(args[0]==='aquery') {
+  if(state.mode==='aquery-failure') process.exit(1);
+  if(state.mode==='aquery-race') writeFileSync('src/input.mts','changed during analysis');
+  const metadata=Object.fromEntries(args.filter((arg:string)=>arg.startsWith('--build_metadata=')).map((arg:string)=>{const value=arg.slice(17);const split=value.indexOf('=');return [value.slice(0,split),value.slice(split+1)];}));
+  const options=args.filter((arg:string)=>arg.startsWith('--')).map((arg:string)=>{const split=arg.indexOf('=');const value=split<0?'':arg.slice(split+1);return {optionName:arg.slice(2,split<0?undefined:split),optionValue:value==='true'?'1':value==='false'?'0':value};});
+  const canonical={id:{structuredCommandLine:{commandLineLabel:'canonical'}},structuredCommandLine:{commandLineLabel:'canonical',sections:[{sectionLabel:'command',chunkList:{chunk:['aquery']}},{sectionLabel:'command options',optionList:{option:[...options,{optionName:'client_env',optionValue:'PRIVATE=not-for-retention'}]}},{sectionLabel:'residual',chunkList:{chunk:[expression]}}]}};
+  const prefix=structuredClone(state.events.filter((event:any)=>event.started||event.workspaceInfo||event.configuration));
+  prefix.find((event:any)=>event.started).started.uuid='fixture-aquery';
+  const events=[...prefix,canonical,{id:{progress:{}},progress:{stdout:'private-query-diagnostic'}},{id:{buildMetadata:{}},buildMetadata:{metadata}},{id:{buildFinished:{}},finished:{exitCode:{name:'SUCCESS'}}},{id:{buildMetrics:{}},buildMetrics:{},lastMessage:true}];
+  writeFileSync(args.find((arg:string)=>arg.startsWith('--build_event_json_file=')).slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
+  if(state.mode!=='dump-missing') writeFileSync(args.find((arg:string)=>arg.startsWith('--output_file=')).slice(14),JSON.stringify(state.aquery));
 } else if(args[0]==='build') {
   if(args.at(-1)!=='--nobuild') throw new Error('failure diagnosis must not construct targets');
   if(state.mode==='incompatible-owner') {
@@ -610,14 +622,21 @@ for (const selection of ['explicit', 'export'])
       expect(builds[0]).toContain(
         '--output_groups=+shipping_manifest,+shipping_policy,+observation_inputs',
       );
-      expect(builds[0]).toContain('--experimental_aquery_dump_after_build_format=jsonproto');
-      expect(builds[0]).toContain(
-        `--experimental_aquery_dump_after_build_output_file=${path.join(f.outputDirectory, 'aquery.json')}`,
+      expect(builds[0].some((flag) => flag.startsWith('--experimental_aquery_dump_'))).toBe(false);
+      const queries = calls.filter((call) => call[0] === 'aquery');
+      expect(queries).toHaveLength(1);
+      expect(queries[0]).toContain('--include_pruned_inputs=true');
+      expect(queries[0]).toContain('--include_artifacts=true');
+      expect(queries[0]).toContain('--include_aspects=true');
+      expect(queries[0]).toContain('--include_commandline=false');
+      expect(queries[0]).toContain(`--output_file=${path.join(f.outputDirectory, 'aquery.json')}`);
+      expect(queries[0][1]).toBe(
+        nativeAqueryExpression(builds[0].filter((arg) => arg.startsWith('//'))),
       );
       expect(calls.map((call) => call[0])).toEqual(
         selection === 'export'
-          ? ['cquery', 'cquery', 'test', 'info', 'cquery', 'query']
-          : ['test', 'info', 'cquery', 'query'],
+          ? ['cquery', 'cquery', 'test', 'aquery', 'info', 'cquery', 'query']
+          : ['test', 'aquery', 'info', 'cquery', 'query'],
       );
       expect(
         calls.filter((call) => call[0] === 'cquery' && call[1].startsWith('--query_file=')),
@@ -657,6 +676,92 @@ for (const selection of ['explicit', 'export'])
       f.cleanup();
     }
   });
+
+test('scoped action capture binds full requested scope, output, source and configured identity', () => {
+  const f = fixture();
+  try {
+    f.request.shipping = { export: '//fixture:shipping_export' };
+    f.request.targets = ['//fixture:consumer', '//fixture:consumer', '//fixture:mandatory_test'];
+    const output = qualifyNativeShipping(f.request, f.workspace);
+    const evidence = JSON.parse(readFileSync(output, 'utf8'));
+    const build = f.calls().find((call) => call[0] === 'test');
+    expect(JSON.stringify(evidence)).not.toContain('not-for-retention');
+    expect(JSON.stringify(evidence)).not.toContain('private-query-diagnostic');
+    expect(build?.filter((arg) => arg === '//fixture:consumer')).toHaveLength(1);
+    expect(build?.filter((arg) => arg === '//fixture:mandatory_test')).toHaveLength(1);
+    const queryEvents = (packet: any) => packet.cohorts[0].producerCapture.aqueryBuildEvents;
+    const command = (packet: any) =>
+      queryEvents(packet).find((event: any) => event.structuredCommandLine)?.structuredCommandLine;
+    const option = (packet: any, name: string) =>
+      command(packet)
+        .sections.flatMap((section: any) => section.optionList?.option ?? [])
+        .find((option: any) => option.optionName === name);
+    const checks = {
+      source: evidence.source,
+      github: evidence.github,
+      bazelVersion: '8.8.1',
+      requireShippingAnalysis: true,
+    };
+    expect(validateNativeBuildEvidence(evidence, checks).shippingAnalysis).toBe('bound');
+    for (const mutate of [
+      (packet: any) => {
+        delete packet.cohorts[0].producerCapture.aqueryBuildEvents;
+      },
+      (packet: any) => {
+        queryEvents(packet).at(-1).lastMessage = false;
+      },
+      (packet: any) => {
+        queryEvents(packet).find((event: any) => event.started).started.uuid = 'fixture-build';
+      },
+      (packet: any) => {
+        queryEvents(packet).find((event: any) => event.workspaceInfo).workspaceInfo.localExecRoot +=
+          '-other';
+      },
+      (packet: any) => {
+        queryEvents(packet).find(
+          (event: any) => event.buildMetadata,
+        ).buildMetadata.metadata.oliphaunt_source_commit = 'd'.repeat(40);
+      },
+      (packet: any) => {
+        queryEvents(packet).find(
+          (event: any) => event.buildMetadata,
+        ).buildMetadata.metadata.oliphaunt_run_attempt = '99';
+      },
+      (packet: any) => {
+        queryEvents(packet).find((event: any) => event.id?.configuration).id.configuration.id =
+          'd'.repeat(64);
+      },
+      (packet: any) => {
+        command(packet).sections.find(
+          (section: any) => section.sectionLabel === 'command',
+        ).chunkList.chunk = ['build'];
+      },
+      (packet: any) => {
+        command(packet).sections.find(
+          (section: any) => section.sectionLabel === 'residual',
+        ).chunkList.chunk = [nativeAqueryExpression(['//fixture:shipping'])];
+      },
+      (packet: any) => {
+        option(packet, 'output_file').optionValue += '.other';
+      },
+      (packet: any) => {
+        option(packet, 'include_pruned_inputs').optionValue = '0';
+      },
+      (packet: any) => {
+        option(packet, 'include_artifacts').optionValue = '0';
+      },
+      (packet: any) => {
+        option(packet, 'include_aspects').optionValue = '0';
+      },
+    ]) {
+      const tampered = structuredClone(evidence);
+      mutate(tampered);
+      expect(() => validateNativeBuildEvidence(tampered, checks)).toThrow();
+    }
+  } finally {
+    f.cleanup();
+  }
+});
 
 test('large configured graphs keep query expressions out of OS-limited argv', () => {
   const f = fixture();
@@ -875,7 +980,7 @@ test('complete-family validation rejects bytes changed after successful evidence
       false,
     );
     expect(existsSync(path.join(f.outputDirectory, 'evidence/files'))).toBe(false);
-    expect(f.calls().map((call) => call[0])).toEqual(['test', 'info', 'cquery', 'query']);
+    expect(f.calls().map((call) => call[0])).toEqual(['test', 'aquery', 'info', 'cquery', 'query']);
   } finally {
     f.cleanup();
   }
@@ -888,6 +993,10 @@ test('caller query substitution is rejected before any process even beyond OS ar
     expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow('cannot override');
     expect(f.calls()).toEqual([]);
     expect(existsSync(f.outputDirectory)).toBe(false);
+    f.request.configuration.pop();
+    f.request.configuration.push('--output_file=/tmp/substituted-query.json');
+    expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow('cannot override');
+    expect(f.calls()).toEqual([]);
   } finally {
     f.cleanup();
   }
@@ -933,7 +1042,7 @@ test('preserves startup argv before every command and configuration afterward', 
     expect(calls.filter((call) => call[2] === 'test')).toHaveLength(1);
     for (const call of calls) {
       expect(call.slice(0, 2)).toEqual(startup);
-      expect(['test', 'cquery', 'query', 'info']).toContain(call[2]);
+      expect(['test', 'aquery', 'cquery', 'query', 'info']).toContain(call[2]);
       if (call[2] !== 'query')
         for (const flag of f.request.configuration) expect(call.indexOf(flag)).toBeGreaterThan(2);
     }
@@ -952,7 +1061,13 @@ for (const product of ['unknown-product', 'postgres-tools-wasix'])
           ? 'unknown selected product'
           : 'incomplete native shipping coverage',
       );
-      expect(f.calls().map((call) => call[0])).toEqual(['test', 'info', 'cquery', 'query']);
+      expect(f.calls().map((call) => call[0])).toEqual([
+        'test',
+        'aquery',
+        'info',
+        'cquery',
+        'query',
+      ]);
       expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
         false,
       );
@@ -971,6 +1086,8 @@ for (const mode of [
   'deleted-load',
   'capture-race',
   'dump-missing',
+  'aquery-failure',
+  'aquery-race',
   'manifest-tamper',
 ])
   test(`does not return evidence after ${mode}`, () => {

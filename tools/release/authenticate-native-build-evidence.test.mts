@@ -13,7 +13,9 @@ import {
   validateReviewedNativeProducerAssurance,
 } from './authenticate-native-build-evidence.mts';
 import {
+  NATIVE_AQUERY_FLAGS,
   type NativeBuildEvidence,
+  nativeAqueryExpression,
   nativeBuildMetadata,
   validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
@@ -307,6 +309,88 @@ test('reviewed main producer assurance preserves construction limits and accepts
         'native action-graph dump bytes authenticated by the producing invocation',
       );
     }
+  }
+});
+
+test('reviewed execution assumptions retain immutable dump readback and describe scoped capture honestly', async () => {
+  const historical = syntheticReviewedProducer();
+  const old = await assureReviewedNativeBuildProducer('synthetic', historical.request, historical);
+  expect(old.assurance.acceptedExecutionAssumptions).toEqual([
+    'producer inputs remained immutable through capture in the reviewed isolated job',
+    'the reviewed coordinator retained the native after-build dump from its producer invocation',
+  ]);
+  const f = syntheticReviewedProducer();
+  const cohort = f.origin.evidence.cohorts[0];
+  const producer = cohort.producerCapture;
+  if (!producer) throw new Error('Missing synthetic producing capture');
+  const targets = ['//fixture:shipping', '//fixture:installed'];
+  const canonical = cohort.buildEvents.find((event: any) => event.structuredCommandLine) as any;
+  canonical.structuredCommandLine.sections = [
+    { sectionLabel: 'command', chunkList: { chunk: ['test'] } },
+    { sectionLabel: 'residual', chunkList: { chunk: targets } },
+  ];
+  producer.aqueryBuildEvents = [
+    ...structuredClone(
+      cohort.buildEvents.filter(
+        (event: any) =>
+          event.started ||
+          event.workspaceInfo ||
+          event.configuration ||
+          event.buildMetadata ||
+          event.finished ||
+          event.lastMessage,
+      ),
+    ),
+    {
+      structuredCommandLine: {
+        commandLineLabel: 'canonical',
+        sections: [
+          { sectionLabel: 'command', chunkList: { chunk: ['aquery'] } },
+          { sectionLabel: 'residual', chunkList: { chunk: [nativeAqueryExpression(targets)] } },
+          {
+            sectionLabel: 'command options',
+            optionList: {
+              option: [
+                ...NATIVE_AQUERY_FLAGS.map((flag) => {
+                  const [optionName, value] = flag.slice(2).split('=');
+                  return {
+                    optionName,
+                    optionValue: value === 'true' ? '1' : value === 'false' ? '0' : value,
+                  };
+                }),
+                { optionName: 'output_file', optionValue: producer.aqueryFile },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ];
+  const events = producer.aqueryBuildEvents as any[];
+  events.find((event) => event.started).started.uuid = 'synthetic-aquery';
+  const terminal = events.splice(
+    events.findIndex((event) => event.lastMessage),
+    1,
+  )[0];
+  events.push(terminal);
+  f.origin.evidenceDigest = `sha256:${createHash('sha256').update(JSON.stringify(f.origin.evidence)).digest('hex')}`;
+  const current = await assureReviewedNativeBuildProducer('synthetic', f.request, f);
+  expect(current.assurance.acceptedExecutionAssumptions).toEqual([
+    old.assurance.acceptedExecutionAssumptions[0],
+    'the reviewed coordinator retained each native action graph from its producing build or corresponding scoped analysis in the same immutable producer window',
+  ]);
+  for (const assurance of [old.assurance, current.assurance]) {
+    expect(
+      validateReviewedNativeProducerAssurance(structuredClone(assurance), {
+        source: f.request.reviewedSource,
+      }),
+    ).toEqual(assurance);
+    expect(() =>
+      validateReviewedNativeProducerAssurance(
+        { ...assurance, acceptedExecutionAssumptions: ['arbitrary host assurance'] },
+        { source: f.request.reviewedSource },
+      ),
+    ).toThrow();
   }
 });
 

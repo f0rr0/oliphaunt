@@ -1012,6 +1012,14 @@ test('serialized native evidence excludes ambient options and logs while retaini
       },
     ];
     const named = f.events.find((event) => event.namedSetOfFiles);
+    command.sections.push(
+      { sectionLabel: 'command', chunkList: { chunk: ['build'] } },
+      { sectionLabel: 'residual', chunkList: { chunk: [secret] } },
+      {
+        sectionLabel: 'command options',
+        optionList: { option: [{ optionName: 'output_file', optionValue: secret }] },
+      },
+    );
     named.namedSetOfFiles.files[0].uri = secret;
     named.namedSetOfFiles.files[0].contents = secret;
     f.events.splice(-1, 0, ...unused, ...testEvents);
