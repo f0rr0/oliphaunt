@@ -9,6 +9,7 @@ import {
 import {
   EXTENSION_TARGET_PROFILES_RELATIVE_PATH,
   loadExtensionTargetProfiles,
+  validateExtensionTargetProfiles,
 } from '../../src/extensions/contracts/extension-target-profiles.mts';
 import { RUST_PAYLOAD_LICENSE as MOBILE_BINDINGS_LICENSE } from '../../src/native/mobile-bindings/tools/dependency-license-contract.mts';
 import {
@@ -149,7 +150,7 @@ const WASIX_POSTMASTER_TARGETS = new Set(RELEASE_HOST_TARGETS);
 const BROKER_TARGETS = new Set(RELEASE_HOST_TARGETS);
 const NODE_DIRECT_TARGETS = BROKER_TARGETS;
 const WASIX_NAPI_TARGETS = BROKER_TARGETS;
-const PRODUCT_PRESETS = {
+export const PRODUCT_PRESETS = {
   'postgres-tools-native': 'postgres-tools-native',
   'postgres-tools-wasix': 'postgres-tools-wasix',
   'liboliphaunt-native': 'liboliphaunt-native',
@@ -234,12 +235,44 @@ export function rel(file) {
   return relative.startsWith('..') ? file : relative.split(path.sep).join('/');
 }
 
-function productConfigs(prefix) {
+/** Explicit source snapshots never fall through to the current checkout. */
+export function readArtifactInputText(relative, inputContext = undefined) {
+  if (inputContext === undefined) return readFileSync(path.join(ROOT, relative), 'utf8');
+  if (typeof inputContext.readText !== 'function')
+    throw new Error(`release-artifact-targets.mts: historical inputContext must read ${relative}`);
+  const text = inputContext.readText(relative);
+  if (typeof text !== 'string')
+    throw new Error(`release-artifact-targets.mts: missing historical input ${relative}`);
+  return text;
+}
+
+function productConfigs(prefix, inputContext = undefined) {
+  if (inputContext !== undefined) {
+    if (
+      !inputContext.products ||
+      typeof inputContext.products !== 'object' ||
+      Array.isArray(inputContext.products)
+    )
+      throw new Error(`${prefix}: historical inputContext requires product descriptors`);
+    return inputContext.products;
+  }
   if (!productsCache.has(prefix)) productsCache.set(prefix, loadProducts(prefix));
   return productsCache.get(prefix);
 }
 
-export function contribCarrierDescriptor(prefix = 'release-artifact-targets.mts') {
+export function contribCarrierDescriptor(
+  prefix = 'release-artifact-targets.mts',
+  inputContext = undefined,
+) {
+  if (inputContext !== undefined) {
+    if (
+      !inputContext.contrib ||
+      typeof inputContext.contrib !== 'object' ||
+      Array.isArray(inputContext.contrib)
+    )
+      throw new Error(`${prefix}: historical inputContext requires its contrib descriptor`);
+    return inputContext.contrib;
+  }
   if (contribCarriersCache !== undefined) return contribCarriersCache;
   let value;
   try {
@@ -336,8 +369,9 @@ export function artifactTargetConfig(
   product,
   expectedPreset,
   prefix = 'release-artifact-targets.mts',
+  inputContext = undefined,
 ) {
-  const release = productConfig(product, prefix);
+  const release = productConfig(product, prefix, inputContext);
   return artifactTargetConfigFromRelease(product, release, expectedPreset, prefix);
 }
 
@@ -892,7 +926,32 @@ export function swiftArtifactRows() {
   ];
 }
 
-export function rawArtifactTargetRows(prefix = 'release-artifact-targets.mts') {
+export function rawArtifactTargetRows(
+  prefix = 'release-artifact-targets.mts',
+  inputContext = undefined,
+  product = undefined,
+) {
+  if (inputContext !== undefined) {
+    const products = productConfigs(prefix, inputContext);
+    const selected = product === undefined ? Object.keys(products) : [product];
+    return selected.flatMap((id) => {
+      productConfig(id, prefix, inputContext);
+      if (id === 'oliphaunt-swift') return swiftArtifactRows();
+      if (id === 'database-resources')
+        return databaseResourceArtifactRows(
+          JSON.parse(
+            readArtifactInputText('src/database-resources/contracts/contract.json', inputContext),
+          ),
+        );
+      if (!(id in PRODUCT_PRESETS)) return [];
+      const targets = artifactTargetConfig(id, PRODUCT_PRESETS[id], prefix, inputContext).targets;
+      if (id === 'liboliphaunt-native' || id === 'postgres-tools-native')
+        return nativeRuntimeArtifactRows(id, targets, prefix);
+      if (id === 'oliphaunt-broker' || id === 'oliphaunt-node-direct')
+        return nativeHelperArtifactRows(id, targets, prefix);
+      return wasixArtifactRows(id, targets, prefix);
+    });
+  }
   return [
     ...swiftArtifactRows(),
     ...databaseResourceArtifactRows(),
@@ -998,12 +1057,12 @@ function normalizeArtifactTarget(row, prefix) {
 }
 
 export function allArtifactTargets(
-  { product = undefined, kind = undefined, surface = undefined } = {},
+  { product = undefined, kind = undefined, surface = undefined, inputContext = undefined } = {},
   prefix = 'release-artifact-targets.mts',
 ) {
-  const products = productConfigs(prefix);
+  const products = productConfigs(prefix, inputContext);
   const seen = new Set();
-  return rawArtifactTargetRows(prefix)
+  return rawArtifactTargetRows(prefix, inputContext, product)
     .map((row) => normalizeArtifactTarget(row, prefix))
     .filter((target) => {
       if (seen.has(target.id)) {
@@ -1312,19 +1371,25 @@ export function expectedAssets(product, kind, version, prefix) {
   return assets.sort(compareText);
 }
 
-function productConfig(product, prefix) {
-  const config = productConfigs(prefix)[product];
+function productConfig(product, prefix, inputContext = undefined) {
+  const config = productConfigs(prefix, inputContext)[product];
   if (!config) {
+    if (inputContext !== undefined)
+      throw new Error(`${prefix}: missing historical product ${product}`);
     fail(prefix, `unknown release product ${product}`);
   }
   return config;
 }
 
-export function exactExtensionProducts(prefix = 'release-artifact-targets.mts') {
-  const products = Object.entries(productConfigs(prefix))
+export function exactExtensionProducts(
+  prefix = 'release-artifact-targets.mts',
+  inputContext = undefined,
+) {
+  const products = Object.entries(productConfigs(prefix, inputContext))
     .filter(([, config]) => EXTENSION_PRODUCT_KINDS.has(config.kind))
     .map(([product]) => product);
-  products.push(contribCarrierDescriptor(prefix).artifactProduct);
+  const contrib = contribCarrierDescriptor(prefix, inputContext);
+  if (contrib.artifactProduct !== undefined) products.push(contrib.artifactProduct);
   return [...new Set(products)].sort(compareText);
 }
 
@@ -1368,8 +1433,8 @@ export function extensionSqlName(product, prefix = 'release-artifact-targets.mts
   return names[0];
 }
 
-function contribMemberRows(product, prefix) {
-  const descriptor = contribCarrierDescriptor(prefix);
+function contribMemberRows(product, prefix, inputContext = undefined) {
+  const descriptor = contribCarrierDescriptor(prefix, inputContext);
   if (product !== descriptor.artifactProduct) {
     fail(prefix, `${product} is not the shared PostgreSQL contrib artifact product`);
   }
@@ -1418,14 +1483,18 @@ export function extensionSqlNamesForProducts(products, prefix = 'release-artifac
   return rows.map(({ sqlName }) => sqlName).sort(compareText);
 }
 
-export function extensionSqlNames(product, prefix = 'release-artifact-targets.mts') {
-  const contrib = contribCarrierDescriptor(prefix);
+export function extensionSqlNames(
+  product,
+  prefix = 'release-artifact-targets.mts',
+  inputContext = undefined,
+) {
+  const contrib = contribCarrierDescriptor(prefix, inputContext);
   if (product === contrib.artifactProduct) {
-    return contribMemberRows(product, prefix)
+    return contribMemberRows(product, prefix, inputContext)
       .map((row) => row.sqlName)
       .sort(compareText);
   }
-  const config = productConfig(product, prefix);
+  const config = productConfig(product, prefix, inputContext);
   if (config.kind === 'exact-extension-artifact') {
     const value = config.extension_sql_name;
     if (typeof value !== 'string' || !value) {
@@ -1451,7 +1520,7 @@ export function extensionSqlNames(product, prefix = 'release-artifact-targets.mt
   if (new Set(sorted).size !== sorted.length || JSON.stringify(values) !== JSON.stringify(sorted)) {
     fail(prefix, `${product}.extension_sql_names must be unique and sorted`);
   }
-  const manifestNames = contribMemberRows(product, prefix)
+  const manifestNames = contribMemberRows(product, prefix, inputContext)
     .map((row) => row.sqlName)
     .sort(compareText);
   if (JSON.stringify(sorted) !== JSON.stringify(manifestNames)) {
@@ -1843,12 +1912,30 @@ export function runtimeExtensionTargetRowsFromConfigs(
   );
 }
 
-function readExtensionTargetRows(prefix) {
+function readExtensionTargetRows(prefix, inputContext = undefined) {
   const relative = EXTENSION_TARGET_PROFILES_RELATIVE_PATH;
+  const contrib =
+    inputContext === undefined ? undefined : contribCarrierDescriptor(prefix, inputContext);
+  if (inputContext !== undefined) {
+    for (const owner of [contrib.nativeOwner, contrib.wasixOwner]) {
+      if (typeof owner !== 'string' || !owner)
+        throw new Error(`${prefix}: historical profiles require their exact runtime owners`);
+      if (productConfig(owner, prefix, inputContext).artifact_targets === undefined)
+        throw new Error(`${prefix}: missing historical runtime artifact targets ${owner}`);
+    }
+  }
   const allowed = new Set(
-    runtimeExtensionTargetRows(prefix).map((row) => `${row.target}\0${row.family}\0${row.kind}`),
+    (inputContext === undefined
+      ? runtimeExtensionTargetRows(prefix)
+      : runtimeExtensionTargetRowsFromConfigs(inputContext.products, prefix, contrib)
+    ).map((row) => `${row.target}\0${row.family}\0${row.kind}`),
   );
-  const rows = loadExtensionTargetProfiles().targets;
+  const rows =
+    inputContext === undefined
+      ? loadExtensionTargetProfiles().targets
+      : validateExtensionTargetProfiles(
+          Bun.TOML.parse(readArtifactInputText(relative, inputContext)),
+        ).targets;
   for (const row of rows) {
     if (!allowed.has(`${row.target}\0${row.family}\0${row.kind}`)) {
       fail(
@@ -1868,18 +1955,18 @@ function nonEmptyString(value, label, prefix) {
 }
 
 export function extensionArtifactTargets(
-  { product = undefined, family = undefined } = {},
+  { product = undefined, family = undefined, inputContext = undefined } = {},
   prefix = 'release-artifact-targets.mts',
 ) {
-  const products = product === undefined ? exactExtensionProducts(prefix) : [product];
+  const products = product === undefined ? exactExtensionProducts(prefix, inputContext) : [product];
   const parsed = [];
   for (const productId of products) {
-    if (!exactExtensionProducts(prefix).includes(productId)) {
+    if (!exactExtensionProducts(prefix, inputContext).includes(productId)) {
       fail(prefix, `${productId} is not an exact-extension artifact product`);
     }
-    for (const sqlName of extensionSqlNames(productId, prefix)) {
+    for (const sqlName of extensionSqlNames(productId, prefix, inputContext)) {
       const seen = new Set();
-      for (const [index, row] of readExtensionTargetRows(prefix).entries()) {
+      for (const [index, row] of readExtensionTargetRows(prefix, inputContext).entries()) {
         const source = EXTENSION_TARGET_PROFILES_RELATIVE_PATH;
         const target = nonEmptyString(row.target, `${source} targets[${index}].target`, prefix);
         const targetFamily = nonEmptyString(

@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { mavenCentralPublicationFiles } from '../packaging/maven-central-contract.mts';
 import { loadPublicationLock } from './publication-lock.mts';
 import { createCratesIoReadGate } from './registry-http-retry.mts';
 import { compareText, ROOT } from './release-graph.mts';
@@ -937,7 +938,10 @@ export async function materializeRegistryCarrierIntegrity(
   ) {
     throw error(`${carrier.id} has an invalid exact registry package name or version`);
   }
-  if (!Array.isArray(carrier.artifacts) || carrier.artifacts.length === 0) {
+  if (
+    !Array.isArray(carrier.artifacts) ||
+    (carrier.artifacts.length === 0 && carrier.ecosystem !== 'maven')
+  ) {
     throw error(`${carrier.id} registry materialization requires explicit artifact names`);
   }
   const names = new Set();
@@ -1073,7 +1077,9 @@ export async function materializeRegistryCarrierIntegrity(
       const { artifact: artifactName, base } = mavenCoordinate(carrier);
       const files = [];
       const remoteNames = new Set();
-      for (const artifact of carrier.artifacts) {
+      const declared = [...carrier.artifacts];
+      if (!declared.length) declared.push({ path: `${artifactName}-${carrier.version}.pom` });
+      for (const artifact of declared) {
         const remoteName = mavenRemoteFilename(carrier, artifact, artifactName);
         if (remoteNames.has(remoteName))
           throw error(`${carrier.id} declares duplicate Maven companion ${remoteName}`);
@@ -1081,6 +1087,19 @@ export async function materializeRegistryCarrierIntegrity(
         const url = `${base}/${encodeURIComponent(remoteName)}`;
         const observed = await capture(artifact, url);
         files.push({ algorithm: 'sha256', digest: observed.sha256, size: observed.size, url });
+        if (!carrier.artifacts.length && remoteName.endsWith('.pom')) {
+          const publication = mavenCentralPublicationFiles(readFileSync(observed.path, 'utf8'));
+          if (
+            `${publication.groupId}:${publication.artifactId}` !== carrier.name ||
+            publication.version !== carrier.version
+          )
+            throw error(`${carrier.id} historical POM differs from its exact coordinate`);
+          declared.push(
+            ...publication.files
+              .filter((name) => name !== remoteName)
+              .map((name) => ({ path: name })),
+          );
+        }
       }
       registryProof = {
         algorithm: 'sha256',

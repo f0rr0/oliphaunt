@@ -2,6 +2,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { cargoSatisfies } from '../../build_defs/languages/cargo-metadata.mts';
 import { electronReleaseDependencies } from '../../src/examples/tools/example-release-dependencies.mts';
 import { isDefaultExtensionRequirement } from './consumer-compatibility.mts';
 import { exampleCargoReleaseVersionBindings } from './example-cargo-versions.mts';
@@ -19,7 +20,10 @@ import {
   loadProducts,
 } from './release-graph.mts';
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from './release-please-bootstrap.mts';
-import { releaseDerivedPathInventory } from './sync-release-pr.mts';
+import {
+  desiredCargoPathDependencyVersion,
+  releaseDerivedPathInventory,
+} from './sync-release-pr.mts';
 
 const TOOL = 'verify-release-commit.mts';
 const ROOT = path.resolve(import.meta.dir, '../..');
@@ -539,6 +543,13 @@ function cargoDependencyEntryPath(parts) {
     return names.slice(0, 2);
   }
   if (
+    names.length === 4 &&
+    names[0] === 'workspace' &&
+    names[1] === 'dependencies' &&
+    names[3] === 'version'
+  )
+    return names.slice(0, 3);
+  if (
     names.length === 5 &&
     names[0] === 'target' &&
     CARGO_DEPENDENCY_TABLES.has(names[2]) &&
@@ -563,6 +574,9 @@ function cargoDependencyVersionChange({
   afterRoot,
   before,
   after,
+  products,
+  transitions,
+  updateMinimum = false,
 }) {
   if (path.posix.basename(file) !== 'Cargo.toml') return false;
   const entryPath = cargoDependencyEntryPath(parts);
@@ -605,10 +619,15 @@ function cargoDependencyVersionChange({
   ) {
     return false;
   }
-  const exact = typeof before === 'string' && before.startsWith('=');
+  const producer = Object.entries(products).find(([, product]) =>
+    product.registry_packages?.includes('crates:' + nextPackage.name),
+  )?.[0];
   return (
-    before === `${exact ? '=' : ''}${priorPackage.version}` &&
-    after === `${exact ? '=' : ''}${nextPackage.version}`
+    transitions.some(({ product }) => product === producer) &&
+    typeof before === 'string' &&
+    cargoSatisfies(priorPackage.version, before) &&
+    (updateMinimum || !cargoSatisfies(nextPackage.version, before)) &&
+    after === desiredCargoPathDependencyVersion(before, nextPackage.version, updateMinimum)
   );
 }
 
@@ -695,6 +714,26 @@ function authorizedDerivedStructuredChange(context, rules) {
     return true;
   }
   const rule = rules.structured.get(structuredRuleKey(context.type, context.file, context.parts));
+  const cargoPath = context.type === 'toml' ? cargoDependencyEntryPath(context.parts) : undefined;
+  if (cargoPath && typeof valueAt(context.beforeRoot, cargoPath)?.path === 'string') {
+    const consumer =
+      rule?.consumerProduct ??
+      Object.entries(context.products).find(([, product]) =>
+        product.registry_packages?.includes('crates:' + context.beforeRoot.package?.name),
+      )?.[0];
+    if (
+      consumer &&
+      context.products[consumer].registry_packages?.some((name) => name.startsWith('crates:')) &&
+      !context.transitions.some(({ product }) => product === consumer)
+    )
+      return false;
+    return cargoDependencyVersionChange({
+      ...context,
+      updateMinimum: Boolean(
+        consumer && context.transitions.some(({ product }) => product === consumer),
+      ),
+    });
+  }
   if (rule !== undefined)
     return productTransition(
       rule,
@@ -875,6 +914,7 @@ function validateAllowedFileSemantics({
             transitions,
             cargoVersions,
             productVersions,
+            products,
           },
           derivedRules,
         )

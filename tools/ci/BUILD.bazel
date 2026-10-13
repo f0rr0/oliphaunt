@@ -75,6 +75,7 @@ test_suite(
     name = "source_checks",
     tests = [
         ":ci_gate_test",
+        ":installed_replay_tools_test",
         ":mobile_e2e_resolver_test",
         ":workflow_bazel_cache_test",
         ":workflow_native_bazel_test",
@@ -83,6 +84,24 @@ test_suite(
         ":workflow_lint_test",
         ":workflow_lint_contract_test",
     ],
+)
+
+alias(
+    name = "android_installed_replay_tools",
+    actual = "//src/examples/native/react-native-expo:android_installed_test_tools",
+)
+
+alias(
+    name = "ios_installed_replay_tools",
+    actual = "//src/examples/native/react-native-expo:ios_installed_test_tools",
+)
+
+bun_test(
+    name = "installed_replay_tools_test",
+    entry_point = "//build_defs/apple:installed-tools.test.mts",
+    data = ["//build_defs/apple:installed-tools.mts"],
+    tags = ["source-check"],
+    size = "small",
 )
 
 source_quality_files()

@@ -13,11 +13,6 @@ export type NativeSupplierArtifact = {
   source?: { commit: string; tree: string; member: string; blob: string };
   file: { path: string; size: number; sha256: string };
 };
-export type NativeSupplierArtifactCatalog = {
-  publicationCarriers: { product: string; ecosystem: string; name: string }[];
-  githubArtifacts: { product: string; asset: string }[];
-  sourceTagProducts?: string[];
-};
 
 function fields(value: unknown, names: string[], label: string) {
   assert.ok(
@@ -80,31 +75,17 @@ export function validateNativeSupplierArtifacts(value: unknown): NativeSupplierA
   });
 }
 
-export function projectNativeSupplierArtifacts(
-  value: unknown,
-  catalog?: NativeSupplierArtifactCatalog,
-) {
+/** Safe File aliases are construction facts, never completed-publication authentication. */
+export function projectNativeSupplierArtifacts(value: unknown) {
   const rows = validateNativeSupplierArtifacts(value);
-  assert.ok(!rows.length || catalog, 'completed supplier artifacts require the canonical catalog');
   const artifacts: Record<string, NativeSupplierArtifact> = {};
   const files: { source: string; path: string; size: number; sha256: string }[] = [];
   const aliases = new Set<string>();
   for (const raw of rows) {
     const publication = raw.publication;
-    const registry = catalog?.publicationCarriers.some(
-      (row) =>
-        row.product === publication.product && `${row.ecosystem}:${row.name}` === raw.artifact,
-    );
-    const github = catalog?.githubArtifacts.some(
-      (row) =>
-        row.product === publication.product &&
-        `github-release:${row.asset.replaceAll('{version}', publication.version)}` === raw.artifact,
-    );
-    const sourceTag = raw.source && catalog?.sourceTagProducts?.includes(publication.product);
-    assert.ok(registry || github || sourceTag, 'unknown canonical completed supplier artifact');
     const key = `${publication.product}/${publication.version}/${raw.artifact}`;
     const basename = path.basename(raw.file.path);
-    if (github)
+    if (raw.artifact.startsWith('github-release:'))
       assert.equal(
         basename,
         raw.artifact.slice('github-release:'.length),

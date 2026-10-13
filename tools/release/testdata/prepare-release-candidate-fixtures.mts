@@ -12,7 +12,29 @@ import {
   includeOwnedSourceCommits,
   useSourceDate,
 } from '../prepare-release-candidate.mts';
-import { productCompatibilityVersion, ROOT } from '../release-graph.mts';
+import { loadPublicationCatalog } from '../publication-catalog.mts';
+import { expectedProductArtifactRows } from '../publication-lock.mts';
+import { contribCarrierDescriptor } from '../release-artifact-targets.mts';
+import { loadProducts, productCompatibilityVersion, ROOT } from '../release-graph.mts';
+
+/** Controlled historical transport for caller tests; the real reader has separate
+ * tag/blob/attestation tests. This fixture grants no completed origin authority. */
+export async function fixtureCompletedNativeInventory(publication) {
+  const catalog = loadPublicationCatalog('completed native caller fixture');
+  const descriptor = { ...loadProducts()[publication.product], version: publication.version };
+  return {
+    publication,
+    descriptor,
+    catalog,
+    carriers: catalog.carriers.filter((row) => row.product === publication.product),
+    publicRows: expectedProductArtifactRows([{ id: publication.product, ...descriptor }]),
+    inputContext: {
+      products: loadProducts(),
+      contrib: contribCarrierDescriptor(),
+      readText: (file) => readFileSync(path.join(ROOT, file), 'utf8'),
+    },
+  } as any;
+}
 
 const first = 'a'.repeat(40);
 const head = 'c'.repeat(40);

@@ -14,10 +14,6 @@ import {
 } from './native-supplier-artifacts.mts';
 
 const metadata = loadReleaseMetadata(path.resolve(import.meta.dir, '../..'));
-const catalog = {
-  publicationCarriers: metadata.publicationCarriers,
-  githubArtifacts: metadata.nativeRuntimeArtifacts as { product: string; asset: string }[],
-};
 function fixture() {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'completed-supplier-alias-'));
   const publication = {
@@ -65,7 +61,9 @@ test('canonical old-version Files join the existing snapshot without current-ver
     expect(rendered.build).toContain('"completed-supplier-artifacts.json"');
     expect(rendered.build).toContain(projected.files[0].path);
     expect(row.file.path).toStartWith(directory);
-    expect(() => projectNativeSupplierArtifacts([row])).toThrow(/catalog/);
+    expect(projectNativeSupplierArtifacts([row]).artifacts[key].publication).toEqual(
+      row.publication,
+    );
     expect(() =>
       nativePublicationInputProjection({ ...snapshot, supplierArtifacts: null }, metadata),
     ).toThrow();
@@ -80,7 +78,7 @@ test('canonical old-version Files join the existing snapshot without current-ver
   }
 });
 
-test('canonical held NAPI names retain publication origin and byte identity', () => {
+test('held identities retain structural origin facts without inferring current ownership or authentication', () => {
   const { directory, row } = fixture();
   try {
     const publication = {
@@ -90,18 +88,20 @@ test('canonical held NAPI names retain publication origin and byte identity', ()
       tagName: 'oliphaunt-wasix-napi-v0.3.2',
     };
     const held = { ...row, publication, artifact: 'npm:@oliphaunt/wasix-napi-linux-x64-gnu' };
-    const projected = projectNativeSupplierArtifacts([held], catalog);
+    const projected = projectNativeSupplierArtifacts([held]);
     expect(Object.values(projected.artifacts)[0].publication).toEqual(publication);
     expect(projected.files[0].sha256).toBe(row.file.sha256);
-    expect(() =>
-      projectNativeSupplierArtifacts([{ ...held, publication: row.publication }], catalog),
-    ).toThrow(/canonical/);
-    expect(() =>
-      projectNativeSupplierArtifacts(
-        [{ ...held, artifact: 'npm:@oliphaunt/nonexistent' }],
-        catalog,
-      ),
-    ).toThrow(/canonical/);
+    const differentOwner = projectNativeSupplierArtifacts([
+      { ...held, publication: row.publication },
+    ]);
+    expect(Object.values(differentOwner.artifacts)[0].publication).toEqual(row.publication);
+    expect(Object.values(differentOwner.artifacts)[0]).not.toHaveProperty('authenticated');
+    expect(
+      Object.values(
+        projectNativeSupplierArtifacts([{ ...held, artifact: 'npm:@oliphaunt/old-name' }])
+          .artifacts,
+      )[0].artifact,
+    ).toBe('npm:@oliphaunt/old-name');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -129,7 +129,7 @@ test('duplicate, contradictory completion, guessed filename and serialized authe
       [{ ...row, publication: { ...row.publication, tagName: 'latest' } }],
       [{ ...row, file: { ...row.file, producer: {} } }],
     ])
-      expect(() => projectNativeSupplierArtifacts(rows, catalog)).toThrow();
+      expect(() => projectNativeSupplierArtifacts(rows)).toThrow();
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -147,13 +147,12 @@ test('changed bytes, size, traversal and symlink inputs cannot become File alias
       { ...row.file, path: link },
     ])
       expect(() =>
-        projectNativeSupplierArtifacts(
-          [{ ...row, artifact: 'npm:@oliphaunt/liboliphaunt-linux-x64-gnu', file }],
-          catalog,
-        ),
+        projectNativeSupplierArtifacts([
+          { ...row, artifact: 'npm:@oliphaunt/liboliphaunt-linux-x64-gnu', file },
+        ]),
       ).toThrow();
     writeFileSync(row.file.path, 'substituted public bytes');
-    expect(() => projectNativeSupplierArtifacts([row], catalog)).toThrow(/bytes differ/);
+    expect(() => projectNativeSupplierArtifacts([row])).toThrow(/bytes differ/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -201,18 +200,17 @@ test('retained source-tag Files preserve their distinct Git source and existing 
     const originalSource = structuredClone(row.source);
     row.source.tree = 'f'.repeat(40);
     expect(alias.source).toEqual(originalSource);
-    expect(() =>
-      projectNativeSupplierArtifacts([row], { ...catalog, sourceTagProducts: [] }),
-    ).toThrow(/canonical/);
-    expect(() => projectNativeSupplierArtifacts([row], catalog)).toThrow(/canonical/);
+    expect(Object.values(projectNativeSupplierArtifacts([row]).artifacts)[0].source).toEqual(
+      row.source,
+    );
     const unpromised = structuredClone(metadata);
     unpromised.products['oliphaunt-swift'].publish_targets = ['github-release'];
-    expect(() =>
-      nativePublicationInputProjection(
-        { source: { commit: 'd'.repeat(40), tree: 'e'.repeat(40) }, supplierArtifacts: [row] },
-        unpromised,
-      ),
-    ).toThrow(/canonical/);
+    const oldDeclaration = nativePublicationInputProjection(
+      { source: { commit: 'd'.repeat(40), tree: 'e'.repeat(40) }, supplierArtifacts: [row] },
+      unpromised,
+    );
+    expect(oldDeclaration.supplierArtifacts[key].source).toEqual(row.source);
+    expect(oldDeclaration.supplierArtifacts[key]).not.toHaveProperty('authenticated');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -243,10 +241,50 @@ test('source-tag references require exact namespace, owner, version and safe imm
       { ...row, source: { ...row.source, member: '/carrier.json' } },
     ])
       expect(() => validateNativeSupplierArtifacts([bad])).toThrow();
-    const sourceCatalog = { ...catalog, sourceTagProducts: ['oliphaunt-swift'] };
-    expect(() => projectNativeSupplierArtifacts([row, row], sourceCatalog)).toThrow(/duplicate/);
+    expect(() => projectNativeSupplierArtifacts([row, row])).toThrow(/duplicate/);
     writeFileSync(row.file.path, 'substituted retained source delivery');
-    expect(() => projectNativeSupplierArtifacts([row], sourceCatalog)).toThrow(/bytes differ/);
+    expect(() => projectNativeSupplierArtifacts([row])).toThrow(/bytes differ/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('retired registry and GitHub names remain safe structural Files independently of the current catalog', () => {
+  const { directory, row } = fixture();
+  try {
+    const artifacts = (
+      [
+        ['cargo:old-helper-part-linux-x64-00', 'old-helper-part-linux-x64-00-9.2.1.crate'],
+        ['npm:@oliphaunt/old-name', 'old-name-9.2.1.tgz'],
+        ['maven:dev.oliphaunt:retired-runtime', 'retired-runtime-9.2.1.jar'],
+        ['github-release:old-only-platform-name.tar.gz', 'old-only-platform-name.tar.gz'],
+      ] as const
+    ).map(([artifact, basename]) => {
+      const file = { ...row.file, path: path.join(directory, basename) };
+      writeFileSync(file.path, 'controlled physical archive fixture, not authentication');
+      return { ...row, artifact, file };
+    });
+    const projected = projectNativeSupplierArtifacts(artifacts);
+    expect(Object.values(projected.artifacts).map(({ artifact }) => artifact)).toEqual(
+      artifacts.map(({ artifact }) => artifact),
+    );
+    expect(projected.files).toHaveLength(4);
+    for (const value of Object.values(projected.artifacts)) {
+      expect(value.publication).toEqual(row.publication);
+      expect(value).not.toHaveProperty('authenticated');
+    }
+    for (const bad of [
+      'foreign:old-name',
+      'npm:../old-name',
+      'github-release:../old-only-platform-name.tar.gz',
+      'npm:old\u0000name',
+    ])
+      expect(() => projectNativeSupplierArtifacts([{ ...artifacts[0], artifact: bad }])).toThrow();
+    expect(() =>
+      projectNativeSupplierArtifacts([
+        { ...artifacts[3], artifact: 'github-release:guessed-name.tar.gz' },
+      ]),
+    ).toThrow('filename differs');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -254,6 +254,10 @@ tasks:
       - /src/native/runtime/tools/native-readiness-probes.test.sh
       - /src/native/runtime/bin/common.sh
       - /src/native/runtime/bin/mobile-static-extensions.sh
+      - /src/native/runtime/bin/build-macos-extension-archives.sh
+      - /src/native/runtime/bin/build-postgres18-ios-device.sh
+      - /src/native/runtime/bin/build-postgres18-ios-simulator.sh
+      - /src/native/runtime/bin/build-postgres18-android-arm64.sh
       - /src/native/runtime/include/oliphaunt.h
       - /src/native/runtime/src/liboliphaunt_internal.h
       - /src/native/runtime/src/liboliphaunt_platform.h

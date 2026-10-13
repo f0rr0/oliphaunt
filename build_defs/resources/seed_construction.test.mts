@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -33,6 +34,7 @@ import {
   writeSeedConstructionReceipt,
 } from './seed_construction.mts';
 import { bootstrapFiles, fixture, identity, publication } from './seed-construction-fixture.mts';
+import { parseWasixBootstrapRecipe } from './wasix_inputs.mts';
 
 test('semantic File roles must bind exact declared inputs and invalidate reassigned headers', () => {
   const inputs = { manual: '/cache/manual.h', control: '/cache/control.h' };
@@ -315,6 +317,91 @@ test('version promotion keeps one frozen seed and original constructor while obs
     writeFileSync(f.frozen, 'changed frozen constructor bytes');
     expect(() => selectQualifiedSeed(current, control)).toThrow(
       'qualified seed input bytes differ',
+    );
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('WASIX guest recipe changes invalidate completed reuse and promotion while tool bytes stay provenance', async () => {
+  const f = await fixture('wasix');
+  try {
+    const share = bootstrapFiles(f.root);
+    const recipe = parseWasixBootstrapRecipe(
+      JSON.stringify({
+        schema: 'oliphaunt-wasix-bootstrap-recipe-v1',
+        profile: 'standard',
+        command: 'initdb',
+        workingDirectory: '/',
+        arguments: ['--encoding=UTF8'],
+        environment: [['TZ', 'UTC']],
+      }),
+      'standard',
+    );
+    expect(
+      parseWasixBootstrapRecipe(JSON.stringify({ ...recipe, profile: 'icu' }), 'icu').profile,
+    ).toBe('icu');
+    const content = captureSeedContentIntent(f.intent, { recipe }, share);
+    const receipt = writeSeedConstructionReceipt(
+      f.receiptPath,
+      f.intent,
+      f.frozen,
+      f.pgdata,
+      undefined,
+      content,
+    );
+    f.updateMetadata(receipt);
+    const promotion = {
+      source: { commit: 'd'.repeat(40), tree: 'e'.repeat(40) },
+      evidenceDigest: `sha256:${'f'.repeat(64)}`,
+      invocationId: 'actual-original-qualification',
+      frozen: identity(f.frozen),
+      receipt: identity(f.receiptPath),
+      transition: {
+        source: { commit: '1'.repeat(40), tree: '2'.repeat(40) },
+        updatesSha256: '3'.repeat(64),
+      },
+    };
+    writeFileSync(f.inputs.tool, '// changed tool comments\n');
+    const current = captureSeedConstructionIntent(f.intent, f.invocation, f.inputs);
+    expect(current).not.toEqual(f.intent);
+    expect(selectCompletedSeed(current, f.control(), content)?.origin.operation).toBe('reused');
+    expect(selectQualifiedSeed(current, promotion, content)?.receipt.intent).toEqual(f.intent);
+    for (const changed of [
+      { ...recipe, arguments: ['--encoding=LATIN1'] },
+      { ...recipe, environment: [['TZ', 'Pacific/Honolulu']] },
+      { ...recipe, workingDirectory: '/base' },
+      { ...recipe, command: 'different-initdb' },
+    ]) {
+      const actual = parseWasixBootstrapRecipe(JSON.stringify(changed), 'standard');
+      const changedContent = captureSeedContentIntent(f.intent, { recipe: actual }, share);
+      expect(changedContent).not.toEqual(content);
+      expect(selectCompletedSeed(current, f.control(), changedContent)).toBeUndefined();
+      expect(() => selectQualifiedSeed(current, promotion, changedContent)).toThrow(
+        'changed declared seed contents',
+      );
+    }
+    for (const malformed of [
+      null,
+      {},
+      { ...recipe, schema: 'unrecognized' },
+      { ...recipe, profile: 'icu' },
+      { ...recipe, arguments: [null] },
+      { ...recipe, workingDirectory: '../base' },
+      {
+        ...recipe,
+        environment: [
+          ['TZ', 'UTC'],
+          ['TZ', 'different'],
+        ],
+      },
+      { ...recipe, environment: [['TZ']] },
+      { ...recipe, extra: 'undeclared' },
+    ])
+      expect(() => parseWasixBootstrapRecipe(JSON.stringify(malformed), 'standard')).toThrow();
+    expect(() => parseWasixBootstrapRecipe('{', 'standard')).toThrow();
+    expect(() => parseWasixBootstrapRecipe(' '.repeat(64 * 1024 + 1), 'standard')).toThrow(
+      'not bounded',
     );
   } finally {
     rmSync(f.root, { recursive: true, force: true });
@@ -727,7 +814,7 @@ test.skipIf(process.platform === 'win32')(
 test.skipIf(process.platform === 'win32')(
   'Bazel expanded runtime leaves preserve constructor intent and reject missing, unknown and substituted Files',
   () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'seed-runtime-tree-'));
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'seed-runtime-tree-')));
     try {
       const producer = path.join(root, 'producer');
       const sandbox = path.join(root, 'sandbox');

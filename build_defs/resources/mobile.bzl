@@ -119,10 +119,14 @@ def _native_seed_domain_impl(ctx):
     bun_action(ctx, ctx.attr._tool, arguments = [arguments],
                inputs = [specification, producer.construction] + constructor_inputs + reuse_inputs + promotion_inputs,
                outputs = [frozen, construction], mnemonic = "NativeSeedDomainAdmission")
+    observation_inputs = depset(
+        [frozen, construction],
+        transitive = [ctx.attr.producer[OutputGroupInfo].observation_inputs],
+    )
     return [DefaultInfo(files = depset([frozen, producer.abi, construction])),
             NativeSeedInfo(frozen = frozen, abi = producer.abi, runtime = producer.runtime,
                            profile = producer.profile, target = ctx.attr.domain, construction = construction),
-            OutputGroupInfo(frozen = depset([frozen]), abi = depset([producer.abi]), construction = depset([construction]))]
+            OutputGroupInfo(frozen = depset([frozen]), abi = depset([producer.abi]), construction = depset([construction]), observation_inputs = observation_inputs)]
 
 native_seed_domain = rule(
     implementation = _native_seed_domain_impl,
@@ -180,7 +184,7 @@ _swift_seed_envelope = rule(implementation = _swift_seed_envelope_impl, attrs = 
 def ios_resource_slice(name, qualification):
     """Admit the real Mac bootstrap against both actual dynamic iOS producers."""
     compatible = ["@platforms//os:macos", "@platforms//cpu:aarch64"]
-    packages, assets = [], [":icu_payload"]
+    packages, assets, seeds = [], [":icu_payload"], []
     for profile in DATABASE_RESOURCE_CONTRACT["profiles"]:
         prefix = "ios_datum64_" + profile
         icu = ":icu_payload" if profile == "icu" else None
@@ -191,13 +195,14 @@ def ios_resource_slice(name, qualification):
         native.filegroup(name = prefix + "_frozen", srcs = [":" + prefix + "_seed"], output_group = "frozen")
         packages.extend(native_seed_envelopes(prefix, "ios-datum64", profile, ":" + prefix + "_seed", icu = icu, compatible = compatible))
         assets.append(":" + prefix + "_assets")
+        seeds.append(":" + prefix + "_seed")
     rows = [row for row in DATABASE_RESOURCE_ARTIFACTS if row["kind"] == "swift-source"]
     if len(rows) != 1:
         fail("Swift seed envelope requires exactly one canonical artifact")
     asset = rows[0]["asset"].replace("{version}", PRODUCTS["database-resources"]["version"])
     _swift_seed_envelope(name = "swift_seed_archive", assets = assets, notices = native_carrier_legal_inputs(), out = asset, target_compatible_with = compatible)
     shipping_package(name = "swift_seed_shipping", owner = "@oliphaunt_metadata//:product_database-resources", artifacts = [":swift_seed_archive"],
-                     ecosystem = "github", package_name = asset, configuration = rows[0]["target"], role = "github-release-asset")
+                     ecosystem = "github", package_name = asset, configuration = rows[0]["target"], role = "github-release-asset", observation_inputs = seeds)
     shipping_export(name = name, packages = packages + [":swift_seed_shipping"], qualification = qualification, testonly = True, target_compatible_with = compatible)
 
 def mobile_resource_test(name, target):

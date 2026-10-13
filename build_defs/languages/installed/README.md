@@ -6,12 +6,20 @@ Archive acquisition uses Cargo's selected Linux host graph; the remaining
 cross-target index records support offline resolution without downloading their
 unused platform archives.
 
-`consumer_test` stages the final envelopes and derives SDK/helper constraints
-from their conventional manifests. Cargo reconciles candidate versions offline
-before the final locked offline compile and SQL/reopen execution. Independently
-held runtime requirements remain the SDK manifest's requirements. Its result
-records which source candidates Cargo actually selected; an unused patch is not
-qualification of that candidate.
+`consumer_test` runs three common preparation cases: the current SDK/helper
+composition with its declared candidate dependency closure, a direct packaged
+Core public API consumer, and the genuine held SDK baseline. Each case compiles
+and executes SQL/reopen checks. The direct Core case leaves the held SDK's
+requirements unchanged.
+
+`consumer_minimum_test` runs only the additional declared SDK minimum case. The
+source-owned policy requires it for final admission of prepared selected Rust
+source carriers. Preparation alone cannot satisfy that final requirement.
+Cargo resolves both tests' compositions offline from the conventional manifests
+and captured inputs. For SDK compositions, independently held runtime
+requirements remain the SDK manifest's requirements. Results record which
+source candidates Cargo actually selected; an unused patch is not qualification
+of that candidate.
 
 Registry requirement changes need explicit qualification preflight. Run
 `capture.mts` with the pinned Cargo and rustc executable paths, an output

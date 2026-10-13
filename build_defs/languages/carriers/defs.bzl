@@ -209,7 +209,7 @@ def _unit_inputs_impl(ctx):
         metadata.update({
             "sources": entries,
             "legal": {name: file for name, file in legal.items() if name in ["LICENSE", "THIRD_PARTY_NOTICES.md", "Cargo.lock"] or name.startswith(owner + "/")},
-            "windowsRuntime": {file.basename: file.path for file in ctx.files.windows_runtime} if metadata["artifact"]["target"] == "windows-x64-msvc" else {},
+            "windowsRuntime": {file.basename: file.short_path for file in ctx.files.windows_runtime} if metadata["artifact"]["target"] == "windows-x64-msvc" else {},
         })
         cases.append(metadata)
     output = ctx.actions.declare_file(ctx.label.name + ".json")

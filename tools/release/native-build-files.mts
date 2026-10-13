@@ -62,6 +62,7 @@ function finalFiles(evidence: NativeBuildEvidence) {
     for (const output of [
       ...value.outputs.filter(({ path }) => selected.has(path)),
       ...value.inputs.filter(({ path }) => seedFiles.has(path)),
+      ...(value.qualificationInputs ?? []).flatMap(({ inputs }) => inputs),
     ])
       for (const member of output.members) {
         if (member.type !== 'file') continue;
@@ -118,6 +119,9 @@ export function readNativeBuildFinalFiles(
   const qualification = validateNativeBuildEvidence(evidence, expected);
   const root = requireSafeDirectoryChain(path.resolve(directory), { label: 'native file packet' });
   const { supportedRoots, artifactFileKeys, ...inventory } = finalFiles(evidence);
+  const qualificationInputs = qualification.cohorts.flatMap((value, cohort) =>
+    (value.qualificationInputs ?? []).map((test) => ({ cohort, ...structuredClone(test) })),
+  );
   const transport = path.join(root, 'files');
   if (!existsSync(transport)) {
     if (inventory.files.length) throw new Error('native final file transport is missing');
@@ -126,6 +130,10 @@ export function readNativeBuildFinalFiles(
       qualification,
       ...inventory,
       artifactRoots: [] as string[],
+      qualificationInputs,
+      file(_cohort: number, _declaredPath: string): string {
+        throw new Error('native final packet does not contain the requested declared File');
+      },
     };
   }
   const expectedFiles = inventory.files.map(({ cohort, path }) => `${cohort}/${path}`).sort();
@@ -200,6 +208,18 @@ export function readNativeBuildFinalFiles(
     scope: 'construction' as const,
     qualification,
     ...inventory,
+    qualificationInputs,
+    /** Resolve only a File whose bytes were retained and verified by this reader. */
+    file(cohort: number, declaredPath: string) {
+      assertInventory();
+      const captured = captures.find(
+        ({ file }) => file.cohort === cohort && file.path === declaredPath,
+      );
+      if (!captured)
+        throw new Error('native final packet does not contain the requested declared File');
+      captured.captured.assertUnchanged();
+      return captured.absolute;
+    },
     artifactRoots: captures.flatMap(({ absolute }, index) =>
       artifactFileKeys.has(`${inventory.files[index].cohort}\0${inventory.files[index].path}`)
         ? [absolute]

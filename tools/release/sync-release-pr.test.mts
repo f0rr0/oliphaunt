@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { renderToml } from '../../build_defs/languages/cargo-metadata.mts';
 import { loadProducts } from './release-graph.mts';
 import {
   cargoManifestPaths,
@@ -34,6 +35,39 @@ if (mode === 'inventory') {
   );
   assert.deepEqual([...priorCargoPathDependencyVersions(nested, { root })], []);
   assert.deepEqual([...priorCargoPathDependencyVersions(untracked, { root })], []);
+  process.exit(0);
+}
+
+if (mode === 'workspace-floor') {
+  const core = 'liboliphaunt-native-bindings';
+  const manifests = ['src/native/rust-bindings/Cargo.toml', 'src/native/sdks/rust/Cargo.toml'];
+  if (stage === 'prepare') {
+    const versionsFile = path.join(root, '.release-please-manifest.json');
+    const versions = JSON.parse(readFileSync(versionsFile, 'utf8'));
+    for (const file of manifests) {
+      const text = readFileSync(path.join(root, file), 'utf8');
+      const version = Bun.TOML.parse(text).package.version;
+      const next = version.replace(/\d+$/u, (patch) => String(Number(patch) + 1));
+      writeFileSync(
+        path.join(root, file),
+        text.replace('version = "' + version + '"', 'version = "' + next + '"'),
+      );
+      versions[path.posix.dirname(file)] = next;
+    }
+    writeFileSync(versionsFile, JSON.stringify(versions, null, 2) + '\n');
+  } else if (stage === 'hold') {
+    const file = path.join(root, loadProducts()['oliphaunt-query'].path, 'Cargo.toml');
+    const manifest = Bun.TOML.parse(readFileSync(file, 'utf8'));
+    manifest.dependencies ??= {};
+    manifest.dependencies[core] = { workspace: true };
+    writeFileSync(file, renderToml(manifest));
+  } else {
+    const before = readFileSync(path.join(root, 'Cargo.toml'));
+    const buildBound = new Map(Object.keys(loadProducts()).map((id) => [id, new Set()]));
+    await syncReleasePr(['--check'], { buildBound });
+    assert.deepEqual(readFileSync(path.join(root, 'Cargo.toml')), before);
+    throw new Error('missing workspace floor was accepted');
+  }
   process.exit(0);
 }
 
@@ -88,7 +122,7 @@ if (mode === 'supplier-map') {
       ? beforeSdk.package.metadata.oliphaunt['broker-version']
       : parsed(broker).package.version;
   assert.equal(afterSdk.package.metadata.oliphaunt['broker-version'], expected);
-  assert.equal(afterSdk.dependencies['oliphaunt-broker'].version, expected);
+  assert.equal(afterSdk.dependencies['oliphaunt-broker'].version, parsed(broker).package.version);
   assert.match(
     readFileSync(constantFile, 'utf8'),
     new RegExp(`BROKER_RELEASE_VERSION: &str = "${expected.replaceAll('.', '[.]')}"`, 'u'),
@@ -132,8 +166,12 @@ test('unknown supplied relationships reject the actual sync runner before derive
 
 test('release sync preserves wildcard Cargo path dependencies', () => {
   assert.equal(desiredCargoPathDependencyVersion('*', '0.2.0'), '*');
+  assert.equal(desiredCargoPathDependencyVersion('0.2.0', '0.2.1'), '0.2.0');
+  assert.equal(desiredCargoPathDependencyVersion('^0.2.0', '0.2.1'), '^0.2.0');
+  assert.equal(desiredCargoPathDependencyVersion('=0.2.0', '0.2.1'), '=0.2.1');
   assert.equal(desiredCargoPathDependencyVersion('0.1.0', '0.2.0'), '0.2.0');
   assert.equal(desiredCargoPathDependencyVersion('=0.1.0', '0.2.0'), '=0.2.0');
+  assert.equal(desiredCargoPathDependencyVersion('^0.2.0', '0.2.1', true), '0.2.1');
 });
 
 test('compatibility sync preserves exact installed Cargo requirements and their operator spacing', () => {

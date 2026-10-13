@@ -1,6 +1,3 @@
-import { loadReleaseMetadata } from './bazel-release-metadata.mts';
-import { deriveQualifiedNativeCurrentExactInputs } from './qualified-native-current-exact-inputs.mts';
-import { fileIdentity } from './native-file-identity.mts';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -15,6 +12,7 @@ import { GenericJson } from 'release-please/build/src/updaters/generic-json.js';
 import { ReleasePleaseManifest } from 'release-please/build/src/updaters/release-please-manifest.js';
 import { TagName } from 'release-please/build/src/util/tag-name.js';
 import { Version } from 'release-please/build/src/version.js';
+import { loadReleaseMetadata } from './bazel-release-metadata.mts';
 import { readCommitHistory, readCommitPaths } from './commit-paths.mts';
 import { createCompletedPublicationChecker } from './completed-release-publication.mts';
 import {
@@ -22,6 +20,7 @@ import {
   snapshotCurrentExactInputs,
 } from './default-extension-release-plan.mts';
 import { requestGithubRepositoryJson } from './github-read.mts';
+import { fileIdentity } from './native-file-identity.mts';
 import { writeNativeReleaseInputs } from './native-release-inputs.mts';
 import {
   prepareNativeReleaseDelivery,
@@ -32,6 +31,7 @@ import {
   commitNativeVersionUpdates,
 } from './native-version-source.mts';
 import { sourceIdentity } from './publication-lock.mts';
+import { deriveQualifiedNativeCurrentExactInputs } from './qualified-native-current-exact-inputs.mts';
 import {
   releaseDependencyPlan,
   resolveBuildBoundCompatibilityProducts,
@@ -41,8 +41,16 @@ import {
   compatibilityVersionEntries,
   loadProducts,
   productCompatibilityVersion,
+  ROOT,
 } from './release-graph.mts';
-import { syncReleasePr, syncTomlStringPath } from './sync-release-pr.mts';
+import {
+  cargoPathDependencyBindings,
+  cargoPathDependencyConsumers,
+  desiredCargoPathDependencyVersion,
+  syncExampleCargoManifestText,
+  syncReleasePr,
+  syncTomlStringPath,
+} from './sync-release-pr.mts';
 import { releaseProductsFromManifests } from './verify-release-commit.mts';
 
 // Initialize RP's public CommonJS entrypoint before its circular workspace modules.
@@ -70,6 +78,7 @@ export function includeOwnedSourceCommits(
   const nativeSelected = new Set<string>();
   const nativeLeaves = new Map<string, Set<string>>();
   let nativePlan;
+  let nativeCargoManifests;
   if (native) {
     const necessary = options.nativeNecessaryProducts;
     if (
@@ -109,6 +118,14 @@ export function includeOwnedSourceCommits(
         for (const file of [...view.leafInputPaths, ...view.analysisInputPaths]) leaves.add(file);
       }
       nativeLeaves.set(product.id, leaves);
+    }
+    // Removed Files still carry the conventional intent of their former owner.
+    for (const [id, baseline] of Object.entries(options.nativeVersionIntentBaselines ?? {})) {
+      if (baseline.product.id !== id || !nativeLeaves.has(id))
+        throw new Error('native version intent baseline has a different owner');
+      for (const view of baseline.construction)
+        for (const file of [...(view.leafInputPaths ?? []), ...(view.analysisInputPaths ?? [])])
+          nativeLeaves.get(id).add(file);
     }
     if (nativeLeaves.size !== Object.keys(graph.products).length)
       throw new Error('native Release Please lacks complete configured product input coverage');
@@ -250,6 +267,46 @@ export function includeOwnedSourceCommits(
       releasesByPath;
 
       async preconfigure(strategies, commitsByPath, releasesByPath) {
+        if (
+          native &&
+          nativeSelected.size &&
+          !nativeCargoManifests &&
+          Object.values(graph.products).some((product) =>
+            product.registry_packages?.some((name) => name.startsWith('crates:')),
+          )
+        ) {
+          const read = async (file) => {
+            try {
+              const text = (await github.getFileContentsOnBranch(file)).parsedContent;
+              return { text, manifest: Bun.TOML.parse(text) };
+            } catch (error) {
+              if (error.status === 404) return undefined;
+              throw error;
+            }
+          };
+          const workspace = await read('Cargo.toml');
+          const files = new Set([
+            ...(workspace?.manifest.workspace?.members ?? []).map(
+              (member) => member + '/Cargo.toml',
+            ),
+            ...(workspace?.manifest.workspace?.exclude ?? []).map(
+              (member) => member + '/Cargo.toml',
+            ),
+            ...Object.values(graph.products).flatMap(
+              (product) => product.embedded_cargo_manifests ?? [],
+            ),
+          ]);
+          nativeCargoManifests = new Map([
+            ...(workspace ? [['Cargo.toml', workspace]] : []),
+            ...(
+              await Promise.all(
+                [...files]
+                  .filter((file) => file !== 'Cargo.toml')
+                  .map(async (file) => [file, await read(file)]),
+              )
+            ).filter(([, value]) => value),
+          ]);
+        }
         this.strategies = strategies;
         this.releasesByPath = releasesByPath;
         const seen = new Set();
@@ -282,6 +339,8 @@ export function includeOwnedSourceCommits(
           ]),
         );
         const unmappedBreaking = new Set<string>();
+        const partiallyMappedBreaking = new Set<string>();
+        const knownNativeFiles = new Set([...nativeLeaves.values()].flatMap((files) => [...files]));
         const unknownIntent = new Map<string, string[]>();
         if (native)
           for (const commit of observed) {
@@ -292,8 +351,11 @@ export function includeOwnedSourceCommits(
               // yet represented by action leaves or loaded BUILD files.
               if (intent.scope && Object.hasOwn(graph.products, intent.scope))
                 owners.get(commit.sha).add(intent.scope);
-              else if (intent.notes?.length && !owners.get(commit.sha).size)
-                unmappedBreaking.add(commit.sha);
+              else if (intent.notes?.length) {
+                if (!owners.get(commit.sha).size) unmappedBreaking.add(commit.sha);
+                else if (commit.files.some((file) => !knownNativeFiles.has(file)))
+                  partiallyMappedBreaking.add(commit.sha);
+              }
             }
           }
         for (const [ownerPath, config] of Object.entries(manifest.repositoryConfig)) {
@@ -334,12 +396,21 @@ export function includeOwnedSourceCommits(
             }
             if (unmappedBreaking.has(commit.sha)) unknown.push(commit.sha);
             if (
+              partiallyMappedBreaking.has(commit.sha) &&
+              !owners.get(commit.sha).has(config.component) &&
+              !options.nativeVersionIntentBaselines?.[config.component]
+            )
+              unknown.push(commit.sha);
+            if (
               (!native || nativeSelected.has(config.component)) &&
               owners.get(commit.sha).has(config.component)
             )
               selected.push(commit);
           }
-          unknownIntent.set(config.component, unknown);
+          // A first publication has no prior API to break. Legacy products
+          // without a captured old footprint need explicit component intent
+          // when a breaking commit is only partly attributable to known Files.
+          unknownIntent.set(config.component, version === '0.0.0' ? [] : unknown);
           commitsByPath[ownerPath] = selected;
         }
         const entries = compatibilityVersionEntries(graph.products, { requireSourceProduct: true });
@@ -447,6 +518,87 @@ export function includeOwnedSourceCommits(
           };
         }
         if (native) {
+          this.planNativeRequirements = (products, selected) => {
+            const plan = defaultExtensionReleasePlan(products, selected, {
+              readCompatibility,
+              buildBound,
+              currentExactInputs: nativeCurrentExactInputs,
+            });
+            if (!nativeCargoManifests) return plan;
+            const owners = new Map(
+              Object.entries(products).flatMap(([id, product]) =>
+                (product.registry_packages ?? [])
+                  .filter((name) => name.startsWith('crates:'))
+                  .map((name) => [name.slice(7), id]),
+              ),
+            );
+            const workspace = nativeCargoManifests.get('Cargo.toml')?.manifest.workspace ?? {};
+            const packages = new Map(
+              [...nativeCargoManifests].flatMap(([file, { manifest }]) => {
+                if (!manifest.package) return [];
+                const actual = manifest.package;
+                const owner = owners.get(actual.name);
+                const version = owner
+                  ? products[owner].version
+                  : actual.version?.workspace === true
+                    ? workspace.package?.version
+                    : actual.version;
+                return typeof actual.name === 'string' && typeof version === 'string'
+                  ? [[path.resolve(ROOT, file), [actual.name, version]]]
+                  : [];
+              }),
+            );
+            for (const [file, { text, manifest }] of nativeCargoManifests) {
+              for (const binding of cargoPathDependencyBindings(
+                text,
+                path.resolve(ROOT, file),
+                packages,
+              )) {
+                const declaration = binding.entryParts.reduce(
+                  (value, key) => value?.[key],
+                  manifest,
+                );
+                const input = path.resolve(
+                  ROOT,
+                  path.dirname(file),
+                  declaration.path,
+                  'Cargo.toml',
+                );
+                const sourceProduct = owners.get(packages.get(input)?.[0]);
+                if (!selected.has(sourceProduct)) continue;
+                const consumers = cargoPathDependencyConsumers(
+                  file,
+                  manifest,
+                  nativeCargoManifests,
+                  owners,
+                  binding,
+                );
+                binding.expected = desiredCargoPathDependencyVersion(
+                  declaration.version,
+                  products[sourceProduct].version,
+                  consumers.some((product) => selected.has(product)),
+                );
+                if (declaration.version === binding.expected) continue;
+                // A changed normalized public Cargo requirement is a changed
+                // source envelope. Private build/test manifests need a coherent
+                // checkout without inventing another public delivery.
+                for (const product of new Set(consumers.length ? consumers : [null])) {
+                  if (product) plan.required.add(product);
+                  plan.requirements.set(
+                    'cargo:' + file + ':' + JSON.stringify(binding.entryParts) + ':' + product,
+                    {
+                      product,
+                      sourceProduct,
+                      version: products[sourceProduct].version,
+                      path: file,
+                      binding,
+                    },
+                  );
+                }
+              }
+            }
+            return plan;
+          };
           const predicted = structuredClone(graph.products);
           const previewed = new Set<string>();
           for (;;) {
@@ -466,11 +618,7 @@ export function includeOwnedSourceCommits(
               predicted[product].version = candidate.version.toString();
               previewed.add(product);
             }
-            nativePlan = defaultExtensionReleasePlan(predicted, nativeSelected, {
-              readCompatibility,
-              buildBound,
-              currentExactInputs: nativeCurrentExactInputs,
-            });
+            nativePlan = this.planNativeRequirements(predicted, nativeSelected);
             const missing = [...nativePlan.required].filter(
               (product) => !nativeSelected.has(product),
             );
@@ -510,11 +658,7 @@ export function includeOwnedSourceCommits(
               [...selected].some((product) => !nativeSelected.has(product))
             )
               throw new Error('native Release Please escaped its frozen necessary/adoption scope');
-            plan = defaultExtensionReleasePlan(products, selected, {
-              readCompatibility,
-              buildBound,
-              currentExactInputs: nativeCurrentExactInputs,
-            });
+            plan = this.planNativeRequirements(products, selected);
             if (
               [...plan.required].some((product) => !nativeSelected.has(product)) ||
               JSON.stringify([...plan.requirements]) !==
@@ -566,7 +710,8 @@ export function includeOwnedSourceCommits(
           const changes = [...plan.requirements.values()].filter(
             (entry) => entry.product === product,
           );
-          for (const { sourceProduct, version } of changes) {
+          for (const { sourceProduct, version, binding } of changes) {
+            if (binding) continue;
             for (const entry of entries.filter(
               (entry) => entry.product === product && entry.sourceProduct === sourceProduct,
             )) {
@@ -587,9 +732,10 @@ export function includeOwnedSourceCommits(
           }
           if (!changes.length) continue;
           const notes = changes
-            .map(
-              ({ sourceProduct, version }) =>
-                `* Require ${sourceProduct}@${version} for the default extension install.`,
+            .map(({ sourceProduct, version, binding }) =>
+              binding
+                ? `* Update the local Cargo requirement for ${binding.name} to ${binding.expected}.`
+                : `* Require ${sourceProduct}@${version} for the default extension install.`,
             )
             .join('\n');
           for (const update of candidate.pullRequest.updates) {
@@ -601,6 +747,32 @@ export function includeOwnedSourceCommits(
           }
           for (const release of candidate.pullRequest.body.releaseData)
             release.notes = appendDependenciesSectionToChangelog(release.notes, notes);
+        }
+        if (native) {
+          const written = new Set();
+          for (const requirement of plan.requirements.values()) {
+            if (!requirement.binding) continue;
+            const key = requirement.path + ':' + JSON.stringify(requirement.binding.entryParts);
+            if (written.has(key)) continue;
+            written.add(key);
+            const candidate = candidates.find(
+              (candidate) =>
+                this.repositoryConfig[candidate.path].component === requirement.sourceProduct,
+            );
+            if (!candidate) throw new Error('native Cargo requirement has no selected producer');
+            candidate.pullRequest.updates.push({
+              path: requirement.path,
+              createIfMissing: false,
+              updater: {
+                updateContent: (content) =>
+                  syncExampleCargoManifestText(content, {
+                    policy: {},
+                    bindings: [requirement.binding],
+                    label: requirement.path,
+                  }).text,
+              },
+            });
+          }
         }
         return candidates;
       }
@@ -724,6 +896,7 @@ async function main() {
     buildBound: native.suppliers.buildBound,
     nativeNecessaryProducts: native.decision.selectedProducts,
     nativeObservation: native.observation,
+    nativeVersionIntentBaselines: native.shippingBaselines,
     nativeCurrentExactInputs,
     observeNativePlan: async ({ selectedProducts, requirements }) => {
       const necessary = new Set(native.decision.selectedProducts);

@@ -133,8 +133,8 @@ jobs:
     name: Portable packages (${{ matrix.platform }})
     needs: release-inputs
     runs-on: ${{ matrix.runner }}
-    # Allow complete cold native and Apple construction in the shared compiler base.
-    timeout-minutes: 180
+    # macOS includes the later cold Apple slices in the shared compiler base.
+    timeout-minutes: ${{ matrix.platform == 'macos-arm64' && 300 || 180 }}
     strategy:
       fail-fast: false
       matrix:
@@ -204,7 +204,7 @@ jobs:
         uses: ./.github/actions/setup-msvc
 
       - name: Qualify packages and native host behavior
-        timeout-minutes: 150
+        timeout-minutes: ${{ matrix.platform == 'macos-arm64' && 180 || 150 }}
         env:
           TARGET_PLATFORM: ${{ matrix.platform }}
         run: |
@@ -560,8 +560,8 @@ jobs:
     name: Linux runtime (${{ matrix.platform }})
     needs: release-inputs
     runs-on: ${{ matrix.runner }}
-    # Cold native, Android and installed-package construction shares one base.
-    timeout-minutes: 120
+    # Android construction and installed testing share the Linux x64 base.
+    timeout-minutes: ${{ matrix.platform == 'x86_64' && 180 || 120 }}
     strategy:
       fail-fast: false
       matrix:
@@ -636,7 +636,7 @@ jobs:
             '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
             > "$input_root/github.json"
           jq -nc '["-c","opt","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
-            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=1","--local_test_jobs=1"]' \
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=2","--local_test_jobs=1"]' \
             > "$input_root/configuration.json"
           jq -nc '[
             "//build_defs/extensions/mobile/final:android_arm64_v8a_final_contract_test",
@@ -665,7 +665,6 @@ jobs:
         if: matrix.platform == 'x86_64'
         run: >-
           bash tools/dev/bazel.sh test -c opt
-          //build_defs/languages/installed:consumer_test
           //build_defs/languages:sdk_source_package_test
           //build_defs/languages:source_contract_test
           //build_defs/extensions:native_frozen_extension_sql_test
@@ -745,9 +744,9 @@ jobs:
     name: Linux WASIX and installed browser
     needs: release-inputs
     runs-on: ubuntu-24.04
-    # A measured cold producer request takes 82 minutes before browser host
-    # construction; share its base and allow the complete cold qualification.
-    timeout-minutes: 120
+    # The cold full request reached its final Rust actions at the old two-hour
+    # bound; retain time for browser/SQL qualification and evidence capture.
+    timeout-minutes: 150
     outputs:
       source_commit: ${{ steps.wasix-cargo-capture.outputs.source_commit }}
       cargo_artifact_id: ${{ steps.wasix-cargo-upload.outputs.artifact-id }}
@@ -796,7 +795,7 @@ jobs:
           jq -nc --arg cache "$RUNNER_TEMP/wasix-source-sdk-cache" \
             --arg chrome "$chrome_binary" --arg chromeReceipt "$RUNNER_TEMP/chrome-host.json" '[
             "-c","opt","--config=wasix-aot","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
-            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=1","--local_test_jobs=1",
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=2","--local_test_jobs=1",
             "--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full","--test_env=XDG_CACHE_HOME="+$cache,"--test_env=RUST_TEST_THREADS=1",
             "--test_env=OLIPHAUNT_BROWSER_CHROME="+$chrome,"--test_env=OLIPHAUNT_BROWSER_CHROME_RECEIPT="+$chromeReceipt
           ]' > "$input_root/configuration.json"
@@ -976,7 +975,7 @@ jobs:
     name: Native postmaster lifecycle (${{ matrix.platform }})
     needs: [postmaster, release-inputs]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    timeout-minutes: ${{ matrix.platform == 'macos-arm64' && 180 || 120 }}
     permissions:
       contents: read
       actions: read

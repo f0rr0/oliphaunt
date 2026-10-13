@@ -116,7 +116,6 @@ _ABI = select({_ARM64: "arm64-v8a", _X64: "x86_64"})
 _SHARED = ["-static_link_cpp_runtimes"]
 _RN_NATIVE = ["@expo_android_sources//:react_native_prefab", "@expo_android_sources//:fbjni", "@expo_android_sources//:shared_cxx_runtime"]
 _JNA = ANDROID_NATIVE["reactNativeSdk"]["jna"]
-_RN_JVM_RUNTIME = ["@expo_android_maven//:" + coordinate.split(":")[0].replace(".", "_").replace("-", "_") + "_" + coordinate.split(":")[1].replace(".", "_").replace("-", "_") for coordinate in ANDROID_NATIVE["reactNativeDependencies"]]
 
 android_final_aar(name = "kotlin_final_aar", source = "//src/native/sdks/kotlin:android_maven_archive")
 aar_import(name = "kotlin_installed", aar = ":kotlin_final_aar", package = "dev.oliphaunt", deps = [
@@ -137,7 +136,7 @@ kt_android_library(
     name = "oliphaunt_android_classes",
     srcs = ["//src/native/sdks/react-native:android_kotlin_sources", ":android_codegen", "@expo_android_sources//:generated/oliphaunt_react_native/BuildConfig.java"],
     manifest = "//src/native/sdks/react-native:android/src/main/AndroidManifest.xml", custom_package = "dev.oliphaunt.reactnative",
-    deps = [":kotlin_installed", "@expo_android_sources//:react_android_release", "@expo_android_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_android"] + _RN_JVM_RUNTIME,
+    deps = [":kotlin_installed", "@expo_android_sources//:react_android_release", "@expo_android_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_android"],
 )
 cc_library(name = "oliphaunt_reactnative_sources", srcs = ["//src/native/sdks/react-native:android_jsi_source"],
     hdrs = ["//src/native/sdks/react-native:cpp_headers"], deps = _RN_NATIVE,
@@ -176,7 +175,7 @@ android_library(name = "expo_config_assets", manifest = ":android_manifest", cus
 android_library(name = "runtime_assets", manifest = ":android_manifest", custom_package = "dev.oliphaunt.reactnative.example", assets = [":selected_runtime_assets"], assets_dir = "selected_runtime_assets/assets")
 kt_android_library(name = "app_release_classes", srcs = [":android_project", ":android_expo_registry"], manifest = ":android_manifest",
     custom_package = "dev.oliphaunt.reactnative.example", resource_files = [":android_resources", ":android_bundle_resources"],
-    deps = [":oliphaunt_android_classes", "@expo_android_sources//:expo_modules", "@expo_android_sources//:react_android_release"] + _RN_JVM_RUNTIME)
+    deps = [":oliphaunt_android_classes", "@expo_android_sources//:expo_modules", "@expo_android_sources//:react_android_release"])
 android_binary(name = "release_binary", manifest = ":android_manifest", custom_package = "dev.oliphaunt.reactnative.example",
     resource_files = [":android_resources", ":android_bundle_resources"],
     manifest_values = {"applicationId": "dev.oliphaunt.reactnative.example", "minSdkVersion": "24", "targetSdkVersion": "36", "versionCode": "1", "versionName": "0.0.0"},

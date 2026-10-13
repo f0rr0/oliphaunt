@@ -106,7 +106,6 @@ if (import.meta.main) {
     toolsArchive,
     brokerArchive,
     argsJson,
-    environmentJson,
     namesJson,
     workspace,
     ...trailingArguments
@@ -116,17 +115,10 @@ if (import.meta.main) {
     'Expected declared runfiles workspace',
   );
   assert(
-    binary &&
-      runtimeArchive &&
-      toolsArchive &&
-      brokerArchive &&
-      argsJson &&
-      environmentJson &&
-      namesJson,
+    binary && runtimeArchive && toolsArchive && brokerArchive && argsJson && namesJson,
     'Expected Rust executable and exact final native carrier Files',
   );
   const args = JSON.parse(argsJson) as unknown;
-  const environment = JSON.parse(environmentJson) as unknown;
   const names = JSON.parse(namesJson) as unknown;
   assert(
     Array.isArray(names) && names.every((name) => typeof name === 'string'),
@@ -141,10 +133,6 @@ if (import.meta.main) {
   assert(
     Array.isArray(args) && args.every((value) => typeof value === 'string'),
     'Expected Rust harness arguments',
-  );
-  assert(
-    environment && typeof environment === 'object' && !Array.isArray(environment),
-    'Expected declared test environment',
   );
   const root = mkdtempSync(path.join(process.env.TEST_TMPDIR ?? tmpdir(), 'native-rust-'));
   try {
@@ -164,13 +152,6 @@ if (import.meta.main) {
       env.OLIPHAUNT_RESOURCES_DIR = resources;
       env.OLIPHAUNT_NATIVE_EXTENSION_PROOF_SQL_NAMES = names.join(',');
       env.OLIPHAUNT_EXTENSION_MATRIX = '1';
-    }
-    for (const [key, value] of Object.entries(environment)) {
-      assert(
-        typeof value === 'string' && !Object.hasOwn(env, key),
-        'Test environment cannot override required native carrier bindings',
-      );
-      env[key] = value;
     }
     const result = Bun.spawnSync(
       [path.resolve(binary), ...args, ...trailingArguments.slice(names.length + 1)],

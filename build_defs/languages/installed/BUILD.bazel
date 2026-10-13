@@ -1,6 +1,6 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
-load(":defs.bzl", "installed_cargo_test")
+load(":defs.bzl", "installed_cargo_tests")
 load(":source-compile.bzl", "source_compile_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -16,21 +16,18 @@ bun_test(
 bun_test(
     name = "candidate_context_test",
     entry_point = "consumer.test.mts",
-    data = ["consumer.mts", "fixture/Cargo.toml", "//src/native/sdks/rust:Cargo.toml", "//build_defs/query:package.mts", "//build_defs/languages:cargo-environment.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/frozen-cargo.mts", "//:tools/packaging/portable-archive.mts"],
+    data = ["consumer.mts", "fixture/Cargo.toml", "//src/native/sdks/rust:Cargo.toml", "//build_defs/query:package.mts", "//build_defs/languages:cargo-environment.mts", "//build_defs/languages:cargo-metadata.mts", "//:tools/packaging/cargo-manifest.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/frozen-cargo.mts", "//:tools/packaging/portable-archive.mts"],
 )
 
-installed_cargo_test(
-    name = "consumer_test",
-    size = "large",
-    timeout = "long",
-    tags = ["manual", "installed-consumer"],
+installed_cargo_tests(
+    name = "consumer",
+    size = "large", timeout = "long", tags = ["manual", "installed-consumer"],
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
     archives = ["//src/native/sdks/rust:crate", "//src/native/sdks/rust/crates/oliphaunt-build:crate", "//src/native/rust-bindings:crate", "//src/native/broker:crate", "//src/query/rust:crate"],
     cargo_home = "@installed_cargo_inputs//:cargo_home",
-    manifest = "fixture/Cargo.toml",
-    lock = "fixture/Cargo.lock",
-    source = "fixture/main.rs",
-    build_script = "fixture/build.rs",
+    manifest = "fixture/Cargo.toml", lock = "fixture/Cargo.lock", source = "fixture/main.rs",
+    core_source = "fixture/core.rs", build_script = "fixture/build.rs",
+    core_build_script = "fixture/core-build.rs",
 )
 
 source_quality_files()
@@ -48,6 +45,7 @@ bun_test(
     data = [
         "source-compile.mts", "consumer.mts", "context.mts",
         "//build_defs/languages:cargo-environment.mts",
+        "//build_defs/languages:cargo-metadata.mts",
         "//:tools/packaging/cargo-manifest.mts", "//:tools/packaging/frozen-cargo.mts",
         "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts",
     ],

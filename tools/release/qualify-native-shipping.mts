@@ -508,7 +508,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     ...configuration,
     ...metadata,
     `--build_event_json_file=${file('build-events.jsonl')}`,
-    '--output_groups=+shipping_manifest,+shipping_policy',
+    '--output_groups=+shipping_manifest,+shipping_policy,+observation_inputs',
     '--experimental_aquery_dump_after_build_format=jsonproto',
     `--experimental_aquery_dump_after_build_output_file=${file('aquery.json')}`,
   ]);

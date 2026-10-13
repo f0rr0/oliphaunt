@@ -32,7 +32,7 @@ function cargoRequirement(requirement: string): string {
   return /^\d/.test(range) ? `^${range}` : range;
 }
 
-function cargoSatisfies(version: string, requirement: string): boolean {
+export function cargoSatisfies(version: string, requirement: string): boolean {
   // Cargo ignores build metadata for version requirements; Bun does not.
   return Bun.semver.satisfies(version.split('+', 1)[0], cargoRequirement(requirement));
 }

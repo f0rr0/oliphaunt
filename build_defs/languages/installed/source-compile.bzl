@@ -62,6 +62,7 @@ _source_compile_test = rule(
             "//build_defs/languages/installed:consumer.mts",
             "//build_defs/languages/installed:context.mts",
             "//build_defs/languages:cargo-environment.mts",
+            "//build_defs/languages:cargo-metadata.mts",
             "//:tools/packaging/frozen-cargo.mts",
             "//:tools/packaging/cargo-manifest.mts",
             "//:tools/packaging/portable-archive.mts",

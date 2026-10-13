@@ -25,6 +25,7 @@ import {
 } from './native-shipping-suppliers.mts';
 import { loadPublicationCatalog } from './publication-catalog.mts';
 import { expectedProductArtifactRows } from './publication-lock.mts';
+import { ROOT } from './release-graph.mts';
 
 const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
 const github = {
@@ -337,6 +338,26 @@ test('one completed publication keeps Cargo and GitHub supplier contexts distinc
   }, 'held');
 });
 
+test('completed supplier projection preserves the original metadata capability while cloning structural facts', async () => {
+  await fixture(async ({ input }) => {
+    const metadataBaseline = { originalAuthenticatedObject: true };
+    input.completed[0].metadataBaseline = metadataBaseline;
+    const original = input.completed[0];
+    await expect(
+      projectNativeBuildBoundSuppliers(input, {
+        authenticateCompleted: (snapshot) => {
+          expect(snapshot).not.toBe(original);
+          expect(snapshot.metadataBaseline).toBe(metadataBaseline);
+          expect(snapshot.publication).not.toBe(original.publication);
+          // The existing completed reader still decides authenticity. A clone
+          // must never replace the capability it is asked to verify.
+          throw new Error('completed metadata authenticity remains mandatory');
+        },
+      }),
+    ).rejects.toThrow('completed metadata authenticity remains mandatory');
+  }, 'held');
+});
+
 test('genuine completed registry source is bound by raw archive bytes, independent of its File path', async () => {
   await fixture(async ({ input, roots, cohort, executionRoot, observation }) => {
     const root = path.join(import.meta.dir, 'testdata/native-source-carriers');
@@ -467,13 +488,33 @@ test('held WASIX payload uses canonical completed public archive members, never 
           expect(requested).toEqual(completed);
           return completed;
         },
-        readJson: async () => ({
-          id: 11,
-          tag_name: completed.tagName,
-          target_commitish: completed.publicationSha,
-          draft: false,
-          prerelease: false,
-        }),
+        readJson: async (endpoint) => {
+          const prefix = 'repos/f0rr0/oliphaunt/contents/';
+          if (!endpoint.startsWith(prefix))
+            return {
+              id: 11,
+              tag_name: completed.tagName,
+              target_commitish: completed.publicationSha,
+              draft: false,
+              prerelease: false,
+            };
+          expect(endpoint.endsWith(`?ref=${completed.publicationSha}`)).toBe(true);
+          const file = endpoint.slice(prefix.length).split('?ref=')[0];
+          let text = readFileSync(path.join(ROOT, file), 'utf8');
+          if (file === '.release-please-manifest.json') {
+            const versions = JSON.parse(text);
+            versions[descriptor.path] = completed.version;
+            text = JSON.stringify(versions);
+          }
+          const bytes = Buffer.from(text);
+          return {
+            type: 'file',
+            path: file,
+            encoding: 'base64',
+            content: bytes.toString('base64'),
+            sha: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),
+          };
+        },
         readPages: async () =>
           publicRows.map((expected, index) => ({
             id: index + 12,

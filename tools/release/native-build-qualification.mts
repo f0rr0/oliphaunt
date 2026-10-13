@@ -8,6 +8,8 @@ import {
 import {
   buildShippingInputView,
   canonicalShippingLabel,
+  configuredAqueryTargetInputs,
+  type ShippingInputView,
   validateNativeShippingSuppliers,
 } from './bazel-shipping-inputs.mts';
 import type { NativeRoot } from './native-publication-artifacts.mts';
@@ -25,6 +27,11 @@ export type NativeBuildGithub = {
   job: string;
 };
 export type NativeBuildFileCapture = { path: string; members: NativeOutputMember[] };
+export type NativeQualificationInputs = NativeRequiredTest & {
+  /** The same configured test's own input-free FileWrite, consumed by its runfiles/actions. */
+  specification: string;
+  inputs: NativeBuildFileCapture[];
+};
 export type NativeProducerCapture = {
   aqueryFile: string;
   shippingManifests: { path: string; contents: string }[];
@@ -46,6 +53,8 @@ export type NativeBuildCohortEvidence = {
   /** Actual configured-root buildfiles; repository acquisition provenance is separate. */
   analysisInputs?: NativeBuildFileCapture[];
   rootAnalysisInputPaths?: { label: string; paths: string[] }[];
+  /** Exact source-owned mandatory-test inputs, retained only for qualification replay. */
+  qualificationInputs?: NativeQualificationInputs[];
 };
 export type NativeBuildEvidence = {
   schema: 'oliphaunt-native-build-evidence-v1';
@@ -204,6 +213,32 @@ function captures(value: unknown, expected: string[], context: string) {
   }
   equal([...result.keys()].sort(), [...new Set(expected)].sort(), `${context} coverage`);
   return result;
+}
+
+/** Require causal leaves, consumed supplier Files and reached constructor companion values. */
+export function nativeRequiredCaptureInputs(view: ShippingInputView) {
+  const files = new Set(view.captureInputs);
+  const actions = new Set(Object.values(view.products).flatMap((product) => product.actions));
+  for (const definition of actions) {
+    const action = object(JSON.parse(definition));
+    if (
+      !['PostgresClusterSeed', 'WasixClusterSeed', 'NativeSeedDomainAdmission'].includes(
+        action.mnemonic,
+      )
+    )
+      continue;
+    const outputs = list(action.outputs).map(relative);
+    for (const receipt of outputs.filter((file) =>
+      file.endsWith(SEED_CONSTRUCTION_RECEIPT_SUFFIX),
+    )) {
+      const frozen = receipt.slice(0, -SEED_CONSTRUCTION_RECEIPT_SUFFIX.length) + '.tar';
+      if (!outputs.includes(frozen))
+        throw new Error('native seed constructor receipt requires its same-action frozen TAR');
+      files.add(receipt);
+      files.add(frozen);
+    }
+  }
+  return [...files].sort();
 }
 
 /** Join each reached receipt to its own constructor action and frozen TAR File. */
@@ -641,6 +676,102 @@ export function nativeShippingRootsHaveQualification(
   );
 }
 
+/** Actual observer Files of source-owned mandatory configured tests; never shipping inputs. */
+export function nativeQualificationInputBindings(
+  aquery: unknown,
+  bep: ReturnType<typeof nativeBuildEventIndex>,
+  policy: ReturnType<typeof nativeShippingQualificationPolicy>,
+) {
+  return (policy?.requiredTests ?? []).flatMap((test) => {
+    const targets = bep.completed.filter(
+      (target) =>
+        canonicalShippingLabel(target.label) === test.label &&
+        target.configuration === test.configuration,
+    );
+    if (targets.length !== 1 || targets[0].value.success !== true)
+      throw new Error('native qualification requires one successful source-owned configured test');
+    const groups = list(targets[0].value.outputGroup ?? []).filter(
+      (group) => group.name === 'observation_inputs',
+    );
+    if (!groups.length) return [];
+    if (groups.length !== 1)
+      throw new Error('native qualification requires one observation_inputs group');
+    const files = bep.filesOf(targets[0].value, 'observation_inputs');
+    if (![3, 4].includes(files.size))
+      throw new Error(
+        'native installed qualification requires its exact three or four observer Files',
+      );
+    for (const file of files.keys())
+      if (!file.startsWith('bazel-out/'))
+        throw new Error('native qualification observer requires a generated bazel-out File');
+    const declared = configuredAqueryTargetInputs(aquery, test.label, test.configuration);
+    for (const file of files.keys())
+      if (!declared.inputs.has(file))
+        throw new Error(
+          'native qualification observer File was not consumed by its configured test',
+        );
+    const specifications = [...files.keys()].filter((file) => declared.written.has(file));
+    if (specifications.length !== 1)
+      throw new Error(
+        'native qualification requires exactly one same-test configured specification FileWrite',
+      );
+    return [{ ...test, specification: specifications[0], files }];
+  });
+}
+
+function validateNativeQualificationInputs(
+  raw: unknown,
+  bindings: ReturnType<typeof nativeQualificationInputBindings>,
+) {
+  const seen = new Set<string>();
+  const result = (raw === undefined ? [] : list(raw)).map((value) => {
+    const row = object(value);
+    exactFields(
+      row,
+      ['label', 'configuration', 'specification', 'inputs'],
+      'native qualification inputs',
+    );
+    const label = canonicalShippingLabel(row.label),
+      configuration = text(row.configuration);
+    const key = `${label}\0${configuration}`;
+    if (seen.has(key)) throw new Error('duplicate native qualification inputs');
+    seen.add(key);
+    const binding = bindings.find(
+      (test) => test.label === label && test.configuration === configuration,
+    );
+    if (!binding)
+      throw new Error('native qualification inputs are not a source-owned observer test');
+    equal(relative(row.specification), binding.specification, 'native qualification specification');
+    const captured = captures(
+      row.inputs,
+      [...binding.files.keys()],
+      'native qualification observer',
+    );
+    for (const [file, capture] of captured) {
+      const member = capture.members[0];
+      if (capture.members.length !== 1 || member.type !== 'file')
+        throw new Error('native qualification observer requires a regular File');
+      equal(
+        { sha256: member.sha256, size: member.size },
+        binding.files.get(file),
+        'native qualification BEP/physical observer digest',
+      );
+    }
+    return {
+      label,
+      configuration,
+      specification: binding.specification,
+      inputs: structuredClone([...captured.values()]),
+    };
+  });
+  equal(
+    [...seen].sort(),
+    bindings.map((test) => `${test.label}\0${test.configuration}`).sort(),
+    'native qualification inputs coverage',
+  );
+  return result;
+}
+
 /** Validate content reported by the actual qualifying builder, including cache-backed success. */
 export function validateNativeBuildEvidence(
   raw: unknown,
@@ -704,6 +835,7 @@ export function validateNativeBuildEvidence(
         ...(cohort.seedConstructions === undefined ? [] : ['seedConstructions']),
         ...(cohort.analysisInputs === undefined ? [] : ['analysisInputs']),
         ...(cohort.rootAnalysisInputPaths === undefined ? [] : ['rootAnalysisInputPaths']),
+        ...(cohort.qualificationInputs === undefined ? [] : ['qualificationInputs']),
       ],
       'native build cohort',
     );
@@ -745,8 +877,11 @@ export function validateNativeBuildEvidence(
     const actions = [
       ...new Set(Object.values(view.products).flatMap((product) => product.actions)),
     ].sort();
-    const declaredInputs = view.physicalInputs.map(relative);
-    const inputs = captures(cohort.inputs, declaredInputs, 'native input content');
+    const inputs = captures(
+      cohort.inputs,
+      nativeRequiredCaptureInputs(view),
+      'native input content',
+    );
     const seedConstructions = validateNativeSeedConstructions(
       cohort.seedConstructions,
       [...inputs.values()],
@@ -842,6 +977,10 @@ export function validateNativeBuildEvidence(
             throw new Error('native owner qualification requires its configured FileWrite action');
         }
     }
+    const qualificationInputs = validateNativeQualificationInputs(
+      cohort.qualificationInputs,
+      nativeQualificationInputBindings(cohort.aquery, bep, qualificationPolicy),
+    );
     const cohortTests = new Map(
       (requiredTests ?? []).map((test) => [`${test.label}\0${test.configuration}`, test]),
     );
@@ -949,6 +1088,7 @@ export function validateNativeBuildEvidence(
       aqueryDigest: digest(cohort.aquery),
       buildEventsDigest: digest(cohort.buildEvents),
       ...(qualificationPolicy ? { qualificationPolicy } : {}),
+      ...(qualificationInputs.length ? { qualificationInputs } : {}),
       ...(seedConstructions.length ? { seedConstructions } : {}),
       ...(analysis
         ? {
@@ -1064,4 +1204,31 @@ export function assertNativeSwiftShippingPhase(
     )
       throw new Error('final selected Swift requires its configured installed consumer test');
   }
+}
+
+/** Final selected source owners must carry their installed requirement proof. */
+export function assertNativeFinalShippingPhase(
+  qualification: ReturnType<typeof validateNativeBuildEvidence>,
+  selectedProducts: readonly string[],
+) {
+  if (selectedProducts.includes('oliphaunt-swift'))
+    assertNativeSwiftShippingPhase(qualification, 'final');
+  if (!selectedProducts.includes('oliphaunt-rust')) return;
+  for (const cohort of qualification.cohorts)
+    for (const root of cohort.roots.filter(
+      (root) => root.package.product === 'oliphaunt-rust' && root.package.ecosystem === 'cargo',
+    )) {
+      const policies = (cohort.qualificationPolicy?.policies ?? []).filter((policy) =>
+        policy.roots.includes(canonicalShippingLabel(root.label)),
+      );
+      if (
+        policies.length !== 1 ||
+        !policies[0].requiredTests.some(
+          (test) => test.label === '//build_defs/languages/installed:consumer_minimum_test',
+        )
+      )
+        throw new Error(
+          'final selected Rust SDK requires its configured declared-minimum consumer test',
+        );
+    }
 }

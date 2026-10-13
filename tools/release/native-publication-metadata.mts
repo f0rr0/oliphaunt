@@ -32,8 +32,8 @@ import { ROOT } from './release-graph.mts';
 import {
   prepareBundleVerification,
   readGhBundleVerification,
-  requestReleaseAssetProof,
   releaseAttestationPublisherRequest,
+  requestReleaseAssetProof,
   verifyAttestationBundleSubject,
   writeImmutableReceipt,
 } from './verify_github_release_attestations.mts';
@@ -49,6 +49,62 @@ export function assertAuthenticatedNativePublicBaseline(value: unknown) {
   if (hash(Buffer.from(JSON.stringify(value))) !== proof.digest)
     throw new Error('authenticated completed native metadata facts changed');
   return value as Awaited<ReturnType<typeof readCompletedNativePublicBaseline>>;
+}
+
+/** Acquire the optional frozen inventory before interpreting an older release.
+ * The default reader authenticates the original completed metadata object. */
+export async function acquireCompletedNativeMetadataBaseline(
+  {
+    publication,
+    directory,
+    assets,
+    metadataOrigin,
+  }: {
+    publication: CompletedPublication;
+    directory: string;
+    assets: readonly any[];
+    metadataOrigin?: { publisherSha: string; bundlePaths: string[] };
+  },
+  {
+    proveAsset = requestReleaseAssetProof,
+    readBaseline = readCompletedNativePublicBaseline,
+    baselineTransports = {} as Parameters<typeof readCompletedNativePublicBaseline>[1],
+  } = {},
+) {
+  const artifact = nativePublicationMetadataArtifactRow({
+    id: publication.product,
+    version: publication.version,
+  });
+  const matching = assets.filter((asset) => asset.name === artifact.name);
+  if (matching.length > 1) throw new Error('completed native metadata asset is ambiguous');
+  if (!matching.length) return undefined;
+  const asset = matching[0];
+  if (
+    !Number.isSafeInteger(asset.id) ||
+    asset.id <= 0 ||
+    asset.state !== 'uploaded' ||
+    asset.url !== `https://api.github.com/repos/f0rr0/oliphaunt/releases/assets/${asset.id}` ||
+    !Number.isSafeInteger(asset.size) ||
+    asset.size <= 0 ||
+    asset.size > NATIVE_PUBLICATION_METADATA_MAX_BYTES ||
+    (asset.digest != null && !/^sha256:[a-f0-9]{64}$/u.test(asset.digest))
+  )
+    throw new Error('completed native metadata asset identity differs');
+  const file = path.join(directory, artifact.name);
+  requireSafeDirectoryChain(path.dirname(file), {
+    create: true,
+    label: 'completed native metadata',
+  });
+  await proveAsset(asset.url, artifact.name, asset.size, {
+    retainedPath: file,
+    ...(asset.digest ? { expectedSha256: asset.digest.slice(7) } : {}),
+  });
+  const request = { publication, file, ...(metadataOrigin ?? {}) };
+  const baseline =
+    readBaseline === readCompletedNativePublicBaseline
+      ? assertAuthenticatedNativePublicBaseline(await readBaseline(request))
+      : await readBaseline(request, baselineTransports);
+  return { baseline, file };
 }
 const limitations = [
   'immutable input lifetime from the producing build through content capture',

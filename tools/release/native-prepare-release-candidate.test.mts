@@ -6,9 +6,12 @@ import path from 'node:path';
 import { ManifestPlugin } from 'release-please/build/src/plugin.js';
 import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
 import { Version } from 'release-please/build/src/version.js';
+import { projectCargoWorkspace, renderToml } from '../../build_defs/languages/cargo-metadata.mts';
+import { sourceManifest } from '../../build_defs/languages/source-package.mts';
 import { readCommitHistory, readCommitPaths } from './commit-paths.mts';
 import { applyCandidate } from './prepare-release-candidate.mts';
 import { loadProducts, productCompatibilityVersion, ROOT } from './release-graph.mts';
+import { syncLockfile } from './sync-release-pr.mts';
 import {
   fixtureCompletionChecker,
   generateHistoryCandidate,
@@ -85,6 +88,22 @@ test('native necessary scope uses actual captured leaves, including zero and pat
   }
 });
 
+test('native first delivery uses the configured Release Please initial version', async () => {
+  const candidates = await generateHistoryCandidate(
+    [
+      { sha: head, message: 'feat: initial alpha interface', files: ['actual/shipping/alpha.c'] },
+      {
+        sha: second,
+        message: 'feat!: earlier unrelated acquisition change',
+        files: ['acquisition/old-tool.toml'],
+      },
+      { sha: first, message: 'fix: published other products', files: [historyShared] },
+    ],
+    { unreleased: ['alpha'], controllerOptions: nativeHistoryOptions(['alpha']) },
+  );
+  expect(historyVersionUpdates(candidates)).toEqual([['products/alpha/VERSION', '0.1.0']]);
+});
+
 test('native loaded recipe breaking intent applies only to a necessary configured consumer', async () => {
   const options = nativeHistoryOptions(['alpha']);
   options.nativeObservation.products[0].construction[0].analysisInputPaths = [
@@ -114,6 +133,76 @@ test('native loaded recipe breaking intent applies only to a necessary configure
   await expect(generateHistoryCandidate([], { controllerOptions: options })).rejects.toThrow(
     'unknown loaded recipe version intent',
   );
+});
+
+test('native breaking intent follows removed Files to their authenticated historical owner', async () => {
+  const options = nativeHistoryOptions(['alpha', 'beta']);
+  options.nativeVersionIntentBaselines = {
+    alpha: {
+      product: { id: 'alpha' },
+      construction: [
+        { leafInputPaths: ['actual/shipping/removed-alpha.c'], analysisInputPaths: [] },
+      ],
+    },
+  };
+  const candidates = await generateHistoryCandidate(
+    [
+      {
+        sha: head,
+        message: 'feat!: remove alpha entry and update beta',
+        files: ['actual/shipping/removed-alpha.c', 'actual/shipping/beta.c'],
+      },
+      { sha: first, message: 'fix: baseline', files: [historyShared] },
+    ],
+    { controllerOptions: options },
+  );
+  expect(historyVersionUpdates(candidates)).toEqual([
+    ['products/alpha/VERSION', '0.3.0'],
+    ['products/beta/VERSION', '0.3.0'],
+  ]);
+  options.nativeNecessaryProducts = ['beta'];
+  expect(
+    historyVersionUpdates(
+      await generateHistoryCandidate(
+        [
+          {
+            sha: head,
+            message: 'feat!: remove alpha entry and update beta',
+            files: ['actual/shipping/removed-alpha.c', 'actual/shipping/beta.c'],
+          },
+          { sha: first, message: 'fix: baseline', files: [historyShared] },
+        ],
+        { controllerOptions: options },
+      ),
+    ),
+  ).toEqual([['products/beta/VERSION', '0.3.0']]);
+});
+
+test('partly mapped breaking history cannot silently patch a necessary legacy product without its old footprint', async () => {
+  const commits = [
+    {
+      sha: head,
+      message: 'feat!: remove an old alpha entry and update beta',
+      files: ['actual/shipping/removed-alpha.c', 'actual/shipping/beta.c'],
+    },
+    { sha: first, message: 'fix: baseline', files: [historyShared] },
+  ];
+  await expect(
+    generateHistoryCandidate(commits, {
+      controllerOptions: nativeHistoryOptions(['alpha', 'beta']),
+    }),
+  ).rejects.toThrow('unknown breaking acquisition intent for alpha');
+  commits[0].message = 'feat(alpha)!: explicitly remove the alpha entry';
+  expect(
+    historyVersionUpdates(
+      await generateHistoryCandidate(commits, {
+        controllerOptions: nativeHistoryOptions(['alpha', 'beta']),
+      }),
+    ),
+  ).toEqual([
+    ['products/alpha/VERSION', '0.3.0'],
+    ['products/beta/VERSION', '0.3.0'],
+  ]);
 });
 
 test('native unmapped breaking acquisition stays unknown until an explicit component intent resolves it', async () => {
@@ -989,5 +1078,306 @@ test('actual RP exact-module requirements preserve held resources and independen
     expect(options.buildBound.get(product).size).toBe(0);
     if (selected.includes(product)) expect(after[resource.path]).not.toBe(resource.version);
     else expect(after[resource.path]).toBe(resource.version);
+  }
+});
+
+test('actual RP local Cargo closure preserves held pins and projects released source minimums offline', async () => {
+  const core = 'liboliphaunt-native-bindings',
+    broker = 'oliphaunt-broker',
+    sdk = 'oliphaunt-rust';
+  const cases = [
+    { owner: core, message: undefined, necessary: [], selected: [] },
+    { owner: core, message: 'fix: update Core', necessary: [core], selected: [core] },
+    { owner: core, message: 'fix: update Core', necessary: [core, sdk], selected: [core, sdk] },
+    {
+      owner: core,
+      message: 'fix: update Core',
+      necessary: [core, broker],
+      selected: [core, broker],
+    },
+    {
+      owner: core,
+      message: 'fix: update Core',
+      necessary: [core, sdk],
+      selected: [core, sdk, 'oliphaunt-query'],
+      sharedConsumer: 'oliphaunt-query',
+    },
+    {
+      owner: core,
+      message: 'feat!: change Core API',
+      necessary: [core, broker],
+      selected: [core, broker, sdk],
+    },
+    {
+      owner: broker,
+      message: 'feat!: change Broker API',
+      necessary: [broker],
+      selected: [broker, sdk],
+    },
+  ];
+  for (const scenario of cases) {
+    const options = nativeProductOptions(scenario.necessary);
+    options.buildBound.get(broker).add(core);
+    // The compiled broker contains Core; the source fa\u00E7ade contains its own
+    // manifest. An adoption uses the existing private requirement bump policy.
+    options.nativeObservation.products
+      .find(({ product }) => product.id === broker)
+      .construction[0].leafInputPaths.push(graph.products[core].path + '/src/implementation');
+    let plan;
+    options.observeNativePlan = async (value) => {
+      plan = value;
+    };
+    const sharedFile = scenario.sharedConsumer
+      ? graph.products[scenario.sharedConsumer].path + '/Cargo.toml'
+      : undefined;
+    const original = (file) => {
+      const text = readFileSync(path.join(ROOT, file), 'utf8');
+      if (file !== sharedFile) return text;
+      const manifest = Bun.TOML.parse(text);
+      manifest.dependencies ??= {};
+      manifest.dependencies[core] = { workspace: true };
+      return renderToml(manifest);
+    };
+    const configure = (_manifest, github) => {
+      if (!sharedFile) return;
+      const get = github.getFileContentsOnBranch.bind(github);
+      github.getFileContentsOnBranch = async (file) => {
+        if (file !== sharedFile) return get(file);
+        const parsedContent = original(file);
+        return { parsedContent, content: Buffer.from(parsedContent).toString('base64') };
+      };
+    };
+    const { candidate, versions } = await generateProductCandidate(
+      scenario.message
+        ? [
+            {
+              sha: head,
+              message: scenario.message,
+              files: [graph.products[scenario.owner].path + '/src/implementation'],
+            },
+          ]
+        : [],
+      undefined,
+      configure,
+      options,
+    );
+    const updates = candidate ? mergeUpdates(candidate.updates) : [];
+    const read = (file) => {
+      const before = original(file);
+      return (
+        updates.find((update) => update.path === file)?.updater.updateContent(before) ?? before
+      );
+    };
+    const after = JSON.parse(read('.release-please-manifest.json'));
+    const selected = candidate?.body.releaseData.map(({ component }) => component).sort() ?? [];
+    expect(selected).toEqual([...scenario.selected].sort());
+    expect(plan.selectedProducts).toEqual(selected);
+    const workspace = Bun.TOML.parse(read('Cargo.toml'));
+    const coreManifest = Bun.TOML.parse(read(graph.products[core].path + '/Cargo.toml'));
+    const brokerText = read(graph.products[broker].path + '/Cargo.toml');
+    const brokerManifest = Bun.TOML.parse(brokerText);
+    const sdkText = read(graph.products[sdk].path + '/Cargo.toml');
+    const sdkManifest = Bun.TOML.parse(sdkText);
+    const addon = Bun.TOML.parse(read('src/native/node-addon/Cargo.toml'));
+    const imported = projectCargoWorkspace(
+      workspace,
+      Bun.TOML.parse(readFileSync(path.join(ROOT, 'Cargo.lock'), 'utf8')),
+      [graph.products[sdk].path, graph.products[broker].path],
+      (file) => Bun.TOML.parse(read(file)),
+      (file) => existsSync(path.join(ROOT, file)),
+    );
+    expect(imported.facts[graph.products[core].path].version).toBe(coreManifest.package.version);
+    expect(imported.facts[graph.products[broker].path].version).toBe(
+      brokerManifest.package.version,
+    );
+    const heldSdk = Bun.TOML.parse(
+      readFileSync(path.join(ROOT, graph.products[sdk].path, 'Cargo.toml'), 'utf8'),
+    );
+    expect(sdkManifest.package.metadata.oliphaunt).toEqual(heldSdk.package.metadata.oliphaunt);
+    expect(read(graph.products[sdk].path + '/src/broker.rs')).toBe(
+      readFileSync(path.join(ROOT, graph.products[sdk].path, 'src/broker.rs'), 'utf8'),
+    );
+    expect(workspace.workspace.dependencies[core].version).toBe(
+      selected.includes(sdk) && selected.includes(core) ? coreManifest.package.version : '0.2.0',
+    );
+    expect(brokerManifest.dependencies[core].version).toBe(
+      selected.includes(broker) && selected.includes(core) ? coreManifest.package.version : '0.2.0',
+    );
+    expect(sdkManifest.dependencies[broker].version).toBe(
+      selected.includes(sdk) && selected.includes(broker)
+        ? brokerManifest.package.version
+        : heldSdk.dependencies[broker].version,
+    );
+    if (selected.includes(sdk)) expect(sdkManifest.package.version).toBe('0.3.3');
+    if (!selected.includes(sdk) && !selected.includes(broker))
+      expect(plan.requirements).toEqual([]);
+    if (sharedFile) {
+      // A single workspace declaration changes every public inheritor's
+      // normalized source envelope; the existing fixed point admits it.
+      const packed = sourceManifest(read(sharedFile), read('Cargo.toml'), {
+        product: scenario.sharedConsumer,
+        version: after[graph.products[scenario.sharedConsumer].path],
+        dependencyOwners: {},
+        compatibility: {},
+      });
+      expect(packed.dependencies[core]).toEqual({ version: coreManifest.package.version });
+      expect(
+        plan.requirements
+          .filter(({ path: file }) => file === 'Cargo.toml')
+          .map(({ product }) => product)
+          .sort(),
+      ).toEqual([sdk, scenario.sharedConsumer].sort());
+    }
+    for (const [product, text] of [
+      [broker, brokerText],
+      [sdk, sdkText],
+    ]) {
+      const packed = sourceManifest(text, read('Cargo.toml'), {
+        product,
+        version: after[graph.products[product].path],
+        dependencyOwners: {},
+        compatibility: {},
+      });
+      expect(packed.dependencies[core].path).toBeUndefined();
+      expect(packed.dependencies[core].version).toBe(
+        product === broker
+          ? brokerManifest.dependencies[core].version
+          : workspace.workspace.dependencies[core].version,
+      );
+      if (product === sdk) {
+        expect(packed.dependencies[broker].path).toBeUndefined();
+        expect(packed.dependencies[broker].version).toBe(sdkManifest.dependencies[broker].version);
+      }
+    }
+    // Use real Cargo resolution, rather than --no-deps enumeration. The fixture
+    // keeps exactly the repository's generated local version/path contracts;
+    // unrelated registry dependencies need no repeated fetch or compilation.
+    const scratch = mkdtempSync(path.join(os.tmpdir(), 'native-cargo-cohort-'));
+    try {
+      const names = ['core', 'broker', 'sdk', 'addon'];
+      const packageNames = [
+        coreManifest.package.name,
+        brokerManifest.package.name,
+        sdkManifest.package.name,
+        addon.package.name,
+      ];
+      const finalVersions = [
+        coreManifest.package.version,
+        brokerManifest.package.version,
+        sdkManifest.package.version,
+        addon.package.version,
+      ];
+      const beforeVersions = [
+        graph.products[core].version,
+        graph.products[broker].version,
+        graph.products[sdk].version,
+        addon.package.version,
+      ];
+      const write = (pins, packageVersions) => {
+        writeFileSync(
+          path.join(scratch, 'Cargo.toml'),
+          renderToml({
+            workspace: {
+              members: names,
+              resolver: '3',
+              dependencies: {
+                [coreManifest.package.name]: { path: 'core', version: pins.sdkCore },
+              },
+            },
+          }),
+        );
+        for (const [index, name] of names.entries()) {
+          mkdirSync(path.join(scratch, name, 'src'), { recursive: true });
+          writeFileSync(path.join(scratch, name, 'src/lib.rs'), 'pub fn fixture() {}\n');
+          const dependencies =
+            name === 'broker'
+              ? { [coreManifest.package.name]: { path: '../core', version: pins.brokerCore } }
+              : name === 'sdk'
+                ? {
+                    [coreManifest.package.name]: { workspace: true },
+                    [brokerManifest.package.name]: {
+                      path: '../broker',
+                      version: pins.sdkBroker,
+                      optional: true,
+                    },
+                  }
+                : name === 'addon'
+                  ? { [coreManifest.package.name]: { path: '../core', version: pins.addonCore } }
+                  : undefined;
+          writeFileSync(
+            path.join(scratch, name, 'Cargo.toml'),
+            renderToml({
+              package: {
+                name: packageNames[index],
+                version: packageVersions[index],
+                edition: '2024',
+              },
+              ...(dependencies ? { dependencies } : {}),
+              ...(name === 'sdk'
+                ? {
+                    features: {
+                      default: ['desktop'],
+                      desktop: ['dep:' + brokerManifest.package.name],
+                    },
+                  }
+                : {}),
+            }),
+          );
+        }
+      };
+      const originalAddon = Bun.TOML.parse(
+        readFileSync(path.join(ROOT, 'src/native/node-addon/Cargo.toml'), 'utf8'),
+      );
+      write(
+        {
+          sdkCore: '0.2.0',
+          brokerCore: '0.2.0',
+          sdkBroker: heldSdk.dependencies[broker].version,
+          addonCore: originalAddon.dependencies[core].version,
+        },
+        beforeVersions,
+      );
+      const cargo = (...args) =>
+        spawnSync('cargo', args, {
+          cwd: scratch,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            CARGO_HOME: path.join(scratch, 'cargo-home'),
+            CARGO_NET_OFFLINE: 'true',
+          },
+          timeout: 30_000,
+        });
+      const locked = cargo('generate-lockfile', '--offline');
+      expect(locked.status, locked.stderr).toBe(0);
+      write(
+        {
+          sdkCore: workspace.workspace.dependencies[core].version,
+          brokerCore: brokerManifest.dependencies[core].version,
+          sdkBroker: sdkManifest.dependencies[broker].version,
+          addonCore: addon.dependencies[core].version,
+        },
+        finalVersions,
+      );
+      syncLockfile(
+        path.join(scratch, 'Cargo.lock'),
+        new Map(packageNames.map((name, index) => [name, finalVersions[index]])),
+        [],
+        { write: true },
+      );
+      const resolved = cargo('metadata', '--frozen', '--format-version', '1');
+      expect(resolved.status, resolved.stderr).toBe(0);
+      const metadata = JSON.parse(resolved.stdout);
+      expect(metadata.resolve.nodes).toHaveLength(4);
+      expect(metadata.packages.map(({ name, version }) => [name, version]).sort()).toEqual(
+        packageNames.map((name, index) => [name, finalVersions[index]]).sort(),
+      );
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+    for (const product of Object.keys(graph.products).filter(
+      (product) => !selected.includes(product),
+    ))
+      expect(after[graph.products[product].path]).toBe(versions[graph.products[product].path]);
   }
 });

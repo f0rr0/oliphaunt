@@ -1,5 +1,9 @@
 import { expect, test } from 'bun:test';
-import { compatibilityVersionFromText } from './compatibility-version-parser.mts';
+import {
+  compatibilityVersionFromText,
+  cargoCompatibilityDependency,
+  isCargoPathCompatibility,
+} from './compatibility-version-parser.mts';
 
 const entry = (parser: string) => ({ id: 'sdk.runtime', path: 'sdk/manifest', parser });
 
@@ -103,4 +107,49 @@ test('invalid sources preserve diagnostics and the injectable failure boundary',
   expect(calls).toEqual([
     ['existing-cli', 'sdk.runtime parser json:version must resolve to a non-empty string'],
   ]);
+});
+
+test('local Cargo dependency declarations stay separate from installed metadata and registry requirements', () => {
+  for (const table of [
+    'dependencies',
+    'workspace.dependencies',
+    'target."cfg(unix)".build-dependencies',
+  ]) {
+    const parser = table.startsWith('target')
+      ? 'target.cfg(unix).build-dependencies.broker.version'
+      : table + '.broker.version';
+    expect(
+      isCargoPathCompatibility(
+        entry('toml:' + parser),
+        '[' + table + ']\nbroker={path="../broker",version="0.4.0"}\n',
+      ),
+    ).toBe(true);
+    expect(
+      isCargoPathCompatibility(
+        entry('toml:' + parser),
+        '[' + table + ']\nbroker={version="0.3.1"}\n',
+      ),
+    ).toBe(false);
+  }
+  expect(
+    isCargoPathCompatibility(
+      entry('toml:package.metadata.broker.version'),
+      '[package.metadata.broker]\npath="resources/broker"\nversion="0.3.1"\n',
+    ),
+  ).toBe(false);
+});
+
+test('Cargo dependency identities preserve aliases for source and installed carrier classification', () => {
+  expect(
+    cargoCompatibilityDependency(
+      entry('toml:dependencies.alias.version'),
+      '[dependencies]\nalias={package="oliphaunt-broker",version="0.3.1"}\n',
+    ),
+  ).toEqual({ packageName: 'oliphaunt-broker' });
+  expect(
+    cargoCompatibilityDependency(
+      entry('toml:dependencies.alias.version'),
+      '[dependencies]\nalias={package="oliphaunt-broker",path="../broker",version="0.4.0"}\n',
+    ),
+  ).toEqual({ packageName: 'oliphaunt-broker', path: '../broker' });
 });

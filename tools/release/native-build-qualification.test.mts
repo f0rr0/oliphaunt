@@ -9,13 +9,58 @@ import {
   writeSeedConstructionReceipt,
 } from '../../build_defs/resources/seed_construction.mts';
 import {
+  assertAuthenticatedNativeBuildOrigin,
+  authenticateNativeBuildEvidence,
+} from './authenticate-native-build-evidence.mts';
+import { buildShippingInputView, configuredAqueryTargetInputs } from './bazel-shipping-inputs.mts';
+import {
+  assertNativeFinalShippingPhase,
   type NativeBuildEvidence,
   nativeAnalysisInputBindings,
   nativeBuildMetadata,
+  nativeRequiredCaptureInputs,
   validateNativeBuildEvidence,
   validateNativeSeedConstructions,
 } from './native-build-qualification.mts';
 import { captureNativeOutputMembers } from './native-publication-staging.mts';
+
+test('selected Rust source final admission requires the actual minimum test on every source carrier', () => {
+  const common = '//build_defs/languages/installed:consumer_test';
+  const minimum = '//build_defs/languages/installed:consumer_minimum_test';
+  const labels = [
+    '//src/native/sdks/rust:shipping_package',
+    '//src/native/sdks/rust/crates/oliphaunt-build:shipping_package',
+  ];
+  const qualification = {
+    cohorts: [
+      {
+        roots: labels.map((label) => ({
+          label,
+          package: { product: 'oliphaunt-rust', ecosystem: 'cargo' },
+        })),
+        qualificationPolicy: {
+          policies: labels.map((label) => ({ roots: [label], requiredTests: [{ label: common }] })),
+        },
+      },
+    ],
+  } as any;
+  expect(() =>
+    assertNativeFinalShippingPhase(qualification, ['liboliphaunt-native-bindings']),
+  ).not.toThrow();
+  expect(() => assertNativeFinalShippingPhase(qualification, ['oliphaunt-rust'])).toThrow(
+    'declared-minimum',
+  );
+  qualification.cohorts[0].qualificationPolicy.policies[0].requiredTests.push({ label: minimum });
+  expect(() => assertNativeFinalShippingPhase(qualification, ['oliphaunt-rust'])).toThrow(
+    'declared-minimum',
+  );
+  qualification.cohorts[0].qualificationPolicy.policies[1].requiredTests.push({ label: minimum });
+  expect(() => assertNativeFinalShippingPhase(qualification, ['oliphaunt-rust'])).not.toThrow();
+  qualification.cohorts[0].qualificationPolicy.policies[1].requiredTests[1].label = `${minimum}_fixture`;
+  expect(() => assertNativeFinalShippingPhase(qualification, ['oliphaunt-rust'])).toThrow(
+    'declared-minimum',
+  );
+});
 
 // BEP fields follow an actual Bazel 8.8.1 capture, including omitted proto zeroes.
 function fixture() {
@@ -174,11 +219,21 @@ function fixture() {
         ],
         aquery,
         buildEvents: events,
-        inputs: [source, tool, generated].map(capture),
+        inputs: [],
         outputs: [capture(output)],
       },
     ],
   };
+  evidence.cohorts[0].inputs = nativeRequiredCaptureInputs(
+    buildShippingInputView(
+      {
+        schema: 'oliphaunt-bazel-shipping-v1',
+        scope: 'construction',
+        packages: evidence.cohorts[0].roots.map((root) => root.package),
+      },
+      aquery,
+    ),
+  ).map(capture);
   return {
     evidence,
     expected,
@@ -446,11 +501,11 @@ test('missing, failed, skipped, incomplete or ambiguous mandatory tests fail clo
   }
 });
 
-test('tool/generated/source content changes alter input diagnostics while identical delivered bytes stay identical', () => {
+test('source and tool content changes alter input diagnostics while identical delivered bytes stay identical', () => {
   const f = fixture();
   try {
     const before = validateNativeBuildEvidence(f.evidence, f.expected);
-    for (const file of [f.source, f.tool, f.generated]) {
+    for (const file of [f.source, f.tool]) {
       writeFileSync(path.join(f.executionRoot, file), `changed ${file}`);
       f.evidence.cohorts[0].inputs = f.evidence.cohorts[0].inputs.map((row) =>
         row.path === file ? f.capture(file) : row,
@@ -489,12 +544,12 @@ test('declaration fingerprints ignore input-set factoring while raw graph eviden
   }
 });
 
-test('input capture requires generated content, exact closure membership and safe file trees', () => {
+test('input capture requires exact frontier membership and safe file trees', () => {
   const f = fixture();
   try {
     for (const change of [
       (value: NativeBuildEvidence) => {
-        value.cohorts[0].inputs.pop();
+        value.cohorts[0].inputs.shift();
       },
       (value: NativeBuildEvidence) => {
         value.cohorts[0].inputs.push({
@@ -745,8 +800,29 @@ test('canonical main-repository roots bind BEP labels while external repositorie
   }
 });
 
-test('candidate exporter/verifier authenticate transport, require tests and bind the same buffer without granting admission', () => {
+test('native transport authenticates the same immutable buffer and configured tests without granting publication', async () => {
   const f = fixture();
+  const environment = {
+    PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`,
+    BUN_OPTIONS: `--preload=${path.resolve(import.meta.dir, 'testdata/download-build-artifacts-github.mts')}`,
+    GH_TOKEN: 'test-token',
+    GH_REPO: 'ignored/by-adapter',
+    OLIPHAUNT_GITHUB_READ_DEADLINE_MS: '1000',
+    OLIPHAUNT_GITHUB_READ_MAX_ATTEMPTS: '1',
+    OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS: '0',
+    OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS: '0',
+    FAKE_NATIVE_ORIGIN: 'true',
+    FAKE_NATIVE_CASE: '',
+    FAKE_NATIVE_SOURCE_COMMIT: '',
+    FAKE_NATIVE_SOURCE_TREE: '',
+    FAKE_NATIVE_MUTATE_LOCAL_PACKET: '',
+    FAKE_ARTIFACT_ARCHIVE: path.join(f.executionRoot, 'artifact.zip'),
+    FAKE_GH_LOG: path.join(f.executionRoot, 'api.log'),
+    FAKE_GH_STATE: path.join(f.executionRoot, 'download-count'),
+    FAKE_MODE: 'success',
+    FAKE_RUN_CONCLUSION: 'failure',
+  };
+  const before = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
   try {
     const runGit = (...args: string[]) =>
       execFileSync('git', args, { cwd: f.executionRoot, encoding: 'utf8' }).trim();
@@ -776,136 +852,192 @@ test('candidate exporter/verifier authenticate transport, require tests and bind
     const packet = path.join(evidenceRoot, 'native-build-evidence.json');
     writeFileSync(packet, `${JSON.stringify(f.evidence)}\n`);
     const packetBytes = readFileSync(packet);
-    const archive = path.join(f.executionRoot, 'artifact.zip');
-    execFileSync('zip', ['-q', archive, 'native-build-evidence.json'], { cwd: evidenceRoot });
-    const plan = path.join(f.executionRoot, 'plan.json');
-    const candidate = path.join(f.executionRoot, 'candidate.json');
-    writeFileSync(
-      plan,
-      JSON.stringify({ projects: [], jobs: ['affected'], extension_package_products: [] }),
-    );
-    // Controller expectations are constraints. Synthetic HTTP responses below
-    // exercise the real transport; this fixture is not live GitHub evidence.
+    execFileSync('zip', ['-q', environment.FAKE_ARTIFACT_ARCHIVE, 'native-build-evidence.json'], {
+      cwd: evidenceRoot,
+    });
+    // Expectations constrain the real HTTP/ZIP acquisition. Synthetic transport
+    // exercises the boundary; it is not a live authenticated builder result.
     const context = {
+      source: f.evidence.source,
       github: f.evidence.github,
-      event: 'workflow_dispatch',
+      event: 'workflow_dispatch' as const,
       ref: 'refs/heads/main',
       artifactName: 'native-build-evidence-x86_64',
-      requiredTests: [{ label: '//package:consumer_test', configuration: 'c'.repeat(64) }],
     };
-    const script = path.resolve(import.meta.dir, '../../.github/scripts/release-candidate.sh');
-    const environment = {
-      ...process.env,
-      PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`,
-      CI_HEAD_SHA: commit,
-      RELEASE_HEAD_SHA: commit,
-      CI_PLAN_PATH: plan,
-      CI_QUALIFICATION_MODE: 'full-payload',
-      WASIX_RELEASE_REGRESSION_REQUIRED: 'false',
-      GITHUB_REPOSITORY: 'f0rr0/oliphaunt',
-      GITHUB_WORKFLOW: 'CI',
-      GITHUB_WORKFLOW_REF: 'f0rr0/oliphaunt/.github/workflows/ci.yml@refs/heads/main',
-      GITHUB_RUN_ID: '123',
-      CI_RUN_ID: '123',
-      GITHUB_RUN_ATTEMPT: '1',
-      GITHUB_EVENT_NAME: 'push',
-      GITHUB_REF: 'refs/heads/main',
-      NATIVE_BUILD_EVIDENCE_ROOT: evidenceRoot,
-      NATIVE_BUILD_CONTEXT_JSON: JSON.stringify(context),
-      BUN_OPTIONS: `--preload=${path.resolve(import.meta.dir, 'testdata/download-build-artifacts-github.mts')}`,
-      GH_TOKEN: 'test-token',
-      FAKE_NATIVE_ORIGIN: 'true',
-      FAKE_NATIVE_CASE: '',
+    const requiredTests = [{ label: '//package:consumer_test', configuration: 'c'.repeat(64) }];
+    Object.assign(process.env, environment, {
       FAKE_NATIVE_SOURCE_COMMIT: commit,
       FAKE_NATIVE_SOURCE_TREE: tree,
-      FAKE_ARTIFACT_ARCHIVE: archive,
-      FAKE_GH_LOG: path.join(f.executionRoot, 'api.log'),
-      FAKE_GH_STATE: path.join(f.executionRoot, 'download-count'),
-      FAKE_MODE: 'success',
-      FAKE_RUN_CONCLUSION: 'failure',
-    };
-    const run = (args: string[], env = environment) =>
-      execFileSync('bash', [script, ...args], {
-        cwd: f.executionRoot,
-        env,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    run(['write', candidate], { ...environment, FAKE_NATIVE_MUTATE_LOCAL_PACKET: packet });
-    const record = JSON.parse(readFileSync(candidate, 'utf8'));
+      FAKE_NATIVE_MUTATE_LOCAL_PACKET: packet,
+    });
+    const origin = await authenticateNativeBuildEvidence(evidenceRoot, context);
     expect(JSON.parse(readFileSync(packet, 'utf8'))).toEqual({
       changedAfterAuthenticatedRead: true,
     });
-    expect(record.evidence.nativeBuild.digest).toBe(
+    expect(origin.evidenceDigest).toBe(
       `sha256:${createHash('sha256').update(packetBytes).digest('hex')}`,
     );
-    writeFileSync(packet, packetBytes);
-    expect(record.runId).toBe('123');
-    expect(record.evidence.nativeBuild.github.runId).toBe(77);
-    expect(record.evidence.nativeBuild.github.runAttempt).toBe(1);
-    expect(record.evidence.nativeBuild.artifact.id).toBe(101);
-    expect(record.evidence.nativeBuild.scope).toBe('construction');
-    expect(record.evidence.nativeBuild.releaseDecision).toBe('unverified');
-    expect(record.evidence.nativeBuild.testQualification).toBe('passed');
-    expect(record.evidence.nativeBuild.requiredTests).toEqual([
-      { ...context.requiredTests[0], invocationId: 'actual-invocation' },
-    ]);
-    expect(record.evidence.nativeBuild.unverified).not.toContain(
-      'authenticated producing workflow, attempt, job and immutable artifact',
+    expect(origin.evidence).toEqual(JSON.parse(packetBytes.toString('utf8')));
+    expect(origin.github).toEqual(context.github);
+    expect(origin.artifact.id).toBe(101);
+    expect(origin.artifact.name).toBe(context.artifactName);
+    expect(assertAuthenticatedNativeBuildOrigin(origin)).toBe(origin);
+    expect(Object.isFrozen(origin)).toBe(true);
+    expect(Object.isFrozen(origin.evidence)).toBe(true);
+    expect(Object.isFrozen((origin.evidence as NativeBuildEvidence).cohorts[0].buildEvents)).toBe(
+      true,
     );
-    const verify = ['verify', candidate, '--plan', plan, '--wasix-evidence-required', 'false'];
-    const native = [
-      '--native-build-evidence-root',
-      evidenceRoot,
-      '--native-build-context-json',
-      JSON.stringify(context),
-    ];
-    expect(() => run([...verify, ...native])).not.toThrow();
-    expect(() => run(verify)).toThrow();
-    expect(() => run([...verify, '--native-build-evidence-root', evidenceRoot])).toThrow();
-    expect(() =>
-      run([
-        ...verify,
-        ...native.slice(0, 3),
-        JSON.stringify({ ...context, github: { ...context.github, runAttempt: 2 } }),
-      ]),
-    ).toThrow();
-    expect(() =>
-      run(['write', candidate], { ...environment, NATIVE_BUILD_EVIDENCE_ROOT: '' }),
-    ).toThrow();
-    for (const requiredTests of [
-      undefined,
-      [],
-      [{ ...context.requiredTests[0], configuration: 'd'.repeat(64) }],
-    ]) {
+    expect(() => {
+      (origin.evidence as NativeBuildEvidence).source.commit = 'f'.repeat(40);
+    }).toThrow();
+    for (const detached of [
+      structuredClone(origin),
+      JSON.parse(JSON.stringify(origin)),
+      { github: context.github, artifact: origin.artifact },
+    ])
+      expect(() => assertAuthenticatedNativeBuildOrigin(detached)).toThrow(
+        /authenticated producer transport/,
+      );
+
+    const expected = {
+      source: context.source,
+      github: context.github,
+      bazelVersion: f.expected.bazelVersion,
+      requiredTests,
+    };
+    const qualified = validateNativeBuildEvidence(origin.evidence, expected);
+    expect(qualified.scope).toBe('construction');
+    expect(qualified.releaseDecision).toBe('unverified');
+    expect(qualified.testQualification).toBe('passed');
+    expect(qualified.requiredTests).toEqual([
+      { ...requiredTests[0], invocationId: 'actual-invocation' },
+    ]);
+    // Content validation stays diagnostic without declared tests, even when its
+    // immutable bytes came from an authenticated artifact. It grants no release.
+    const diagnostic = validateNativeBuildEvidence(origin.evidence, {
+      ...expected,
+      requiredTests: undefined,
+    });
+    expect(diagnostic.testQualification).toBe('unverified');
+    expect(diagnostic.releaseDecision).toBe('unverified');
+    expect(diagnostic.unverified).toContain(
+      'declared mandatory test roots and successful BEP results',
+    );
+    for (const tests of [[], [{ ...requiredTests[0], configuration: 'd'.repeat(64) }]])
       expect(() =>
-        run(['write', candidate], {
-          ...environment,
-          NATIVE_BUILD_CONTEXT_JSON: JSON.stringify({ ...context, requiredTests }),
-        }),
+        validateNativeBuildEvidence(origin.evidence, { ...expected, requiredTests: tests }),
       ).toThrow();
+    expect(qualified.unverified).toContain(
+      'complete canonical product qualification and completed-baseline admission',
+    );
+    expect(Object.hasOwn(origin, 'releaseDecision')).toBe(false);
+    expect(Object.hasOwn(origin, 'baselineAdmission')).toBe(false);
+    writeFileSync(packet, packetBytes);
+    delete process.env.FAKE_NATIVE_MUTATE_LOCAL_PACKET;
+
+    const again = await authenticateNativeBuildEvidence(evidenceRoot, context);
+    expect(again.evidenceDigest).toBe(origin.evidenceDigest);
+    expect(validateNativeBuildEvidence(again.evidence, expected)).toEqual(qualified);
+    for (const changed of [
+      { ...context, source: { ...context.source, commit: 'f'.repeat(40) } },
+      { ...context, source: { ...context.source, tree: 'f'.repeat(40) } },
+      { ...context, github: { ...context.github, runId: 78 } },
+      { ...context, github: { ...context.github, runAttempt: 2 } },
+      { ...context, github: { ...context.github, job: 'Other producer' } },
+      { ...context, artifactName: 'other-artifact' },
+    ])
+      await expect(authenticateNativeBuildEvidence(evidenceRoot, changed)).rejects.toThrow();
+    for (const kind of ['job-failure', 'stale-artifact', 'digest']) {
+      process.env.FAKE_NATIVE_CASE = kind;
+      await expect(authenticateNativeBuildEvidence(evidenceRoot, context)).rejects.toThrow();
     }
-    expect(() =>
-      run(['write', candidate], {
-        ...environment,
-        NATIVE_BUILD_ORIGIN_JSON: JSON.stringify({ github: context.github, artifact: {} }),
-      }),
-    ).toThrow();
-    expect(() =>
-      run([
-        ...verify,
-        '--native-build-evidence-root',
-        evidenceRoot,
-        '--native-build-origin-json',
-        JSON.stringify({ github: context.github, artifact: {} }),
-      ]),
-    ).toThrow();
-    for (const kind of ['job-failure', 'stale-artifact', 'digest'])
-      expect(() =>
-        run([...verify, ...native], { ...environment, FAKE_NATIVE_CASE: kind }),
-      ).toThrow();
+    process.env.FAKE_NATIVE_CASE = '';
     writeFileSync(packet, '{"tampered":true}');
-    expect(() => run([...verify, ...native])).toThrow();
+    await expect(authenticateNativeBuildEvidence(evidenceRoot, context)).rejects.toThrow(
+      /bytes differ/,
+    );
+    // An already acquired buffer is immutable and independent of later path mutation.
+    expect(assertAuthenticatedNativeBuildOrigin(origin)).toBe(origin);
+    expect(validateNativeBuildEvidence(origin.evidence, expected)).toEqual(qualified);
+  } finally {
+    for (const key of Object.keys(environment)) {
+      if (before[key] === undefined) delete process.env[key];
+      else process.env[key] = before[key];
+    }
+    f.cleanup();
+  }
+});
+
+test('exact frontier rejects extra intermediate captures and requires every leaf and consumed supplier', () => {
+  const f = fixture();
+  try {
+    const before = validateNativeBuildEvidence(f.evidence, f.expected);
+    const extra = structuredClone(f.evidence);
+    extra.cohorts[0].inputs.push(f.capture(f.generated));
+    expect(() => validateNativeBuildEvidence(extra, f.expected)).toThrow(
+      'native input content coverage',
+    );
+    rmSync(path.join(f.executionRoot, f.generated));
+    const current = validateNativeBuildEvidence(f.evidence, f.expected);
+    expect(current.cohorts[0].actionDefinitionsDigest).toBe(
+      before.cohorts[0].actionDefinitionsDigest,
+    );
+    expect(current.cohorts[0].inputContentsDigest).toBe(before.cohorts[0].inputContentsDigest);
+    for (const file of [f.source, f.tool]) {
+      const missing = structuredClone(f.evidence);
+      missing.cohorts[0].inputs = missing.cohorts[0].inputs.filter((input) => input.path !== file);
+      expect(() => validateNativeBuildEvidence(missing, f.expected)).toThrow(
+        'native input content coverage',
+      );
+    }
+    const supplied = structuredClone(f.evidence);
+    (supplied.cohorts[0].roots[0].package as any).supplierInputs = [
+      {
+        product: 'supplier',
+        version: '1.0.0',
+        configuration: 'linux-x64',
+        binding: 'abi-contract',
+        origin: { kind: 'current-source' },
+        files: [{ path: f.generated }],
+      },
+    ];
+    expect(() => validateNativeBuildEvidence(supplied, f.expected)).toThrow(
+      'native input content coverage',
+    );
+    writeFileSync(path.join(f.executionRoot, f.generated), 'actual declared supplier File');
+    supplied.cohorts[0].inputs.push(f.capture(f.generated));
+    expect(validateNativeBuildEvidence(supplied, f.expected).scope).toBe('construction');
+    const unrelated = structuredClone(f.evidence);
+    unrelated.cohorts[0].inputs.push({
+      path: 'unrelated',
+      members: unrelated.cohorts[0].inputs[0].members,
+    });
+    expect(() => validateNativeBuildEvidence(unrelated, f.expected)).toThrow(
+      'native input content coverage',
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('configured qualification follows TestRunner producer edges and rejects missing or cyclic closure', () => {
+  const f = fixture();
+  try {
+    const graph = f.evidence.cohorts[0].aquery as any;
+    graph.actions[1].mnemonic = 'TestRunner';
+    const observed = configuredAqueryTargetInputs(graph, '//package:archive', 'c'.repeat(64));
+    expect([...observed.inputs].sort()).toEqual([f.source, f.tool, f.generated].sort());
+    expect(() => configuredAqueryTargetInputs(graph, '//package:archive', 'd'.repeat(64))).toThrow(
+      /configured TestRunner/,
+    );
+    expect(() =>
+      configuredAqueryTargetInputs(graph, '//package:generated', 'c'.repeat(64)),
+    ).toThrow(/configured TestRunner/);
+    graph.actions[0].mnemonic = 'Middleman';
+    graph.depSetOfFiles[0].directArtifactIds.push(3);
+    expect(() => configuredAqueryTargetInputs(graph, '//package:archive', 'c'.repeat(64))).toThrow(
+      /cycle/,
+    );
   } finally {
     f.cleanup();
   }

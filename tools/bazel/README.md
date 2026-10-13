@@ -123,10 +123,13 @@ directory and receipts on failure.
 
 The `Native Bazel qualification` workflow uses the same Linux commands and
 declared profiles, alongside native macOS/Windows SDK and installed package
-checks. Those hosted checks must pass for the exact source commit. This migration
-workflow does not supply publication evidence. Existing Required/Qualified and frozen
-publication checks remain authoritative until every product/platform's native
-construction and final carrier gate passes.
+checks. Its authenticated construction evidence binds original final archives,
+configured production inputs and required tests to the exact source commit.
+The native release entrypoints consume this evidence and reject incomplete
+product/platform coverage. Frozen installed consumers and publication readiness
+remain separate gates. The migration still requires complete hosted qualification
+and the seed adoption anchor before retiring legacy CI; a passing local command
+or an individual platform job cannot authorize publication.
 
 Shared construction stays on Linux to reproduce CI locally. macOS/Windows jobs
 provide licensed SDK construction and native execution where required. Cross-host
@@ -168,9 +171,12 @@ not rewrite the external dependency lock.
 The real query construction exports are `//src/query/rust:shipping_export` and
 `//src/query/ts:shipping_export`. Their respective `:shipping_package` roots
 construct the archives; exports alone record analysis metadata. Conformance
-checks both actual package manifests and their action-input closures. Active
-release preparation still uses the existing ownership graph; the native adapter
-does not yet decide release scope.
+checks both actual package manifests and their action-input closures.
+`tools/release/prepare-release-pr.sh` invokes native release preparation. It
+compares authenticated deliveries with each product's completed publication,
+closes necessary compatibility adoption and passes those selected owners to
+Release Please for version calculation. Missing historical facts block a decision;
+the old ownership graph is not a fallback selector.
 
 Tool/rule repins intentionally update `MODULE.bazel.lock`:
 

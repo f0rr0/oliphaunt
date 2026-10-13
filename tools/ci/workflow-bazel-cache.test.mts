@@ -8,12 +8,34 @@ import test from 'node:test';
 const root = path.resolve(import.meta.dir, '../..');
 const action = Bun.YAML.parse(
   readFileSync(path.join(root, '.github/actions/bazel-cache/action.yml'), 'utf8'),
-) as { runs: { steps: { id?: string; name: string; run?: string }[] } };
+) as { runs: { steps: { id?: string; name: string; run?: string; with?: { key?: string } }[] } };
 const script = (name: string) => {
   const step = action.runs.steps.find((step) => step.id === name || step.name === name);
   assert.ok(step?.run, `missing executable cache step ${name}`);
   return step.run;
 };
+
+// Render the actual action's output-only cache expression after executing its Shell step.
+function cacheKey(name: string, output: string) {
+  const step = action.runs.steps.find((step) => step.id === name || step.name === name);
+  assert.ok(step?.with?.key);
+  const values = Object.fromEntries(
+    output
+      .trim()
+      .split('\n')
+      .map((line) => line.split('=')),
+  );
+  return step.with.key.replace(
+    /\$\{\{\s*steps[.]identity[.]outputs[.](\w+)\s*\}\}/gu,
+    (_match, name) => {
+      assert.ok(
+        Object.hasOwn(values, name),
+        'Cache key references an absent actual identity output',
+      );
+      return values[name];
+    },
+  );
+}
 
 type FixtureEnvironment = NodeJS.ProcessEnv & {
   HOME: string;
@@ -63,6 +85,7 @@ function fixture(run: (directory: string, env: FixtureEnvironment) => void) {
     PHASE: 'restore',
     COHORT: 'portable',
     SOURCE_COMMIT: 'a'.repeat(40),
+    REPOSITORY_GENERATION: 'c'.repeat(64),
     OUTPUT_BASE: '',
     JVM_ARGS: '',
     SERVER_LOG: '',
@@ -100,7 +123,7 @@ test('optional cache saves are bounded independently of qualification results', 
   }
 });
 
-test('cache identity follows the actual source, pinned Bazel and independent cohort', () => {
+test('action keys follow source while download keys reuse canonical acquisition generations', () => {
   fixture((directory, env) => {
     const identities = [];
     for (const variation of [
@@ -114,8 +137,34 @@ test('cache identity follows the actual source, pinned Bazel and independent coh
       identities.push(readFileSync(env.GITHUB_OUTPUT, 'utf8'));
     }
     assert.equal(new Set(identities).size, identities.length);
-    assert.match(identities[0], /-portable-8\.8\.1\nsource=a{40}\n$/u);
-    for (const variation of [{ PHASE: 'unknown' }, { COHORT: 'portable/../linux' }]) {
+    assert.match(identities[0], /-portable-8\.8\.1\nsource=a{40}\nrepository_generation=c{64}\n$/u);
+    assert.notEqual(
+      cacheKey('disk-restore', identities[0]),
+      cacheKey('disk-restore', identities[1]),
+    );
+    assert.equal(
+      cacheKey('repository-restore', identities[0]),
+      cacheKey('repository-restore', identities[1]),
+      'Source-only edits reuse the existing download cache',
+    );
+    assert.equal(
+      cacheKey('repository-restore', identities[0]),
+      cacheKey('Save bounded Bazel repository downloads', identities[0]),
+    );
+    writeFileSync(env.GITHUB_OUTPUT, '');
+    execute(directory, { ...env, REPOSITORY_GENERATION: 'd'.repeat(64) }, script('identity'));
+    const repinned = readFileSync(env.GITHUB_OUTPUT, 'utf8');
+    assert.notEqual(
+      cacheKey('repository-restore', repinned),
+      cacheKey('repository-restore', identities[0]),
+      'Changed acquisition generations persist new downloads',
+    );
+    assert.equal(cacheKey('disk-restore', repinned), cacheKey('disk-restore', identities[0]));
+    for (const variation of [
+      { PHASE: 'unknown' },
+      { COHORT: 'portable/../linux' },
+      { REPOSITORY_GENERATION: '' },
+    ]) {
       const rejected = spawnSync('bash', ['-eu', '-c', script('identity')], {
         cwd: directory,
         env: { ...env, ...variation },

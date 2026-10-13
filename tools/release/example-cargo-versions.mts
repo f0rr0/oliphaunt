@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { loadReleaseMetadata } from './bazel-release-metadata.mts';
 import path from 'node:path';
 import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
 import { productCompatibilityVersion, ROOT } from './release-graph.mts';
@@ -56,6 +57,7 @@ export function exampleCargoPolicies() {
 
 export function exampleCargoReleaseVersionBindings() {
   const catalog = loadPublicationCatalog(TOOL);
+  const installed = loadReleaseMetadata(ROOT).products;
   const initialVersion = JSON.parse(
     readFileSync(path.join(ROOT, 'release-please-config.json'), 'utf8'),
   )['initial-version'];
@@ -76,11 +78,14 @@ export function exampleCargoReleaseVersionBindings() {
         runtimeVersion &&
         (carrier.product === policy.runtime.product ||
           carrier.product === 'oliphaunt-extension-contrib-pg18');
-      const followsBroker = sdk === 'oliphaunt-rust' && carrier.product === 'oliphaunt-broker';
+      const followsBroker =
+        sdk === 'oliphaunt-rust' &&
+        carrier.product === 'oliphaunt-broker' &&
+        carrier.target !== null;
       const version = followsRuntime
         ? runtimeVersion
         : followsBroker
-          ? productCompatibilityVersion(sdk, 'oliphaunt-broker', TOOL)
+          ? installed[sdk].compatibility_versions[carrier.product]
           : carrier.version;
       bindings.push({
         kind: 'dependency',

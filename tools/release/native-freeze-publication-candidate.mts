@@ -13,11 +13,13 @@ import { assertAuthenticatedNativeBuildOrigin } from './authenticate-native-buil
 import { validateReleaseConsumerCompatibility } from './consumer-compatibility.mts';
 import { requestGithubPages, requestGithubRepositoryJson } from './github-read.mts';
 import {
-  assertNativeSwiftShippingPhase,
+  assertNativeFinalShippingPhase,
   type NativeBuildSource,
 } from './native-build-qualification.mts';
+import { readCompletedNativeDeliveryInventory } from './native-completed-delivery.mts';
 import { fileIdentity } from './native-file-identity.mts';
 import {
+  acquireCompletedNativeMetadataBaseline,
   observedNativePublicationMetadata,
   writeMetadataRecords,
 } from './native-publication-metadata.mts';
@@ -43,11 +45,7 @@ import {
   type NativeSupplierArtifact,
   validateNativeSupplierArtifacts,
 } from './native-supplier-artifacts.mts';
-import {
-  loadPublicationCatalog,
-  publicationCatalogDigest,
-  resolveActualCarrier,
-} from './publication-catalog.mts';
+import { loadPublicationCatalog, publicationCatalogDigest } from './publication-catalog.mts';
 import { consumerDigest } from './publication-consumer-proof.mts';
 import {
   buildPublicationCandidate,
@@ -405,6 +403,14 @@ export async function acquireObservedCompletedSuppliers(
   observation: Observation,
   directory: string,
   retainedArtifacts: unknown = [],
+  {
+    inventory = readCompletedNativeDeliveryInventory,
+    readJson = requestGithubRepositoryJson,
+    readPages = requestGithubPages,
+    materialize = materializeRegistryCarrierIntegrity,
+    proveAsset = requestReleaseAssetProof,
+    acquireMetadata = acquireCompletedNativeMetadataBaseline,
+  } = {},
 ): Promise<CompletedInputs> {
   const retained = validateNativeSupplierArtifacts(retainedArtifacts);
   const retainedFile = (publication, artifact: string) => {
@@ -425,7 +431,6 @@ export async function acquireObservedCompletedSuppliers(
     }
     return row;
   };
-  const catalog = loadPublicationCatalog('native publication held suppliers');
   const groups = new Map<string, { publication: any; artifacts: Set<string> }>();
   for (const { evidence } of observation.authenticated)
     for (const cohort of evidence.cohorts)
@@ -443,11 +448,20 @@ export async function acquireObservedCompletedSuppliers(
         }
   const inputs: CompletedInputs = [];
   for (const [index, { publication, artifacts }] of [...groups.values()].entries()) {
+    const release = await readJson(
+      `repos/${repository}/releases/tags/${encodeURIComponent(publication.tagName)}`,
+    );
+    const assets = await readPages(`repos/${repository}/releases/${release.id}/assets`);
+    const metadataBaseline = (
+      await acquireMetadata(
+        { publication, directory: path.join(directory, String(index), 'metadata'), assets },
+        { proveAsset },
+      )
+    )?.baseline;
+    const historical = await inventory(publication, { metadataBaseline, readJson });
     const carriers: Record<string, string[]> = {};
     const files: Record<string, string> = {};
     const sourceTags: NativeSupplierArtifact[] = [];
-    let release: any;
-    let assets: any[];
     for (const [item, identity] of [...artifacts].sort().entries()) {
       if (identity.startsWith('swift-source-tag:')) {
         const retainedSource = retainedFile(publication, identity);
@@ -455,11 +469,9 @@ export async function acquireObservedCompletedSuppliers(
           retainedSource?.source,
           'completed Git source supplier is absent from the acquired Prepare inputs',
         );
-        const product = catalog.products.find(({ id }) => id === publication.product);
-        assert.ok(product, 'unknown completed source supplier');
-        const bindings = expectedProductArtifactRows([
-          { ...product, version: publication.version },
-        ]).filter(({ kind, role }) => kind === 'swift-bindings' && role === 'github-release-asset');
+        const bindings = historical.publicRows.filter(
+          ({ kind, role }) => kind === 'swift-bindings' && role === 'github-release-asset',
+        );
         assert.equal(
           bindings.length,
           1,
@@ -477,18 +489,27 @@ export async function acquireObservedCompletedSuppliers(
       const separator = identity.indexOf(':');
       const ecosystem = identity.slice(0, separator);
       if (['cargo', 'npm'].includes(ecosystem)) {
-        const carrier = resolveActualCarrier(catalog, ecosystem, identity.slice(separator + 1));
+        const matching = historical.carriers.filter((row) => row.id === identity);
+        assert.equal(
+          matching.length,
+          1,
+          'held registry supplier is absent from its historical inventory',
+        );
+        const carrier = matching[0];
         assert.equal(carrier.product, publication.product, 'held registry supplier owner differs');
         const captured = retainedFile(publication, identity);
         if (captured) {
           carriers[identity] = [captured.file.path];
           continue;
         }
-        const retained = await materializeRegistryCarrierIntegrity(
+        const retained = await materialize(
           {
             ...carrier,
             version: publication.version,
-            artifacts: [
+            artifacts: carrier.artifacts?.map((artifact) => ({
+              ...artifact,
+              path: path.basename(artifact.path),
+            })) ?? [
               {
                 path:
                   ecosystem === 'cargo'
@@ -501,9 +522,7 @@ export async function acquireObservedCompletedSuppliers(
         );
         carriers[identity] = retained.carrier.artifacts.map(({ path: file }) => file);
       } else {
-        const product = catalog.products.find(({ id }) => id === publication.product);
-        assert.ok(product, 'unknown held public supplier');
-        const rows = expectedProductArtifactRows([{ ...product, version: publication.version }]);
+        const rows = historical.publicRows;
         const matching = rows.filter((row) => row.id === identity || row.name === identity);
         assert.equal(
           matching.length,
@@ -516,25 +535,39 @@ export async function acquireObservedCompletedSuppliers(
           files[row.id] = captured.file.path;
           continue;
         }
-        release ??= await requestGithubRepositoryJson(
-          `repos/${repository}/releases/tags/${encodeURIComponent(publication.tagName)}`,
-        );
-        assets ??= await requestGithubPages(`repos/${repository}/releases/${release.id}/assets`);
         const matches = assets.filter((asset) => asset.name === row.name);
         assert.equal(matches.length, 1, 'held supplier public asset is absent or ambiguous');
         const asset = matches[0];
+        assert.ok(
+          asset.state === 'uploaded' &&
+            Number.isSafeInteger(asset.id) &&
+            asset.id > 0 &&
+            asset.url ===
+              `https://api.github.com/repos/${repository}/releases/assets/${asset.id}` &&
+            Number.isSafeInteger(asset.size) &&
+            asset.size > 0 &&
+            (asset.digest == null || /^sha256:[a-f0-9]{64}$/u.test(asset.digest)) &&
+            (row.size === undefined || row.size === asset.size) &&
+            (row.sha256 === undefined ||
+              asset.digest == null ||
+              asset.digest === `sha256:${row.sha256}`),
+          'held supplier public asset identity differs',
+        );
         const retainedPath = path.join(directory, String(index), String(item), row.name);
-        await requestReleaseAssetProof(asset.url, row.name, asset.size, {
+        await proveAsset(asset.url, row.name, asset.size, {
           retainedPath,
-          ...(asset.digest ? { expectedSha256: asset.digest.replace(/^sha256:/u, '') } : {}),
+          ...(row.sha256 || asset.digest
+            ? { expectedSha256: row.sha256 ?? asset.digest.slice(7) }
+            : {}),
         });
         files[row.id] = retainedPath;
       }
     }
-    if (sourceTags.length) inputs.push({ publication, files, carriers, sourceTags });
+    const context = { publication, ...(metadataBaseline ? { metadataBaseline } : {}) };
+    if (sourceTags.length) inputs.push({ ...context, files, carriers, sourceTags });
     else {
-      if (Object.keys(carriers).length) inputs.push({ publication, carriers });
-      if (Object.keys(files).length) inputs.push({ publication, files });
+      if (Object.keys(carriers).length) inputs.push({ ...context, carriers });
+      if (Object.keys(files).length) inputs.push({ ...context, files });
     }
   }
   return inputs;
@@ -645,9 +678,8 @@ export async function admitNativePublicationCandidate({
     { envelope: withoutMetadata, files: selectedFiles },
     observation.authenticated,
   );
-  if (prepared.record.selectedProducts.includes('oliphaunt-swift'))
-    for (const build of selectedObservation.authenticated)
-      assertNativeSwiftShippingPhase(build.qualification, 'final');
+  for (const build of selectedObservation.authenticated)
+    assertNativeFinalShippingPhase(build.qualification, prepared.record.selectedProducts);
   const records = observedNativePublicationMetadata(
     {
       envelope: withoutMetadata,

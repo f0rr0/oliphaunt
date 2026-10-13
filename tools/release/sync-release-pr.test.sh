@@ -44,16 +44,29 @@ echo 'Release sync: real tracked/untracked Cargo inventory and prior constraints
 # The imported runner uses its own checkout's canonical catalog and real snapshots.
 repo="$scratch/suppliers"
 git clone --quiet --shared "$source_root" "$repo"
-for file in sync-release-pr.mts sync-release-pr.test.mts release-dependency-plan.mts; do
-  cp "$source_root/tools/release/$file" "$repo/tools/release/$file"
+fixture_files=(
+  build_defs/languages/cargo-metadata.mts
+  tools/release/bazel-release-metadata.mts
+  tools/release/bazel-shipping-inputs.mts
+  tools/release/compatibility-version-parser.mts
+  tools/release/example-cargo-versions.mts
+  tools/release/native-supplier-artifacts.mts
+  tools/release/release-artifact-targets.mts
+  tools/release/release-dependency-plan.mts
+  tools/release/sync-release-pr.mts
+  tools/release/sync-release-pr.test.mts
+)
+for file in "${fixture_files[@]}"; do
+  cp "$source_root/$file" "$repo/$file"
 done
 printf '/node_modules\n' >> "$repo/.git/info/exclude"
 ln -s "$source_root/node_modules" "$repo/node_modules"
 cd "$repo"
 git config user.name Fixture
 git config user.email fixture@example.invalid
-git add tools/release
+git add -- "${fixture_files[@]}"
 git commit --allow-empty -qm 'test: source controller baseline'
+baseline="$(git rev-parse HEAD)"
 bash tools/dev/bun.sh tools/release/sync-release-pr.test.mts supplier-map "$repo" prepare
 git add .release-please-manifest.json src/native/sdks/rust/Cargo.toml src/native/broker/Cargo.toml
 git commit -qm 'chore(release): select broker and source SDK independently'
@@ -66,3 +79,31 @@ for stage in held current; do
     bash tools/dev/bun.sh tools/release/sync-release-pr.test.mts supplier-map "$repo" "$stage"
 done
 echo 'Release sync: supplied held/current relationships and unknown-before-write admission passed'
+
+# A root workspace binding has no product directory owner. Check the same
+# public-inheritor decision used by release preparation without changing Files.
+git reset --hard -q "$baseline"
+bash tools/dev/bun.sh tools/release/sync-release-pr.test.mts workspace-floor "$repo" prepare
+git add .release-please-manifest.json src/native/rust-bindings/Cargo.toml src/native/sdks/rust/Cargo.toml
+git commit -qm 'chore(release): select Core and source SDK'
+OLIPHAUNT_EVIDENCE_COMMIT="$(git rev-parse 'HEAD^{commit}')"
+OLIPHAUNT_EVIDENCE_TREE="$(git rev-parse 'HEAD^{tree}')"
+export OLIPHAUNT_EVIDENCE_COMMIT OLIPHAUNT_EVIDENCE_TREE
+check_floor() {
+  bash tools/release/release-please-state.sh "$repo" HEAD \
+    bash tools/release/with-product-history.sh "$repo" HEAD '' @workspace \
+    bash tools/dev/bun.sh tools/release/sync-release-pr.test.mts workspace-floor "$repo" check
+}
+workspace_before="$(git hash-object Cargo.toml)"
+status=0
+check_floor > "$scratch/floor-check" 2>&1 || status=$?
+[[ "$status" == 1 ]]
+rg -q '^Cargo.toml: liboliphaunt-native-bindings' "$scratch/floor-check"
+[[ "$(git hash-object Cargo.toml)" == "$workspace_before" ]]
+bash tools/dev/bun.sh tools/release/sync-release-pr.test.mts workspace-floor "$repo" hold
+status=0
+check_floor > "$scratch/held-check" 2>&1 || status=$?
+[[ "$status" == 2 ]]
+rg -q 'would change unselected public consumers: oliphaunt-query' "$scratch/held-check"
+[[ "$(git hash-object Cargo.toml)" == "$workspace_before" ]]
+echo 'Release sync: missing workspace floor and held public inheritor checks passed'

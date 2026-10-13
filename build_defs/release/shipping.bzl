@@ -37,7 +37,19 @@ def _shipping_package_impl(ctx):
     )
     manifest = ctx.actions.declare_file(ctx.label.name + ".shipping.json")
     ctx.actions.write(manifest, json.encode({"label": str(ctx.label), "package": _package(info)}) + "\n")
-    return [DefaultInfo(files = files), info, OutputGroupInfo(shipping_manifest = depset([manifest]))]
+    observation_inputs = depset(
+        ctx.files.observation_inputs,
+        transitive = ([ctx.attr.suppliers[ShippingSupplierInfo].files] if ctx.attr.suppliers else []) + [
+            target[OutputGroupInfo].observation_inputs
+            for target in ctx.attr.observation_inputs
+            if OutputGroupInfo in target and hasattr(target[OutputGroupInfo], "observation_inputs")
+        ],
+    )
+    return [
+        DefaultInfo(files = files),
+        info,
+        OutputGroupInfo(shipping_manifest = depset([manifest]), observation_inputs = observation_inputs),
+    ]
 
 shipping_package = rule(
     implementation = _shipping_package_impl,
@@ -49,6 +61,7 @@ shipping_package = rule(
         "configuration": attr.string(mandatory = True),
         "role": attr.string(mandatory = True),
         "suppliers": attr.label(providers = [ShippingSupplierInfo], doc = "Actual configured supplier Files. Omission is unknown coverage; shipping_suppliers(inputs = []) explicitly declares none."),
+        "observation_inputs": attr.label_list(allow_files = True, doc = "Original constructor values required by evidence capture, materialized in this same invocation."),
     },
 )
 

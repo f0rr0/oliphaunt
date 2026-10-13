@@ -37,6 +37,8 @@ export interface ShippingInputView {
   products: Record<string, ShippingProductInputs>;
   /** Complete reached action inputs, excluding only declared virtual Middleman outputs. */
   physicalInputs: string[];
+  /** Source leaves and explicit consumed supplier values; intermediates remain in the DAG. */
+  captureInputs: string[];
 }
 
 type Row = Record<string, unknown>;
@@ -229,24 +231,8 @@ export function validateNativeShippingSuppliers(value: unknown): NativeShippingS
   });
 }
 
-export function buildShippingInputView(
-  exportValue: unknown,
-  aqueryValue: unknown,
-  {
-    configurationByOutput,
-    inspectPackageInputs,
-  }: {
-    configurationByOutput?: ReadonlyMap<string, string>;
-    /** Check declared supplier Files against this package, never sibling roots. */
-    inspectPackageInputs?: (pkg: Row, consumes: (path: string) => boolean) => void;
-  } = {},
-): ShippingInputView {
-  const exported = row(exportValue);
-  if (exported.schema !== 'oliphaunt-bazel-shipping-v1')
-    throw new Error('unsupported shipping export');
-  if (exported.scope !== 'construction')
-    throw new Error('shipping export must declare construction scope');
-  const graph = row(aqueryValue);
+function aqueryFileGraph(raw: unknown) {
+  const graph = row(raw);
   const fragments = index(graph.pathFragments);
   const artifacts = index(graph.artifacts);
   const targets = index(graph.targets);
@@ -266,7 +252,6 @@ export function buildShippingInputView(
   };
   for (const [key, artifact] of artifacts)
     artifactPaths.set(key, fragmentPath(id(artifact.pathFragmentId)));
-  const producers = new Map<string, Row>();
   const inputsOf = (action: Row): Set<string> => {
     const result = new Set<string>();
     const visited = new Set<string>();
@@ -286,12 +271,87 @@ export function buildShippingInputView(
     for (const key of array(action.inputDepSetIds ?? [])) visit(id(key), new Set());
     return result;
   };
+  return { graph, targets, configurations, artifactPaths, depSets, inputsOf };
+}
+
+/** Actual TestRunner input closure and input-free FileWrite outputs of its configured target. */
+export function configuredAqueryTargetInputs(raw: unknown, label: string, configuration: string) {
+  const { graph, targets, configurations, artifactPaths, inputsOf } = aqueryFileGraph(raw);
+  const inputs = new Set<string>();
+  const written = new Set<string>();
+  const producers = new Map<string, Row>();
+  const tests: Row[] = [];
+  for (const rawAction of array(graph.actions ?? [])) {
+    const action = row(rawAction);
+    for (const output of array(action.outputIds ?? [])) {
+      const key = id(output);
+      required(artifactPaths, key);
+      const previous = producers.get(key);
+      if (previous && canonical(previous) !== canonical(action))
+        throw new Error('native qualification has conflicting aquery producers');
+      producers.set(key, action);
+    }
+    if (
+      canonicalShippingLabel(required(targets, id(action.targetId)).label) !==
+      canonicalShippingLabel(label)
+    )
+      continue;
+    if (text(required(configurations, id(action.configurationId)).checksum) !== configuration)
+      continue;
+    if (action.mnemonic === 'TestRunner') tests.push(action);
+    if (action.mnemonic === 'FileWrite' && inputsOf(action).size === 0)
+      for (const output of array(action.outputIds ?? []))
+        written.add(required(artifactPaths, id(output)));
+  }
+  if (!tests.length)
+    throw new Error('native qualification requires its actual configured TestRunner action');
+  const visited = new Set<string>();
+  const visit = (key: string, stack: Set<string>) => {
+    if (stack.has(key)) throw new Error('cycle in native qualification TestRunner inputs');
+    if (visited.has(key)) return;
+    const file = required(artifactPaths, key);
+    inputs.add(file);
+    const producer = producers.get(key);
+    // Runfiles infrastructure expands runtime Files. An APK or package producer
+    // belongs to construction; its compiler inputs are not installed-test inputs.
+    if (
+      producer &&
+      ['Middleman', 'SourceSymlinkManifest', 'SymlinkTree'].includes(text(producer.mnemonic))
+    )
+      for (const input of inputsOf(producer)) visit(input, new Set(stack).add(key));
+    visited.add(key);
+  };
+  for (const test of tests) for (const input of inputsOf(test)) visit(input, new Set());
+  return { inputs, written };
+}
+
+export function buildShippingInputView(
+  exportValue: unknown,
+  aqueryValue: unknown,
+  {
+    configurationByOutput,
+    inspectPackageInputs,
+  }: {
+    configurationByOutput?: ReadonlyMap<string, string>;
+    /** Check declared supplier Files against this package, never sibling roots. */
+    inspectPackageInputs?: (pkg: Row, consumes: (path: string) => boolean) => void;
+  } = {},
+): ShippingInputView {
+  const exported = row(exportValue);
+  if (exported.schema !== 'oliphaunt-bazel-shipping-v1')
+    throw new Error('unsupported shipping export');
+  if (exported.scope !== 'construction')
+    throw new Error('shipping export must declare construction scope');
+  const { graph, targets, configurations, artifactPaths, depSets, inputsOf } =
+    aqueryFileGraph(aqueryValue);
+  const producers = new Map<string, Row>();
   const products: ShippingInputView['products'] = {};
   const identities = new Set<string>();
   const visitedByProduct = new Map<string, Set<string>>();
   const actionDescriptions = new Map<Row, string>();
   const sharedDefinitions = new Map<Row, string>();
   const physicalInputs = new Set<string>();
+  const captureInputs = new Set<string>();
   const virtualOutputs = new Set<string>();
   const describeAction = (action: Row) => ({
     ...Object.fromEntries(
@@ -445,6 +505,7 @@ export function buildShippingInputView(
         if (inputPath.startsWith('bazel-out/'))
           throw new Error(`missing generated input producer: ${inputPath}`);
         leaves.add(inputPath);
+        captureInputs.add(inputPath);
       } else {
         const inputs = inputsOf(action);
         for (const input of inputs) visit(input, new Set(stack).add(key));
@@ -477,6 +538,11 @@ export function buildShippingInputView(
     view.packages.push(pkg);
     view.inputs = [...leaves].sort();
     view.actions = [...descriptions].sort();
+    if (pkg.supplierInputs !== undefined)
+      for (const supplier of validateNativeShippingSuppliers(pkg.supplierInputs))
+        for (const file of supplier.files) {
+          if (outputKeys.some((key) => consumes(key, file.path))) captureInputs.add(file.path);
+        }
     inspectPackageInputs?.(pkg, (path) => outputKeys.some((key) => consumes(key, path)));
   }
   for (const view of Object.values(products))
@@ -489,6 +555,7 @@ export function buildShippingInputView(
     schema: 'oliphaunt-bazel-construction-inputs-v2',
     products,
     physicalInputs: [...physicalInputs].filter((path) => !virtualOutputs.has(path)).sort(),
+    captureInputs: [...captureInputs].sort(),
   };
 }
 
@@ -615,6 +682,7 @@ export function selectObservedShippingChanges(
     schema: 'oliphaunt-bazel-construction-inputs-v2',
     products: {},
     physicalInputs: [],
+    captureInputs: [],
   };
   const deltas: Record<string, string[]> = {};
   const unknownProducts: string[] = [];

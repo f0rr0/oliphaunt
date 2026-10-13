@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   mkdirSync,
@@ -78,7 +79,18 @@ test('applies conventional Biome directory exclusions and root/nested Git ignore
         'src/generated/bad.ts',
         'src/fixtures/bad.ts',
       ];
-      expect(check(root, 'format', paths)).toMatchObject({ status: 0 });
+      const format = check(root, 'format', paths);
+      if (format.status !== 0) {
+        console.error(
+          'Biome declared policy diagnostic',
+          JSON.stringify({
+            ambientConfigPresent: process.env.BIOME_CONFIG_PATH !== undefined,
+            binarySha256: createHash('sha256').update(readFileSync(binary!)).digest('hex'),
+            configSha256: createHash('sha256').update(config).digest('hex'),
+          }),
+        );
+      }
+      expect(format).toMatchObject({ status: 0 });
       expect(check(root, 'lint', paths)).toMatchObject({ status: 0 });
     },
   );
@@ -121,4 +133,31 @@ test('detects actual lint errors and refuses path escape or duplicate members', 
       'Invalid or duplicate',
     );
   });
+});
+
+test('uses declared configuration when BIOME_CONFIG_PATH points elsewhere', () => {
+  const external = mkdtempSync(
+    join(process.env.TEST_TMPDIR ?? tmpdir(), 'oliphaunt-biome-external-config-'),
+  );
+  const previous = process.env.BIOME_CONFIG_PATH;
+  try {
+    writeFileSync(join(external, 'biome.json'), config);
+    process.env.BIOME_CONFIG_PATH = external;
+    fixture(
+      {
+        'src/.gitignore': 'ignored.ts\n',
+        'src/ignored.ts': 'syntax error \\\n',
+        'src/good.ts': 'export const value = 1;\n',
+      },
+      (root) => {
+        const paths = ['src/.gitignore', 'src/ignored.ts', 'src/good.ts'];
+        expect(check(root, 'format', paths)).toMatchObject({ status: 0 });
+        expect(check(root, 'lint', paths)).toMatchObject({ status: 0 });
+      },
+    );
+  } finally {
+    if (previous === undefined) delete process.env.BIOME_CONFIG_PATH;
+    else process.env.BIOME_CONFIG_PATH = previous;
+    rmSync(external, { recursive: true, force: true });
+  }
 });

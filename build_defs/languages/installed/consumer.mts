@@ -5,6 +5,7 @@ import path from 'node:path';
 import { stageCargoCarrierInputs } from '../../../tools/packaging/frozen-cargo.mts';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
 import { type CargoLinkConfiguration, cargoLinkEnvironment } from '../cargo-environment.mts';
+import { cargoSatisfies } from '../cargo-metadata.mts';
 
 export function cargoCandidate(file: string) {
   const entries = readPortableArchiveEntries(file);
@@ -48,6 +49,7 @@ export function candidateConsumerManifest(
 ) {
   const sdk = candidates.find((candidate) => candidate.name === 'oliphaunt');
   const helper = candidates.find((candidate) => candidate.name === 'oliphaunt-build');
+  const core = candidates.find((candidate) => candidate.name === 'liboliphaunt-native-bindings');
   let text = template;
   for (const candidate of [sdk, helper].filter((value) => value !== undefined)) {
     const expression = new RegExp(`^${candidate.name}\\s*=\\s*"[^"]*"`, 'mu');
@@ -56,7 +58,13 @@ export function candidateConsumerManifest(
   }
   // Unselected roots retain the fixture's explicit published requirements. Their
   // authentic resolved SDK manifest is checked after Cargo generates the lock.
-  if (!sdk) return text;
+  if (!sdk) {
+    if (core) {
+      text = text.replace(/^oliphaunt\s*=\s*"[^"]*"/mu, `${core.name} = "=${core.version}"`);
+      text = text.replace(/^\[package\]$/mu, '[package]\nbuild = "core-build.rs"');
+    }
+    return text;
+  }
   const runtime = sdk.manifest.package.metadata.oliphaunt['native-version'];
   assert.equal(typeof runtime, 'string');
   text = text.replace(
@@ -65,6 +73,83 @@ export function candidateConsumerManifest(
   );
   text = text.replace(/^runtime-version\s*=\s*"[^"]*"/mu, `runtime-version = "${runtime}"`);
   return text;
+}
+
+/** Stage only declared candidate dependencies; Cargo still resolves the actual composition. */
+export function candidateDependencyInputs(
+  roots: ReturnType<typeof cargoCandidate>[],
+  pool: ReturnType<typeof cargoCandidate>[],
+  lockText: string,
+  preferHeld = false,
+) {
+  const held = Bun.TOML.parse(lockText).package;
+  const selected = new Map(roots.map((candidate) => [candidate.name, candidate]));
+  const pending = [...roots];
+  for (const candidate of pending)
+    for (const table of [
+      candidate.manifest,
+      ...Object.values(candidate.manifest.target ?? {}),
+    ] as any[])
+      for (const section of ['dependencies', 'build-dependencies'])
+        for (const [alias, declaration] of Object.entries(table[section] ?? {})) {
+          const dependency =
+            typeof declaration === 'string' ? { version: declaration } : (declaration as any);
+          const name = dependency.package ?? alias;
+          if (selected.has(name)) continue;
+          const current = pool.find((row) => row.name === name);
+          if (!current) continue;
+          assert.equal(
+            typeof dependency.version,
+            'string',
+            `candidate dependency needs its conventional requirement: ${name}`,
+          );
+          const compatibleHeld = held.some(
+            (row: any) =>
+              row.name === name && row.source && cargoSatisfies(row.version, dependency.version),
+          );
+          if (preferHeld && compatibleHeld) continue;
+          if (!cargoSatisfies(current.version, dependency.version)) {
+            assert(
+              compatibleHeld,
+              `candidate dependency lacks a compatible declared input: ${name}`,
+            );
+            continue;
+          }
+          selected.set(name, current);
+          pending.push(current);
+        }
+  return [...selected.values()];
+}
+
+export function installedConsumerCases(
+  candidates: ReturnType<typeof cargoCandidate>[],
+  fixtureLock: string,
+  selectedProducts: string[],
+  minimum: boolean,
+) {
+  const sdkRoots = candidates.filter((candidate) =>
+    ['oliphaunt', 'oliphaunt-build'].includes(candidate.name),
+  );
+  const core = candidates.filter((candidate) => candidate.name === 'liboliphaunt-native-bindings');
+  assert.equal(core.length, 1, 'installed Core consumer needs one actual candidate envelope');
+  if (minimum) {
+    assert(
+      selectedProducts.includes('oliphaunt-rust'),
+      'declared SDK minimum qualification requires its prepared selected owner',
+    );
+    return [['sdk', candidateDependencyInputs(sdkRoots, candidates, fixtureLock, true)]] as [
+      string,
+      ReturnType<typeof cargoCandidate>[],
+    ][];
+  }
+  return [
+    ['checkout', candidateDependencyInputs(sdkRoots, candidates, fixtureLock)],
+    [
+      'liboliphaunt-native-bindings',
+      candidateDependencyInputs(core, candidates, fixtureLock, true),
+    ],
+    ['held', []],
+  ] as [string, ReturnType<typeof cargoCandidate>[]][];
 }
 
 export function resolvedSdkRuntime(
@@ -138,20 +223,13 @@ async function main(args: string[]) {
     HOME: root,
     TMPDIR: root,
   };
-  const cases = [
-    ['checkout', candidates],
-    [
-      'sdk',
-      candidates.filter((candidate: any) =>
-        ['oliphaunt', 'oliphaunt-build'].includes(candidate.name),
-      ),
-    ],
-    ...['liboliphaunt-native-bindings', 'oliphaunt-broker', 'oliphaunt-query'].map((name) => [
-      name,
-      candidates.filter((candidate: any) => candidate.name === name),
-    ]),
-    ['held', []],
-  ] as [string, ReturnType<typeof cargoCandidate>[]][];
+  const fixtureLock = readFileSync(file(spec.lock), 'utf8');
+  const cases = installedConsumerCases(
+    candidates,
+    fixtureLock,
+    spec.selectedProducts,
+    spec.minimum,
+  );
   const receipts = [];
   for (const [name, selectedCandidates] of cases) {
     const directory = path.join(root, name);
@@ -165,8 +243,13 @@ async function main(args: string[]) {
     );
     writeFileSync(path.join(consumer, 'Cargo.toml'), manifest);
     copyFileSync(file(spec.lock), path.join(consumer, 'Cargo.lock'));
-    copyFileSync(file(spec.source), path.join(consumer, 'src/main.rs'));
-    copyFileSync(file(spec.buildScript), path.join(consumer, 'build.rs'));
+    copyFileSync(
+      file(name === 'liboliphaunt-native-bindings' ? spec.coreSource : spec.source),
+      path.join(consumer, 'src/main.rs'),
+    );
+    if (name === 'liboliphaunt-native-bindings')
+      copyFileSync(file(spec.coreBuildScript), path.join(consumer, 'core-build.rs'));
+    else copyFileSync(file(spec.buildScript), path.join(consumer, 'build.rs'));
     const cargo = (command: string[]) => {
       const result = Bun.spawnSync(
         [
@@ -196,7 +279,10 @@ async function main(args: string[]) {
     cargo(['generate-lockfile']);
     const lockText = readFileSync(path.join(consumer, 'Cargo.lock'), 'utf8');
     const lock = Bun.TOML.parse(lockText);
-    const runtime = resolvedSdkRuntime(manifest, lockText, selectedCandidates, cargoHome);
+    const runtime =
+      name === 'liboliphaunt-native-bindings'
+        ? Bun.TOML.parse(manifest).package.metadata.oliphaunt['runtime-version']
+        : resolvedSdkRuntime(manifest, lockText, selectedCandidates, cargoHome);
     for (const pkg of lock.package) {
       if (pkg.source || pkg.name === 'frozen-consumer') continue;
       assert(
@@ -241,7 +327,9 @@ async function main(args: string[]) {
       {
         scope: 'checkout-composition-installed-consumer',
         status: 'passed',
-        cases: ['direct-sql-reopen', 'broker-sql-reopen'],
+        cases: spec.minimum
+          ? ['sdk-declared-minimum']
+          : ['direct-sql-reopen', 'broker-sql-reopen', 'core-direct-sql-reopen'],
         compositions: receipts,
       },
       null,

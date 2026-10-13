@@ -13,7 +13,10 @@ import {
   type NativeBuildSource,
   nativeBuildEventIndex,
   nativeBuildMetadata,
+  nativeQualificationInputBindings,
+  nativeRequiredCaptureInputs,
   nativeShippingManifestBindings,
+  nativeShippingQualificationPolicy,
   validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
 import { type NativeRoot, nativeOutputPath } from './native-publication-artifacts.mts';
@@ -99,17 +102,14 @@ export function captureNativeBuildEvidence({
       let roots: NativeRoot[];
       let rootConfigurations: { label: string; configuration: string }[];
       let producerCapture: NativeBuildEvidence['cohorts'][number]['producerCapture'];
+      let bep: ReturnType<typeof nativeBuildEventIndex> | undefined;
       if ('shippingRoots' in cohort) {
         const labels = array(cohort.shippingRoots).map((label) =>
           canonicalShippingLabel(text(label)),
         );
         if (!labels.length || new Set(labels).size !== labels.length)
           throw new Error('native producer requires unique selected shipping roots');
-        const bep = nativeBuildEventIndex(
-          cohort,
-          bazelVersion,
-          nativeBuildMetadata(source, github),
-        );
+        bep = nativeBuildEventIndex(cohort, bazelVersion, nativeBuildMetadata(source, github));
         const shippingManifests = labels.map((label) => {
           const targets = bep.completed.filter(
             (target) => canonicalShippingLabel(target.label) === label,
@@ -189,7 +189,7 @@ export function captureNativeBuildEvidence({
         },
         cohort.aquery,
       );
-      const inputs = view.physicalInputs;
+      const inputs = nativeRequiredCaptureInputs(view);
       const outputs = [
         ...new Set(roots.flatMap((root) => root.package.outputs.map((output) => output.path))),
       ].sort();
@@ -216,6 +216,19 @@ export function captureNativeBuildEvidence({
                 captures.push(value);
                 return { path: file, members: value.members };
               });
+      const qualificationInputs =
+        producerCapture === undefined
+          ? []
+          : (() => {
+              if (!bep) throw new Error('native qualification requires the producing event index');
+              const policy = nativeShippingQualificationPolicy(producerCapture, bep, roots);
+              return nativeQualificationInputBindings(cohort.aquery, bep, policy).map(
+                ({ files, ...test }) => ({
+                  ...test,
+                  inputs: [...files.keys()].sort().map((file) => capture(file, true)),
+                }),
+              );
+            })();
       return {
         executionRoot: cohort.executionRoot,
         roots,
@@ -225,6 +238,7 @@ export function captureNativeBuildEvidence({
         inputs: inputs.map((file) => capture(file, false)),
         outputs: outputs.map((file) => capture(file, true)),
         ...(producerCapture === undefined ? {} : { producerCapture }),
+        ...(qualificationInputs.length ? { qualificationInputs } : {}),
         ...(seedConstructions.length ? { seedConstructions } : {}),
         ...(analysisInputs === undefined
           ? {}

@@ -607,7 +607,9 @@ for (const selection of ['explicit', 'export'])
       expect(builds).toHaveLength(1);
       expect(builds[0]).toContain('//fixture:shipping');
       expect(builds[0]).toContain('//fixture:consumer');
-      expect(builds[0]).toContain('--output_groups=+shipping_manifest,+shipping_policy');
+      expect(builds[0]).toContain(
+        '--output_groups=+shipping_manifest,+shipping_policy,+observation_inputs',
+      );
       expect(builds[0]).toContain('--experimental_aquery_dump_after_build_format=jsonproto');
       expect(builds[0]).toContain(
         `--experimental_aquery_dump_after_build_output_file=${path.join(f.outputDirectory, 'aquery.json')}`,

@@ -217,6 +217,23 @@ exercise_android_crash_recovery() {
   write_android_process_metrics "$adb"
 }
 
+wait_for_android_smoke_receipt() {
+  local adb="$1" android_log_file="$2" receipt_status=0 pass
+  mobile_app_is_alive() { "$adb" shell pidof "$app_id" >/dev/null 2>&1; }
+  pass="$(wait_for_mobile_receipt "$android_log_file" "$android_log_pid")" || receipt_status=$?
+  kill -0 "$android_log_pid" 2>/dev/null || receipt_status=3
+  stop_mobile_log_capture "$android_log_pid"
+  android_log_pid=""
+  mobile_log_has_failure "$android_log_file" && receipt_status=2
+  mobile_app_is_alive || receipt_status=4
+  if [ "$receipt_status" != 0 ]; then
+    write_android_e2e_diagnostics "$adb" receipt-failure
+    fail "Android smoke receipt failed (status $receipt_status: timeout=1, failure=2, capture=3, app=4)"
+  fi
+  write_runner_report "$pass" || fail "invalid Android smoke receipt"
+  write_android_process_metrics "$adb"
+}
+
 install_and_launch() {
   local adb="$ANDROID_HOME/platform-tools/adb"
   "$adb" devices | grep -Eq 'device$' || fail "no Android emulator/device is connected"
@@ -261,27 +278,18 @@ install_and_launch() {
 
   local logs pass
   if [ "$runner" = smoke ] && [ "$lifecycle_smoke" != 1 ]; then
-    local receipt_status=0
-    mobile_app_is_alive() { "$adb" shell pidof "$app_id" >/dev/null 2>&1; }
-    pass="$(wait_for_mobile_receipt "$android_log_file" "$android_log_pid")" || receipt_status=$?
-    kill -0 "$android_log_pid" 2>/dev/null || receipt_status=3
-    stop_mobile_log_capture "$android_log_pid"
-    android_log_pid=""
-    mobile_log_has_failure "$android_log_file" && receipt_status=2
-    mobile_app_is_alive || receipt_status=4
-    if [ "$receipt_status" != 0 ]; then
-      write_android_e2e_diagnostics "$adb" receipt-failure
-      fail "Android smoke receipt failed (status $receipt_status: timeout=1, failure=2, capture=3, app=4)"
-    fi
-    write_runner_report "$pass" || fail "invalid Android smoke receipt"
-    write_android_process_metrics "$adb"
+    wait_for_android_smoke_receipt "$adb" "$android_log_file"
     return
   fi
 
   local deadline=$((SECONDS + timeout_seconds))
   local fail_line lifecycle_exercised=0
   while [ "$SECONDS" -lt "$deadline" ]; do
-    logs="$("$adb" logcat -d)"
+    if [ "$runner" = smoke ]; then
+      logs="$(cat "$android_log_file")"
+    else
+      logs="$("$adb" logcat -d)"
+    fi
     if [ "$lifecycle_smoke" = "1" ] &&
       [ "$lifecycle_exercised" = "0" ] &&
       logs_have_lifecycle_ready "$logs"; then
@@ -295,6 +303,10 @@ install_and_launch() {
       pass="$(printf '%s\n' "$logs" | grep -F "$success_tag" | tail -1 || true)"
     fi
     if [ -n "$pass" ]; then
+      if [ "$runner" = smoke ]; then
+        wait_for_android_smoke_receipt "$adb" "$android_log_file"
+        return
+      fi
       printf '\n%s\n' "$pass"
       write_runner_report "$pass"
       write_android_process_metrics "$adb"

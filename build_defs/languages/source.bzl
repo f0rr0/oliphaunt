@@ -1,7 +1,7 @@
 """Deterministic public source crates from authored manifests and native files."""
 
 load("@native_cargo_metadata//:cargo.bzl", "CARGO")
-load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS", "PUBLICATION_CARRIERS")
+load("@oliphaunt_metadata//:metadata.bzl", "PREPARED_NATIVE_SELECTED_PRODUCTS", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/release:supplier.bzl", "shipping_suppliers")
@@ -135,4 +135,7 @@ def cargo_source_package(product, fixtures = "", native_sdk = False, cargo_facts
     # Its compile/test dependencies are not incorporated compiled carrier Files.
     shipping_suppliers(name = "source_suppliers", inputs = [])
     shipping_package(name = "shipping_package", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":crate"], ecosystem = "cargo", package_name = facts["name"], configuration = "source", role = carriers[0]["role"], suppliers = ":source_suppliers")
+    common_consumer = "//build_defs/languages/installed:consumer_test"
+    if product == "oliphaunt-rust" and product in PREPARED_NATIVE_SELECTED_PRODUCTS and common_consumer in qualification:
+        qualification = qualification + ["//build_defs/languages/installed:consumer_minimum_test"]
     shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = qualification, testonly = True)

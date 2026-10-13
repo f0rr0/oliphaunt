@@ -30,6 +30,89 @@ const ROOT = path.resolve(import.meta.dir, '../..');
 const sha = (bytes, algorithm, encoding = 'hex') =>
   createHash(algorithm).update(bytes).digest(encoding);
 
+test('historical Maven files come from the exact old POM and each companion is acquired once', async () => {
+  const root = mkdtempSync(path.join('/tmp', 'historical-maven-'));
+  const pom = (packaging) =>
+    `<project><modelVersion>4.0.0</modelVersion><groupId>dev.example</groupId><artifactId>retired</artifactId><version>1.0.0</version><packaging>${packaging}</packaging><name>Retired</name><description>Historical package</description><url>https://example.org</url><licenses><license><name>MIT</name><url>https://example.org/license</url></license></licenses><developers><developer><name>Maintainer</name><url>https://example.org</url></developer></developers><scm><connection>scm:git:https://example.org/repo</connection><developerConnection>scm:git:ssh://example.org/repo</developerConnection><url>https://example.org/repo</url></scm></project>`;
+  try {
+    for (const packaging of ['pom', 'jar', 'aar', 'tar.gz']) {
+      const names = [
+        'retired-1.0.0.pom',
+        ...(packaging === 'pom'
+          ? []
+          : [
+              `retired-1.0.0.${packaging}`,
+              'retired-1.0.0-sources.jar',
+              'retired-1.0.0-javadoc.jar',
+            ]),
+      ];
+      const requested = [];
+      const result = await materializeRegistryCarrierIntegrity(
+        {
+          id: 'maven:dev.example:retired',
+          product: 'fixture',
+          ecosystem: 'maven',
+          name: 'dev.example:retired',
+          version: '1.0.0',
+          artifacts: [],
+        },
+        {
+          directory: path.join(root, packaging),
+          fetchImpl: async (url) => {
+            const name = new URL(url).pathname.split('/').at(-1);
+            assert.ok(names.includes(name));
+            requested.push(name);
+            return new Response(name.endsWith('.pom') ? pom(packaging) : `exact old ${name}`);
+          },
+        },
+      );
+      assert.deepEqual(requested, names);
+      assert.deepEqual(
+        result.carrier.artifacts.map((artifact) => path.basename(artifact.path)),
+        names,
+      );
+      await verifyRegistryCarrierIntegrity(result.carrier, {
+        cachedReceipt: result.receipt,
+        fetchImpl: () => assert.fail('retained receipt must not fetch'),
+      });
+    }
+    for (const fault of ['wrong-coordinate', 'missing-companion']) {
+      const requested = [];
+      await assert.rejects(
+        materializeRegistryCarrierIntegrity(
+          {
+            id: 'maven:dev.example:retired',
+            product: 'fixture',
+            ecosystem: 'maven',
+            name: 'dev.example:retired',
+            version: '1.0.0',
+            artifacts: [],
+          },
+          {
+            directory: path.join(root, fault),
+            fetchImpl: async (url) => {
+              const name = new URL(url).pathname.split('/').at(-1);
+              requested.push(name);
+              if (name.endsWith('.pom'))
+                return new Response(
+                  fault === 'wrong-coordinate'
+                    ? pom('jar').replace('<artifactId>retired', '<artifactId>wrong')
+                    : pom('jar'),
+                );
+              return new Response('missing', { status: 404 });
+            },
+          },
+        ),
+        fault === 'wrong-coordinate' ? /exact coordinate/ : /HTTP 404/,
+      );
+      assert.equal(requested[0], 'retired-1.0.0.pom');
+      assert.deepEqual(readdirSync(path.join(root, fault)), []);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('materializes exact Cargo/npm archives and all Maven companions once and reuses authenticated receipts', async () => {
   mkdirSync(path.join(ROOT, 'target'), { recursive: true });
   const root = mkdtempSync(path.join(ROOT, 'target', 'registry-materialization-test-'));

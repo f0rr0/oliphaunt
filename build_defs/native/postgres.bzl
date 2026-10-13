@@ -185,9 +185,12 @@ def postgres_native_targets(version):
     _postgres_windows_targets()
     native.alias(name = "libpq_shared", actual = select({"@oliphaunt//build_defs/native:macos_arm64": ":libpq.dylib", "@oliphaunt//build_defs/native:windows_x64": ":libpq.dll", "//conditions:default": ":libpq.so"}))
     cc_import(name = "libpq", shared_library = ":libpq_shared", interface_library = select({"@oliphaunt//build_defs/native:windows_x64": ":libpq_windows_interface", "//conditions:default": None}), target_compatible_with = _COMPATIBLE)
+    # Match upstream fe_utils Windows Winsock capacity without exporting it to other targets.
     cc_library(name = "frontend_utils", srcs = POSTGRES_FRONTEND_UTIL_SOURCES + ["src/fe_utils/psqlscan.c"],
                deps = [":server_headers", ":common_frontend", ":port_frontend", ":libpq"],
-               defines = ["FRONTEND"], copts = _COPTS, target_compatible_with = _COMPATIBLE)
+               defines = ["FRONTEND"],
+               local_defines = select({"@oliphaunt//build_defs/native:windows_x64": ["FD_SETSIZE=1024"], "//conditions:default": []}),
+               copts = _COPTS, target_compatible_with = _COMPATIBLE)
     cc_library(name = "tools_headers", hdrs = native.glob(["src/bin/pg_dump/*.h", "src/bin/pg_basebackup/*.h", "src/bin/psql/*.h"]) + ["src/bin/psql/sql_help.h"],
                deps = [":server_headers"], includes = ["src/bin/pg_dump", "src/bin/pg_basebackup", "src/bin/psql"], target_compatible_with = _COMPATIBLE)
     frontend_deps = [":server_headers", ":common_frontend", ":port_frontend", ":libpq", ":frontend_utils"]

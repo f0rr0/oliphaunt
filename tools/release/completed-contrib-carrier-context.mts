@@ -215,6 +215,7 @@ export async function readCompletedContribCarrierRows(
     return {
       publication,
       descriptor: products[publication.product],
+      inputContext,
       registryRows: registryPackageRows({ product: publication.product, inputContext }, prefix),
       sourceFiles: [...sources].map(([file, { sha }]) => ({ path: file, sha })),
     };

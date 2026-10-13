@@ -18,7 +18,7 @@ import {
   writeSeedConstructionReceipt,
 } from './seed_construction.mts';
 import { materializeArchive, privateWork, readSpecification, run } from './shared.mts';
-import { extractWasixRuntime } from './wasix_inputs.mts';
+import { extractWasixRuntime, parseWasixBootstrapRecipe } from './wasix_inputs.mts';
 
 const specification = readSpecification(process.argv.length === 4 ? 1 : 0);
 if (Object.hasOwn(specification, 'constructionTrees')) {
@@ -59,6 +59,10 @@ try {
   const command = path.resolve(specification.runner);
   const arguments_ = [runtime, prepared, specification.profile, ...(icuData ? [icuData] : [])];
   const environment = { LC_ALL: 'C', LANG: 'C', TZ: 'UTC', RAYON_NUM_THREADS: '2' };
+  const recipe = parseWasixBootstrapRecipe(
+    run(command, ['recipe', specification.profile], environment, work),
+    specification.profile,
+  );
   const intent = specification.constructionInputs
     ? captureSeedConstructionIntent(
         { family: 'wasix', target: 'portable', profile: specification.profile },
@@ -95,6 +99,7 @@ try {
         { family: 'wasix', target: 'portable', profile: specification.profile },
         {
           contract: specification.contract,
+          recipe,
           invocation: seedConstructionInvocation(command, arguments_, environment, {
             runtime,
             work,

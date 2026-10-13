@@ -54,6 +54,7 @@ import {
 } from './publication-lock.mts';
 import {
   allArtifactTargets,
+  contribCarrierDescriptor,
   currentProductVersionSync,
   extensionArtifactProductRoot,
   extensionArtifactTargets,
@@ -62,7 +63,7 @@ import {
   extensionSqlNames,
   validateExtensionCatalogRows,
 } from './release-artifact-targets.mts';
-import { productCompatibilityVersion, ROOT } from './release-graph.mts';
+import { loadProducts, productCompatibilityVersion, ROOT } from './release-graph.mts';
 
 const temporaryDirectories = [];
 
@@ -142,6 +143,227 @@ test('native publication inventory requires no Moon metadata and preserves runti
     env: { ...process.env, OLIPHAUNT_MOON_PROJECTS_FILE: '/missing-moon-projects.json' },
   });
   expect(result.exitCode, result.stderr.toString()).toBe(0);
+});
+
+function historicalArtifactContext() {
+  const files = new Map(
+    [
+      'src/database-resources/contracts/contract.json',
+      'src/extensions/contracts/extension-target-profiles.toml',
+      'src/extensions/generated/sdk/extensions.json',
+      'src/extensions/generated/mobile/static-extensions.tsv',
+    ].map((file) => [file, readFileSync(path.join(ROOT, file), 'utf8')]),
+  );
+  return {
+    files,
+    context: {
+      products: structuredClone(loadProducts('historical-artifact-test')),
+      contrib: structuredClone(contribCarrierDescriptor('historical-artifact-test')),
+      readText: (file) => {
+        if (!files.has(file)) throw new Error(`uncaptured historical input ${file}`);
+        return files.get(file);
+      },
+    },
+  };
+}
+
+test('historical artifact context preserves all current canonical renderer output', () => {
+  const { context } = historicalArtifactContext();
+  const catalog = loadPublicationCatalog('historical-artifact-parity');
+  expect(expectedProductArtifactRows(catalog.products, { inputContext: context })).toEqual(
+    expectedProductArtifactRows(catalog.products),
+  );
+});
+
+test('historical artifact context uses captured runtime targets and contrib member profiles', () => {
+  const { context, files } = historicalArtifactContext();
+  const native = context.contrib.nativeOwner;
+  const wasix = context.contrib.wasixOwner;
+  context.products[native].artifact_targets.targets = ['linux-x64-gnu'];
+  context.products[wasix].artifact_targets.targets = ['portable'];
+  context.contrib.members = [
+    { id: 'old_one', 'sql-name': 'old_one' },
+    { id: 'old_two', 'sql-name': 'old_two' },
+  ];
+  files.set(
+    'src/extensions/contracts/extension-target-profiles.toml',
+    `schema = "oliphaunt-extension-artifact-target-profiles-v1"
+[[profiles]]
+id = "old-native"
+[[profiles.targets]]
+target = "linux-x64-gnu"
+family = "native"
+kind = "native-dynamic"
+[[profiles]]
+id = "old-wasix"
+[[profiles.targets]]
+target = "wasix-portable"
+family = "wasix"
+kind = "wasix-runtime"
+`,
+  );
+  // Bundled historical members do not require today's singleton mobile files.
+  files.delete('src/extensions/generated/sdk/extensions.json');
+  files.delete('src/extensions/generated/mobile/static-extensions.tsv');
+  const product = { id: native, kind: context.products[native].kind, version: '0.1.0' };
+  const rows = expectedProductArtifactRows([product], { inputContext: context });
+  expect(rows.filter((row) => row.kind === 'native-runtime').map((row) => row.target)).toEqual([
+    'linux-x64-gnu',
+  ]);
+  expect(rows.filter((row) => row.kind === 'extension-bundle').map((row) => row.name)).toEqual([
+    `${context.contrib.artifactProduct}-0.1.0-native-linux-x64-gnu-bundle.tar.gz`,
+  ]);
+  expect(extensionSqlNames(context.contrib.artifactProduct, 'historical-test', context)).toEqual([
+    'old_one',
+    'old_two',
+  ]);
+});
+
+test('historical artifact context uses the captured resource contract rather than current seed slots', () => {
+  const { context, files } = historicalArtifactContext();
+  files.set(
+    'src/database-resources/contracts/contract.json',
+    JSON.stringify({
+      compatibilityKeys: { native: { 'linux-x64-gnu': [] } },
+      profiles: { standard: {} },
+    }),
+  );
+  const rows = expectedProductArtifactRows(
+    [
+      {
+        id: 'database-resources',
+        kind: context.products['database-resources'].kind,
+        version: '0.1.0',
+      },
+    ],
+    { inputContext: context },
+  );
+  expect(
+    rows.filter((row) => ['native-seeds', 'wasix-seeds'].includes(row.kind)).map((row) => row.name),
+  ).toEqual([
+    'database-resources-0.1.0-seed-native-linux-x64-gnu-standard.json',
+    'database-resources-0.1.0-seed-native-linux-x64-gnu-standard.tar.zst',
+    'database-resources-0.1.0-seed-wasix-standard.json',
+    'database-resources-0.1.0-seed-wasix-standard.tar.zst',
+  ]);
+  files.delete('src/database-resources/contracts/contract.json');
+  expect(() =>
+    expectedProductArtifactRows(
+      [{ id: 'database-resources', kind: 'resource', version: '0.1.0' }],
+      { inputContext: context },
+    ),
+  ).toThrow('uncaptured historical input');
+});
+
+test('historical artifact context keeps old iOS module and dependency identities without current file fallback', () => {
+  const { context, files } = historicalArtifactContext();
+  context.products = {
+    [context.contrib.nativeOwner]: {
+      ...context.products[context.contrib.nativeOwner],
+      artifact_targets: { preset: 'liboliphaunt-native', targets: ['ios-xcframework'] },
+    },
+    [context.contrib.wasixOwner]: {
+      ...context.products[context.contrib.wasixOwner],
+      artifact_targets: { preset: 'liboliphaunt-wasix', targets: ['portable'] },
+    },
+    'oliphaunt-extension-vector': {
+      kind: 'exact-extension-artifact',
+      extension_sql_name: 'vector',
+      path: 'gone/old-vector',
+    },
+  };
+  files.set(
+    'src/extensions/contracts/extension-target-profiles.toml',
+    `schema = "oliphaunt-extension-artifact-target-profiles-v1"
+[[profiles]]
+id = "old-ios"
+[[profiles.targets]]
+target = "ios-xcframework"
+family = "native"
+kind = "native-static-registry"
+`,
+  );
+  files.set(
+    'src/extensions/generated/sdk/extensions.json',
+    JSON.stringify({ extensions: [{ 'sql-name': 'vector', 'native-module-stem': 'old_vector' }] }),
+  );
+  files.set(
+    'src/extensions/generated/mobile/static-extensions.tsv',
+    'sql-name\tnative-module-stem\tios-static-dependencies\nvector\told_vector\topenssl\n',
+  );
+  const product = {
+    id: 'oliphaunt-extension-vector',
+    kind: 'exact-extension-artifact',
+    version: '0.0.9',
+  };
+  const rows = expectedProductArtifactRows([product], { inputContext: context });
+  expect(rows.filter((row) => row.role === 'github-release-asset').map((row) => row.name)).toEqual([
+    'oliphaunt-extension-vector-0.0.9-native-ios-dependency-openssl-xcframework.zip',
+    'oliphaunt-extension-vector-0.0.9-native-ios-runtime.tar.gz',
+    'oliphaunt-extension-vector-0.0.9-native-ios-xcframework.zip',
+  ]);
+  expect(rows.find((row) => row.kind === 'ios-xcframework').identity).toBe('old_vector');
+  const outsideOldTables = new Map(files);
+  outsideOldTables.set(
+    'src/extensions/contracts/extension-target-profiles.toml',
+    files.get('src/extensions/contracts/extension-target-profiles.toml') +
+      `
+[[profiles.targets]]
+target = "linux-arm64-gnu"
+family = "native"
+kind = "native-dynamic"
+`,
+  );
+  const rejected = Bun.spawnSync(
+    [
+      process.execPath,
+      '-e',
+      `
+    import { expectedProductArtifactRows } from './tools/release/publication-lock.mts';
+    const { product, context, files } = JSON.parse(process.env.HISTORICAL_ARTIFACT_FIXTURE);
+    context.readText = (file) => {
+      if (!Object.hasOwn(files, file)) throw new Error('uncaptured historical input ' + file);
+      return files[file];
+    };
+    expectedProductArtifactRows([product], { inputContext: context });
+  `,
+    ],
+    {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        HISTORICAL_ARTIFACT_FIXTURE: JSON.stringify({
+          product,
+          context,
+          files: Object.fromEntries(outsideOldTables),
+        }),
+      },
+    },
+  );
+  expect(rejected.exitCode).not.toBe(0);
+  expect(rejected.stderr.toString()).toContain('not backed by runtime artifact metadata');
+  const wasixTargets = context.products[context.contrib.wasixOwner].artifact_targets;
+  delete context.products[context.contrib.wasixOwner].artifact_targets;
+  expect(() => expectedProductArtifactRows([product], { inputContext: context })).toThrow(
+    'missing historical runtime artifact targets',
+  );
+  context.products[context.contrib.wasixOwner].artifact_targets = wasixTargets;
+  files.delete('src/extensions/generated/mobile/static-extensions.tsv');
+  expect(() => expectedProductArtifactRows([product], { inputContext: context })).toThrow(
+    'uncaptured historical input',
+  );
+  files.delete('src/extensions/generated/sdk/extensions.json');
+  expect(() => expectedProductArtifactRows([product], { inputContext: context })).toThrow(
+    'uncaptured historical input',
+  );
+  files.delete('src/extensions/contracts/extension-target-profiles.toml');
+  expect(() => expectedProductArtifactRows([product], { inputContext: context })).toThrow(
+    'uncaptured historical input',
+  );
+  delete context.products[context.contrib.nativeOwner];
+  expect(() =>
+    allArtifactTargets({ product: 'liboliphaunt-native', inputContext: context }),
+  ).toThrow('missing historical product');
 });
 
 test('canonical extension GitHub projection matches every legacy native asset row', () => {
@@ -1945,7 +2167,7 @@ describe('publication artifact discovery and freezing', () => {
   });
 });
 
-test('completed supplier projection covers the entire canonical GitHub delivery graph and keeps owner identities exact', () => {
+test('completed supplier projection preserves current and historical File facts without catalog authority', () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'complete-supplier-catalog-'));
   try {
     const root = path.resolve(import.meta.dir, '../..');
@@ -2006,33 +2228,40 @@ test('completed supplier projection covers the entire canonical GitHub delivery 
         },
         metadata,
       ),
-    ).toThrow('unknown canonical');
-    expect(() =>
-      nativePublicationInputProjection(
-        {
-          ...snapshot,
-          supplierArtifacts: [
-            {
-              ...supplierArtifacts[0],
-              publication: {
-                ...supplierArtifacts[0].publication,
-                product: 'oliphaunt-rust',
-                tagName: 'oliphaunt-rust-v' + supplierArtifacts[0].publication.version,
-              },
+    ).toThrow('filename differs');
+    // Structural relocation preserves declared history; the completed reader
+    // independently authenticates its owner, source and inventory.
+    const historicalOwner = nativePublicationInputProjection(
+      {
+        ...snapshot,
+        supplierArtifacts: [
+          {
+            ...supplierArtifacts[0],
+            publication: {
+              ...supplierArtifacts[0].publication,
+              product: 'oliphaunt-rust',
+              tagName: 'oliphaunt-rust-v' + supplierArtifacts[0].publication.version,
             },
-          ],
-        },
-        metadata,
-      ),
-    ).toThrow('unknown canonical');
+          },
+        ],
+      },
+      metadata,
+    );
+    expect(Object.values(historicalOwner.supplierArtifacts)).toHaveLength(1);
+    expect(Object.values(historicalOwner.supplierArtifacts)[0].publication.product).toBe(
+      'oliphaunt-rust',
+    );
     const subset = structuredClone(metadata);
     subset.products['oliphaunt-swift'].publish_targets = ['swift-package-source-tag'];
     const binding = supplierArtifacts.find(
       (row) => row.publication.product === 'oliphaunt-swift' && row.artifact.endsWith('.zip'),
     );
-    expect(() =>
-      nativePublicationInputProjection({ ...snapshot, supplierArtifacts: [binding] }, subset),
-    ).toThrow('unknown canonical');
+    const heldSwift = nativePublicationInputProjection(
+      { ...snapshot, supplierArtifacts: [binding] },
+      subset,
+    );
+    expect(Object.values(heldSwift.supplierArtifacts)).toHaveLength(1);
+    expect(Object.values(heldSwift.supplierArtifacts)[0].artifact).toBe(binding.artifact);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

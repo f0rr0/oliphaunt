@@ -535,6 +535,7 @@ test('compact descriptions bind exact sorted physical input sets and retain the 
   const actions = view.products.alpha.actions.map((action) => JSON.parse(action));
   expect(view.schema).toBe('oliphaunt-bazel-construction-inputs-v2');
   expect(view.physicalInputs).toEqual(['bazel-out/alpha.o', 'src/alpha.c', 'tools/packager']);
+  expect(view.captureInputs).toEqual(['src/alpha.c', 'tools/packager']);
   const packageInputs = ['bazel-out/alpha.o', 'tools/packager'];
   expect(actions.find((action) => action.target === '//:package').inputs).toEqual({
     count: packageInputs.length,
@@ -643,4 +644,29 @@ test('reused compiler headers remain complete without multiplying retained descr
   expect(view.physicalInputs).toHaveLength(2179);
   expect(view.products.alpha.actions).toHaveLength(130);
   expect(JSON.stringify(view).length).toBeLessThan(512_000);
+});
+
+test('only consumed typed supplier Files join the required byte frontier', () => {
+  const { exported, graph } = fixture();
+  const pkg = exported.packages[0] as any;
+  pkg.supplierInputs = [
+    {
+      product: 'supplier',
+      version: '1.0.0',
+      configuration: 'linux-x64',
+      binding: 'abi-contract',
+      origin: { kind: 'current-source' },
+      files: [{ path: 'bazel-out/alpha.o' }],
+    },
+  ];
+  expect(buildShippingInputView(exported, graph).captureInputs).toEqual([
+    'bazel-out/alpha.o',
+    'src/alpha.c',
+    'tools/packager',
+  ]);
+  pkg.supplierInputs[0].files[0].path = 'unconsumed';
+  expect(buildShippingInputView(exported, graph).captureInputs).toEqual([
+    'src/alpha.c',
+    'tools/packager',
+  ]);
 });

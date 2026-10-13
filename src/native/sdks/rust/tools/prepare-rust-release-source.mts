@@ -13,6 +13,7 @@ import {
   renderUnsupportedNativeTargetGuard,
   rustNativeTargetCfg,
 } from '../../../../../tools/packaging/rust-native-targets.mts';
+import { loadReleaseMetadata } from '../../../../../tools/release/bazel-release-metadata.mts';
 import {
   allArtifactTargets,
   compareText,
@@ -20,7 +21,6 @@ import {
   ROOT,
   registryPackageRows,
 } from '../../../../../tools/release/release-artifact-targets.mts';
-import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
 import { stageRustPackageSource } from './package-source.mts';
 
 const TOOL = 'prepare-rust-release-source.mts';
@@ -97,10 +97,16 @@ export function renderRustSdkNativeTargetGuard(nativeTargets) {
 
 export function renderReleaseCargoToml(
   source,
-  nativeVersion = productCompatibilityVersion(RUST_PRODUCT, LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL),
-  brokerVersion = productCompatibilityVersion(RUST_PRODUCT, BROKER_PRODUCT, TOOL),
+  nativeVersion,
+  brokerVersion,
   artifactTargets = nativeSdkArtifactTargets(),
 ) {
+  if (nativeVersion === undefined || brokerVersion === undefined) {
+    const compatibility = loadReleaseMetadata(ROOT).products[RUST_PRODUCT].compatibility_versions;
+    nativeVersion ??= compatibility[LIBOLIPHAUNT_NATIVE_PRODUCT];
+    brokerVersion ??= compatibility[BROKER_PRODUCT];
+  }
+  if (!nativeVersion || !brokerVersion) fail('Rust SDK installed runtime/helper pins are missing');
   let text = source
     .replace('repository.workspace = true', 'repository = "https://github.com/f0rr0/oliphaunt"')
     .replace('homepage.workspace = true', 'homepage = "https://oliphaunt.dev"');
@@ -198,12 +204,9 @@ function releaseStageDir(stageDir) {
 
 export function prepareRustReleaseSource({ stageDir = DEFAULT_STAGE_DIR, log = true } = {}) {
   const version = currentProductVersionSync(RUST_PRODUCT, TOOL);
-  const nativeVersion = productCompatibilityVersion(
-    RUST_PRODUCT,
-    LIBOLIPHAUNT_NATIVE_PRODUCT,
-    TOOL,
-  );
-  const brokerVersion = productCompatibilityVersion(RUST_PRODUCT, BROKER_PRODUCT, TOOL);
+  const compatibility = loadReleaseMetadata(ROOT).products[RUST_PRODUCT].compatibility_versions;
+  const nativeVersion = compatibility[LIBOLIPHAUNT_NATIVE_PRODUCT];
+  const brokerVersion = compatibility[BROKER_PRODUCT];
   const artifactTargets = nativeSdkArtifactTargets();
   const outputDir = releaseStageDir(stageDir);
   stageRustPackageSource(outputDir);

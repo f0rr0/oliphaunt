@@ -874,6 +874,113 @@ parser="json:version"
   });
 });
 
+test('Cargo source-library requirements remain distinct from independently held installed helper pins', () => {
+  fixture((root, write) => {
+    const config = JSON.parse(readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
+    const versions = JSON.parse(
+      readFileSync(path.join(root, '.release-please-manifest.json'), 'utf8'),
+    );
+    config.packages['src/native/broker'] = { component: 'oliphaunt-broker' };
+    config.packages['src/native/sdks/rust'] = { component: 'oliphaunt-rust' };
+    versions['src/native/broker'] = '0.4.0';
+    versions['src/native/sdks/rust'] = '0.3.3';
+    write('release-please-config.json', JSON.stringify(config));
+    write('.release-please-manifest.json', JSON.stringify(versions));
+    write(
+      'src/native/broker/release.toml',
+      'id="oliphaunt-broker"\nregistry_packages=["crates:oliphaunt-broker","crates:oliphaunt-broker-linux-x64-gnu"]\n[artifact_targets]\npreset="oliphaunt-broker"\ntargets=["linux-x64-gnu"]\n',
+    );
+    write(
+      'src/native/sdks/rust/release.toml',
+      `id="oliphaunt-rust"
+[compatibility_versions.broker_library]
+source_product="oliphaunt-broker"
+path="src/native/sdks/rust/Cargo.toml"
+parser="toml:dependencies.oliphaunt-broker.version"
+[compatibility_versions.broker_workspace_library]
+source_product="oliphaunt-broker"
+path="Cargo.toml"
+parser="toml:workspace.dependencies.oliphaunt-broker.version"
+[compatibility_versions.broker_runtime]
+source_product="oliphaunt-broker"
+path="src/native/sdks/rust/Cargo.toml"
+parser="toml:package.metadata.oliphaunt.broker-version"
+[compatibility_versions.broker_runtime_constant]
+source_product="oliphaunt-broker"
+path="src/native/sdks/rust/src/broker.rs"
+parser="rust-const:BROKER_RELEASE_VERSION"
+`,
+    );
+    const manifest = `[package]
+name="oliphaunt"
+version="0.3.3"
+[package.metadata.oliphaunt]
+broker-version="0.3.1"
+[dependencies]
+oliphaunt-broker={path="../../broker",version="0.4.0"}
+`;
+    write('src/native/sdks/rust/Cargo.toml', manifest);
+    write(
+      'Cargo.toml',
+      '[workspace.dependencies]\noliphaunt-broker={path="src/native/broker",version="0.4.0"}\n',
+    );
+    write('src/native/sdks/rust/src/broker.rs', 'const BROKER_RELEASE_VERSION: &str = "0.3.1";\n');
+    const metadata = loadReleaseMetadata(root);
+    expect(metadata.products['oliphaunt-broker'].version).toBe('0.4.0');
+    expect(metadata.products['oliphaunt-rust'].compatibility_versions).toEqual({
+      'oliphaunt-broker': '0.3.1',
+    });
+    expect(metadata.inputs['src/native/sdks/rust/Cargo.toml']).toBe(manifest);
+    expect(metadata.inputs['Cargo.toml']).toContain('version="0.4.0"');
+    expect(renderReleaseMetadata(metadata, '@identity//:identity.bzl').bzl).toContain('0.3.1');
+    // The registry source library and platform helper remain distinct packages
+    // even when the current library is consumed through Cargo's registry.
+    write('src/native/sdks/rust/Cargo.toml', manifest.replace('path="../../broker",', ''));
+    expect(loadReleaseMetadata(root).products['oliphaunt-rust'].compatibility_versions).toEqual({
+      'oliphaunt-broker': '0.3.1',
+    });
+    write(
+      'src/native/sdks/rust/Cargo.toml',
+      manifest.replace('version="0.4.0"', 'version="0.5.0"'),
+    );
+    expect(loadReleaseMetadata(root).products['oliphaunt-rust'].compatibility_versions).toEqual({
+      'oliphaunt-broker': '0.3.1',
+    });
+    const heldLibrary = manifest
+      .replace('path="../../broker",', '')
+      .replace('version="0.4.0"', 'version="0.3.1"')
+      .replace('broker-version="0.3.1"', 'broker-version="0.3.2"');
+    write('src/native/sdks/rust/Cargo.toml', heldLibrary);
+    write('src/native/sdks/rust/src/broker.rs', 'const BROKER_RELEASE_VERSION: &str = "0.3.2";\n');
+    expect(loadReleaseMetadata(root).products['oliphaunt-rust'].compatibility_versions).toEqual({
+      'oliphaunt-broker': '0.3.2',
+    });
+    const descriptor = readFileSync(path.join(root, 'src/native/sdks/rust/release.toml'), 'utf8');
+    write(
+      'src/native/sdks/rust/release.toml',
+      `${descriptor}
+[compatibility_versions.broker_platform]
+source_product="oliphaunt-broker"
+path="src/native/sdks/rust/Cargo.toml"
+parser="toml:dependencies.broker-carrier.version"
+`,
+    );
+    const platform =
+      '\nbroker-carrier={package="oliphaunt-broker-linux-x64-gnu",version="0.3.2"}\n';
+    write('src/native/sdks/rust/Cargo.toml', heldLibrary + platform);
+    expect(loadReleaseMetadata(root).products['oliphaunt-rust'].compatibility_versions).toEqual({
+      'oliphaunt-broker': '0.3.2',
+    });
+    write(
+      'src/native/sdks/rust/Cargo.toml',
+      heldLibrary + platform.replace('version="0.3.2"', 'version="0.3.3"'),
+    );
+    expect(() => loadReleaseMetadata(root)).toThrow(
+      'conflicting compatibility versions for oliphaunt-broker',
+    );
+  });
+});
+
 test('metadata paths cannot escape; rendered identities have no construction dependencies', () => {
   for (const value of ['', '../elsewhere', '/absolute', 'a/../b', 'a//b', 'a\\b', 'a\0b']) {
     expect(() => repositoryPath(value)).toThrow('inside the repository');
@@ -1113,11 +1220,14 @@ test('supplied-root supplier projection includes declared Swift and extension ca
         },
         metadata,
       ),
-    ).toThrow('unknown canonical');
+    ).toThrow('filename differs');
     const sourceOnly = structuredClone(metadata);
     sourceOnly.products['oliphaunt-swift'].publish_targets = ['swift-package-source-tag'];
-    expect(() =>
-      nativePublicationInputProjection({ ...snapshot, supplierArtifacts: [binding] }, sourceOnly),
-    ).toThrow('unknown canonical');
+    const retained = nativePublicationInputProjection(
+      { ...snapshot, supplierArtifacts: [binding] },
+      sourceOnly,
+    );
+    expect(Object.values(retained.supplierArtifacts)[0].publication).toEqual(binding.publication);
+    expect(Object.values(retained.supplierArtifacts)[0]).not.toHaveProperty('authenticated');
   });
 });

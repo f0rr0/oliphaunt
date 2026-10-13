@@ -588,3 +588,25 @@ test('exact reached seed TAR and receipt survive internal transport without ente
     expect(() => packet.assertUnchanged()).toThrow();
   });
 });
+
+test('public final packet cannot promote caller-injected test inputs into publication artifacts', async () => {
+  await fixture(async (f) => {
+    const directory = path.join(f.directory, 'injected-test-packet');
+    const evidenceFile = writeNativeBuildEvidence(f.capture, directory);
+    const evidence = JSON.parse(readFileSync(evidenceFile, 'utf8'));
+    const original = readNativeBuildFinalFiles(directory, evidence, constraints(f));
+    expect(original.qualificationInputs).toEqual([]);
+    expect(original.file(0, original.files[0].path)).toBe(original.artifactRoots[0]);
+    evidence.cohorts[0].qualificationInputs = [
+      {
+        label: '//fixture:unowned_test',
+        configuration: 'c'.repeat(64),
+        specification: evidence.cohorts[0].outputs[0].path,
+        inputs: evidence.cohorts[0].outputs,
+      },
+    ];
+    expect(() => readNativeBuildFinalFiles(directory, evidence, constraints(f))).toThrow(
+      /source-owned observer/,
+    );
+  });
+});

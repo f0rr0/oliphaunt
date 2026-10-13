@@ -7,9 +7,11 @@ import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrie
 import { tarArchive } from '../packaging/testdata/tar-fixture.mts';
 import { fileIdentity } from './native-file-identity.mts';
 import {
+  acquireCompletedNativeDeliveryBaseline,
   acquireNativePublicationBuilds,
   acquireNativePublicationInputs,
   acquireNativeReleaseArchives,
+  assertNeverPublishedNativeProducts,
   prepareNativeReleaseDelivery,
   stageNativeReleaseArchives,
   stageNativeReleaseFamilies,
@@ -18,8 +20,219 @@ import { loadPublicationCatalog } from './publication-catalog.mts';
 import { expectedProductArtifactRows } from './publication-lock.mts';
 import { allArtifactTargets } from './release-artifact-targets.mts';
 import { ROOT } from './release-graph.mts';
+import { fixtureCompletedNativeInventory } from './testdata/prepare-release-candidate-fixtures.mts';
 
 const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
+
+test('first publication requires initial source versions and proves public absence once for all new owners', async () => {
+  const calls = [];
+  const readPages = async (endpoint) => {
+    calls.push(endpoint);
+    return [];
+  };
+  await assertNeverPublishedNativeProducts([], { readPages });
+  expect(calls).toEqual([]);
+  await assertNeverPublishedNativeProducts(
+    [
+      { id: 'new-alpha', version: '0.0.0' },
+      { id: 'new-beta', version: '0.0.0' },
+    ],
+    { readPages },
+  );
+  expect(calls).toEqual(['repos/f0rr0/oliphaunt/tags', 'repos/f0rr0/oliphaunt/releases']);
+  for (const historical of ['tag', 'release'])
+    await expect(
+      assertNeverPublishedNativeProducts([{ id: 'new-alpha', version: '0.0.0' }], {
+        readPages: async (endpoint) =>
+          endpoint.endsWith(historical === 'tag' ? '/tags' : '/releases')
+            ? [
+                historical === 'tag'
+                  ? { name: 'new-alpha-v0.1.0' }
+                  : { tag_name: 'new-alpha-v0.1.0' },
+              ]
+            : [],
+      }),
+    ).rejects.toThrow('already has published version history');
+  await expect(
+    assertNeverPublishedNativeProducts([{ id: 'new-alpha', version: '0.1.0' }], { readPages }),
+  ).rejects.toThrow('initial products');
+  await expect(
+    assertNeverPublishedNativeProducts([{ id: 'new-alpha', version: '0.0.0' }], {
+      readPages: async () => {
+        throw new Error('history unavailable');
+      },
+    }),
+  ).rejects.toThrow('history unavailable');
+});
+
+test('historical acquisition retains retired identities and follows the old parent archive part set once', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'native-historical-acquisition-'));
+  const publication = {
+    product: 'liboliphaunt-native',
+    version: '1.0.0',
+    tagName: 'liboliphaunt-native-v1.0.0',
+    publicationSha: 'c'.repeat(40),
+    publicationTree: 'd'.repeat(40),
+    releaseSha: 'c'.repeat(40),
+  };
+  const parent = {
+    id: 'cargo:oliphaunt-linux-x64-gnu',
+    product: publication.product,
+    ecosystem: 'cargo',
+    name: 'oliphaunt-linux-x64-gnu',
+    version: publication.version,
+    role: 'platform-leaf',
+    target: 'linux-x64-gnu',
+    declared: true,
+  };
+  const npm = {
+    id: 'npm:@oliphaunt/retired-native',
+    product: publication.product,
+    ecosystem: 'npm',
+    name: '@oliphaunt/retired-native',
+    version: publication.version,
+    role: 'platform-leaf',
+    target: 'linux-x64-gnu',
+    declared: true,
+  };
+  const requested = [];
+  const assets = [
+    {
+      name: 'retired-native-1.0.0.tar.gz',
+      url: 'https://api.github.com/repos/f0rr0/oliphaunt/releases/assets/1',
+      size: 3,
+    },
+  ];
+  const transport = {
+    inventory: async () => ({
+      publication,
+      catalog: { products: [], carriers: [parent, npm] },
+      publicRows: [{ id: 'github-release:retired-native-1.0.0.tar.gz', name: assets[0].name }],
+    }),
+    readJson: async () => ({ id: 1 }),
+    readPages: async () => assets,
+    materialize: async (carrier, options) => {
+      requested.push(carrier.id);
+      mkdirSync(options.directory, { recursive: true });
+      const file = path.join(options.directory, carrier.artifacts[0].path);
+      writeFileSync(
+        file,
+        tarArchive(
+          carrier.ecosystem === 'npm'
+            ? [
+                {
+                  name: 'package/package.json',
+                  data: JSON.stringify({
+                    name: carrier.name,
+                    version: publication.version,
+                    repository: { type: 'git', url: 'git+https://github.com/f0rr0/oliphaunt.git' },
+                  }),
+                },
+              ]
+            : [
+                {
+                  name: `${carrier.name}-${publication.version}/Cargo.toml`,
+                  data: `[package]\nname = "${carrier.name}"\nversion = "${publication.version}"\n${carrier.id === parent.id ? `[dependencies]\n${parent.name}-part-001 = "=${publication.version}"\n` : ''}`,
+                },
+              ],
+        ),
+      );
+      const identity = fileIdentity(file);
+      if (carrier.artifacts[0].sha256) {
+        expect(carrier.artifacts[0].sha256).toBe(identity.sha256);
+        expect(carrier.artifacts[0].size).toBe(identity.size);
+      }
+      return {
+        carrier: {
+          ...carrier,
+          artifacts: [{ path: file, size: identity.size, sha256: identity.sha256 }],
+        },
+        receipt: {},
+        metadata: {},
+      };
+    },
+    proveAsset: async (_url, _name, _size, options) => {
+      requested.push('old-public-target');
+      mkdirSync(path.dirname(options.retainedPath), { recursive: true });
+      writeFileSync(options.retainedPath, 'old');
+      const identity = fileIdentity(options.retainedPath);
+      return { bytes: identity.size, sha256: identity.sha256 };
+    },
+  };
+  try {
+    const result = await acquireCompletedNativeDeliveryBaseline(
+      { publication, directory },
+      transport,
+    );
+    expect(requested).toEqual([
+      parent.id,
+      npm.id,
+      `cargo:${parent.name}-part-001`,
+      'old-public-target',
+    ]);
+    expect(Object.keys(result.baseline.carriers).sort()).toEqual(
+      [parent.id, npm.id, `cargo:${parent.name}-part-001`].sort(),
+    );
+    expect(Object.keys(result.baseline.productArtifacts)).toEqual([
+      'github-release:retired-native-1.0.0.tar.gz',
+    ]);
+    const metadataBaseline = { originalAuthenticatedObject: true } as any;
+    requested.length = 0;
+    const frozen = await acquireCompletedNativeDeliveryBaseline(
+      { publication, directory: path.join(directory, 'frozen'), metadataBaseline },
+      {
+        ...transport,
+        inventory: async (_publication, options) => {
+          expect(options.metadataBaseline).toBe(metadataBaseline);
+          return {
+            publication,
+            catalog: result.historical.catalog,
+            carriers: result.retained.map(({ carrier }) => carrier),
+            publicRows: [
+              {
+                id: 'github-release:retired-native-1.0.0.tar.gz',
+                name: assets[0].name,
+                size: 3,
+                sha256: createHash('sha256').update('old').digest('hex'),
+              },
+            ],
+          };
+        },
+      },
+    );
+    expect(frozen.baseline.metadataBaseline).toBe(metadataBaseline);
+    expect(requested).toEqual([
+      parent.id,
+      npm.id,
+      `cargo:${parent.name}-part-001`,
+      'old-public-target',
+    ]);
+    await expect(
+      acquireCompletedNativeDeliveryBaseline(
+        { publication, directory: path.join(directory, 'missing-frozen-part'), metadataBaseline },
+        {
+          ...transport,
+          inventory: async () => ({
+            publication,
+            catalog: result.historical.catalog,
+            carriers: result.retained
+              .map(({ carrier }) => carrier)
+              .filter((carrier) => carrier.id !== `cargo:${parent.name}-part-001`),
+            publicRows: [],
+          }),
+        },
+      ),
+    ).rejects.toThrow('completed Cargo part is absent from frozen inventory');
+    await expect(
+      acquireCompletedNativeDeliveryBaseline(
+        { publication, directory: path.join(directory, 'missing') },
+        { ...transport, readPages: async () => [] },
+      ),
+    ).rejects.toThrow('missing or ambiguous');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('WASIX held host lookup uses the actual published facade NAPI pin, independent of its runtime version, once per carrier', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'native-facade-supplier-'));
@@ -28,11 +241,25 @@ test('WASIX held host lookup uses the actual published facade NAPI pin, independ
     surface: 'npm-optional',
   }).filter((row) => row.npm_os === process.platform && row.npm_cpu === process.arch);
   expect(hosts).toHaveLength(1);
+  const retiredHost = '@oliphaunt/retired-host-native';
   const facade = loadPublicationCatalog('published facade fixture').products.find(
     (product) => product.id === 'oliphaunt-wasix-ts',
   )!;
   const acquisitions: string[] = [];
   const transport = {
+    inventory: async (publication) => {
+      const value = await fixtureCompletedNativeInventory(publication);
+      if (publication.product !== 'oliphaunt-wasix-napi') return value;
+      const host = value.carriers.find((row) => row.name === hosts[0].npm_package)!;
+      return {
+        ...value,
+        inputContext: undefined,
+        carriers: [
+          { ...host, id: `npm:${retiredHost}`, name: retiredHost, role: 'previous-host-role' },
+        ],
+      };
+    },
+    readPages: async () => [],
     readJson: async (endpoint: string) => ({
       id: 1,
       target_commitish: 'c'.repeat(40),
@@ -58,7 +285,7 @@ test('WASIX held host lookup uses the actual published facade NAPI pin, independ
                     name: carrier.name,
                     version: carrier.version,
                     oliphaunt: { runtimeVersion: '0.3.2' },
-                    optionalDependencies: { [hosts[0].npm_package]: '0.2.1' },
+                    optionalDependencies: { [retiredHost]: '0.2.1' },
                   }
                 : { name: carrier.name, version: carrier.version },
             ),
@@ -78,19 +305,25 @@ test('WASIX held host lookup uses the actual published facade NAPI pin, independ
       { source, directory: path.join(directory, 'owned'), consumerProducts: [facade.id] },
       transport,
     );
-    expect(acquisitions).toEqual([
-      'npm:@oliphaunt/ts-query@0.1.1',
-      `npm:@oliphaunt/wasix-ts@${facade.version}`,
-      `npm:${hosts[0].npm_package}@0.2.1`,
-    ]);
+    expect(acquisitions.toSorted()).toEqual(
+      [
+        'npm:@oliphaunt/ts-query@0.1.1',
+        `npm:@oliphaunt/wasix-ts@${facade.version}`,
+        `npm:${retiredHost}@0.2.1`,
+      ].sort(),
+    );
     expect(result.snapshot.seedControls).toEqual([]);
     expect(
-      result.snapshot.supplierArtifacts?.map((row) => [row.artifact, row.publication.version]),
-    ).toEqual([
-      ['npm:@oliphaunt/ts-query', '0.1.1'],
-      ['npm:@oliphaunt/wasix-ts', facade.version],
-      [`npm:${hosts[0].npm_package}`, '0.2.1'],
-    ]);
+      result.snapshot.supplierArtifacts
+        ?.map((row) => [row.artifact, row.publication.version])
+        .sort(),
+    ).toEqual(
+      [
+        ['npm:@oliphaunt/ts-query', '0.1.1'],
+        ['npm:@oliphaunt/wasix-ts', facade.version],
+        [`npm:${retiredHost}`, '0.2.1'],
+      ].sort(),
+    );
     expect(
       result.snapshot.supplierArtifacts?.every(
         (row) => fileIdentity(row.file.path).sha256 === row.file.sha256,
@@ -124,6 +357,8 @@ test('source Cargo requirements retain each canonical completed crate once throu
         consumerProducts: ['oliphaunt-pgwire-server'],
       },
       {
+        inventory: fixtureCompletedNativeInventory,
+        readPages: async () => [],
         readJson: async (endpoint) => ({
           id: 7,
           target_commitish: 'c'.repeat(40),
@@ -549,6 +784,7 @@ test('producer seed snapshot adopts all genuine completed slots without claiming
     }));
     const downloads: string[] = [];
     const transport = {
+      inventory: fixtureCompletedNativeInventory,
       readSeedAnchor: () => undefined,
       readJson: async (endpoint: string) => ({
         id: 7,
@@ -675,10 +911,13 @@ test('producer seed snapshot adopts all genuine completed slots without claiming
   }
 });
 
-test('declared held Swift source and bindings share one completed-origin acquisition and physical snapshot pool', async () => {
+test('declared held Swift source uses its retired binding name and historical owner path once', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'held-swift-inputs-'));
   const bindings = Buffer.from('controlled owned binding ZIP bytes');
-  const expected = 'oliphaunt-swift-0.8.2-bindings.xcframework.zip';
+  const expected = 'retired-swift-binding-0.8.2.zip';
+  const metadataName = 'oliphaunt-swift-0.8.2-native-baseline.json';
+  const metadataBytes = Buffer.from('controlled completed metadata bytes');
+  const originalMetadata = { metadata: {}, baselineAdmission: 'unknown' } as any;
   const acquisitions: string[] = [];
   const captures: any[] = [];
   try {
@@ -689,6 +928,20 @@ test('declared held Swift source and bindings share one completed-origin acquisi
         consumerProducts: ['oliphaunt-react-native'],
       },
       {
+        inventory: async (publication, options) => {
+          const historical = await fixtureCompletedNativeInventory(publication);
+          if (publication.product !== 'oliphaunt-swift') return historical;
+          expect(options.metadataBaseline).toBe(originalMetadata);
+          return {
+            ...historical,
+            descriptor: { ...historical.descriptor, path: 'retired/swift-source' },
+            publicRows: historical.publicRows.map((row) =>
+              row.kind === 'swift-bindings'
+                ? { ...row, id: `github-release:${expected}`, name: expected }
+                : row,
+            ),
+          };
+        },
         readJson: async (endpoint) => ({
           id: 82,
           target_commitish: 'c'.repeat(40),
@@ -703,7 +956,19 @@ test('declared held Swift source and bindings share one completed-origin acquisi
             url: 'https://api.github.com/repos/f0rr0/oliphaunt/releases/assets/1',
             digest: 'sha256:' + createHash('sha256').update(bindings).digest('hex'),
           },
+          {
+            id: 2,
+            name: metadataName,
+            state: 'uploaded',
+            size: metadataBytes.length,
+            url: 'https://api.github.com/repos/f0rr0/oliphaunt/releases/assets/2',
+            digest: 'sha256:' + createHash('sha256').update(metadataBytes).digest('hex'),
+          },
         ],
+        readBaseline: async ({ file }) => {
+          expect(readFileSync(file)).toEqual(metadataBytes);
+          return originalMetadata;
+        },
         assertCompleted: async (request) => ({
           ...request,
           publicationTree: 'd'.repeat(40),
@@ -712,8 +977,10 @@ test('declared held Swift source and bindings share one completed-origin acquisi
         proveAsset: async (_url, name, size, options) => {
           acquisitions.push(name);
           mkdirSync(path.dirname(options.retainedPath), { recursive: true });
-          writeFileSync(options.retainedPath, bindings);
-          return { bytes: size, sha256: createHash('sha256').update(bindings).digest('hex') };
+          const bytes = name === metadataName ? metadataBytes : bindings;
+          expect(size).toBe(bytes.length);
+          writeFileSync(options.retainedPath, bytes);
+          return { bytes: size, sha256: createHash('sha256').update(bytes).digest('hex') };
         },
         materialize: async (carrier: any, options: any) => {
           expect(carrier.product).toBe('oliphaunt-query-ts');
@@ -757,8 +1024,12 @@ test('declared held Swift source and bindings share one completed-origin acquisi
         },
       } as any,
     );
-    expect(acquisitions).toEqual([expected]);
+    expect(acquisitions).toEqual([metadataName, expected]);
+    expect(result.supplierMetadata.get('oliphaunt-swift@0.8.2')).toBe(originalMetadata);
+    expect(readFileSync(result.file, 'utf8')).not.toContain('baselineAdmission');
     expect(captures).toHaveLength(1);
+    expect(captures[0].descriptor.path).toBe('retired/swift-source');
+    expect(captures[0].bindings.name).toBe(expected);
     expect(captures[0].bindings.sha256).toBe(createHash('sha256').update(bindings).digest('hex'));
     expect(result.snapshot.seedControls).toEqual([]);
     expect(result.snapshot.supplierArtifacts!.map((row) => row.artifact)).toEqual([

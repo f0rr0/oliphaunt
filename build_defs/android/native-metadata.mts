@@ -272,10 +272,6 @@ export function androidNativeMetadata(packages: Package[], kotlin: string) {
     // stubs still compile with the originally applied compiler plugins.
     if (row.package === 'expo-dev-menu')
       deps = deps.filter((coordinate) => coordinate.startsWith('androidx.compose.foundation:'));
-    // Exact classifier AAR acquisition has no transitive variant metadata.
-    // Preserve RN's original api dependency edges from its source catalog.
-    if (deps.some((coordinate) => coordinate.startsWith('com.facebook.react:react-android:')))
-      deps = [...new Set([...deps, ...reactNativeDependencies])];
     for (const coordinate of deps) {
       maven.add(coordinate);
       if (coordinate.startsWith('com.squareup.zstd:zstd-kmp-okio-android:'))

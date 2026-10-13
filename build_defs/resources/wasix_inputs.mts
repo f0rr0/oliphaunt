@@ -9,6 +9,67 @@ import {
 } from '../../tools/packaging/portable-archive.mts';
 import { materializeArchive } from './shared.mts';
 
+export type WasixBootstrapRecipe = {
+  schema: 'oliphaunt-wasix-bootstrap-recipe-v1';
+  profile: 'standard' | 'icu';
+  command: string;
+  workingDirectory: string;
+  arguments: string[];
+  environment: [string, string][];
+};
+
+/** The declared runner describes the same guest recipe it actually executes. */
+export function parseWasixBootstrapRecipe(text: string, profile: 'standard' | 'icu') {
+  assert.ok(Buffer.byteLength(text) <= 64 * 1024, 'WASIX bootstrap recipe is not bounded');
+  const recipe = JSON.parse(text);
+  assert.ok(
+    recipe && typeof recipe === 'object' && !Array.isArray(recipe),
+    'invalid WASIX bootstrap recipe',
+  );
+  assert.deepEqual(
+    Object.keys(recipe).sort(),
+    ['schema', 'profile', 'command', 'workingDirectory', 'arguments', 'environment'].sort(),
+    'WASIX bootstrap recipe fields differ',
+  );
+  assert.equal(
+    recipe.schema,
+    'oliphaunt-wasix-bootstrap-recipe-v1',
+    'unsupported WASIX bootstrap recipe',
+  );
+  assert.equal(recipe.profile, profile, 'WASIX bootstrap recipe profile differs');
+  const string = (value: unknown): value is string =>
+    typeof value === 'string' && !/[\u0000-\u001f\u007f]/u.test(value);
+  assert.ok(string(recipe.command) && recipe.command, 'WASIX bootstrap recipe needs its command');
+  assert.ok(
+    string(recipe.workingDirectory) &&
+      recipe.workingDirectory.startsWith('/') &&
+      !recipe.workingDirectory.split('/').some((part: string) => part === '.' || part === '..'),
+    'WASIX bootstrap recipe needs its guest working directory',
+  );
+  assert.ok(
+    Array.isArray(recipe.arguments) && recipe.arguments.length && recipe.arguments.every(string),
+    'invalid WASIX bootstrap arguments',
+  );
+  assert.ok(
+    Array.isArray(recipe.environment) && recipe.environment.length,
+    'invalid WASIX bootstrap environment',
+  );
+  const names = new Set<string>();
+  for (const row of recipe.environment) {
+    assert.ok(
+      Array.isArray(row) &&
+        row.length === 2 &&
+        string(row[0]) &&
+        /^[A-Za-z_][A-Za-z_0-9]*$/u.test(row[0]) &&
+        string(row[1]),
+      'invalid WASIX bootstrap environment entry',
+    );
+    assert.ok(!names.has(row[0]), 'duplicate WASIX bootstrap environment entry');
+    names.add(row[0]);
+  }
+  return recipe as WasixBootstrapRecipe;
+}
+
 /** Project the actual completed archive; current payload directories remain unchanged. */
 export function wasixRuntimeInputs(source: string, work: string): string {
   if (!statSync(source).isFile()) return source;

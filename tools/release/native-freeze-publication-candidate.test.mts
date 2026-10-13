@@ -17,6 +17,7 @@ import {
   expectedProductArtifactRows,
   freezeNativePublicationCandidate,
 } from './publication-lock.mts';
+import { fixtureCompletedNativeInventory } from './testdata/prepare-release-candidate-fixtures.mts';
 
 const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
 const successful = {
@@ -264,9 +265,9 @@ test('two source cycles reuse the exact prepared Git source and owned binding wi
         },
         {
           publication: completed,
-          artifact: `github-release:oliphaunt-swift-${version}-bindings.xcframework.zip`,
+          artifact: `github-release:retired-swift-${version}.zip`,
           file: file(
-            `oliphaunt-swift-${version}-bindings.xcframework.zip`,
+            `retired-swift-${version}.zip`,
             Buffer.from('controlled retained binding; public authentication remains mandatory'),
           ),
         },
@@ -283,7 +284,27 @@ test('two source cycles reuse the exact prepared Git source and owned binding wi
       artifact: `swift-source-tag:${version}`,
     });
     const first = rows('0.8.2');
-    const held = await acquireObservedCompletedSuppliers(
+    const acquireHeld = (observation, directory, retained) =>
+      acquireObservedCompletedSuppliers(observation, directory, retained, {
+        inventory: async (publication) => {
+          const historic = await fixtureCompletedNativeInventory(publication);
+          return {
+            ...historic,
+            publicRows: historic.publicRows.map((row) =>
+              row.kind === 'swift-bindings'
+                ? {
+                    ...row,
+                    name: `retired-swift-${publication.version}.zip`,
+                    id: `github-release:retired-swift-${publication.version}.zip`,
+                  }
+                : row,
+            ),
+          };
+        },
+        readJson: async () => ({ id: 82 }),
+        readPages: async () => [],
+      });
+    const held = await acquireHeld(
       observation(origin('0.8.2')) as any,
       path.join(directory, 'held'),
       first,
@@ -292,56 +313,45 @@ test('two source cycles reuse the exact prepared Git source and owned binding wi
     expect(held[0]).toHaveProperty('sourceTags');
     expect(held[0].files[first[1].artifact]).toBe(first[1].file.path);
     expect(held[0].sourceTags[0]).toEqual(first[0]);
-    const nextSource = await acquireObservedCompletedSuppliers(
+    const nextSource = await acquireHeld(
       observation(origin('0.8.2')) as any,
       path.join(directory, 'next-source'),
       first,
     );
     expect(nextSource).toEqual(held);
     expect(
-      await acquireObservedCompletedSuppliers(
+      await acquireHeld(
         observation({ kind: 'current-source' }) as any,
         path.join(directory, 'current'),
         first,
       ),
     ).toEqual([]);
     const next = rows('0.8.3');
-    const nextHeld = await acquireObservedCompletedSuppliers(
+    const nextHeld = await acquireHeld(
       observation(origin('0.8.3')) as any,
       path.join(directory, 'next-held'),
       [...first, ...next],
     );
     expect(nextHeld[0].sourceTags[0]).toEqual(next[0]);
     await expect(
-      acquireObservedCompletedSuppliers(
-        observation(origin('0.8.3')) as any,
-        path.join(directory, 'missing'),
-        first,
-      ),
+      acquireHeld(observation(origin('0.8.3')) as any, path.join(directory, 'missing'), first),
     ).rejects.toThrow('absent from the acquired Prepare inputs');
     await expect(
-      acquireObservedCompletedSuppliers(
-        observation(origin('0.8.2')) as any,
-        path.join(directory, 'no-binding'),
-        [first[0]],
-      ),
+      acquireHeld(observation(origin('0.8.2')) as any, path.join(directory, 'no-binding'), [
+        first[0],
+      ]),
     ).rejects.toThrow('same-publication binding archive');
     const wrongBinding = structuredClone(first[1]);
     wrongBinding.publication.publicationSha = '7'.repeat(40);
     await expect(
-      acquireObservedCompletedSuppliers(
-        observation(origin('0.8.2')) as any,
-        path.join(directory, 'wrong-binding'),
-        [first[0], wrongBinding],
-      ),
+      acquireHeld(observation(origin('0.8.2')) as any, path.join(directory, 'wrong-binding'), [
+        first[0],
+        wrongBinding,
+      ]),
     ).rejects.toThrow('source differs');
     writeFileSync(first[0].file.path, 'tampered');
     await expect(
-      acquireObservedCompletedSuppliers(
-        observation(origin('0.8.2')) as any,
-        path.join(directory, 'wrong-file'),
-        first,
-      ),
+      acquireHeld(observation(origin('0.8.2')) as any, path.join(directory, 'wrong-file'), first),
     ).rejects.toThrow('File changed');
   } finally {
     rmSync(directory, { recursive: true, force: true });

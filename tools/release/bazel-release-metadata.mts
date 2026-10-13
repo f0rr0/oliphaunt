@@ -11,7 +11,10 @@ import {
 } from '../../src/extensions/tools/native-component-contract.mts';
 import { nativeCargoArtifactRows } from '../packaging/rust-native-targets.mts';
 import { validateNativeSupplierPublications } from './bazel-shipping-inputs.mts';
-import { compatibilityVersionFromText } from './compatibility-version-parser.mts';
+import {
+  cargoCompatibilityDependency,
+  compatibilityVersionFromText,
+} from './compatibility-version-parser.mts';
 import {
   contribExtensionMetadata,
   declaredExtensionMetadata,
@@ -319,31 +322,6 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
     }
     descriptors.set(id, descriptor);
   }
-  // Read authored installed requirements through the same parser as release
-  // preparation. Workspace producer versions do not replace these pins.
-  for (const [product, descriptor] of descriptors) {
-    const entries = object(
-      descriptor.compatibility_versions ?? {},
-      `${product}.compatibility_versions`,
-    );
-    for (const [id, value] of Object.entries(entries)) {
-      const entry = object(value, `${product}.compatibility_versions.${id}`);
-      const sourceProduct = string(entry.source_product, `${product}.${id}.source_product`);
-      if (!Object.hasOwn(products, sourceProduct))
-        throw new Error(`unknown compatibility product ${sourceProduct}`);
-      const file = string(entry.path, `${product}.${id}.path`);
-      const parser = string(entry.parser, `${product}.${id}.parser`);
-      const version = compatibilityVersionFromText({ id, path: file, parser }, read(file), {
-        prefix: 'release metadata',
-      });
-      const prior = products[product].compatibility_versions[sourceProduct];
-      if (prior !== undefined && prior !== version)
-        throw new Error(
-          `${product} declares conflicting compatibility versions for ${sourceProduct}`,
-        );
-      products[product].compatibility_versions[sourceProduct] = version;
-    }
-  }
   const contrib = toml('src/extensions/contrib/carriers.toml');
   const contribOwners = {
     native: string(contrib.native_owner, 'contrib.native_owner'),
@@ -532,6 +510,51 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
     target,
     role,
   }));
+  // Read authored installed requirements through the same parser as release
+  // preparation. Workspace producer versions do not replace these pins.
+  for (const [product, descriptor] of descriptors) {
+    const entries = object(
+      descriptor.compatibility_versions ?? {},
+      `${product}.compatibility_versions`,
+    );
+    for (const [id, value] of Object.entries(entries)) {
+      const entry = object(value, `${product}.compatibility_versions.${id}`);
+      const sourceProduct = string(entry.source_product, `${product}.${id}.source_product`);
+      if (!Object.hasOwn(products, sourceProduct))
+        throw new Error(`unknown compatibility product ${sourceProduct}`);
+      const file = string(entry.path, `${product}.${id}.path`);
+      const parser = string(entry.parser, `${product}.${id}.parser`);
+      const locator = { id, path: file, parser };
+      const text = read(file);
+      const dependency = cargoCompatibilityDependency(locator, text);
+      if (dependency?.path !== undefined) continue;
+      const carrier =
+        dependency &&
+        publicationCarriers.find(
+          (row) =>
+            row.product === sourceProduct &&
+            row.ecosystem === 'cargo' &&
+            row.name === dependency.packageName,
+        );
+      if (
+        carrier?.target === null &&
+        publicationCarriers.some(
+          (row) =>
+            row.product === sourceProduct && row.ecosystem === 'cargo' && row.target !== null,
+        )
+      )
+        continue;
+      const version = compatibilityVersionFromText(locator, text, {
+        prefix: 'release metadata',
+      });
+      const prior = products[product].compatibility_versions[sourceProduct];
+      if (prior !== undefined && prior !== version)
+        throw new Error(
+          `${product} declares conflicting compatibility versions for ${sourceProduct}`,
+        );
+      products[product].compatibility_versions[sourceProduct] = version;
+    }
+  }
   const nativeHelperArtifacts = ['oliphaunt-broker', 'oliphaunt-node-direct'].flatMap((product) => {
     const identity = products[product];
     if (!identity) return [];
@@ -763,7 +786,7 @@ export function nativeSupplierGithubArtifactDeclarations(metadata: ReleaseMetada
   ];
 }
 
-export function nativePublicationInputProjection(value: unknown, metadata?: ReleaseMetadata) {
+export function nativePublicationInputProjection(value: unknown, _metadata?: ReleaseMetadata) {
   const snapshot = object(value, 'native publication inputs');
   if (
     Object.keys(snapshot).some(
@@ -814,13 +837,6 @@ export function nativePublicationInputProjection(value: unknown, metadata?: Rele
     throw new Error('prepared native selected products require unique canonical IDs');
   const suppliers = projectNativeSupplierArtifacts(
     snapshot.supplierArtifacts === undefined ? [] : snapshot.supplierArtifacts,
-    metadata && {
-      publicationCarriers: metadata.publicationCarriers,
-      sourceTagProducts: Object.values(metadata.products)
-        .filter((product) => product.publish_targets.includes('swift-package-source-tag'))
-        .map((product) => product.id),
-      githubArtifacts: nativeSupplierGithubArtifactDeclarations(metadata),
-    },
   );
   for (const { publication } of Object.values(suppliers.artifacts)) {
     const matching = supplierPublications.find(

@@ -9,24 +9,25 @@ import {
   SEED_CONSTRUCTION_ANCHOR_SCHEMA,
   SEED_CONSTRUCTION_RECEIPT_SUFFIX,
   type SeedConstructionAnchor,
+  seedConstructionIntentSha256,
   validateSeedConstructionAnchor,
   validateSeedConstructionReceipt,
-  seedConstructionIntentSha256,
 } from '../../build_defs/resources/seed_construction.mts';
 import { assertAuthenticatedNativeBuildOrigin } from './authenticate-native-build-evidence.mts';
 import { buildShippingInputView } from './bazel-shipping-inputs.mts';
+import type { CompletedPublication } from './completed-release-publication.mts';
 import {
-  nativeShippingRootsHaveQualification,
   type NativeBuildSource,
+  nativeRequiredCaptureInputs,
+  nativeShippingRootsHaveQualification,
 } from './native-build-qualification.mts';
 import { fileIdentity } from './native-file-identity.mts';
-import { type NativeSeedInputControl } from './native-seed-inputs.mts';
-import { ROOT } from './release-graph.mts';
+import { assertAuthenticatedNativePublicBaseline } from './native-publication-metadata.mts';
+import type { observeNativePublicationConstruction } from './native-publication-observation.mts';
+import type { NativeSeedInputControl } from './native-seed-inputs.mts';
 import { loadPublicationCatalog } from './publication-catalog.mts';
 import { expectedProductArtifactRows } from './publication-lock.mts';
-import { assertAuthenticatedNativePublicBaseline } from './native-publication-metadata.mts';
-import type { CompletedPublication } from './completed-release-publication.mts';
-import type { observeNativePublicationConstruction } from './native-publication-observation.mts';
+import { ROOT } from './release-graph.mts';
 
 export const seedConstructionAnchorPath = 'src/database-resources/seeds/construction-anchor.json';
 export type NativeSeedConstructionBaseline =
@@ -195,7 +196,7 @@ export function proposeSeedConstructionAnchor({
           },
           cohort.aquery,
         );
-        const reached = new Set(view.physicalInputs);
+        const reached = new Set([...view.physicalInputs, ...nativeRequiredCaptureInputs(view)]);
         const rows = (cohort.seedConstructions ?? []).filter(
           (row) =>
             reached.has(row.path) &&

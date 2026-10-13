@@ -107,6 +107,11 @@ function transport(source, contents, treeReader, blobReader, carrier) {
         ),
         'src/native/sdks/swift/release.toml',
       );
+    // Historical inventory is pinned to the publication commit, separately
+    // from the delivered Swift source tag and its immutable Git members.
+    for (const member of ['release-please-config.json', '.release-please-manifest.json'])
+      if (endpoint === `${repository}/contents/${member}?ref=${source.publication.publicationSha}`)
+        return blob(git('show', `${source.publication.publicationSha}:${member}`), member);
     if (endpoint.startsWith(`${repository}/git/trees/`))
       return treeReader(endpoint.split('/').at(-1));
     if (endpoint.startsWith(`${repository}/git/blobs/`))

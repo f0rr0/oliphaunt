@@ -1,10 +1,12 @@
 import { expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fixture, source } from './completed-native-publication.fixture.mts';
 import {
+  acquireCompletedNativeMetadataBaseline,
   assertAuthenticatedNativePublicBaseline,
   prepareNativePublicationMetadata,
   readCompletedNativePublicBaseline,
@@ -30,6 +32,81 @@ import {
 } from './verify_github_release_attestations.mts';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+test('optional completed metadata is acquired before inventory decoding and keeps its original reader object', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'completed-metadata-acquisition-'));
+  const publication = {
+    product: 'database-resources',
+    version: '0.2.2',
+    tagName: 'database-resources-v0.2.2',
+    publicationSha: 'a'.repeat(40),
+    publicationTree: 'b'.repeat(40),
+    releaseSha: 'c'.repeat(40),
+  };
+  const artifact = nativePublicationMetadataArtifactRow({
+    id: publication.product,
+    version: publication.version,
+  });
+  const bytes = Buffer.from('{"controlled":"metadata"}');
+  const asset = {
+    id: 17,
+    name: artifact.name,
+    state: 'uploaded',
+    size: bytes.length,
+    digest: `sha256:${hash(bytes)}`,
+    url: 'https://api.github.com/repos/f0rr0/oliphaunt/releases/assets/17',
+  };
+  const baseline = { publication, metadata: {}, baselineAdmission: 'unknown' } as any;
+  const requests = [];
+  const transports = {
+    proveAsset: async (_url, name, size, options) => {
+      requests.push('download');
+      expect(name).toBe(artifact.name);
+      expect(size).toBe(bytes.length);
+      expect(options.expectedSha256).toBe(hash(bytes));
+      writeFileSync(options.retainedPath, bytes, { flag: 'wx' });
+      return { bytes: bytes.length, sha256: hash(bytes) };
+    },
+    readBaseline: async ({ publication: completed, file }) => {
+      requests.push('authenticate');
+      expect(completed).toBe(publication);
+      expect(readFileSync(file)).toEqual(bytes);
+      return baseline;
+    },
+  };
+  try {
+    expect(
+      await acquireCompletedNativeMetadataBaseline(
+        { publication, directory, assets: [] },
+        transports,
+      ),
+    ).toBeUndefined();
+    expect(requests).toEqual([]);
+    await expect(
+      acquireCompletedNativeMetadataBaseline(
+        { publication, directory, assets: [asset, asset] },
+        transports,
+      ),
+    ).rejects.toThrow('ambiguous');
+    await expect(
+      acquireCompletedNativeMetadataBaseline(
+        { publication, directory, assets: [{ ...asset, digest: 'invalid' }] },
+        transports,
+      ),
+    ).rejects.toThrow('identity');
+    const result = await acquireCompletedNativeMetadataBaseline(
+      { publication, directory, assets: [asset] },
+      transports,
+    );
+    expect(result!.baseline).toBe(baseline);
+    expect(requests).toEqual(['download', 'authenticate']);
+    expect(() => assertAuthenticatedNativePublicBaseline(result!.baseline)).toThrow(
+      'authenticated completed metadata origin',
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 const preparation = (input) => ({
   envelope: input.publicationLock,
   files: input.publicationFiles,
@@ -83,9 +160,26 @@ test('prepared metadata authenticates actual captured construction and excludes 
       'external/compiler/compiler',
       'src/alpha/index.ts',
     ]);
-    expect(construction.inputs.map(({ path }) => path)).toContain(
-      'bazel-out/k8-opt/bin/alpha/config.h',
-    );
+    const intermediate = 'bazel-out/k8-opt/bin/alpha/config.h';
+    expect(construction.inputs.map(({ path }) => path)).not.toContain(intermediate);
+    const actions = construction.actions.map((definition) => JSON.parse(definition));
+    expect(actions).toHaveLength(2);
+    expect(actions.find((action) => action.target === '//fixture/alpha:config')).toMatchObject({
+      outputs: [intermediate],
+      inputs: {
+        count: 2,
+        sha256: hash(Buffer.from(JSON.stringify(construction.leafInputPaths))),
+      },
+    });
+    expect(actions.find((action) => action.target === '//fixture/alpha:archive')).toMatchObject({
+      outputs: ['bazel-out/k8-opt/bin/alpha/alpha.tgz'],
+      inputs: {
+        count: 3,
+        sha256: hash(
+          Buffer.from(JSON.stringify([...construction.leafInputPaths, intermediate].sort())),
+        ),
+      },
+    });
     for (const paths of [
       ['bazel-out/k8-opt/bin/alpha/config.h'],
       ['src/missing/index.ts'],

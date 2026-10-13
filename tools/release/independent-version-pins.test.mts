@@ -93,11 +93,7 @@ function stageManifest(name, source) {
 test('every SDK retains its declared compatibility pins after independent dependency releases', () => {
   assert.ok(sdkPins.length > 0);
   for (const entry of sdkPins) {
-    assert.equal(
-      productCompatibilityVersion(entry.product, entry.sourceProduct),
-      entry.value,
-      entry.id,
-    );
+    assert.equal(compatibilityVersionValue(entry), entry.value, entry.id);
     const source = products[entry.sourceProduct];
     if (source.version !== manifest[source.path]) {
       assert.notEqual(entry.value, manifest[source.path], entry.id);

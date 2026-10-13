@@ -22,10 +22,11 @@ development lane.
 Construction exports are marked `scope = construction`: they cannot authorize
 publication, and unclassified changed inputs cannot mean unaffected. The
 acceptance fixtures exercise actual native outputs and cached action reuse.
-Active preparation still selects products through the existing ownership graph.
-The ancestry repair makes its history exact; it does not make that graph a
-precise description of delivered contents. Native release selection remains a
-cutover gate.
+Native release preparation now selects changed deliveries through authenticated
+configured production observations and completed publication history. Release
+Please calculates the versions of those selected owners. Complete hosted
+construction, consumer coverage and the seed adoption anchor remain acceptance
+gates; the implemented entrypoint alone does not establish release readiness.
 
 Linux construction and local reproduction are the default. This preserves the
 reason for the existing Linux-first design: maintainers must be able to reproduce
@@ -59,11 +60,13 @@ does not admit a release or establish coverage of the other rows.
 | Source SDK packages | Three actual Rust source crates match conventional manifests, features, held pins and canonical legal bytes. The installed native Cargo compiler/link/SQL/reopen consumer passes. Swift's declared source tree contains its root manifest and conventional version files. React Native's public npm package passes installed compiler/codegen and offline materialization/verification of the genuine held iOS carrier, using its immutable public header. | Installed WASIX Cargo execution, fresh macOS Swift qualification, final source-tag transport and installed mobile application tests. |
 | SQL-only WASIX extension | pgTAP GitHub/npm/Cargo envelopes contain identical bytes for all 24 actual SQL/control files. Cargo output is byte-identical to the existing canonical dispatcher; an unchanged Bazel request runs no packaging or tests. | Complete external owner assembly and actual WASIX installed execution alongside the remaining extension families. |
 | Construction evidence | The producing build emits shipping identities. Its BEP binds their bytes and configuration; physical inputs/outputs and required configured tests are checked. Final public file leaves are copied into the evidence packet and independently verified through the authenticated Actions ZIP; internal producer trees remain local. Reviewed exact-main assurance is retained in explicitly opted-in controller metadata, preserving PR construction-only transport. | Actual revised-source CI handoff, source-tag transport and complete canonical qualification for admission. The reviewed isolated builder attests input lifetime and the after-build dump; parsing bytes alone does not prove those execution claims. |
-| Release integration | Authenticated construction observations and explicitly opted-in controller metadata have focused regressions, including physical split-Cargo transport and historical producer versions. Default publication inventory and frozen locks reject incomplete native admission. | All-product coverage, durable admitted baselines, one necessary-delivery/compatibility decision, and replacement of the active selector and gates. |
+| Release integration | Authenticated construction observations and explicitly opted-in controller metadata have focused regressions, including physical split-Cargo transport and historical producer versions. Default publication inventory and frozen locks reject incomplete native admission. | Complete hosted coverage of all products/platforms, durable admitted baselines, the seed adoption anchor and retirement of legacy qualification machinery. |
 
-The migration remains incomplete. Existing Moon qualification and release
-selection retain authority; these construction checkpoints cannot be used to
-justify publishing or to remove an existing gate.
+The migration remains incomplete. Native release preparation and publication
+admission are implemented, but the complete hosted run and seed adoption anchor
+have not passed. Legacy CI remains for parity until that proof permits its
+atomic retirement. These construction checkpoints cannot justify publishing
+or removing an existing gate.
 
 macOS construction uses `--config=macos-sandbox` and the same
 `--host_jvm_args=-Xmx3g` startup setting throughout its shared output base. The
@@ -1219,10 +1222,9 @@ published. A changed VCS stamp or freshly bootstrapped PGDATA archive can change
 bytes without justifying a release; causal source equality and reuse of
 authenticated frozen deliveries still need live release-controller integration.
 
-Existing Moon qualification, Release Please versioning and release selection
-remain active. The native workflow qualifies an exact source commit; platform
-results from an earlier commit do not qualify the next checkpoint. Remaining
-WASIX extension families, foreign/device consumers, final inventory coverage,
-declared toolchain identity and the shared necessary-delivery decision must pass
-before that authority changes. No registry mutation, public version bump or
-release cutover was performed.
+Native release preparation now selects necessary deliveries and supplies their
+owners to Release Please for version calculation. Legacy CI remains until the
+complete native hosted/platform/device run, 27-product audit and genuine seed
+adoption anchor pass. Results from an earlier commit do not qualify the next
+source revision. No registry mutation, public version bump or legacy CI
+retirement has been performed.

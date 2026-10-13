@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { cargoSatisfies } from '../../build_defs/languages/cargo-metadata.mts';
 import { electronReleaseDependencies } from '../../src/examples/tools/example-release-dependencies.mts';
 import { extensionRegistryPackageStrings } from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
 import { currentEvidenceTable } from '../../src/extensions/tools/extension-evidence.mts';
 import { catalogPath, readJson } from '../../src/extensions/tools/extension-projections.mts';
+import { isCargoPathCompatibility } from './compatibility-version-parser.mts';
 import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
 import {
   exampleCargoPolicies,
@@ -323,6 +325,10 @@ async function syncCompatibilityVersions(
       continue;
     }
     if (parser.startsWith('toml:')) {
+      // Cargo requirements were projected before scope froze; runtime/helper
+      // metadata retains its separate installed-artifact adoption contract.
+      if (isCargoPathCompatibility({ id: specId, path: pathText, parser }, readText(file)))
+        continue;
       const [text, detail] = setTomlStringPath(file, parser.split(':', 2)[1], expected, specId);
       if (text !== undefined && detail !== undefined) {
         writeTextIfChanged(file, text, changes, detail, { write, observeUpdate });
@@ -421,10 +427,10 @@ function syncElectronExampleDependencies(changes, { write, observeUpdate, transi
   }
 }
 
-function localCargoPackagesByManifest() {
+function localCargoPackagesByManifest(manifests) {
   const packages = new Map();
-  for (const manifest of cargoManifestPaths()) {
-    const data = Bun.TOML.parse(readText(manifest));
+  for (const manifest of manifests?.keys() ?? cargoManifestPaths()) {
+    const data = manifests?.get(manifest).manifest ?? Bun.TOML.parse(readText(manifest));
     const packageConfig = data.package;
     if (
       packageConfig === null ||
@@ -455,10 +461,11 @@ function localCargoPackageVersions() {
   return versions;
 }
 
-function iterDependencyTables(manifest) {
+export function iterDependencyTables(manifest) {
   const tables = [];
   for (const [parts, owner] of [
     [[], manifest],
+    ...(manifest.workspace ? [[['workspace'], manifest.workspace]] : []),
     ...Object.entries(manifest.target ?? {}).map(([target, value]) => [['target', target], value]),
   ]) {
     for (const tableName of DEPENDENCY_TABLES) {
@@ -470,8 +477,22 @@ function iterDependencyTables(manifest) {
   return tables;
 }
 
-export function desiredCargoPathDependencyVersion(current, packageVersion) {
-  if (current === '*') return current;
+export function cargoPathDependencyConsumers(file, manifest, manifests, owners, binding) {
+  const consumers =
+    file === 'Cargo.toml'
+      ? [...manifests.values()]
+          .filter(({ manifest }) =>
+            iterDependencyTables(manifest).some(
+              ([, table]) => table[binding.name]?.workspace === true,
+            ),
+          )
+          .map(({ manifest }) => owners.get(manifest.package?.name))
+      : [owners.get(manifest.package?.name)];
+  return [...new Set(consumers.filter(Boolean))];
+}
+
+export function desiredCargoPathDependencyVersion(current, packageVersion, updateMinimum = false) {
+  if (!updateMinimum && cargoSatisfies(packageVersion, current)) return current;
   return current.startsWith('=') ? `=${packageVersion}` : packageVersion;
 }
 
@@ -520,7 +541,9 @@ export function cargoPathDependencyBindings(
         continue;
       }
       const dependencyManifest = path.resolve(path.dirname(manifestPath), pathValue, 'Cargo.toml');
-      const packageInfo = localPackages.get(realpathIfExists(dependencyManifest));
+      const packageInfo =
+        localPackages.get(dependencyManifest) ??
+        localPackages.get(realpathIfExists(dependencyManifest));
       if (packageInfo === undefined) {
         continue;
       }
@@ -541,25 +564,39 @@ export function cargoPathDependencyBindings(
 }
 
 function syncCargoPathDependencyPins(changes, { write, observeUpdate, transitions, buildBound }) {
-  const localPackages = localCargoPackagesByManifest();
+  const manifests = new Map(
+    cargoManifestPaths().map((file) => {
+      const text = readText(file);
+      return [file, { text, manifest: Bun.TOML.parse(text) }];
+    }),
+  );
+  const localPackages = localCargoPackagesByManifest(manifests);
   const products = graphProducts();
+  const owners = new Map(
+    Object.entries(products).flatMap(([id, product]) =>
+      (product.registry_packages ?? [])
+        .filter((name) => name.startsWith('crates:'))
+        .map((name) => [name.slice(7), id]),
+    ),
+  );
+  const selected = new Set(transitions.map(({ product }) => product));
   const selectedRoots = transitions
     .map(({ product }) => ({ product, root: path.join(ROOT, packagePath(product)) }))
     .sort(
       (left, right) => right.root.length - left.root.length || compareText(left.root, right.root),
     );
-  for (const manifestPath of cargoManifestPaths()) {
+  for (const [manifestPath, { text: source, manifest: parsed }] of manifests) {
+    const file = rel(manifestPath);
     const owner = selectedRoots.find(
       ({ root }) => manifestPath === root || manifestPath.startsWith(`${root}${path.sep}`),
     );
-    if (!owner) continue;
-    const source = readText(manifestPath);
-    const parsed = Bun.TOML.parse(source);
+    if (!owner && file !== 'Cargo.toml') continue;
+    const priorVersions = priorCargoPathDependencyVersions(manifestPath);
     const bindings = cargoPathDependencyBindings(
       source,
       manifestPath,
       localPackages,
-      priorCargoPathDependencyVersions(manifestPath),
+      priorVersions,
     ).filter((binding) => {
       const dependency = valueAt(parsed, binding.entryParts);
       const input = path.resolve(path.dirname(manifestPath), dependency.path);
@@ -570,7 +607,28 @@ function syncCargoPathDependencyPins(changes, { write, observeUpdate, transition
             input.startsWith(path.join(ROOT, metadata.path) + path.sep),
         )
         .sort((left, right) => right[1].path.length - left[1].path.length)[0]?.[0];
-      return buildBound.get(owner.product)?.has(producer);
+      const consumers = cargoPathDependencyConsumers(file, parsed, manifests, owners, binding);
+      const producerSelected = selected.has(producer);
+      const adopts = producerSelected && consumers.some((product) => selected.has(product));
+      if (adopts)
+        binding.expected = desiredCargoPathDependencyVersion(
+          binding.expected,
+          products[producer].version,
+          true,
+        );
+      if (file === 'Cargo.toml' && producerSelected) {
+        const held = consumers.filter((product) => !selected.has(product));
+        const prior = priorVersions.get(JSON.stringify(binding.entryParts)) ?? dependency.version;
+        if (held.length && binding.expected !== prior)
+          fail(
+            'workspace Cargo requirement ' +
+              binding.name +
+              ' would change unselected public consumers: ' +
+              held.join(', '),
+          );
+        return adopts;
+      }
+      return adopts || Boolean(owner && buildBound.get(owner.product)?.has(producer));
     });
     const result = syncExampleCargoManifestText(source, {
       policy: { crateDir: path.dirname(manifestPath) },

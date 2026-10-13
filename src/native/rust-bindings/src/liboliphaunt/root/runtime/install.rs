@@ -1031,36 +1031,16 @@ fn install_native_library_tree(
         }
     }
     for extension in extension_modules {
-        let extension_root = &extension.source_root;
-        let extension_lib = extension_root.join("lib/postgresql");
         for module in &extension.files {
-            match profile {
-                NativeRuntimeProfile::OliphauntEmbedded => {
-                    let embedded_extension_lib = extension_root.join("lib/modules");
-                    if embedded_extension_lib.join(module).is_file()
-                        || extension.embedded_fallback_file.as_ref() != Some(module)
-                    {
-                        copy_file_preserving_permissions(
-                            &embedded_extension_lib.join(module),
-                            &target_lib.join(module),
-                        )?;
-                    } else {
-                        let embedded_modules = embedded_modules.ok_or_else(|| {
-                        Error::Engine(
-                            "native liboliphaunt runtime requires embedded PostgreSQL extension modules"
-                                .to_owned(),
-                        )
-                    })?;
-                        copy_embedded_module(embedded_modules, &target_lib, module)?;
-                    }
-                }
-                NativeRuntimeProfile::PostgresServer => {
-                    copy_file_preserving_permissions(
-                        &extension_lib.join(module),
-                        &target_lib.join(module),
-                    )?;
-                }
+            let source = extension.module_source(profile, embedded_modules, module)?;
+            if !source.is_file() {
+                return Err(Error::Engine(format!(
+                    "native extension '{}' module is missing {}",
+                    extension.extension.sql_name(),
+                    source.display()
+                )));
             }
+            copy_file_preserving_permissions(&source, &target_lib.join(module))?;
         }
     }
     Ok(())

@@ -62,6 +62,7 @@ import {
   extensionMetadata,
   extensionSourceIdentity,
   extensionSqlNames,
+  readArtifactInputText,
 } from './release-artifact-targets.mts';
 import {
   compareText,
@@ -670,8 +671,11 @@ function extensionAssetKindAllowed(family, target, kind) {
   return kind === 'runtime';
 }
 
-function parseTsv(file) {
-  const lines = readFileSync(file, 'utf8')
+function parseTsv(file, inputContext = undefined) {
+  const lines = readArtifactInputText(
+    path.relative(ROOT, file).split(path.sep).join('/'),
+    inputContext,
+  )
     .split(/\r?\n/u)
     .filter((line) => line.length > 0 && !line.startsWith('#'));
   const header = lines[0].split('\t');
@@ -681,12 +685,12 @@ function parseTsv(file) {
   });
 }
 
-function exactExtensionIosContract(product, sqlName) {
-  if (!extensionSqlNames(product, 'publication-lock').includes(sqlName)) {
+function exactExtensionIosContract(product, sqlName, inputContext = undefined) {
+  if (!extensionSqlNames(product, 'publication-lock', inputContext).includes(sqlName)) {
     throw error(`${product} does not own extension SQL name ${sqlName}`);
   }
   const generated = JSON.parse(
-    readFileSync(path.join(ROOT, 'src/extensions/generated/sdk/extensions.json'), 'utf8'),
+    readArtifactInputText('src/extensions/generated/sdk/extensions.json', inputContext),
   );
   const row = generated.extensions?.find((item) => item?.['sql-name'] === sqlName);
   if (row === undefined) {
@@ -701,6 +705,7 @@ function exactExtensionIosContract(product, sqlName) {
   }
   const staticRows = parseTsv(
     path.join(ROOT, 'src/extensions/generated/mobile/static-extensions.tsv'),
+    inputContext,
   );
   const staticRow = staticRows.find((item) => item['sql-name'] === sqlName);
   if (staticRow === undefined || staticRow['native-module-stem'] !== nativeModuleStem) {
@@ -719,11 +724,11 @@ function exactExtensionIosContract(product, sqlName) {
   return { sqlName, nativeModuleStem, dependencies, metadata: row };
 }
 
-function extensionRequiredArtifactRows(product) {
+function extensionRequiredArtifactRows(product, inputContext = undefined) {
   const rows = [];
-  for (const target of extensionArtifactTargets({ product }, 'publication-lock')) {
+  for (const target of extensionArtifactTargets({ product, inputContext }, 'publication-lock')) {
     const sqlName = target.sqlName ?? target.sql_name;
-    const ios = exactExtensionIosContract(product, sqlName);
+    const ios = exactExtensionIosContract(product, sqlName, inputContext);
     if (target.family === 'wasix') {
       rows.push({
         sqlName,
@@ -796,9 +801,9 @@ export function extensionRequiredAssetKeys(product) {
   );
 }
 
-function extensionBundleCarrierRows(product, family = null) {
+function extensionBundleCarrierRows(product, family = null, inputContext = undefined) {
   const groups = new Map();
-  for (const row of extensionArtifactTargets({ product }, 'publication-lock')) {
+  for (const row of extensionArtifactTargets({ product, inputContext }, 'publication-lock')) {
     if (family !== null && row.family !== family) continue;
     const key = `${row.family}\0${row.target}`;
     if (!groups.has(key)) {
@@ -825,15 +830,19 @@ export function expectedExtensionGithubReleaseAssetCount(product) {
   return extensionRequiredAssetKeys(product).length + 4;
 }
 
-export function expectedExtensionGithubReleaseAssetRows(product, declared = undefined) {
+export function expectedExtensionGithubReleaseAssetRows(
+  product,
+  declared = undefined,
+  inputContext = undefined,
+) {
   if (declared !== undefined) return declaredExtensionGithubReleaseAssetRows(product, declared);
-  const sqlNames = extensionSqlNames(product.id, 'publication-lock');
+  const sqlNames = extensionSqlNames(product.id, 'publication-lock', inputContext);
   return declaredExtensionGithubReleaseAssetRows(product, {
     sqlNames,
     requiredRows:
       sqlNames.length > 1
-        ? extensionBundleCarrierRows(product.id, extensionCarrierFamily(product))
-        : extensionRequiredArtifactRows(product.id),
+        ? extensionBundleCarrierRows(product.id, extensionCarrierFamily(product), inputContext)
+        : extensionRequiredArtifactRows(product.id, inputContext),
   });
 }
 
@@ -2285,10 +2294,10 @@ export function extensionReleaseMetadataRows(product, family = extensionCarrierF
   return declaredExtensionReleaseMetadataRows(product, family);
 }
 
-function expectedExtensionProductArtifactRows(product) {
+function expectedExtensionProductArtifactRows(product, inputContext = undefined) {
   const owner = extensionPublicationOwner(product);
   return [
-    ...expectedExtensionGithubReleaseAssetRows(product).map((row) => ({
+    ...expectedExtensionGithubReleaseAssetRows(product, undefined, inputContext).map((row) => ({
       product: owner,
       version: product.version,
       id: `github-release:${row.name}`,
@@ -2311,11 +2320,16 @@ function expectedExtensionProductArtifactRows(product) {
   ];
 }
 
-function expectedProductArtifacts(product, hasSelectedExtensionProducts, artifactPhase) {
+function expectedProductArtifacts(
+  product,
+  hasSelectedExtensionProducts,
+  artifactPhase,
+  inputContext = undefined,
+) {
   if (EXTENSION_PRODUCT_KINDS.has(product.kind))
-    return expectedExtensionProductArtifactRows(product);
+    return expectedExtensionProductArtifactRows(product, inputContext);
   const rows = allArtifactTargets(
-    { product: product.id, surface: 'github-release' },
+    { product: product.id, surface: 'github-release', inputContext },
     'publication-lock',
   ).map((target) => {
     const name = target.asset.replaceAll('{version}', product.version);
@@ -2363,17 +2377,20 @@ function expectedProductArtifacts(product, hasSelectedExtensionProducts, artifac
       name,
     })),
   );
-  const contrib = contribCarrierDescriptor('publication-lock');
+  const contrib = contribCarrierDescriptor('publication-lock', inputContext);
   for (const family of ['native', 'wasix']) {
     const owner = family === 'native' ? contrib.nativeOwner : contrib.wasixOwner;
     if (product.id === owner)
       rows.push(
-        ...expectedExtensionProductArtifactRows({
-          id: contrib.artifactProduct,
-          version: product.version,
-          releaseProduct: product.id,
-          family,
-        }),
+        ...expectedExtensionProductArtifactRows(
+          {
+            id: contrib.artifactProduct,
+            version: product.version,
+            releaseProduct: product.id,
+            family,
+          },
+          inputContext,
+        ),
       );
   }
   return rows;
@@ -2381,7 +2398,12 @@ function expectedProductArtifacts(product, hasSelectedExtensionProducts, artifac
 
 export function expectedProductArtifactRows(
   products,
-  { nativeMetadataProducts = [], artifactPhase = 'final', swiftExtensionFixture = false } = {},
+  {
+    nativeMetadataProducts = [],
+    artifactPhase = 'final',
+    swiftExtensionFixture = false,
+    inputContext = undefined,
+  } = {},
 ) {
   if (!['pre-version', 'final'].includes(artifactPhase))
     throw error('artifact inventory phase must be pre-version or final');
@@ -2404,7 +2426,7 @@ export function expectedProductArtifactRows(
     throw error('Swift extension fixture requires the source SDK product');
   return [
     ...products.flatMap((product) =>
-      expectedProductArtifacts(product, swiftExtensionFixture, artifactPhase),
+      expectedProductArtifacts(product, swiftExtensionFixture, artifactPhase, inputContext),
     ),
     ...nativePublicationMetadataArtifactRows(products, nativeMetadataProducts),
   ].sort((left, right) =>

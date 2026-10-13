@@ -3,14 +3,14 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
-#[cfg(feature = "cluster-seed-runner")]
+#[cfg(any(feature = "cluster-seed-runner", test))]
 pub const INTERNAL_ICU_READY_ENV: &str = "OLIPHAUNT_INTERNAL_ICU_READY";
-#[cfg(feature = "cluster-seed-runner")]
+#[cfg(any(feature = "cluster-seed-runner", test))]
 pub const INTERNAL_ICU_READY_VALUE: &str = "1";
-#[cfg(feature = "cluster-seed-runner")]
+#[cfg(any(feature = "cluster-seed-runner", test))]
 const SKIP_SYSTEM_COLLATION_DISCOVERY_ENV: &str =
     "OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY";
-#[cfg(feature = "cluster-seed-runner")]
+#[cfg(any(feature = "cluster-seed-runner", test))]
 const SKIP_ICU_COLLATION_DISCOVERY_ENV: &str = "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +39,30 @@ impl CatalogProfile {
 
 pub fn default_initdb_profile() -> &'static str {
     "allow-group-access,encoding=UTF8,locale=C.UTF-8,locale-provider=libc,auth=trust,no-sync"
+}
+
+#[cfg(any(feature = "cluster-seed-runner", test))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootstrapRecipe {
+    pub schema: &'static str,
+    pub profile: &'static str,
+    pub command: &'static str,
+    pub working_directory: &'static str,
+    pub arguments: Vec<&'static str>,
+    pub environment: Vec<(&'static str, &'static str)>,
+}
+
+#[cfg(any(feature = "cluster-seed-runner", test))]
+pub fn bootstrap_recipe(profile: CatalogProfile) -> BootstrapRecipe {
+    BootstrapRecipe {
+        schema: "oliphaunt-wasix-bootstrap-recipe-v1",
+        profile: profile.as_str(),
+        command: "initdb",
+        working_directory: "/",
+        arguments: default_initdb_args(),
+        environment: cluster_seed_producer_environment(profile),
+    }
 }
 
 pub fn clean_generated_cluster_seed(pgdata: &Path) -> Result<()> {
@@ -77,6 +101,7 @@ pub fn run_wasix_initdb_cluster_seed(
     use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
     use wasmer_wasix::virtual_fs::null_file::NullFile;
 
+    let recipe = bootstrap_recipe(profile);
     with_wasix_cluster_seed_runner(
         runtime_stage,
         work_root,
@@ -88,16 +113,16 @@ pub fn run_wasix_initdb_cluster_seed(
             let (stderr_file, stderr_capture) = TailCaptureFile::new(64 * 1024);
             let run_result = {
                 let mut runner = WasiRunner::new();
-                runner.with_current_dir("/");
+                runner.with_current_dir(recipe.working_directory);
                 runner.with_mount("/".to_owned(), seed_runner.root_fs.clone());
                 runner.with_mount("/base".to_owned(), seed_runner.pgdata_fs.clone());
-                runner.with_args(default_initdb_args());
-                runner.with_envs(cluster_seed_producer_environment(profile));
+                runner.with_args(recipe.arguments.clone());
+                runner.with_envs(recipe.environment.clone());
                 runner.with_stdin(Box::<NullFile>::default());
                 runner.with_stdout(Box::new(stdout_file));
                 runner.with_stderr(Box::new(stderr_file));
                 runner.run_command(
-                    "initdb",
+                    recipe.command,
                     &seed_runner.package,
                     RuntimeOrEngine::Runtime(seed_runner.runtime.clone()),
                 )
@@ -388,7 +413,7 @@ fn default_initdb_args() -> Vec<&'static str> {
     ]
 }
 
-#[cfg(feature = "cluster-seed-runner")]
+#[cfg(any(feature = "cluster-seed-runner", test))]
 fn cluster_seed_environment(profile: CatalogProfile) -> Vec<(&'static str, &'static str)> {
     let mut environment = vec![
         ("PGDATA", "/base"),
@@ -409,7 +434,7 @@ fn cluster_seed_environment(profile: CatalogProfile) -> Vec<(&'static str, &'sta
     environment
 }
 
-#[cfg(feature = "cluster-seed-runner")]
+#[cfg(any(feature = "cluster-seed-runner", test))]
 fn cluster_seed_producer_environment(profile: CatalogProfile) -> Vec<(&'static str, &'static str)> {
     let mut environment = cluster_seed_environment(profile);
     environment.push((SKIP_SYSTEM_COLLATION_DISCOVERY_ENV, "1"));
@@ -797,6 +822,44 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
 #[cfg(test)]
 mod layout_tests {
     use super::*;
+
+    #[test]
+    fn bootstrap_recipe_describes_the_actual_profile_policy() -> Result<()> {
+        for profile in CatalogProfile::ALL {
+            let recipe = bootstrap_recipe(profile);
+            assert_eq!(recipe.profile, profile.as_str());
+            assert_eq!(recipe.arguments, default_initdb_args());
+            assert_eq!(
+                recipe.environment,
+                cluster_seed_producer_environment(profile)
+            );
+            let json = serde_json::to_value(&recipe)?;
+            assert_eq!(json["schema"], "oliphaunt-wasix-bootstrap-recipe-v1");
+            assert_eq!(json["command"], "initdb");
+            assert_eq!(json["workingDirectory"], "/");
+            assert_eq!(json["arguments"], serde_json::to_value(&recipe.arguments)?);
+            assert_eq!(
+                json["environment"],
+                serde_json::to_value(&recipe.environment)?
+            );
+            let environment: std::collections::BTreeMap<_, _> =
+                recipe.environment.into_iter().collect();
+            assert_eq!(environment[SKIP_SYSTEM_COLLATION_DISCOVERY_ENV], "1");
+            if profile == CatalogProfile::Standard {
+                assert_eq!(environment[SKIP_ICU_COLLATION_DISCOVERY_ENV], "1");
+                assert!(!environment.contains_key(INTERNAL_ICU_READY_ENV));
+                assert!(!environment.contains_key("ICU_DATA"));
+            } else {
+                assert_eq!(
+                    environment[INTERNAL_ICU_READY_ENV],
+                    INTERNAL_ICU_READY_VALUE
+                );
+                assert_eq!(environment["ICU_DATA"], "/share/icu");
+                assert!(!environment.contains_key(SKIP_ICU_COLLATION_DISCOVERY_ENV));
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn rejects_missing_empty_pgdata_directory() -> Result<()> {

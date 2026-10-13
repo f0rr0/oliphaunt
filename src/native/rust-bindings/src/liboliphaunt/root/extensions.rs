@@ -48,6 +48,36 @@ pub(super) struct ResolvedExtensionModules {
     pub(super) embedded_fallback_file: Option<String>,
 }
 
+impl ResolvedExtensionModules {
+    pub(super) fn module_source(
+        &self,
+        profile: NativeRuntimeProfile,
+        embedded_modules: Option<&Path>,
+        module: &str,
+    ) -> Result<PathBuf> {
+        let directory = if profile.needs_embedded_modules() {
+            "lib/modules"
+        } else {
+            "lib/postgresql"
+        };
+        let source = self.source_root.join(directory).join(module);
+        if !profile.needs_embedded_modules()
+            || source.is_file()
+            || self.embedded_fallback_file.as_deref() != Some(module)
+        {
+            return Ok(source);
+        }
+        embedded_modules
+            .map(|directory| directory.join(module))
+            .ok_or_else(|| {
+                Error::Engine(
+                    "native liboliphaunt runtime requires embedded PostgreSQL extension modules"
+                        .to_owned(),
+                )
+            })
+    }
+}
+
 pub(super) fn resolve_extension_modules(
     profile: NativeRuntimeProfile,
     install_dir: &Path,

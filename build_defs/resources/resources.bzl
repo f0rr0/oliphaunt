@@ -197,7 +197,7 @@ def _native_seed_impl(ctx):
     }, constructor_inputs + reuse_inputs + promotion_inputs, [frozen, abi, construction], "PostgresClusterSeed")
     return [DefaultInfo(files = depset([frozen, abi, construction])),
             NativeSeedInfo(frozen = frozen, abi = abi, runtime = ctx.file.runtime, profile = ctx.attr.profile, target = ctx.attr.target, construction = construction),
-            OutputGroupInfo(frozen = depset([frozen]), abi = depset([abi]), specification = depset([specification]), construction = depset([construction]))]
+            OutputGroupInfo(frozen = depset([frozen]), abi = depset([abi]), specification = depset([specification]), construction = depset([construction]), observation_inputs = depset([frozen, construction]))]
 
 native_seed = rule(implementation = _native_seed_impl, attrs = dict(SEED_REUSE_ATTRS, **{
     "runtime": attr.label(default = "//src/native/runtime:runtime_payload", allow_single_file = True),
@@ -243,7 +243,7 @@ def _wasix_seed_impl(ctx):
             env = {"LC_ALL": "C", "RAYON_NUM_THREADS": "2"})
     return [DefaultInfo(files = depset([frozen, construction])),
             WasixSeedInfo(frozen = frozen, runtime = ctx.file.runtime, profile = ctx.attr.profile, target = "portable", construction = construction),
-            OutputGroupInfo(frozen = depset([frozen]), construction = depset([construction]))]
+            OutputGroupInfo(frozen = depset([frozen]), construction = depset([construction]), observation_inputs = depset([frozen, construction]))]
 
 wasix_seed = rule(implementation = _wasix_seed_impl, attrs = dict(SEED_REUSE_ATTRS, **{
     "runtime": attr.label(default = "//src/wasix/runtime:portable_payload", allow_single_file = True),
@@ -330,13 +330,13 @@ def _rows(names):
         fail("resource carriers must exactly match the canonical publication catalog")
     return rows
 
-def _shipping(name, rows, suppliers = None):
+def _shipping(name, rows, suppliers = None, observation_inputs = []):
     packages = []
     for row in rows:
         label = name + "_" + row["ecosystem"]
         native.filegroup(name = label + "_files", srcs = [":" + name], output_group = row["ecosystem"])
         shipping_package(name = label, owner = "@oliphaunt_metadata//:product_database-resources", artifacts = [":" + label + "_files"],
-                         ecosystem = row["ecosystem"], package_name = row["name"], configuration = row["target"] or "portable", role = row["role"], suppliers = suppliers)
+                         ecosystem = row["ecosystem"], package_name = row["name"], configuration = row["target"] or "portable", role = row["role"], suppliers = suppliers, observation_inputs = observation_inputs)
         packages.append(":" + label)
     return packages
 
@@ -354,7 +354,7 @@ def seed_envelopes(prefix, family, target, profile, seed, icu = None, compatible
     for group, row in [("archive", archive), ("manifest", manifest)]:
         native.filegroup(name = prefix + "_" + group, srcs = [":" + prefix + "_assets"], output_group = group)
         shipping_package(name = prefix + "_github_" + group, owner = "@oliphaunt_metadata//:product_database-resources", artifacts = [":" + prefix + "_" + group],
-                         ecosystem = "github", package_name = row["asset"].replace("{version}", _VERSION), configuration = row["target"], role = "github-release-asset", suppliers = suppliers)
+                         ecosystem = "github", package_name = row["asset"].replace("{version}", _VERSION), configuration = row["target"], role = "github-release-asset", suppliers = suppliers, observation_inputs = [seed])
         packages.append(":" + prefix + "_github_" + group)
     identities = [row for row in DATABASE_SEED_CARRIERS if row["family"] == family and row["target"] == target and row["profile"] == profile]
     if len(identities) != 1:
@@ -368,7 +368,7 @@ def seed_envelopes(prefix, family, target, profile, seed, icu = None, compatible
         names.append(maven[0]["name"])
     carriers = _rows(names)
     resource_carriers(name = prefix + "_carriers", kind = "seed", family = family, target = target, profile = profile, assets = [":" + prefix + "_assets"] + ([icu] if target == "android-datum64" and profile == "icu" else []), carriers = json.encode(carriers), target_compatible_with = compatible)
-    packages.extend(_shipping(prefix + "_carriers", carriers, suppliers = suppliers))
+    packages.extend(_shipping(prefix + "_carriers", carriers, suppliers = suppliers, observation_inputs = [seed]))
     return packages
 
 def native_seed_envelopes(prefix, target, profile, seed, icu = None, compatible = []):

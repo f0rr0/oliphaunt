@@ -137,52 +137,28 @@ pub(super) fn runtime_cache_key_with_icu(
         }
         fingerprint_file(&mut state, &source_lib, &source)?;
     }
-    match profile {
-        NativeRuntimeProfile::OliphauntEmbedded => {
-            let embedded_modules = embedded_modules.ok_or_else(|| {
-                Error::Engine(
-                    "native liboliphaunt runtime requires embedded PostgreSQL modules".to_owned(),
-                )
-            })?;
-            for module in embedded_core_modules {
-                fingerprint_optional_file(
-                    &mut state,
-                    embedded_modules,
-                    &embedded_modules.join(module),
-                )?;
-            }
-            for extension in extension_modules {
-                for module in &extension.files {
-                    let extension_lib = extension.source_root.join("lib/modules");
-                    if extension_lib.join(module).is_file()
-                        || extension.embedded_fallback_file.as_ref() != Some(module)
-                    {
-                        fingerprint_optional_file(
-                            &mut state,
-                            &extension_lib,
-                            &extension_lib.join(module),
-                        )?;
-                    } else {
-                        fingerprint_optional_file(
-                            &mut state,
-                            embedded_modules,
-                            &embedded_modules.join(module),
-                        )?;
-                    }
-                }
-            }
+    if profile.needs_embedded_modules() {
+        let embedded_modules = embedded_modules.ok_or_else(|| {
+            Error::Engine(
+                "native liboliphaunt runtime requires embedded PostgreSQL modules".to_owned(),
+            )
+        })?;
+        for module in embedded_core_modules {
+            fingerprint_optional_file(
+                &mut state,
+                embedded_modules,
+                &embedded_modules.join(module),
+            )?;
         }
-        NativeRuntimeProfile::PostgresServer => {
-            for extension in extension_modules {
-                for module in &extension.files {
-                    let extension_lib = extension.source_root.join("lib/postgresql");
-                    fingerprint_optional_file(
-                        &mut state,
-                        &extension_lib,
-                        &extension_lib.join(module),
-                    )?;
-                }
-            }
+    }
+    for extension in extension_modules {
+        for module in &extension.files {
+            let source = extension.module_source(profile, embedded_modules, module)?;
+            fingerprint_optional_file(
+                &mut state,
+                source.parent().expect("native module source directory"),
+                &source,
+            )?;
         }
     }
 

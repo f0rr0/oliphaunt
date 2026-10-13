@@ -3,6 +3,7 @@
 load("@rules_cc//cc:find_cc_toolchain.bzl", "use_cc_toolchain")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/languages:cargo-toolchain.bzl", "cargo_test_toolchain")
+load("@oliphaunt_metadata//:metadata.bzl", "PREPARED_NATIVE_SELECTED_PRODUCTS")
 
 _RUST = "@rules_rust//rust:toolchain_type"
 
@@ -23,13 +24,17 @@ def _installed_cargo_test_impl(ctx):
         "manifest": _runfile(ctx, ctx.file.manifest),
         "lock": _runfile(ctx, ctx.file.lock),
         "source": _runfile(ctx, ctx.file.source),
+        "coreSource": _runfile(ctx, ctx.file.core_source),
         "buildScript": _runfile(ctx, ctx.file.build_script),
+        "coreBuildScript": _runfile(ctx, ctx.file.core_build_script),
         "cargo": _runfile(ctx, rust.cargo),
         "rustc": _runfile(ctx, rust.rustc),
         "rustdoc": _runfile(ctx, rust.rust_doc),
         "compiler": _runfile(ctx, cc.configuration),
+        "minimum": ctx.attr.minimum,
+        "selectedProducts": PREPARED_NATIVE_SELECTED_PRODUCTS,
     }))
-    files = [specification, cc.configuration, ctx.file.manifest, ctx.file.lock, ctx.file.source, ctx.file.build_script, ctx.file._runner] + ctx.files._helpers + cargo_files + archives + rust.all_files.to_list() + cc.files
+    files = [specification, cc.configuration, ctx.file.manifest, ctx.file.lock, ctx.file.source, ctx.file.core_source, ctx.file.build_script, ctx.file.core_build_script, ctx.file._runner] + ctx.files._helpers + cargo_files + archives + rust.all_files.to_list() + cc.files
     return bun_test_entrypoint(ctx, runner = ctx.file._runner, arguments = [specification], files = files, source_files = [ctx.file._runner] + ctx.files._helpers, runfiles_argument = True)
 
 _installed_cargo_test = rule(
@@ -43,11 +48,18 @@ _installed_cargo_test = rule(
         "manifest": attr.label(mandatory = True, allow_single_file = True),
         "lock": attr.label(mandatory = True, allow_single_file = True),
         "source": attr.label(mandatory = True, allow_single_file = True),
+        "core_source": attr.label(mandatory = True, allow_single_file = True),
+        "minimum": attr.bool(default = False),
         "build_script": attr.label(mandatory = True, allow_single_file = True),
+        "core_build_script": attr.label(mandatory = True, allow_single_file = True),
         "_runner": attr.label(default = "//build_defs/languages/installed:consumer.mts", allow_single_file = True),
-        "_helpers": attr.label_list(default = ["//build_defs/languages:cargo-environment.mts", "//:tools/packaging/frozen-cargo.mts", "//:tools/packaging/portable-archive.mts"], allow_files = True),
+        "_helpers": attr.label_list(default = ["//build_defs/languages:cargo-environment.mts", "//build_defs/languages:cargo-metadata.mts", "//:tools/packaging/cargo-manifest.mts", "//:tools/packaging/frozen-cargo.mts", "//:tools/packaging/portable-archive.mts"], allow_files = True),
     }),
 )
 
 def installed_cargo_test(name, args = [], **kwargs):
     _installed_cargo_test(name = name, args = bun_test_entrypoint_args(name) + args, **kwargs)
+
+def installed_cargo_tests(name, **kwargs):
+    installed_cargo_test(name = name + "_test", **kwargs)
+    installed_cargo_test(name = name + "_minimum_test", minimum = True, **kwargs)

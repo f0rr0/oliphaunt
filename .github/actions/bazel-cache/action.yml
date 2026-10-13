@@ -42,6 +42,15 @@ runs:
       env:
         PHASE: ${{ inputs.phase }}
         COHORT: ${{ inputs.cohort }}
+        REPOSITORY_GENERATION: >-
+          ${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'Cargo.lock', 'bun.lock',
+              '.prototools', 'rust-toolchain.toml', 'tools/dev/*.toml',
+              'tools/dev/native-host-toolchains.json', 'build_defs/**/*repositor*.bzl',
+              'build_defs/**/source.json', 'src/extensions/catalog/*.toml',
+              'src/**/source.toml', 'src/**/sources/*.toml',
+              'src/**/toolchain.toml', 'src/**/Cargo.toml', 'src/**/package.json',
+              'src/**/VERSION', 'src/**/release.toml', '!**/node_modules/**',
+              '!**/target/**', '!**/.git/**') }}
       run: |
         set -euo pipefail
         case "$PHASE" in restore|save) ;; *) exit 1 ;; esac
@@ -50,8 +59,10 @@ runs:
         [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
         source_commit="$(git rev-parse HEAD)"
         [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
-        printf 'prefix=bazel-ci-v1-%s-%s-%s-%s\nsource=%s\n' \
-          "$RUNNER_OS" "$RUNNER_ARCH" "$COHORT" "$version" "$source_commit" >> "$GITHUB_OUTPUT"
+        # This conservative download-cache hint is not a dependency or release digest.
+        [[ "$REPOSITORY_GENERATION" =~ ^[0-9a-f]{64}$ ]]
+        printf 'prefix=bazel-ci-v1-%s-%s-%s-%s\nsource=%s\nrepository_generation=%s\n' \
+          "$RUNNER_OS" "$RUNNER_ARCH" "$COHORT" "$version" "$source_commit" "$REPOSITORY_GENERATION" >> "$GITHUB_OUTPUT"
 
     - name: Restore Bazel action cache
       id: disk-restore
@@ -71,7 +82,7 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ~/.cache/oliphaunt/bazel-ci/repositories
-        key: ${{ steps.identity.outputs.prefix }}-repositories-${{ steps.identity.outputs.source }}
+        key: ${{ steps.identity.outputs.prefix }}-repositories-${{ steps.identity.outputs.repository_generation }}
         restore-keys: |
           ${{ steps.identity.outputs.prefix }}-repositories-
 
@@ -141,4 +152,4 @@ runs:
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ~/.cache/oliphaunt/bazel-ci/repositories
-        key: ${{ steps.identity.outputs.prefix }}-repositories-${{ steps.identity.outputs.source }}
+        key: ${{ steps.identity.outputs.prefix }}-repositories-${{ steps.identity.outputs.repository_generation }}

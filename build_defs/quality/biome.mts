@@ -40,6 +40,7 @@ export function runBiome(
         mode,
         ...(mode === 'lint' ? ['--diagnostic-level=error'] : []),
         '--no-errors-on-unmatched',
+        `--config-path=${root}`,
         `--vcs-root=${root}`,
         '.',
       ],

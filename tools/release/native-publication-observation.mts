@@ -12,6 +12,7 @@ import {
   type NativeBuildEvidence,
   type NativeBuildSource,
   type NativeRequiredTest,
+  nativeRequiredCaptureInputs,
   validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
 import type { NativeRoot } from './native-publication-artifacts.mts';
@@ -249,7 +250,7 @@ export function projectNativePublicationConstruction(
           },
           cohort.aquery,
         );
-        const needed = new Set(view.physicalInputs);
+        const needed = new Set([...view.physicalInputs, ...nativeRequiredCaptureInputs(view)]);
         const analysisPaths =
           cohort.rootAnalysisInputPaths === undefined
             ? undefined

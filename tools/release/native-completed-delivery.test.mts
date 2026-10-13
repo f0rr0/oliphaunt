@@ -24,23 +24,25 @@ import { captureNativeBuildEvidence } from './capture-native-build-evidence.mts'
 import { fixture as observationFixture } from './completed-native-publication.fixture.mts';
 import { createCompletedPublicationChecker } from './completed-release-publication.mts';
 import { nativeBuildMetadata } from './native-build-qualification.mts';
-import { nativePublicationMetadataArtifactRow } from './native-publication-metadata-contract.mts';
 import {
   captureCompletedNativePublicArtifacts,
   captureCompletedNativeRegistryCarriers,
   compareNativeCompletedPhysicalDelivery,
   nativeArchiveDeliveryMembers,
   nativeCarrierDeliveryMembers,
+  readCompletedNativeDeliveryInventory,
 } from './native-completed-delivery.mts';
 import {
   compareNativePreVersionDelivery,
   differentNativeDeliveredMembers,
 } from './native-publication-delivery.mts';
+import { nativePublicationMetadataArtifactRow } from './native-publication-metadata-contract.mts';
 import { observeNativePublicationConstruction } from './native-publication-observation.mts';
 import {
   loadPublicationCatalog,
   PUBLICATION_CATALOG_SCHEMA,
   publicationCatalogDigest,
+  resolveActualCarrier,
 } from './publication-catalog.mts';
 import { consumerDigest } from './publication-consumer-proof.mts';
 import {
@@ -382,8 +384,34 @@ async function publicFixture(directory: string, id: string, version = '9.8.7') {
       return publication;
     },
     readJson: async (endpoint) => {
-      expect(endpoint).toBe(`repos/f0rr0/oliphaunt/releases/tags/${publication.tagName}`);
-      return release;
+      if (endpoint === `repos/f0rr0/oliphaunt/releases/tags/${publication.tagName}`) return release;
+      const match = endpoint.match(
+        /^repos\/f0rr0\/oliphaunt\/contents\/(.+)\?ref=([a-f0-9]{40})$/u,
+      );
+      if (!match || match[2] !== publication.publicationSha)
+        throw new Error(`unexpected fixture historical endpoint ${endpoint}`);
+      const file = match[1];
+      const bytes =
+        file === '.release-please-manifest.json'
+          ? Buffer.from(
+              JSON.stringify({
+                ...JSON.parse(
+                  readFileSync(
+                    new URL('../../.release-please-manifest.json', import.meta.url),
+                    'utf8',
+                  ),
+                ),
+                [product.path]: version,
+              }),
+            )
+          : readFileSync(new URL(`../../${file}`, import.meta.url));
+      return {
+        type: 'file',
+        path: file,
+        encoding: 'base64',
+        content: bytes.toString('base64'),
+        sha: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),
+      };
     },
     readPages: async (endpoint) => {
       expect(endpoint).toBe('repos/f0rr0/oliphaunt/releases/123/assets');
@@ -473,27 +501,17 @@ test('public baseline rejects source/asset substitutions and preserves missing o
       },
     });
     expect(fallback.unknowns).toEqual([]);
-    const product = loadPublicationCatalog('seed contract fixture', {
-      products: ['database-resources'],
-    }).products[0];
-    const rows = expectedProductArtifactRows([product]).filter(({ role }) =>
-      role.startsWith('github-release-'),
+    const seedFixture = await publicFixture(
+      path.join(directory, 'missing-seeds'),
+      'database-resources',
     );
-    const publication = {
-      ...fixture.input.publication,
-      product: product.id,
-      version: product.version,
-      tagName: `${product.id}-v${product.version}`,
-    };
     const seeds = await captureCompletedNativePublicArtifacts(
-      { publication, files: {} },
-      {
-        assertCompletedPublication: async () => publication,
-        readJson: async () => ({ ...fixture.release, tag_name: publication.tagName }),
-        readPages: async () => rows.map(({ name }) => ({ name })),
-      },
+      { ...seedFixture.input, files: {} },
+      seedFixture.options,
     );
-    for (const row of rows.filter(({ kind }) => ['native-seeds', 'wasix-seeds'].includes(kind)))
+    for (const row of seedFixture.rows.filter(({ kind }) =>
+      ['native-seeds', 'wasix-seeds'].includes(kind),
+    ))
       expect(seeds.unknowns).toContain(`completed-public-artifact-missing:${row.id}`);
   }));
 
@@ -647,7 +665,9 @@ test('completed registry suppliers reject substituted ownership, checksum and co
     }),
   ).rejects.toThrow('registry checksum mismatch');
   const endpoint = `repos/f0rr0/oliphaunt/contents/src/query/rust/release.toml?ref=${publicationSha}`;
-  const descriptor = Buffer.from('id="oliphaunt-query"\nregistry_packages=[]\n');
+  const descriptor = Buffer.from(
+    'id="oliphaunt-query"\nkind="sdk"\npublish_targets=["crates-io"]\nregistry_packages=[]\n',
+  );
   await expect(
     captureCompletedNativeRegistryCarriers(input, {
       ...options,
@@ -665,7 +685,7 @@ test('completed registry suppliers reject substituted ownership, checksum and co
                 .digest('hex'),
             },
     }),
-  ).rejects.toThrow('historical registry ownership');
+  ).rejects.toThrow('not declared');
 });
 
 test('completed registry suppliers reject an archive mutated during authentication', async () =>
@@ -963,7 +983,7 @@ test('retired historical registry and source-tag obligations cannot disappear in
         /registry_packages\s*=\s*\[/u,
         'registry_packages = ["crates:retired-published-carrier",',
       ),
-      'historical-declared-registry-inventory-differs',
+      'completed-carrier-missing:cargo:retired-published-carrier',
     ],
     [
       original.replace(
@@ -1171,7 +1191,102 @@ test('complete canonical runtime inventory uses its genuine completed contrib de
     expect(result.products[0].comparisons).toHaveLength(
       carriers.length + publicFiles.rows.filter(({ kind }) => kind !== 'checksums').length,
     );
-    expect(sourceFiles.size).toBe(10);
+    expect(sourceFiles.size).toBe(12);
+    let random = 0x5eed;
+    for (let scenario = 0; scenario < 4; scenario++) {
+      const entries = Object.entries(oldCarriers);
+      for (let index = entries.length - 1; index > 0; index--) {
+        random = (Math.imul(random, 1664525) + 1013904223) >>> 0;
+        const swap = random % (index + 1);
+        [entries[index], entries[swap]] = [entries[swap], entries[index]];
+      }
+      expect(
+        await compareNativeCompletedPhysicalDelivery(
+          candidate,
+          [
+            {
+              ...baseline[0],
+              carriers: Object.fromEntries(entries),
+            },
+          ],
+          options,
+        ),
+      ).toEqual(result);
+    }
+    // Controlled sealed-inventory fixture; actual parent-archive dependency checks run at acquisition.
+    const historical = await readCompletedNativeDeliveryInventory(publication, options);
+    const frozenMetadata: any = {
+      publication,
+      metadata: {
+        repository: 'f0rr0/oliphaunt',
+        source: { commit: publication.publicationSha, tree: publication.publicationTree },
+        product,
+        carriers: structuredClone(carriers),
+        productArtifacts: productArtifacts.filter(({ kind }) => kind !== 'checksums'),
+      },
+    };
+    const oldRole = frozenMetadata.metadata.carriers.find(({ ecosystem }) => ecosystem === 'cargo');
+    oldRole.role = 'retired-source-contract';
+    oldRole.target = 'retired-target-v1';
+    const visited = new Set<string>();
+    const frozenOptions = {
+      ...options,
+      assertMetadataBaseline: (value) => value,
+      readJson: async (endpoint: string) => {
+        if (endpoint.includes('/contents/')) {
+          const file = endpoint.match(/\/contents\/(.+)\?ref=/u)?.[1];
+          expect([
+            'release-please-config.json',
+            '.release-please-manifest.json',
+            `${product.path}/release.toml`,
+          ]).toContain(file);
+          visited.add(file!);
+        }
+        return options.readJson(endpoint);
+      },
+    };
+    const frozenResult = await compareNativeCompletedPhysicalDelivery(
+      candidate,
+      [{ ...baseline[0], metadataBaseline: frozenMetadata }],
+      frozenOptions,
+    );
+    expect(frozenResult.products[0].deliveryStatus).toBe('identical');
+    expect(frozenResult.products[0].unknowns).toEqual([]);
+    expect(frozenResult.products[0].contractChanges).toEqual({ added: [], removed: [] });
+    expect(visited.size).toBe(3);
+    const parent = frozenMetadata.metadata.carriers.find(
+      ({ ecosystem, role }) => ecosystem === 'cargo' && role === 'platform-leaf',
+    );
+    if (!parent) throw new Error('runtime inventory fixture has no split-capable Cargo parent');
+    const parts = [1, 2].map((number) => {
+      const name = `${parent.name}-part-${String(number).padStart(3, '0')}`;
+      return {
+        ...resolveActualCarrier(historical.catalog, 'cargo', name),
+        artifacts: [{ ...parent.artifacts[0], path: `original/${name}-${product.version}.crate` }],
+        packageDependencies: [],
+      };
+    });
+    parent.packageDependencies = parts.map(({ name }) => ({ ecosystem: 'cargo', name }));
+    frozenMetadata.metadata.carriers.push(...parts);
+    const frozen = await readCompletedNativeDeliveryInventory(publication, {
+      ...options,
+      metadataBaseline: frozenMetadata,
+      assertMetadataBaseline: (value) => value,
+    });
+    expect(frozen.catalog.carriers).toEqual(frozen.carriers);
+    expect(frozen.carriers).toHaveLength(carriers.length + 2);
+    expect(
+      frozen.carriers.filter(({ role }) => role === 'payload-part').map(({ id }) => id),
+    ).toEqual(parts.map(({ id }) => id));
+    const incomplete = structuredClone(frozenMetadata);
+    incomplete.metadata.carriers.pop();
+    await expect(
+      readCompletedNativeDeliveryInventory(publication, {
+        ...options,
+        metadataBaseline: incomplete,
+        assertMetadataBaseline: (value) => value,
+      }),
+    ).rejects.toThrow('complete Cargo payload part set');
     const expanded = carriers.find(({ name }) => name === 'oliphaunt-extension-contrib-pg18');
     expect(expanded).toBeDefined();
     const file = expanded.artifacts[0].path;
@@ -1194,3 +1309,435 @@ test('complete canonical runtime inventory uses its genuine completed contrib de
     ).toEqual(['README.md']);
     expect(changed.releaseDecision).toBe('unverified');
   }));
+
+function historicalFileResponse(file: string, contents: string) {
+  const bytes = Buffer.from(contents);
+  return {
+    type: 'file',
+    path: file,
+    encoding: 'base64',
+    content: bytes.toString('base64'),
+    sha: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),
+  };
+}
+
+test('missing published baselines cannot become first deliveries through explicit IDs', async () => {
+  const candidate = {
+    ...buildPublicationCandidate({ products: sourceProducts, artifactRoots: [sourceFixture] }),
+    scope: 'construction',
+  };
+  const options = originEnvironment();
+  const baseline = await origins(options);
+  const remaining = baseline.filter(({ publication }) => publication.product !== 'oliphaunt-query');
+  expect(
+    (await compareNativeCompletedPhysicalDelivery(candidate, remaining, options)).products.find(
+      ({ product }) => product === 'oliphaunt-query',
+    )!.deliveryStatus,
+  ).toBe('unknown');
+  for (const unreleasedProducts of [
+    ['oliphaunt-query'],
+    ['foreign'],
+    ['oliphaunt-query', 'oliphaunt-query'],
+    ['oliphaunt-query-ts'],
+  ])
+    await expect(
+      compareNativeCompletedPhysicalDelivery(candidate, remaining, {
+        ...options,
+        unreleasedProducts,
+      }),
+    ).rejects.toThrow('unique explicit version-zero products');
+});
+
+test('verified historical registry additions and removals compare as necessary contract changes', async () => {
+  const candidate = {
+    ...buildPublicationCandidate({ products: sourceProducts, artifactRoots: [sourceFixture] }),
+    scope: 'construction',
+  };
+  const options = originEnvironment();
+  const baselines = await origins(options);
+  const owner = candidate.products.find(({ id }) => id === 'oliphaunt-query')!;
+  const file = `${owner.path}/release.toml`;
+  const endpoint = `repos/f0rr0/oliphaunt/contents/${file}?ref=${publicationSha}`;
+  const original = Buffer.from((await options.readJson(endpoint)).content, 'base64').toString(
+    'utf8',
+  );
+  const history = async (text: string) => ({
+    ...options,
+    readJson: async (request: string) =>
+      request === endpoint ? historicalFileResponse(file, text) : options.readJson(request),
+  });
+  const added = structuredClone(baselines);
+  added[0].carriers = {};
+  const addition = await compareNativeCompletedPhysicalDelivery(
+    candidate,
+    added,
+    await history(original.replace('"crates:oliphaunt-query"', '')),
+  );
+  expect(addition.products[0].deliveryStatus).toBe('different');
+  expect(addition.products[0].contractChanges.added).toEqual(['cargo:oliphaunt-query']);
+  expect(addition.products[0].unknowns).toEqual([]);
+  const removed = structuredClone(baselines);
+  removed[0].carriers['npm:@oliphaunt/ts-query'] = baselines[1].carriers['npm:@oliphaunt/ts-query'];
+  const removal = await compareNativeCompletedPhysicalDelivery(
+    candidate,
+    removed,
+    await history(
+      original.replace(
+        '"crates:oliphaunt-query"',
+        '"crates:oliphaunt-query", "npm:@oliphaunt/ts-query"',
+      ),
+    ),
+  );
+  expect(removal.products[0].deliveryStatus).toBe('different');
+  expect(removal.products[0].contractChanges.removed).toEqual(['npm:@oliphaunt/ts-query']);
+  expect(removal.products[0].unknowns).toEqual([]);
+  const missing = structuredClone(removed);
+  delete missing[0].carriers['npm:@oliphaunt/ts-query'];
+  expect(
+    (
+      await compareNativeCompletedPhysicalDelivery(
+        candidate,
+        missing,
+        await history(
+          original.replace(
+            '"crates:oliphaunt-query"',
+            '"crates:oliphaunt-query", "npm:@oliphaunt/ts-query"',
+          ),
+        ),
+      )
+    ).products[0].deliveryStatus,
+  ).toBe('unknown');
+  await asyncScratch(async (directory) => {
+    const file = path.join(directory, 'retired.tgz');
+    const originalArchive = removed[0].carriers['npm:@oliphaunt/ts-query'][0];
+    const rows = [...readPortableArchiveEntries(originalArchive).values()].map((entry) => ({
+      name: entry.name + (entry.isDirectory ? '/' : ''),
+      type: entry.isFile ? '0' : '5',
+      mode: entry.mode,
+      data: entry.isFile ? entry.data() : Buffer.alloc(0),
+    }));
+    const docs = rows.find(({ name }) => name.endsWith('/README.md'));
+    if (!docs) throw new Error('retired supplier fixture has no README');
+    docs.data = Buffer.from('substituted retired contract');
+    writeFileSync(file, tarArchive(rows));
+    const changed = structuredClone(removed);
+    changed[0].carriers['npm:@oliphaunt/ts-query'] = [file];
+    await expect(
+      compareNativeCompletedPhysicalDelivery(
+        candidate,
+        changed,
+        await history(
+          original.replace(
+            '"crates:oliphaunt-query"',
+            '"crates:oliphaunt-query", "npm:@oliphaunt/ts-query"',
+          ),
+        ),
+      ),
+    ).rejects.toThrow(/checksum|integrity|payload mismatch/);
+  });
+});
+
+test('historical inventory uses exact owner path and targets rather than current directories or defaults', async () =>
+  asyncScratch(async (directory) => {
+    const fixture = await publicFixture(directory, 'oliphaunt-broker');
+    const original = fixture.options.readJson;
+    const oldPath = 'historical/broker';
+    const readJson = async (endpoint: string) => {
+      const match = endpoint.match(/^repos\/f0rr0\/oliphaunt\/contents\/(.+)\?ref=/u);
+      if (!match) return original(endpoint);
+      const file = match[1];
+      if (file === 'release-please-config.json')
+        return historicalFileResponse(
+          file,
+          JSON.stringify({ packages: { [oldPath]: { component: 'oliphaunt-broker' } } }),
+        );
+      if (file === '.release-please-manifest.json')
+        return historicalFileResponse(
+          file,
+          JSON.stringify({ [oldPath]: fixture.input.publication.version }),
+        );
+      if (file === `${oldPath}/release.toml`)
+        return historicalFileResponse(
+          file,
+          'id="oliphaunt-broker"\nkind="tool"\npublish_targets=["github-release-assets"]\nregistry_packages=[]\n' +
+            '[artifact_targets]\npreset="broker-helper"\ntargets=["macos-arm64"]\n',
+        );
+      throw new Error(`unexpected current-source request ${file}`);
+    };
+    const inventory = await readCompletedNativeDeliveryInventory(fixture.input.publication, {
+      ...fixture.options,
+      readJson,
+    });
+    expect(inventory.catalog.products[0].path).toBe(oldPath);
+    expect(
+      inventory.publicRows.map(({ target }) => target).filter((target) => target !== 'portable'),
+    ).toEqual(['macos-arm64']);
+    const legacy = await readCompletedNativeDeliveryInventory(fixture.input.publication, {
+      ...fixture.options,
+      readJson: async (endpoint: string) => {
+        if (endpoint.includes(`/contents/${oldPath}/moon.yml?`))
+          return historicalFileResponse(
+            `${oldPath}/moon.yml`,
+            `id: oliphaunt-broker\nproject:\n  release:\n    component: oliphaunt-broker\n    packagePath: ${oldPath}\n    artifactTargets:\n      preset: broker-helper\n      targets: [macos-arm64]\n`,
+          );
+        if (endpoint.includes(`/contents/${oldPath}/release.toml?`))
+          return historicalFileResponse(
+            `${oldPath}/release.toml`,
+            'id="oliphaunt-broker"\nkind="tool"\npublish_targets=["github-release-assets"]\nregistry_packages=[]\n',
+          );
+        return readJson(endpoint);
+      },
+    });
+    expect(legacy.publicRows).toEqual(inventory.publicRows);
+    expect(legacy.sourceFiles.some(({ path: file }) => file === `${oldPath}/moon.yml`)).toBe(true);
+    const invalid = async (endpoint: string) => {
+      const response = await readJson(endpoint);
+      return endpoint.includes(`/contents/${oldPath}/release.toml?`)
+        ? { ...response, sha: '0'.repeat(40) }
+        : response;
+    };
+    await expect(
+      readCompletedNativeDeliveryInventory(fixture.input.publication, {
+        ...fixture.options,
+        readJson: invalid,
+      }),
+    ).rejects.toThrow('Git blob differs');
+    await expect(
+      readCompletedNativeDeliveryInventory(fixture.input.publication, {
+        ...fixture.options,
+        readJson: async () => {
+          throw new Error('history inaccessible');
+        },
+      }),
+    ).rejects.toThrow('history inaccessible');
+  }));
+
+test('external public inventory captures its exact historical runtime owner tables and iOS closure', async () =>
+  asyncScratch(async (directory) => {
+    const fixture = await publicFixture(directory, 'oliphaunt-extension-postgis');
+    const inventory = await readCompletedNativeDeliveryInventory(
+      fixture.input.publication,
+      fixture.options,
+    );
+    expect(inventory.publicRows).toEqual(fixture.rows);
+    const files = inventory.sourceFiles.map(({ path: file }) => file);
+    for (const file of [
+      'src/extensions/contrib/carriers.toml',
+      'src/native/runtime/release.toml',
+      'src/wasix/runtime/release.toml',
+      'src/extensions/contracts/extension-target-profiles.toml',
+      'src/extensions/generated/sdk/extensions.json',
+      'src/extensions/generated/mobile/static-extensions.tsv',
+    ])
+      expect(files).toContain(file);
+    expect(inventory.publicRows.some(({ kind }) => kind === 'ios-dependency-xcframework')).toBe(
+      true,
+    );
+    expect(
+      (await captureCompletedNativePublicArtifacts(fixture.input, fixture.options)).unknowns,
+    ).toEqual([]);
+  }));
+
+test('frozen public names and File identities survive changed current filename templates', async () =>
+  asyncScratch(async (directory) => {
+    const fixture = await publicFixture(directory, 'oliphaunt-broker');
+    const row = fixture.rows.find(({ target }) => target === 'macos-arm64');
+    if (!row) throw new Error('broker fixture has no macOS archive');
+    const oldName = `old-broker-${fixture.input.publication.version}-macos.tar.gz`;
+    const oldId = `github-release:${oldName}`;
+    const files = { ...fixture.input.files, [oldId]: fixture.input.files[row.id] };
+    delete files[row.id];
+    const asset = fixture.assets.find(({ name }) => name === row.name);
+    if (!asset) throw new Error('broker fixture has no macOS asset');
+    asset.name = oldName;
+    const metadataBaseline: any = {
+      publication: fixture.input.publication,
+      metadata: {
+        repository: 'f0rr0/oliphaunt',
+        source: {
+          commit: fixture.input.publication.publicationSha,
+          tree: fixture.input.publication.publicationTree,
+        },
+        product: {
+          id: fixture.input.publication.product,
+          version: fixture.input.publication.version,
+        },
+        carriers: [],
+        productArtifacts: fixture.rows
+          .filter(({ kind }) => kind !== 'checksums')
+          .map((item) => ({
+            ...item,
+            ...(item.id === row.id ? { id: oldId, name: oldName } : {}),
+            ...artifact(fixture.input.files[item.id]),
+          })),
+      },
+    };
+    const visited = new Set<string>();
+    const options = {
+      ...fixture.options,
+      assertMetadataBaseline: (value) => value,
+      readJson: async (endpoint: string) => {
+        if (endpoint.includes('/contents/')) {
+          const file = endpoint.match(/\/contents\/(.+)\?ref=/u)?.[1];
+          expect([
+            'release-please-config.json',
+            '.release-please-manifest.json',
+            'src/native/broker/release.toml',
+          ]).toContain(file);
+          visited.add(file!);
+        }
+        if (endpoint.includes('/contents/src/native/broker/release.toml?'))
+          return historicalFileResponse(
+            'src/native/broker/release.toml',
+            'id="oliphaunt-broker"\nkind="retired-factory-v1"\npublish_targets=["github-release-assets"]\nregistry_packages=[]\n',
+          );
+        return fixture.options.readJson(endpoint);
+      },
+    };
+    const inventory = await readCompletedNativeDeliveryInventory(fixture.input.publication, {
+      ...options,
+      metadataBaseline,
+    });
+    expect(inventory.publicRows.some(({ name }) => name === oldName)).toBe(true);
+    expect(inventory.publicRows.some(({ name }) => name === row.name)).toBe(false);
+    expect(inventory.publicRows.every(({ kind }) => kind !== 'checksums')).toBe(true);
+    expect(visited.size).toBe(3);
+    expect(
+      (
+        await captureCompletedNativePublicArtifacts(
+          { ...fixture.input, files, metadataBaseline },
+          options,
+        )
+      ).unknowns,
+    ).toEqual([]);
+    const checksumAsset = fixture.assets.find(({ name }) => name.endsWith('.sha256'))!;
+    checksumAsset.name = 'retired-outer-envelope.sha256';
+    const payloadFiles = Object.fromEntries(
+      Object.entries(files).filter(([id]) => !id.endsWith('.sha256')),
+    );
+    const capture = () =>
+      captureCompletedNativePublicArtifacts(
+        { ...fixture.input, files: payloadFiles, metadataBaseline },
+        options,
+      );
+    expect((await capture()).unknowns).toEqual([]);
+    fixture.assets.push({ ...checksumAsset });
+    expect((await capture()).unknowns).toContain('completed-public-asset-inventory-differs');
+    fixture.assets.pop();
+    fixture.assets.push({ ...checksumAsset, name: 'unlisted-delivery.bin' });
+    expect((await capture()).unknowns).toContain('completed-public-asset-inventory-differs');
+    fixture.assets.pop();
+    const missingFile = { ...payloadFiles };
+    delete missingFile[oldId];
+    expect(
+      (
+        await captureCompletedNativePublicArtifacts(
+          { ...fixture.input, files: missingFile, metadataBaseline },
+          options,
+        )
+      ).unknowns,
+    ).toContain(`completed-public-artifact-missing:${oldId}`);
+    await expect(
+      readCompletedNativeDeliveryInventory(fixture.input.publication, {
+        ...fixture.options,
+        metadataBaseline: structuredClone(metadataBaseline),
+      }),
+    ).rejects.toThrow('authenticated completed metadata origin');
+    await expect(
+      readCompletedNativeDeliveryInventory(fixture.input.publication, {
+        ...options,
+        metadataBaseline,
+        assertMetadataBaseline: () => undefined,
+      }),
+    ).rejects.toThrow('authentication returned no baseline');
+    const wrongSource = structuredClone(metadataBaseline);
+    wrongSource.metadata.source.commit = 'f'.repeat(40);
+    await expect(
+      readCompletedNativeDeliveryInventory(fixture.input.publication, {
+        ...options,
+        metadataBaseline: wrongSource,
+      }),
+    ).rejects.toThrow('source/product/version differs');
+    const wrongHash = structuredClone(metadataBaseline);
+    wrongHash.metadata.productArtifacts.find(({ id }) => id === oldId).sha256 = 'f'.repeat(64);
+    await expect(
+      captureCompletedNativePublicArtifacts(
+        { ...fixture.input, files, metadataBaseline: wrongHash },
+        options,
+      ),
+    ).rejects.toThrow('File differs from frozen metadata');
+    const wrongOwner = structuredClone(metadataBaseline);
+    wrongOwner.metadata.productArtifacts[0].product = 'foreign';
+    await expect(
+      readCompletedNativeDeliveryInventory(fixture.input.publication, {
+        ...options,
+        metadataBaseline: wrongOwner,
+      }),
+    ).rejects.toThrow('frozen public File identity differs');
+    const wrongVersion = structuredClone(metadataBaseline);
+    wrongVersion.metadata.productArtifacts[0].version = '99.0.0';
+    await expect(
+      readCompletedNativeDeliveryInventory(fixture.input.publication, {
+        ...options,
+        metadataBaseline: wrongVersion,
+      }),
+    ).rejects.toThrow('frozen public version differs');
+  }));
+
+test('frozen registry inventory binds actual archive filenames and hashes before held supplier capture', async () => {
+  const options = originEnvironment();
+  const input = (await origins(options))[0];
+  const inventory = await readCompletedNativeDeliveryInventory(input.publication, options);
+  const metadataBaseline: any = {
+    publication: input.publication,
+    metadata: {
+      repository: 'f0rr0/oliphaunt',
+      source: { commit: input.publication.publicationSha, tree: input.publication.publicationTree },
+      product: { id: input.publication.product, version: input.publication.version },
+      carriers: inventory.catalog.carriers.map((carrier) => ({
+        ...carrier,
+        artifacts: input.carriers[carrier.id].map(artifact),
+        packageDependencies: [],
+      })),
+      productArtifacts: [],
+    },
+  };
+  const transport = { ...options, assertMetadataBaseline: (value) => value };
+  metadataBaseline.metadata.carriers[0].role = 'retired-classifier-role';
+  metadataBaseline.metadata.carriers[0].target = 'retired-target-v1';
+  expect(
+    (await captureCompletedNativeRegistryCarriers({ ...input, metadataBaseline }, transport))
+      .unknowns,
+  ).toEqual([]);
+  await expect(
+    captureCompletedNativeRegistryCarriers(
+      {
+        ...input,
+        metadataBaseline,
+        carriers: { ...input.carriers, 'cargo:foreign': input.carriers['cargo:oliphaunt-query'] },
+      },
+      transport,
+    ),
+  ).rejects.toThrow('absent from frozen metadata');
+  const wrongOwner = structuredClone(metadataBaseline);
+  wrongOwner.metadata.carriers[0].product = 'foreign';
+  await expect(
+    readCompletedNativeDeliveryInventory(input.publication, {
+      ...transport,
+      metadataBaseline: wrongOwner,
+    }),
+  ).rejects.toThrow('frozen registry ownership differs');
+  const changed = structuredClone(metadataBaseline);
+  changed.metadata.carriers[0].artifacts[0].sha256 = 'f'.repeat(64);
+  await expect(
+    captureCompletedNativeRegistryCarriers({ ...input, metadataBaseline: changed }, transport),
+  ).rejects.toThrow('Files differ from frozen metadata');
+  const missing = structuredClone(metadataBaseline);
+  missing.metadata.carriers = [];
+  await expect(
+    readCompletedNativeDeliveryInventory(input.publication, {
+      ...transport,
+      metadataBaseline: missing,
+    }),
+  ).rejects.toThrow('omits a historical declaration');
+});

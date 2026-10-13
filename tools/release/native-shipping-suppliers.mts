@@ -417,7 +417,7 @@ export async function projectNativeBuildBoundSuppliers(
       );
     }
   }
-  const origins = new Map<string, ReturnType<typeof authenticateCompleted>>();
+  const origins = new Map<CompletedInput, ReturnType<typeof authenticateCompleted>>();
   for (const { supplier, files } of pending) {
     if (supplier.origin.kind !== 'completed-publication') continue;
     const publication = supplier.origin.publication;
@@ -460,9 +460,18 @@ export async function projectNativeBuildBoundSuppliers(
       unknowns.add(`unsupported completed supplier contract: ${supplier.product}`);
       continue;
     }
-    const key = consumerDigest(matches[0]);
-    if (!origins.has(key)) origins.set(key, authenticateCompleted(structuredClone(matches[0])));
-    const origin = await origins.get(key)!;
+    const original = matches[0];
+    if (!origins.has(original)) {
+      // The authenticated metadata capability is tied to its original object.
+      // Clone structural facts without manufacturing a replacement capability.
+      let snapshot: CompletedInput;
+      if ('metadataBaseline' in original) {
+        const { metadataBaseline, ...facts } = original;
+        snapshot = { ...structuredClone(facts), metadataBaseline };
+      } else snapshot = structuredClone(original);
+      origins.set(original, authenticateCompleted(snapshot));
+    }
+    const origin = await origins.get(original)!;
     equal(origin.publication, publication, 'authenticated completed supplier');
     if ('unknowns' in origin)
       // Unconsumed target Files are not required for this supplier binding.

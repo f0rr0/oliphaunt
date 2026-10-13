@@ -5,7 +5,13 @@ import { basename, dirname, join } from 'node:path';
 import { createDeterministicTar } from '../../../tools/packaging/archive-directory.mts';
 import { canonicalGzipSync } from '../../../tools/packaging/portable-archive.mts';
 import { archive } from '../../query/package.mts';
-import { candidateConsumerManifest, cargoCandidate, resolvedSdkRuntime } from './consumer.mts';
+import {
+  candidateConsumerManifest,
+  candidateDependencyInputs,
+  cargoCandidate,
+  installedConsumerCases,
+  resolvedSdkRuntime,
+} from './consumer.mts';
 
 const template = readFileSync(`${import.meta.dir}/fixture/Cargo.toml`, 'utf8');
 const sdkManifest = Bun.TOML.parse(
@@ -166,4 +172,80 @@ test('held SDK runtime comes from the checksum-authenticated resolved archive', 
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('installed candidate staging follows declared future-major dependencies and retains compatible minimums', () => {
+  const candidate = (name: string, version: string, dependencies = {}) =>
+    ({ name, version, manifest: { dependencies } }) as ReturnType<typeof cargoCandidate>;
+  const oldCore = 'liboliphaunt-native-bindings';
+  const core = candidate(oldCore, '0.3.0');
+  const broker = candidate('oliphaunt-broker', '0.4.0', { [oldCore]: '0.3.0' });
+  const sdk = candidate('oliphaunt', '0.4.0', { [oldCore]: '0.3.0', 'oliphaunt-broker': '0.4.0' });
+  const unrelated = candidate('oliphaunt-query', '1.0.0');
+  const lock = `version=4\n[[package]]\nname="${oldCore}"\nversion="0.2.0"\nsource="registry+https://github.com/rust-lang/crates.io-index"\n[[package]]\nname="oliphaunt-broker"\nversion="0.3.1"\nsource="registry+https://github.com/rust-lang/crates.io-index"\n`;
+  expect(
+    candidateDependencyInputs([sdk], [sdk, core, broker, unrelated], lock, true).map(
+      (row) => row.name,
+    ),
+  ).toEqual(['oliphaunt', oldCore, 'oliphaunt-broker']);
+  expect(
+    candidateDependencyInputs([broker], [sdk, core, broker, unrelated], lock, true).map(
+      (row) => row.name,
+    ),
+  ).toEqual(['oliphaunt-broker', oldCore]);
+  const patch = candidate(oldCore, '0.2.1');
+  const compatibleSdk = candidate('oliphaunt', '0.3.3', { [oldCore]: '0.2.0' });
+  expect(candidateDependencyInputs([compatibleSdk], [compatibleSdk, patch], lock, true)).toEqual([
+    compatibleSdk,
+  ]);
+  expect(candidateDependencyInputs([compatibleSdk], [compatibleSdk, patch], lock)).toEqual([
+    compatibleSdk,
+    patch,
+  ]);
+});
+
+test('Core-only public consumer is independent of the held SDK requirement', () => {
+  const core = { name: 'liboliphaunt-native-bindings', version: '0.3.0' } as ReturnType<
+    typeof cargoCandidate
+  >;
+  const manifest = Bun.TOML.parse(candidateConsumerManifest(template, [core]));
+  expect(manifest.package.build).toBe('core-build.rs');
+  expect(manifest.dependencies.oliphaunt).toBeUndefined();
+  expect(manifest.dependencies['oliphaunt-broker']).toBeUndefined();
+  expect(manifest.dependencies[core.name]).toBe('=0.3.0');
+  expect(manifest.dependencies['liboliphaunt-native-linux-x64-gnu']).toBe(`=${heldRuntime}`);
+  expect(manifest['build-dependencies']['oliphaunt-build']).toBe('=0.3.2');
+  expect(manifest.package.metadata.oliphaunt['runtime-version']).toBe(heldRuntime);
+  expect(candidateConsumerManifest(template, [])).toBe(template);
+});
+
+test('preparation keeps common and genuine held cases; final adds only the declared SDK minimum', () => {
+  const core = {
+    name: 'liboliphaunt-native-bindings',
+    version: '0.2.0',
+    manifest: { dependencies: {} },
+  } as ReturnType<typeof cargoCandidate>;
+  const pool = [
+    ...candidates().map((row) => ({
+      ...row,
+      manifest: {
+        dependencies: row.name === 'oliphaunt' ? { 'liboliphaunt-native-bindings': '0.2.0' } : {},
+      },
+    })),
+    core,
+  ];
+  const lock =
+    'version=4\n[[package]]\nname="liboliphaunt-native-bindings"\nversion="0.2.0"\nsource="registry+https://github.com/rust-lang/crates.io-index"\n';
+  expect(installedConsumerCases(pool, lock, [], false).map(([name]) => name)).toEqual([
+    'checkout',
+    'liboliphaunt-native-bindings',
+    'held',
+  ]);
+  expect(() => installedConsumerCases(pool, lock, [], true)).toThrow('prepared selected owner');
+  expect(() => installedConsumerCases(pool, lock, ['liboliphaunt-native-bindings'], true)).toThrow(
+    'prepared selected owner',
+  );
+  expect(
+    installedConsumerCases(pool, lock, ['oliphaunt-rust'], true).map(([name]) => name),
+  ).toEqual(['sdk']);
 });

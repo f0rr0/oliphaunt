@@ -12,7 +12,7 @@ def _impl(ctx):
     if any([member.configuration != "linux-x64-gnu" for member in members]):
         fail("Rust extension lifecycle requires actual Linux x64 member Files")
     archives = [member.archive for member in members]
-    arguments = [binary, ctx.file.runtime, ctx.file.tools, ctx.file.broker, json.encode(ctx.attr.test_args), json.encode(ctx.attr.environment), json.encode(names), ctx.workspace_name] + archives
+    arguments = [binary, ctx.file.runtime, ctx.file.tools, ctx.file.broker, json.encode(ctx.attr.test_args), json.encode(names), ctx.workspace_name] + archives
     sources = [ctx.file._runner] + ctx.files._helpers
     result = bun_test_entrypoint(ctx, ctx.file._runner, arguments, arguments[:4] + archives + sources, source_files = sources, runfiles_argument = True, additional_runfiles = ctx.attr.binary[DefaultInfo].default_runfiles)
     if RunEnvironmentInfo in ctx.attr.binary:
@@ -28,7 +28,6 @@ _native_rust_runtime_test = rule(
         "tools": attr.label(default = Label("//src/native/postgres-tools:github_archive"), allow_single_file = True),
         "broker": attr.label(default = Label("//src/native/broker:github_archive"), allow_single_file = True),
         "test_args": attr.string_list(default = ["--test-threads=1", "--nocapture"]),
-        "environment": attr.string_dict(),
         "extensions": attr.label_list(providers = [ExtensionMemberInfo]),
         "_runner": attr.label(default = Label("//build_defs/native:rust-runtime-test.mts"), allow_single_file = True),
         "_helpers": attr.label_list(default = [Label("//build_defs/native:host-runtime-test-helpers.mts"), Label("//:tools/packaging/portable-archive.mts"), Label("//:tools/packaging/release-directory-safety.mts")], allow_files = True),

@@ -18,6 +18,35 @@ function valueAtPath(value: unknown, parts: string[]): unknown {
   return current;
 }
 
+/** Read conventional Cargo dependency identity without assigning release roles. */
+export function cargoCompatibilityDependency(
+  entry: CompatibilityEntry,
+  text: string,
+): { packageName: string; path?: string } | undefined {
+  if (!entry.parser.startsWith('toml:') || !entry.parser.endsWith('.version')) return undefined;
+  const parts = entry.parser.slice(5).split('.');
+  const tables = ['dependencies', 'dev-dependencies', 'build-dependencies'];
+  if (
+    !(parts.length === 3 && tables.includes(parts[0])) &&
+    !(parts.length === 4 && parts[0] === 'workspace' && parts[1] === 'dependencies') &&
+    !(parts.length === 5 && parts[0] === 'target' && tables.includes(parts[2]))
+  )
+    return undefined;
+  const declaration = valueAtPath(Bun.TOML.parse(text), parts.slice(0, -1)) as
+    | { package?: unknown; path?: unknown }
+    | undefined;
+  if (!declaration || typeof declaration !== 'object') return undefined;
+  return {
+    packageName: typeof declaration.package === 'string' ? declaration.package : parts.at(-2)!,
+    ...(typeof declaration.path === 'string' ? { path: declaration.path } : {}),
+  };
+}
+
+/** Local Cargo declarations are build requirements, not installed artifact requests. */
+export function isCargoPathCompatibility(entry: CompatibilityEntry, text: string): boolean {
+  return cargoCompatibilityDependency(entry, text)?.path !== undefined;
+}
+
 /** Parse already-read source bytes without filesystem, history, or graph access. */
 export function compatibilityVersionFromText<Missing = never>(
   entry: CompatibilityEntry,
