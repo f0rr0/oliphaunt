@@ -184,7 +184,6 @@ jobs:
         env:
           MOON_BIN: /definitely-unavailable-moon
         run: |
-          bash tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
           bash tools/dev/bun.sh tools/release/check_release_please_config.mts
           bash tools/dev/bun.sh tools/release/check_artifact_targets.mts
           bash tools/release/release-check.sh --mutation-tests-only
@@ -1074,7 +1073,8 @@ jobs:
             '["--output_base="+$base,"--host_jvm_args=-Xmx3g"]' > "$input_root/startup.json"
           jq -nc --arg compiler "$TARGET_COMPILER" --arg archive "$archive" --arg platform "$TARGET_PLATFORM" \
             '["-c","opt","--platforms=//build_defs/wasix:portable","--host_platform="+$compiler,
-              "--extra_execution_platforms="+$compiler,"--jobs=1","--local_test_jobs=1",
+              "--extra_execution_platforms="+$compiler,
+              (if $platform == "macos-arm64" then "--jobs=2" else "--jobs=1" end),"--local_test_jobs=1",
               "--repo_env=OLIPHAUNT_POSTMASTER_GUEST_ARCHIVE="+$archive]
               + (if $platform == "macos-arm64" then ["--config=macos-sandbox"] else [] end)' \
             > "$input_root/configuration.json"

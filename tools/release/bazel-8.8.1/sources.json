@@ -1,0 +1,26 @@
+{
+  "bazelVersion": "8.8.1",
+  "files": [
+    {
+      "file": "analysis_v2.proto",
+      "url": "https://raw.githubusercontent.com/bazelbuild/bazel/8.8.1/src/main/protobuf/analysis_v2.proto",
+      "sha256": "2dc3deb978de08a4cd6b95b824b4c2d1801dbf945ab332877c419495b59e908c",
+      "size": 9625,
+      "license": "Apache-2.0"
+    },
+    {
+      "file": "build.proto",
+      "url": "https://raw.githubusercontent.com/bazelbuild/bazel/8.8.1/src/main/protobuf/build.proto",
+      "sha256": "5041f18adb0507f0d85ddb2c8ecf62d0cf148c8506dd4cdaff051a40cc4ecd96",
+      "size": 22263,
+      "license": "Apache-2.0"
+    },
+    {
+      "file": "stardoc_output.proto",
+      "url": "https://raw.githubusercontent.com/bazelbuild/bazel/8.8.1/src/main/protobuf/stardoc_output.proto",
+      "sha256": "515d7657c0a57903058d6c59cf2f2ac815fc92557bfd3e4856ac96d6e2cf55c0",
+      "size": 14574,
+      "license": "Apache-2.0"
+    }
+  ]
+}

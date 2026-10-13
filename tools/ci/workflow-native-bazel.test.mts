@@ -586,3 +586,91 @@ test('native qualification supports protected merge groups with the same require
   assert.equal(jobs.required.name, 'Required');
   assert.ok(predecessors('required').has('release-inputs'));
 });
+
+test('postmaster host scheduling keeps native tests serial and Linux guest inputs unchanged', () => {
+  const job = jobs['postmaster-host'];
+  assert.equal(
+    job['timeout-minutes'],
+    '$' + "{{ matrix.platform == 'macos-arm64' && 180 || 120 }}",
+  );
+  const step = job.steps.find(
+    (step: any) => step.name === 'Qualify native carrier from authenticated Linux guest',
+  );
+  const start = step.run.indexOf('jq -nc --arg compiler "$TARGET_COMPILER"');
+  const end = step.run.indexOf('jq -nc --arg prefix "$TARGET_PREFIX"', start);
+  assert.ok(start >= 0 && end > start, 'Missing actual host configuration generator');
+  qualifierFixture((directory, env) => {
+    const inputRoot = path.join(directory, 'host inputs');
+    mkdirSync(inputRoot);
+    for (const platform of ['macos-arm64', 'linux-arm64']) {
+      const compiler =
+        platform === 'macos-arm64'
+          ? '//src/wasix/postmaster:native_macos_arm64'
+          : '//src/wasix/postmaster:compiler_linux_arm64';
+      const archive = path.join(directory, 'original-linux-x64-gnu.tar.zst');
+      const result = spawnSync(
+        'bash',
+        ['-eu', '-c', `input_root="$HOST_INPUT_ROOT"\n${step.run.slice(start, end)}`],
+        {
+          cwd: directory,
+          env: {
+            ...env,
+            HOST_INPUT_ROOT: inputRoot,
+            TARGET_PLATFORM: platform,
+            TARGET_COMPILER: compiler,
+            archive,
+          },
+        },
+      );
+      assert.equal(result.status, 0, result.stderr.toString());
+      assert.deepEqual(
+        JSON.parse(readFileSync(path.join(inputRoot, 'configuration.json'), 'utf8')),
+        [
+          '-c',
+          'opt',
+          '--platforms=//build_defs/wasix:portable',
+          `--host_platform=${compiler}`,
+          `--extra_execution_platforms=${compiler}`,
+          platform === 'macos-arm64' ? '--jobs=2' : '--jobs=1',
+          '--local_test_jobs=1',
+          `--repo_env=OLIPHAUNT_POSTMASTER_GUEST_ARCHIVE=${archive}`,
+          ...(platform === 'macos-arm64' ? ['--config=macos-sandbox'] : []),
+        ],
+        `${platform} actual qualification configuration`,
+      );
+    }
+  });
+});
+
+test('every native CLI producer installs the conventional frozen release-tools workspace before capture', () => {
+  const action = Bun.YAML.parse(
+    readFileSync(
+      path.resolve(import.meta.dir, '../../.github/actions/native-release-inputs/action.yml'),
+      'utf8',
+    ),
+  ) as any;
+  const command =
+    'bash tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts';
+  const installs = action.runs.steps.filter((step: any) => step.run?.trim() === command);
+  assert.equal(installs.length, 1);
+  assert.equal(installs[0].if, undefined);
+  assert.equal(installs[0]['continue-on-error'], undefined);
+  const firstImport = action.runs.steps.findIndex((step: any) =>
+    step.run?.includes('native-release-inputs.mts'),
+  );
+  assert.ok(action.runs.steps.indexOf(installs[0]) < firstImport);
+  for (const job of Object.values(jobs)) {
+    assert.ok(
+      !job.steps.some((step: any) => step.run?.includes(command)),
+      'Shared tooling must install once per job',
+    );
+    const capture = job.steps.findIndex((step: any) =>
+      step.run?.includes('qualify-native-shipping.mts'),
+    );
+    if (capture < 0) continue;
+    const acquisition = job.steps.findIndex(
+      (step: any) => step.uses === './.github/actions/native-release-inputs',
+    );
+    assert.ok(acquisition >= 0 && acquisition < capture);
+  }
+});

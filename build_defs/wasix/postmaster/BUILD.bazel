@@ -38,7 +38,9 @@ bun_test(name = "native_receipts_test", entry_point = "native-receipts.test.mts"
 bun_test(
     name = "guest_inputs_test",
     entry_point = "guest-inputs.test.mts",
-    data = ["guest-inputs.mts", "native-receipts.mts", "//:tools/packaging/strict-json.mts"],
+    data = ["guest-inputs.mts", "native-receipts.mts", "//:tools/packaging/strict-json.mts",
+            "//src/wasix/postmaster:lib/guest-build-provenance.mts",
+            "//src/wasix/postmaster:wasmer/policies/sealed-side-modules.v1.tsv"],
     size = "small",
 )
 
@@ -73,6 +75,8 @@ bun_test(
     entry_point = "seal-modules.test.mts",
     data = [
         "seal-modules.mts",
+        "guest-inputs.mts",
+        "native-receipts.mts",
         "//:tools/packaging/strict-json.mts",
         "//src/wasix/postmaster:wasmer/policies/sealed-side-modules.v1.tsv",
         "//src/wasix/postmaster:lib/linear-memory-profile.mts",

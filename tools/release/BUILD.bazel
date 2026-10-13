@@ -1,5 +1,7 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
+load("@bazel_lib//lib:copy_file.bzl", "copy_file")
+load("@bazel_lib//lib:directory_path.bzl", "directory_path")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -132,3 +134,20 @@ exports_files([
     "verify-release-commit.mts",
     "verify_github_release_attestations.mts",
 ], visibility = ["//visibility:public"])
+
+# Copy the publisher's regular standalone module and original CommonJS manifest.
+directory_path(
+    name = "protobufjs_bundle_module_source",
+    directory = "//build_defs/languages/ts:protobufjs_native_aquery_package/dir",
+    path = "dist/protobuf.js",
+)
+directory_path(
+    name = "protobufjs_bundle_manifest_source",
+    directory = "//build_defs/languages/ts:protobufjs_native_aquery_package/dir",
+    path = "package.json",
+)
+copy_file(name = "protobufjs_bundle_module", src = ":protobufjs_bundle_module_source", out = "node_modules/protobufjs/dist/protobuf.js")
+copy_file(name = "protobufjs_bundle_manifest", src = ":protobufjs_bundle_manifest_source", out = "node_modules/protobufjs/package.json")
+exports_files(["package.json", "native-aquery.mts"] + glob(["bazel-8.8.1/*"]))
+filegroup(name = "native_aquery_sources", srcs = ["native-aquery.mts", ":protobufjs_bundle_module", ":protobufjs_bundle_manifest"] + glob(["bazel-8.8.1/*"]))
+bun_test(name = "native_aquery_test", entry_point = "native-aquery.test.mts", data = [":native_aquery_sources", "bazel-shipping-inputs.mts"] + glob(["fixtures/aquery-bazel-8.8.1/*"]), size = "small")

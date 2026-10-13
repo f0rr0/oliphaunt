@@ -30,11 +30,13 @@ import {
   type GuestInputs,
   validateGuestProducer,
   validateImportedGuestReceipt,
+  writeAotModuleOutputs,
 } from './guest-inputs.mts';
 import { nativeWasmerReceipt, runtimeAbiFacts } from './native-receipts.mts';
 
 export interface ImportedGuest extends GuestInputs {
   archive: string;
+  moduleOutputs: Record<string, string>;
   version: string;
   artifact: { product: string; kind: string; asset: string; target: string; triple: string };
 }
@@ -130,6 +132,7 @@ export function importPostmasterGuest(spec: ImportedGuest, output: string, recei
         mode: path.startsWith('bin/') ? 0o755 : 0o644,
       });
     }
+    writeAotModuleOutputs(output, requiredModules, spec.moduleOutputs);
     writeFileSync(receipt, bytes, { flag: 'wx' });
   } finally {
     // Only our private extracted copy is made writable for deletion.

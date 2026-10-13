@@ -98,7 +98,7 @@ def postgres_postmaster_targets(version):
         module_paths[name] = "lib/postgresql/" + name + ".so"
     native.filegroup(name = "side_modules", srcs = side_targets, target_compatible_with = _COMPATIBLE)
     native.filegroup(name = "unsealed_modules", srcs = [":postgres_seed", ":initdb", ":side_modules"], target_compatible_with = _COMPATIBLE)
-    postmaster_seal_modules(name = "sealed_modules", main = ":postgres_seed", initdb = ":initdb", sides = ":side_modules", abi_check = ":abi_check", target_compatible_with = _COMPATIBLE, exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"])
+    postmaster_seal_modules(name = "sealed_modules", module_paths = ["bin/postgres", "bin/initdb"] + module_paths.values(), main = ":postgres_seed", initdb = ":initdb", sides = ":side_modules", abi_check = ":abi_check", target_compatible_with = _COMPATIBLE, exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"])
     native.alias(name = "sealed_profile_test", actual = "@oliphaunt//src/wasix/postmaster:linux_sealed_profile_test")
     aot_targets = []
     for name, path in dict(module_paths, postgres = "bin/postgres", initdb = "bin/initdb").items():

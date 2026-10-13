@@ -42,7 +42,7 @@ export type NativeProducerCapture = {
 };
 
 export const NATIVE_AQUERY_FLAGS = [
-  '--output=jsonproto',
+  '--output=proto',
   '--include_commandline=false',
   '--include_artifacts=true',
   '--include_pruned_inputs=true',
@@ -54,6 +54,21 @@ export const NATIVE_AQUERY_FLAGS = [
   '--nodep_deps=true',
   '--skyframe_state=false',
 ] as const;
+
+/** Read only the supported raw query format; full provenance binding follows below. */
+export function nativeAqueryOutputFormat(events: unknown[]): 'proto' | 'jsonproto' {
+  const commands = events
+    .map(object)
+    .filter((event) => event.structuredCommandLine?.commandLineLabel === 'canonical');
+  if (commands.length !== 1) throw new Error('native scoped aquery requires one canonical command');
+  const options = list(object(commands[0].structuredCommandLine).sections).flatMap((section) =>
+    list(object(section).optionList?.option ?? []),
+  );
+  const output = options.filter((option) => option.optionName === 'output');
+  if (output.length !== 1 || !['proto', 'jsonproto'].includes(output[0].optionValue))
+    throw new Error('native scoped aquery requires one supported output format');
+  return output[0].optionValue;
+}
 
 /** The complete requested configured closure, including owner policy and tests. */
 export function nativeAqueryExpression(targets: string[]) {
@@ -525,7 +540,8 @@ export function nativeShippingManifestBindings(
       list(object(section).optionList?.option ?? []),
     );
     for (const flag of NATIVE_AQUERY_FLAGS) {
-      const [name, value] = flag.slice(2).split('=');
+      const [name, literal] = flag.slice(2).split('=');
+      const value = name === 'output' ? nativeAqueryOutputFormat(query.events) : literal;
       const matches = queryOptions.filter((option) => option.optionName === name);
       if (matches.length !== 1 || matches[0].optionValue !== value)
         throw new Error(`native scoped aquery command requires ${name}=${value}`);

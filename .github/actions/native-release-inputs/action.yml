@@ -28,6 +28,10 @@ runs:
           [[ "$PREPARE_RUN_ID" =~ ^[1-9][0-9]*$ && "$PREPARED_PULL_NUMBER" =~ ^[1-9][0-9]*$ ]]
         fi
 
+    - name: Install locked release tooling
+      shell: bash
+      run: bash tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
+
     - name: Download this run's public inputs
       if: inputs.public-artifact-id != ''
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c

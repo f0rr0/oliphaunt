@@ -26,6 +26,7 @@ import {
 } from './qualify-native-shipping.mts';
 
 const realCapture = fileURLToPath(new URL('./capture-native-build-evidence.mts', import.meta.url));
+const realAquery = fileURLToPath(new URL('./native-aquery.mts', import.meta.url));
 const withSource = fileURLToPath(new URL('./with-source.sh', import.meta.url));
 const qualifiedReplay = fileURLToPath(new URL('./qualified-release-replay.sh', import.meta.url));
 
@@ -282,6 +283,7 @@ function fixture(mode = 'success') {
     `import {appendFileSync,readFileSync,writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import {nativeAqueryType} from ${JSON.stringify(realAquery)};
 const state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));
 const invocation=process.argv.slice(2);
 appendFileSync(${JSON.stringify(callsFile)},JSON.stringify(invocation)+'\\n');
@@ -318,7 +320,7 @@ if(args[0]==='test') {
   prefix.find((event:any)=>event.started).started.uuid='fixture-aquery';
   const events=[...prefix,canonical,{id:{progress:{}},progress:{stdout:'private-query-diagnostic'}},{id:{buildMetadata:{}},buildMetadata:{metadata}},{id:{buildFinished:{}},finished:{exitCode:{name:'SUCCESS'}}},{id:{buildMetrics:{}},buildMetrics:{},lastMessage:true}];
   writeFileSync(args.find((arg:string)=>arg.startsWith('--build_event_json_file=')).slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
-  if(state.mode!=='dump-missing') writeFileSync(args.find((arg:string)=>arg.startsWith('--output_file=')).slice(14),JSON.stringify(state.aquery));
+  if(state.mode!=='dump-missing') { const type=nativeAqueryType('8.8.1'); writeFileSync(args.find((arg:string)=>arg.startsWith('--output_file=')).slice(14),type.encode(type.fromObject(state.aquery)).finish()); }
 } else if(args[0]==='build') {
   if(args.at(-1)!=='--nobuild') throw new Error('failure diagnosis must not construct targets');
   if(state.mode==='incompatible-owner') {
@@ -393,14 +395,14 @@ else {
   const aquery = {
     pathFragments: paths.flatMap((file, index) =>
       file.split('/').map((name, part) => ({
-        id: `${index}-${part}`,
+        id: index * 100 + part + 1,
         label: name,
-        ...(part ? { parentId: `${index}-${part - 1}` } : {}),
+        ...(part ? { parentId: index * 100 + part } : {}),
       })),
     ),
     artifacts: paths.map((file, index) => ({
       id: index + 1,
-      pathFragmentId: `${index}-${file.split('/').length - 1}`,
+      pathFragmentId: index * 100 + file.split('/').length,
     })),
     targets: [
       { id: 1, label: '//fixture:package' },
@@ -629,7 +631,7 @@ for (const selection of ['explicit', 'export'])
       expect(queries[0]).toContain('--include_artifacts=true');
       expect(queries[0]).toContain('--include_aspects=true');
       expect(queries[0]).toContain('--include_commandline=false');
-      expect(queries[0]).toContain(`--output_file=${path.join(f.outputDirectory, 'aquery.json')}`);
+      expect(queries[0]).toContain(`--output_file=${path.join(f.outputDirectory, 'aquery.pb')}`);
       expect(queries[0][1]).toBe(
         nativeAqueryExpression(builds[0].filter((arg) => arg.startsWith('//'))),
       );
@@ -659,9 +661,9 @@ for (const selection of ['explicit', 'export'])
       expect(existsSync(path.join(f.outputDirectory, 'build-events.jsonl'))).toBe(true);
       expect(existsSync(path.join(f.outputDirectory, 'cquery.json'))).toBe(false);
       expect(existsSync(path.join(f.outputDirectory, 'roots.jsonl'))).toBe(false);
-      expect(existsSync(path.join(f.outputDirectory, 'aquery.json'))).toBe(true);
+      expect(existsSync(path.join(f.outputDirectory, 'aquery.pb'))).toBe(true);
       expect(evidence.cohorts[0].producerCapture.aqueryFile).toBe(
-        path.join(f.outputDirectory, 'aquery.json'),
+        path.join(f.outputDirectory, 'aquery.pb'),
       );
       const transferred = path.join(
         f.outputDirectory,

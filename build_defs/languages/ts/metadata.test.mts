@@ -506,6 +506,57 @@ const executionProjection = (value = executionFixture()) =>
     '@oliphaunt/docs',
   ]);
 
+test('explicit tools select conventional runtime or development libraries with exact field bindings', () => {
+  const value = fixture();
+  const workspace = '@oliphaunt/release-tools';
+  const manifest = {
+    name: workspace,
+    type: 'module',
+    dependencies: { protobufjs: '8.8.1', 'release-please': '17.3.0' },
+  };
+  const dependencies = { 'tools/release': manifest } as any;
+  value.lock.workspaces['tools/release'] = structuredClone(manifest);
+  Object.assign(value.lock.packages, {
+    protobufjs: ['protobufjs@8.8.1', '', { dependencies: { long: '^5.3.2' } }, 'sha512-cHJvdG8='],
+    long: ['long@5.3.2', '', {}, 'sha512-bG9uZw=='],
+    'release-please': ['release-please@17.3.0', '', {}, 'sha512-cmVsZWFzZQ=='],
+  });
+  const project = (tools = {}, execution: string[] = []) =>
+    importJavascriptMetadata(
+      value.root,
+      value.lock,
+      value.manifests,
+      tools,
+      {},
+      dependencies,
+      execution,
+    );
+  expect(() => project({ [workspace]: ['protobufjs'] }, [workspace])).toThrow(
+    'independent conventional selection',
+  );
+  const selected = { [workspace]: ['protobufjs'] };
+  const acquired = project(selected).consumerTools!;
+  expect(Object.keys(acquired.roots[workspace])).toEqual(['protobufjs']);
+  const library = acquired.packages[acquired.roots[workspace].protobufjs];
+  expect(library.version).toBe('8.8.1');
+  expect(Object.keys(library.dependencies)).toEqual(['long']);
+  expect(acquired.packages[library.dependencies.long].version).toBe('5.3.2');
+  expect(
+    Object.values(acquired.packages)
+      .map((row) => row.package)
+      .sort(),
+  ).toEqual(['long', 'protobufjs']);
+  value.lock.workspaces['tools/release'].dependencies.protobufjs = '8.8.0';
+  expect(() => project(selected)).toThrow('stale consumer tool declaration');
+  value.lock.workspaces['tools/release'] = structuredClone(manifest);
+  const runtime = structuredClone(acquired);
+  (manifest as any).devDependencies = { protobufjs: manifest.dependencies.protobufjs };
+  delete (manifest.dependencies as any).protobufjs;
+  expect(() => project(selected)).toThrow('stale consumer tool declaration');
+  value.lock.workspaces['tools/release'] = structuredClone(manifest);
+  expect(project(selected).consumerTools).toEqual(runtime);
+});
+
 test('execution workspaces acquire every conventional root with their own compiler and lock-projected CLI paths', () => {
   const value = executionFixture();
   const before = importJavascriptMetadata(

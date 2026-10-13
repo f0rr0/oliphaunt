@@ -31,6 +31,7 @@ import {
 } from '../../../src/wasix/postmaster/wasmer/bin/verify-postmaster-concurrency-contract.mts';
 import { verify } from '../../../src/wasix/postmaster/wasmer/bin/verify-postmaster-wasm-import.mts';
 import { parseStrictJson } from '../../../tools/packaging/strict-json.mts';
+import { writeAotModuleOutputs } from './guest-inputs.mts';
 
 const hash = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
 type Side = { path: string; input: string; aliases: string[] };
@@ -255,6 +256,7 @@ export async function sealModules(specPath: string, outputPath: string) {
       work,
       join(output, 'share/postgresql/wasix-postmaster.concurrency.receipt'),
     );
+    writeAotModuleOutputs(output, ['bin/postgres', 'bin/initdb', ...sides], spec.moduleOutputs);
     console.log(
       `Sealed exact postmaster closure: ${index.length} modules, ${plan.length} side modules`,
     );

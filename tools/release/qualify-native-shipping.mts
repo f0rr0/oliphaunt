@@ -522,7 +522,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     ...configuration,
     ...metadata,
     ...NATIVE_AQUERY_FLAGS,
-    `--output_file=${file('aquery.json')}`,
+    `--output_file=${file('aquery.pb')}`,
     `--build_event_json_file=${file('aquery-build-events.jsonl')}`,
   ]);
   assertSource();
@@ -604,7 +604,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     file('github.json'),
     '--producer-cohort',
     file('selected-roots.json'),
-    file('aquery.json'),
+    file('aquery.pb'),
     file('build-events.jsonl'),
     executionRoot,
     '--aquery-build-events',

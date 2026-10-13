@@ -2,15 +2,18 @@
 
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/wasix:wasm.bzl", "WasmModuleInfo")
+load(":aot.bzl", "PostmasterModulesInfo", "postmaster_module_outputs")
 
 def _seal_impl(ctx):
     output = ctx.actions.declare_directory(ctx.label.name)
     spec = ctx.actions.declare_file(ctx.label.name + ".json")
+    modules = postmaster_module_outputs(ctx, ctx.attr.module_paths)
     main = ctx.attr.main[WasmModuleInfo].module
     initdb = ctx.attr.initdb[WasmModuleInfo].module
     policies = {"mandatory": ctx.file.mandatory_policy, "dlsym": ctx.file.dlsym_policy, "sides": ctx.file.side_policy}
     tools = {"sealer": ctx.executable._sealer, "memory": ctx.executable._memory, "start": ctx.executable._start, "wasmOpt": ctx.executable._optimizer, "wasmDis": ctx.executable._disassembler}
     ctx.actions.write(spec, json.encode({
+        "moduleOutputs": {path: file.path for path, file in modules.items()},
         "main": main.path,
         "initdb": initdb.path,
         "sides": [file.path for file in ctx.files.sides],
@@ -26,12 +29,12 @@ def _seal_impl(ctx):
         arguments = [arguments],
         inputs = [spec, main, initdb] + ctx.files.sides + policies.values() + ctx.files.abi_check,
         tools = [ctx.attr._sealer[DefaultInfo].files_to_run, ctx.attr._memory[DefaultInfo].files_to_run, ctx.attr._start[DefaultInfo].files_to_run] + ctx.files._binaryen_files,
-        outputs = [output],
+        outputs = [output] + modules.values(),
         mnemonic = "PostmasterSealModules",
         progress_message = "Seal and verify exact postmaster module closure %{label}",
         resource_set = _resources,
     )
-    return [DefaultInfo(files = depset([output]))]
+    return [DefaultInfo(files = depset([output])), PostmasterModulesInfo(modules = modules)]
 
 def _resources(_os, _input_count):
     return {"cpu": 2, "memory": 2048}
@@ -40,6 +43,7 @@ postmaster_seal_modules = rule(
     implementation = _seal_impl,
     toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
+        "module_paths": attr.string_list(mandatory = True),
         "main": attr.label(mandatory = True, providers = [WasmModuleInfo]),
         "initdb": attr.label(mandatory = True, providers = [WasmModuleInfo]),
         "sides": attr.label(mandatory = True, allow_files = True),
@@ -50,6 +54,8 @@ postmaster_seal_modules = rule(
         "_writer": attr.label(default = "//build_defs/wasix/postmaster:seal-modules.mts", allow_single_file = True),
         "_writer_sources": attr.label_list(default = [
             "//:tools/packaging/strict-json.mts",
+            "//build_defs/wasix/postmaster:guest-inputs.mts",
+            "//build_defs/wasix/postmaster:native-receipts.mts",
             "//src/wasix/postmaster:lib/linear-memory-profile.mts",
             "//src/wasix/postmaster:lib/receipt-files.mts",
             "//src/wasix/postmaster:lib/sealed-export-chain.mts",

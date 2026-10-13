@@ -1,6 +1,7 @@
 /** Bind an imported Linux guest to the exact current declared construction sources. */
 import assert from 'node:assert/strict';
-import { readFileSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { parseStrictJson } from '../../../tools/packaging/strict-json.mts';
 import { digest, nativeGuestReceipt, runtimeAbiFacts } from './native-receipts.mts';
 
@@ -63,6 +64,23 @@ export function validateImportedGuestReceipt(bytes: Uint8Array | string, spec: G
   // Sysroot closure and guest compiler identities describe the original Linux
   // construction. They remain unchanged; no foreign compiler is relabeled here.
   return guest;
+}
+
+// Emit ordinary sibling Files from the already admitted final tree for per-module AOT caching.
+export function writeAotModuleOutputs(
+  tree: string,
+  modules: string[],
+  outputs: Record<string, string>,
+) {
+  assert.deepEqual(
+    Object.keys(outputs).sort(),
+    [...modules].sort(),
+    'Declared AOT module outputs differ',
+  );
+  for (const [relative, file] of Object.entries(outputs)) {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, readFileSync(join(tree, relative)), { flag: 'wx', mode: 0o644 });
+  }
 }
 
 export function validateGuestProducer(abi: any, canonicalTriple: string) {

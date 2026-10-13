@@ -532,11 +532,7 @@ export function importJavascriptMetadata(
     for (const name of tools) {
       const field = manifest.devDependencies?.[name] ? 'devDependencies' : 'dependencies';
       let requirement = manifest[field]?.[name];
-      if (
-        (!execution.has(workspace) && field !== 'devDependencies') ||
-        !requirement ||
-        lock.workspaces[path][field]?.[name] !== requirement
-      )
+      if (!requirement || lock.workspaces[path][field]?.[name] !== requirement)
         throw new Error(`bun.lock has a stale consumer tool declaration ${workspace}/${name}`);
       requirement = catalogRequirement(name, requirement);
       consumerRoots[workspace][name] = record(name, workspace, requirement, true, false, workspace);

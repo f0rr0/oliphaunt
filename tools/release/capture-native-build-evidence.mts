@@ -6,12 +6,14 @@ import path from 'node:path';
 import { SEED_CONSTRUCTION_RECEIPT_SUFFIX } from '../../build_defs/resources/seed_construction.mts';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import { buildShippingInputView, canonicalShippingLabel } from './bazel-shipping-inputs.mts';
+import { readNativeAquery } from './native-aquery.mts';
 import { writeNativeBuildFinalFiles } from './native-build-files.mts';
 import {
   NATIVE_AQUERY_FLAGS,
   type NativeBuildEvidence,
   type NativeBuildGithub,
   type NativeBuildSource,
+  nativeAqueryOutputFormat,
   nativeBuildEventIndex,
   nativeBuildMetadata,
   nativeQualificationInputBindings,
@@ -472,7 +474,8 @@ function main() {
       cohorts.push({
         shippingRoots: json(roots),
         aqueryFile: path.resolve(aquery),
-        aquery: json(aquery),
+        // Query BEP follows this argument; decode only after all flags are parsed.
+        aquery: undefined,
         buildEvents: jsonLines(buildEvents),
         executionRoot,
       });
@@ -506,13 +509,23 @@ function main() {
   }
   if (!githubFile || !output || !cohorts.length)
     throw new Error(
-      'usage: capture-native-build-evidence.mts --github-json FILE --producer-cohort ROOT_LABELS.json AQUERY.json BEP.jsonl EXECROOT [--producer-cohort ...] --output-directory DIR [--source-ref REF]',
+      'usage: capture-native-build-evidence.mts --github-json FILE --producer-cohort ROOT_LABELS.json AQUERY_FILE BEP.jsonl EXECROOT [--producer-cohort ...] --output-directory DIR [--source-ref REF]',
     );
+  const bazelVersion = readFileSync(new URL('../../.bazelversion', import.meta.url), 'utf8').trim();
+  for (const cohort of cohorts)
+    if ('shippingRoots' in cohort)
+      cohort.aquery = readNativeAquery(
+        cohort.aqueryFile,
+        cohort.aqueryBuildEvents === undefined
+          ? 'jsonproto'
+          : nativeAqueryOutputFormat(cohort.aqueryBuildEvents),
+        bazelVersion,
+      );
   const captured = captureNativeBuildEvidence({
     source: sourceIdentity(ref ?? 'HEAD'),
     github: json(githubFile),
     cohorts,
-    bazelVersion: readFileSync(new URL('../../.bazelversion', import.meta.url), 'utf8').trim(),
+    bazelVersion,
   });
   console.log(writeNativeBuildEvidence(captured, output));
 }

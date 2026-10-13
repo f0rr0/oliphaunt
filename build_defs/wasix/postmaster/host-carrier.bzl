@@ -14,7 +14,7 @@ def postmaster_imported_host_carrier(target, native_platform, execution, name = 
     name = name or target.replace("-", "_")
     compatible = ["@platforms//cpu:wasm32", "@platforms//os:wasi"]
     guest = name + "_guest"
-    postmaster_import_guest(name = guest, archive = archive, configuration = "@postmaster_postgres//:configuration", patches = postmaster_patch_inputs(POSTGRES_PATCHES),
+    postmaster_import_guest(name = guest, archive = archive, module_paths = POSTMASTER_GUEST_MODULE_PATHS, configuration = "@postmaster_postgres//:configuration", patches = postmaster_patch_inputs(POSTGRES_PATCHES),
                             target_compatible_with = compatible, exec_compatible_with = execution)
     native.filegroup(name = guest + "_receipt", srcs = [":" + guest], output_group = "receipt", target_compatible_with = compatible)
     if not aot_modules:

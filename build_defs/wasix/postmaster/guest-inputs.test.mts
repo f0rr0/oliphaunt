@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { validateGuestProducer, validateImportedGuestReceipt } from './guest-inputs.mts';
+import { requiredModules } from '../../../src/wasix/postmaster/lib/guest-build-provenance.mts';
+import {
+  validateGuestProducer,
+  validateImportedGuestReceipt,
+  writeAotModuleOutputs,
+} from './guest-inputs.mts';
 import { canonicalJson, digest, nativeGuestReceipt } from './native-receipts.mts';
 
 type Spec = Parameters<typeof validateImportedGuestReceipt>[1];
@@ -345,4 +350,52 @@ test('guest producer requires the canonical Linux x64 ABI rather than a foreign 
       linuxTriple,
     ),
   );
+});
+
+test('scalar AOT outputs preserve the canonical final bytes without unrelated tree metadata', () => {
+  const root = mkdtempSync(join(tmpdir(), 'postmaster-aot-output-'));
+  try {
+    const tree = join(root, 'tree');
+    for (const relative of requiredModules) {
+      const file = join(tree, relative);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+    }
+    const metadata = join(tree, 'share/postgresql/receipt.json');
+    mkdirSync(dirname(metadata), { recursive: true });
+    writeFileSync(metadata, '{"receipt":1}');
+    const project = (name: string) => {
+      const outputs = Object.fromEntries(
+        requiredModules.map((relative) => [relative, join(root, name, relative)]),
+      );
+      writeAotModuleOutputs(tree, requiredModules, outputs);
+      return Object.fromEntries(
+        Object.entries(outputs).map(([relative, file]) => [relative, identity(readFileSync(file))]),
+      );
+    };
+    const before = project('before');
+    writeFileSync(metadata, '{"receipt":2}');
+    assert.deepEqual(project('metadata-only'), before);
+    writeFileSync(join(tree, 'bin/initdb'), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0, 0, 1, 0]));
+    const changed = project('own-module');
+    assert.notDeepEqual(changed['bin/initdb'], before['bin/initdb']);
+    for (const relative of requiredModules.filter((path) => path !== 'bin/initdb'))
+      assert.deepEqual(changed[relative], before[relative]);
+    const outputs = Object.fromEntries(
+      requiredModules.map((relative) => [relative, join(root, 'invalid', relative)]),
+    );
+    const missing = { ...outputs };
+    delete missing['bin/postgres'];
+    assert.throws(() => writeAotModuleOutputs(tree, requiredModules, missing), /outputs differ/);
+    assert.throws(
+      () =>
+        writeAotModuleOutputs(tree, requiredModules, {
+          ...outputs,
+          foreign: join(root, 'foreign'),
+        }),
+      /outputs differ/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
