@@ -125,7 +125,9 @@ runs:
         printf 'Bazel cache writer shutdown: success\n'
         # Repository downloads have no size GC. Bound them independently so
         # their growth cannot discard an otherwise valid action cache.
-        cache_limit_kib=2097152
+        # Disk GC targets 2G of logical bytes; allocated transport includes
+        # filesystem overhead. Keep both cache families bounded separately.
+        cache_limit_kib=3145728
         for family in disk repositories; do
           if [[ "$family" == disk && "$DISK_CACHE_HIT" == true ]] || \
              [[ "$family" == repositories && "$REPOSITORY_CACHE_HIT" == true ]]; then
