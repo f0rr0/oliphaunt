@@ -381,7 +381,8 @@ export async function sourceCompile(
       RUSTC: file(spec.rustc),
       RUSTDOC: file(spec.rustdoc),
       PATH: path.dirname(file(spec.rustc)),
-      HOME: output,
+      // Reuse the compiler's content-keyed cache within this private test only.
+      HOME: process.env.TEST_TMPDIR,
       TMPDIR: output,
     };
     const version = Bun.spawnSync([file(spec.cargo), '--version'], { env });

@@ -22,11 +22,11 @@ def _perl_generator_impl(ctx):
     arguments = perl.perlopt + [_expand(ctx, value) for value in ctx.attr.options]
     arguments += [ctx.file.script.path] + [_expand(ctx, value) for value in ctx.attr.arguments]
     if ctx.attr.capture_stdout:
-        # Two upstream generators emit stdout instead of accepting an output
-        # path. Redirect it in the same declared interpreter, without a shell.
+        # Wait for the generator: Windows exec exits the launcher before its
+        # child completes, so Bazel would terminate the child and capture no output.
         arguments = perl.perlopt + [
             "-e",
-            "open(STDOUT, q(>), shift @ARGV) or die $!; exec {$ARGV[0]} @ARGV; die $!;",
+            "open(STDOUT, q(>), shift @ARGV) or die $!; system {$ARGV[0]} @ARGV; die qq(Perl generator failed: status $?) if $? != 0;",
             ctx.outputs.outs[0].path,
             perl.interpreter.path,
         ] + arguments

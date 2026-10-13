@@ -431,6 +431,10 @@ async function qualifyOfflineCargoScenarios() {
     },
   ) {
     const directory = path.join(scratch, `case-${count++}`);
+    const started = performance.now();
+    console.error(
+      `Offline Cargo ${path.basename(directory)}: ${root.name}@${root.version} minimum=${minimum} expectedSuccess=${expectedSuccess}`,
+    );
     mkdirSync(directory);
     const diagnostics = path.join(directory, 'diagnostics');
     mkdirSync(diagnostics);
@@ -488,6 +492,9 @@ async function qualifyOfflineCargoScenarios() {
         );
       return { ordinary, floor };
     } finally {
+      console.error(
+        `Offline Cargo ${path.basename(directory)} elapsed ${Math.round(performance.now() - started)}ms`,
+      );
       if (previous === undefined) delete process.env.TEST_UNDECLARED_OUTPUTS_DIR;
       else process.env.TEST_UNDECLARED_OUTPUTS_DIR = previous;
     }

@@ -45,6 +45,14 @@ bun_test(
     size = "small",
 )
 
+bun_script_test(
+    name = "postgres_probe_header_test",
+    entry_point = "postgres-probe-header.test.mts",
+    args = ["$(location @postgres//:src/include/utils/probes.h)", "$(location @postgres//:src/backend/utils/probes.d)"],
+    data = ["@postgres//:src/include/utils/probes.h", "@postgres//:src/backend/utils/probes.d"],
+    size = "small",
+)
+
 bun_test(
     name = "host_config_policy_test",
     entry_point = "host-config-policy.test.mts",

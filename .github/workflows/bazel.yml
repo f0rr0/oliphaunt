@@ -510,7 +510,7 @@ jobs:
           //build_defs/foundation:bun_toolchain_test
           --platforms=//build_defs/foundation:windows_x86_64
           --extra_execution_platforms=//build_defs/foundation:linux_x86_64
-          --nocache_test_results --jobs=2
+          --jobs=2
 
       - name: Exercise cold, incremental and coverage scenarios
         if: matrix.platform == 'linux-x64'
