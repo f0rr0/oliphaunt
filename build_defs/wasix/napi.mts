@@ -12,6 +12,10 @@ import {
   type WasixNapiStage,
 } from '../../src/wasix/node-addon/tools/package-platform.mts';
 import { releaseProfilePackageLicense } from '../../tools/packaging/release-notices.mts';
+import {
+  renderWindowsVcRuntimeSourceReceipt,
+  WINDOWS_VC_RUNTIME_RECEIPT,
+} from '../../tools/packaging/windows-vc-runtime-closure.mts';
 import { copyNativeInputFile } from '../../tools/release/native-file-identity.mts';
 
 export type WasixNapiCarrierSpec = {
@@ -118,6 +122,13 @@ export async function packageNativeWasixNapi(spec: WasixNapiCarrierSpec) {
         assert.equal(path.basename(member), member, 'Windows runtime must be a flat declared File');
         copy(input, path.join(windowsRuntimeSourceDirectory, member));
       }
+      writeFileSync(
+        path.join(windowsRuntimeSourceDirectory, WINDOWS_VC_RUNTIME_RECEIPT),
+        renderWindowsVcRuntimeSourceReceipt({
+          sourceDirectory: windowsRuntimeSourceDirectory,
+          profile: 'provider',
+        }),
+      );
     } else
       assert.equal(
         Object.keys(spec.windowsRuntime).length,

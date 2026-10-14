@@ -21,6 +21,10 @@ import {
   machoFixture,
   windowsPeFixture,
 } from '../../tools/packaging/testdata/release-fixture-utils.mts';
+import {
+  WINDOWS_VC_RUNTIME_RECEIPT,
+  windowsVcRuntimeProfileNames,
+} from '../../tools/packaging/windows-vc-runtime-closure.mts';
 import { packageNativeWasixNapi } from './napi.mts';
 import { stageWasixNapiInputs, type WasixNapiInputsSpec } from './napi-inputs.mts';
 
@@ -239,14 +243,13 @@ test('held registry origins, default contrib and canonical construction carriers
       const windowsRuntime: Record<string, string> = {};
       if (target === 'windows-x64-msvc') {
         const bytes = windowsPeFixture();
-        for (const [member, data] of [
-          ['vcruntime140.dll', bytes],
-          ['windows-vc-runtime.sha256', `${digest(bytes)}  vcruntime140.dll\n`],
-        ] as const) {
+        // The actual SDK filegroup declares provider DLLs, without a packaging receipt.
+        for (const member of windowsVcRuntimeProfileNames('provider')) {
           const file = path.join(root, member);
-          writeFileSync(file, data);
+          writeFileSync(file, bytes);
           windowsRuntime[member] = file;
         }
+        assert(!Object.hasOwn(windowsRuntime, WINDOWS_VC_RUNTIME_RECEIPT));
       }
       const outputs = await packageNativeWasixNapi({
         target: target as any,
@@ -287,6 +290,23 @@ test('held registry origins, default contrib and canonical construction carriers
         },
       });
       const npm = readPortableArchiveEntries(outputs.npm);
+      if (target === 'windows-x64-msvc') {
+        const dll = readFileSync(windowsRuntime['vcruntime140.dll']);
+        const receipt = `${digest(dll)}  vcruntime140.dll\n`;
+        for (const [entries, prefix] of [
+          [npm, 'package/prebuilds/'],
+          [readPortableArchiveEntries(outputs.github), ''],
+        ] as const) {
+          const runtime = entries.get(`${prefix}vcruntime140.dll`);
+          const manifest = entries.get(prefix + WINDOWS_VC_RUNTIME_RECEIPT);
+          assert(runtime?.isFile && !runtime.isSymbolicLink);
+          assert(manifest?.isFile && !manifest.isSymbolicLink);
+          assert.deepEqual(Buffer.from(runtime.data()), dll);
+          assert.equal(Buffer.from(manifest.data()).toString(), receipt);
+          assert(!entries.has(`${prefix}msvcp140.dll`));
+          assert(!entries.has(`${prefix}vcruntime140_1.dll`));
+        }
+      }
       const published = JSON.parse(
         Buffer.from(npm.get('package/artifact-provenance.json')!.data()).toString(),
       );
