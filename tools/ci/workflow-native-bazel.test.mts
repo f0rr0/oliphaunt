@@ -805,7 +805,7 @@ test('postmaster host scheduling keeps native tests serial and Linux guest input
   });
 });
 
-test('every native CLI producer installs the conventional frozen release-tools workspace before capture', () => {
+test('native controllers provision locked release tooling before their first dependent command', () => {
   const action = Bun.YAML.parse(
     readFileSync(
       path.resolve(import.meta.dir, '../../.github/actions/native-release-inputs/action.yml'),
@@ -822,10 +822,20 @@ test('every native CLI producer installs the conventional frozen release-tools w
     step.run?.includes('native-release-inputs.mts'),
   );
   assert.ok(action.runs.steps.indexOf(installs[0]) < firstImport);
-  for (const job of Object.values(jobs)) {
-    assert.ok(
-      !job.steps.some((step: any) => step.run?.includes(command)),
-      'Shared tooling must install once per job',
+  const resolver = jobs['release-inputs'].steps;
+  const resolverInstall = resolver.filter((step: any) => step.run?.trim() === command);
+  assert.equal(resolverInstall.length, 1);
+  assert.equal(resolverInstall[0].if, undefined);
+  assert.equal(resolverInstall[0]['continue-on-error'], undefined);
+  assert.ok(
+    resolver.indexOf(resolverInstall[0]) <
+      resolver.findIndex((step: any) => step.run?.includes('native-release-inputs.mts')),
+  );
+  for (const [id, job] of Object.entries(jobs)) {
+    assert.equal(
+      job.steps.filter((step: any) => step.run?.trim() === command).length,
+      id === 'release-inputs' ? 1 : 0,
+      'Each controller or acquisition job provisions tooling once',
     );
     const capture = job.steps.findIndex((step: any) =>
       step.run?.includes('qualify-native-shipping.mts'),
@@ -836,6 +846,20 @@ test('every native CLI producer installs the conventional frozen release-tools w
     );
     assert.ok(acquisition >= 0 && acquisition < capture);
   }
+  const release = Bun.YAML.parse(
+    readFileSync(path.resolve(import.meta.dir, '../../.github/workflows/release.yml'), 'utf8'),
+  ) as any;
+  const planning = release.jobs['plan-candidate'].steps;
+  const planningInstall = planning.filter((step: any) => step.run?.trim() === command);
+  assert.equal(planningInstall.length, 1);
+  assert.equal(planningInstall[0].if, undefined);
+  assert.equal(planningInstall[0]['continue-on-error'], undefined);
+  assert.ok(
+    planning.indexOf(planningInstall[0]) <
+      planning.findIndex((step: any) =>
+        step.run?.includes('native-freeze-publication-candidate.mts'),
+      ),
+  );
 });
 
 test('Source CI verifies ordinary receipts while full qualification retains Required admission', () => {

@@ -81,6 +81,9 @@ jobs:
       - name: Set up verified Node.js and Bun
         uses: ./.github/actions/setup-node-bun
 
+      - name: Install locked release tooling
+        run: bash tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
+
       - name: Resolve canonical prepared release tree
         id: context
         env:
