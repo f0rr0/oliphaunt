@@ -396,6 +396,150 @@ test('shared capture uses existing configured/recipe views without query, binds 
   });
 });
 
+test('capture keeps large exact queries outside subprocess argv', async () => {
+  await gitFixture(async (root, outputBase) => {
+    const labels = Array.from({ length: 640 }, (_, i) => `//package_${'x'.repeat(64)}_${i}:root`);
+    const buildLabels = labels.map((label) => `${label.slice(0, label.indexOf(':'))}:BUILD`);
+    for (const label of buildLabels) {
+      const file = path.join(root, label.slice(2).replace(':', '/'));
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, '# source recipe fixture\n');
+    }
+    const actualGraph = {
+      configurations: [{ id: 1, checksum: configuration }],
+      results: [
+        ...labels.map((name, i) => ({
+          configurationId: 1,
+          target: {
+            rule: {
+              name,
+              configuredRuleInput:
+                i === 0 ? [{ label: '//shared:input.rs', configurationId: 0 }] : [],
+            },
+          },
+        })),
+        { configurationId: 0, target: { sourceFile: { name: '//shared:input.rs' } } },
+      ],
+    };
+    const graphFile = path.join(outputBase, 'graph.json');
+    const callsFile = path.join(outputBase, 'calls.json');
+    const driver = path.join(outputBase, 'query-driver.mts');
+    writeFileSync(graphFile, JSON.stringify(actualGraph));
+    writeFileSync(
+      driver,
+      `
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+const args = process.argv.slice(2);
+if (args.join(' ').length >= 32767) throw new Error('Windows command-line limit');
+if (!args[1]?.startsWith('--query_file=')) throw new Error('missing query file transport');
+const expression = readFileSync(args[1].slice('--query_file='.length), 'utf8');
+const file = ${JSON.stringify(callsFile)};
+const calls = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
+calls.push({ args, expression });
+writeFileSync(file, JSON.stringify(calls));
+if (args[0] === 'cquery') console.log(readFileSync(${JSON.stringify(graphFile)}, 'utf8'));
+else if (args[0] === 'query') console.log(${JSON.stringify([...buildLabels, '//shared:BUILD'].join('\n'))});
+else throw new Error('unexpected additional Bazel command');
+`,
+    );
+    const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    const launcher = path.join(root, 'tools/dev/bazel.sh');
+    mkdirSync(path.dirname(launcher), { recursive: true });
+    writeFileSync(
+      launcher,
+      `#!/usr/bin/env bash\nexec ${shellQuote(process.execPath)} --no-install --no-env-file ${shellQuote(driver)} "$@"\n`,
+    );
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.invalid',
+        'commit',
+        '--quiet',
+        '-m',
+        'large queries',
+      ],
+      { cwd: root },
+    );
+    const actualSource = {
+      commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+      tree: execFileSync('git', ['rev-parse', 'HEAD^{tree}'], {
+        cwd: root,
+        encoding: 'utf8',
+      }).trim(),
+    };
+    const outputDirectory = path.join(outputBase, 'receipts/full');
+    const configurationFlags = [
+      '--platforms=//native:windows',
+      '--host_platform=//native:windows',
+      '--lockfile_mode=error',
+    ];
+    const file = await captureConfiguredCiRequest({
+      id: 'portable/windows-x64/packages',
+      job: 'portable/windows-x64',
+      source: actualSource,
+      github,
+      outputDirectory,
+      workspaceRoot: root,
+      configuration: configurationFlags,
+      startup: [],
+      requestedTargets: labels.toReversed(),
+      completedRoots: labels.map((label) => ({ label, configuration })),
+      executionRoot: path.join(outputBase, 'execroot/_main'),
+    });
+    const expression = (values: string[]) =>
+      `set(${[...new Set(values)]
+        .sort()
+        .map((value) => JSON.stringify(value))
+        .join(' ')})`;
+    const calls = JSON.parse(readFileSync(callsFile, 'utf8'));
+    assert.deepEqual(calls, [
+      {
+        args: [
+          'cquery',
+          `--query_file=${path.join(outputDirectory, 'analysis-deps.query')}`,
+          ...configurationFlags,
+          '--lockfile_mode=update',
+          '--output=jsonproto',
+          '--consistent_labels',
+          '--transitions=lite',
+          '--proto:include_configurations',
+          '--proto:output_rule_attrs=',
+        ],
+        expression: `deps(${expression(labels)})`,
+      },
+      {
+        args: [
+          'query',
+          `--query_file=${path.join(outputDirectory, 'analysis-buildfiles.query')}`,
+          '--lockfile_mode=error',
+          '--consistent_labels',
+          '--output=label',
+        ],
+        expression: `buildfiles(${expression([...labels, '//shared:input.rs'])})`,
+      },
+    ]);
+    for (const call of calls) {
+      assert(call.expression.length > 32767, 'fixture must exceed the Windows command limit');
+      assert(call.args.join(' ').length < 32767, 'both subprocess commands must remain bounded');
+    }
+    const captured = JSON.parse(readFileSync(file, 'utf8'));
+    assert.deepEqual(captured.projection.files, ['shared/input.rs']);
+    assert.deepEqual(
+      captured.projection.analysisInputs,
+      [...buildLabels, '//shared:BUILD'].map((label) => label.slice(2).replace(':', '/')).sort(),
+    );
+    assert.deepEqual(
+      captured.projection.roots,
+      labels.map((label) => ({ label, configuration })),
+    );
+    assert.deepEqual(captured.source, actualSource);
+  });
+});
+
 test('CLI full fallback and source verification preserve complete Required and reject omitted work', async () => {
   await gitFixture(async (root, outputBase, actualSource) => {
     const entry = new URL('./configured-scope.mts', import.meta.url).pathname;

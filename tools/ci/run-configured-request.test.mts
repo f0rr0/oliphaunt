@@ -105,18 +105,21 @@ const bep=args.find(arg=>arg.startsWith('--build_event_json_file='));if(bep){
  const summaryLabel=mode==='alias-root'?'//fixture:underlying_test':testLabel;
  const tested=args.includes('test');
  const builtOnly=mode==='built-only-test';
+ const skipped=mode==='incompatible'||mode.startsWith('invalid-skip-');
+ const skippedLabel='//fixture:incompatible_test';
  const completedId=label=>({targetCompleted:{label,configuration:{id:configuration}}});
  const summaryId={testSummary:{label:summaryLabel,configuration:{id:configuration}}};
  const resultId={testResult:{label:summaryLabel,configuration:{id:configuration},run:1,shard:1,attempt:1}};
  const metadata=Object.fromEntries(args.filter(arg=>arg.startsWith('--build_metadata=')).map(arg=>{const value=arg.slice(17);const split=value.indexOf('=');return[value.slice(0,split),value.slice(split+1)];}));
  const events=[{started:{uuid:'fixture-build',buildToolVersion:'8.8.1'}},{workspaceInfo:{localExecRoot:path.join(process.cwd(),'execroot/_main')}},{buildMetadata:{metadata}},
- {id:{pattern:{pattern:${JSON.stringify(targets)}}},children:[{targetConfigured:{label:testLabel}},{targetConfigured:{label:'//fixture:archive'}},...(builtOnly?[{targetConfigured:{label:'//fixture:built_only_test'}}]:[])],expanded:{testSuiteExpansions:[{suiteLabel:'//fixture:suite',testLabels:[testLabel,'//fixture:filtered_test']}]}},
+ {id:{pattern:{pattern:${JSON.stringify(targets)}}},children:[{targetConfigured:{label:testLabel}},{targetConfigured:{label:'//fixture:archive'}},...(builtOnly?[{targetConfigured:{label:'//fixture:built_only_test'}}]:[]),...(skipped?[{targetConfigured:{label:skippedLabel}}]:[])],expanded:{testSuiteExpansions:[{suiteLabel:'//fixture:suite',testLabels:[testLabel,'//fixture:filtered_test']}]}},
  {id:{configuration:{id:configuration}},configuration:{mnemonic:'fixture'}},
  {id:{targetConfigured:{label:testLabel}},children:[completedId(testLabel)],configured:mode==='alias-root'?{targetKind:'alias rule'}:{testSize:'SMALL'}},
  {id:{targetConfigured:{label:'//fixture:archive'}},children:[completedId('//fixture:archive')],configured:{targetKind:'archive rule'}},
  {id:completedId(testLabel),children:tested?[summaryId,resultId]:[],completed:{success:mode!=='failed-completion'}},
  {id:completedId('//fixture:archive'),completed:{success:true}},
  ...(builtOnly?[{id:{targetConfigured:{label:'//fixture:built_only_test'}},children:[completedId('//fixture:built_only_test')],configured:{testSize:'SMALL'}},{id:completedId('//fixture:built_only_test'),completed:{success:true}}]:[]),
+ ...(skipped?[{id:{targetConfigured:{label:skippedLabel}},children:[completedId(skippedLabel)],configured:{testSize:'SMALL'}},{id:completedId(skippedLabel),aborted:{reason:'SKIPPED',description:'Target '+skippedLabel+' build was skipped.'}}]:[]),
  ...(tested?[{id:summaryId,testSummary:{overallStatus:mode==='failed-test'?'FAILED':'PASSED',totalRunCount:1}},{id:resultId,testResult:{status:'PASSED'}}]:[]),
  {finished:{exitCode:{name:'SUCCESS',code:0}}},{buildMetrics:{},lastMessage:true}];
  const captured=events.filter(event=>!(
@@ -127,6 +130,19 @@ const bep=args.find(arg=>arg.startsWith('--build_event_json_file='));if(bep){
   mode==='missing-result'&&event.id?.testResult||
   mode==='missing-expansion'&&event.expanded));
  if(mode==='wrong-pattern')captured.find(event=>event.expanded).id.pattern.pattern=['//fixture:other'];
+ if(skipped){
+  const skippedEvent=captured.find(event=>event.id?.targetCompleted?.label===skippedLabel);
+  const skippedConfigured=captured.find(event=>event.id?.targetConfigured?.label===skippedLabel);
+  if(mode==='invalid-skip-missing-abort')delete skippedEvent.aborted;
+  if(mode==='invalid-skip-reason')skippedEvent.aborted.reason='ANALYSIS_FAILURE';
+  if(mode==='invalid-skip-missing-reason')delete skippedEvent.aborted.reason;
+  if(mode==='invalid-skip-failed-completion')skippedEvent.completed={success:false};
+  if(mode==='invalid-skip-missing-config')delete skippedConfigured.children[0].targetCompleted.configuration;
+  if(mode==='invalid-skip-wrong-config')skippedEvent.id.targetCompleted.configuration.id='d'.repeat(64);
+  if(mode==='invalid-skip-child')skippedEvent.children=[summaryId];
+  if(mode==='invalid-skip-test-evidence')captured.push({id:{testSummary:{label:skippedLabel,configuration:{id:configuration}}},testSummary:{overallStatus:'FAILED',totalRunCount:1}},{id:{testResult:{label:skippedLabel,configuration:{id:configuration},run:1,shard:1,attempt:1}},testResult:{status:'FAILED'}});
+  if(mode==='invalid-skip-missing-completion')captured.splice(captured.indexOf(skippedEvent),1);
+ }
  writeFileSync(bep.slice(24),captured.map(event=>JSON.stringify(event)).join('\\n')+'\\n');
 }
 `,
@@ -223,8 +239,12 @@ test('ordinary source request retains exact arrays and executes once without BEP
 });
 
 test('plain full and ordinary requests use the real shared capture, source guard and recorded reader', () => {
-  for (const mode of ['full', 'source']) {
-    const f = fixture('success', true);
+  for (const [scenario, mode] of [
+    ['success', 'full'],
+    ['incompatible', 'full'],
+    ['success', 'source'],
+  ]) {
+    const f = fixture(scenario, true);
     try {
       const result = f.run(mode);
       expect(result.status, result.stderr).toBe(0);
@@ -288,6 +308,15 @@ for (const [mode, executionMode] of [
   ['missing-expansion', 'full'],
   ['wrong-pattern', 'full'],
   ['opaque', 'full'],
+  ['invalid-skip-missing-abort', 'full'],
+  ['invalid-skip-reason', 'full'],
+  ['invalid-skip-missing-reason', 'full'],
+  ['invalid-skip-failed-completion', 'full'],
+  ['invalid-skip-missing-config', 'full'],
+  ['invalid-skip-wrong-config', 'full'],
+  ['invalid-skip-child', 'full'],
+  ['invalid-skip-test-evidence', 'full'],
+  ['invalid-skip-missing-completion', 'full'],
 ])
   test(`failed/incomplete ${executionMode} ${mode} request never produces success or projection`, () => {
     const f = fixture(mode);
@@ -319,6 +348,7 @@ for (const [mode, command] of [
   ['success', 'build'],
   ['external-root', 'test'],
   ['alias-root', 'test'],
+  ['incompatible', 'test'],
 ])
   test(`complete ${mode} ${command} request captures every built leaf and only scheduled test evidence`, () => {
     const f = fixture(mode);

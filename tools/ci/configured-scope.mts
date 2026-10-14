@@ -220,12 +220,17 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
     `set(${ordered(names)
       .map((name) => JSON.stringify(name))
       .join(' ')})`;
+  const queryFile = (name: string, value: string) => {
+    const file = path.join(output, name);
+    writeFileSync(file, value, { flag: 'wx' });
+    return `--query_file=${file}`;
+  };
   const raw =
     request.configuredGraph ??
     JSON.parse(
       run([
         'cquery',
-        `deps(${expression(roots.map((value) => value.label))})`,
+        queryFile('analysis-deps.query', `deps(${expression(roots.map((value) => value.label))})`),
         ...request.configuration,
         '--lockfile_mode=update',
         '--output=jsonproto',
@@ -267,7 +272,7 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
     loaded.push(
       ...run([
         'query',
-        `buildfiles(${expression(representatives)})`,
+        queryFile('analysis-buildfiles.query', `buildfiles(${expression(representatives)})`),
         ...loading,
         '--consistent_labels',
         '--output=label',

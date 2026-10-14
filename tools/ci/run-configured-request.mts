@@ -61,6 +61,7 @@ export function completedCiRequestRoots(
     'CI configured leaves differ from the producing expansion',
   );
   const roots = new Map<string, NativeRequiredTest>();
+  const accounted = new Set<string>();
   const admittedTests = new Set<string>();
   for (const label of expected) {
     const configured = index.events.filter(
@@ -89,12 +90,25 @@ export function completedCiRequestRoots(
         canonicalShippingLabel(event.id.targetCompleted.label) === label &&
         event.id.targetCompleted.configuration?.id === configuration,
     );
+    assert(completed.length === 1, 'CI configured leaf lacks its successful producing completion');
+    const key = `${label}\0${configuration}`;
+    assert(!accounted.has(key), 'duplicate completed CI root');
+    accounted.add(key);
+    if (completed[0].aborted !== undefined) {
+      // Stock Bazel posts this terminal disposition for intentionally skipped
+      // configured targets. It is coverage accounting, never build/test proof.
+      assert(
+        completed[0].completed === undefined &&
+          completed[0].aborted.reason === 'SKIPPED' &&
+          (completed[0].children ?? []).length === 0,
+        'CI skipped leaf lacks its explicit terminal SKIPPED disposition',
+      );
+      continue;
+    }
     assert(
-      completed.length === 1 && completed[0].completed?.success === true,
+      completed[0].completed?.success === true,
       'CI configured leaf lacks its successful producing completion',
     );
-    const key = `${label}\0${configuration}`;
-    assert(!roots.has(key), 'duplicate completed CI root');
     const scheduled = (completed[0].children ?? []).filter((child: any) => child.testSummary);
     if (scheduled.length) {
       assert(scheduled.length === 1, 'CI test summary ID is ambiguous');
@@ -134,7 +148,7 @@ export function completedCiRequestRoots(
     index.completed
       .map((target) => `${canonicalShippingLabel(target.label)}\0${target.configuration}`)
       .sort(),
-    [...roots.keys()].sort(),
+    [...accounted].sort(),
     'CI producing completions differ from the expanded configured leaves',
   );
   for (const event of index.events)

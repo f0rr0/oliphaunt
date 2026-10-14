@@ -14,6 +14,35 @@ function incomplete(message: string): never {
   throw new IncompleteBazelRecordedInputsError(message);
 }
 
+const readErrorCodes = new Set([
+  'EACCES',
+  'EBUSY',
+  'EINVAL',
+  'EIO',
+  'EISDIR',
+  'ELOOP',
+  'EMFILE',
+  'ENAMETOOLONG',
+  'ENFILE',
+  'ENOENT',
+  'ENOMEM',
+  'ENOTDIR',
+  'EPERM',
+]);
+
+async function readInput<T>(kind: string, input: Promise<T>): Promise<T> {
+  try {
+    return await input;
+  } catch (error) {
+    if (error instanceof IncompleteBazelRecordedInputsError) throw error;
+    const code =
+      error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined;
+    const errno = typeof code === 'string' && readErrorCodes.has(code) ? code : 'UNKNOWN';
+    // Never include the raw I/O message, file path or ignored recorded values.
+    incomplete(`Missing or unreadable Bazel recorded source input: ${kind} (${errno})`);
+  }
+}
+
 class LockReader {
   private readonly chunks: AsyncIterator<Buffer>;
   private chunk = Buffer.alloc(0);
@@ -242,9 +271,11 @@ function currentHostFactors(factor: string): boolean {
   );
 }
 
+type ExtensionInputs = { keys: string[]; generated: Set<string> };
+
 async function lockInputs(file: string) {
   const reader = new LockReader(file);
-  const inputs = new Map<string, string[] | undefined>();
+  const inputs = new Map<string, ExtensionInputs | undefined>();
   let version = false;
   let extensions = false;
   try {
@@ -259,6 +290,7 @@ async function lockInputs(file: string) {
         await reader.object(async (extension) => {
           if (inputs.has(extension)) incomplete('Duplicate module extension identity');
           const keys: string[] = [];
+          const generated = new Set<string>();
           let matched = false;
           await reader.object(async (factor) => {
             if (!currentHostFactors(factor)) {
@@ -267,18 +299,31 @@ async function lockInputs(file: string) {
             }
             matched = true;
             let records = false;
+            let specs = false;
             await reader.object(async (field) => {
-              if (field !== 'recordedInputs') {
+              if (field === 'recordedInputs') {
+                if (records) incomplete('Duplicate extension recorded inputs');
+                records = true;
+                await reader.array(async () => keys.push(await reader.string('record')));
+              } else if (field === 'generatedRepoSpecs') {
+                if (specs) incomplete('Duplicate extension generated repositories');
+                specs = true;
+                const names = new Set<string>();
+                await reader.object(async (name) => {
+                  repositoryName(name);
+                  if (names.has(name)) incomplete('Duplicate extension generated repository');
+                  names.add(name);
+                  generated.add(name);
+                  await reader.skip();
+                });
+              } else {
                 await reader.skip();
-                return;
               }
-              if (records) incomplete('Duplicate extension recorded inputs');
-              records = true;
-              await reader.array(async () => keys.push(await reader.string('record')));
             });
             if (!records) incomplete('Missing extension recorded inputs');
+            if (!specs) incomplete('Missing extension generated repositories');
           });
-          inputs.set(extension, matched ? keys : undefined);
+          inputs.set(extension, matched ? { keys, generated } : undefined);
         });
       } else await reader.skip();
     });
@@ -291,16 +336,23 @@ async function lockInputs(file: string) {
   return inputs;
 }
 
-/** Pinned canonical prefixes; include all collision candidates, never recreate their ordering. */
-function usesExtension(extension: string, repositories: Set<string>) {
+/** Group observed internal names by stock canonical prefix; never reconstruct collision ordinals. */
+function extensionGroups(extension: string, repositories: Set<string>) {
   const match = /^(?:@@?([^/]*))?\/\/[^%]+%([a-zA-Z][a-zA-Z0-9_]*)(?:%(.+))?$/u.exec(extension);
   if (!match) incomplete('Unsupported module extension identity');
   const prefix = `${match[1] ?? ''}+${match[3] ? '_' : ''}${match[2]}`;
-  const used = [...repositories].some(
-    (name) => name.startsWith(prefix) && /^\d*\+/u.test(name.slice(prefix.length)),
-  );
-  if (used && match[3]) incomplete('Unsupported used isolated module extension');
-  return used;
+  const groups = new Map<string, Set<string>>();
+  for (const name of repositories) {
+    if (!name.startsWith(prefix)) continue;
+    const suffix = /^(\d*)\+(.+)$/u.exec(name.slice(prefix.length));
+    if (!suffix) continue;
+    if (match[3]) incomplete('Unsupported used isolated module extension');
+    const unique = prefix + suffix[1];
+    const names = groups.get(unique) ?? new Set<string>();
+    names.add(suffix[2]);
+    groups.set(unique, names);
+  }
+  return groups;
 }
 
 async function markerInputs(file: string, add: (key: string) => void) {
@@ -406,31 +458,71 @@ export async function collectBazelRecordedSourceInputs(options: {
     groups[record.kind].add(relative);
   };
   try {
-    if ((await readFile(path.join(workspace, '.bazelversion'), 'utf8')).trim() !== '8.8.1')
+    if (
+      (
+        await readInput('version pin', readFile(path.join(workspace, '.bazelversion'), 'utf8'))
+      ).trim() !== '8.8.1'
+    )
       incomplete('Unsupported Bazel marker format');
     const locks = await Promise.all([
-      lockInputs(path.join(workspace, 'MODULE.bazel.lock')),
-      lockInputs(path.join(outputBase, 'MODULE.bazel.lock')),
+      readInput('workspace lock', lockInputs(path.join(workspace, 'MODULE.bazel.lock'))),
+      readInput('hidden lock', lockInputs(path.join(outputBase, 'MODULE.bazel.lock'))),
     ]);
-    const merged = new Map<string, string[] | undefined>();
+    const merged = new Map<string, ExtensionInputs | undefined>();
     for (const lock of locks)
-      for (const [extension, keys] of lock)
+      for (const [extension, inputs] of lock)
         merged.set(
           extension,
-          keys === undefined ? merged.get(extension) : [...(merged.get(extension) ?? []), ...keys],
+          inputs === undefined
+            ? merged.get(extension)
+            : {
+                keys: [...(merged.get(extension)?.keys ?? []), ...inputs.keys],
+                generated: new Set([
+                  ...(merged.get(extension)?.generated ?? []),
+                  ...inputs.generated,
+                ]),
+              },
         );
     const rows = [...merged.entries()];
     const usedRows = new Set<number>();
     const visited = new Set<string>();
+    const covered = new Set<string>();
+    const boundPrefixes = new Map<number, string>();
     for (;;) {
       let changed = false;
-      for (const [index, [extension, keys]] of rows.entries()) {
-        if (usedRows.has(index) || !usesExtension(extension, repositories)) continue;
-        if (keys === undefined)
-          incomplete('Used module extension has no current-host persisted row');
+      const candidates = new Map<
+        string,
+        { names: Set<string>; rows: Map<number, ExtensionInputs>; missingHost: boolean }
+      >();
+      for (const [index, [extension, inputs]] of rows.entries())
+        for (const [prefix, names] of extensionGroups(extension, repositories)) {
+          const group = candidates.get(prefix) ?? {
+            names,
+            rows: new Map<number, ExtensionInputs>(),
+            missingHost: false,
+          };
+          if (inputs === undefined) group.missingHost = true;
+          else if ([...names].every((name) => inputs.generated.has(name)))
+            group.rows.set(index, inputs);
+          candidates.set(prefix, group);
+        }
+      const selected = new Map<number, ExtensionInputs>();
+      for (const [prefix, group] of candidates) {
+        if (group.missingHost || group.rows.size !== 1) continue;
+        for (const [index, inputs] of group.rows) {
+          const previous = boundPrefixes.get(index);
+          if (previous !== undefined && previous !== prefix)
+            incomplete('Used module extension has conflicting canonical prefixes');
+          boundPrefixes.set(index, prefix);
+          selected.set(index, inputs);
+        }
+        for (const name of group.names) covered.add(`${prefix}+${name}`);
+      }
+      for (const [index, inputs] of selected) {
+        if (usedRows.has(index)) continue;
         usedRows.add(index);
         changed = true;
-        for (const key of keys) add(key);
+        for (const key of inputs.keys) add(key);
       }
       for (const repository of repositories) {
         if (visited.has(repository)) continue;
@@ -439,15 +531,26 @@ export async function collectBazelRecordedSourceInputs(options: {
         // These two stock repositories are supplied by the verified pinned Bazel
         // installation, whose override path deliberately has no fetch marker.
         if (repository === 'bazel_tools' || repository === '_builtins') continue;
-        await markerInputs(path.join(outputBase, 'external', `@${repository}.marker`), add);
+        await readInput(
+          `repository marker @${repository}`,
+          markerInputs(path.join(outputBase, 'external', `@${repository}.marker`), add),
+        );
       }
-      if (!changed) break;
+      if (!changed) {
+        for (const group of candidates.values()) {
+          if (group.missingHost)
+            incomplete('Used module extension has no current-host persisted row');
+          if (group.rows.size > 1) incomplete('Ambiguous used module extension repository');
+          if (!group.rows.size) incomplete('Used module extension has no persisted input record');
+        }
+        break;
+      }
     }
     for (const name of repositories) {
       if (
         (name.match(/\+/gu)?.length ?? 0) >= 2 &&
         !/(?:^|\+)_repo_rules\d*\+/u.test(name) &&
-        !rows.some(([extension]) => usesExtension(extension, new Set([name])))
+        !covered.has(name)
       )
         incomplete('Used module extension has no persisted input record');
     }

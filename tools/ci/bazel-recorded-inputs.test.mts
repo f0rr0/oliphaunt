@@ -14,15 +14,17 @@ const escapeRecorded = (value: string) =>
   value.replaceAll('\\', '\\\\').replaceAll('\n', '\\n').replaceAll(' ', '\\s');
 const record = (kind: string, key: string, value = 'ignored') =>
   `${kind}:${escapeRecorded(key)} ${escapeRecorded(value)}`;
-const row = (recordedInputs: string[]) => ({
+const row = (recordedInputs: string[], generatedNames = ['fixture']) => ({
   recordedInputs,
-  generatedRepoSpecs: {},
+  generatedRepoSpecs: Object.fromEntries(generatedNames.map((name) => [name, {}])),
   bzlTransitiveDigest: 'ignored',
   usagesDigest: 'ignored',
 });
-const lock = (recordedInputs: string[] = []) => ({
+const lock = (recordedInputs: string[] = [], generatedNames = ['fixture']) => ({
   lockFileVersion: 28,
-  moduleExtensions: { '//build_defs:acquire.bzl%inputs': { general: row(recordedInputs) } },
+  moduleExtensions: {
+    '//build_defs:acquire.bzl%inputs': { general: row(recordedInputs, generatedNames) },
+  },
 });
 
 async function fixture(
@@ -71,14 +73,20 @@ test('unions both lock locations and recursively follows acquisition-only extern
   await fixture(async (f) => {
     f.repositories = ['+inputs+product', '+inputs+product'];
     f.source(
-      lock([record('FILE', '@@//src/version.toml'), record('FILE', '@@metadata+//model.json')]),
+      lock(
+        [record('FILE', '@@//src/version.toml'), record('FILE', '@@metadata+//model.json')],
+        ['product'],
+      ),
     );
     f.hidden(
-      lock([
-        record('DIRTREE', '//src/resources'),
-        record('DIRENTS', '//src/extensions'),
-        record('FILE', '@@//src/version.toml'),
-      ]),
+      lock(
+        [
+          record('DIRTREE', '//src/resources'),
+          record('DIRENTS', '//src/extensions'),
+          record('FILE', '@@//src/version.toml'),
+        ],
+        ['product'],
+      ),
     );
     f.marker('+inputs+product', [
       record('FILE', '@@//patches/compiler.patch'),
@@ -104,6 +112,7 @@ test('unions both lock locations and recursively follows acquisition-only extern
 
 test('unused extension rows do not broaden a configured request', async () => {
   await fixture(async (f) => {
+    f.hidden({ lockFileVersion: 28, moduleExtensions: {} });
     f.source({
       lockFileVersion: 28,
       moduleExtensions: {
@@ -121,28 +130,145 @@ test('unused extension rows do not broaden a configured request', async () => {
   });
 });
 
-test('colliding extension prefixes conservatively include all candidates', async () => {
+test('generated names distinguish extension-name digits from collision ordinals', async () => {
   await fixture(async (f) => {
     f.repositories = ['+ext2+output'];
     f.marker('+ext2+output', []);
     f.source({
       lockFileVersion: 28,
       moduleExtensions: {
-        '//defs:one.bzl%ext': { general: row([record('FILE', '//collision')]) },
-        '//defs:two.bzl%ext2': { general: row([record('FILE', '//exact')]) },
+        '//defs:one.bzl%ext': { general: row([record('FILE', '//collision')], ['other']) },
+        '//defs:two.bzl%ext2': { general: row([record('FILE', '//exact')], ['output']) },
         '//defs:three.bzl%ext3': { general: row([record('FILE', '//unused')]) },
       },
     });
-    assert.deepEqual((await collectBazelRecordedSourceInputs(f)).files, ['collision', 'exact']);
+    assert.deepEqual((await collectBazelRecordedSourceInputs(f)).files, ['exact']);
   });
+});
+
+test('one reached hub binds all shared names to its sibling extension without fetching unused metadata', async () => {
+  await fixture(async (f) => {
+    const missing = '+_repo_rules9+wasix_adapter_cargo_metadata';
+    const adapter = [
+      'shared',
+      'adapter_hub',
+      ...Array.from({ length: 491 }, (_, i) => `adapter_${i}`),
+    ];
+    const postmaster = [
+      'shared',
+      'postmaster_hub',
+      ...Array.from({ length: 824 }, (_, i) => `postmaster_${i}`),
+    ];
+    f.source({
+      lockFileVersion: 28,
+      moduleExtensions: {
+        '//defs:adapter.bzl%crate': {
+          general: row([record('FILE', `@@${missing}//Cargo.toml`)], adapter),
+        },
+        '//defs:postmaster.bzl%crate': {
+          general: row([record('FILE', '@@postmaster_metadata+//Cargo.toml')], postmaster),
+        },
+      },
+    });
+    f.repositories = ['+crate3+shared', '+crate3+postmaster_hub'];
+    for (const name of f.repositories) f.marker(name, []);
+    f.marker('postmaster_metadata+', [
+      record('FILE', '//src/postmaster/Cargo.toml'),
+      record('DIRTREE', '//src/postmaster/assets'),
+      record('DIRENTS', '//src/postmaster/manifests'),
+    ]);
+    assert.deepEqual(await collectBazelRecordedSourceInputs(f), {
+      files: ['src/postmaster/Cargo.toml'],
+      trees: ['src/postmaster/assets'],
+      directories: ['src/postmaster/manifests'],
+    });
+    f.repositories = ['+crate3+shared', '+crate3+adapter_hub'];
+    f.marker('+crate3+adapter_hub', []);
+    await assert.rejects(collectBazelRecordedSourceInputs(f), {
+      name: 'IncompleteBazelRecordedInputsError',
+      message: `Missing or unreadable Bazel recorded source input: repository marker @${missing} (ENOENT)`,
+    });
+  });
+});
+
+test('unresolved same-name sibling repositories fail closed', async () => {
+  await fixture(async (f) => {
+    f.repositories = ['+crate3+shared'];
+    f.marker('+crate3+shared', []);
+    f.source({
+      lockFileVersion: 28,
+      moduleExtensions: {
+        '//defs:one.bzl%crate': { general: row([record('FILE', '//one')], ['shared']) },
+        '//defs:two.bzl%crate': { general: row([record('FILE', '//two')], ['shared']) },
+      },
+    });
+    await assert.rejects(collectBazelRecordedSourceInputs(f), /Ambiguous used module extension/u);
+  });
+});
+
+test('reached marker fan-in can disambiguate a shared name before the fixpoint closes', async () => {
+  await fixture(async (f) => {
+    f.repositories = ['+crate3+shared'];
+    f.marker('+crate3+shared', [record('FILE', '@@+crate3+postmaster_hub//metadata')]);
+    f.marker('+crate3+postmaster_hub', []);
+    f.source({
+      lockFileVersion: 28,
+      moduleExtensions: {
+        '//defs:adapter.bzl%crate': {
+          general: row([record('FILE', '@@unused+//metadata')], ['shared', 'adapter_hub']),
+        },
+        '//defs:postmaster.bzl%crate': {
+          general: row([record('FILE', '//postmaster')], ['shared', 'postmaster_hub']),
+        },
+      },
+    });
+    assert.deepEqual((await collectBazelRecordedSourceInputs(f)).files, ['postmaster']);
+  });
+});
+
+test('one extension identity cannot authenticate two canonical unique prefixes', async () => {
+  await fixture(async (f) => {
+    f.repositories = ['+crate3+shared', '+crate4+shared'];
+    for (const name of f.repositories) f.marker(name, []);
+    f.source({
+      lockFileVersion: 28,
+      moduleExtensions: {
+        '//defs:one.bzl%crate': { general: row([], ['shared']) },
+      },
+    });
+    await assert.rejects(collectBazelRecordedSourceInputs(f), /conflicting canonical prefixes/u);
+  });
+});
+
+test('missing or malformed generated-repository names remain unknown', async () => {
+  for (const generated of [
+    '',
+    ',"generatedRepoSpecs":[]',
+    ',"generatedRepoSpecs":{}',
+    ',"generatedRepoSpecs":{"fixture":{}},"generatedRepoSpecs":{"fixture":{}}',
+    ',"generatedRepoSpecs":{"fixture":{},"fixture":{}}',
+    ',"generatedRepoSpecs":{"bad/name":{}}',
+    ',"generatedRepoSpecs":{"..":{}}',
+  ])
+    await fixture(async (f) => {
+      writeFileSync(
+        path.join(f.workspaceRoot, 'MODULE.bazel.lock'),
+        `{"lockFileVersion":28,"moduleExtensions":{"//defs:inputs.bzl%inputs":{"general":{"recordedInputs":[]${generated}}}}}`,
+      );
+      f.hidden({ lockFileVersion: 28, moduleExtensions: {} });
+      await assert.rejects(collectBazelRecordedSourceInputs(f), IncompleteBazelRecordedInputsError);
+    });
 });
 
 test('metadata repository reads activate transitive extension inputs to a fixpoint', async () => {
   await fixture(async (f) => {
+    f.hidden({ lockFileVersion: 28, moduleExtensions: {} });
     f.source({
       lockFileVersion: 28,
       moduleExtensions: {
-        '@@metadata+//defs:acquire.bzl%next': { general: row([record('FILE', '//transitive')]) },
+        '@@metadata+//defs:acquire.bzl%next': {
+          general: row([record('FILE', '//transitive')], ['data']),
+        },
         '//defs:inputs.bzl%inputs': {
           general: row([record('FILE', '@@metadata++next+data//metadata')]),
         },
@@ -188,15 +314,24 @@ test('does not decode secret values, arbitrary attributes or facts, including ac
   await fixture(async (f) => {
     const secret = 'SYNTHETIC_SECRET_DO_NOT_DECODE';
     const large = `${'x'.repeat(70_000)}${secret}\\n ${'y'.repeat(70_000)}`;
-    f.source({
-      ...lock([
+    const sourceLock = lock(
+      [
         record('ENV', 'TOKEN', large),
         record('REPO_MAPPING', ',dep', secret),
         record('FILE', '//safe'),
-      ]),
+      ],
+      ['secret'],
+    );
+    sourceLock.moduleExtensions[
+      '//build_defs:acquire.bzl%inputs'
+    ].general.generatedRepoSpecs.secret = {
+      attributes: { [secret]: [large, null, true, 123.4] },
+    };
+    f.source({
+      ...sourceLock,
       facts: { [secret]: { attributes: [large, null, true, false, 123.4] } },
     });
-    f.hidden(lock([record('ENV', 'OTHER', large)]));
+    f.hidden(lock([record('ENV', 'OTHER', large)], ['secret']));
     f.repositories = ['+inputs+secret'];
     f.marker('+inputs+secret', [
       record('ENV', 'TOKEN', large),
@@ -243,8 +378,8 @@ test('includes current host and general evaluation factors, excluding foreign ho
       lockFileVersion: 28,
       moduleExtensions: {
         '//defs:extension.bzl%ext': {
-          general: row([record('FILE', '//general')]),
-          [`os:${os},arch:${arch}`]: row([record('FILE', '//host')]),
+          general: row([record('FILE', '//general')], ['host']),
+          [`os:${os},arch:${arch}`]: row([record('FILE', '//host')], ['host']),
           'os:foreign host,arch:unavailable': row([record('FILE', '@@not-fetched-foreign+//x')]),
         },
       },
@@ -260,14 +395,14 @@ test('a used extension needs a matched persisted row, including collision candid
     f.source({
       lockFileVersion: 28,
       moduleExtensions: {
-        '//defs:e.bzl%ext': { general: row([]) },
-        '//defs:e.bzl%ext2': { 'os:foreign host': row([record('FILE', '//omitted')]) },
+        '//defs:e.bzl%ext': { general: row([], ['other']) },
+        '//defs:e.bzl%ext2': { 'os:foreign host': row([record('FILE', '//omitted')], ['host']) },
       },
     });
     await assert.rejects(collectBazelRecordedSourceInputs(f), /current-host/u);
     f.hidden({
       lockFileVersion: 28,
-      moduleExtensions: { '//defs:e.bzl%ext2': { general: row([]) } },
+      moduleExtensions: { '//defs:e.bzl%ext2': { general: row([], ['host']) } },
     });
     assert.deepEqual(await collectBazelRecordedSourceInputs(f), {
       files: [],
@@ -296,8 +431,17 @@ test('absolute source paths normalize; outside-workspace host observations are n
 
 test('missing referenced repository markers reject an incomplete basis', async () => {
   await fixture(async (f) => {
-    f.hidden(lock([record('FILE', '@@missing+//metadata')]));
-    await assert.rejects(collectBazelRecordedSourceInputs(f), IncompleteBazelRecordedInputsError);
+    f.hidden(
+      lock([
+        record('ENV', 'PRIVATE_NAME', 'PRIVATE_RECORDED_VALUE'),
+        record('FILE', '@@missing+//metadata'),
+      ]),
+    );
+    await assert.rejects(collectBazelRecordedSourceInputs(f), {
+      name: 'IncompleteBazelRecordedInputsError',
+      message:
+        'Missing or unreadable Bazel recorded source input: repository marker @missing+ (ENOENT)',
+    });
   });
 });
 
@@ -315,15 +459,50 @@ test('only pinned stock builtin repositories can lack fetch markers', async () =
 });
 
 test('missing either lock or version pin rejects an incomplete basis', async () => {
-  for (const file of ['MODULE.bazel.lock', '.bazelversion', 'hidden'])
+  for (const [file, kind] of [
+    ['MODULE.bazel.lock', 'workspace lock'],
+    ['.bazelversion', 'version pin'],
+    ['hidden', 'hidden lock'],
+  ])
     await fixture(async (f) => {
       rmSync(
         file === 'hidden'
           ? path.join(f.outputBase, 'MODULE.bazel.lock')
           : path.join(f.workspaceRoot, file),
       );
-      await assert.rejects(collectBazelRecordedSourceInputs(f), IncompleteBazelRecordedInputsError);
+      await assert.rejects(collectBazelRecordedSourceInputs(f), {
+        name: 'IncompleteBazelRecordedInputsError',
+        message: `Missing or unreadable Bazel recorded source input: ${kind} (ENOENT)`,
+      });
     });
+});
+
+test('unexpected I/O errors withhold raw messages and unapproved codes', async () => {
+  await fixture(async (f) => {
+    await assert.rejects(
+      collectBazelRecordedSourceInputs({
+        ...f,
+        workspaceRoot: `${f.workspaceRoot}\0PRIVATE_PATH_VALUE`,
+      }),
+      {
+        name: 'IncompleteBazelRecordedInputsError',
+        message: 'Missing or unreadable Bazel recorded source input: version pin (UNKNOWN)',
+      },
+    );
+  });
+});
+
+test('malformed records retain their decoding diagnostic without revealing values', async () => {
+  await fixture(async (f) => {
+    writeFileSync(
+      path.join(f.outputBase, 'MODULE.bazel.lock'),
+      '{"lockFileVersion":28,"moduleExtensions":{},"facts":{"PRIVATE_NAME":"PRIVATE_VALUE\\x"}}',
+    );
+    await assert.rejects(collectBazelRecordedSourceInputs(f), {
+      name: 'IncompleteBazelRecordedInputsError',
+      message: 'Malformed Bazel lock escape',
+    });
+  });
 });
 
 test('wrong Bazel or lock formats cannot silently yield an empty basis', async () => {
