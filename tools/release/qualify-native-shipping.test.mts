@@ -614,6 +614,80 @@ else {
   };
 }
 
+test('Mac capture CPU diagnostics preserve evidence, collector failures and source freeze', async () => {
+  const platform = process.platform;
+  const originalSpawn = childProcess.spawnSync;
+  const captures: string[][] = [];
+  const calls = spyOn(childProcess, 'spawnSync').mockImplementation(((
+    command: string,
+    args: string[],
+    options: any,
+  ) => {
+    if (command === '/usr/bin/time') captures.push(args);
+    return originalSpawn(command, args, options);
+  }) as typeof childProcess.spawnSync);
+  try {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    for (const mode of ['success', 'manifest-tamper', 'capture-race']) {
+      const f = fixture(mode);
+      try {
+        if (mode === 'success') {
+          const output = await qualifyNativeShipping(f.request, f.workspace);
+          const evidence = JSON.parse(readFileSync(output, 'utf8'));
+          expect(evidence.github).toEqual(f.request.github);
+          expect(evidence.cohorts[0].roots[0].label).toBe('//fixture:shipping');
+          expect(JSON.stringify(evidence)).not.toContain('--cpu-prof');
+        } else {
+          await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow(
+            mode === 'manifest-tamper' ? /failed/u : /clean checkout/u,
+          );
+          expect(
+            existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json')),
+          ).toBe(false);
+        }
+        const command = captures.at(-1);
+        expect(command?.slice(0, 6)).toEqual([
+          '-p',
+          'bash',
+          'tools/release/with-source.sh',
+          'HEAD',
+          'bash',
+          'tools/dev/bun.sh',
+        ]);
+        expect(command?.slice(6, 11)).toEqual([
+          '--cpu-prof',
+          '--cpu-prof-interval=10000',
+          `--cpu-prof-dir=${path.join(f.outputDirectory, 'diagnostics')}`,
+          '--cpu-prof-name=capture.cpuprofile',
+          'tools/release/capture-native-build-evidence.mts',
+        ]);
+        const profile = JSON.parse(
+          readFileSync(path.join(f.outputDirectory, 'diagnostics/capture.cpuprofile'), 'utf8'),
+        );
+        expect(Object.keys(profile).sort()).toEqual([
+          'endTime',
+          'nodes',
+          'samples',
+          'startTime',
+          'timeDeltas',
+        ]);
+        expect(
+          f
+            .calls()
+            .flat()
+            .some((argument) => argument.startsWith('--cpu-prof')),
+        ).toBe(false);
+      } finally {
+        f.cleanup();
+      }
+    }
+    expect(captures).toHaveLength(3);
+  } finally {
+    Object.defineProperty(process, 'platform', { value: platform });
+    calls.mockRestore();
+  }
+});
+
 for (const selection of ['explicit', 'export'])
   test(`qualifies ${selection} roots with one request and the real evidence collector`, async () => {
     const f = fixture();
