@@ -442,63 +442,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Qualify final native carriers and frozen resources
-        if: (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))
-        env:
-          CI_REQUEST_IDS: '{"macos-arm64":["portable/macos-arm64/native-carriers"],"windows-x64":["portable/windows-x64/native-carriers"]}'
-          TARGET_PLATFORM: ${{ matrix.platform }}
-          QUALIFICATION_JOB_NAME: Portable packages (${{ matrix.platform }})
-        run: |
-          CI_REQUEST_ID="$(jq -r --arg platform "$CI_PLATFORM" '.[$platform][0]' <<< "$CI_REQUEST_IDS")"
-          input_root="$RUNNER_TEMP/native-build-inputs"
-          mkdir -p "$input_root"
-          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
-            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
-            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
-            > "$input_root/github.json"
-          case "$TARGET_PLATFORM" in
-            macos-arm64)
-              jq -nc --arg base "$RUNNER_TEMP/native-bazel" \
-                --arg log "$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" \
-                '["--output_base="+$base,"--host_jvm_args=-Xmx3g","--server_jvm_out="+$log]' \
-                > "$input_root/startup.json"
-              jq -nc '["-c","opt","--config=macos-sandbox",
-                "--platforms=//build_defs/host:native_macos_arm64",
-                "--host_platform=//build_defs/host:native_macos_arm64","--jobs=2"]' \
-                > "$input_root/configuration.json"
-              ;;
-            windows-x64)
-              jq -nc --arg base "$RUNNER_TEMP/b" '["--output_base="+$base]' \
-                > "$input_root/startup.json"
-              jq -nc '["-c","opt","--platforms=//build_defs/host:native_windows_x64",
-                "--host_platform=//build_defs/host:native_windows_x64","--jobs=2"]' \
-                > "$input_root/configuration.json"
-              ;;
-          esac
-          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
-          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
-            --ci-requires-json "$input_root/ci-requires.json")
-          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
-            ci_arguments+=(--ci-handoff)
-          fi
-          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
-            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
-            --configuration-json "$input_root/configuration.json" \
-            --shipping-export //:native_shipping_export \
-            --output-directory "$RUNNER_TEMP/native-build-capture"
-          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
-          cp "$RUNNER_TEMP/native-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
-
-      - name: Upload native construction evidence
-        if: (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64') && (needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('portable/{0}/native-carriers', matrix.platform)))
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: native-build-evidence-native-${{ matrix.platform }}
-          path: ${{ runner.temp }}/native-build-capture/evidence/
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Construct native iOS device and simulator ABI consumers
         if: matrix.platform == 'macos-arm64'
         env:
@@ -578,6 +521,63 @@ jobs:
         with:
           name: native-build-evidence-mobile-ios
           path: ${{ runner.temp }}/ios-extension-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Qualify final native carriers and frozen resources
+        if: (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))
+        env:
+          CI_REQUEST_IDS: '{"macos-arm64":["portable/macos-arm64/native-carriers"],"windows-x64":["portable/windows-x64/native-carriers"]}'
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          QUALIFICATION_JOB_NAME: Portable packages (${{ matrix.platform }})
+        run: |
+          CI_REQUEST_ID="$(jq -r --arg platform "$CI_PLATFORM" '.[$platform][0]' <<< "$CI_REQUEST_IDS")"
+          input_root="$RUNNER_TEMP/native-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          case "$TARGET_PLATFORM" in
+            macos-arm64)
+              jq -nc --arg base "$RUNNER_TEMP/native-bazel" \
+                --arg log "$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" \
+                '["--output_base="+$base,"--host_jvm_args=-Xmx3g","--server_jvm_out="+$log]' \
+                > "$input_root/startup.json"
+              jq -nc '["-c","opt","--config=macos-sandbox",
+                "--platforms=//build_defs/host:native_macos_arm64",
+                "--host_platform=//build_defs/host:native_macos_arm64","--jobs=2"]' \
+                > "$input_root/configuration.json"
+              ;;
+            windows-x64)
+              jq -nc --arg base "$RUNNER_TEMP/b" '["--output_base="+$base]' \
+                > "$input_root/startup.json"
+              jq -nc '["-c","opt","--platforms=//build_defs/host:native_windows_x64",
+                "--host_platform=//build_defs/host:native_windows_x64","--jobs=2"]' \
+                > "$input_root/configuration.json"
+              ;;
+          esac
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:native_shipping_export \
+            --output-directory "$RUNNER_TEMP/native-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/native-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload native construction evidence
+        if: (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64') && (needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('portable/{0}/native-carriers', matrix.platform)))
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-native-${{ matrix.platform }}
+          path: ${{ runner.temp }}/native-build-capture/evidence/
           if-no-files-found: error
           retention-days: 7
 
