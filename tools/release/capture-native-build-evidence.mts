@@ -90,23 +90,27 @@ export function nativeRootConfigurations(roots: NativeRoot[], raw: unknown) {
 }
 
 /** Physical collection retains raw protocol bindings before packet sanitization. */
-function collectNativeBuildEvidence({
-  source,
-  github,
-  cohorts,
-  bazelVersion,
-}: {
-  source: NativeBuildSource;
-  github: NativeBuildGithub;
-  cohorts: NativeBuildCaptureCohort[];
-  bazelVersion: string;
-}) {
+function collectNativeBuildEvidence(
+  {
+    source,
+    github,
+    cohorts,
+    bazelVersion,
+  }: {
+    source: NativeBuildSource;
+    github: NativeBuildGithub;
+    cohorts: NativeBuildCaptureCohort[];
+    bazelVersion: string;
+  },
+  report?: (phase: string) => void,
+) {
   const captures: ReturnType<typeof captureNativeInputMembers>[] = [];
   const evidence: NativeBuildEvidence = {
     schema: 'oliphaunt-native-build-evidence-v1',
     source,
     github,
     cohorts: cohorts.map((cohort) => {
+      report?.('deriving capture frontier');
       let roots: NativeRoot[];
       let rootConfigurations: { label: string; configuration: string }[];
       let producerCapture: NativeBuildEvidence['cohorts'][number]['producerCapture'];
@@ -207,6 +211,7 @@ function collectNativeBuildEvidence({
       const outputs = [
         ...new Set(roots.flatMap((root) => root.package.outputs.map((output) => output.path))),
       ].sort();
+      report?.('collecting physical members');
       const seedConstructions = inputs
         .filter((file) => file.endsWith(SEED_CONSTRUCTION_RECEIPT_SUFFIX))
         .map((file) => ({
@@ -388,13 +393,16 @@ function writeCapturedNativeBuildEvidence(
   captured: ReturnType<typeof collectNativeBuildEvidence>,
   directory: string,
   expected?: Parameters<typeof validateNativeBuildEvidence>[1],
+  report?: (phase: string) => void,
 ) {
   const parent = requireSafeDirectoryChain(directory, { create: true, label: 'native evidence' });
   const temporary = mkdtempSync(path.join(parent, '.native-evidence-'));
   const output = path.join(parent, 'native-build-evidence.json');
   let copiedFiles = false;
   try {
+    report?.('pre-copy unchanged guard');
     captured.assertUnchanged();
+    report?.('copying files/serializing');
     const file = path.join(temporary, 'evidence.json');
     const evidence = {
       ...captured.evidence,
@@ -425,10 +433,14 @@ function writeCapturedNativeBuildEvidence(
     writeNativeBuildFinalFiles(evidence, parent);
     copiedFiles = true;
     writeFileSync(file, `${JSON.stringify(evidence)}\n`, { flag: 'wx', mode: 0o600 });
-    if (expected !== undefined)
+    if (expected !== undefined) {
+      report?.('serialized full validation');
       validateNativeBuildEvidence(JSON.parse(readFileSync(file, 'utf8')), expected);
+    }
+    report?.('post-copy unchanged guard');
     captured.assertUnchanged();
     linkSync(file, output);
+    report?.('completed');
     return output;
   } catch (error) {
     if (copiedFiles) rmSync(path.join(parent, 'files'), { recursive: true, force: true });
@@ -565,11 +577,13 @@ function main() {
       typeof expected.requireShippingAnalysis !== 'boolean'
     )
       throw new Error('native qualification analysis expectation must be a boolean');
+    const report = (phase: string) => console.error(`native capture: ${phase}`);
     console.log(
       writeCapturedNativeBuildEvidence(
-        collectNativeBuildEvidence(options),
+        collectNativeBuildEvidence(options, report),
         output,
         expected as Parameters<typeof validateNativeBuildEvidence>[1],
+        report,
       ),
     );
   }

@@ -1,5 +1,5 @@
-import { expect, test } from 'bun:test';
-import { execFileSync } from 'node:child_process';
+import { expect, spyOn, test } from 'bun:test';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -1194,6 +1194,7 @@ test('configured metadata FileWrites accept empty transitive sets and reject add
 
 test('collector reads declared source/repository links and source trees after cache-backed success', () => {
   const f = fixture();
+  const stderr = spyOn(console, 'error');
   try {
     const capture = f.capture();
     expect(capture.evidence.cohorts[0].rootConfigurations).toEqual([
@@ -1217,7 +1218,9 @@ test('collector reads declared source/repository links and source trees after ca
     const original = readFileSync(output);
     expect(() => writeNativeBuildEvidence(capture, path.dirname(output))).toThrow();
     expect(readFileSync(output)).toEqual(original);
+    expect(stderr.mock.calls).toHaveLength(0);
   } finally {
+    stderr.mockRestore();
     f.cleanup();
   }
 });
@@ -1536,7 +1539,7 @@ spyOn(fs,'writeFileSync').mockImplementation((file,data,...args)=>{
         directory,
       ];
       const run = () =>
-        execFileSync(process.execPath, args, {
+        spawnSync(process.execPath, args, {
           cwd: f.workspace,
           env: {
             ...process.env,
@@ -1550,14 +1553,29 @@ spyOn(fs,'writeFileSync').mockImplementation((file,data,...args)=>{
           encoding: 'utf8',
         });
       if (fault === 'none') {
-        const output = run().trim();
+        const result = run();
+        expect(result.status).toBe(0);
+        const output = result.stdout.trim();
+        expect(result.stdout).toBe(`${output}\n`);
+        expect(result.stderr.trim().split('\n')).toEqual([
+          'native capture: deriving capture frontier',
+          'native capture: collecting physical members',
+          'native capture: pre-copy unchanged guard',
+          'native capture: copying files/serializing',
+          'native capture: serialized full validation',
+          'native capture: post-copy unchanged guard',
+          'native capture: completed',
+        ]);
         const packet = JSON.parse(readFileSync(output, 'utf8'));
         expect(validateNativeBuildEvidence(packet, expected).testQualification).toBe('passed');
         expect(readFileSync(path.join(directory, 'files/0', f.output))).toEqual(
           readFileSync(path.join(f.executionRoot, f.output)),
         );
       } else {
-        expect(run, fault).toThrow();
+        const result = run();
+        expect(result.status, fault).not.toBe(0);
+        expect(result.stdout, fault).toBe('');
+        expect(result.stderr, fault).not.toContain('native capture: completed');
         expect(existsSync(path.join(directory, 'native-build-evidence.json')), fault).toBe(false);
         expect(existsSync(path.join(directory, 'files')), fault).toBe(false);
       }

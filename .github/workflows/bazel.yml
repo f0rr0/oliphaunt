@@ -670,7 +670,7 @@ jobs:
           retention-days: 7
 
       - name: Save bounded standard Bazel caches
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         continue-on-error: true
         timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
@@ -933,7 +933,7 @@ jobs:
       - *ci_request_receipts
 
       - name: Save bounded standard Bazel caches
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         continue-on-error: true
         timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
@@ -1082,7 +1082,7 @@ jobs:
       - *ci_request_receipts
 
       - name: Save bounded standard Bazel caches
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         continue-on-error: true
         timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
@@ -1223,7 +1223,7 @@ jobs:
       - *ci_request_receipts
 
       - name: Save bounded standard Bazel caches
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         continue-on-error: true
         timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
@@ -1372,7 +1372,7 @@ jobs:
       - *ci_request_receipts
 
       - name: Save bounded standard Bazel caches
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         continue-on-error: true
         timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
@@ -1483,7 +1483,7 @@ jobs:
       - *ci_request_receipts
 
       - name: Save bounded standard Bazel caches
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         continue-on-error: true
         timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
@@ -1582,7 +1582,7 @@ jobs:
       - *ci_request_receipts
 
       - name: Save bounded standard Bazel caches
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         continue-on-error: true
         timeout-minutes: 10
         uses: ./.github/actions/bazel-cache
@@ -1688,7 +1688,7 @@ jobs:
       - *ci_request_receipts
 
       - name: Save bounded standard Bazel caches
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         continue-on-error: true
         timeout-minutes: 10
         uses: ./.github/actions/bazel-cache

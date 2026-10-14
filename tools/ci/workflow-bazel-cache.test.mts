@@ -162,7 +162,7 @@ printf 'gc done\\n' >> "$COMMAND_TRACE"
 const execute = (directory: string, env: NodeJS.ProcessEnv, source: string) =>
   execFileSync('bash', ['-eu', '-c', source], { cwd: directory, env, encoding: 'utf8' });
 
-test('optional cache saves are bounded independently of qualification results', () => {
+test('optional terminal cache saves preserve restore policy, writer bounds and source identity', () => {
   const workflow = Bun.YAML.parse(
     readFileSync(path.join(root, '.github/workflows/bazel.yml'), 'utf8'),
   );
@@ -178,14 +178,31 @@ test('optional cache saves are bounded independently of qualification results', 
   for (const step of transports) assert.equal(step.with?.path, '~/.cache/oliphaunt/bazel-ci/disk');
   assert.equal(
     action.runs.steps.find((step) => step.id === 'ready')?.if,
-    '$' + "{{ !cancelled() && inputs.phase == 'save' && inputs.disk-cache-hit != 'true' }}",
+    '$' +
+      "{{ always() && inputs.phase == 'save' && steps.identity.outcome == 'success' && inputs.disk-cache-hit != 'true' }}",
+  );
+  assert.equal(
+    action.runs.steps.find((step) => step.id === 'identity')?.if,
+    '$' + "{{ inputs.phase == 'save' || !cancelled() }}",
+  );
+  assert.equal(
+    action.runs.steps.find((step) => step.id === 'disk-restore')?.if,
+    "inputs.phase == 'restore'",
+  );
+  assert.equal(
+    action.runs.steps.find((step) => step.name === 'Configure standard hosted Bazel caches')?.if,
+    "inputs.phase == 'restore'",
+  );
+  assert.equal(
+    action.runs.steps.find((step) => step.name === 'Save bounded Bazel action cache')?.if,
+    '$' + "{{ always() && inputs.phase == 'save' && steps.ready.outputs.disk == 'true' }}",
   );
   const saves = callers.filter((step: any) => step.with.phase === 'save');
   assert.equal(saves.length, 8);
   for (const step of saves) {
     assert.equal(step['timeout-minutes'], 10);
     assert.equal(step['continue-on-error'], true);
-    assert.equal(step.if, '$' + '{{ !cancelled() }}');
+    assert.equal(step.if, '$' + '{{ always() }}');
   }
 });
 

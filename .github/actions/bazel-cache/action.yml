@@ -31,7 +31,7 @@ runs:
   steps:
     - name: Select canonical cache identity
       id: identity
-      if: ${{ !cancelled() }}
+      if: ${{ inputs.phase == 'save' || !cancelled() }}
       shell: bash
       env:
         PHASE: ${{ inputs.phase }}
@@ -75,7 +75,7 @@ runs:
 
     - name: Freeze, collect and bound cache transport
       id: ready
-      if: ${{ !cancelled() && inputs.phase == 'save' && inputs.disk-cache-hit != 'true' }}
+      if: ${{ always() && inputs.phase == 'save' && steps.identity.outcome == 'success' && inputs.disk-cache-hit != 'true' }}
       continue-on-error: true
       shell: bash
       env:
@@ -130,7 +130,7 @@ runs:
     # GitHub isolates pull_request saves under refs/pull/<number>/merge.
     # This optional cache contains action results, never release authority.
     - name: Save bounded Bazel action cache
-      if: ${{ !cancelled() && inputs.phase == 'save' && steps.ready.outputs.disk == 'true' }}
+      if: ${{ always() && inputs.phase == 'save' && steps.ready.outputs.disk == 'true' }}
       continue-on-error: true
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
