@@ -832,6 +832,9 @@ guaranteed. Cache failure must not determine qualification success. The fixture
 verifies reuse from a fresh output base,
 selective invalidation and identical physical archive consumers; the actual
 WASIX job must establish the retained working set and speedup.
+Use Bazel's default concurrent-change guard; the selected external SDK and
+toolchain inputs remain fixed throughout the isolated qualification job.
+Rescanning every SDK file after every action adds substantial repeated work.
 [Disk cache collection](https://bazel.build/remote/caching#garbage-collection),
 [Repository downloads](https://bazel.build/run/build#repository-cache),
 [GitHub cache eviction](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#usage-limits-and-eviction-policy).
