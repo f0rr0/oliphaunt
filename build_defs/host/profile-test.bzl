@@ -3,10 +3,40 @@
 load("@bazel_skylib//lib:unittest.bzl", "asserts", "unittest")
 load("@rules_swift//swift:providers.bzl", "SwiftToolchainInfo")
 load("@rules_swift//swift/toolchains/config:tool_config.bzl", "ToolConfigInfo")
+load("@rules_swift//swift/toolchains/config:action_config.bzl", "ActionConfigInfo", "add_arg")
+load("@rules_swift//swift/toolchains/config:compile_config.bzl", "compiler_plugin_search_path_configurator")
+load("@rules_swift//swift/internal:actions.bzl", "compiler_plugin_directory_error", "run_toolchain_action")
+load("@rules_swift//swift/internal:action_names.bzl", "SWIFT_ACTION_COMPILE", "SWIFT_ACTION_DERIVE_FILES", "SWIFT_ACTION_COMPILE_MODULE_INTERFACE", "SWIFT_ACTION_SYMBOL_GRAPH_EXTRACT", "all_action_names", "all_compile_action_names", "compiler_plugin_action_names")
 load("@rules_swift//swift/internal:developer_dirs.bzl", "swift_developer_lib_dir")
 load(":swift-profile.bzl", "declared_swift_path", "declared_xcode_info")
 load(":repositories.bzl", "apple_swift_test_runtime_files")
 load(":app-tool-inputs.bzl", "apple_app_configuration_error")
+
+def _plugin_arguments(source, directory, include_developer, action):
+    arguments = []
+    actions = struct(
+        args = lambda: struct(add = lambda flag, value = None, format = None: arguments.append([flag, value])),
+        run = lambda **kwargs: None,
+    )
+    fields = {
+        "tool_configs": {action: ToolConfigInfo(executable = source)},
+        "action_configs": [
+            ActionConfigInfo(actions = [action], configurators = [add_arg("-marker", "preserved")]),
+            ActionConfigInfo(actions = compiler_plugin_action_names(), configurators = [compiler_plugin_search_path_configurator("__BAZEL_XCODE_DEVELOPER_DIR__/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing")]),
+            ActionConfigInfo(actions = all_compile_action_names(), configurators = [compiler_plugin_search_path_configurator("__BAZEL_SWIFT_TOOLCHAIN_PATH__/usr/lib/swift/host/plugins/testing", developer_search_only = True)]),
+        ],
+    }
+    if directory != None:
+        fields["compiler_plugin_directory"] = directory
+    run_toolchain_action(
+        actions = actions,
+        action_name = action,
+        feature_configuration = None,
+        prerequisites = struct(include_dev_srch_paths = include_developer),
+        swift_toolchain = SwiftToolchainInfo(**fields),
+        toolchain_type = "fixture",
+    )
+    return arguments
 
 def _profile_test(ctx):
     env = unittest.begin(ctx)
@@ -86,6 +116,7 @@ def _profile_test(ctx):
     asserts.equals(env, ctx.file.source, rebound.tool_configs["compile"].executable)
     asserts.equals(env, [ctx.file.source], rebound.tool_configs["compile"].additional_tools)
     asserts.equals(env, stock_env, rebound.tool_configs["compile"].env)
+    asserts.equals(env, prefix + "toolchain/lib/swift/host/plugins/testing", rebound.compiler_plugin_directory)
     asserts.equals(env, "1", rebound.tool_configs["compile"].execution_requirements["no-remote"])
     asserts.equals(env, prefix + "sdk_macosx/usr/include", declared_swift_path("__BAZEL_XCODE_SDKROOT__/usr/include", prefix))
     for sdk, platform in [("iphoneos", "iPhoneOS"), ("iphonesimulator", "iPhoneSimulator")]:
@@ -95,7 +126,26 @@ def _profile_test(ctx):
     recorder = struct(add = lambda flag, value, format = None: arguments.append([flag, value]))
     for configure in rebound.action_configs[-1].configurators:
         configure(None, recorder)
-    asserts.equals(env, [["-target", "arm64-apple-macosx14.0.0"], ["-sdk", prefix + "sdk_macosx"], ["-resource-dir", prefix + "toolchain/lib/swift"], ["-plugin-path", prefix + "toolchain/lib/swift/host/plugins/testing"]], arguments)
+    asserts.equals(env, [["-target", "arm64-apple-macosx14.0.0"], ["-sdk", prefix + "sdk_macosx"], ["-resource-dir", prefix + "toolchain/lib/swift"]], arguments)
+    legacy_xcode = ["-plugin-path", "__BAZEL_XCODE_DEVELOPER_DIR__/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing"]
+    legacy_toolchain = ["-plugin-path", "__BAZEL_SWIFT_TOOLCHAIN_PATH__/usr/lib/swift/host/plugins/testing"]
+    marker = ["-marker", "preserved"]
+    stock_plugin_actions = [SWIFT_ACTION_COMPILE, SWIFT_ACTION_DERIVE_FILES, SWIFT_ACTION_COMPILE_MODULE_INTERFACE, SWIFT_ACTION_SYMBOL_GRAPH_EXTRACT]
+    asserts.equals(env, stock_plugin_actions, compiler_plugin_action_names())
+    for action in all_action_names():
+        for include_developer in [False, True]:
+            defaults = [marker] + ([legacy_xcode] if action in stock_plugin_actions else []) + ([legacy_toolchain] if include_developer and action in all_compile_action_names() else [])
+            asserts.equals(env, defaults, _plugin_arguments(ctx.file.source, None, include_developer, action))
+            # The actual stock pipeline replaces both paths once, only for
+            # actions in their original scope; other driver modes get no flag.
+            captured = ([["-plugin-path", rebound.compiler_plugin_directory]] if action in stock_plugin_actions else []) + [marker]
+            asserts.equals(env, captured, _plugin_arguments(ctx.file.source, rebound.compiler_plugin_directory, include_developer, action))
+    asserts.equals(env, None, compiler_plugin_directory_error(None))
+    asserts.equals(env, None, compiler_plugin_directory_error(rebound.compiler_plugin_directory))
+    for invalid in ["", 23, []]:
+        asserts.equals(env, "compiler_plugin_directory must be a non-empty directory path", compiler_plugin_directory_error(invalid))
+    missing = prefix + "missing-plugins"
+    asserts.equals(env, [["-plugin-path", missing], marker], _plugin_arguments(ctx.file.source, missing, True, compiler_plugin_action_names()[0]))
     return unittest.end(env)
 
 profile_test = unittest.make(_profile_test, attrs = {"source": attr.label(default = ":sdk-smoke.c", allow_single_file = True)})

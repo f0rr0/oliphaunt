@@ -1,0 +1,124 @@
+diff --git a/swift/providers.bzl b/swift/providers.bzl
+--- a/swift/providers.bzl
++++ b/swift/providers.bzl
+@@ -316,4 +316,8 @@
+ This field is an internal implementation detail of the build rules.
+ """,
++        "compiler_plugin_directory": """\
++Optional directory for compiler plugins. When set, it replaces the Xcode and
++developer-search plugin directories in compile action configuration.
++""",
+         "cc_language": """\
+ The `language` that should be passed to `cc_common` APIs that take it as an
+diff --git a/swift/internal/actions.bzl b/swift/internal/actions.bzl
+--- a/swift/internal/actions.bzl
++++ b/swift/internal/actions.bzl
+@@ -18,4 +18,12 @@
+ load("//swift/toolchains/config:action_config.bzl", "ConfigResultInfo")
+ load(":features.bzl", "are_all_features_enabled", "gather_toolchains")
++load(":utils.bzl", "struct_fields")
++load(":action_names.bzl", "compiler_plugin_action_names")
++
++def compiler_plugin_directory_error(directory):
++    """Returns the error for an invalid optional compiler-plugin directory."""
++    if directory != None and (type(directory) != "string" or not directory):
++        return "compiler_plugin_directory must be a non-empty directory path"
++    return None
+ 
+ def _apply_action_configs(
+@@ -41,4 +49,11 @@
+         inputs of the action, as determined by the configurators.
+     """
++    compiler_plugin_directory = getattr(swift_toolchain, "compiler_plugin_directory", None)
++    error = compiler_plugin_directory_error(compiler_plugin_directory)
++    if error:
++        fail(error)
++    if compiler_plugin_directory != None and action_name in compiler_plugin_action_names():
++        args.add("-plugin-path", compiler_plugin_directory)
++    prerequisites = struct(**(struct_fields(prerequisites) | {"compiler_plugin_directory": compiler_plugin_directory}))
+     additional_tools = []
+     inputs = []
+diff --git a/swift/toolchains/config/compile_config.bzl b/swift/toolchains/config/compile_config.bzl
+--- a/swift/toolchains/config/compile_config.bzl
++++ b/swift/toolchains/config/compile_config.bzl
+@@ -1023,5 +1023,8 @@
+         ActionConfigInfo(
+             actions = all_compile_action_names(),
+-            configurators = [_plugin_search_paths_configurator],
++            configurators = [compiler_plugin_search_path_configurator(
++                "__BAZEL_SWIFT_TOOLCHAIN_PATH__/usr/lib/swift/host/plugins/testing",
++                developer_search_only = True,
++            )],
+         ),
+ 
+@@ -2377,11 +2380,19 @@
+         )
+ 
+-def _plugin_search_paths_configurator(prerequisites, args):
+-    """Adds plugin search paths to the command line."""
+-    if prerequisites.include_dev_srch_paths:
+-        args.add(
+-            "-plugin-path",
+-            "__BAZEL_SWIFT_TOOLCHAIN_PATH__/usr/lib/swift/host/plugins/testing",
+-        )
++def compiler_plugin_search_path_configurator(default_directory, developer_search_only = False):
++    """Adds the default plugin path unless the toolchain supplies its own."""
++    return lambda prerequisites, args: _add_compiler_plugin_search_path(
++        prerequisites,
++        args,
++        default_directory,
++        developer_search_only,
++    )
++
++def _add_compiler_plugin_search_path(prerequisites, args, default_directory, developer_search_only):
++    if getattr(prerequisites, "compiler_plugin_directory", None) != None:
++        return
++    if developer_search_only and not prerequisites.include_dev_srch_paths:
++        return
++    args.add("-plugin-path", default_directory)
+ 
+ def _cross_import_overlays_configurator(prerequisites, args):
+diff --git a/swift/toolchains/xcode_swift_toolchain.bzl b/swift/toolchains/xcode_swift_toolchain.bzl
+--- a/swift/toolchains/xcode_swift_toolchain.bzl
++++ b/swift/toolchains/xcode_swift_toolchain.bzl
+@@ -44,4 +44,5 @@
+     "SWIFT_ACTION_SYNTHESIZE_INTERFACE",
+     "all_compile_action_names",
++    "compiler_plugin_action_names",
+ )
+ load("//swift/internal:attrs.bzl", "swift_toolchain_driver_attrs")
+@@ -101,4 +102,5 @@
+     "command_line_objc_copts",
+     "compile_action_configs",
++    "compiler_plugin_search_path_configurator",
+ )
+ load(
+@@ -596,11 +598,7 @@
+     action_configs.append(
+         ActionConfigInfo(
+-            actions = all_compile_action_names() + [
+-                SWIFT_ACTION_COMPILE_MODULE_INTERFACE,
+-                SWIFT_ACTION_SYMBOL_GRAPH_EXTRACT,
+-            ],
++            actions = compiler_plugin_action_names(),
+             configurators = [
+-                add_arg(
+-                    "-plugin-path",
++                compiler_plugin_search_path_configurator(
+                     "{resource_dir}/host/plugins/testing".format(
+                         resource_dir = _resource_dir_path(apple_toolchain),
+diff --git a/swift/internal/action_names.bzl b/swift/internal/action_names.bzl
+--- a/swift/internal/action_names.bzl
++++ b/swift/internal/action_names.bzl
+@@ -64,4 +64,11 @@
+     )
+ 
++def compiler_plugin_action_names():
++    """Returns the Xcode actions that search for Swift compiler plugins."""
++    return all_compile_action_names() + [
++        SWIFT_ACTION_COMPILE_MODULE_INTERFACE,
++        SWIFT_ACTION_SYMBOL_GRAPH_EXTRACT,
++    ]
++
+ def all_compile_action_names():
+     """Returns all actions that compile source files."""

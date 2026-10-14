@@ -45,6 +45,7 @@ def _fields(value):
 def declared_xcode_info(original, tools, ctx):
     """Rebind a standard Swift provider without changing its action model."""
     fields = _fields(original)
+    fields["compiler_plugin_directory"] = ctx.attr.resource_directory + "/host/plugins/testing"
     fields["developer_dirs"] = [struct(developer_path_label = item.developer_path_label, path = declared_swift_path(item.path, ctx.attr.prefix, ctx.attr.sdk_name)) for item in original.developer_dirs]
     fields["implicit_deps_providers"] = _declared_implicit(original.implicit_deps_providers, ctx)
     test = _fields(original.test_configuration)
@@ -73,7 +74,6 @@ def declared_xcode_info(original, tools, ctx):
             add_arg("-target", ctx.attr.target_triple),
             add_arg("-sdk", ctx.attr.sdkroot),
             add_arg("-resource-dir", ctx.attr.resource_directory),
-            add_arg("-plugin-path", ctx.attr.resource_directory + "/host/plugins/testing"),
         ],
     )]
     info = SwiftToolchainInfo(**fields)
