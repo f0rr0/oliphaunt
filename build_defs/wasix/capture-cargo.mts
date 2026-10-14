@@ -1,4 +1,4 @@
-/** Capture only the five declared final WASIX Cargo files for construction consumers. */
+/** Capture final WASIX core and bounded host-smoke Cargo inputs from one invocation. */
 import {
   copyFileSync,
   lstatSync,
@@ -21,7 +21,11 @@ import { captureNativePublicationOutputs } from '../../tools/release/native-publ
 import { loadPublicationCatalog } from '../../tools/release/publication-catalog.mts';
 import { sourceIdentity } from '../../tools/release/publication-lock.mts';
 import { ROOT } from '../../tools/release/release-graph.mts';
-import { type CargoInput, writeWasixCargoConstructionReceipt } from './cargo-inputs.mts';
+import {
+  type CargoInput,
+  wasixHostSmokeCargoIdentities,
+  writeWasixCargoConstructionReceipt,
+} from './cargo-inputs.mts';
 
 const PRODUCT = 'liboliphaunt-wasix';
 const TARGETS = new Map([
@@ -58,15 +62,26 @@ export function captureWasixCargoConstructionInputs({
 }) {
   const source = sourceIdentity(headRef);
   const catalog = loadPublicationCatalog('WASIX Cargo construction capture', {
-    products: [PRODUCT],
+    products: [PRODUCT, 'postgres-tools-wasix'],
   });
+  const runtimeVersion = Bun.TOML.parse(
+    readFileSync(path.join(ROOT, 'src/wasix/runtime/crates/assets/Cargo.toml'), 'utf8'),
+  ).package.version;
+  const targets = new Map([
+    ...TARGETS,
+    ...wasixHostSmokeCargoIdentities(ROOT, runtimeVersion).map(
+      (row) => [row.name, row.target] as const,
+    ),
+  ]);
   const carriers = new Map(
     catalog.carriers
-      .filter((carrier) => carrier.ecosystem === 'cargo' && TARGETS.has(carrier.name))
+      .filter((carrier) => carrier.ecosystem === 'cargo' && targets.has(carrier.name))
       .map((carrier) => [carrier.name, carrier]),
   );
-  if (carriers.size !== TARGETS.size || [...TARGETS.keys()].some((name) => !carriers.has(name)))
-    throw new Error('WASIX Cargo capture must match the five canonical publication carriers');
+  if (carriers.size !== targets.size || [...targets.keys()].some((name) => !carriers.has(name)))
+    throw new Error(
+      'WASIX Cargo capture must match the core and contrib/tools publication carriers',
+    );
   if (!Array.isArray(cohorts) || !cohorts.length)
     throw new Error('WASIX Cargo capture requires actual configured physical cohorts');
   const seen = new Set<string>();
@@ -81,11 +96,11 @@ export function captureWasixCargoConstructionInputs({
       if (
         !carrier ||
         seen.has(pkg.name) ||
-        pkg.product !== PRODUCT ||
+        pkg.product !== carrier.product ||
         pkg.ecosystem !== 'cargo' ||
         pkg.version !== carrier.version ||
         pkg.role !== carrier.role ||
-        pkg.configuration !== TARGETS.get(pkg.name) ||
+        pkg.configuration !== targets.get(pkg.name) ||
         pkg.outputs?.length !== 1 ||
         path.posix.basename(pkg.outputs[0].path) !== `${pkg.name}-${pkg.version}.crate`
       )
@@ -113,7 +128,7 @@ export function captureWasixCargoConstructionInputs({
         path.basename(file) === `${candidate}-${carriers.get(candidate)?.version}.crate`,
     );
     if (!name) throw new Error(`unexpected staged WASIX Cargo file: ${file}`);
-    const target = TARGETS.get(name);
+    const target = targets.get(name);
     if (!target) throw new Error(`staged WASIX Cargo file has no canonical target: ${file}`);
     return { file, name, target };
   });
@@ -124,8 +139,17 @@ export function captureWasixCargoConstructionInputs({
     toolchainManifest: path.join(ROOT, 'src/wasix/runtime/toolchain.toml'),
     cargoLock: path.join(ROOT, 'Cargo.lock'),
     versionManifest: path.join(ROOT, 'src/wasix/runtime/crates/assets/Cargo.toml'),
+    sourceRoot: ROOT,
   };
-  const captured = writeWasixCargoConstructionReceipt(inputs, receiptOptions);
+  const receiptFor = (values: CargoInput[]) =>
+    writeWasixCargoConstructionReceipt(
+      values.filter((row) => TARGETS.has(row.name)),
+      {
+        ...receiptOptions,
+        hostSmokeInputs: values.filter((row) => !TARGETS.has(row.name)),
+      },
+    );
+  const captured = receiptFor(inputs);
   const destination = targetDirectory(outputDirectory);
   const parent = requireSafeDirectoryChain(path.dirname(destination), {
     create: true,
@@ -138,11 +162,10 @@ export function captureWasixCargoConstructionInputs({
       copyFileSync(input.file, file);
       return { ...input, file };
     });
-    const receipt = writeWasixCargoConstructionReceipt(copied, receiptOptions);
+    const receipt = receiptFor(copied);
     if (
       JSON.stringify(receipt) !== JSON.stringify(captured) ||
-      JSON.stringify(writeWasixCargoConstructionReceipt(inputs, receiptOptions)) !==
-        JSON.stringify(captured)
+      JSON.stringify(receiptFor(inputs)) !== JSON.stringify(captured)
     )
       throw new Error('WASIX Cargo files changed while copying captured construction inputs');
     writeFileSync(path.join(temporary, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);

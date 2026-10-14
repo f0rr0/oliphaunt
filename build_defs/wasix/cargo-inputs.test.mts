@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { zstdCompressSync } from 'node:zlib';
+import { gzipSync, zstdCompressSync } from 'node:zlib';
 import { canonicalWasixAotMetadata } from '../../src/wasix/runtime/tools/wasix-aot-manifest.mts';
 import {
   AOT_PACKAGES,
@@ -16,6 +16,7 @@ import {
 import { packageRuntimeCargo, type RuntimeCargoSpec } from './cargo.mts';
 import {
   extractWasixCargoConstructionInputs,
+  wasixHostSmokeCargoIdentities,
   writeWasixCargoConstructionReceipt,
 } from './cargo-inputs.mts';
 
@@ -212,6 +213,105 @@ test('imports genuine canonical crate envelopes and rejects receipt substitution
     );
     assert(!existsSync(path.join(output, '.staged')));
     assert.equal(receipt.crates.find((row) => row.name === RUNTIME_PACKAGE)?.role, 'platform-leaf');
+
+    // Public support envelopes are immutable data inputs, never projected into
+    // foreign Cargo libraries or used to start a foreign WASIX producer.
+    const toolsManifestPath = 'src/wasix/postgres-tools/crates/tools/Cargo.toml';
+    copyFile(packed[0].sourceRoot, toolsManifestPath, path.resolve(toolsManifestPath));
+    const hostSmokeInputs = await Promise.all(
+      wasixHostSmokeCargoIdentities(packed[0].sourceRoot, version).map(async (identity) => {
+        const file = path.join(inputDirectory, `${identity.name}-${identity.version}.crate`);
+        const envelope = new Bun.Archive({
+          [`${identity.name}-${identity.version}/Cargo.toml`]: `[package]\nname="${identity.name}"\nversion="${identity.version}"\n`,
+        });
+        writeFileSync(file, gzipSync(Buffer.from(await envelope.bytes())));
+        return { file, name: identity.name, target: identity.target };
+      }),
+    );
+    const supportReceipt = writeWasixCargoConstructionReceipt(inputs, {
+      sourceCommit: '1'.repeat(40),
+      sourceTree: '2'.repeat(40),
+      releaseManifest,
+      toolchainManifest,
+      cargoLock,
+      versionManifest,
+      hostSmokeInputs,
+      sourceRoot: packed[0].sourceRoot,
+    });
+    const supportOutput = path.join(root, 'host-repository');
+    const importSupport = (value: unknown, destination: string) =>
+      extractWasixCargoConstructionInputs(value, inputDirectory, '1'.repeat(40), destination, {
+        releaseManifest,
+        toolchainManifest,
+        cargoLock,
+        versionManifest,
+        rustDefs: '@@main//build_defs/languages:rust.bzl',
+        cratesDefs: '@@cargo_crates//:defs.bzl',
+        sourceRoot: packed[0].sourceRoot,
+      });
+    importSupport(supportReceipt, supportOutput);
+    const reordered = structuredClone(supportReceipt);
+    assert(reordered.hostSmokeCrates);
+    reordered.hostSmokeCrates = reordered.hostSmokeCrates.map(
+      (row) => Object.fromEntries(Object.entries(row).reverse()) as typeof row,
+    );
+    importSupport(reordered, path.join(root, 'reordered-host-repository'));
+    for (const row of [...hostSmokeInputs, ...inputs.filter((row) => row.name === RUNTIME_PACKAGE)])
+      assert.deepEqual(
+        readFileSync(path.join(supportOutput, 'host-smoke', path.basename(row.file))),
+        readFileSync(row.file),
+      );
+    assert.equal(
+      readFileSync(path.join(supportOutput, 'cargo-facts.json'), 'utf8'),
+      readFileSync(path.join(output, 'cargo-facts.json'), 'utf8'),
+    );
+    assert.match(
+      readFileSync(path.join(supportOutput, 'BUILD.bazel'), 'utf8'),
+      /filegroup\(name = "host_smoke"/u,
+    );
+    for (const [key, mutation] of [
+      [
+        'hash',
+        (rows: any[]) => {
+          rows[0].sha256 = '0'.repeat(64);
+        },
+      ],
+      [
+        'target',
+        (rows: any[]) => {
+          rows[0].target = 'different-target';
+        },
+      ],
+      [
+        'version',
+        (rows: any[]) => {
+          rows[0].version = 'different-version';
+        },
+      ],
+      [
+        'path',
+        (rows: any[]) => {
+          rows[0].path = `../${rows[0].path}`;
+        },
+      ],
+      [
+        'missing',
+        (rows: any[]) => {
+          rows.pop();
+        },
+      ],
+      [
+        'duplicate',
+        (rows: any[]) => {
+          rows[0] = rows[1];
+        },
+      ],
+    ] as const) {
+      const invalid = structuredClone(supportReceipt);
+      assert(invalid.hostSmokeCrates);
+      mutation(invalid.hostSmokeCrates);
+      assert.throws(() => importSupport(invalid, path.join(root, `invalid-support-${key}`)));
+    }
 
     const badRole = structuredClone(receipt);
     badRole.crates[0].role = 'artifact';

@@ -615,6 +615,23 @@ mod extension_tests {
     #[ignore = "requires declared Bazel extension and tools packets"]
     #[allow(unsafe_code)]
     fn declared_contrib_carriers_pass_logical_dump_restore() -> Result<()> {
+        run_declared_logical_dump_restore(&declared_contrib_extensions()?)
+    }
+
+    #[cfg(all(feature = "tools-execution", feature = "extension-uuid-ossp"))]
+    #[test]
+    #[ignore = "requires exact current-source native-host extension and tools packets"]
+    fn declared_uuid_ossp_carriers_pass_aot_host_smoke() -> Result<()> {
+        let extensions = declared_contrib_extensions()?;
+        ensure!(extensions.len() == 1 && extensions[0].sql_name() == "uuid-ossp");
+        run_direct_and_restart_smoke_set(&extensions)?;
+        run_lifecycle_materialization_set(&extensions)?;
+        run_declared_logical_dump_restore(&extensions)
+    }
+
+    #[cfg(feature = "tools-execution")]
+    #[allow(unsafe_code)]
+    fn run_declared_logical_dump_restore(extensions: &[Extension]) -> Result<()> {
         use crate::tools::{PgDumpOptions, PsqlOptions, ToolAssets};
         use serde::Deserialize;
 
@@ -655,7 +672,7 @@ mod extension_tests {
         };
         let pg_dump = assets(tools.pg_dump)?;
         let psql = assets(tools.psql)?;
-        for extension in declared_contrib_extensions()? {
+        for &extension in extensions {
             let name = extension.sql_name();
             eprintln!("logical dump/restore extension: {name}");
             let mut source = Oliphaunt::builder().extension(extension).open()?;

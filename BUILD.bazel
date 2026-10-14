@@ -269,6 +269,7 @@ test_suite(
         "//build_defs/wasix:runtime_cargo_test",
         "//build_defs/wasix:tools_carriers_test",
         "//build_defs/wasix:cargo_inputs_test",
+        "//build_defs/wasix:host_aot_smoke_inputs_test",
         "//build_defs/wasix/postmaster:metadata_test",
         "//build_defs/wasix/postmaster:compile_metadata_test",
         "//build_defs/wasix/postmaster:native_receipts_test",

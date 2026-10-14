@@ -1,11 +1,24 @@
 /** Captured construction inputs for the five public WASIX runtime crates. */
 import { createHash } from 'node:crypto';
-import { cpSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  cpSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import {
   AOT_PACKAGES,
   AOT_TARGET_TRIPLES,
   RUNTIME_PACKAGE,
+  TOOLS_AOT_PACKAGES,
+  TOOLS_PACKAGE,
+  wasixExtensionAotPackageName,
+  wasixExtensionPackageName,
 } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { stageCargoCarrierInputs } from '../../tools/packaging/frozen-cargo.mts';
 import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
@@ -24,6 +37,79 @@ const PACKAGE_PATHS = new Map([
 const PACKAGE_NAMES = [...PACKAGE_PATHS.keys()].sort();
 const SHA = /^[a-f0-9]{64}$/u;
 const COMMIT = /^[a-f0-9]{40}$/u;
+
+/** The current source owns these same public envelope identities. */
+export function wasixHostSmokeCargoIdentities(sourceRoot: string, runtimeVersion: string) {
+  const tools = Bun.TOML.parse(
+    readFileSync(path.join(sourceRoot, 'src/wasix/postgres-tools/crates/tools/Cargo.toml'), 'utf8'),
+  ).package;
+  if (tools?.name !== TOOLS_PACKAGE || typeof tools.version !== 'string' || !tools.version)
+    throw new Error('WASIX host smoke requires the canonical tools version manifest');
+  const contrib = 'oliphaunt-extension-contrib-pg18';
+  return [
+    {
+      name: wasixExtensionPackageName(contrib),
+      product: 'liboliphaunt-wasix',
+      version: runtimeVersion,
+      target: 'wasix-portable',
+    },
+    ...Object.values(AOT_TARGET_TRIPLES).map((target) => ({
+      name: wasixExtensionAotPackageName(contrib, target),
+      product: 'liboliphaunt-wasix',
+      version: runtimeVersion,
+      target,
+    })),
+    {
+      name: TOOLS_PACKAGE,
+      product: 'postgres-tools-wasix',
+      version: tools.version,
+      target: 'portable',
+    },
+    ...Object.entries(TOOLS_AOT_PACKAGES).map(([target, name]) => ({
+      name,
+      product: 'postgres-tools-wasix',
+      version: tools.version,
+      target: AOT_TARGET_TRIPLES[target],
+    })),
+  ].sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+}
+
+/** Validate/copy support envelopes without compiling their public Cargo source. */
+export function wasixHostSmokeCargoRows(
+  inputs: CargoInput[],
+  sourceRoot: string,
+  runtimeVersion: string,
+) {
+  const expected = wasixHostSmokeCargoIdentities(sourceRoot, runtimeVersion);
+  if (
+    !Array.isArray(inputs) ||
+    inputs.length !== expected.length ||
+    new Set(inputs.map((row) => row.name)).size !== inputs.length
+  )
+    throw new Error(
+      'WASIX host smoke requires exactly the ten canonical contrib/tools Cargo archives',
+    );
+  return expected.map((identity) => {
+    const input = inputs.find((row) => row.name === identity.name);
+    if (!input || input.target !== identity.target || !path.isAbsolute(input.file))
+      throw new Error(`WASIX host smoke Cargo target differs: ${identity.name}`);
+    const stat = lstatSync(input.file);
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      path.basename(input.file) !== `${identity.name}-${identity.version}.crate`
+    )
+      throw new Error(`WASIX host smoke requires a canonical regular Cargo file: ${identity.name}`);
+    readCargoManifest(input.file, identity.name, identity.version);
+    const bytes = readFileSync(input.file);
+    return {
+      ...identity,
+      path: path.basename(input.file),
+      size: bytes.length,
+      sha256: sha256(bytes),
+    };
+  });
+}
 
 function sha256(bytes: Uint8Array) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -97,6 +183,8 @@ export function writeWasixCargoConstructionReceipt(
     toolchainManifest,
     cargoLock,
     versionManifest,
+    hostSmokeInputs,
+    sourceRoot,
   }: {
     sourceCommit: string;
     sourceTree: string;
@@ -104,6 +192,8 @@ export function writeWasixCargoConstructionReceipt(
     toolchainManifest: string;
     cargoLock: string;
     versionManifest: string;
+    hostSmokeInputs?: CargoInput[];
+    sourceRoot?: string;
   },
 ) {
   if (!COMMIT.test(sourceCommit) || !COMMIT.test(sourceTree))
@@ -148,6 +238,12 @@ export function writeWasixCargoConstructionReceipt(
       sha256: sha256(bytes),
     };
   });
+  if (hostSmokeInputs && !sourceRoot)
+    throw new Error('WASIX host smoke requires its declared conventional source manifests');
+  const hostSmokeCrates =
+    hostSmokeInputs && sourceRoot
+      ? wasixHostSmokeCargoRows(hostSmokeInputs, sourceRoot, version)
+      : undefined;
   return {
     schema: SCHEMA,
     source: { commit: sourceCommit, tree: sourceTree },
@@ -158,6 +254,7 @@ export function writeWasixCargoConstructionReceipt(
     cargoLockSha256: sha256(readFileSync(cargoLock)),
     versionManifestSha256: sha256(readFileSync(versionManifest)),
     crates: rows,
+    ...(hostSmokeCrates ? { hostSmokeCrates } : {}),
   };
 }
 
@@ -254,6 +351,33 @@ export function extractWasixCargoConstructionInputs(
     if (manifest.package.links !== expectedLinks(row.name))
       throw new Error(`WASIX Cargo links identity differs: ${row.name}`);
   }
+  if (value.hostSmokeCrates !== undefined) {
+    if (
+      !Array.isArray(value.hostSmokeCrates) ||
+      value.hostSmokeCrates.some(
+        (row: any) => row?.path !== `${row?.name}-${row?.version}.crate` || /[\\/]/u.test(row.path),
+      )
+    )
+      throw new Error('WASIX host smoke receipt requires canonical regular archive filenames');
+    const support = wasixHostSmokeCargoRows(
+      value.hostSmokeCrates.map((row: any) => ({
+        name: row.name,
+        target: row.target,
+        file: path.join(inputDirectory, row.path ?? ''),
+      })),
+      sourceRoot,
+      value.version,
+    );
+    if (!isDeepStrictEqual(support, value.hostSmokeCrates))
+      throw new Error('WASIX host smoke Cargo identities or hashes differ from the receipt');
+    const supportDirectory = path.join(outputDirectory, 'host-smoke');
+    mkdirSync(supportDirectory, { recursive: true });
+    for (const row of [
+      ...value.crates.filter((row: any) => row.name === RUNTIME_PACKAGE),
+      ...support,
+    ])
+      copyFileSync(path.join(inputDirectory, row.path), path.join(supportDirectory, row.path));
+  }
   mkdirSync(outputDirectory, { recursive: true });
   const staged = path.join(outputDirectory, '.staged');
   stageCargoCarrierInputs(
@@ -317,6 +441,7 @@ export function extractWasixCargoConstructionInputs(
   const rootBuild = [
     'package(default_visibility = ["//visibility:public"])',
     'exports_files(["Cargo.toml", "Cargo.lock", "cargo.bzl", "cargo-facts.json"])',
+    'filegroup(name = "host_smoke", srcs = glob(["host-smoke/*.crate"]))',
     '',
   ].join('\n');
   writeFileSync(path.join(outputDirectory, 'BUILD.bazel'), rootBuild);

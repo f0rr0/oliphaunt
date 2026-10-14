@@ -811,13 +811,17 @@ jobs:
           mkdir -p "$capture_root"
           test -z "$(git status --porcelain)"
           # Reuse the producing invocation captured above. The reader requires
-          # exactly the five canonical core Cargo envelopes.
+          # the five core envelopes and the ten already-constructed contrib/tools
+          # envelopes needed for bounded side-module/tool execution on each host.
           jq '. as $evidence | [
             .cohorts[] | {
               source: $evidence.source, executionRoot: .executionRoot, aquery: .aquery,
-              roots: [.roots[] | select(.package.product == "liboliphaunt-wasix"
+              roots: [.roots[] | select((.package.product == "liboliphaunt-wasix"
+                or .package.product == "postgres-tools-wasix")
                 and .package.ecosystem == "cargo"
-                and (.package.name | startswith("liboliphaunt-wasix-")))]
+                and ((.package.name | startswith("liboliphaunt-wasix-"))
+                  or (.package.name | startswith("oliphaunt-extension-contrib-pg18-"))
+                  or (.package.name | startswith("oliphaunt-wasix-tools"))))]
             } | select(.roots | length > 0)
           ]' "$RUNNER_TEMP/wasix-tools-build-capture/evidence/native-build-evidence.json" \
             > "$capture_root/cohorts.json"
@@ -1188,7 +1192,7 @@ jobs:
 
   release-families:
     name: Native release families
-    needs: [portable, linux, wasix, postmaster, postmaster-host, react-native, release-inputs]
+    needs: [portable, linux, wasix, postmaster, postmaster-host, release-inputs]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -1336,7 +1340,7 @@ jobs:
             startup=(--host_jvm_args=-Xmx3g)
             configuration=(--config=macos-sandbox)
           fi
-          bash tools/dev/bazel.sh "${startup[@]}" test //src/wasix/sdks/rust:postgres_regression_test \
+          bash tools/dev/bazel.sh "${startup[@]}" test //src/wasix/sdks/rust:postgres_regression_test //build_defs/wasix:host_aot_smoke_test \
             "${configuration[@]}" --platforms="$TARGET_PROFILE" --host_platform="$TARGET_PROFILE" \
             --repo_env=OLIPHAUNT_WASIX_SOURCE_COMMIT="$EXPECTED_SOURCE_COMMIT" \
             --repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS="$RUNNER_TEMP/wasix-cargo-inputs" \

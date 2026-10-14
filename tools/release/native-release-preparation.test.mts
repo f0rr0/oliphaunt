@@ -951,6 +951,7 @@ test('PR family construction uses finite completed producer transport and never 
         readPages: async () => [
           { name: 'native-build-evidence-x86_64', expired: false },
           { name: 'native-build-evidence-release-families', expired: false },
+          { name: 'native-build-evidence-react-native-macos-arm64', expired: false },
           { name: 'arbitrary', expired: false },
         ],
         acquire: async (evidenceRoot, expected) => {
@@ -960,6 +961,7 @@ test('PR family construction uses finite completed producer transport and never 
       },
     );
     expect(acquired).toHaveLength(1);
+    expect(acquired.map((row) => row.artifactName)).toEqual(['native-build-evidence-x86_64']);
     expect(acquired[0].event).toBe('pull_request');
     expect(acquired[0].ref).toBe('refs/pull/295/merge');
     expect(acquired[0].github.runAttempt).toBe(1);

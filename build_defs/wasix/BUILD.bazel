@@ -7,6 +7,7 @@ load(":cargo.bzl", "RUNTIME_CARGO_HELPERS")
 load(":tools-carriers.bzl", "TOOLS_CARRIER_HELPERS")
 load(":aot-repeatability.bzl", "wasix_aot_repeatability_test")
 load(":napi.bzl", "NAPI_HELPERS", "NAPI_NOTICES")
+load(":host-aot-smoke.bzl", "wasix_host_aot_smoke_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -98,12 +99,33 @@ bun_test(
         "//:Cargo.lock",
         "//src/wasix/runtime:release.toml",
         "//src/wasix/runtime:toolchain.toml",
+        "//src/wasix/postgres-tools:crates/tools/Cargo.toml",
         "//src/wasix/runtime/crates/assets:package_sources",
         "//src/wasix/runtime/crates/aot/x86_64-unknown-linux-gnu:package_sources",
         "//src/wasix/runtime/crates/aot/aarch64-unknown-linux-gnu:package_sources",
         "//src/wasix/runtime/crates/aot/aarch64-apple-darwin:package_sources",
         "//src/wasix/runtime/crates/aot/x86_64-pc-windows-msvc:package_sources",
     ] + RUNTIME_CARGO_HELPERS + RUNTIME_NPM_NOTICES.keys(),
+    size = "small",
+)
+
+wasix_host_aot_smoke_test(
+    name = "host_aot_smoke_test",
+    target_triple = select({
+        ":llvm_linux_x64": "x86_64-unknown-linux-gnu",
+        ":llvm_linux_arm64": "aarch64-unknown-linux-gnu",
+        ":llvm_macos_arm64": "aarch64-apple-darwin",
+        ":llvm_windows_x64": "x86_64-pc-windows-msvc",
+    }),
+    size = "large",
+    timeout = "long",
+    tags = ["manual", "installed-consumer"],
+)
+
+bun_test(
+    name = "host_aot_smoke_inputs_test",
+    entry_point = "host-aot-smoke.test.mts",
+    data = ["host-aot-smoke.mts", "cargo-inputs.mts", "cargo.mts", "//build_defs/languages:cargo-metadata.mts", "//:tools/packaging/frozen-cargo.mts", "//src/wasix/postgres-tools:tools/package-assets.mts", "//src/wasix/runtime:tools/package-release-assets.mts", "//src/wasix/runtime:toolchain.toml"] + RUNTIME_CARGO_HELPERS + RUNTIME_NPM_NOTICES.keys(),
     size = "small",
 )
 

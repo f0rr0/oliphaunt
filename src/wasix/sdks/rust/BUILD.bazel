@@ -32,6 +32,14 @@ _CONTRIB_TOOLS_FEATURES = _CONTRIB_FEATURES + ["tools-execution"]
 cargo_library(name = "extension_carrier_tools_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":extension_carrier_build_script", features = _CONTRIB_TOOLS_FEATURES)
 cargo_library_test(name = "extension_carrier_tools_unit_test", crate = ":extension_carrier_tools_lib", features = _CONTRIB_TOOLS_FEATURES, rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode([member["sql-name"] for member in CONTRIB_MEMBERS]), "OLIPHAUNT_DECLARED_TOOLS_VERSION": PRODUCTS["postgres-tools-wasix"]["version"]}, path_dependencies = PATH_DEPS, data = _UNIT_TEST_DATA, tags = ["manual"])
 
+# The host lane executes one representative module, rather than repeating the
+# exhaustive contrib lifecycle on each native executor. Tools are supplied as
+# final declared Files, so this variant does not construct WASIX tools locally.
+_HOST_SMOKE_FEATURES = ["extension-uuid-ossp", "tools-execution"]
+cargo_generator(name = "host_aot_smoke_build_script", path_dependencies = PATH_DEPS, features = _HOST_SMOKE_FEATURES, proc_macro_names = ["async-trait"])
+cargo_library(name = "host_aot_smoke_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":host_aot_smoke_build_script", features = _HOST_SMOKE_FEATURES)
+cargo_library_test(name = "host_aot_smoke_unit_test", crate = ":host_aot_smoke_lib", features = _HOST_SMOKE_FEATURES, rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode(["uuid-ossp"]), "OLIPHAUNT_DECLARED_TOOLS_VERSION": PRODUCTS["postgres-tools-wasix"]["version"]}, path_dependencies = PATH_DEPS, data = _UNIT_TEST_DATA, tags = ["manual"])
+
 _QUALITY_PATH_DEPS = {
     name: "//" + label.split("//", 1)[1].removesuffix(":lib") + ":quality_lib"
     for name, label in PATH_DEPS.items()

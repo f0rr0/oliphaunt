@@ -13,6 +13,7 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(glob(["tools/*.mts", "npm/native.mts"]))
 exports_files(["npm/package.json", "npm/index.d.ts", "CHANGELOG.md"])
+exports_files(["crates/tools/Cargo.toml"])
 
 js_library(name = "npm_types", srcs = ["npm/index.d.ts", "npm/package.json"])
 

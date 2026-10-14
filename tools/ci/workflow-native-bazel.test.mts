@@ -32,15 +32,90 @@ function predecessors(id: string, active = new Set<string>()): Set<string> {
   return new Set(needs(id).flatMap((parent) => [parent, ...predecessors(parent, stack)]));
 }
 
+test('native AOT hosts consume source-bound side-module and tools inputs and stay required', () => {
+  assert.ok(predecessors('required').has('wasix-host'));
+  assert.ok(predecessors('wasix-host').has('wasix'));
+  const host = jobs['wasix-host'].steps.find((step: any) =>
+    step.run?.includes('EXPECTED_SOURCE_COMMIT'),
+  );
+  assert.ok(host.run.includes('//src/wasix/sdks/rust:postgres_regression_test'));
+  assert.ok(host.run.includes('//build_defs/wasix:host_aot_smoke_test'));
+  assert.ok(
+    host.run.includes('--repo_env=OLIPHAUNT_WASIX_SOURCE_COMMIT="$EXPECTED_SOURCE_COMMIT"'),
+  );
+  assert.ok(
+    host.run.includes('--repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS="$RUNNER_TEMP/wasix-cargo-inputs"'),
+  );
+  const capture = jobs.wasix.steps.find(
+    (step: any) => step.name === 'Capture final WASIX Cargo inputs for native hosts',
+  );
+  const expression = capture.run.match(/jq '([\s\S]*?)' /u)?.[1];
+  assert.ok(expression, 'WASIX construction capture needs its actual source-owned root filter');
+  const expected = [
+    ['liboliphaunt-wasix', 'liboliphaunt-wasix-portable'],
+    ['liboliphaunt-wasix', 'liboliphaunt-wasix-aot-aarch64-apple-darwin'],
+    ['liboliphaunt-wasix', 'oliphaunt-extension-contrib-pg18-wasix'],
+    ['liboliphaunt-wasix', 'oliphaunt-extension-contrib-pg18-aot-macos-arm64'],
+    ['postgres-tools-wasix', 'oliphaunt-wasix-tools'],
+    ['postgres-tools-wasix', 'oliphaunt-wasix-tools-aot-aarch64-apple-darwin'],
+  ].map(([product, name]) => ({ package: { product, name, ecosystem: 'cargo' } }));
+  const source = { commit: '1'.repeat(40), tree: '2'.repeat(40) };
+  const cohort = {
+    executionRoot: '/actual/execution/root',
+    aquery: { actions: [] },
+    roots: [
+      ...expected,
+      { package: { product: 'oliphaunt-wasix-rust', name: 'oliphaunt-wasix', ecosystem: 'cargo' } },
+      {
+        package: {
+          product: 'liboliphaunt-wasix',
+          name: 'liboliphaunt-wasix-portable',
+          ecosystem: 'npm',
+        },
+      },
+      {
+        package: { product: 'different-owner', name: 'oliphaunt-wasix-tools', ecosystem: 'cargo' },
+      },
+    ],
+  };
+  const filtered = JSON.parse(
+    execFileSync('jq', [expression], {
+      input: JSON.stringify({ source, cohorts: [cohort] }),
+      encoding: 'utf8',
+    }),
+  );
+  assert.deepEqual(filtered, [{ ...cohort, source, roots: expected }]);
+});
+
 test('native package consumers follow their producers and remain required for admission', () => {
   for (const id of Object.keys(jobs)) predecessors(id);
   assert.ok(predecessors('react-native').has('portable'));
   assert.ok(predecessors('react-native').has('release-inputs'));
-  assert.ok(predecessors('release-families').has('react-native'));
+  assert.ok(!predecessors('release-families').has('react-native'));
   const required = predecessors('required');
   for (const [id, job] of Object.entries(jobs)) {
     if (job.steps.some((step: any) => step.run?.includes('qualify-native-shipping.mts')))
       assert.ok(required.has(id), `Native shipping producer omitted from admission: ${id}`);
+  }
+  const admission = jobs.required.steps.find(
+    (step: any) => step.name === 'Require every native qualification job',
+  );
+  for (const [subject, outcome] of [
+    ['', 'success'],
+    ['react-native', 'failure'],
+    ['release-families', 'failure'],
+    ['wasix-host', 'failure'],
+    ['react-native', 'skipped'],
+    ['release-families', 'skipped'],
+    ['wasix-host', 'skipped'],
+  ]) {
+    const results = Object.fromEntries(
+      needs('required').map((id) => [id, { result: id === subject ? outcome : 'success' }]),
+    );
+    const result = spawnSync('bash', ['-eu', '-c', admission.run], {
+      env: { ...process.env, NEEDS_JSON: JSON.stringify(results) },
+    });
+    assert.equal(result.status === 0, subject === '', result.stderr.toString());
   }
   const consumer = jobs['react-native'];
   assert.equal(consumer.if, undefined);
@@ -86,7 +161,14 @@ test('native package consumers follow their producers and remain required for ad
     );
     assert.ok(family.has(owner), `Cargo source owner lost its final qualification: ${owner}`);
   }
-  for (const producer of ['portable', 'linux', 'release-inputs'])
+  for (const producer of [
+    'portable',
+    'linux',
+    'wasix',
+    'postmaster',
+    'postmaster-host',
+    'release-inputs',
+  ])
     assert.ok(predecessors('release-families').has(producer));
   for (const owner of [
     '//src/native/rust-bindings:compiled_shipping_export',
