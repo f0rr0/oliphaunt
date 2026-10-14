@@ -1,8 +1,10 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
+import * as childProcess from 'node:child_process';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   copyFileSync,
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -288,6 +290,7 @@ const state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));
 const invocation=process.argv.slice(2);
 appendFileSync(${JSON.stringify(callsFile)},JSON.stringify(invocation)+'\\n');
 const args=invocation.slice(invocation.findIndex((arg:string)=>['test','build','cquery','query','aquery','info'].includes(arg)));
+if(args[0]==='test' || args[0]==='aquery') writeFileSync(args.find((arg:string)=>arg.startsWith('--profile=')).slice(10),'fixture profile');
 const expression=args[1]?.startsWith('--query_file=')?readFileSync(args[1].slice(13),'utf8'):args[1];
 if(args[0]==='test') {
   if(state.mode==='build-failure') process.exit(1);
@@ -312,6 +315,12 @@ if(args[0]==='test') {
   writeFileSync(args.find((arg:string)=>arg.startsWith('--build_event_json_file=')).slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
 } else if(args[0]==='aquery') {
   if(state.mode==='aquery-failure') process.exit(1);
+  if(state.mode==='aquery-hang' || state.mode==='aquery-ignore-term') {
+    if(state.mode==='aquery-ignore-term') process.on('SIGTERM',()=>{});
+    writeFileSync(args.find((arg:string)=>arg.startsWith('--output_file=')).slice(14),'partial output');
+    setInterval(()=>{},1000);
+    await new Promise(()=>{});
+  }
   if(state.mode==='aquery-race') writeFileSync('src/input.mts','changed during analysis');
   const metadata=Object.fromEntries(args.filter((arg:string)=>arg.startsWith('--build_metadata=')).map((arg:string)=>{const value=arg.slice(17);const split=value.indexOf('=');return [value.slice(0,split),value.slice(split+1)];}));
   const options=args.filter((arg:string)=>arg.startsWith('--')).map((arg:string)=>{const split=arg.indexOf('=');const value=split<0?'':arg.slice(split+1);return {optionName:arg.slice(2,split<0?undefined:split),optionValue:value};});
@@ -608,17 +617,20 @@ else {
 }
 
 for (const selection of ['explicit', 'export'])
-  test(`qualifies ${selection} roots with one request and the real evidence collector`, () => {
+  test(`qualifies ${selection} roots with one request and the real evidence collector`, async () => {
     const f = fixture();
     try {
       if (selection === 'export') f.request.shipping = { export: '//fixture:shipping_export' };
-      const output = qualifyNativeShipping(f.request, f.workspace);
+      const output = await qualifyNativeShipping(f.request, f.workspace);
       const evidence = JSON.parse(readFileSync(output, 'utf8'));
       expect(evidence.cohorts[0].roots[0].label).toBe('//fixture:shipping');
       expect(evidence.github).toEqual(f.request.github);
       const calls = f.calls();
       const builds = calls.filter((call) => call[0] === 'test');
       expect(builds).toHaveLength(1);
+      expect(builds[0]).toContain(
+        `--profile=${path.join(f.outputDirectory, 'diagnostics/build-profile.json.gz')}`,
+      );
       expect(builds[0]).toContain('//fixture:shipping');
       expect(builds[0]).toContain('//fixture:consumer');
       expect(builds[0]).toContain(
@@ -627,6 +639,9 @@ for (const selection of ['explicit', 'export'])
       expect(builds[0].some((flag) => flag.startsWith('--experimental_aquery_dump_'))).toBe(false);
       const queries = calls.filter((call) => call[0] === 'aquery');
       expect(queries).toHaveLength(1);
+      expect(queries[0]).toContain(
+        `--profile=${path.join(f.outputDirectory, 'diagnostics/aquery-profile.json.gz')}`,
+      );
       expect(queries[0]).toContain('--include_pruned_inputs=true');
       expect(queries[0]).toContain('--include_artifacts=true');
       expect(queries[0]).toContain('--include_aspects=true');
@@ -679,12 +694,12 @@ for (const selection of ['explicit', 'export'])
     }
   });
 
-test('scoped action capture binds full requested scope, output, source and configured identity', () => {
+test('scoped action capture binds full requested scope, output, source and configured identity', async () => {
   const f = fixture();
   try {
     f.request.shipping = { export: '//fixture:shipping_export' };
     f.request.targets = ['//fixture:consumer', '//fixture:consumer', '//fixture:mandatory_test'];
-    const output = qualifyNativeShipping(f.request, f.workspace);
+    const output = await qualifyNativeShipping(f.request, f.workspace);
     const evidence = JSON.parse(readFileSync(output, 'utf8'));
     const build = f.calls().find((call) => call[0] === 'test');
     expect(JSON.stringify(evidence)).not.toContain('not-for-retention');
@@ -771,7 +786,7 @@ test('scoped action capture binds full requested scope, output, source and confi
   }
 });
 
-test('large configured graphs keep query expressions out of OS-limited argv', () => {
+test('large configured graphs keep query expressions out of OS-limited argv', async () => {
   const f = fixture();
   try {
     f.update((state) => {
@@ -784,7 +799,7 @@ test('large configured graphs keep query expressions out of OS-limited argv', ()
       state.recipeGraph.results[0].target.rule.configuredRuleInput.push({ label: representative });
       state.recipeGraph.results.push({ target: { sourceFile: { name: representative } } });
     });
-    qualifyNativeShipping(f.request, f.workspace);
+    await qualifyNativeShipping(f.request, f.workspace);
     const query = readFileSync(path.join(f.outputDirectory, 'analysis-buildfiles-0.query'), 'utf8');
     expect(Buffer.byteLength(query)).toBeGreaterThan(128 * 1024);
     expect(query).toStartWith('buildfiles(set("//fixture:a-');
@@ -804,12 +819,12 @@ test('large configured graphs keep query expressions out of OS-limited argv', ()
 });
 
 for (const targets of [[], undefined])
-  test(`source-owned manual tests remain mandatory with ${targets ? 'empty' : 'omitted'} caller targets`, () => {
+  test(`source-owned manual tests remain mandatory with ${targets ? 'empty' : 'omitted'} caller targets`, async () => {
     const f = fixture();
     try {
       f.request.shipping = { export: '//fixture:shipping_export' };
       f.request.targets = targets;
-      const output = qualifyNativeShipping(f.request, f.workspace);
+      const output = await qualifyNativeShipping(f.request, f.workspace);
       const evidence = JSON.parse(readFileSync(output, 'utf8'));
       const requiredTests = [{ label: '//fixture:mandatory_test', configuration: 'c'.repeat(64) }];
       const result = validateNativeBuildEvidence(evidence, {
@@ -873,7 +888,7 @@ test('the existing CLI accepts omitted additional targets and still runs owner p
 });
 
 for (const failure of ['missing-summary', 'failed-result', 'configuration-mismatch'])
-  test(`removes evidence when source-owned configured qualification has ${failure}`, () => {
+  test(`removes evidence when source-owned configured qualification has ${failure}`, async () => {
     const f = fixture();
     try {
       f.request.shipping = { export: '//fixture:shipping_export' };
@@ -885,7 +900,7 @@ for (const failure of ['missing-summary', 'failed-result', 'configuration-mismat
           state.testEvents.find((event: any) => event.testResult).testResult.status = 'FAILED';
         else state.qualification.configurations[0].checksum = 'd'.repeat(64);
       });
-      expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
+      await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow(
         failure === 'configuration-mismatch'
           ? /mandatory configured test/
           : /with-source.sh failed/,
@@ -901,14 +916,14 @@ for (const failure of ['missing-summary', 'failed-result', 'configuration-mismat
   });
 
 for (const ruleClass of ['filegroup', 'test_suite'])
-  test(`rejects ${ruleClass} policy nodes before construction`, () => {
+  test(`rejects ${ruleClass} policy nodes before construction`, async () => {
     const f = fixture();
     try {
       f.request.shipping = { export: '//fixture:shipping_export' };
       f.update((state) => {
         state.qualification.results[0].target.rule.ruleClass = ruleClass;
       });
-      expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
+      await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow(
         'configured actual test rules',
       );
       expect(f.calls().map((call) => call[0])).toEqual(['cquery', 'cquery']);
@@ -918,11 +933,11 @@ for (const ruleClass of ['filegroup', 'test_suite'])
   });
 
 for (const mode of ['incompatible-owner', 'malformed-owner'])
-  test(`diagnoses ${mode} configured export output without construction`, () => {
+  test(`diagnoses ${mode} configured export output without construction`, async () => {
     const f = fixture(mode);
     try {
       f.request.shipping = { export: '//fixture:shipping_export' };
-      expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
+      await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow(
         mode === 'incompatible-owner'
           ? 'Bazel configuration analysis failed'
           : 'readable configured export provider',
@@ -939,11 +954,11 @@ for (const mode of ['incompatible-owner', 'malformed-owner'])
     }
   });
 
-test('an incompatible declared mandatory test fails policy analysis before construction', () => {
+test('an incompatible declared mandatory test fails policy analysis before construction', async () => {
   const f = fixture('incompatible-policy');
   try {
     f.request.shipping = { export: '//fixture:shipping_export' };
-    expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow('failed');
+    await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow('failed');
     expect(f.calls().map((call) => call[0])).toEqual(['cquery', 'cquery']);
     expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
       false,
@@ -953,7 +968,7 @@ test('an incompatible declared mandatory test fails policy analysis before const
   }
 });
 
-test('an explicitly empty owner policy retains construction-only compatibility', () => {
+test('an explicitly empty owner policy retains construction-only compatibility', async () => {
   const f = fixture();
   try {
     f.request.shipping = { export: '//fixture:shipping_export' };
@@ -962,7 +977,7 @@ test('an explicitly empty owner policy retains construction-only compatibility',
       state.qualification = {};
       state.testEvents = [];
     });
-    const output = qualifyNativeShipping(f.request, f.workspace);
+    const output = await qualifyNativeShipping(f.request, f.workspace);
     const evidence = JSON.parse(readFileSync(output, 'utf8'));
     const result = validateNativeBuildEvidence(evidence, {
       source: evidence.source,
@@ -977,11 +992,11 @@ test('an explicitly empty owner policy retains construction-only compatibility',
   }
 });
 
-test('complete-family validation rejects bytes changed after successful evidence capture', () => {
+test('complete-family validation rejects bytes changed after successful evidence capture', async () => {
   const f = fixture('capture-output-race');
   try {
     f.request.completeProducts = ['fixture'];
-    expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
+    await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow(
       'native complete-family output differs from build evidence',
     );
     expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
@@ -994,27 +1009,27 @@ test('complete-family validation rejects bytes changed after successful evidence
   }
 });
 
-test('caller query substitution is rejected before any process even beyond OS argv limits', () => {
+test('caller query substitution is rejected before any process even beyond OS argv limits', async () => {
   const f = fixture();
   try {
     f.request.configuration.push(`--query_file=${'x'.repeat(130 * 1024)}`);
-    expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow('cannot override');
+    await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow('cannot override');
     expect(f.calls()).toEqual([]);
     expect(existsSync(f.outputDirectory)).toBe(false);
     f.request.configuration.pop();
     f.request.configuration.push('--output_file=/tmp/substituted-query.json');
-    expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow('cannot override');
+    await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow('cannot override');
     expect(f.calls()).toEqual([]);
   } finally {
     f.cleanup();
   }
 });
 
-test('rejects dirty source before any Bazel request', () => {
+test('rejects dirty source before any Bazel request', async () => {
   const f = fixture();
   try {
     writeFileSync(path.join(f.workspace, 'src/input.mts'), 'dirty');
-    expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow('clean checkout');
+    await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow('clean checkout');
     expect(f.calls()).toEqual([]);
   } finally {
     f.cleanup();
@@ -1022,7 +1037,7 @@ test('rejects dirty source before any Bazel request', () => {
 });
 
 for (const flag of ['--assume-unchanged', '--skip-worktree'])
-  test(`rejects ${flag} when git status hides a modified tracked input`, () => {
+  test(`rejects ${flag} when git status hides a modified tracked input`, async () => {
     const f = fixture();
     try {
       execFileSync('git', ['update-index', flag, 'src/input.mts'], { cwd: f.workspace });
@@ -1030,7 +1045,7 @@ for (const flag of ['--assume-unchanged', '--skip-worktree'])
       expect(
         execFileSync('git', ['status', '--porcelain'], { cwd: f.workspace, encoding: 'utf8' }),
       ).toBe('');
-      expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
+      await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow(
         'index suppression flags',
       );
       expect(f.calls()).toEqual([]);
@@ -1039,13 +1054,13 @@ for (const flag of ['--assume-unchanged', '--skip-worktree'])
     }
   });
 
-test('preserves startup argv before every command and configuration afterward', () => {
+test('preserves startup argv before every command and configuration afterward', async () => {
   const f = fixture();
   try {
     const startup = ['--output_base=/tmp/approved base', '--host_jvm_args=-Xmx2g'];
     f.request.startup = startup;
     f.request.shipping = { export: '//fixture:shipping_export' };
-    qualifyNativeShipping(f.request, f.workspace);
+    await qualifyNativeShipping(f.request, f.workspace);
     const calls = f.calls();
     expect(calls.filter((call) => call[2] === 'test')).toHaveLength(1);
     for (const call of calls) {
@@ -1060,11 +1075,11 @@ test('preserves startup argv before every command and configuration afterward', 
 });
 
 for (const product of ['unknown-product', 'postgres-tools-wasix'])
-  test(`removes its packet when canonical complete-family coverage fails for ${product}`, () => {
+  test(`removes its packet when canonical complete-family coverage fails for ${product}`, async () => {
     const f = fixture();
     try {
       f.request.completeProducts = [product];
-      expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
+      await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow(
         product === 'unknown-product'
           ? 'unknown selected product'
           : 'incomplete native shipping coverage',
@@ -1098,18 +1113,104 @@ for (const mode of [
   'aquery-race',
   'manifest-tamper',
 ])
-  test(`does not return evidence after ${mode}`, () => {
+  test(`does not return evidence after ${mode}`, async () => {
     const f = fixture(mode);
     try {
       if (mode === 'discovery-failure')
         f.request.shipping = { export: '//fixture:shipping_export' };
-      expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow();
+      await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow();
       expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
         false,
       );
       if (mode.startsWith('build-') || mode === 'head-race')
         expect(f.calls().map((call) => call[0])).toEqual(['test']);
     } finally {
+      f.cleanup();
+    }
+  });
+
+for (const mode of ['aquery-hang', 'aquery-ignore-term'])
+  test(`a stalled query (${mode}) is terminated without retry or downstream capture`, async () => {
+    const f = fixture(mode);
+    const base = path.join(path.dirname(f.outputDirectory), 'bazel-base');
+    const server = path.join(base, 'server');
+    mkdirSync(server, { recursive: true });
+    writeFileSync(path.join(server, 'server.pid.txt'), String(process.pid));
+    const log = path.join(server, 'jvm.out');
+    writeFileSync(log, 'historical action diagnostic must stay private\n');
+    f.request.startup = [`--output_base=${base}`];
+    const execute = childProcess.execFileSync;
+    const commands = spyOn(childProcess, 'execFileSync').mockImplementation(((
+      command: string,
+      args: string[],
+      options: any,
+    ) =>
+      command === 'ps' && args[0] === '-p'
+        ? 'java\n'
+        : execute(command, args, options)) as typeof execFileSync);
+    const start = childProcess.spawn;
+    const terminated: string[] = [];
+    const children = spyOn(childProcess, 'spawn').mockImplementation(((...args: any[]) => {
+      const child = start(...(args as Parameters<typeof childProcess.spawn>));
+      const kill = child.kill;
+      spyOn(child, 'kill').mockImplementation((kind) => {
+        terminated.push(String(kind));
+        return kill.call(child, kind);
+      });
+      return child;
+    }) as typeof childProcess.spawn);
+    const signal = process.kill;
+    const signals = spyOn(process, 'kill').mockImplementation((pid, kind) => {
+      if (pid === process.pid && kind === 'SIGQUIT') {
+        appendFileSync(log, 'new JVM thread snapshot\n');
+        return true;
+      }
+      return signal(pid, kind);
+    });
+    const schedule = globalThis.setTimeout;
+    const deadlines: number[] = [];
+    let escalation: ReturnType<typeof setTimeout> | undefined;
+    const cleared = spyOn(globalThis, 'clearTimeout');
+    const timer = spyOn(globalThis, 'setTimeout').mockImplementation(((
+      callback: (...args: any[]) => void,
+      delay?: number,
+      ...args: any[]
+    ) => {
+      deadlines.push(delay ?? 0);
+      const scheduled = schedule(
+        callback,
+        delay === 300000 ? 500 : delay === 2000 ? 0 : delay === 5000 ? 100 : delay,
+        ...args,
+      );
+      if (delay === 5000) escalation = scheduled;
+      return scheduled;
+    }) as typeof setTimeout);
+    try {
+      await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow(
+        'five-minute limit',
+      );
+      expect(deadlines).toEqual([300000, 2000, 5000]);
+      expect(cleared).toHaveBeenCalledWith(escalation);
+      expect(terminated).toEqual(
+        mode === 'aquery-ignore-term' ? ['SIGTERM', 'SIGKILL'] : ['SIGTERM'],
+      );
+      expect(f.calls().map((call) => call[1])).toEqual(['test', 'aquery']);
+      expect(signals).toHaveBeenCalledWith(process.pid, 'SIGQUIT');
+      expect(readFileSync(path.join(f.outputDirectory, 'diagnostics/aquery-jvm.log'), 'utf8')).toBe(
+        'new JVM thread snapshot\n',
+      );
+      expect(readFileSync(path.join(f.outputDirectory, 'aquery.pb'), 'utf8')).toBe(
+        'partial output',
+      );
+      expect(existsSync(path.join(f.outputDirectory, 'diagnostics/disk.txt'))).toBe(true);
+      expect(existsSync(path.join(f.outputDirectory, 'diagnostics/processes.txt'))).toBe(true);
+      expect(existsSync(path.join(f.outputDirectory, 'evidence'))).toBe(false);
+    } finally {
+      timer.mockRestore();
+      cleared.mockRestore();
+      signals.mockRestore();
+      commands.mockRestore();
+      children.mockRestore();
       f.cleanup();
     }
   });

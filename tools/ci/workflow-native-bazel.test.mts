@@ -589,6 +589,14 @@ test('native qualification supports protected merge groups with the same require
 
 test('postmaster host scheduling keeps native tests serial and Linux guest inputs unchanged', () => {
   const job = jobs['postmaster-host'];
+  const diagnostics = job.steps.find(
+    (step: any) => step.name === 'Upload native postmaster build and query diagnostics',
+  );
+  assert.equal(diagnostics.if, 'always()');
+  assert.equal(
+    diagnostics.with.path,
+    '$' + '{{ runner.temp }}/postmaster-build-capture/diagnostics/',
+  );
   assert.equal(
     job['timeout-minutes'],
     '$' + "{{ matrix.platform == 'macos-arm64' && 180 || 120 }}",

@@ -1,5 +1,5 @@
-name: Transport bounded Bazel caches
-description: Restore or save standard Bazel action and repository caches for one qualification cohort.
+name: Transport bounded Bazel action cache
+description: Restore or save the standard Bazel action cache for one qualification cohort.
 
 inputs:
   phase:
@@ -20,17 +20,11 @@ inputs:
   disk-cache-hit:
     description: Primary action cache hit returned by the restore phase.
     default: "false"
-  repository-cache-hit:
-    description: Primary repository cache hit returned by the restore phase.
-    default: "false"
 
 outputs:
   disk-cache-hit:
     description: Whether the immutable action cache key already exists.
     value: ${{ steps.disk-restore.outputs.cache-hit }}
-  repository-cache-hit:
-    description: Whether the immutable repository cache key already exists.
-    value: ${{ steps.repository-restore.outputs.cache-hit }}
 
 runs:
   using: composite
@@ -42,15 +36,6 @@ runs:
       env:
         PHASE: ${{ inputs.phase }}
         COHORT: ${{ inputs.cohort }}
-        REPOSITORY_GENERATION: >-
-          ${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'Cargo.lock', 'bun.lock',
-              '.prototools', 'rust-toolchain.toml', 'tools/dev/*.toml',
-              'tools/dev/native-host-toolchains.json', 'build_defs/**/*repositor*.bzl',
-              'build_defs/**/source.json', 'src/extensions/catalog/*.toml',
-              'src/**/source.toml', 'src/**/sources/*.toml',
-              'src/**/toolchain.toml', 'src/**/Cargo.toml', 'src/**/package.json',
-              'src/**/VERSION', 'src/**/release.toml', '!**/node_modules/**',
-              '!**/target/**', '!**/.git/**') }}
       run: |
         set -euo pipefail
         case "$PHASE" in restore|save) ;; *) exit 1 ;; esac
@@ -59,10 +44,8 @@ runs:
         [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
         source_commit="$(git rev-parse HEAD)"
         [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
-        # This conservative download-cache hint is not a dependency or release digest.
-        [[ "$REPOSITORY_GENERATION" =~ ^[0-9a-f]{64}$ ]]
-        printf 'prefix=bazel-ci-v1-%s-%s-%s-%s\nsource=%s\nrepository_generation=%s\n' \
-          "$RUNNER_OS" "$RUNNER_ARCH" "$COHORT" "$version" "$source_commit" "$REPOSITORY_GENERATION" >> "$GITHUB_OUTPUT"
+        printf 'prefix=bazel-ci-v1-%s-%s-%s-%s\nsource=%s\n' \
+          "$RUNNER_OS" "$RUNNER_ARCH" "$COHORT" "$version" "$source_commit" >> "$GITHUB_OUTPUT"
 
     - name: Restore Bazel action cache
       id: disk-restore
@@ -75,23 +58,13 @@ runs:
         restore-keys: |
           ${{ steps.identity.outputs.prefix }}-disk-
 
-    - name: Restore Bazel repository downloads
-      id: repository-restore
-      if: inputs.phase == 'restore'
-      continue-on-error: true
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-      with:
-        path: ~/.cache/oliphaunt/bazel-ci/repositories
-        key: ${{ steps.identity.outputs.prefix }}-repositories-${{ steps.identity.outputs.repository_generation }}
-        restore-keys: |
-          ${{ steps.identity.outputs.prefix }}-repositories-
-
     - name: Configure standard hosted Bazel caches
       if: inputs.phase == 'restore'
       shell: bash
       run: |
         set -euo pipefail
         cache_root="$HOME/.cache/oliphaunt/bazel-ci"
+        # Downloads remain a per-job content-addressed cache, not hosted archives.
         mkdir -p "$cache_root/disk" "$cache_root/repositories"
         if [[ "$RUNNER_OS" == Windows ]]; then
           cache_root="$(cygpath -m "$cache_root")"
@@ -102,15 +75,13 @@ runs:
 
     - name: Stop the cohort writer and bound cache transport
       id: ready
-      if: ${{ !cancelled() && inputs.phase == 'save' && (inputs.disk-cache-hit != 'true' || inputs.repository-cache-hit != 'true') }}
+      if: ${{ !cancelled() && inputs.phase == 'save' && inputs.disk-cache-hit != 'true' }}
       continue-on-error: true
       shell: bash
       env:
         OUTPUT_BASE: ${{ inputs.output-base }}
         JVM_ARGS: ${{ inputs.jvm-args }}
         SERVER_LOG: ${{ inputs.server-log }}
-        DISK_CACHE_HIT: ${{ inputs.disk-cache-hit }}
-        REPOSITORY_CACHE_HIT: ${{ inputs.repository-cache-hit }}
       run: |
         set -euo pipefail
         startup=(bash tools/dev/bazel.sh)
@@ -123,32 +94,24 @@ runs:
           exit 0
         fi
         printf 'Bazel cache writer shutdown: success\n'
-        # Repository downloads have no size GC. Bound them independently so
-        # their growth cannot discard an otherwise valid action cache.
         # Disk GC targets 2G of logical bytes; allocated transport includes
-        # filesystem overhead. Keep both cache families bounded separately.
+        # filesystem overhead. Bound the action archive before uploading it.
         cache_limit_kib=3145728
-        for family in disk repositories; do
-          if [[ "$family" == disk && "$DISK_CACHE_HIT" == true ]] || \
-             [[ "$family" == repositories && "$REPOSITORY_CACHE_HIT" == true ]]; then
-            continue
+        cache_root="$HOME/.cache/oliphaunt/bazel-ci/disk"
+        if [[ -d "$cache_root" ]]; then
+          printf 'Bazel cache disk: present=true\n'
+          cache_kib="$(du -sk "$cache_root" | cut -f1)"
+          printf 'Bazel cache disk: allocated_kib=%s limit_kib=%s\n' \
+            "$cache_kib" "$cache_limit_kib"
+          if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib <= cache_limit_kib )); then
+            printf 'disk=true\n' >> "$GITHUB_OUTPUT"
           fi
-          cache_root="$HOME/.cache/oliphaunt/bazel-ci/$family"
-          if [[ -d "$cache_root" ]]; then
-            printf 'Bazel cache %s: present=true\n' "$family"
-            cache_kib="$(du -sk "$cache_root" | cut -f1)"
-            printf 'Bazel cache %s: allocated_kib=%s limit_kib=%s\n' \
-              "$family" "$cache_kib" "$cache_limit_kib"
-            if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib <= cache_limit_kib )); then
-              printf '%s=true\n' "$family" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            printf 'Bazel cache %s: present=false\n' "$family"
-          fi
-        done
+        else
+          printf 'Bazel cache disk: present=false\n'
+        fi
 
     # GitHub isolates pull_request saves under refs/pull/<number>/merge.
-    # These optional caches contain outputs/downloads, never release authority.
+    # This optional cache contains action results, never release authority.
     - name: Save bounded Bazel action cache
       if: ${{ !cancelled() && inputs.phase == 'save' && steps.ready.outputs.disk == 'true' }}
       continue-on-error: true
@@ -156,11 +119,3 @@ runs:
       with:
         path: ~/.cache/oliphaunt/bazel-ci/disk
         key: ${{ steps.identity.outputs.prefix }}-disk-${{ steps.identity.outputs.source }}
-
-    - name: Save bounded Bazel repository downloads
-      if: ${{ !cancelled() && inputs.phase == 'save' && steps.ready.outputs.repositories == 'true' }}
-      continue-on-error: true
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-      with:
-        path: ~/.cache/oliphaunt/bazel-ci/repositories
-        key: ${{ steps.identity.outputs.prefix }}-repositories-${{ steps.identity.outputs.repository_generation }}

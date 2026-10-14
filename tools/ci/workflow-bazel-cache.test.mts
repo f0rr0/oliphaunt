@@ -8,7 +8,19 @@ import test from 'node:test';
 const root = path.resolve(import.meta.dir, '../..');
 const action = Bun.YAML.parse(
   readFileSync(path.join(root, '.github/actions/bazel-cache/action.yml'), 'utf8'),
-) as { runs: { steps: { id?: string; name: string; run?: string; with?: { key?: string } }[] } };
+) as {
+  inputs: Record<string, unknown>;
+  runs: {
+    steps: {
+      id?: string;
+      name: string;
+      uses?: string;
+      if?: string;
+      run?: string;
+      with?: { key?: string; path?: string };
+    }[];
+  };
+};
 const script = (name: string) => {
   const step = action.runs.steps.find((step) => step.id === name || step.name === name);
   assert.ok(step?.run, `missing executable cache step ${name}`);
@@ -62,7 +74,7 @@ function fixture(run: (directory: string, env: FixtureEnvironment) => void) {
   );
   writeFileSync(
     path.join(bin, 'du'),
-    `#!/usr/bin/env bash\ncase "\${2##*/}" in disk) size="$DISK_KIB" ;; repositories) size="$REPOSITORY_KIB" ;; *) exit 1 ;; esac\nprintf "%s\\t%s\\n" "$size" "$2"\n`,
+    `#!/usr/bin/env bash\ntest "\${2##*/}" = disk\nprintf "%s\\t%s\\n" "$DISK_KIB" "$2"\n`,
     { mode: 0o755 },
   );
   writeFileSync(
@@ -85,14 +97,10 @@ function fixture(run: (directory: string, env: FixtureEnvironment) => void) {
     PHASE: 'restore',
     COHORT: 'portable',
     SOURCE_COMMIT: 'a'.repeat(40),
-    REPOSITORY_GENERATION: 'c'.repeat(64),
     OUTPUT_BASE: '',
     JVM_ARGS: '',
     SERVER_LOG: '',
-    DISK_CACHE_HIT: 'false',
-    REPOSITORY_CACHE_HIT: 'false',
     DISK_KIB: '1',
-    REPOSITORY_KIB: '1',
     SHUTDOWN_ARGS: path.join(directory, 'shutdown-args'),
     SHUTDOWN_STATUS: '0',
   };
@@ -110,11 +118,21 @@ test('optional cache saves are bounded independently of qualification results', 
   const workflow = Bun.YAML.parse(
     readFileSync(path.join(root, '.github/workflows/bazel.yml'), 'utf8'),
   );
-  const saves = Object.values(workflow.jobs).flatMap((job: any) =>
-    job.steps.filter(
-      (step: any) => step.with?.phase === 'save' && step.uses === './.github/actions/bazel-cache',
-    ),
+  const callers = Object.values(workflow.jobs).flatMap((job: any) =>
+    job.steps.filter((step: any) => step.uses === './.github/actions/bazel-cache'),
   );
+  for (const step of callers) {
+    for (const name of Object.keys(step.with))
+      assert.ok(Object.hasOwn(action.inputs, name), `Unknown cache action input: ${name}`);
+  }
+  const transports = action.runs.steps.filter((step) => step.uses?.startsWith('actions/cache/'));
+  assert.equal(transports.length, 2);
+  for (const step of transports) assert.equal(step.with?.path, '~/.cache/oliphaunt/bazel-ci/disk');
+  assert.equal(
+    action.runs.steps.find((step) => step.id === 'ready')?.if,
+    '$' + "{{ !cancelled() && inputs.phase == 'save' && inputs.disk-cache-hit != 'true' }}",
+  );
+  const saves = callers.filter((step: any) => step.with.phase === 'save');
   assert.equal(saves.length, 8);
   for (const step of saves) {
     assert.equal(step['timeout-minutes'], 10);
@@ -123,7 +141,7 @@ test('optional cache saves are bounded independently of qualification results', 
   }
 });
 
-test('action keys follow source while download keys reuse canonical acquisition generations', () => {
+test('action keys retain source, cohort and platform separation', () => {
   fixture((directory, env) => {
     const identities = [];
     for (const variation of [
@@ -137,33 +155,19 @@ test('action keys follow source while download keys reuse canonical acquisition 
       identities.push(readFileSync(env.GITHUB_OUTPUT, 'utf8'));
     }
     assert.equal(new Set(identities).size, identities.length);
-    assert.match(identities[0], /-portable-8\.8\.1\nsource=a{40}\nrepository_generation=c{64}\n$/u);
-    assert.notEqual(
+    assert.match(identities[0], /-portable-8\.8\.1\nsource=a{40}\n$/u);
+    assert.equal(
+      new Set(identities.map((identity) => cacheKey('disk-restore', identity))).size,
+      identities.length,
+    );
+    assert.equal(
       cacheKey('disk-restore', identities[0]),
-      cacheKey('disk-restore', identities[1]),
+      cacheKey('Save bounded Bazel action cache', identities[0]),
     );
-    assert.equal(
-      cacheKey('repository-restore', identities[0]),
-      cacheKey('repository-restore', identities[1]),
-      'Source-only edits reuse the existing download cache',
-    );
-    assert.equal(
-      cacheKey('repository-restore', identities[0]),
-      cacheKey('Save bounded Bazel repository downloads', identities[0]),
-    );
-    writeFileSync(env.GITHUB_OUTPUT, '');
-    execute(directory, { ...env, REPOSITORY_GENERATION: 'd'.repeat(64) }, script('identity'));
-    const repinned = readFileSync(env.GITHUB_OUTPUT, 'utf8');
-    assert.notEqual(
-      cacheKey('repository-restore', repinned),
-      cacheKey('repository-restore', identities[0]),
-      'Changed acquisition generations persist new downloads',
-    );
-    assert.equal(cacheKey('disk-restore', repinned), cacheKey('disk-restore', identities[0]));
     for (const variation of [
       { PHASE: 'unknown' },
       { COHORT: 'portable/../linux' },
-      { REPOSITORY_GENERATION: '' },
+      { SOURCE_COMMIT: 'invalid' },
     ]) {
       const rejected = spawnSync('bash', ['-eu', '-c', script('identity')], {
         cwd: directory,
@@ -194,50 +198,20 @@ test('hosted cache configuration preserves user rc and quotes portable native pa
   }
 });
 
-test('cache freeze stops exactly the configured writer before independent size decisions', () => {
+test('cache freeze stops exactly the configured writer before the action archive size decision', () => {
   for (const scenario of [
-    {
-      name: 'default base',
-      disk: '1',
-      repositories: '1',
-      expected: ['disk=true', 'repositories=true'],
-    },
-    {
-      name: 'at both budgets',
-      disk: '3145728',
-      repositories: '3145728',
-      expected: ['disk=true', 'repositories=true'],
-    },
-    {
-      name: 'observed WASIX allocation overhead',
-      disk: '2118144',
-      repositories: '2120220',
-      expected: ['disk=true', 'repositories=true'],
-    },
-    { name: 'repository oversize', disk: '1', repositories: '3145729', expected: ['disk=true'] },
-    {
-      name: 'action oversize',
-      disk: '3145729',
-      repositories: '1',
-      expected: ['repositories=true'],
-    },
-    {
-      name: 'malformed repository size',
-      disk: '1',
-      repositories: 'invalid',
-      expected: ['disk=true'],
-    },
-    {
-      name: 'existing immutable action key',
-      disk: '1',
-      repositories: '1',
-      diskHit: 'true',
-      expected: ['repositories=true'],
-    },
-    { name: 'failed shutdown', disk: '1', repositories: '1', shutdown: '1', expected: [] },
+    { name: 'default base', disk: '1', expected: ['disk=true'] },
+    { name: 'at allocated budget', disk: '3145728', expected: ['disk=true'] },
+    { name: 'observed WASIX allocation overhead', disk: '2118144', expected: ['disk=true'] },
+    { name: 'action oversize', disk: '3145729', expected: [] },
+    { name: 'malformed action size', disk: 'invalid', expected: [] },
+    { name: 'missing action cache', disk: '1', missing: true, expected: [] },
+    { name: 'failed shutdown', disk: '1', shutdown: '1', expected: [] },
   ]) {
     fixture((directory, env) => {
       execute(directory, env, script('Configure standard hosted Bazel caches'));
+      if (scenario.missing)
+        rmSync(path.join(env.HOME, '.cache/oliphaunt/bazel-ci/disk'), { recursive: true });
       const explicit = scenario.name !== 'default base';
       const outputBase = explicit ? path.join(directory, 'selected output base') : '';
       const serverLog = explicit ? path.join(directory, 'server output.log') : '';
@@ -248,9 +222,7 @@ test('cache freeze stops exactly the configured writer before independent size d
           OUTPUT_BASE: outputBase,
           JVM_ARGS: explicit ? '-Xmx3g' : '',
           SERVER_LOG: serverLog,
-          DISK_CACHE_HIT: scenario.diskHit ?? 'false',
           DISK_KIB: scenario.disk,
-          REPOSITORY_KIB: scenario.repositories,
           SHUTDOWN_STATUS: scenario.shutdown ?? '0',
         },
         script('ready'),

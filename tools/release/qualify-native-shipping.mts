@@ -1,8 +1,16 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 /** Build shipping roots once and retain configured construction evidence. */
-import { execFileSync, spawnSync } from 'node:child_process';
-import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import {
+  closeSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
@@ -343,7 +351,10 @@ function checkCompleteProducts(evidence: NativeBuildEvidence, products: string[]
 }
 
 /** The caller keeps this checkout and its producer inputs frozen through capture. */
-export function qualifyNativeShipping(request: NativeShippingRequest, directory = process.cwd()) {
+export async function qualifyNativeShipping(
+  request: NativeShippingRequest,
+  directory = process.cwd(),
+) {
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: directory, encoding: 'utf8', maxBuffer: 1024 * 1024 }).trim();
   const workspace = git('rev-parse', '--show-toplevel');
@@ -381,7 +392,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     configuration.some(
       (item) =>
         item === '--' ||
-        /^--(?:build_metadata|build_event_json_file|output|output_file|output_groups|query_file|starlark:file|starlark:expr|experimental_aquery_dump_after_build_format|experimental_aquery_dump_after_build_output_file)(?:=|$)/u.test(
+        /^--(?:build_metadata|build_event_json_file|output|output_file|output_groups|profile|query_file|starlark:file|starlark:expr|experimental_aquery_dump_after_build_format|experimental_aquery_dump_after_build_output_file)(?:=|$)/u.test(
           item,
         ),
     )
@@ -399,10 +410,22 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     label: 'shipping qualification',
   });
   const file = (name: string) => path.join(output, name);
+  const diagnostics = requireSafeDirectoryChain(file('diagnostics'), {
+    create: true,
+    label: 'shipping qualification diagnostics',
+  });
+  const diagnosticFile = (name: string) => path.join(diagnostics, name);
   writeFileSync(file('github.json'), `${JSON.stringify(request.github)}\n`, { flag: 'wx' });
   writeFileSync(file('configuration.json'), `${JSON.stringify(configuration)}\n`, { flag: 'wx' });
   writeFileSync(file('startup.json'), `${JSON.stringify(startup)}\n`, { flag: 'wx' });
-  const run = (command: string, args: string[], stdout?: string) => {
+  const phase = (name: string) => {
+    const started = Date.now();
+    console.error(`native qualification: ${name} started`);
+    return () =>
+      console.error(`native qualification: ${name} finished in ${Date.now() - started} ms`);
+  };
+  const run = (name: string, command: string, args: string[], stdout?: string) => {
+    const finish = phase(name);
     const fd = stdout === undefined ? undefined : openSync(stdout, 'wx');
     try {
       const result = spawnSync(command, args, {
@@ -416,10 +439,115 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
         );
     } finally {
       if (fd !== undefined) closeSync(fd);
+      finish();
     }
   };
   const bazel = (args: string[], stdout?: string) =>
-    run('bash', ['tools/dev/bazel.sh', ...startup, ...args], stdout);
+    run(args[0], 'bash', ['tools/dev/bazel.sh', ...startup, ...args], stdout);
+  const captureQueryDiagnostics = async () => {
+    try {
+      const base = startup.find((arg) => arg.startsWith('--output_base='))?.slice(14);
+      if (!base || process.platform === 'win32') return;
+      const server = path.join(path.resolve(workspace, base), 'server');
+      const pid = readFileSync(path.join(server, 'server.pid.txt'), 'utf8').trim();
+      if (!/^[1-9][0-9]*$/u.test(pid)) throw new Error('invalid Bazel server PID');
+      const command = execFileSync('ps', ['-p', pid, '-o', 'comm='], {
+        encoding: 'utf8',
+        timeout: 2000,
+        killSignal: 'SIGKILL',
+      }).trim();
+      if (!/^(?:(?:.*\/)?java|bazel(?:\(.*\))?)$/u.test(command))
+        throw new Error('Bazel server PID does not name its JVM');
+      const log = path.resolve(
+        workspace,
+        startup.find((arg) => arg.startsWith('--server_jvm_out='))?.slice(17) ??
+          path.join(server, 'jvm.out'),
+      );
+      const offset = statSync(log).size;
+      process.kill(Number(pid), 'SIGQUIT');
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Retain only the new thread dump; earlier server output can contain action diagnostics.
+      const snapshot = Buffer.alloc(
+        Math.min(2 * 1024 * 1024, Math.max(0, statSync(log).size - offset)),
+      );
+      const fd = openSync(log, 'r');
+      try {
+        const bytes = readSync(fd, snapshot, 0, snapshot.length, offset);
+        writeFileSync(diagnosticFile('aquery-jvm.log'), snapshot.subarray(0, bytes), {
+          flag: 'wx',
+          mode: 0o600,
+        });
+      } finally {
+        closeSync(fd);
+      }
+    } finally {
+      for (const [name, command, args] of [
+        ['disk.txt', 'df', ['-Pk', output]],
+        ['processes.txt', 'ps', ['-axo', 'pid,ppid,state,etime,%cpu,%mem,comm']],
+      ] as const)
+        writeFileSync(
+          diagnosticFile(name),
+          execFileSync(command, args, {
+            timeout: 2000,
+            killSignal: 'SIGKILL',
+          }),
+          {
+            flag: 'wx',
+            mode: 0o600,
+          },
+        );
+    }
+  };
+  const aquery = async (args: string[]) => {
+    const finish = phase('aquery');
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn('bash', ['tools/dev/bazel.sh', ...startup, ...args], {
+          cwd: workspace,
+          stdio: ['ignore', 'inherit', 'inherit'],
+        });
+        let exceeded = false;
+        let snapshot: Promise<void> | undefined;
+        let escalation: ReturnType<typeof setTimeout> | undefined;
+        // Ordinary captures finish in seconds. A stalled serializer must not consume the build's job budget.
+        const timer = setTimeout(
+          () => {
+            exceeded = true;
+            snapshot = captureQueryDiagnostics()
+              .catch((error: NodeJS.ErrnoException) =>
+                console.error(
+                  `native qualification: aquery diagnostics unavailable (${error.code ?? 'unknown'})`,
+                ),
+              )
+              .finally(() => {
+                escalation = setTimeout(() => {
+                  child.kill('SIGKILL');
+                }, 5000);
+                child.kill('SIGTERM');
+              });
+          },
+          5 * 60 * 1000,
+        );
+        child.once('error', (error) => {
+          clearTimeout(timer);
+          clearTimeout(escalation);
+          reject(error);
+        });
+        child.once('close', async (code, signal) => {
+          clearTimeout(timer);
+          await snapshot;
+          clearTimeout(escalation);
+          if (exceeded)
+            reject(new Error('shipping qualification aquery exceeded its five-minute limit'));
+          else if (code !== 0)
+            reject(new Error(`shipping qualification aquery failed (${signal ?? code})`));
+          else resolve();
+        });
+      });
+    } finally {
+      finish();
+    }
+  };
   let roots: string[];
   let shippingExport: string | undefined;
   let requiredTests: NativeRequiredTest[] = [];
@@ -513,10 +641,11 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     ...configuration,
     ...metadata,
     `--build_event_json_file=${file('build-events.jsonl')}`,
+    `--profile=${diagnosticFile('build-profile.json.gz')}`,
     '--output_groups=+shipping_manifest,+shipping_policy,+observation_inputs',
   ]);
   assertSource();
-  bazel([
+  await aquery([
     'aquery',
     nativeAqueryExpression(buildTargets),
     ...configuration,
@@ -524,6 +653,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     ...NATIVE_AQUERY_FLAGS,
     `--output_file=${file('aquery.pb')}`,
     `--build_event_json_file=${file('aquery-build-events.jsonl')}`,
+    `--profile=${diagnosticFile('aquery-profile.json.gz')}`,
   ]);
   assertSource();
   bazel(['info', ...configuration, 'execution_root'], file('execution-root.txt'));
@@ -594,7 +724,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     flag: 'wx',
   });
   assertSource();
-  run('bash', [
+  run('capture', 'bash', [
     'tools/release/with-source.sh',
     'HEAD',
     'bash',
@@ -642,7 +772,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
   return evidence;
 }
 
-function main() {
+async function main() {
   const { values } = parseArgs({
     options: {
       'github-json': { type: 'string' },
@@ -673,7 +803,7 @@ function main() {
     shipping = { roots: argv(json(rootsFile), 'shipping roots') };
   }
   console.log(
-    qualifyNativeShipping({
+    await qualifyNativeShipping({
       github: json(values['github-json']) as NativeBuildGithub,
       startup: values['startup-json'] ? argv(json(values['startup-json']), 'startup') : [],
       configuration: argv(json(values['configuration-json']), 'configuration'),
@@ -691,7 +821,7 @@ function main() {
 
 if (import.meta.main) {
   try {
-    main();
+    await main();
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;

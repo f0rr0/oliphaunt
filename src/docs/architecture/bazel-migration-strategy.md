@@ -823,13 +823,17 @@ existing cache service; no remote executor or separately hosted cache is
 required. The optional cache is scoped by OS, CPU, cohort and Bazel version,
 with immutable source keys and a matching restore prefix. Stop the writer
 before saving. Retain the action cache's 2 GiB logical-byte garbage collection
-target and permit at most 3 GiB of allocated storage per transported cache
-family. GitHub evicts caches by last access when the repository limit is
-reached, so cache hits are not guaranteed. Cache failure must not determine
-qualification success. The fixture verifies reuse from a fresh output base,
+target and permit at most 3 GiB of allocated storage for each transported action
+cache. Repository downloads retain Bazel's per-job content-addressed cache;
+fetch missing pinned files normally rather than spending the shared GitHub
+storage budget on download archives for every cohort. GitHub evicts caches by
+last access when the repository limit is reached, so cache hits are not
+guaranteed. Cache failure must not determine qualification success. The fixture
+verifies reuse from a fresh output base,
 selective invalidation and identical physical archive consumers; the actual
 WASIX job must establish the retained working set and speedup.
 [Disk cache collection](https://bazel.build/remote/caching#garbage-collection),
+[Repository downloads](https://bazel.build/run/build#repository-cache),
 [GitHub cache eviction](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#usage-limits-and-eviction-policy).
 
 Untrusted PRs must not replace trusted publication cache results. GitHub's

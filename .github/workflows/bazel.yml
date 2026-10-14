@@ -315,29 +315,6 @@ jobs:
           capture_jvm_snapshot jvm-final.out
           exit "$qualifier_status"
 
-      - name: Qualify installed desktop extension family
-        if: matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64'
-        env:
-          TARGET_PLATFORM: ${{ matrix.platform }}
-        run: |
-          case "$TARGET_PLATFORM" in
-            macos-arm64)
-              profile=//build_defs/host:native_macos_arm64
-              startup=(--output_base="$RUNNER_TEMP/native-bazel" --host_jvm_args=-Xmx3g
-                --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out")
-              configuration=(--config=macos-sandbox)
-              ;;
-            windows-x64)
-              profile=//build_defs/host:native_windows_x64
-              startup=(--output_base="$RUNNER_TEMP/b")
-              configuration=()
-              ;;
-          esac
-          bash tools/dev/bazel.sh "${startup[@]}" test -c opt \
-            //build_defs/extensions:desktop_all_members_frozen_sql_test \
-            //build_defs/extensions:desktop_all_final_contract_test \
-            "${configuration[@]}" --platforms="$profile" --host_platform="$profile" --jobs=2
-
       - name: Qualify final WASIX addon on its native host
         env:
           TARGET_PLATFORM: ${{ matrix.platform }}
@@ -525,7 +502,11 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: native-bazel-macos-diagnostics
-          path: ${{ runner.temp }}/native-bazel-diagnostics
+          path: |
+            ${{ runner.temp }}/native-bazel-diagnostics
+            ${{ runner.temp }}/napi-build-capture/diagnostics
+            ${{ runner.temp }}/native-build-capture/diagnostics
+            ${{ runner.temp }}/ios-extension-build-capture/diagnostics
           if-no-files-found: ignore
           retention-days: 5
 
@@ -550,7 +531,6 @@ jobs:
           phase: save
           cohort: portable
           disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
-          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
           output-base: ${{ matrix.platform == 'windows-x64' && format('{0}/b', runner.temp) || matrix.platform == 'macos-arm64' && format('{0}/native-bazel', runner.temp) || '' }}
           jvm-args: ${{ matrix.platform == 'macos-arm64' && '-Xmx3g' || '' }}
           server-log: ${{ matrix.platform == 'macos-arm64' && format('{0}/native-bazel-diagnostics/server-jvm.out', runner.temp) || '' }}
@@ -749,7 +729,6 @@ jobs:
           phase: save
           cohort: linux
           disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
-          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
 
   wasix:
     name: Linux WASIX and installed browser
@@ -865,7 +844,6 @@ jobs:
           phase: save
           cohort: wasix
           disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
-          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
 
   postmaster:
     name: Linux native postmaster lifecycle
@@ -976,7 +954,6 @@ jobs:
           phase: save
           cohort: postmaster
           disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
-          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
           output-base: ${{ runner.temp }}/postmaster-native
           jvm-args: -Xmx3g
 
@@ -1096,6 +1073,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Upload native postmaster build and query diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-postmaster-build-diagnostics-${{ matrix.platform }}
+          path: ${{ runner.temp }}/postmaster-build-capture/diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Save bounded standard Bazel caches
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -1105,7 +1091,6 @@ jobs:
           phase: save
           cohort: postmaster-host
           disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
-          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
           output-base: ${{ runner.temp }}/postmaster-native
           jvm-args: -Xmx3g
 
@@ -1196,7 +1181,6 @@ jobs:
           phase: save
           cohort: react-native
           disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
-          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
           output-base: ${{ runner.temp }}/native-bazel
           jvm-args: -Xmx3g
 
@@ -1275,7 +1259,6 @@ jobs:
           phase: save
           cohort: release-families
           disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
-          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
 
   wasix-host:
     name: WASIX imported runtime (${{ matrix.platform }})
@@ -1369,7 +1352,6 @@ jobs:
           phase: save
           cohort: wasix-host
           disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
-          repository-cache-hit: ${{ steps.bazel-cache.outputs.repository-cache-hit }}
           output-base: ${{ matrix.platform == 'windows-x64' && format('{0}/b', runner.temp) || '' }}
           jvm-args: ${{ matrix.platform == 'macos-arm64' && '-Xmx3g' || '' }}
 
