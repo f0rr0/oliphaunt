@@ -261,6 +261,8 @@ test_suite(
         "//build_defs/native:windows_exports_test",
         "//build_defs/native:host_config_policy_test",
         "//build_defs/native:compiler_probe_tool_inputs_test",
+        "//build_defs/extensions:forced_header_server_inputs_test",
+        "//build_defs/extensions:forced_header_embedded_inputs_test",
         "//build_defs/native:postgres_probe_header_test",
         "//build_defs/native:icu_data_object_test",
         "//build_defs/native:ios_device_profile_test",

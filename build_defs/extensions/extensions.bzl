@@ -327,6 +327,7 @@ def native_extension_modules(name, srcs, hdrs = [], copts = [], deps = [], inclu
             name = name + "_" + variant + "_objects",
             srcs = srcs,
             hdrs = hdrs,
+            additional_compiler_inputs = hdrs,
             deps = [headers] + deps,
             copts = copts + select({"//build_defs/native:windows_x64": WINDOWS_COPTS, "//conditions:default": []}),
             includes = includes,
