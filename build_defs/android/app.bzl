@@ -403,6 +403,11 @@ android_apk_proof = rule(
         "catalog_profile": attr.string(mandatory = True, values = ["standard", "icu"]),
         "catalog_profile_probe": attr.label(mandatory = True, allow_single_file = [".json"]),
         "expected_classes": attr.string_list(mandatory = True),
+        "_helpers": attr.label_list(default = _HELPERS + [
+            Label("//src/native/runtime:tools/native-runtime-carrier-contract.mts"),
+            Label("//src/database-resources:contracts/native-manifest.mts"),
+            Label("//src/database-resources:contracts/contract.json"),
+        ], allow_files = True),
         "keystore": attr.label(mandatory = True, allow_single_file = True, cfg = "exec"),
         "_sdk": attr.label(default = Label("@oliphaunt_android_sdk//:sdk"), providers = [AndroidSdkInfo]),
         "_java_runtime": attr.label(default = Label("@bazel_tools//tools/jdk:current_java_runtime"), cfg = "exec", providers = [java_common.JavaRuntimeInfo]),

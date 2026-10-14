@@ -20,6 +20,7 @@ native_release_checksum_family(product = "liboliphaunt-native")
 exports_files(["release.toml", "postgres/series", "include/oliphaunt.h", "bin/android-cxx-runtime.map", "tools/native-mobile-abi-contract.mts"] + glob(["patches/**/*.patch"]))
 exports_files(["THIRD_PARTY_NOTICES.md", "tools/native-runtime-payload.mts", "tools/native-runtime-payload-policy.json"])
 exports_files(["tools/finalize-native-runtime-carrier.mts", "tools/native-runtime-carrier-contract.mts"])
+exports_files(["tools/testdata/native-runtime-fixture.mts"], visibility = ["//build_defs/android:__pkg__"])
 exports_files(glob(["packages/*/package.json", "packages/*/README.md"]))
 
 alias(name = "postgres_server_headers", actual = "@postgres//:server_headers")

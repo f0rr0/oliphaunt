@@ -1027,6 +1027,9 @@ export async function prepareAppRuntimeAssets(spec: {
   receipt: string;
   output: string;
 }) {
+  const { finalizeNativeRuntimeCarrier } = await import(
+    '../../src/native/runtime/tools/finalize-native-runtime-carrier.mts'
+  );
   return scratch(async (root) => {
     assert(spec.selectedExtensions.length === spec.mobileStaticModules.length);
     const receipt = JSON.parse(readFileSync(spec.receipt, 'utf8'));
@@ -1064,9 +1067,21 @@ export async function prepareAppRuntimeAssets(spec: {
         },
       },
     );
-    cpSync(path.join(stage, 'oliphaunt'), path.join(spec.output, 'oliphaunt'), { recursive: true });
-    put(spec.output, 'oliphaunt/static-registry/link-receipt.json', readFileSync(spec.receipt));
+    const closure = path.join(stage, 'oliphaunt');
+    put(closure, 'static-registry/link-receipt.json', readFileSync(spec.receipt));
+    finalizeNativeRuntimeCarrier(closure, 'android-datum64');
+    cpSync(closure, path.join(spec.output, 'oliphaunt'), { recursive: true });
   });
+}
+
+export async function assertAndroidRuntimeManifest(bytes: Buffer) {
+  const { bindNativeRuntimeResourceManifest } = await import(
+    '../../src/native/runtime/tools/native-runtime-carrier-contract.mts'
+  );
+  assert(
+    bytes.equals(bindNativeRuntimeResourceManifest(bytes, 'android-datum64')),
+    'Android app runtime manifest must be canonical for android-datum64',
+  );
 }
 
 export async function nativeLibrariesAar(spec: {
@@ -1254,7 +1269,7 @@ export function androidDynamicLinkMetadata(output: string, library: string) {
   return { soname: sonames[0] ?? null, needed };
 }
 
-export function verifyAndroidApk(spec: {
+export async function verifyAndroidApk(spec: {
   apk: string;
   abi: string;
   zipalign: string;
@@ -1323,6 +1338,10 @@ export function verifyAndroidApk(spec: {
     env: { ...process.env, ...spec.environment },
   });
   const entries = readAndroidApkEntries(apk);
+  const runtimeManifestEntry = entries.get('assets/oliphaunt/runtime/manifest.properties');
+  assert(runtimeManifestEntry?.isFile, 'Full Expo APK omitted its runtime manifest');
+  const runtimeManifest = Buffer.from(runtimeManifestEntry.data());
+  await assertAndroidRuntimeManifest(runtimeManifest);
   for (const name of [
     `lib/${spec.abi}/liboliphaunt.so`,
     `lib/${spec.abi}/liboliphaunt_mobile_bindings.so`,
@@ -1337,7 +1356,6 @@ export function verifyAndroidApk(spec: {
     `lib/${spec.abi}/libreact_codegen_safeareacontext.so`,
     `lib/${spec.abi}/liboliphaunt_extensions.so`,
     `lib/${spec.abi}/libjnidispatch.so`,
-    'assets/oliphaunt/runtime/manifest.properties',
     'assets/oliphaunt/cluster-seed/manifest.properties',
     'assets/oliphaunt/static-registry/link-receipt.json',
     'assets/index.android.bundle',
@@ -1413,10 +1431,8 @@ export function verifyAndroidApk(spec: {
     ...spec.expectedClasses,
   ])
     assert(classes.has(name), `Full Expo APK omitted defined bytecode ${name}`);
-  const manifest = Buffer.from(
-    entries.get('assets/oliphaunt/runtime/manifest.properties')!.data(),
-  ).toString('utf8');
-  const selected = manifest
+  const selected = runtimeManifest
+    .toString('utf8')
     .match(/^selectedExtensions=(.*)$/mu)?.[1]
     ?.split(',')
     .filter(Boolean)
@@ -1476,6 +1492,6 @@ if (import.meta.main) {
   else if (mode === 'extension-receipt') extensionLinkReceipt(spec);
   else if (mode === 'runtime-assets') await prepareAppRuntimeAssets(spec);
   else if (mode === 'jni-aar') await nativeLibrariesAar(spec);
-  else if (mode === 'verify') verifyAndroidApk(spec);
+  else if (mode === 'verify') await verifyAndroidApk(spec);
   else throw new Error(`Unknown Android app action ${mode}`);
 }

@@ -1,24 +1,39 @@
+import { test } from 'bun:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { test } from 'bun:test';
+import { nativeRuntimeResourceManifestFixture } from '../../src/native/runtime/tools/testdata/native-runtime-fixture.mts';
 import {
-  androidDynamicLinkMetadata,
-  assertAndroidElf,
-  assertHermesBytecode,
-  dexDefinedClasses,
-  extractFinalAar,
-  mobileBundleEnvironment,
-  stageNodeInputs,
-  stageAndroidSelectedResources,
-} from './app.mts';
-import { createDeterministicTar } from '../../tools/packaging/archive-directory.mts';
+  createDeterministicTar,
+  createDeterministicZip,
+} from '../../tools/packaging/archive-directory.mts';
 import {
   canonicalGzipSync,
   readPortableArchiveEntries,
 } from '../../tools/packaging/portable-archive.mts';
+import {
+  androidDynamicLinkMetadata,
+  assertAndroidElf,
+  assertAndroidRuntimeManifest,
+  assertHermesBytecode,
+  dexDefinedClasses,
+  extractFinalAar,
+  mobileBundleEnvironment,
+  prepareAppRuntimeAssets,
+  stageAndroidSelectedResources,
+  stageNodeInputs,
+  verifyAndroidApk,
+} from './app.mts';
 
 function dex(names: string[], definitions: number[]) {
   const strings = 112;
@@ -190,6 +205,88 @@ test('selected Android resources use frozen carrier bytes and bind both ABI stat
       const staged = await stageAndroidSelectedResources(spec, path.join(directory, 'valid'));
       assert.equal(staged.length, 1);
       assert(readFileSync(staged[0]).equals(readFileSync(file)));
+      const intermediate = path.join(directory, 'formatter-intermediate');
+      const data = Buffer.from('runtime resource bytes');
+      const registry = Buffer.from('source static registration');
+      mkdirSync(path.join(intermediate, 'runtime/files/share/postgresql'), { recursive: true });
+      mkdirSync(path.join(intermediate, 'static-registry'));
+      writeFileSync(path.join(intermediate, 'runtime/files/share/postgresql/data'), data);
+      writeFileSync(
+        path.join(intermediate, 'static-registry/oliphaunt_static_registry.c'),
+        registry,
+      );
+      const intermediateManifest = nativeRuntimeResourceManifestFixture({
+        overrides: {
+          runtimeFeatures: abi === 'x86_64' ? 'icu' : '',
+          icuDataTreeSha256: abi === 'x86_64' ? 'a'.repeat(64) : '',
+          selectedExtensions: 'vector',
+          extensions: 'vector',
+          mobileStaticRegistryState: 'complete',
+          mobileStaticRegistryRegistered: 'vector',
+          nativeModuleStems: 'vector',
+          mobileStaticRegistrySource: 'static-registry/oliphaunt_static_registry.c',
+        },
+      });
+      writeFileSync(path.join(intermediate, 'runtime/manifest.properties'), intermediateManifest);
+      writeFileSync(
+        path.join(intermediate, 'package-size.tsv'),
+        'kind\tid\textensions\tfiles\tbytes\npackage\ttotal\t-\t-\t0\nextension\tvector\tvector\t2\t99\n',
+      );
+      const formatter = path.join(directory, 'formatter.mts');
+      writeFileSync(
+        formatter,
+        `#!${process.execPath}\nimport { cpSync } from 'node:fs';\nimport path from 'node:path';\nconst args=process.argv.slice(2);\ncpSync(${JSON.stringify(intermediate)},path.join(args[args.indexOf('--output')+1],'oliphaunt'),{recursive:true});\n`,
+      );
+      chmodSync(formatter, 0o755);
+      const output = path.join(directory, 'app-assets');
+      await prepareAppRuntimeAssets({
+        ...spec,
+        payload,
+        formatter,
+        mobileStaticModules: ['vector'],
+        output,
+      });
+      const closure = path.join(output, 'oliphaunt');
+      const manifest = readFileSync(path.join(closure, 'runtime/manifest.properties'));
+      await assertAndroidRuntimeManifest(manifest);
+      assert(
+        manifest.equals(
+          Buffer.from(
+            intermediateManifest
+              .toString('utf8')
+              .replace('clusterSeedTarget=\n', 'clusterSeedTarget=android-datum64\n'),
+          ),
+        ),
+      );
+      assert(readFileSync(path.join(closure, 'runtime/files/share/postgresql/data')).equals(data));
+      assert(
+        readFileSync(path.join(closure, 'static-registry/link-receipt.json')).equals(
+          readFileSync(receipt),
+        ),
+      );
+      const report = readFileSync(path.join(closure, 'package-size.tsv'), 'utf8');
+      assert(
+        report.includes(
+          `package\ttotal\t-\t-\t${data.length + registry.length + readFileSync(receipt).length}\n`,
+        ),
+      );
+      assert(report.includes('extension\tvector\tvector\t2\t99\n'));
+      await assert.rejects(
+        assertAndroidRuntimeManifest(
+          readFileSync(path.join(intermediate, 'runtime/manifest.properties')),
+        ),
+        /canonical for android-datum64/u,
+      );
+      await assert.rejects(
+        assertAndroidRuntimeManifest(
+          Buffer.from(
+            manifest
+              .toString('utf8')
+              .replace('clusterSeedTarget=android-datum64', 'clusterSeedTarget=ios-datum64'),
+          ),
+        ),
+        /incompatible native-direct contract/u,
+      );
       await assert.rejects(
         stageAndroidSelectedResources(
           { ...spec, abi: abi === 'arm64-v8a' ? 'x86_64' : 'arm64-v8a' },
@@ -225,6 +322,45 @@ function elf(alignment: bigint, machine = 183) {
   bytes.writeBigUInt64LE(alignment, 112);
   return bytes;
 }
+
+test('actual APK proof rejects an unbound runtime manifest before deeper bytecode inspection', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'android-runtime-manifest-proof-'));
+  try {
+    const tree = path.join(root, 'apk');
+    mkdirSync(path.join(tree, 'assets/oliphaunt/runtime'), { recursive: true });
+    const manifest = path.join(tree, 'assets/oliphaunt/runtime/manifest.properties');
+    writeFileSync(manifest, nativeRuntimeResourceManifestFixture());
+    const apk = path.join(root, 'installed.apk');
+    writeFileSync(apk, await createDeterministicZip(tree));
+    const tool = path.join(root, 'sdk-tool.mts');
+    const badging =
+      "package: name='dev.oliphaunt.reactnative.example'\nsdkVersion:'24'\ntargetSdkVersion:'36'\nlaunchable-activity: name='dev.oliphaunt.reactnative.example.MainActivity'\n";
+    writeFileSync(
+      tool,
+      `#!${process.execPath}\nif(process.argv[2]==='dump') console.log(${JSON.stringify(badging)});\n`,
+    );
+    chmodSync(tool, 0o755);
+    const spec = {
+      apk,
+      abi: 'x86_64',
+      zipalign: tool,
+      apksigner: tool,
+      aapt: tool,
+      objdump: tool,
+      output: path.join(root, 'proof.json'),
+      selectedExtensions: [],
+      expectedClasses: [],
+      catalogProfile: 'standard',
+      profileProbe: '',
+    };
+    await assert.rejects(verifyAndroidApk(spec), /canonical for android-datum64/u);
+    writeFileSync(manifest, nativeRuntimeResourceManifestFixture({ target: 'android-datum64' }));
+    writeFileSync(apk, await createDeterministicZip(tree));
+    await assert.rejects(verifyAndroidApk(spec), /Full Expo APK omitted lib/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('JNI proof rejects ABI mismatch and libraries with 4 KiB ELF segments', () => {
   assertAndroidElf(elf(16384n), 'arm64-v8a');
