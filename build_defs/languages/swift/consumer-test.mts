@@ -4,13 +4,10 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { localizeSwiftReleaseManifest } from '../../../src/native/sdks/swift/tools/prepare-swift-release-consumer.mts';
-import {
-  archiveLogicalTreeRows,
-  extractPortableArchiveTree,
-  readPortableArchiveEntries,
-} from '../../../tools/packaging/portable-archive.mts';
+import { extractPortableArchiveTree } from '../../../tools/packaging/portable-archive.mts';
 import { composeSwiftCandidateManifest } from '../../native/apple/swift-candidate-contract.mts';
 import {
+  assertSwiftIosResourceParity,
   assertSwiftSourceDeliveryParity,
   readSwiftSourceTagMembers,
 } from './source-delivery-contract.mts';
@@ -65,15 +62,7 @@ if (mode === 'bundled-candidate') {
   );
   composition = identity;
   writeFileSync(manifestFile, manifest);
-  const rows = (archive: string, prefix: string) =>
-    archiveLogicalTreeRows(readPortableArchiveEntries(realpathSync(archive)), archive, prefix).sort(
-      (left, right) => left.path.localeCompare(right.path),
-    );
-  assert.deepEqual(
-    rows(base, 'liboliphaunt.xcframework/macos-arm64/liboliphaunt.framework/Resources/oliphaunt/'),
-    rows(resources, 'oliphaunt/'),
-    'candidate macOS resource archive must match the actual bundled framework resources',
-  );
+  assertSwiftIosResourceParity(base, resources);
 }
 localizeSwiftReleaseManifest({
   manifestFile,
@@ -92,7 +81,7 @@ extractPortableArchiveTree(
   'OliphauntNativeBindingsFFI.xcframework',
 );
 const runtimeRoot = path.join(root, 'runtime');
-extractPortableArchiveTree(realpathSync(resources), runtimeRoot);
+if (mode === 'frozen') extractPortableArchiveTree(realpathSync(resources), runtimeRoot);
 const consumerRoot = path.join(root, 'consumer');
 mkdirSync(path.join(consumerRoot, 'Sources/InstalledConsumer'), { recursive: true });
 writeFileSync(

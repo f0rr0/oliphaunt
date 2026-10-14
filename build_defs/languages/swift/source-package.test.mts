@@ -1,17 +1,75 @@
 import { expect, test } from 'bun:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readNativeAppleHeader } from '../../../src/native/sdks/swift/tools/swift-xcframework-contract.mts';
-import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
+import { createDeterministicTar } from '../../../tools/packaging/archive-directory.mts';
+import {
+  canonicalGzipSync,
+  readPortableArchiveEntries,
+} from '../../../tools/packaging/portable-archive.mts';
 import { zipArchive } from '../../../tools/packaging/testdata/zip-fixture.mts';
 import {
+  assertSwiftIosResourceParity,
   assertSwiftSourceDeliveryParity,
   readSwiftSourceTagMembers,
 } from './source-delivery-contract.mts';
 import { fixture } from './source-package.fixture.mts';
 import { packageSwiftSource, verifyFrozenNativeArchives } from './source-package.mts';
+
+test('Swift native resource parity preserves different macOS data and binds both iOS slices', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'swift-native-resource-domains-'));
+  try {
+    const ios = Buffer.from('extensionTarget=ios-datum64\n');
+    const macos = Buffer.from('extensionTarget=macos-arm64\n');
+    const tree = path.join(root, 'resources');
+    mkdirSync(path.join(tree, 'oliphaunt/runtime'), { recursive: true });
+    writeFileSync(path.join(tree, 'oliphaunt/runtime/manifest.properties'), ios);
+    const resources = path.join(root, 'runtime-resources-ios-datum64.tar.gz');
+    writeFileSync(resources, canonicalGzipSync(await createDeterministicTar(tree)));
+    const framework = path.join(root, 'native.zip');
+    const rows = ['macos-arm64', 'ios-arm64', 'ios-arm64-simulator'].map((slice) => ({
+      name: `liboliphaunt.xcframework/${slice}/liboliphaunt.framework/Resources/oliphaunt/runtime/manifest.properties`,
+      data: slice === 'macos-arm64' ? macos : ios,
+    }));
+    writeFileSync(framework, zipArchive(rows));
+    assertSwiftIosResourceParity(framework, resources);
+    for (const slice of ['ios-arm64', 'ios-arm64-simulator']) {
+      for (const corrupt of [false, true]) {
+        writeFileSync(
+          framework,
+          zipArchive(
+            rows.flatMap((row) =>
+              row.name.includes(`/${slice}/`) ? (corrupt ? [{ ...row, data: macos }] : []) : [row],
+            ),
+          ),
+        );
+        expect(() => assertSwiftIosResourceParity(framework, resources)).toThrow(slice);
+      }
+    }
+    writeFileSync(framework, zipArchive(rows));
+    writeFileSync(path.join(tree, 'oliphaunt/runtime/manifest.properties'), macos);
+    writeFileSync(resources, canonicalGzipSync(await createDeterministicTar(tree)));
+    expect(() => assertSwiftIosResourceParity(framework, resources)).toThrow('ios-arm64');
+    rmSync(path.join(tree, 'oliphaunt'), { recursive: true });
+    writeFileSync(path.join(tree, 'THIRD_PARTY_NOTICES.md'), 'resource archive without iOS data\n');
+    writeFileSync(resources, canonicalGzipSync(await createDeterministicTar(tree)));
+    expect(() => assertSwiftIosResourceParity(framework, resources)).toThrow(
+      'no files under oliphaunt/',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('a held native header cannot be replaced by another slice or an incomplete framework', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'selected-native-header-'));

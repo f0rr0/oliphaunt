@@ -452,7 +452,7 @@ jobs:
             "--platforms=//build_defs/host:apple_package_macos_arm64",
             "--host_platform=//build_defs/host:native_macos_arm64","--jobs=1","--local_test_jobs=1"]' \
             > "$input_root/configuration.json"
-          jq -nc '["//build_defs/host:host_swift_smoke"]' \
+          jq -nc '["//build_defs/host:host_swift_smoke", "//src/native/sdks/swift:installed_consumer_test"]' \
             > "$input_root/targets.json"
           bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
             --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
