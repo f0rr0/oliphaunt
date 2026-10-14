@@ -673,10 +673,7 @@ jobs:
           //build_defs/native/apple:swift_candidate_contract_test
           //build_defs/native/apple:mobile_seed_contract_test
           //src/native/runtime:npm
-          //src/native/runtime:installed_cargo_test
           //src/native/postgres-tools:cargo_facade
-          //src/native/postgres-tools:installed_cargo_test
-          //src/native/postgres-tools:installed_carrier_test
           //build_defs/resources:resource_contract_test
           //src/database-resources:android_datum64_standard_carriers
           //src/database-resources:android_datum64_icu_carriers
