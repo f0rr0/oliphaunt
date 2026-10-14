@@ -43,7 +43,7 @@ export function fileIdentity(file: string, destination?: string) {
       );
     }
     const hash = createHash('sha256');
-    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    const buffer = Buffer.allocUnsafe(Math.max(1, Math.min(before.size, 1024 * 1024)));
     let size = 0;
     for (;;) {
       const count = readSync(source, buffer, 0, buffer.length, null);
