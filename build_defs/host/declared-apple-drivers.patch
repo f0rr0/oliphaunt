@@ -16,7 +16,7 @@ diff --git a/wrapped_clang.cc b/wrapped_clang.cc
    FindAndReplace("__BAZEL_XCODE_DEVELOPER_DIR__", developer_dir, &new_arg);
    FindAndReplace("__BAZEL_XCODE_SDKROOT__", sdk_root, &new_arg);
    if (!toolchain_path.empty()) {
-@@ -439,7 +447,8 @@
+@@ -439,11 +447,12 @@
    const char* toolchain_id = getenv("TOOLCHAINS");
    std::string toolchain_path = "";
    if (toolchain_id != nullptr) {
@@ -25,7 +25,13 @@ diff --git a/wrapped_clang.cc b/wrapped_clang.cc
 +    return EXIT_FAILURE;
    }
  
-   std::string developer_dir = GetMandatoryEnvVar("DEVELOPER_DIR");
+-  std::string developer_dir = GetMandatoryEnvVar("DEVELOPER_DIR");
+-  std::string sdk_root = GetMandatoryEnvVar("SDKROOT");
++  std::string developer_dir = GetMandatoryEnvVar("OLIPHAUNT_APPLE_DEVELOPER_DIRECTORY");
++  std::string sdk_root = GetMandatoryEnvVar("OLIPHAUNT_APPLE_SDKROOT");
+   std::string linked_binary, dsym_path;
+   bool strip_debug_symbols = false;
+ 
 @@ -453,7 +462,8 @@
      canonical_cwd = GetCanonicalPath(cwd);
    }
@@ -75,7 +81,19 @@ diff --git a/libtool.cc b/libtool.cc
    findAndReplace("__BAZEL_XCODE_DEVELOPER_DIR__", developer_dir, &new_arg);
    findAndReplace("__BAZEL_XCODE_SDKROOT__", sdk_root, &new_arg);
    return new_arg;
-@@ -311,6 +319,5 @@
+@@ -272,8 +280,8 @@
+     args.push_back(argv[i]);
+   }
+ 
+-  std::string developer_dir = getMandatoryEnvVar("DEVELOPER_DIR");
+-  std::string sdk_root = getMandatoryEnvVar("SDKROOT");
++  std::string developer_dir = getMandatoryEnvVar("OLIPHAUNT_APPLE_DEVELOPER_DIRECTORY");
++  std::string sdk_root = getMandatoryEnvVar("OLIPHAUNT_APPLE_SDKROOT");
+ 
+   // NOTE: Order of libtool flags interspersed with files does not matter, but
+   // maintaining file order might?
+@@ -310,7 +318,6 @@
+   response_file_stream.close();
  
    std::vector<std::string> invocation_args = {
 -      "/usr/bin/xcrun",

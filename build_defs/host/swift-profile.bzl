@@ -62,7 +62,6 @@ def declared_xcode_info(original, tools, ctx):
         if mode not in tools:
             fail("The declared Xcode profile has no tool for Swift driver mode " + mode)
         values["executable"] = tools[mode]
-        values["env"] = values["env"] | {"SDKROOT": ctx.attr.sdkroot}
         # This profile imports a licensed SDK from the local Apple host.
         values["execution_requirements"] = values["execution_requirements"] | {"no-remote": "1"}
         configs[action] = ToolConfigInfo(**values)

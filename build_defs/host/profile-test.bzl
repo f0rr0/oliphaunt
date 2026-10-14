@@ -44,12 +44,13 @@ def _profile_test(ctx):
             "-Wl,-rpath,__BAZEL_XCODE_DEVELOPER_DIR__/Platforms/MacOSX.platform/Developer/usr/lib",
         ]),
     ]))
+    stock_env = {"XCODE_VERSION_OVERRIDE": "26.5.0.17f42", "APPLE_SDK_PLATFORM": "MacOSX", "APPLE_SDK_VERSION_OVERRIDE": "26.5"}
     original = SwiftToolchainInfo(
         action_configs = [],
         developer_dirs = [struct(developer_path_label = "platform", path = "__BAZEL_XCODE_DEVELOPER_DIR__/Platforms/MacOSX.platform/Developer/Library/Frameworks")],
         implicit_deps_providers = struct(cc_infos = [info], swift_infos = []),
         test_configuration = struct(test_linking_contexts = [test_linking]),
-        tool_configs = {"compile": ToolConfigInfo(executable = "swiftc")},
+        tool_configs = {"compile": ToolConfigInfo(executable = "swiftc", env = stock_env)},
     )
     rebound = declared_xcode_info(original, {"swiftc": ctx.file.source}, struct(
         files = struct(sdk = [ctx.file.source]),
@@ -84,7 +85,7 @@ def _profile_test(ctx):
     asserts.equals(env, sorted([source for sources in runtime_files.values() for source in sources]), apple_swift_test_runtime_files({component: runtime_files[component] + compile_files[component] for component in runtime_files}))
     asserts.equals(env, ctx.file.source, rebound.tool_configs["compile"].executable)
     asserts.equals(env, [ctx.file.source], rebound.tool_configs["compile"].additional_tools)
-    asserts.equals(env, prefix + "sdk_macosx", rebound.tool_configs["compile"].env["SDKROOT"])
+    asserts.equals(env, stock_env, rebound.tool_configs["compile"].env)
     asserts.equals(env, "1", rebound.tool_configs["compile"].execution_requirements["no-remote"])
     asserts.equals(env, prefix + "sdk_macosx/usr/include", declared_swift_path("__BAZEL_XCODE_SDKROOT__/usr/include", prefix))
     for sdk, platform in [("iphoneos", "iPhoneOS"), ("iphonesimulator", "iPhoneSimulator")]:
