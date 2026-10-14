@@ -13,6 +13,11 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import {
+  captureConfiguredCiRequest,
+  writeConfiguredCiSuccessReceipt,
+} from '../ci/configured-scope.mts';
+import { completedCiRequestRoots } from '../ci/run-configured-request.mts';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import { canonicalShippingLabel } from './bazel-shipping-inputs.mts';
 import {
@@ -25,6 +30,11 @@ import {
   nativeBuildMetadata,
   validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
+import {
+  nativeConfiguredRecipeGraph,
+  nativeConfiguredWorkspaceLabel,
+  nativeRecipeInputPaths,
+} from './native-configured-inputs.mts';
 import { readNativePublicationArtifacts } from './native-publication-artifacts.mts';
 import {
   captureNativeOutputMembers,
@@ -40,6 +50,7 @@ import {
 } from './publication-lock.mts';
 
 export type NativeShippingRequest = {
+  ci?: { id: string; job: string; mode: 'full' | 'source'; requires: string[]; handoff?: boolean };
   github: NativeBuildGithub;
   startup?: string[];
   configuration: string[];
@@ -58,190 +69,15 @@ function argv(value: unknown, context: string): string[] {
   return value;
 }
 
-function label(value: string): string {
-  value = canonicalShippingLabel(value);
-  if (!/^\/\/[A-Za-z0-9_./+-]*:[A-Za-z0-9_./+-]+$/u.test(value))
-    throw new Error(`shipping qualification requires an explicit workspace target: ${value}`);
-  return value;
-}
-
+const label = nativeConfiguredWorkspaceLabel;
 function json(file: string): unknown {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
 
-type RecipeRoot = { label: string; configuration: string };
-type RecipeGraph = {
-  labels: string[];
-  packages: { package: string; label: string }[];
-  roots: { label: string; packages: string[] }[];
-};
-
-/** Index Bazel's configured edges once; do not expand selects in the loading graph. */
-export function nativeConfiguredRecipeGraph(raw: any, roots: RecipeRoot[]): RecipeGraph {
-  assert(
-    Array.isArray(raw?.results) && Array.isArray(raw.configurations),
-    'configured recipe graph is missing',
-  );
-  const configurations = new Map<string, string>();
-  for (const config of raw.configurations) {
-    assert(/^[a-f0-9]{64}$/u.test(config.checksum), 'configured recipe checksum is invalid');
-    assert(!configurations.has(String(config.id)), 'duplicate configured recipe ID');
-    configurations.set(String(config.id), config.checksum);
-  }
-  const checksum = (value: any) => {
-    const id = value.configurationId;
-    const declared = value.configurationChecksum ?? value.configuration?.checksum;
-    if (id === undefined || id === 0) {
-      assert(
-        declared === undefined || declared === 'null',
-        'configured recipe reference lacks an ID',
-      );
-      return 'null';
-    }
-    const result = configurations.get(String(id));
-    assert(result, 'configured recipe reference is missing');
-    assert(declared === undefined || declared === result, 'configured recipe checksum differs');
-    return result;
-  };
-  const targetLabel = (value: unknown) => {
-    assert(
-      typeof value === 'string' && !/[\u0000-\u001f\u007f]/u.test(value),
-      'configured recipe label is invalid',
-    );
-    const result = canonicalShippingLabel(value);
-    assert(/^(?:@@?[^/]+)?\/\/[^:]*:.+$/u.test(result), 'configured recipe label is not explicit');
-    return result;
-  };
-  const key = (name: string, config: string) => `${name}\0${config}`;
-  const nodes = new Map<string, { label: string; edges: string[] }>();
-  for (const result of raw.results) {
-    const target = result.target;
-    const config = checksum(result);
-    const name = targetLabel(
-      target?.rule?.name ??
-        target?.sourceFile?.name ??
-        target?.generatedFile?.name ??
-        target?.packageGroup?.name,
-    );
-    const id = key(name, config);
-    assert(!nodes.has(id), 'duplicate configured recipe target');
-    const edges = (target.rule?.configuredRuleInput ?? []).map((dep: any) =>
-      key(targetLabel(dep.label), checksum(dep)),
-    );
-    if (target.generatedFile)
-      edges.push(key(targetLabel(target.generatedFile.generatingRule), config));
-    if (target.packageGroup)
-      edges.push(
-        ...(target.packageGroup.includedPackageGroup ?? []).map((name: string) =>
-          key(targetLabel(name), 'null'),
-        ),
-      );
-    nodes.set(id, { label: name, edges });
-  }
-  const labels = new Set<string>();
-  const names = new Set<string>();
-  const mapped = roots.map((root) => {
-    const name = label(root.label);
-    assert(
-      !names.has(name) && /^[a-f0-9]{64}$/u.test(root.configuration),
-      'configured recipe roots are ambiguous',
-    );
-    names.add(name);
-    const visited = new Set<string>();
-    const active = new Set<string>();
-    const packages = new Set<string>();
-    const pending = [{ id: key(name, root.configuration), exit: false }];
-    while (pending.length) {
-      const current = pending.pop();
-      assert(current);
-      if (current.exit) {
-        active.delete(current.id);
-        visited.add(current.id);
-        continue;
-      }
-      if (visited.has(current.id)) continue;
-      assert(!active.has(current.id), 'cycle in configured recipe dependencies');
-      const node = nodes.get(current.id);
-      assert(node, 'configured recipe dependency is missing');
-      active.add(current.id);
-      labels.add(node.label);
-      packages.add(node.label.slice(0, node.label.indexOf(':')));
-      pending.push(
-        { id: current.id, exit: true },
-        ...node.edges.map((id) => ({ id, exit: false })),
-      );
-    }
-    return { label: name, packages: [...packages].sort() };
-  });
-  const ordered = [...labels].sort();
-  const packages = new Map<string, string>();
-  for (const name of ordered) {
-    const pkg = name.slice(0, name.indexOf(':'));
-    if (!packages.has(pkg)) packages.set(pkg, name);
-  }
-  return {
-    labels: ordered,
-    packages: [...packages].map(([pkg, name]) => ({ package: pkg, label: name })),
-    roots: mapped,
-  };
-}
-
-/** Use real buildfiles label results: Bazel 8 omits BUILD.bazel subinclude in proto output. */
-export function nativeRecipeInputPaths(
-  graph: RecipeGraph,
-  queries: { packages: string[]; labels: string[] }[],
-) {
-  const key = (packages: string[]) => JSON.stringify(packages);
-  const expected = new Set(graph.roots.map((root) => key(root.packages)));
-  const loaded = new Map<string, string[]>();
-  const workspacePath = (name: string) => {
-    assert(
-      typeof name === 'string' && !/[\u0000-\u001f\u007f]/u.test(name),
-      'recipe source label is invalid',
-    );
-    name = canonicalShippingLabel(name);
-    assert(/^(?:@@?[^/]+)?\/\/[^:]*:.+$/u.test(name), 'recipe source label is not explicit');
-    if (!name.startsWith('//')) return undefined;
-    const separator = name.indexOf(':');
-    const result = [name.slice(2, separator), name.slice(separator + 1)].filter(Boolean).join('/');
-    assert(
-      result &&
-        !name.includes('\\') &&
-        !result.split('/').some((part) => part === '..' || part === '.' || !part),
-      'recipe source path escapes',
-    );
-    return result;
-  };
-  for (const query of queries) {
-    assert(Array.isArray(query.packages), 'recipe package set is missing');
-    const id = key(query.packages);
-    assert(expected.has(id) && !loaded.has(id), 'recipe package-set query is ambiguous');
-    assert(Array.isArray(query.labels), 'recipe package sources are missing');
-    const names = query.labels.map((name) => canonicalShippingLabel(name));
-    assert(new Set(names).size === names.length, 'duplicate recipe source File');
-    for (const pkg of query.packages.filter((pkg) => pkg.startsWith('//'))) {
-      const buildNames = names.filter(
-        (name) => name === `${pkg}:BUILD` || name === `${pkg}:BUILD.bazel`,
-      );
-      assert(buildNames.length === 1, 'configured package BUILD File is missing or ambiguous');
-    }
-    loaded.set(
-      id,
-      names.flatMap((name) => {
-        const file = workspacePath(name);
-        return file === undefined ? [] : [file];
-      }),
-    );
-  }
-  assert(loaded.size === expected.size, 'configured package-set recipe query is missing');
-  return graph.roots.map((root) => {
-    const files = loaded.get(key(root.packages));
-    assert(files, 'configured package-set recipe query is missing');
-    const paths = new Set(files);
-    assert(paths.size, 'shipping analysis has no loaded workspace recipe sources');
-    return { label: root.label, paths: [...paths].sort() };
-  });
-}
+export {
+  nativeConfiguredRecipeGraph,
+  nativeRecipeInputPaths,
+} from './native-configured-inputs.mts';
 
 /** Policy edges name actual tests; cquery cannot expand test_suite or tests(). */
 function configuredQualificationTests(raw: unknown): NativeRequiredTest[] {
@@ -551,6 +387,8 @@ export async function qualifyNativeShipping(
   let roots: string[];
   let shippingExport: string | undefined;
   let requiredTests: NativeRequiredTest[] = [];
+  let requiredLabels: string[] = [];
+  const sourceOnly = request.ci?.mode === 'source' && !request.ci.handoff;
   if ('export' in request.shipping) {
     const owner = label(request.shipping.export);
     shippingExport = owner;
@@ -591,11 +429,12 @@ export async function qualifyNativeShipping(
       throw new Error('shipping qualification requires its configured export provider');
     roots = argv(selected.roots, 'source-owned shipping roots').map(label);
     const tests = argv(selected.qualification, 'source-owned qualification').map(label);
+    requiredLabels = tests;
     if (new Set(tests).size !== tests.length)
       throw new Error('shipping qualification requires unique source-owned tests');
     // These graph edges are source-owned, independently of caller targets.
     // An incompatible declared test fails analysis rather than disappearing.
-    if (tests.length)
+    if (tests.length && !sourceOnly)
       bazel(
         [
           'cquery',
@@ -607,7 +446,7 @@ export async function qualifyNativeShipping(
         ],
         file('qualification-targets.json'),
       );
-    if (tests.length) {
+    if (tests.length && !sourceOnly) {
       requiredTests = configuredQualificationTests(json(file('qualification-targets.json')));
       assert.deepStrictEqual(
         requiredTests.map((test) => test.label).sort(),
@@ -631,10 +470,23 @@ export async function qualifyNativeShipping(
     ...new Set([
       ...roots,
       ...(shippingExport ? [shippingExport] : []),
-      ...requiredTests.map((test) => test.label),
+      ...requiredLabels,
       ...targets,
     ]),
   ];
+  const ciIdentity = request.ci && {
+    id: request.ci.id,
+    job: request.ci.job,
+    requires: request.ci.requires,
+    source,
+    github: request.github,
+    outputDirectory: output,
+    workspaceRoot: workspace,
+  };
+  if (sourceOnly) {
+    bazel(['test', ...buildTargets, ...configuration, ...metadata]);
+    return writeConfiguredCiSuccessReceipt(ciIdentity!);
+  }
   bazel([
     'test',
     ...buildTargets,
@@ -680,14 +532,19 @@ export async function qualifyNativeShipping(
   });
   const depsFile = file('analysis-deps.json');
   const depsQuery = file('analysis-deps.query');
-  writeFileSync(depsQuery, `deps(set(${roots.map((root) => JSON.stringify(root)).join(' ')}))`, {
-    flag: 'wx',
-  });
+  writeFileSync(
+    depsQuery,
+    `deps(set(${(request.ci?.mode === 'full' ? buildTargets : roots).map((root) => JSON.stringify(root)).join(' ')}))`,
+    {
+      flag: 'wx',
+    },
+  );
   bazel(
     [
       'cquery',
       `--query_file=${depsQuery}`,
       ...configuration,
+      ...(request.ci?.mode === 'full' ? ['--lockfile_mode=update', '--consistent_labels'] : []),
       '--output=jsonproto',
       '--transitions=lite',
       '--proto:include_configurations',
@@ -713,7 +570,16 @@ export async function qualifyNativeShipping(
       `buildfiles(set(${root.packages.map((pkg) => JSON.stringify(packageLabels.get(pkg))).join(' ')}))`,
       { flag: 'wx' },
     );
-    bazel(['query', `--query_file=${recipeQuery}`, ...loadingFlags, '--output=label'], recipeFile);
+    bazel(
+      [
+        'query',
+        `--query_file=${recipeQuery}`,
+        ...loadingFlags,
+        ...(request.ci?.mode === 'full' ? ['--consistent_labels'] : []),
+        '--output=label',
+      ],
+      recipeFile,
+    );
     recipeQueries.set(key, {
       packages: root.packages,
       labels: readFileSync(recipeFile, 'utf8').split(/\r?\n/u).filter(Boolean),
@@ -780,6 +646,18 @@ export async function qualifyNativeShipping(
     rmSync(path.dirname(evidence), { recursive: true, force: true });
     throw error;
   }
+  if (request.ci?.mode === 'full') {
+    await captureConfiguredCiRequest({
+      ...ciIdentity!,
+      configuration,
+      startup,
+      requestedTargets: buildTargets,
+      completedRoots: completedCiRequestRoots(bep, buildTargets),
+      executionRoot,
+      configuredGraph: json(depsFile),
+      recipeQueries: [...recipeQueries.values()],
+    });
+  } else if (ciIdentity) writeConfiguredCiSuccessReceipt(ciIdentity);
   return evidence;
 }
 
@@ -794,6 +672,11 @@ async function main() {
       'targets-json': { type: 'string' },
       'complete-products-json': { type: 'string' },
       'output-directory': { type: 'string' },
+      'ci-request-id': { type: 'string' },
+      'ci-job': { type: 'string' },
+      'ci-mode': { type: 'string' },
+      'ci-requires-json': { type: 'string' },
+      'ci-handoff': { type: 'boolean', default: false },
     },
     strict: true,
   });
@@ -807,6 +690,14 @@ async function main() {
       'usage: qualify-native-shipping.mts --github-json FILE --configuration-json FILE [--startup-json FILE] (--shipping-export LABEL | --shipping-roots-json FILE) [--targets-json FILE] [--complete-products-json FILE] --output-directory DIR',
     );
   let shipping: NativeShippingRequest['shipping'];
+  const ciMode = values['ci-mode'];
+  const ciId = values['ci-request-id'];
+  const ciJob = values['ci-job'];
+  if (
+    (ciMode || ciId || ciJob || values['ci-requires-json'] || values['ci-handoff']) &&
+    (!['full', 'source'].includes(ciMode ?? '') || !ciId || !ciJob)
+  )
+    throw new Error('CI qualification requires mode, request ID and job');
   if (values['shipping-export']) shipping = { export: values['shipping-export'] };
   else {
     const rootsFile = values['shipping-roots-json'];
@@ -815,6 +706,19 @@ async function main() {
   }
   console.log(
     await qualifyNativeShipping({
+      ...(ciMode && ciId && ciJob
+        ? {
+            ci: {
+              id: ciId,
+              job: ciJob,
+              mode: ciMode as 'full' | 'source',
+              requires: values['ci-requires-json']
+                ? argv(json(values['ci-requires-json']), 'CI prerequisites')
+                : [],
+              handoff: values['ci-handoff'],
+            },
+          }
+        : {}),
       github: json(values['github-json']) as NativeBuildGithub,
       startup: values['startup-json'] ? argv(json(values['startup-json']), 'startup') : [],
       configuration: argv(json(values['configuration-json']), 'configuration'),

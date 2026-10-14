@@ -30,6 +30,7 @@ test('a new source owner selects its first release and keeps registry libraries 
       'native-completed-delivery.mts',
       'completed-contrib-carrier-context.mts',
       'publication-lock.mts',
+      'with-source.mts',
       'publication-catalog.mts',
       'release-graph.mts',
       'release-artifact-targets.mts',

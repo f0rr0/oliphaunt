@@ -6,6 +6,40 @@ package(default_visibility = ["//visibility:public"])
 
 bazel_disk_cache_gc(name = "bazel_disk_cache_gc", tags = ["manual"])
 
+filegroup(
+    name = "configured_ci_sources",
+    srcs = [
+        "bazel-recorded-inputs.mts",
+        "configured-scope.mts",
+        "run-configured-request.mts",
+        "//build_defs/resources:seed_construction.mts",
+        "//src/database-resources:contracts/native-manifest.mts",
+        "//src/database-resources:contracts/contract.json",
+        "//:tools/packaging/portable-archive.mts",
+        "//:tools/packaging/release-directory-safety.mts",
+        "//tools/release:bazel-shipping-inputs.mts",
+        "//tools/release:github-core-request-journal.mts",
+        "//tools/release:github-read.mts",
+        "//tools/release:github-release-lineage.mts",
+        "//tools/release:native-build-qualification.mts",
+        "//tools/release:native-configured-inputs.mts",
+        "//tools/release:native-file-identity.mts",
+        "//tools/release:with-source.mts",
+    ],
+)
+
+[bun_test(
+    name = name,
+    entry_point = entry,
+    data = ["bazel-recorded-inputs.mts"] if name == "bazel_recorded_inputs_test" else [":configured_ci_sources", "//:workflow_policy_sources", "//:tools/packaging/testdata/zip-fixture.mts", "//tools/release:with-source.sh", "//tools/release:qualified-release-replay.sh"],
+    tags = ["source-check"],
+    size = "small",
+) for name, entry in [
+    ("bazel_recorded_inputs_test", "bazel-recorded-inputs.test.mts"),
+    ("configured_scope_test", "configured-scope.test.mts"),
+    ("run_configured_request_test", "run-configured-request.test.mts"),
+]]
+
 bun_test(
     name = "workflow_security_test",
     entry_point = "workflow-security.test.mts",
@@ -38,6 +72,7 @@ bun_test(
         "//:BUILD.bazel",
         "//:.github/scripts/check-release-intent.sh",
         "//:.github/scripts/release-intent-data.mts",
+        "//tools/release:with-source.sh",
     ],
     tags = ["source-check"],
     size = "small",
@@ -78,6 +113,9 @@ _WORKFLOW_LINTERS = ["@actionlint_linux_x64//:actionlint", "@zizmor_linux_x64//:
 test_suite(
     name = "source_checks",
     tests = [
+        ":bazel_recorded_inputs_test",
+        ":configured_scope_test",
+        ":run_configured_request_test",
         ":ci_gate_test",
         ":installed_replay_tools_test",
         ":mobile_e2e_resolver_test",

@@ -181,7 +181,12 @@ test('missing, substituted and cyclic configured recipes or loads reject', () =>
       ];
     },
     (f) => {
-      f.query.results.push(f.query.results[0]);
+      const conflict = structuredClone(f.query.results[0]);
+      conflict.target.rule.configuredRuleInput.push({
+        label: '//right:implementation',
+        configurationId: 2,
+      });
+      f.query.results.push(conflict);
     },
     (f) => {
       f.files = f.files.filter((row) => row.package !== '//common');
@@ -206,6 +211,87 @@ test('missing, substituted and cyclic configured recipes or loads reject', () =>
         queriedRecipes(nativeConfiguredRecipeGraph(f.query, f.roots), f.files),
       ),
     ).toThrow();
+  }
+});
+
+test('repeated configured nodes preserve typed topology and loaded source closure', () => {
+  const f = recipeFixture();
+  const graph = nativeConfiguredRecipeGraph(f.query, f.roots);
+  const paths = nativeRecipeInputPaths(graph, queriedRecipes(graph, f.files));
+  for (const reverse of [false, true]) {
+    const repeated = structuredClone(f.query);
+    for (const row of structuredClone(repeated.results)) {
+      const inputs = row.target.rule?.configuredRuleInput;
+      if (inputs?.length) {
+        inputs.reverse();
+        inputs.push(inputs[0]);
+      }
+      repeated.results.push(row);
+    }
+    if (reverse) repeated.results.reverse();
+    const actual = nativeConfiguredRecipeGraph(repeated, f.roots);
+    expect(actual).toEqual(graph);
+    expect(nativeRecipeInputPaths(actual, queriedRecipes(actual, f.files))).toEqual(paths);
+  }
+});
+
+test('repeated generated files and package groups must retain their actual dependency definition', () => {
+  const f = recipeFixture();
+  f.query.results[0].target.rule.configuredRuleInput.push(
+    { label: '//generated:header.h', configurationId: 1 },
+    { label: '//visibility:group' },
+  );
+  f.query.results.push(
+    {
+      configurationId: 1,
+      target: {
+        generatedFile: { name: '//generated:header.h', generatingRule: '//left:implementation' },
+      },
+    } as any,
+    {
+      target: {
+        packageGroup: { name: '//visibility:group', includedPackageGroup: ['//visibility:leaf'] },
+      },
+    } as any,
+    { target: { packageGroup: { name: '//visibility:leaf', includedPackageGroup: [] } } } as any,
+  );
+  const graph = nativeConfiguredRecipeGraph(f.query, f.roots);
+  const repeated = structuredClone(f.query);
+  repeated.results.push(...structuredClone(f.query.results.slice(-3)));
+  expect(nativeConfiguredRecipeGraph(repeated, f.roots)).toEqual(graph);
+  for (const [index, mutate] of [
+    [
+      0,
+      (row: any) => {
+        row.target.rule.ruleClass = 'different_rule';
+      },
+    ],
+    [
+      7,
+      (row: any) => {
+        row.target = { rule: { name: '//common:header.h', configuredRuleInput: [] } };
+      },
+    ],
+    [
+      9,
+      (row: any) => {
+        row.target.generatedFile.generatingRule = '//right:implementation';
+      },
+    ],
+    [
+      10,
+      (row: any) => {
+        row.target.packageGroup.includedPackageGroup = [];
+      },
+    ],
+  ] as const) {
+    const conflict = structuredClone(f.query);
+    const row = structuredClone(conflict.results[index]);
+    mutate(row);
+    conflict.results.push(row);
+    expect(() => nativeConfiguredRecipeGraph(conflict, f.roots)).toThrow(
+      'conflicting configured recipe target',
+    );
   }
 });
 
@@ -248,7 +334,7 @@ test('external configured packages retain workspace loads and equal package sets
 function fixture(mode = 'success') {
   const directory = mkdtempSync(path.join(tmpdir(), 'qualify-native-shipping-'));
   const workspace = path.join(directory, 'workspace');
-  const executionRoot = path.join(directory, 'execroot');
+  const executionRoot = path.join(directory, 'bazel/execroot/_main');
   const outputDirectory = path.join(directory, 'capture');
   const stateFile = path.join(directory, 'state.json');
   const callsFile = path.join(directory, 'calls.jsonl');
@@ -256,6 +342,17 @@ function fixture(mode = 'success') {
     mkdirSync(path.join(workspace, name), { recursive: true });
   mkdirSync(path.join(executionRoot, 'bazel-out/k8-fastbuild/bin'), { recursive: true });
   writeFileSync(path.join(workspace, 'src/input.mts'), 'declared source');
+  writeFileSync(path.join(workspace, '.bazelversion'), '8.8.1\n');
+  writeFileSync(
+    path.join(workspace, 'MODULE.bazel.lock'),
+    '{"lockFileVersion":28,"moduleExtensions":{}}',
+  );
+  writeFileSync(
+    path.join(directory, 'bazel/MODULE.bazel.lock'),
+    '{"lockFileVersion":28,"moduleExtensions":{}}',
+  );
+  mkdirSync(path.join(directory, 'bazel/external'));
+  writeFileSync(path.join(directory, 'bazel/external/@registry.marker'), `${'a'.repeat(64)}\n`);
   mkdirSync(path.join(workspace, 'fixture'));
   writeFileSync(path.join(workspace, 'fixture/BUILD.bazel'), 'declared shipping recipe');
   writeFileSync(path.join(workspace, 'fixture/macro1.bzl'), 'load(":macro2.bzl", "macro2")');
@@ -288,7 +385,8 @@ const state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));
 const invocation=process.argv.slice(2);
 appendFileSync(${JSON.stringify(callsFile)},JSON.stringify(invocation)+'\\n');
 const args=invocation.slice(invocation.findIndex((arg:string)=>['test','build','cquery','query','aquery','info'].includes(arg)));
-if(args[0]==='test' || args[0]==='aquery') writeFileSync(args.find((arg:string)=>arg.startsWith('--profile=')).slice(10),'fixture profile');
+const profile=args.find((arg:string)=>arg.startsWith('--profile='));
+if(profile) writeFileSync(profile.slice(10),'fixture profile');
 const expression=args[1]?.startsWith('--query_file=')?readFileSync(args[1].slice(13),'utf8'):args[1];
 if(args[0]==='test') {
   if(state.mode==='build-failure') process.exit(1);
@@ -310,7 +408,8 @@ if(args[0]==='test') {
   const options=args.filter((arg:string)=>arg.startsWith('--')).map((arg:string)=>{const split=arg.indexOf('=');return {optionName:arg.slice(2,split<0?undefined:split),optionValue:split<0?'':arg.slice(split+1)};});
   const canonical={id:{structuredCommandLine:{commandLineLabel:'canonical'}},structuredCommandLine:{commandLineLabel:'canonical',sections:[{sectionLabel:'command',chunkList:{chunk:['test']}},{sectionLabel:'command options',optionList:{option:options}},{sectionLabel:'residual',chunkList:{chunk:args.filter((arg:string)=>arg.startsWith('//'))}}]}};
   const events=[...state.events,...state.testEvents,canonical,{id:{buildMetadata:{}},buildMetadata:{metadata}},{id:{buildFinished:{}},finished:{exitCode:{name:'SUCCESS'}}},{id:{buildMetrics:{}},buildMetrics:{},lastMessage:true}];
-  writeFileSync(args.find((arg:string)=>arg.startsWith('--build_event_json_file=')).slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
+  const bep=args.find((arg:string)=>arg.startsWith('--build_event_json_file='));
+  if(bep) writeFileSync(bep.slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
 } else if(args[0]==='aquery') {
   if(state.mode==='aquery-failure') process.exit(1);
   if(state.mode==='aquery-hang' || state.mode==='aquery-ignore-term') {
@@ -854,6 +953,92 @@ test('scoped action capture binds full requested scope, output, source and confi
       mutate(tampered);
       expect(() => validateNativeBuildEvidence(tampered, checks)).toThrow();
     }
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('ordinary shipping checks run once and keep existing policy discovery without publication export', async () => {
+  for (const owner of [false, true]) {
+    const f = fixture();
+    try {
+      if (owner) f.request.shipping = { export: '//fixture:shipping_export' };
+      f.request.ci = {
+        id: 'portable/linux/napi',
+        job: 'portable/linux',
+        mode: 'source',
+        requires: [],
+      };
+      const output = await qualifyNativeShipping(f.request, f.workspace);
+      const receipt = JSON.parse(readFileSync(output, 'utf8'));
+      expect(receipt.mode).toBe('source');
+      expect(receipt.projection).toBeUndefined();
+      expect(f.calls().map((call) => call[0])).toEqual(owner ? ['cquery', 'test'] : ['test']);
+      expect(f.calls().find((call) => call[0] === 'test')).toContain('//fixture:consumer');
+      if (owner)
+        expect(f.calls().find((call) => call[0] === 'test')).toContain('//fixture:mandatory_test');
+      expect(existsSync(path.join(f.outputDirectory, 'aquery.json'))).toBe(false);
+      expect(existsSync(path.join(f.outputDirectory, 'evidence'))).toBe(false);
+      expect(
+        f
+          .calls()
+          .find((call) => call[0] === 'test')!
+          .some((flag) => flag.startsWith('--output_groups=')),
+      ).toBe(false);
+    } finally {
+      f.cleanup();
+    }
+  }
+});
+
+test('source requests preserve physical handoff capture and never receipt a failed producer', async () => {
+  for (const failed of [false, true]) {
+    const f = fixture(failed ? 'build-failure' : 'success');
+    try {
+      f.request.ci = {
+        id: 'wasix/producer',
+        job: 'wasix',
+        mode: 'source',
+        requires: [],
+        handoff: true,
+      };
+      if (failed) {
+        await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow();
+        expect(existsSync(path.join(f.outputDirectory, 'ci-request.json'))).toBe(false);
+      } else {
+        const output = await qualifyNativeShipping(f.request, f.workspace);
+        expect(JSON.parse(readFileSync(output, 'utf8')).schema).toBe(
+          'oliphaunt-native-build-evidence-v1',
+        );
+        expect(
+          JSON.parse(readFileSync(path.join(f.outputDirectory, 'ci-request.json'), 'utf8')).mode,
+        ).toBe('source');
+        expect(f.calls().map((call) => call[0])).toEqual([
+          'test',
+          'aquery',
+          'info',
+          'cquery',
+          'query',
+        ]);
+      }
+    } finally {
+      f.cleanup();
+    }
+  }
+});
+
+test('ordinary source receipt guard rejects a tracked source mutation during the producer', async () => {
+  const f = fixture('build-race');
+  try {
+    f.request.ci = {
+      id: 'portable/linux/napi',
+      job: 'portable/linux',
+      mode: 'source',
+      requires: [],
+    };
+    await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow();
+    expect(f.calls().map((call) => call[0])).toEqual(['test']);
+    expect(existsSync(path.join(f.outputDirectory, 'ci-request.json'))).toBe(false);
   } finally {
     f.cleanup();
   }

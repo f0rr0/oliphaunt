@@ -6,7 +6,7 @@ load("@bazel_lib//lib:directory_path.bzl", "directory_path")
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["bazel-release-metadata.mts", "bazel-shipping-inputs.mts", "extension-release-metadata.mts", "compatibility-version-parser.mts", "compatibility-version-policy.mts", "product-version.mts", "platform-compatibility-policy.mts", "frozen-extension-consumer.mts", "release-artifact-targets.mts", "release-graph.mts", "release-history.mts"])
-exports_files(["native-file-identity.mts"])
+exports_files(["native-file-identity.mts", "with-source.sh", "with-source.mts", "qualified-release-replay.sh", "native-configured-inputs.mts"])
 exports_files(["checksum-manifest.mts"])
 exports_files(["native-extension-final-inputs.mts", "qualified-native-extension-final-inputs.mts"])
 exports_files(["native-supplier-artifacts.mts"])

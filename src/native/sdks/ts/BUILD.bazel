@@ -241,6 +241,7 @@ sdk_unit_test(
         "//tools/release:publication-consumer-proof.mts",
         "//tools/release:publication-controller.mts",
         "//tools/release:publication-lock.mts",
+        "//tools/release:with-source.mts",
         "//tools/release:registry-http-retry.mts",
         "//tools/release:registry-integrity.mts",
         "//tools/release:registry-publication-deferral.mts",
