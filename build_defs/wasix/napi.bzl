@@ -2,7 +2,8 @@
 
 load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_PUBLICATIONS", "EXTENSIONS", "PRODUCTS", "PUBLICATION_CARRIERS", "WASIX_ARTIFACTS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
-load("//build_defs/languages:rust.bzl", "cargo_features")
+load("//build_defs/languages:rust.bzl", "cargo_features", "rust_cdylib_output")
+load("@rules_rust//rust:defs.bzl", "rust_common")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
@@ -138,16 +139,15 @@ _release_profile = transition(implementation = _release_profile_impl, inputs = [
 ])
 
 def _producer_impl(ctx):
-    library = ctx.attr.library[0]
-    files = library[DefaultInfo].files.to_list()
-    if len(files) != 1 or files[0].is_directory:
+    binary = rust_cdylib_output(ctx.attr.library[0])
+    if binary.is_directory:
         fail("WASIX addon release must supply exactly its maintained native cdylib")
     inputs = ctx.attr.inputs[0][WasixNapiInputsInfo]
-    return [DefaultInfo(files = depset(files)), WasixNapiReleaseInfo(binary = files[0], inputs = inputs),
+    return [DefaultInfo(files = depset([binary])), WasixNapiReleaseInfo(binary = binary, inputs = inputs),
             ctx.attr.inputs[0][ShippingSupplierInfo]]
 
 wasix_napi_release = rule(implementation = _producer_impl, attrs = {
-    "library": attr.label(mandatory = True, cfg = _release_profile),
+    "library": attr.label(mandatory = True, providers = [rust_common.test_crate_info], cfg = _release_profile),
     "inputs": attr.label(mandatory = True, providers = [WasixNapiInputsInfo], cfg = _release_profile),
     "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
 })

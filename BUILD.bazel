@@ -292,6 +292,7 @@ test_suite(
         "//build_defs/languages:cargo_metadata_test",
         "//build_defs/languages:napi_artifact_projection_test",
         "//build_defs/languages:napi_artifact_kind_test",
+        "//build_defs/languages:wasix_napi_release_kind_test",
         "//build_defs/languages:source_package_test",
         "//build_defs/languages/installed:context_test",
         "//build_defs/languages/ts:metadata_test",

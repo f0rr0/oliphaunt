@@ -304,12 +304,16 @@ def cargo_binary(name, source, path_dependencies = {}, features = [], default_fe
         **kwargs
     )
 
-def _napi_artifact_impl(ctx):
-    crate = ctx.attr.library[rust_common.test_crate_info].crate
+def rust_cdylib_output(library):
+    """Select the typed Rust binary when platform auxiliary files coexist."""
+    crate = library[rust_common.test_crate_info].crate
     if crate.type != "cdylib":
         fail("Node-API artifacts require a Rust cdylib")
+    return crate.output
+
+def _napi_artifact_impl(ctx):
     output = ctx.actions.declare_file(ctx.attr.out)
-    ctx.actions.symlink(output = output, target_file = crate.output)
+    ctx.actions.symlink(output = output, target_file = rust_cdylib_output(ctx.attr.library))
     return [DefaultInfo(files = depset([output]))]
 
 napi_artifact = rule(
