@@ -1452,6 +1452,121 @@ test('build metadata CLI prints the shared validated flags with spaces and rejec
   }
 });
 
+test('collector qualification expectations bind written bytes and both physical mutation windows', () => {
+  const cli = path.resolve(import.meta.dir, 'capture-native-build-evidence.mts');
+  for (const fault of [
+    'none',
+    'source',
+    'github',
+    'version',
+    'test-label',
+    'test-configuration',
+    'unknown-fields',
+    'analysis-type',
+    'serialized-summary',
+    'before-copy',
+    'after-serialize',
+  ]) {
+    const f = ownerPolicyFixture();
+    try {
+      const cohort = f.options.cohorts[0];
+      const file = (name: string, value: unknown, lines = false) => {
+        const target = path.join(f.directory, name);
+        writeFileSync(
+          target,
+          lines
+            ? (value as unknown[]).map((row) => JSON.stringify(row)).join('\n')
+            : JSON.stringify(value),
+        );
+        return target;
+      };
+      writeFileSync(cohort.aqueryFile, JSON.stringify(cohort.aquery));
+      const expected: any = {
+        source: f.options.source,
+        github: f.options.github,
+        bazelVersion: f.options.bazelVersion,
+        requiredTests: [{ label: '//src:installed_test', configuration: 'c'.repeat(64) }],
+        requireShippingAnalysis: true,
+      };
+      if (fault === 'source') expected.source = { ...expected.source, tree: 'd'.repeat(40) };
+      if (fault === 'github') expected.github = { ...expected.github, runAttempt: 99 };
+      if (fault === 'version') expected.bazelVersion = '8.8.0';
+      if (fault === 'test-label') expected.requiredTests[0].label = '//src:unrelated_test';
+      if (fault === 'test-configuration') expected.requiredTests[0].configuration = 'd'.repeat(64);
+      if (fault === 'unknown-fields') expected.trust = true;
+      if (fault === 'analysis-type') expected.requireShippingAnalysis = 'true';
+      const directory = path.join(f.directory, 'expected-packet');
+      const preload = path.join(f.directory, 'written-packet-control.mts');
+      writeFileSync(
+        preload,
+        `import {spyOn} from 'bun:test';
+import * as fs from 'node:fs';
+import path from 'node:path';
+const write=fs.writeFileSync, temporary=fs.mkdtempSync;
+const fault=${JSON.stringify(fault)};
+const mutate=()=>write(${JSON.stringify(path.join(f.workspace, f.source))},'changed after physical capture');
+spyOn(fs,'mkdtempSync').mockImplementation((prefix,...args)=>{const result=temporary(prefix,...args);if(fault==='before-copy'&&String(prefix).includes('.native-evidence-'))mutate();return result;});
+spyOn(fs,'writeFileSync').mockImplementation((file,data,...args)=>{
+  if(path.basename(String(file))==='evidence.json') {
+    if(fault==='serialized-summary'){const packet=JSON.parse(String(data));packet.cohorts[0].buildEvents=packet.cohorts[0].buildEvents.filter(event=>!event.testSummary);data=JSON.stringify(packet)+'\\n';}
+    write(file,data,...args);
+    if(fault==='after-serialize')mutate();
+    return;
+  }
+  return write(file,data,...args);
+});
+`,
+      );
+      const args = [
+        '--preload',
+        preload,
+        cli,
+        '--github-json',
+        file('github.json', f.options.github),
+        '--expected-qualification-json',
+        file('expected.json', expected),
+        '--producer-cohort',
+        file('roots.json', cohort.shippingRoots),
+        cohort.aqueryFile,
+        file('bep.jsonl', cohort.buildEvents, true),
+        f.executionRoot,
+        '--shipping-export',
+        cohort.shippingExport,
+        '--output-directory',
+        directory,
+      ];
+      const run = () =>
+        execFileSync(process.execPath, args, {
+          cwd: f.workspace,
+          env: {
+            ...process.env,
+            OLIPHAUNT_GIT_SOURCE_JSON: JSON.stringify({
+              ...f.options.source,
+              ref: 'HEAD',
+              checkout: f.options.source.commit,
+            }),
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+          encoding: 'utf8',
+        });
+      if (fault === 'none') {
+        const output = run().trim();
+        const packet = JSON.parse(readFileSync(output, 'utf8'));
+        expect(validateNativeBuildEvidence(packet, expected).testQualification).toBe('passed');
+        expect(readFileSync(path.join(directory, 'files/0', f.output))).toEqual(
+          readFileSync(path.join(f.executionRoot, f.output)),
+        );
+      } else {
+        expect(run, fault).toThrow();
+        expect(existsSync(path.join(directory, 'native-build-evidence.json')), fault).toBe(false);
+        expect(existsSync(path.join(directory, 'files')), fault).toBe(false);
+      }
+    } finally {
+      f.cleanup();
+    }
+  }
+});
+
 function seedCompanions(f: ReturnType<typeof fixture>) {
   const stem = 'bazel-out/k8-opt/bin/seed';
   const frozen = `${stem}.tar`;

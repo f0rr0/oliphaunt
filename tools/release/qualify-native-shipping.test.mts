@@ -16,6 +16,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as shippingInputs from './bazel-shipping-inputs.mts';
 import {
   nativeAqueryExpression,
   validateNativeBuildEvidence,
@@ -338,6 +339,7 @@ function fixture(mode = 'success') {
   const outputDirectory = path.join(directory, 'capture');
   const stateFile = path.join(directory, 'state.json');
   const callsFile = path.join(directory, 'calls.jsonl');
+  const countsFile = path.join(directory, 'capture-counts.json');
   for (const name of ['src', 'tools/dev', 'tools/release'])
     mkdirSync(path.join(workspace, name), { recursive: true });
   mkdirSync(path.join(executionRoot, 'bazel-out/k8-fastbuild/bin'), { recursive: true });
@@ -368,9 +370,19 @@ function fixture(mode = 'success') {
   );
   copyFileSync(withSource, path.join(workspace, 'tools/release/with-source.sh'));
   copyFileSync(qualifiedReplay, path.join(workspace, 'tools/release/qualified-release-replay.sh'));
+  if (mode === 'capture-count')
+    writeFileSync(
+      path.join(workspace, 'tools/release/capture-counter.mts'),
+      `import {spyOn} from 'bun:test';
+import {writeFileSync} from 'node:fs';
+import * as graph from ${JSON.stringify(fileURLToPath(new URL('./bazel-shipping-inputs.mts', import.meta.url)))};
+const views=spyOn(graph,'buildShippingInputView');
+process.on('exit',()=>writeFileSync(${JSON.stringify(countsFile)},JSON.stringify({views:views.mock.calls.length})));
+`,
+    );
   writeFileSync(
     path.join(workspace, 'tools/release/capture-native-build-evidence.mts'),
-    `import {spawnSync} from 'node:child_process';\nimport {readFileSync,writeFileSync} from 'node:fs';\nconst state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));\nif(state.mode==='capture-race') writeFileSync('src/input.mts','changed during capture');\nconst result=spawnSync(process.execPath,[${JSON.stringify(realCapture)},...process.argv.slice(2)],{stdio:'inherit'});\nif(state.mode==='capture-output-race' && result.status===0) writeFileSync(state.output,'changed after capture');\nprocess.exit(result.status??1);\n`,
+    `import {spawnSync} from 'node:child_process';\nimport {readFileSync,writeFileSync} from 'node:fs';\nconst state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));\nif(state.mode==='capture-race') writeFileSync('src/input.mts','changed during capture');\nconst preload=state.mode==='capture-count'?['--preload',${JSON.stringify(path.join(workspace, 'tools/release/capture-counter.mts'))}]:[];\nconst result=spawnSync(process.execPath,[...preload,${JSON.stringify(realCapture)},...process.argv.slice(2)],{stdio:'inherit'});\nif(state.mode==='capture-output-race' && result.status===0) writeFileSync(state.output,'changed after capture');\nprocess.exit(result.status??1);\n`,
   );
   writeFileSync(
     path.join(workspace, 'tools/dev/bazel.sh'),
@@ -397,6 +409,7 @@ if(args[0]==='test') {
     execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','changed source']);
   }
   const metadata=Object.fromEntries(args.filter((arg:string)=>arg.startsWith('--build_metadata=')).map((arg:string)=>{const value=arg.slice(17);const split=value.indexOf('=');return [value.slice(0,split),value.slice(split+1)];}));
+  if(state.mode==='raw-metadata-mismatch') metadata.fixture_observation='build-value';
   if(state.mode==='manifest-tamper') writeFileSync(state.manifest,JSON.stringify({...state.root,package:{...state.root.package,version:'1.0.1'}})+'\\n');
   if(state.policy) {
     const policy={...state.policy,qualification:(state.qualification.results??[]).map((result:any)=>result.target.rule.name.replace(/^@@?\\/\\//,'//'))};
@@ -420,6 +433,7 @@ if(args[0]==='test') {
   }
   if(state.mode==='aquery-race') writeFileSync('src/input.mts','changed during analysis');
   const metadata=Object.fromEntries(args.filter((arg:string)=>arg.startsWith('--build_metadata=')).map((arg:string)=>{const value=arg.slice(17);const split=value.indexOf('=');return [value.slice(0,split),value.slice(split+1)];}));
+  if(state.mode==='raw-metadata-mismatch') metadata.fixture_observation='query-value';
   const options=args.filter((arg:string)=>arg.startsWith('--')).map((arg:string)=>{const split=arg.indexOf('=');const value=split<0?'':arg.slice(split+1);return {optionName:arg.slice(2,split<0?undefined:split),optionValue:value};});
   const canonical={id:{structuredCommandLine:{commandLineLabel:'canonical'}},structuredCommandLine:{commandLineLabel:'canonical',sections:[{sectionLabel:'command',chunkList:{chunk:['aquery']}},{sectionLabel:'command options',optionList:{option:[...options,{optionName:'client_env',optionValue:'PRIVATE=not-for-retention'}]}},{sectionLabel:'residual',chunkList:{chunk:[expression]}}]}};
   const prefix=structuredClone(state.events.filter((event:any)=>event.started||event.workspaceInfo||event.configuration));
@@ -709,6 +723,7 @@ else {
       change(state);
       writeFileSync(stateFile, JSON.stringify(state));
     },
+    countsFile,
     cleanup: () => rmSync(directory, { recursive: true, force: true }),
   };
 }
@@ -1113,6 +1128,40 @@ for (const targets of [[], undefined])
     }
   });
 
+test('one exact serialized qualification replaces the raw and parent replay without trusting a cached view', async () => {
+  const f = fixture('capture-count');
+  const parentViews = spyOn(shippingInputs, 'buildShippingInputView');
+  try {
+    f.request.shipping = { export: '//fixture:shipping_export' };
+    f.request.targets = [];
+    const output = await qualifyNativeShipping(f.request, f.workspace);
+    const evidence = JSON.parse(readFileSync(output, 'utf8'));
+    expect(JSON.parse(readFileSync(f.countsFile, 'utf8')).views).toBe(2);
+    expect(parentViews.mock.calls).toHaveLength(0);
+    expect(
+      JSON.parse(readFileSync(path.join(f.outputDirectory, 'expected-qualification.json'), 'utf8')),
+    ).toEqual({
+      source: evidence.source,
+      github: f.request.github,
+      bazelVersion: '8.8.1',
+      requiredTests: [{ label: '//fixture:mandatory_test', configuration: 'c'.repeat(64) }],
+      requireShippingAnalysis: true,
+    });
+    expect(
+      evidence.cohorts[0].buildEvents.find((event: any) => event.testSummary).testSummary
+        .overallStatus,
+    ).toBe('PASSED');
+    expect(
+      readFileSync(
+        path.join(f.outputDirectory, 'evidence/files/0', evidence.cohorts[0].outputs[0].path),
+      ),
+    ).toEqual(Buffer.from('final archive'));
+  } finally {
+    parentViews.mockRestore();
+    f.cleanup();
+  }
+});
+
 test('the existing CLI accepts omitted additional targets and still runs owner policy', () => {
   const f = fixture();
   try {
@@ -1145,7 +1194,12 @@ test('the existing CLI accepts omitted additional targets and still runs owner p
   }
 });
 
-for (const failure of ['missing-summary', 'failed-result', 'configuration-mismatch'])
+for (const failure of [
+  'missing-summary',
+  'failed-result',
+  'configuration-mismatch',
+  'raw-metadata-mismatch',
+])
   test(`removes evidence when source-owned configured qualification has ${failure}`, async () => {
     const f = fixture();
     try {
@@ -1156,12 +1210,12 @@ for (const failure of ['missing-summary', 'failed-result', 'configuration-mismat
           state.testEvents = state.testEvents.filter((event: any) => !event.testSummary);
         else if (failure === 'failed-result')
           state.testEvents.find((event: any) => event.testResult).testResult.status = 'FAILED';
-        else state.qualification.configurations[0].checksum = 'd'.repeat(64);
+        else if (failure === 'configuration-mismatch')
+          state.qualification.configurations[0].checksum = 'd'.repeat(64);
+        else state.mode = failure;
       });
       await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow(
-        failure === 'configuration-mismatch'
-          ? /mandatory configured test/
-          : /with-source.sh failed/,
+        /with-source.sh failed/,
       );
       expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
         false,

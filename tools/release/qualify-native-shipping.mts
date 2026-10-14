@@ -28,7 +28,6 @@ import {
   nativeAqueryExpression,
   nativeBuildEventIndex,
   nativeBuildMetadata,
-  validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
 import {
   nativeConfiguredRecipeGraph,
@@ -590,6 +589,16 @@ export async function qualifyNativeShipping(
     flag: 'wx',
   });
   assertSource();
+  writeFileSync(
+    file('expected-qualification.json'),
+    `${JSON.stringify({
+      source,
+      github: request.github,
+      bazelVersion: readFileSync(new URL('../../.bazelversion', import.meta.url), 'utf8').trim(),
+      ...(requiredTests.length ? { requiredTests, requireShippingAnalysis: true } : {}),
+    })}\n`,
+    { flag: 'wx' },
+  );
   // Pair sampled stacks with OS CPU time: pinned Bun can bill idle gaps to JavaScript.
   const macos = process.platform === 'darwin';
   run('capture', macos ? '/usr/bin/time' : 'bash', [
@@ -609,6 +618,8 @@ export async function qualifyNativeShipping(
     'tools/release/capture-native-build-evidence.mts',
     '--github-json',
     file('github.json'),
+    '--expected-qualification-json',
+    file('expected-qualification.json'),
     '--producer-cohort',
     file('selected-roots.json'),
     file('aquery.json'),
@@ -628,14 +639,6 @@ export async function qualifyNativeShipping(
   const evidence = file('evidence/native-build-evidence.json');
   try {
     assertSource();
-    if (requiredTests.length)
-      validateNativeBuildEvidence(json(evidence), {
-        source,
-        github: request.github,
-        bazelVersion: readFileSync(new URL('../../.bazelversion', import.meta.url), 'utf8').trim(),
-        requiredTests,
-        requireShippingAnalysis: true,
-      });
     if (completeProducts.length) {
       checkCompleteProducts(json(evidence) as NativeBuildEvidence, completeProducts);
       assertSource();

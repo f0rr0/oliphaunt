@@ -89,8 +89,8 @@ export function nativeRootConfigurations(roots: NativeRoot[], raw: unknown) {
   });
 }
 
-/** The producing job must freeze inputs across build and capture; this observes current contents. */
-export function captureNativeBuildEvidence({
+/** Physical collection retains raw protocol bindings before packet sanitization. */
+function collectNativeBuildEvidence({
   source,
   github,
   cohorts,
@@ -260,13 +260,23 @@ export function captureNativeBuildEvidence({
       };
     }),
   };
-  const qualification = validateNativeBuildEvidence(evidence, { source, github, bazelVersion });
   return {
     evidence,
-    qualification,
     assertUnchanged() {
       for (const capture of captures) capture.assertUnchanged();
     },
+  };
+}
+
+/** The producing job must freeze inputs across build and capture; this observes current contents. */
+export function captureNativeBuildEvidence(
+  options: Parameters<typeof collectNativeBuildEvidence>[0],
+) {
+  const captured = collectNativeBuildEvidence(options);
+  const { source, github, bazelVersion } = options;
+  return {
+    ...captured,
+    qualification: validateNativeBuildEvidence(captured.evidence, { source, github, bazelVersion }),
   };
 }
 
@@ -374,9 +384,10 @@ function retainedBuildEvents(evidence: NativeBuildEvidence, events: unknown[], s
 }
 
 /** Publish one validated packet without replacing a previous capture. */
-export function writeNativeBuildEvidence(
-  captured: ReturnType<typeof captureNativeBuildEvidence>,
+function writeCapturedNativeBuildEvidence(
+  captured: ReturnType<typeof collectNativeBuildEvidence>,
   directory: string,
+  expected?: Parameters<typeof validateNativeBuildEvidence>[1],
 ) {
   const parent = requireSafeDirectoryChain(directory, { create: true, label: 'native evidence' });
   const temporary = mkdtempSync(path.join(parent, '.native-evidence-'));
@@ -414,6 +425,8 @@ export function writeNativeBuildEvidence(
     writeNativeBuildFinalFiles(evidence, parent);
     copiedFiles = true;
     writeFileSync(file, `${JSON.stringify(evidence)}\n`, { flag: 'wx', mode: 0o600 });
+    if (expected !== undefined)
+      validateNativeBuildEvidence(JSON.parse(readFileSync(file, 'utf8')), expected);
     captured.assertUnchanged();
     linkSync(file, output);
     return output;
@@ -423,6 +436,14 @@ export function writeNativeBuildEvidence(
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
+}
+
+/** Preserve the validated programmatic capture boundary. */
+export function writeNativeBuildEvidence(
+  captured: ReturnType<typeof captureNativeBuildEvidence>,
+  directory: string,
+) {
+  return writeCapturedNativeBuildEvidence(captured, directory);
 }
 
 function json(file: string) {
@@ -439,6 +460,7 @@ function main() {
   const args = process.argv.slice(2);
   const cohorts: NativeBuildCaptureCohort[] = [];
   let githubFile: string | undefined;
+  let expectedFile: string | undefined;
   let output: string | undefined;
   let ref: string | undefined;
   let metadata = false;
@@ -450,6 +472,8 @@ function main() {
   while (args.length) {
     const option = args.shift();
     if (option === '--github-json' && githubFile === undefined) githubFile = value();
+    else if (option === '--expected-qualification-json' && expectedFile === undefined)
+      expectedFile = value();
     else if (option === '--output-directory' && output === undefined) output = value();
     else if (option === '--source-ref' && ref === undefined) ref = value();
     else if (option === '--build-metadata' && !metadata) metadata = true;
@@ -499,7 +523,7 @@ function main() {
     } else throw new Error(`unknown or repeated native capture argument: ${option}`);
   }
   if (metadata) {
-    if (!githubFile || output || cohorts.length)
+    if (!githubFile || expectedFile || output || cohorts.length)
       throw new Error('--build-metadata requires --github-json and no capture outputs/cohorts');
     for (const [key, value] of Object.entries(
       nativeBuildMetadata(sourceIdentity(ref ?? 'HEAD'), json(githubFile)),
@@ -521,13 +545,34 @@ function main() {
           : nativeAqueryOutputFormat(cohort.aqueryBuildEvents),
         bazelVersion,
       );
-  const captured = captureNativeBuildEvidence({
+  const options = {
     source: sourceIdentity(ref ?? 'HEAD'),
     github: json(githubFile),
     cohorts,
     bazelVersion,
-  });
-  console.log(writeNativeBuildEvidence(captured, output));
+  };
+  if (expectedFile === undefined) {
+    console.log(writeNativeBuildEvidence(captureNativeBuildEvidence(options), output));
+  } else {
+    const expected = object(json(expectedFile));
+    const fields = ['source', 'github', 'bazelVersion'];
+    for (const optional of ['requiredTests', 'requireShippingAnalysis'])
+      if (Object.hasOwn(expected, optional)) fields.push(optional);
+    if (Object.keys(expected).sort().join(',') !== fields.sort().join(','))
+      throw new Error('native qualification expectations require exact fields');
+    if (
+      Object.hasOwn(expected, 'requireShippingAnalysis') &&
+      typeof expected.requireShippingAnalysis !== 'boolean'
+    )
+      throw new Error('native qualification analysis expectation must be a boolean');
+    console.log(
+      writeCapturedNativeBuildEvidence(
+        collectNativeBuildEvidence(options),
+        output,
+        expected as Parameters<typeof validateNativeBuildEvidence>[1],
+      ),
+    );
+  }
 }
 
 if (import.meta.main) {
