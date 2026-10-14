@@ -3,8 +3,8 @@ import * as childProcess from 'node:child_process';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  copyFileSync,
   appendFileSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -28,7 +28,6 @@ import {
 } from './qualify-native-shipping.mts';
 
 const realCapture = fileURLToPath(new URL('./capture-native-build-evidence.mts', import.meta.url));
-const realAquery = fileURLToPath(new URL('./native-aquery.mts', import.meta.url));
 const withSource = fileURLToPath(new URL('./with-source.sh', import.meta.url));
 const qualifiedReplay = fileURLToPath(new URL('./qualified-release-replay.sh', import.meta.url));
 
@@ -285,7 +284,6 @@ function fixture(mode = 'success') {
     `import {appendFileSync,readFileSync,writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import {nativeAqueryType} from ${JSON.stringify(realAquery)};
 const state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));
 const invocation=process.argv.slice(2);
 appendFileSync(${JSON.stringify(callsFile)},JSON.stringify(invocation)+'\\n');
@@ -329,7 +327,7 @@ if(args[0]==='test') {
   prefix.find((event:any)=>event.started).started.uuid='fixture-aquery';
   const events=[...prefix,canonical,{id:{progress:{}},progress:{stdout:'private-query-diagnostic'}},{id:{buildMetadata:{}},buildMetadata:{metadata}},{id:{buildFinished:{}},finished:{exitCode:{name:'SUCCESS'}}},{id:{buildMetrics:{}},buildMetrics:{},lastMessage:true}];
   writeFileSync(args.find((arg:string)=>arg.startsWith('--build_event_json_file=')).slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
-  if(state.mode!=='dump-missing') { const type=nativeAqueryType('8.8.1'); writeFileSync(args.find((arg:string)=>arg.startsWith('--output_file=')).slice(14),type.encode(type.fromObject(state.aquery)).finish()); }
+  if(state.mode!=='dump-missing') writeFileSync(args.find((arg:string)=>arg.startsWith('--output_file=')).slice(14),JSON.stringify(state.aquery)+'\\n');
 } else if(args[0]==='build') {
   if(args.at(-1)!=='--nobuild') throw new Error('failure diagnosis must not construct targets');
   if(state.mode==='incompatible-owner') {
@@ -646,7 +644,8 @@ for (const selection of ['explicit', 'export'])
       expect(queries[0]).toContain('--include_artifacts=true');
       expect(queries[0]).toContain('--include_aspects=true');
       expect(queries[0]).toContain('--include_commandline=false');
-      expect(queries[0]).toContain(`--output_file=${path.join(f.outputDirectory, 'aquery.pb')}`);
+      expect(queries[0]).toContain('--output=jsonproto');
+      expect(queries[0]).toContain(`--output_file=${path.join(f.outputDirectory, 'aquery.json')}`);
       expect(queries[0][1]).toBe(
         nativeAqueryExpression(builds[0].filter((arg) => arg.startsWith('//'))),
       );
@@ -676,9 +675,9 @@ for (const selection of ['explicit', 'export'])
       expect(existsSync(path.join(f.outputDirectory, 'build-events.jsonl'))).toBe(true);
       expect(existsSync(path.join(f.outputDirectory, 'cquery.json'))).toBe(false);
       expect(existsSync(path.join(f.outputDirectory, 'roots.jsonl'))).toBe(false);
-      expect(existsSync(path.join(f.outputDirectory, 'aquery.pb'))).toBe(true);
+      expect(existsSync(path.join(f.outputDirectory, 'aquery.json'))).toBe(true);
       expect(evidence.cohorts[0].producerCapture.aqueryFile).toBe(
-        path.join(f.outputDirectory, 'aquery.pb'),
+        path.join(f.outputDirectory, 'aquery.json'),
       );
       const transferred = path.join(
         f.outputDirectory,
@@ -1199,7 +1198,7 @@ for (const mode of ['aquery-hang', 'aquery-ignore-term'])
       expect(readFileSync(path.join(f.outputDirectory, 'diagnostics/aquery-jvm.log'), 'utf8')).toBe(
         'new JVM thread snapshot\n',
       );
-      expect(readFileSync(path.join(f.outputDirectory, 'aquery.pb'), 'utf8')).toBe(
+      expect(readFileSync(path.join(f.outputDirectory, 'aquery.json'), 'utf8')).toBe(
         'partial output',
       );
       expect(existsSync(path.join(f.outputDirectory, 'diagnostics/disk.txt'))).toBe(true);

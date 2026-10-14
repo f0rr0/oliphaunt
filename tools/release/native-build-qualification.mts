@@ -42,7 +42,8 @@ export type NativeProducerCapture = {
 };
 
 export const NATIVE_AQUERY_FLAGS = [
-  '--output=proto',
+  // The pinned JSON formatter avoids the proto serializer's blocked worker queue.
+  '--output=jsonproto',
   '--include_commandline=false',
   '--include_artifacts=true',
   '--include_pruned_inputs=true',

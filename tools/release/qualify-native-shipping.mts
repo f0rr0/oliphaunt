@@ -651,7 +651,7 @@ export async function qualifyNativeShipping(
     ...configuration,
     ...metadata,
     ...NATIVE_AQUERY_FLAGS,
-    `--output_file=${file('aquery.pb')}`,
+    `--output_file=${file('aquery.json')}`,
     `--build_event_json_file=${file('aquery-build-events.jsonl')}`,
     `--profile=${diagnosticFile('aquery-profile.json.gz')}`,
   ]);
@@ -734,7 +734,7 @@ export async function qualifyNativeShipping(
     file('github.json'),
     '--producer-cohort',
     file('selected-roots.json'),
-    file('aquery.pb'),
+    file('aquery.json'),
     file('build-events.jsonl'),
     executionRoot,
     '--aquery-build-events',
