@@ -203,8 +203,33 @@ test('release workflow reserves repository mutations for Oli with per-step token
     const tokenStep = workflow.jobs[name].steps.find((step) => step.id === tokenId);
     assert.equal(tokenStep.with['permission-contents'], 'write', 'draft collision visibility');
   }
-  for (const job of Object.values(workflow.jobs) as any[])
-    assert.notEqual(job.permissions?.actions, 'write', 'qualification observes existing runs');
+  for (const [name, job] of Object.entries(workflow.jobs) as [string, any][]) {
+    if (name === 'qualify-prepare-source') {
+      assert.deepEqual(job.permissions, { actions: 'write', contents: 'read' });
+      assert.equal(job.needs, 'validate-inputs');
+      assert.equal(job.if, "${{ inputs.operation == 'prepare-release-pr' }}");
+      const request = job.steps.find((step) => step.id === 'native_qualification');
+      assert.equal(request.env.GH_TOKEN, '${{ github.token }}');
+      assert.equal(request.env.GH_REPO, '${{ github.repository }}');
+      assert.match(
+        request.run,
+        /require-workflow-success\.sh 'Native Bazel qualification' "\$GITHUB_SHA" 0/u,
+      );
+      assert.match(request.run, /--request-native-qualification/u);
+      assert.doesNotMatch(
+        JSON.stringify(job),
+        /secrets\.|create-github-app-token|permission-contents|publish-release-pr/u,
+      );
+      for (const step of job.steps.filter((step) => step.env?.GH_TOKEN))
+        assert.equal(
+          step.id,
+          'native_qualification',
+          'Actions write serves only the Native request',
+        );
+    } else {
+      assert.notEqual(job.permissions?.actions, 'write', `${name} observes existing runs`);
+    }
+  }
   assert.equal(workflow.jobs['publish-bootstrap'].permissions['id-token'], 'write');
   assert.equal(workflow.jobs.publish.permissions['id-token'], 'write');
 });

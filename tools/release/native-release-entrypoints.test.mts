@@ -1,17 +1,28 @@
 /** These dispatch fixtures grant no qualification or publication authority. */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { isolatedGitHubTestEnvironment } from './testdata/isolated-github-test-environment.mts';
+import { reconcileNativePrepare } from './native-prepare-continuation.mts';
+import { nativePrepareContinuationFixture } from './testdata/native-prepare-continuation-fixture.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 const invalidRuns = [undefined, '', '0', '01', '-1', '1.5', '12\n'];
 
 function fixture(run) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'native-release-entrypoints-'));
+  let deferredCleanup = false;
   const log = path.join(root, '.git/commands');
   const directory = path.join(root, '.git/candidate');
   const output = path.join(root, '.git/outputs');
@@ -79,9 +90,14 @@ function fixture(run) {
           ...additions,
         },
       });
-    return run({ root, directory, log, output, source, git, command, write });
+    const result = run({ root, directory, log, output, source, git, command, write });
+    if (result?.then) {
+      deferredCleanup = true;
+      return result.finally(() => rmSync(root, { recursive: true, force: true }));
+    }
+    return result;
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    if (!deferredCleanup) rmSync(root, { recursive: true, force: true });
   }
 }
 
@@ -97,6 +113,198 @@ test('release shell entrypoints reject missing or malformed native proof before 
       }
     }
     assert.throws(() => readFileSync(log), { code: 'ENOENT' });
+  });
+});
+
+test('Prepare reuses successful Required proof and returns pending Native work without preparing', {
+  timeout: 20_000,
+}, () => {
+  const workflow = Bun.YAML.parse(
+    readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8'),
+  );
+  const prerequisite = workflow.jobs['qualify-prepare-source'];
+  const prepare = workflow.jobs['prepare-release-pr'];
+  assert.equal(prerequisite.permissions.actions, 'write');
+  assert.equal(prepare.permissions.actions, 'read');
+  assert.ok(prepare.needs.includes('qualify-prepare-source'));
+  assert.match(prepare.if, /needs\.qualify-prepare-source\.outputs\.run_id != ''/u);
+  assert.equal(
+    prepare.steps.find((step) => step.id === 'prepare_candidate').env.NATIVE_QUALIFICATION_RUN_ID,
+    '${{ needs.qualify-prepare-source.outputs.run_id }}',
+  );
+  const request = prerequisite.steps.find((step) => step.id === 'native_qualification');
+  assert.equal(request.env.GH_TOKEN, '${{ github.token }}');
+  assert.match(request.run, /--request-native-qualification/u);
+  for (const mode of [
+    'reuse',
+    'active',
+    'source',
+    'absent',
+    'feature',
+    'failed',
+    'dispatch-skipped',
+    'advanced',
+    'race',
+    'ambiguous',
+  ]) {
+    fixture(({ root, source, command, write, directory }) => {
+      const bin = path.join(root, '.git/bin');
+      const output = path.join(root, '.git/native-output');
+      const dispatch = path.join(root, '.git/native-dispatch.json');
+      mkdirSync(bin);
+      write(
+        '.git/bin/gh',
+        '#!/usr/bin/env bash\nset -euo pipefail\n[[ "$1" == api && "$2" == --method && "$3" == POST && ! -e "$FAKE_DISPATCH" ]] || exit 93\nwhile [[ $# -gt 0 ]]; do if [[ "$1" == --input ]]; then cp "$2" "$FAKE_DISPATCH"; break; fi; shift; done\n[[ "$FAKE_MODE" != native-ambiguous ]] || exit 95\nprintf \'{"workflow_run_id":88}\\n\'\n',
+      );
+      chmodSync(path.join(bin, 'gh'), 0o755);
+      const result = spawnSync('bash', ['-c', request.run], {
+        cwd: ROOT,
+        encoding: 'utf8',
+        timeout: 10_000,
+        env: isolatedGitHubTestEnvironment({
+          PATH: `${bin}:${path.dirname(process.execPath)}:${process.env.PATH}`,
+          GH_TOKEN: 'test-token',
+          GH_REPO: 'f0rr0/oliphaunt',
+          GITHUB_SHA: source,
+          GITHUB_OUTPUT: output,
+          BUN_OPTIONS: `--preload=${ROOT}/tools/release/testdata/require-workflow-success-github.mts`,
+          FAKE_NATIVE_SHA: source,
+          FAKE_MODE: `native-${mode}`,
+          FAKE_DISPATCH: dispatch,
+          FAKE_LOG: path.join(root, '.git/native-reads'),
+          OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS: '0',
+          OLIPHAUNT_GITHUB_READ_DEADLINE_MS: '1000',
+          OLIPHAUNT_GITHUB_READ_MAX_ATTEMPTS: '1',
+          OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS: '0',
+        }),
+      });
+      if (mode === 'reuse') {
+        assert.equal(result.status, 0, result.stderr);
+        const proof = /^run_id=(\d+)$/mu.exec(readFileSync(output, 'utf8'))?.[1];
+        assert.equal(proof, '77');
+        assert.equal(command('prepare-release-pr.sh', proof).status, 0);
+        assert.ok(readFileSync(path.join(directory, 'required'), 'utf8').includes('true'));
+      } else if (['active', 'source', 'absent', 'feature'].includes(mode)) {
+        assert.equal(result.status, 0, result.stderr);
+        const pending = readFileSync(output, 'utf8');
+        assert.doesNotMatch(pending, /^run_id=/mu);
+        assert.match(
+          pending,
+          new RegExp(`qualification_pending_run_id=${mode === 'active' ? 77 : 88}`),
+        );
+        assert.match(
+          pending,
+          /qualification_pending_run_url=https:\/\/github\.com\/f0rr0\/oliphaunt\/actions\/runs\//u,
+        );
+        assert.match(pending, /qualification_pending_run_attempt=1/u);
+        assert.match(result.stderr, /resume automatically after qualification/u);
+        assert.equal(command('prepare-release-pr.sh', undefined).status, 1);
+      } else {
+        assert.notEqual(result.status, 0);
+        assert.ok(!existsSync(output), result.stdout);
+      }
+      if (['source', 'absent', 'feature', 'race', 'ambiguous'].includes(mode))
+        assert.deepEqual(JSON.parse(readFileSync(dispatch, 'utf8')), { ref: 'main' });
+      else assert.ok(!existsSync(dispatch));
+    });
+  }
+});
+
+test('one Prepare request retains pending Native intent and resumes the original producer after full proof', async () => {
+  await fixture(async ({ root, source, git, write, command }) => {
+    const workflow = Bun.YAML.parse(
+      readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8'),
+    );
+    const steps = workflow.jobs['qualify-prepare-source'].steps;
+    const request = steps.find((step) => step.id === 'native_qualification');
+    const record = steps.find((step) => step.id === 'prepare_intent');
+    const upload = steps.find((step) => step.name === 'Retain pending Prepare intent');
+    assert.equal(upload.with.name, '${{ steps.prepare_intent.outputs.artifact_name }}');
+    assert.equal(upload.with['retention-days'], 30);
+    const bin = path.join(root, '.git/bin');
+    mkdirSync(bin);
+    write(
+      '.git/bin/gh',
+      '#!/usr/bin/env bash\nset -euo pipefail\n[[ ! -e "$FAKE_DISPATCH" ]] || exit 93\nwhile [[ $# -gt 0 ]]; do if [[ "$1" == --input ]]; then cp "$2" "$FAKE_DISPATCH"; break; fi; shift; done\nprintf \'{"workflow_run_id":88}\\n\'\n',
+    );
+    chmodSync(path.join(bin, 'gh'), 0o755);
+    const output = path.join(root, '.git/request-output');
+    const env = isolatedGitHubTestEnvironment({
+      PATH: `${bin}:${path.dirname(process.execPath)}:${process.env.PATH}`,
+      GH_TOKEN: 'test-token',
+      GH_REPO: 'f0rr0/oliphaunt',
+      GITHUB_SHA: source,
+      GITHUB_OUTPUT: output,
+      BUN_OPTIONS: `--preload=${ROOT}/tools/release/testdata/require-workflow-success-github.mts`,
+      FAKE_NATIVE_SHA: source,
+      FAKE_MODE: 'native-absent',
+      FAKE_DISPATCH: path.join(root, '.git/dispatch.json'),
+      FAKE_LOG: path.join(root, '.git/reads'),
+      OLIPHAUNT_GITHUB_READ_MAX_ATTEMPTS: '1',
+    });
+    const runRequest = () =>
+      spawnSync('bash', ['-c', request.run], { cwd: ROOT, encoding: 'utf8', timeout: 10_000, env });
+    const pending = runRequest();
+    assert.equal(pending.status, 0, pending.stderr);
+    const outputs = Object.fromEntries(
+      readFileSync(output, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => line.split('=')),
+    );
+    assert.equal(outputs.run_id, undefined);
+    assert.equal(outputs.qualification_pending_run_id, '88');
+    assert.equal(command('prepare-release-pr.sh', undefined).status, 1);
+    const intentFile = path.join(root, '.git/intent.json');
+    const controller = nativePrepareContinuationFixture(
+      source,
+      git('rev-parse', 'HEAD^{tree}'),
+      88,
+    );
+    const recorded = spawnSync(
+      'bash',
+      [
+        '-c',
+        record.run.replace(
+          'tools/release/native-prepare-continuation.mts',
+          `${ROOT}/tools/release/native-prepare-continuation.mts`,
+        ),
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 10_000,
+        env: isolatedGitHubTestEnvironment({
+          ...controller.state.environment,
+          RUNNER_TEMP: path.dirname(intentFile),
+          GITHUB_OUTPUT: path.join(root, '.git/intent-output'),
+          NATIVE_PENDING_RUN_ID: outputs.qualification_pending_run_id,
+          NATIVE_PENDING_RUN_ATTEMPT: outputs.qualification_pending_run_attempt,
+        }),
+      },
+    );
+    assert.equal(recorded.status, 0, recorded.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(intentFile, 'utf8')), controller.state.intent);
+    assert.equal(
+      readFileSync(path.join(root, '.git/intent-output'), 'utf8'),
+      'artifact_name=native-prepare-intent-1\n',
+    );
+    controller.state.native.status = 'in_progress';
+    assert.deepEqual(await reconcileNativePrepare(controller.event('release'), controller.io), []);
+    controller.state.native.status = 'completed';
+    assert.equal((await reconcileNativePrepare(controller.event(), controller.io))[0].runId, 41);
+    assert.deepEqual(controller.state.posts, [41]);
+    assert.equal(controller.state.original.event, 'workflow_dispatch');
+    assert.equal(controller.state.original.head_sha, source);
+    env.FAKE_NATIVE_COMPLETE = 'true';
+    env.GITHUB_OUTPUT = path.join(root, '.git/resumed-output');
+    const resumed = runRequest();
+    assert.equal(resumed.status, 0, resumed.stderr);
+    const proof = /^run_id=(\d+)$/mu.exec(readFileSync(env.GITHUB_OUTPUT, 'utf8'))?.[1];
+    assert.equal(proof, '88');
+    assert.equal(command('prepare-release-pr.sh', proof).status, 0);
+    assert.equal(git('rev-parse', 'HEAD'), source);
+    assert.deepEqual(JSON.parse(readFileSync(env.FAKE_DISPATCH, 'utf8')), { ref: 'main' });
   });
 });
 

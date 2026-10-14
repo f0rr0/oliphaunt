@@ -77,12 +77,71 @@ jobs:
           RELEASE_APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
           RELEASE_QUALIFICATION_RUN_ID: ${{ inputs.qualification_run_id }}
         run: bash .github/scripts/validate-release-workflow-inputs.sh
-  prepare-release-pr:
-    name: Prepare release PR
+  qualify-prepare-source:
+    name: Resolve native qualification for preparation
     needs: validate-inputs
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 10
     if: ${{ inputs.operation == 'prepare-release-pr' }}
+    environment: release-pr
+    permissions:
+      actions: write
+      contents: read
+    outputs:
+      run_id: ${{ steps.native_qualification.outputs.run_id }}
+    steps:
+      - name: Require main
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "Releases must be run from main; got $GITHUB_REF" >&2
+            exit 1
+          fi
+      - name: Checkout exact preparation source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require current main
+        run: bash .github/scripts/require-current-main.sh "$GITHUB_SHA"
+      - name: Set up verified Node.js and Bun
+        uses: ./.github/actions/setup-node-bun
+      - name: Request or reuse exact Native qualification
+        id: native_qualification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          bash .github/scripts/require-workflow-success.sh 'Native Bazel qualification' "$GITHUB_SHA" 0
+          --job Required --request-native-qualification
+      - name: Record pending exact-source Prepare intent
+        id: prepare_intent
+        if: ${{ steps.native_qualification.outputs.qualification_pending_run_id != '' }}
+        env:
+          RELEASE_OPERATION: ${{ inputs.operation }}
+          NATIVE_PENDING_RUN_ID: ${{ steps.native_qualification.outputs.qualification_pending_run_id }}
+          NATIVE_PENDING_RUN_ATTEMPT: ${{ steps.native_qualification.outputs.qualification_pending_run_attempt }}
+        run: bun tools/release/native-prepare-continuation.mts record "$RUNNER_TEMP/intent.json"
+      - name: Retain pending Prepare intent
+        if: ${{ steps.native_qualification.outputs.qualification_pending_run_id != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.prepare_intent.outputs.artifact_name }}
+          path: ${{ runner.temp }}/intent.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Report pending automatic preparation
+        if: ${{ steps.native_qualification.outputs.qualification_pending_run_id != '' }}
+        env:
+          NATIVE_RUN_URL: ${{ steps.native_qualification.outputs.qualification_pending_run_url }}
+        run: |
+          printf 'Prepare is retained and will resume automatically after [Native qualification](%s) succeeds.\n' "$NATIVE_RUN_URL" >> "$GITHUB_STEP_SUMMARY"
+  prepare-release-pr:
+    name: Prepare release PR
+    needs: [validate-inputs, qualify-prepare-source]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    if: ${{ inputs.operation == 'prepare-release-pr' && needs.qualify-prepare-source.outputs.run_id != '' }}
     environment: release-pr
     permissions:
       actions: read
@@ -121,14 +180,6 @@ jobs:
         uses: ./.github/actions/setup-node-bun
       - name: Install locked release tooling
         run: bun install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
-      - name: Require qualified native source
-        id: native_qualification
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: >-
-          bash .github/scripts/require-workflow-success.sh 'Native Bazel qualification' "$GITHUB_SHA" 900
-          --event push --event workflow_dispatch --job Required
       - name: Set up Rust for dependency metadata and manifest synchronization
         uses: ./.github/actions/setup-rust
         with:
@@ -137,12 +188,12 @@ jobs:
         id: prepare_candidate
         env:
           GH_TOKEN: ${{ steps.release_pr_token.outputs.token }}
-          NATIVE_QUALIFICATION_RUN_ID: ${{ steps.native_qualification.outputs.run_id }}
+          NATIVE_QUALIFICATION_RUN_ID: ${{ needs.qualify-prepare-source.outputs.run_id }}
         run: bash tools/release/prepare-release-pr.sh "$RUNNER_TEMP/release-candidate"
       - name: Close and validate the local release candidate
         if: ${{ steps.prepare_candidate.outputs.required == 'true' }}
         env:
-          NATIVE_QUALIFICATION_RUN_ID: ${{ steps.native_qualification.outputs.run_id }}
+          NATIVE_QUALIFICATION_RUN_ID: ${{ needs.qualify-prepare-source.outputs.run_id }}
         run: bash tools/release/close-release-candidate.sh "$RUNNER_TEMP/release-candidate"
       - name: Retain qualified native release inputs
         if: ${{ steps.prepare_candidate.outputs.native_inputs == 'true' }}
