@@ -1,6 +1,7 @@
-import * as fs from 'node:fs';
-import * as crypto from 'node:crypto';
 import assert from 'node:assert/strict';
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+
 function extensionReceipt(
   reportFile,
   metadataFile,
@@ -26,6 +27,7 @@ function extensionReceipt(
     'extensionCatalogComplete',
     'extensionCount',
     'icuRuntimeProof',
+    'lifecycleResume',
     'pgTextsearchEnglishBm25',
     'platform',
     'runner',
@@ -38,13 +40,23 @@ function extensionReceipt(
     );
   }
   if (
-    payload.schema !== 'oliphaunt-expo-smoke-pass-v4' ||
+    payload.schema !== 'oliphaunt-expo-smoke-pass-v5' ||
     payload.runner !== 'smoke' ||
     payload.platform !== platform
   ) {
     throw new Error(`${platform} app PASS receipt schema, runner, or platform identity mismatch`);
   }
   const expectedIcu = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_ICU;
+  const expectedLifecycle = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_LIFECYCLE;
+  if (expectedLifecycle !== '0' && expectedLifecycle !== '1') {
+    throw new Error(`${platform} app PASS receipt requires an explicit lifecycle expectation`);
+  }
+  if (
+    typeof payload.lifecycleResume !== 'boolean' ||
+    (expectedLifecycle === '1' && payload.lifecycleResume !== true)
+  ) {
+    throw new Error(`${platform} app PASS receipt omitted the required lifecycle resume proof`);
+  }
   const expectedCatalogProfile = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE;
   if (expectedIcu !== '0' && expectedIcu !== '1') {
     throw new Error(`${platform} app PASS receipt requires an exact artifact ICU expectation`);
@@ -111,6 +123,7 @@ function extensionReceipt(
     extensions: expected,
     extensionCatalogSha256: catalogSha256,
     appPassPayloadSha256: crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
+    lifecycleResume: payload.lifecycleResume,
   };
   return receipt;
 }

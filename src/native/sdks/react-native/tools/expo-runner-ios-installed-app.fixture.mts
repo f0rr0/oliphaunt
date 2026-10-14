@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+
 const [command, ...args] = process.argv.slice(2);
 switch (command) {
   case 'receipt': {
@@ -6,7 +7,7 @@ switch (command) {
     const extensions = (metadata.extensions ?? []).map((row) => row['sql-name']).sort();
     process.stdout.write(
       JSON.stringify({
-        schema: 'oliphaunt-expo-smoke-pass-v4',
+        schema: 'oliphaunt-expo-smoke-pass-v5',
         runner: 'smoke',
         platform: 'ios',
         extensionCount: extensions.length,
@@ -16,6 +17,7 @@ switch (command) {
         extensionCatalogSha256: metadata['extension-catalog-sha256'],
         catalogProfile: 'standard',
         icuRuntimeProof: false,
+        lifecycleResume: args[1] === 'lifecycle',
       }),
     );
     break;

@@ -7,6 +7,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 . "$root/src/native/sdks/react-native/tools/expo-runner-ios-installed-app.sh"
 . "$root/src/native/sdks/react-native/tools/expo-runner-reporting.sh"
+. "$root/src/native/sdks/react-native/tools/expo-runner-common.sh"
 
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-ios-runner-test.XXXXXX")"
 trap 'rm -rf "$test_root"' EXIT
@@ -70,6 +71,7 @@ success_tag=OLIPHAUNT_EXPO_SMOKE_PASS
 export CI_HEAD_SHA="$(git rev-parse HEAD)"
 export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=0
 export OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE=standard
+export OLIPHAUNT_MOBILE_E2E_EXPECT_LIFECYCLE=0
 export OLIPHAUNT_MOBILE_E2E_EXPECT_EXTENSIONS="$(
   bun -e 'const metadata = await Bun.file(process.argv[1]).json(); console.log(metadata.extensions.map((row) => row["sql-name"]).join(","));' \
     "$root/src/extensions/generated/sdk/extensions.json"
@@ -87,3 +89,104 @@ if verify_mobile_e2e_smoke_receipt ios "$scratch_root" >/dev/null 2>&1; then
 fi
 
 echo "iOS runner failure and receipt checks passed"
+
+# Release must deliver a registered-scheme URL through UIKit. Debug retains
+# the development launcher's supported argument; neither changes bundle flags.
+calls="$test_root/launch-calls"
+app_id=dev.oliphaunt.fixture
+openurl_failure=0
+xcrun() {
+  printf '%s\n' "$*" >>"$calls"
+  if [ "$2" = openurl ] && [ "$openurl_failure" = 1 ]; then return 7; fi
+  if [ "$2" = launch ]; then printf '%s: %s\n' "$app_id" "$$"; fi
+}
+uses_ios_metro() { [ "$configuration" = Debug ]; }
+configuration=Release
+launch_ios_simulator_runner owned-simulator 'fixture://smoke?liboliphauntLifecycle=1' >"$test_root/launch-output"
+grep -Fxq 'simctl openurl owned-simulator fixture://smoke?liboliphauntLifecycle=1' "$calls"
+grep -Fxq 'simctl launch owned-simulator dev.oliphaunt.fixture' "$calls"
+[ "$(wc -l <"$calls" | tr -d '[:space:]')" = 2 ]
+if grep -Fq -- '--initialUrl' "$calls"; then
+  echo 'Release forwarded an unsupported initialUrl argument' >&2
+  exit 1
+fi
+: >"$calls"
+openurl_failure=1
+status=0
+launch_output="$(launch_ios_simulator_runner owned-simulator 'fixture://smoke')" || status=$?
+[ "$status" = 7 ]
+[ "$(wc -l <"$calls" | tr -d '[:space:]')" = 1 ]
+if grep -Fq 'simctl launch ' "$calls"; then
+  echo 'failed registered URL launch fell through to ordinary launch' >&2
+  exit 1
+fi
+openurl_failure=0
+: >"$calls"
+configuration=Debug
+launch_ios_simulator_runner owned-simulator 'fixture://development' >"$test_root/launch-output"
+grep -Fxq 'simctl launch owned-simulator dev.oliphaunt.fixture --initialUrl fixture://development' "$calls"
+[ "$(wc -l <"$calls" | tr -d '[:space:]')" = 1 ]
+
+# Exercise the actual simulator runner loop: an ordinary PASS before readiness
+# cannot stand in for lifecycle, while a completed requested exercise succeeds.
+configuration=Release
+sdk=iphonesimulator
+runner=smoke
+lifecycle_smoke=1
+clean_simulator_install=0
+scheme=fixture
+startup_gucs=""
+failure_tag=OLIPHAUNT_EXPO_SMOKE_FAIL
+timeout_seconds=5
+metro_dev_log="$test_root/no-metro.log"
+select_ios_simulator_udid() { printf 'owned-simulator'; }
+boot_ios_simulator() { :; }
+resolve_ios_app_process_name() { printf 'fixture'; }
+write_ios_process_metrics() { :; }
+start_ios_simulator_log_capture() {
+  mkdir -p "$scratch_root/logs"
+  ios_simulator_log_file="$scratch_root/logs/smoke-simulator-unified.log"
+  : >"$ios_simulator_log_file"
+  sleep 60 &
+  ios_simulator_log_pid=$!
+}
+completed_receipt="$(bun "$root/src/native/sdks/react-native/tools/expo-runner-ios-installed-app.fixture.mts" receipt "$root/src/extensions/generated/sdk/extensions.json" lifecycle)"
+exercise_ios_lifecycle() {
+  printf 'exercised\n' >"$test_root/lifecycle-exercised"
+  printf '%s\n' \
+    'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:state","state":"background"}' \
+    'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:state","state":"active"}' \
+    'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:sql:done"}' \
+    "$success_tag $completed_receipt" >>"$ios_simulator_log_file"
+}
+xcrun() {
+  if [ "$2" = openurl ]; then
+    if [ "$scenario" = complete ]; then
+      printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:ready","state":"active"}\n' >>"$ios_simulator_log_file"
+    else
+      printf '%s %s\n' "$success_tag" "$receipt_json" >>"$ios_simulator_log_file"
+    fi
+  elif [ "$2" = launch ]; then
+    printf '%s: %s\n' "$app_id" "$$"
+  fi
+}
+export OLIPHAUNT_MOBILE_E2E_EXPECT_LIFECYCLE=1
+for scenario in ordinary complete; do
+  scratch_root="$test_root/$scenario"
+  status=0
+  (
+    ios_simulator_log_pid=""
+    trap 'stop_mobile_log_capture "$ios_simulator_log_pid"' EXIT
+    install_and_launch "$app"
+  ) >"$test_root/$scenario.log" 2>&1 || status=$?
+  if [ "$scenario" = ordinary ]; then
+    [ "$status" != 0 ]
+    grep -Fq 'PASS preceded the requested lifecycle exercise' "$test_root/$scenario.log"
+    [ ! -e "$test_root/lifecycle-exercised" ]
+  else
+    [ "$status" = 0 ] || { cat "$test_root/$scenario.log" >&2; exit 1; }
+    [ -s "$test_root/lifecycle-exercised" ]
+    verify_mobile_e2e_smoke_receipt ios "$scratch_root"
+  fi
+done
+echo 'iOS registered URL launch and required lifecycle receipt passed'

@@ -230,6 +230,8 @@ wait_for_android_smoke_receipt() {
     write_android_e2e_diagnostics "$adb" receipt-failure
     fail "Android smoke receipt failed (status $receipt_status: timeout=1, failure=2, capture=3, app=4)"
   fi
+  [ "$lifecycle_smoke" != 1 ] || [ "${lifecycle_exercised:-0}" = 1 ] ||
+    fail "Android smoke PASS preceded the requested lifecycle exercise"
   write_runner_report "$pass" || fail "invalid Android smoke receipt"
   write_android_process_metrics "$adb"
 }

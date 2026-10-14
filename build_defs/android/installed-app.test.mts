@@ -7,11 +7,11 @@ import path from 'node:path';
 import {
   assertInstalledApk,
   assertKvmAvailable,
-  assertLifecycleReceipt,
   captureInstalledAndroidFailure,
   emulatorArguments,
   stageSdkFiles,
 } from './installed-app.mts';
+import { assertLifecycleReceipt } from '../apple/installed-app.mts';
 
 test('installed test binds the exact final signed APK, selected extensions and emulator ABI', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'android-installed-contract-'));
@@ -103,15 +103,35 @@ test('private emulator launch always uses KVM and requires actual lifecycle rece
     () => assertKvmAvailable('/definitely-absent-oliphaunt-kvm'),
     /No device test was executed/u,
   );
-  const stages = ['lifecycle:ready', 'lifecycle:state', 'lifecycle:sql:done']
-    .map((stage) => 'OLIPHAUNT_EXPO_SMOKE_STAGE ' + JSON.stringify({ stage, state: 'background' }))
-    .join('\n');
+  const events = [
+    { stage: 'lifecycle:ready', state: 'active' },
+    { stage: 'lifecycle:state', state: 'background' },
+    { stage: 'lifecycle:state', state: 'active' },
+    { stage: 'lifecycle:sql:done' },
+  ];
+  const lines = events.map((event) => 'OLIPHAUNT_EXPO_SMOKE_STAGE ' + JSON.stringify(event));
+  lines.push('OLIPHAUNT_EXPO_SMOKE_PASS {"lifecycleResume":true}');
+  const stages = lines.join('\n');
   assertLifecycleReceipt(stages);
   assert.throws(() => assertLifecycleReceipt('OLIPHAUNT_EXPO_SMOKE_PASS {}'), /omitted/u);
   assert.throws(
     () => assertLifecycleReceipt(stages.replaceAll('background', 'active')),
     /background/u,
   );
+  assert.throws(
+    () => assertLifecycleReceipt(stages.replaceAll('background', 'inactive')),
+    /background/u,
+  );
+  for (let omitted = 0; omitted < lines.length; omitted++)
+    assert.throws(
+      () => assertLifecycleReceipt(lines.filter((_, index) => index !== omitted).join('\n')),
+      /ordered/u,
+    );
+  for (let index = 0; index < lines.length - 1; index++) {
+    const reordered = [...lines];
+    [reordered[index], reordered[index + 1]] = [reordered[index + 1], reordered[index]];
+    assert.throws(() => assertLifecycleReceipt(reordered.join('\n')), /ordered/u);
+  }
 });
 
 test.skipIf(process.platform !== 'linux')(

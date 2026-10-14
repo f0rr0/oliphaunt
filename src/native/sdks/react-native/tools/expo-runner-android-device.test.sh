@@ -86,7 +86,7 @@ case "$*" in
         packet="$(mktemp "${ADB_RECEIPT}.XXXXXX")"
         {
           case "$ADB_SCENARIO" in
-            lifecycle-pre-ready-*)
+            lifecycle-pre-ready-*|lifecycle-unrequested)
               printf '10042 OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"open:start"}\n'
               [ "$ADB_SCENARIO" != lifecycle-pre-ready-fatal ] || printf '10042 FATAL EXCEPTION: main\n'
               ;;
@@ -140,7 +140,7 @@ write_android_process_metrics() { :; }
 write_android_e2e_diagnostics() { :; }
 write_runner_report() { [ "$1" = "$ADB_CURRENT_RECEIPT" ]; }
 exercise_android_lifecycle() { printf '67890\n' > "$ADB_CURRENT_PID"; }
-for scenario in pass unrelated-crash app-crash stale unrelated-pass missing-uid invalid-uid benchmark-pass benchmark-unrelated-crash benchmark-own-fatal lifecycle-pass lifecycle-unrelated-crash lifecycle-fatal lifecycle-dead-capture lifecycle-dead-app lifecycle-pre-ready-fatal lifecycle-pre-ready-dead-capture lifecycle-pre-ready-dead-app; do
+for scenario in pass unrelated-crash app-crash stale unrelated-pass missing-uid invalid-uid benchmark-pass benchmark-unrelated-crash benchmark-own-fatal lifecycle-pass lifecycle-unrelated-crash lifecycle-fatal lifecycle-dead-capture lifecycle-dead-app lifecycle-pre-ready-fatal lifecycle-pre-ready-dead-capture lifecycle-pre-ready-dead-app lifecycle-unrequested; do
   runner=smoke
   success_tag=OLIPHAUNT_EXPO_SMOKE_PASS
   failure_tag=OLIPHAUNT_EXPO_SMOKE_FAIL
@@ -166,6 +166,7 @@ for scenario in pass unrelated-crash app-crash stale unrelated-pass missing-uid 
     lifecycle-dead-capture|lifecycle-pre-ready-dead-capture) grep -Fq 'receipt failed (status 3:' "$scratch/$scenario-launch.log" ;;
     lifecycle-dead-app|lifecycle-pre-ready-dead-app) grep -Fq 'receipt failed (status 4:' "$scratch/$scenario-launch.log" ;;
     lifecycle-pass|lifecycle-unrelated-crash) [ "$(cat "$ADB_CURRENT_PID")" = 67890 ] ;;
+    lifecycle-unrequested) grep -Fq 'PASS preceded the requested lifecycle exercise' "$scratch/$scenario-launch.log" ;;
     benchmark-own-fatal) grep -Fq 'Expo Android benchmark failed' "$scratch/$scenario-launch.log" ;;
   esac || { cat "$scratch/$scenario-launch.log" >&2; echo "$scenario: terminal guard assertion failed" >&2; exit 1; }
 done

@@ -235,6 +235,7 @@ export default function HomeScreen() {
           extensionCatalogSha256: GENERATED_MOBILE_EXTENSION_METADATA_SHA256,
           catalogProfile: profileProof.catalogProfile,
           icuRuntimeProof: profileProof.catalogProfile === 'icu',
+          lifecycleResume: lifecycle !== undefined,
         });
         setReport(nextReport);
         (globalThis as Record<string, unknown>).__OLIPHAUNT_EXPO_SMOKE_REPORT__ = nextReport;
@@ -611,7 +612,7 @@ function waitForBackgroundAndForeground(
     const subscription = AppState.addEventListener('change', (nextState) => {
       states.push(nextState);
       stage('lifecycle:state', { state: nextState });
-      if (nextState === 'background' || nextState === 'inactive') {
+      if (nextState === 'background') {
         sawBackground = true;
         return;
       }

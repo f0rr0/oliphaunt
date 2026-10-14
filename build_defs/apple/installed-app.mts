@@ -115,6 +115,26 @@ export function simulatorTemplate(value: any) {
   return choices[0];
 }
 
+/** The same captured launch must finish background/resume SQL before its PASS. */
+export function assertLifecycleReceipt(log: string) {
+  const stages = [
+    /OLIPHAUNT_EXPO_SMOKE_STAGE.*"stage":"lifecycle:ready"/u,
+    /OLIPHAUNT_EXPO_SMOKE_STAGE.*"stage":"lifecycle:state".*"state":"background"/u,
+    /OLIPHAUNT_EXPO_SMOKE_STAGE.*"stage":"lifecycle:state".*"state":"active"/u,
+    /OLIPHAUNT_EXPO_SMOKE_STAGE.*"stage":"lifecycle:sql:done"/u,
+    /OLIPHAUNT_EXPO_SMOKE_PASS/u,
+  ];
+  let next = 0;
+  for (const line of log.split('\n')) {
+    if (stages[next]?.test(line)) next++;
+  }
+  assert.equal(
+    next,
+    stages.length,
+    'Installed smoke omitted ordered background/resume SQL before PASS',
+  );
+}
+
 async function installedApp(args: string[]) {
   assert.equal(process.platform, 'darwin', 'Actual iOS installed test requires the Mac host');
   const [specFile, archive, sdk, node, receiptFile, ...files] = args;
@@ -217,6 +237,9 @@ async function installedApp(args: string[]) {
       await child.exited,
       0,
       'Original actual installed app lifecycle/SQL/receipt qualification failed',
+    );
+    assertLifecycleReceipt(
+      readFileSync(path.join(output, 'logs/smoke-simulator-unified.log'), 'utf8'),
     );
     assertCandidateCheckout(checkout, sha, tree, helpers);
   } finally {

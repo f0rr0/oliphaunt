@@ -18,7 +18,8 @@ import {
 } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { assertCandidateCheckout } from '../apple/installed-app.mts';
+import { assertCandidateCheckout, assertLifecycleReceipt } from '../apple/installed-app.mts';
+
 import { verifyAndroidEmulator } from '../languages/jvm/android-sdk-metadata.mts';
 
 const digest = (file: string) =>
@@ -106,20 +107,6 @@ export function emulatorArguments(name: string, port: number, sdk: string) {
     '-sysdir',
     path.join(sdk, 'system-images/android-35/google_atd/x86_64'),
   ];
-}
-
-export function assertLifecycleReceipt(log: string) {
-  for (const stage of ['lifecycle:ready', 'lifecycle:sql:done'])
-    assert(
-      new RegExp(`OLIPHAUNT_EXPO_SMOKE_STAGE.*"stage":"${stage}"`, 'u').test(log),
-      `Installed smoke omitted actual ${stage}`,
-    );
-  assert(
-    /OLIPHAUNT_EXPO_SMOKE_STAGE.*"stage":"lifecycle:state".*"state":"(?:background|inactive)"/u.test(
-      log,
-    ),
-    'Installed smoke omitted actual background transition',
-  );
 }
 
 /** Retain device diagnostics before the owned emulator and ADB server are stopped. */

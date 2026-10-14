@@ -273,7 +273,8 @@ verify_mobile_extension_smoke_receipt() {
     return 1
   fi
   local receipt_status=0
-  bun "$root/src/native/sdks/react-native/tools/expo-runner-reporting.mts" extension-receipt "$report" "$metadata" "$platform" "$candidate_sha" "$candidate_tree" "$OLIPHAUNT_MOBILE_E2E_EXPECT_EXTENSIONS" >"$receipt_tmp" || receipt_status=$?
+  OLIPHAUNT_MOBILE_E2E_EXPECT_LIFECYCLE="${lifecycle_smoke:-${OLIPHAUNT_MOBILE_E2E_EXPECT_LIFECYCLE:-0}}" \
+    bun "$root/src/native/sdks/react-native/tools/expo-runner-reporting.mts" extension-receipt "$report" "$metadata" "$platform" "$candidate_sha" "$candidate_tree" "$OLIPHAUNT_MOBILE_E2E_EXPECT_EXTENSIONS" >"$receipt_tmp" || receipt_status=$?
   if [ "$receipt_status" -ne 0 ]; then
     rm -f "$receipt_tmp" "$receipt" || true
     echo "$platform installed-app extension receipt verification failed" >&2
