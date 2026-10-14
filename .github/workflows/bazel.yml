@@ -804,6 +804,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Upload WASIX build and query diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-wasix-build-diagnostics
+          path: ${{ runner.temp }}/wasix-tools-build-capture/diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Capture final WASIX Cargo inputs for native hosts
         id: wasix-cargo-capture
         run: |
