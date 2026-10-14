@@ -9,6 +9,12 @@ load("@rules_java//java/common:java_common.bzl", "java_common")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/extensions:mobile.bzl", "MobileExtensionInfo")
 load("//build_defs/extensions:final_leaf.bzl", "ExtensionFinalLeafInfo")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS")
+
+_DESCRIPTORS = {row["sql-name"]: row for row in EXTENSIONS.values()}
+
+def _module_stems(sql_names):
+    return {name: _DESCRIPTORS[name]["native-module-file"][:-3] if _DESCRIPTORS[name].get("native-module-file") else None for name in sql_names}
 
 _NODE = "@rules_nodejs//nodejs:toolchain_type"
 _TAR = "@tar.bzl//tar/toolchain:type"
@@ -235,7 +241,7 @@ def _final_aar_impl(ctx):
     output = ctx.actions.declare_file(ctx.label.name + ".aar")
     if source.is_directory or ctx.attr.kind != "aar":
         _action(ctx, "final-aar", {"source": source.path, "output": output.path,
-            "kind": ctx.attr.kind, "package": ctx.attr.package, "abi": ctx.attr.abi}, [source], [output], "AndroidFinalMavenAar")
+            "kind": ctx.attr.kind, "package": ctx.attr.package, "abi": ctx.attr.abi, "catalogProfile": ctx.attr.catalog_profile}, [source], [output], "AndroidFinalMavenAar")
     else:
         if source.extension != "aar":
             fail("Installed Android classes must come from the actual final AAR")
@@ -245,6 +251,7 @@ def _final_aar_impl(ctx):
 android_final_aar = rule(implementation = _final_aar_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = dict(_RUNNER, **{"source": attr.label(mandatory = True, allow_files = True, cfg = "exec"),
         "kind": attr.string(default = "aar", values = ["aar", "runtime", "seed"]),
+        "catalog_profile": attr.string(default = "standard", values = ["standard", "icu"]),
         "package": attr.string(), "abi": attr.string(default = "", values = ["", "arm64-v8a", "x86_64"])}))
 
 def mobile_query_input(owner, requirement, source_version, final_version, selected_products, suppliers):
@@ -291,7 +298,7 @@ def _link_receipt_impl(ctx):
         fail("Static extension proof needs the actual pinned NDK nm tool")
     output = ctx.actions.declare_file(ctx.label.name + ".json")
     _action(ctx, "extension-receipt", {"library": ctx.file.library.path, "registry": ctx.file.registry.path,
-        "members": members, "selectedExtensions": ctx.attr.selected_extensions, "abi": ctx.attr.abi, "nm": nm[0].path, "output": output.path},
+        "members": members, "selectedExtensions": ctx.attr.selected_extensions, "moduleStems": _module_stems(ctx.attr.selected_extensions), "abi": ctx.attr.abi, "nm": nm[0].path, "output": output.path},
         inputs + ctx.files._nm, [output], "AndroidSelectedStaticExtensionLink")
     return [DefaultInfo(files = depset([output]))]
 
@@ -327,14 +334,16 @@ def _runtime_assets_impl(ctx):
             "github": [file.path for file in leaf.github], "frozen": leaf.frozen.path})
         inputs += leaf.github + [leaf.frozen] + ([leaf.validation] if leaf.validation else [])
     _action(ctx, "runtime-assets", {"leaves": leaves, "abi": ctx.attr.abi, "payload": ctx.files.payload[0].path, "formatter": ctx.executable._formatter.path,
-        "version": ctx.attr.version, "selectedExtensions": ctx.attr.selected_extensions, "mobileStaticModules": ctx.attr.mobile_static_modules,
+        "version": ctx.attr.version, "selectedExtensions": ctx.attr.selected_extensions, "moduleStems": _module_stems(ctx.attr.selected_extensions), "mobileStaticModules": ctx.attr.mobile_static_modules,
+        "icu": ctx.file.icu.path if ctx.file.icu else None,
         "receipt": ctx.file.receipt.path, "output": output.path},
-        ctx.files.payload + [ctx.file.receipt] + inputs, [output], "ExpoSelectedRuntimeAssets", tools = [ctx.attr._formatter[DefaultInfo].files_to_run])
+        ctx.files.payload + [ctx.file.receipt] + ctx.files.icu + inputs, [output], "ExpoSelectedRuntimeAssets", tools = [ctx.attr._formatter[DefaultInfo].files_to_run])
     return [DefaultInfo(files = depset([output]))]
 
 android_app_runtime_assets = rule(implementation = _runtime_assets_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = dict(_RUNNER, **{
         "payload": attr.label(default = Label("//src/native/runtime:public_payload"), cfg = "exec", allow_files = True),
+        "icu": attr.label(allow_single_file = True, cfg = "exec"),
         "version": attr.string(mandatory = True), "selected_extensions": attr.string_list(mandatory = True),
         "mobile_static_modules": attr.string_list(mandatory = True), "receipt": attr.label(mandatory = True, allow_single_file = [".json"]),
         "abi": attr.string(mandatory = True, values = ["arm64-v8a", "x86_64"]),
@@ -385,7 +394,7 @@ def _verify_impl(ctx):
                            "zipalign": sdk.zip_align.executable.path, "apksigner": sdk.apk_signer.executable.path,
                            "aapt": sdk.aapt.executable.path,
                            "objdump": objdump[0].path,
-                           "output": proof.path, "selectedExtensions": ctx.attr.selected_extensions,
+                           "output": proof.path, "selectedExtensions": ctx.attr.selected_extensions, "moduleStems": _module_stems(ctx.attr.selected_extensions),
                            "catalogProfile": ctx.attr.catalog_profile, "profileProbe": ctx.file.catalog_profile_probe.path,
                            "expectedClasses": ctx.attr.expected_classes,
                            "environment": {"JAVA_HOME": runtime.java_home}},

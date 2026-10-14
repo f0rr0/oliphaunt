@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDeterministicZip } from '../../tools/packaging/archive-directory.mts';
 import {
+  extractPortableArchiveTree,
   readAndroidApkEntries,
   readPortableArchiveEntries,
 } from '../../tools/packaging/portable-archive.mts';
@@ -830,6 +831,7 @@ export async function extractFinalAar(spec: {
   source: string;
   output: string;
   kind?: 'aar' | 'runtime' | 'seed';
+  catalogProfile?: 'standard' | 'icu';
   package?: string;
   abi?: string;
 }) {
@@ -849,6 +851,7 @@ export async function extractFinalAar(spec: {
   }
   assert(spec.package && /^[a-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/u.test(spec.package));
   const entries = readPortableArchiveEntries(candidates[0].source);
+  const seedPrefix = spec.catalogProfile === 'icu' ? 'cluster-seed-icu/' : 'cluster-seed/';
   if (spec.kind === 'runtime') {
     assert(spec.abi === 'arm64-v8a' || spec.abi === 'x86_64');
     const library = entries.get(`jni/${spec.abi}/liboliphaunt.so`);
@@ -863,7 +866,7 @@ export async function extractFinalAar(spec: {
       }
   } else
     assert(
-      entries.get('cluster-seed/manifest.properties')?.isFile,
+      entries.get(seedPrefix + 'manifest.properties')?.isFile,
       'Canonical Android seed TAR omitted its resource manifest',
     );
   await scratch(async (root) => {
@@ -871,9 +874,7 @@ export async function extractFinalAar(spec: {
       if (entry.isFile)
         put(
           root,
-          spec.kind === 'seed' && name.startsWith('cluster-seed/')
-            ? `assets/oliphaunt/${name}`
-            : name,
+          spec.kind === 'seed' && name.startsWith(seedPrefix) ? `assets/oliphaunt/${name}` : name,
           Buffer.from(entry.data()),
         );
     assert(
@@ -894,11 +895,40 @@ export async function extractFinalAar(spec: {
   });
 }
 
+/** SQL-only extensions require resources; compiled extensions require exact original registrations. */
+export function assertAndroidStaticMembers(
+  selectedExtensions: string[],
+  moduleStems: Record<string, string | null>,
+  members: { sqlName: string; nativeModuleStem: string }[],
+) {
+  assert.deepEqual(
+    Object.keys(moduleStems).sort(),
+    [...selectedExtensions].sort(),
+    'Canonical SQL cohort differs',
+  );
+  const compiled = Object.keys(moduleStems)
+    .filter((name) => moduleStems[name] !== null)
+    .sort();
+  assert.deepEqual(
+    members.map((row) => row.sqlName).sort(),
+    compiled,
+    'Compiled registration cohort differs',
+  );
+  for (const row of members)
+    assert.equal(
+      row.nativeModuleStem,
+      moduleStems[row.sqlName],
+      'Canonical native module stem differs',
+    );
+  return compiled.map((name) => moduleStems[name]!);
+}
+
 export function extensionLinkReceipt(spec: {
   library: string;
   registry: string;
   members: { archive: string; registration: string }[];
   selectedExtensions: string[];
+  moduleStems: Record<string, string | null>;
   abi: string;
   nm: string;
   output: string;
@@ -949,10 +979,7 @@ export function extensionLinkReceipt(spec: {
       };
     })
     .sort((a, b) => a.sqlName.localeCompare(b.sqlName));
-  assert.deepEqual(
-    members.map((row) => row.sqlName),
-    [...spec.selectedExtensions].sort(),
-  );
+  assertAndroidStaticMembers(spec.selectedExtensions, spec.moduleStems, members);
   writeFileSync(
     spec.output,
     JSON.stringify(
@@ -975,8 +1002,9 @@ export async function stageAndroidSelectedResources(spec: any, root: string) {
   const receipt = JSON.parse(readFileSync(spec.receipt, 'utf8'));
   assert.equal(receipt.abi, spec.abi, 'Selected resource ABI differs from its actual link proof');
   assert.deepEqual(receipt.selectedExtensions, [...spec.selectedExtensions].sort());
-  const selected = new Map(receipt.members.map((row: any) => [row.sqlName, row]));
-  assert.equal(selected.size, spec.selectedExtensions.length, 'Duplicate selected resource member');
+  assertAndroidStaticMembers(spec.selectedExtensions, spec.moduleStems, receipt.members);
+  const selected = new Set(spec.selectedExtensions);
+  const linkedMembers = new Map(receipt.members.map((row: any) => [row.sqlName, row]));
   const covered = new Set<string>(),
     archives: string[] = [];
   for (const [index, leaf] of spec.leaves.entries()) {
@@ -990,22 +1018,30 @@ export async function stageAndroidSelectedResources(spec: any, root: string) {
     const frozen = JSON.parse(readFileSync(staged.output, 'utf8'));
     for (const row of frozen.extensions ?? [frozen]) {
       if (!selected.has(row.sqlName)) continue;
+      assert.equal(
+        row.nativeModuleStem,
+        spec.moduleStems[row.sqlName],
+        'Frozen native module stem differs',
+      );
       assert(!covered.has(row.sqlName), 'Repeated selected carrier member');
       covered.add(row.sqlName);
       const assets = row.assets.filter((asset: any) => asset.kind === 'runtime');
       assert.equal(assets.length, 1, 'Selected member must have one exact runtime archive');
-      const entries = readPortableArchiveEntries(realpathSync(assets[0].path));
-      const linked: any = selected.get(row.sqlName);
-      const archive = entries.get(
-        `mobile-static/${leaf.target}/extensions/${linked.nativeModuleStem}/liboliphaunt_extension_${linked.nativeModuleStem}.a`,
-      );
-      assert(archive?.isFile, 'Selected resource carrier lacks its linked static archive');
-      assert.equal(
-        createHash('sha256').update(archive.data()).digest('hex'),
-        linked.archiveSha256,
-        'Selected carrier static archive differs from actual app link',
-      );
-      archives.push(realpathSync(assets[0].path));
+      const archivePath = realpathSync(assets[0].path);
+      const linked: any = linkedMembers.get(row.sqlName);
+      if (linked) {
+        const entries = readPortableArchiveEntries(archivePath);
+        const archive = entries.get(
+          `mobile-static/${leaf.target}/extensions/${linked.nativeModuleStem}/liboliphaunt_extension_${linked.nativeModuleStem}.a`,
+        );
+        assert(archive?.isFile, 'Selected resource carrier lacks its linked static archive');
+        assert.equal(
+          createHash('sha256').update(archive.data()).digest('hex'),
+          linked.archiveSha256,
+          'Selected carrier static archive differs from actual app link',
+        );
+      }
+      archives.push(archivePath);
     }
   }
   assert.deepEqual(
@@ -1023,7 +1059,9 @@ export async function prepareAppRuntimeAssets(spec: {
   formatter: string;
   version: string;
   selectedExtensions: string[];
+  moduleStems: Record<string, string | null>;
   mobileStaticModules: string[];
+  icu?: string;
   receipt: string;
   output: string;
 }) {
@@ -1031,9 +1069,20 @@ export async function prepareAppRuntimeAssets(spec: {
     '../../src/native/runtime/tools/finalize-native-runtime-carrier.mts'
   );
   return scratch(async (root) => {
-    assert(spec.selectedExtensions.length === spec.mobileStaticModules.length);
     const receipt = JSON.parse(readFileSync(spec.receipt, 'utf8'));
+    const modules = assertAndroidStaticMembers(
+      spec.selectedExtensions,
+      spec.moduleStems,
+      receipt.members,
+    );
+    assert.deepEqual(
+      [...spec.mobileStaticModules].sort(),
+      modules.sort(),
+      'Selected native modules differ',
+    );
     assert.deepEqual(receipt.selectedExtensions, [...spec.selectedExtensions].sort());
+    const icu = path.join(root, 'icu');
+    if (spec.icu) extractPortableArchiveTree(realpathSync(spec.icu), icu);
     const stage = path.join(root, 'resources');
     const archives = await stageAndroidSelectedResources(spec, root);
     const identity = createHash('sha256').update(readFileSync(spec.receipt)).digest('hex');
@@ -1049,6 +1098,7 @@ export async function prepareAppRuntimeAssets(spec: {
         '--runtime-cache-identity',
         `android-app-${identity}`,
         '--require-mobile-static-registry',
+        ...(spec.icu ? ['--runtime-feature', 'icu'] : []),
         ...archives.flatMap((archive) => ['--prebuilt-extension', archive]),
         ...spec.selectedExtensions.flatMap((name) => ['--extension', name]),
         ...spec.mobileStaticModules.flatMap((name) => ['--mobile-static-module', name]),
@@ -1064,6 +1114,7 @@ export async function prepareAppRuntimeAssets(spec: {
           OLIPHAUNT_INSTALL_DIR: path.join(realpathSync(spec.payload), 'runtime'),
           OLIPHAUNT_EMBEDDED_MODULE_DIR: path.join(realpathSync(spec.payload), 'lib/modules'),
           OLIPHAUNT_RUNTIME_CACHE_DIR: path.join(root, 'cache'),
+          ...(spec.icu ? { OLIPHAUNT_ICU_DATA_DIR: path.join(icu, 'share/icu') } : {}),
         },
       },
     );
@@ -1278,6 +1329,7 @@ export async function verifyAndroidApk(spec: {
   objdump: string;
   output: string;
   selectedExtensions: string[];
+  moduleStems: Record<string, string | null>;
   expectedClasses: string[];
   catalogProfile: string;
   profileProbe: string;
@@ -1342,6 +1394,16 @@ export async function verifyAndroidApk(spec: {
   assert(runtimeManifestEntry?.isFile, 'Full Expo APK omitted its runtime manifest');
   const runtimeManifest = Buffer.from(runtimeManifestEntry.data());
   await assertAndroidRuntimeManifest(runtimeManifest);
+  const seedPrefix = spec.catalogProfile === 'icu' ? 'cluster-seed-icu' : 'cluster-seed';
+  assert.equal(
+    runtimeManifest
+      .toString('utf8')
+      .match(/^runtimeFeatures=(.*)$/mu)?.[1]
+      ?.split(',')
+      .includes('icu'),
+    spec.catalogProfile === 'icu',
+    'APK runtime features differ from its catalog profile',
+  );
   for (const name of [
     `lib/${spec.abi}/liboliphaunt.so`,
     `lib/${spec.abi}/liboliphaunt_mobile_bindings.so`,
@@ -1356,7 +1418,7 @@ export async function verifyAndroidApk(spec: {
     `lib/${spec.abi}/libreact_codegen_safeareacontext.so`,
     `lib/${spec.abi}/liboliphaunt_extensions.so`,
     `lib/${spec.abi}/libjnidispatch.so`,
-    'assets/oliphaunt/cluster-seed/manifest.properties',
+    `assets/oliphaunt/${seedPrefix}/manifest.properties`,
     'assets/oliphaunt/static-registry/link-receipt.json',
     'assets/index.android.bundle',
   ])
@@ -1378,7 +1440,7 @@ export async function verifyAndroidApk(spec: {
       'APK bundle omitted its original catalog expectation ' + name,
     );
   const seedManifest = Buffer.from(
-    entries.get('assets/oliphaunt/cluster-seed/manifest.properties')!.data(),
+    entries.get(`assets/oliphaunt/${seedPrefix}/manifest.properties`)!.data(),
   ).toString('utf8');
   assert.equal(
     seedManifest.match(/^catalogProfile=(.*)$/mu)?.[1],
@@ -1446,6 +1508,7 @@ export async function verifyAndroidApk(spec: {
   assert.equal(receipt.schema, 'oliphaunt-android-static-extension-link-v1');
   assert.equal(receipt.abi, spec.abi);
   assert.deepEqual(receipt.selectedExtensions, [...spec.selectedExtensions].sort());
+  assertAndroidStaticMembers(spec.selectedExtensions, spec.moduleStems, receipt.members);
   assert.equal(
     receipt.linkedSha256,
     createHash('sha256')

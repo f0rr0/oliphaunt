@@ -21,7 +21,7 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
 load("//build_defs/android:app.bzl", "android_aar_native", "android_apk_proof", "android_app_runtime_assets", "android_extension_receipt", "android_final_aar", "android_header_tree", "android_jni_aar", "android_workspace_npm", "expo_android_bundle", "expo_android_project", "mobile_query_input", "react_native_android_codegen")
 load("//build_defs/android:native-cpp.bzl", "REACT_NATIVE_RELEASE_DEFINES")
 load("//build_defs/extensions:mobile.bzl", "mobile_extension_registry")
-load("//build_defs/extensions:mobile_members.bzl", "MOBILE_MEMBER_LIBRARIES", "MOBILE_MEMBER_TARGETS")
+load("//build_defs/extensions:mobile_members.bzl", "MOBILE_MEMBER_LIBRARIES", "MOBILE_MEMBER_TARGETS", "MOBILE_SQL_ONLY_MEMBERS")
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 
 package(default_visibility = ["//visibility:public"])
@@ -29,10 +29,12 @@ package(default_visibility = ["//visibility:public"])
 exports_files(["package.json", "app.json"])
 
 APP_NAME = "react-native-oliphaunt-expo"
-# The previous mandatory example compiler selected vector. Bundle expectations
-# and the real native registration share this exact source-owned cohort.
+# iOS retains its independent example cohort. Android exercises every supported
+# SQL extension, including SQL-only members, in the existing ICU installed app.
 SELECTED_EXTENSIONS = ["vector"]
-CATALOG_PROFILE = "standard"
+ANDROID_COMPILED_EXTENSIONS = sorted(MOBILE_MEMBER_TARGETS.keys())
+ANDROID_SELECTED_EXTENSIONS = sorted(ANDROID_COMPILED_EXTENSIONS + MOBILE_SQL_ONLY_MEMBERS)
+ANDROID_CATALOG_PROFILE = "icu"
 ROOTS = CONSUMER_TOOLS[APP_NAME]
 PACKAGES = {key: CONSUMER_PACKAGES[key] for key in CONSUMER_CLOSURES[APP_NAME]}
 INPUTS = {"@javascript_android_app_packages//:" + key: key for key in PACKAGES}
@@ -69,7 +71,7 @@ expo_android_project(name = "android_project", sources = COMMON_INPUTS["sources"
     exec_compatible_with = COMMON_INPUTS["exec_compatible_with"])
 expo_android_bundle(name = "android_bundle", sources = COMMON_INPUTS["sources"], package_inputs = INPUTS, package_identities = IDENTITIES,
     package_roots = ROOTS, workspace_inputs = WORKSPACE_INPUTS, workspace_identities = WORKSPACE_IDENTITIES,
-    selected_extensions = SELECTED_EXTENSIONS, catalog_profile = CATALOG_PROFILE,
+    selected_extensions = ANDROID_SELECTED_EXTENSIONS, catalog_profile = ANDROID_CATALOG_PROFILE,
     catalog_profile_probe = "//src/database-resources:contracts/profile-probe.json",
     exec_compatible_with = COMMON_INPUTS["exec_compatible_with"])
 react_native_android_codegen(
@@ -125,7 +127,7 @@ aar_import(name = "kotlin_installed", aar = ":kotlin_final_aar", package = "dev.
 ])
 [android_final_aar(name = "runtime_" + name + "_aar", source = "//src/native/runtime:android_maven_liboliphaunt_android_" + name,
     kind = "runtime", package = "dev.oliphaunt.runtime", abi = abi) for name, abi in [("arm64_v8a", "arm64-v8a"), ("x86_64", "x86_64")]]
-android_final_aar(name = "seed_final_aar", source = "//src/database-resources:android_datum64_standard_carriers_maven_files", kind = "seed", package = "dev.oliphaunt.resources")
+android_final_aar(name = "seed_final_aar", source = "//src/database-resources:android_datum64_icu_carriers_maven_files", kind = "seed", package = "dev.oliphaunt.resources", catalog_profile = ANDROID_CATALOG_PROFILE)
 aar_import(name = "seed_installed", aar = ":seed_final_aar", package = "dev.oliphaunt.resources")
 aar_import(name = "runtime_installed", aar = select({_ARM64: ":runtime_arm64_v8a_aar", _X64: ":runtime_x86_64_aar"}), package = "dev.oliphaunt.runtime")
 android_aar_native(name = "runtime_library", aar = select({_ARM64: ":runtime_arm64_v8a_aar", _X64: ":runtime_x86_64_aar"}), abi = _ABI, library = "liboliphaunt.so")
@@ -150,17 +152,17 @@ cc_binary(name = "liboliphauntreactnative.so", deps = [":oliphaunt_reactnative_s
 # Static registration consumes the actual ABI-specific archive; final proof
 # binds its definitions to the same cohort embedded in the Hermes bundle.
 _DESCRIPTORS = {row["sql-name"]: row for row in EXTENSIONS.values()}
-_MEMBERS = [MOBILE_MEMBER_TARGETS[name] for name in SELECTED_EXTENSIONS]
-mobile_extension_registry(name = "selected_registry", members = _MEMBERS, sql_names = SELECTED_EXTENSIONS)
+_MEMBERS = [MOBILE_MEMBER_TARGETS[name] for name in ANDROID_COMPILED_EXTENSIONS]
+mobile_extension_registry(name = "selected_registry", members = _MEMBERS, sql_names = ANDROID_COMPILED_EXTENSIONS)
 cc_binary(name = "liboliphaunt_extensions.so", srcs = [":selected_registry"],
-    deps = [":runtime_cc", ":runtime_headers", "@expo_android_sources//:shared_cxx_runtime"] + [MOBILE_MEMBER_LIBRARIES[name] for name in SELECTED_EXTENSIONS],
+    deps = [":runtime_cc", ":runtime_headers", "@expo_android_sources//:shared_cxx_runtime"] + [MOBILE_MEMBER_LIBRARIES[name] for name in ANDROID_COMPILED_EXTENSIONS],
     features = _SHARED, linkshared = True, linkstatic = True,
     linkopts = ["-Wl,-z,defs", "-Wl,-z,max-page-size=16384", "-Wl,-z,common-page-size=16384", "-Wl,-soname,liboliphaunt_extensions.so"], target_compatible_with = ["@platforms//os:android"])
-android_extension_receipt(name = "extension_receipt", library = ":liboliphaunt_extensions.so", registry = ":selected_registry", members = _MEMBERS, selected_extensions = SELECTED_EXTENSIONS, abi = _ABI)
-android_app_runtime_assets(name = "selected_runtime_assets", receipt = ":extension_receipt", selected_extensions = SELECTED_EXTENSIONS,
-    mobile_static_modules = [_DESCRIPTORS[name]["native-module-file"][:-3] for name in SELECTED_EXTENSIONS], version = PRODUCTS["liboliphaunt-native"]["version"], abi = _ABI,
-    leaves = select({_ARM64: ["//build_defs/extensions/mobile/final:" + product.replace("-", "_") + "_android_arm64_v8a" for product in sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in SELECTED_EXTENSIONS}.keys())],
-                     _X64: ["//build_defs/extensions/mobile/final:" + product.replace("-", "_") + "_android_x86_64" for product in sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in SELECTED_EXTENSIONS}.keys())]}))
+android_extension_receipt(name = "extension_receipt", library = ":liboliphaunt_extensions.so", registry = ":selected_registry", members = _MEMBERS, selected_extensions = ANDROID_SELECTED_EXTENSIONS, abi = _ABI)
+android_app_runtime_assets(name = "selected_runtime_assets", receipt = ":extension_receipt", selected_extensions = ANDROID_SELECTED_EXTENSIONS,
+    mobile_static_modules = [_DESCRIPTORS[name]["native-module-file"][:-3] for name in ANDROID_COMPILED_EXTENSIONS], icu = "//src/database-resources:icu_payload", version = PRODUCTS["liboliphaunt-native"]["version"], abi = _ABI,
+    leaves = select({_ARM64: ["//build_defs/extensions/mobile/final:" + product.replace("-", "_") + "_android_arm64_v8a" for product in sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in ANDROID_SELECTED_EXTENSIONS}.keys())],
+                     _X64: ["//build_defs/extensions/mobile/final:" + product.replace("-", "_") + "_android_x86_64" for product in sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in ANDROID_SELECTED_EXTENSIONS}.keys())]}))
 
 _LIBRARIES = {
     ":liboliphauntreactnative.so": "liboliphauntreactnative.so", ":liboliphaunt_extensions.so": "liboliphaunt_extensions.so",
@@ -182,8 +184,8 @@ android_binary(name = "release_binary", manifest = ":android_manifest", custom_p
     manifest_values = {"applicationId": "dev.oliphaunt.reactnative.example", "minSdkVersion": str(_MIN_SDK), "targetSdkVersion": "36", "versionCode": "1", "versionName": "0.0.0"},
     deps = [":app_release_classes", ":bundle_assets", ":expo_config_assets", ":runtime_assets", ":seed_installed", ":runtime_installed", ":source_jni", "@expo_android_maven//:com_facebook_hermes_hermes_android_release"],
     multidex = "native", incremental_dexing = 0, nocompress_extensions = ["so", "bundle"])
-[android_apk_proof(name = name, apk = ":release_binary", abi = abi, keystore = ":android_keystore", selected_extensions = SELECTED_EXTENSIONS,
-    catalog_profile = CATALOG_PROFILE, catalog_profile_probe = "//src/database-resources:contracts/profile-probe.json",
+[android_apk_proof(name = name, apk = ":release_binary", abi = abi, keystore = ":android_keystore", selected_extensions = ANDROID_SELECTED_EXTENSIONS,
+    catalog_profile = ANDROID_CATALOG_PROFILE, catalog_profile_probe = "//src/database-resources:contracts/profile-probe.json",
     min_sdk_version = _MIN_SDK,
     expected_classes = ["dev.oliphaunt.reactnative.example.MainApplication", "dev.oliphaunt.reactnative.example.MainActivity", "expo.modules.splashscreen.SplashScreenModule", "expo.modules.sqlite.SQLiteModule", "com.th3rdwave.safeareacontext.SafeAreaContextPackage", "com.facebook.soloader.SoLoader", "com.facebook.drawee.backends.pipeline.Fresco"],
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
@@ -318,7 +320,7 @@ filegroup(name = "android_installed_apk", srcs = [":android_release_x86_64"], ou
 filegroup(name = "android_installed_apk_proof", srcs = [":android_release_x86_64"], output_group = "proof")
 expo_android_installed_test(
     name = "android_installed_test", apk = ":android_installed_apk", proof = ":android_installed_apk_proof",
-    sdk = "//src/native/sdks/react-native:npm", extensions = SELECTED_EXTENSIONS,
+    sdk = "//src/native/sdks/react-native:npm", extensions = ANDROID_SELECTED_EXTENSIONS,
     helpers = ["//src/native/sdks/react-native:mobile_android_e2e_sources", "//src/native/runtime:mobile_e2e_sources",
         "//src/extensions/generated/sdk:metadata", "//:src/extensions/generated/mobile/static-registry.json",
         "//src/database-resources:contracts/profile-probe.json"],

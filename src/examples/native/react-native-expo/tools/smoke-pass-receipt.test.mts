@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   GENERATED_MOBILE_EXTENSION_METADATA_SHA256,
   GENERATED_MOBILE_EXTENSION_PLAN,
+  GENERATED_MOBILE_EXTENSION_SMOKE,
 } from '../src/generated/extension-smoke.ts';
 import {
   EXPO_SMOKE_PASS_EVENT_MAX_BYTES,
@@ -86,6 +87,22 @@ test('lifecycle receipts distinguish a completed resume from an ordinary smoke',
 
 test('receipt serialization fails closed on proof drift and remains constant-size as catalogs grow', () => {
   const extensions = platformExtensions();
+  const sqlOnly = GENERATED_MOBILE_EXTENSION_PLAN.find(
+    (extension) => extension.sqlName === 'pgtap',
+  );
+  assert(
+    sqlOnly && GENERATED_MOBILE_EXTENSION_SMOKE[sqlOnly.sqlName].length > 0,
+    'SQL-only mobile member must have smoke SQL',
+  );
+  assert.throws(
+    () =>
+      serializeExpoSmokePassReceipt(
+        receiptInput('android', {
+          activatedExtensions: extensions.filter((name) => name !== sqlOnly.sqlName),
+        }),
+      ),
+    /activated extension mismatch/u,
+  );
   assert.throws(
     () =>
       serializeExpoSmokePassReceipt(

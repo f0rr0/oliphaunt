@@ -25,6 +25,7 @@ import {
   androidDynamicLinkMetadata,
   assertAndroidElf,
   assertAndroidRuntimeManifest,
+  assertAndroidStaticMembers,
   assertHermesBytecode,
   dexDefinedClasses,
   extractFinalAar,
@@ -159,6 +160,7 @@ test('selected Android resources use frozen carrier bytes and bind both ABI stat
           version: '1.2.3',
           compatibility: { nativeRuntimeVersion: '3.3.3' },
           sqlName: 'vector',
+          nativeModuleStem: 'vector',
           dataFiles: ['postgresql/data'],
           assets: [
             {
@@ -182,10 +184,55 @@ test('selected Android resources use frozen carrier bytes and bind both ABI stat
         github: [github],
         frozen,
       };
+      const sqlPayload = path.join(directory, 'pgtap-payload');
+      mkdirSync(path.join(sqlPayload, 'files/share/postgresql/extension'), { recursive: true });
+      const pgtapSql = Buffer.from('original SQL-only install fixture\n');
+      writeFileSync(
+        path.join(sqlPayload, 'files/share/postgresql/extension/pgtap.control'),
+        'default_version=fixture\n',
+      );
+      writeFileSync(
+        path.join(sqlPayload, 'files/share/postgresql/extension/pgtap--fixture.sql'),
+        pgtapSql,
+      );
+      const sqlArchive = path.join(directory, 'pgtap.tar.gz');
+      writeFileSync(sqlArchive, canonicalGzipSync(await createDeterministicTar(sqlPayload)));
+      const sqlFrozen = path.join(directory, 'pgtap-frozen.json');
+      writeFileSync(
+        sqlFrozen,
+        JSON.stringify({
+          product: 'pgtap-product',
+          releaseProduct: 'pgtap-owner',
+          version: '1.2.3',
+          compatibility: { nativeRuntimeVersion: '3.3.3' },
+          sqlName: 'pgtap',
+          nativeModuleStem: null,
+          assets: [
+            {
+              name: 'pgtap.tar.gz',
+              family: 'native',
+              target: `android-${abi}`,
+              kind: 'runtime',
+              bytes: readFileSync(sqlArchive).length,
+              sha256: createHash('sha256').update(readFileSync(sqlArchive)).digest('hex'),
+            },
+          ],
+        }),
+      );
+      const sqlLeaf = {
+        product: 'pgtap-product',
+        owner: 'pgtap-owner',
+        version: '1.2.3',
+        runtimeVersion: '3.3.3',
+        target: `android-${abi}`,
+        sqlNames: ['pgtap'],
+        github: [sqlArchive],
+        frozen: sqlFrozen,
+      };
       const receipt = path.join(directory, 'receipt.json');
       const link = {
         abi,
-        selectedExtensions: ['vector'],
+        selectedExtensions: ['pgtap', 'vector'],
         members: [
           {
             sqlName: 'vector',
@@ -197,17 +244,79 @@ test('selected Android resources use frozen carrier bytes and bind both ABI stat
       writeFileSync(receipt, JSON.stringify(link));
       const spec = {
         abi,
-        selectedExtensions: ['vector'],
+        selectedExtensions: ['pgtap', 'vector'],
+        moduleStems: { pgtap: null, vector: 'vector' },
         version: '3.3.3',
-        leaves: [leaf],
+        leaves: [leaf, sqlLeaf],
         receipt,
       };
       const staged = await stageAndroidSelectedResources(spec, path.join(directory, 'valid'));
-      assert.equal(staged.length, 1);
+      assert.equal(staged.length, 2);
       assert(readFileSync(staged[0]).equals(readFileSync(file)));
+      assert(readFileSync(staged[1]).equals(readFileSync(sqlArchive)));
+      const stagedSql = readPortableArchiveEntries(staged[1]).get(
+        'files/share/postgresql/extension/pgtap--fixture.sql',
+      );
+      assert(stagedSql?.isFile);
+      assert(Buffer.from(stagedSql.data()).equals(pgtapSql));
+      await assert.rejects(
+        stageAndroidSelectedResources(
+          { ...spec, leaves: [leaf] },
+          path.join(directory, 'missing-sql'),
+        ),
+        /Selected resource carriers differ/u,
+      );
+      const originalSqlFrozen = readFileSync(sqlFrozen);
+      writeFileSync(
+        sqlFrozen,
+        JSON.stringify({
+          ...JSON.parse(originalSqlFrozen.toString('utf8')),
+          nativeModuleStem: 'pgtap',
+        }),
+      );
+      await assert.rejects(
+        stageAndroidSelectedResources(spec, path.join(directory, 'wrong-sql-module')),
+        /module stem/u,
+      );
+      writeFileSync(sqlFrozen, originalSqlFrozen);
+      assert.throws(
+        () =>
+          assertAndroidStaticMembers(spec.selectedExtensions, { vector: 'vector' }, link.members),
+        /Canonical SQL cohort differs/u,
+      );
+      assert.throws(
+        () =>
+          assertAndroidStaticMembers(spec.selectedExtensions, spec.moduleStems, [
+            ...link.members,
+            { sqlName: 'pgtap', nativeModuleStem: 'pgtap' },
+          ]),
+        /Compiled registration cohort differs/u,
+      );
+      assert.throws(
+        () =>
+          assertAndroidStaticMembers(spec.selectedExtensions, spec.moduleStems, [
+            { ...link.members[0], nativeModuleStem: 'wrong-vector' },
+          ]),
+        /Canonical native module stem differs/u,
+      );
       const intermediate = path.join(directory, 'formatter-intermediate');
       const data = Buffer.from('runtime resource bytes');
       const registry = Buffer.from('source static registration');
+      const icuBytes =
+        abi === 'x86_64' ? Buffer.from('immutable ICU fixture bytes') : Buffer.alloc(0);
+      let icu: string | undefined;
+      let icuDigest = '';
+      if (icuBytes.length) {
+        const icuRoot = path.join(directory, 'icu');
+        const icuData = path.join(icuRoot, 'share/icu');
+        mkdirSync(icuData, { recursive: true });
+        writeFileSync(path.join(icuData, 'icudt76l.dat'), icuBytes);
+        icuDigest = 'a'.repeat(64);
+        icu = path.join(directory, 'icu.tar.gz');
+        writeFileSync(icu, canonicalGzipSync(await createDeterministicTar(icuRoot)));
+        mkdirSync(path.join(intermediate, 'runtime/files/share/icu'), { recursive: true });
+        writeFileSync(path.join(intermediate, 'runtime/files/share/icu/icudt76l.dat'), icuBytes);
+      }
       mkdirSync(path.join(intermediate, 'runtime/files/share/postgresql'), { recursive: true });
       mkdirSync(path.join(intermediate, 'static-registry'));
       writeFileSync(path.join(intermediate, 'runtime/files/share/postgresql/data'), data);
@@ -217,10 +326,10 @@ test('selected Android resources use frozen carrier bytes and bind both ABI stat
       );
       const intermediateManifest = nativeRuntimeResourceManifestFixture({
         overrides: {
-          runtimeFeatures: abi === 'x86_64' ? 'icu' : '',
-          icuDataTreeSha256: abi === 'x86_64' ? 'a'.repeat(64) : '',
-          selectedExtensions: 'vector',
-          extensions: 'vector',
+          runtimeFeatures: icu ? 'icu' : '',
+          icuDataTreeSha256: icuDigest,
+          selectedExtensions: 'pgtap,vector',
+          extensions: 'pgtap,vector',
           mobileStaticRegistryState: 'complete',
           mobileStaticRegistryRegistered: 'vector',
           nativeModuleStems: 'vector',
@@ -235,17 +344,23 @@ test('selected Android resources use frozen carrier bytes and bind both ABI stat
       const formatter = path.join(directory, 'formatter.mts');
       writeFileSync(
         formatter,
-        `#!${process.execPath}\nimport { cpSync } from 'node:fs';\nimport path from 'node:path';\nconst args=process.argv.slice(2);\ncpSync(${JSON.stringify(intermediate)},path.join(args[args.indexOf('--output')+1],'oliphaunt'),{recursive:true});\n`,
+        `#!${process.execPath}\nimport assert from 'node:assert/strict';\nimport { cpSync, readFileSync } from 'node:fs';\nimport path from 'node:path';\nconst args=process.argv.slice(2);\nassert.equal(args.includes('--runtime-feature'),${Boolean(icu)});\nif(${Boolean(icu)}) { assert.equal(args[args.indexOf('--runtime-feature')+1],'icu'); assert(readFileSync(path.join(process.env.OLIPHAUNT_ICU_DATA_DIR,'icudt76l.dat')).equals(Buffer.from(${JSON.stringify(icuBytes.toString('hex'))},'hex'))); } else assert.equal(process.env.OLIPHAUNT_ICU_DATA_DIR,undefined);\nassert.equal(args.filter(arg=>arg==='--prebuilt-extension').length,2);\ncpSync(${JSON.stringify(intermediate)},path.join(args[args.indexOf('--output')+1],'oliphaunt'),{recursive:true});\n`,
       );
       chmodSync(formatter, 0o755);
       const output = path.join(directory, 'app-assets');
-      await prepareAppRuntimeAssets({
+      const assetSpec = {
         ...spec,
         payload,
         formatter,
         mobileStaticModules: ['vector'],
+        icu,
         output,
-      });
+      };
+      await assert.rejects(
+        prepareAppRuntimeAssets({ ...assetSpec, mobileStaticModules: [] }),
+        /Selected native modules differ/u,
+      );
+      await prepareAppRuntimeAssets(assetSpec);
       const closure = path.join(output, 'oliphaunt');
       const manifest = readFileSync(path.join(closure, 'runtime/manifest.properties'));
       await assertAndroidRuntimeManifest(manifest);
@@ -259,6 +374,10 @@ test('selected Android resources use frozen carrier bytes and bind both ABI stat
         ),
       );
       assert(readFileSync(path.join(closure, 'runtime/files/share/postgresql/data')).equals(data));
+      if (icu)
+        assert(
+          readFileSync(path.join(closure, 'runtime/files/share/icu/icudt76l.dat')).equals(icuBytes),
+        );
       assert(
         readFileSync(path.join(closure, 'static-registry/link-receipt.json')).equals(
           readFileSync(receipt),
@@ -267,7 +386,7 @@ test('selected Android resources use frozen carrier bytes and bind both ABI stat
       const report = readFileSync(path.join(closure, 'package-size.tsv'), 'utf8');
       assert(
         report.includes(
-          `package\ttotal\t-\t-\t${data.length + registry.length + readFileSync(receipt).length}\n`,
+          `package\ttotal\t-\t-\t${data.length + icuBytes.length + registry.length + readFileSync(receipt).length}\n`,
         ),
       );
       assert(report.includes('extension\tvector\tvector\t2\t99\n'));
@@ -349,6 +468,7 @@ test('actual APK proof rejects an unbound runtime manifest before deeper bytecod
       objdump: tool,
       output: path.join(root, 'proof.json'),
       selectedExtensions: [],
+      moduleStems: {},
       expectedClasses: [],
       catalogProfile: 'standard',
       profileProbe: '',
@@ -509,30 +629,39 @@ test('app-private Android envelope preserves canonical Maven runtime and seed TA
       }),
       /selected JNI/u,
     );
-    const seed = path.join(root, 'seed');
-    mkdirSync(path.join(seed, 'cluster-seed/files'), { recursive: true });
-    writeFileSync(path.join(seed, 'cluster-seed/manifest.properties'), 'physicalFormat=datum64\n');
-    writeFileSync(path.join(seed, 'cluster-seed/files/PG_VERSION'), '18\n');
-    const seedArchive = path.join(root, 'seed.tar.gz');
-    writeFileSync(seedArchive, canonicalGzipSync(await createDeterministicTar(seed)));
-    const seedOutput = path.join(root, 'seed.aar');
-    await extractFinalAar({
-      source: seedArchive,
-      output: seedOutput,
-      kind: 'seed',
-      package: 'dev.oliphaunt.resources',
-    });
-    const entries = readPortableArchiveEntries(seedOutput);
-    assert.equal(
-      Buffer.from(entries.get('assets/oliphaunt/cluster-seed/files/PG_VERSION')!.data()).toString(),
-      '18\n',
-    );
-    assert.equal(
-      Buffer.from(
-        entries.get('assets/oliphaunt/cluster-seed/manifest.properties')!.data(),
-      ).toString(),
-      'physicalFormat=datum64\n',
-    );
+    for (const catalogProfile of ['standard', 'icu'] as const) {
+      const prefix = catalogProfile === 'icu' ? 'cluster-seed-icu' : 'cluster-seed';
+      const seed = path.join(root, `seed-${catalogProfile}`);
+      mkdirSync(path.join(seed, prefix, 'files'), { recursive: true });
+      const manifest = Buffer.from(`catalogProfile=${catalogProfile}\nphysicalFormat=datum64\n`);
+      writeFileSync(path.join(seed, prefix, 'manifest.properties'), manifest);
+      writeFileSync(path.join(seed, prefix, 'files/PG_VERSION'), '18\n');
+      const seedArchive = path.join(root, `seed-${catalogProfile}.tar.gz`);
+      writeFileSync(seedArchive, canonicalGzipSync(await createDeterministicTar(seed)));
+      const seedOutput = path.join(root, `seed-${catalogProfile}.aar`);
+      const spec = {
+        source: seedArchive,
+        output: seedOutput,
+        kind: 'seed' as const,
+        package: 'dev.oliphaunt.resources',
+        catalogProfile,
+      };
+      await extractFinalAar(spec);
+      const entries = readPortableArchiveEntries(seedOutput);
+      assert.equal(
+        Buffer.from(entries.get(`assets/oliphaunt/${prefix}/files/PG_VERSION`)!.data()).toString(),
+        '18\n',
+      );
+      assert(
+        Buffer.from(entries.get(`assets/oliphaunt/${prefix}/manifest.properties`)!.data()).equals(
+          manifest,
+        ),
+      );
+      await assert.rejects(
+        extractFinalAar({ ...spec, catalogProfile: catalogProfile === 'icu' ? 'standard' : 'icu' }),
+        /seed TAR omitted its resource manifest/u,
+      );
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
