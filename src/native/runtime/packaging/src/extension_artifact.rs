@@ -36,6 +36,10 @@ pub(super) const EXTENSION_ARTIFACT_POSTGRESQL_LICENSE: &str =
     "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT";
 pub(super) const EXTENSION_ARTIFACT_OPENSSL_LICENSE: &str =
     "THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt";
+pub(super) const EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES: [&str; 2] = [
+    "share/licenses/openssl-native/LICENSE.txt",
+    "share/licenses/openssl-native/SOURCE.toml",
+];
 
 fn extension_artifact_legal_members(
     profile: NativeExtensionArtifactLicenseProfile,
@@ -89,9 +93,16 @@ pub(super) fn validate_extension_artifact_license_profile(
     let external = catalog::by_sql_name(sql_name)
         .and_then(|extension| extension.artifact_product.as_deref())
         .is_none_or(|product| product != "oliphaunt-extension-contrib-pg18");
+    let openssl_construction_files = license_files.iter().map(PathBuf::as_path).eq(
+        EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES
+            .iter()
+            .map(Path::new),
+    );
     let embeds_openssl = !external
         && sql_name == "pgcrypto"
         && (matches!(native_target, Some("macos-arm64" | "windows-x64-msvc"))
+            || (openssl_construction_files
+                && native_target.is_some_and(|target| DESKTOP_NATIVE_TARGETS.contains(&target)))
             || mobile_static_dependency_archives
                 .iter()
                 .any(|archive| archive.name == "openssl"));
@@ -118,7 +129,7 @@ pub(super) fn validate_extension_artifact_license_profile(
             manifest_path.display()
         )));
     }
-    if !external && !license_files.is_empty() {
+    if !(external || license_files.is_empty() || embeds_openssl && openssl_construction_files) {
         return Err(Error::InvalidConfig(format!(
             "manifest {} contrib profile must not declare upstream licenseFiles leaves",
             manifest_path.display()

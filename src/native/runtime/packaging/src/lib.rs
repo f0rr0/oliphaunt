@@ -2790,6 +2790,141 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             Some(NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl)
         );
 
+        for (target, profile) in [
+            (
+                "linux-x64-gnu",
+                NativeExtensionArtifactLicenseProfile::ContribNative,
+            ),
+            (
+                "windows-x64-msvc",
+                NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+            ),
+        ] {
+            let historical = temp.join(format!("pgcrypto-empty-{target}"));
+            write_profiled_extension_artifact(
+                &historical,
+                "pgcrypto",
+                "pgcrypto",
+                target,
+                profile,
+                &[],
+            );
+            assert_eq!(
+                load_prebuilt_extension_artifact(&historical)
+                    .unwrap()
+                    .license_profile,
+                Some(profile)
+            );
+        }
+
+        for (target, static_targets) in [
+            ("android-arm64-v8a", &["android-arm64-v8a"][..]),
+            ("android-x86_64", &["android-x86_64"][..]),
+            ("ios-xcframework", &["ios-device", "ios-simulator"][..]),
+            ("linux-x64-gnu", &[][..]),
+            ("linux-arm64-gnu", &[][..]),
+            ("macos-arm64", &[][..]),
+            ("windows-x64-msvc", &[][..]),
+        ] {
+            let artifact = temp.join(format!("pgcrypto-construction-{target}"));
+            write_profiled_extension_artifact(
+                &artifact,
+                "pgcrypto",
+                "pgcrypto",
+                target,
+                NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+                &EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES,
+            );
+            if !static_targets.is_empty() {
+                let mut archives = Vec::new();
+                let mut dependencies = Vec::new();
+                for static_target in static_targets {
+                    let archive =
+                        mobile_static_archive_artifact_relative_path(static_target, "pgcrypto");
+                    let dependency = mobile_static_dependency_archive_artifact_relative_path(
+                        static_target,
+                        "openssl",
+                        "libcrypto.a",
+                    );
+                    write_file(
+                        &artifact.join(&archive),
+                        b"fixture pgcrypto static archive\n",
+                    );
+                    write_file(
+                        &artifact.join(&dependency),
+                        b"fixture OpenSSL static archive\n",
+                    );
+                    archives.push(format!(
+                        "{static_target}:{}",
+                        archive.display().to_string().replace('\\', "/"),
+                    ));
+                    dependencies.push(format!(
+                        "{static_target}:openssl:{}",
+                        dependency.display().to_string().replace('\\', "/"),
+                    ));
+                }
+                let manifest = artifact.join("manifest.properties");
+                let text = fs::read_to_string(&manifest)
+                    .unwrap()
+                    .replace("mobilePrebuilt=no\n", "mobilePrebuilt=yes\n")
+                    .replace(
+                        "mobileStaticArchives=\n",
+                        &format!("mobileStaticArchives={}\n", archives.join(",")),
+                    )
+                    .replace(
+                        "mobileStaticDependencyArchives=\n",
+                        &format!(
+                            "mobileStaticDependencyArchives={}\n",
+                            dependencies.join(",")
+                        ),
+                    )
+                    .replace(
+                        "staticSymbolPrefix=\n",
+                        "staticSymbolPrefix=oliphaunt_static_pgcrypto\n",
+                    );
+                fs::write(manifest, text).unwrap();
+            }
+            let loaded = load_prebuilt_extension_artifact(&artifact).unwrap();
+            assert_eq!(
+                loaded.license_profile,
+                Some(NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl)
+            );
+            assert_eq!(
+                loaded.license_files,
+                EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES
+                    .map(PathBuf::from)
+                    .to_vec()
+            );
+            let extensions = [loaded];
+            let stems = if static_targets.is_empty() {
+                Vec::new()
+            } else {
+                vec!["pgcrypto".to_owned()]
+            };
+            let metadata = mobile_static_registry_metadata(&extensions, &stems).unwrap();
+            let resources = temp.join(format!("resources-{target}"));
+            let runtime = resources.join("runtime/files");
+            copy_prebuilt_extension_artifacts(&runtime, &extensions, Some(target), &metadata)
+                .unwrap();
+            for relative in EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES {
+                assert_eq!(
+                    fs::read(runtime.join(relative)).unwrap(),
+                    fs::read(artifact.join("files").join(relative)).unwrap()
+                );
+            }
+            write_file(
+                &resources.join("static-registry/manifest.properties"),
+                b"fixture static registry report marker\n",
+            );
+            let report =
+                runtime_resource_size_report(&resources, &extensions, Some(target), &metadata)
+                    .unwrap();
+            assert_eq!(
+                report.extensions[0].file_count,
+                if static_targets.is_empty() { 5 } else { 4 }
+            );
+        }
+
         let postgis = temp.join("postgis");
         let postgis_licenses = [
             "share/licenses/geos/COPYING",
@@ -2903,6 +3038,90 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             "unexpected wrong legal profile error: {error}"
         );
 
+        for (case, sql_name, target, profile, license_files, error_text) in [
+            (
+                "partial-construction",
+                "pgcrypto",
+                "macos-arm64",
+                NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+                vec![EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES[0]],
+                "must not declare upstream licenseFiles",
+            ),
+            (
+                "extra-construction",
+                "pgcrypto",
+                "macos-arm64",
+                NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+                vec![
+                    EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES[0],
+                    EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES[1],
+                    "share/licenses/unrelated/LICENSE",
+                ],
+                "must not declare upstream licenseFiles",
+            ),
+            (
+                "wrong-construction-member",
+                "cube",
+                "linux-x64-gnu",
+                NativeExtensionArtifactLicenseProfile::ContribNative,
+                EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES.to_vec(),
+                "must not declare upstream licenseFiles",
+            ),
+            (
+                "wrong-construction-target",
+                "pgcrypto",
+                "foreign-target",
+                NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+                EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES.to_vec(),
+                "expected 'contrib-native'",
+            ),
+            (
+                "wrong-construction-profile",
+                "pgcrypto",
+                "linux-x64-gnu",
+                NativeExtensionArtifactLicenseProfile::ContribNative,
+                EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES.to_vec(),
+                "expected 'contrib-native-openssl'",
+            ),
+        ] {
+            let artifact = temp.join(case);
+            write_profiled_extension_artifact(
+                &artifact,
+                sql_name,
+                sql_name,
+                target,
+                profile,
+                &license_files,
+            );
+            let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+            assert!(
+                error.to_string().contains(error_text),
+                "unexpected {case} error: {error}"
+            );
+        }
+        let construction = temp.join("missing-construction-file");
+        write_profiled_extension_artifact(
+            &construction,
+            "pgcrypto",
+            "pgcrypto",
+            "macos-arm64",
+            NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+            &EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES,
+        );
+        fs::remove_file(
+            construction
+                .join("files")
+                .join(EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES[1]),
+        )
+        .unwrap();
+        let error = load_prebuilt_extension_artifact(&construction).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("missing: files/share/licenses/openssl-native/SOURCE.toml"),
+            "unexpected missing construction file error: {error}"
+        );
+
         let _ = fs::remove_dir_all(temp);
     }
 
@@ -2927,6 +3146,38 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             error.to_string().contains("LICENSE must have mode 0644"),
             "unexpected legal mode error: {error}"
         );
+        let construction = temp.join("pgcrypto-construction-mode");
+        write_profiled_extension_artifact(
+            &construction,
+            "pgcrypto",
+            "pgcrypto",
+            "macos-arm64",
+            NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+            &EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES,
+        );
+        let license = construction
+            .join("files")
+            .join(EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES[0]);
+        fs::set_permissions(&license, fs::Permissions::from_mode(0o600)).unwrap();
+        let error = load_prebuilt_extension_artifact(&construction).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("share/licenses/openssl-native/LICENSE.txt must have mode 0644"),
+            "unexpected construction license mode error: {error}"
+        );
+        fs::remove_file(&license).unwrap();
+        std::os::unix::fs::symlink(
+            construction.join(EXTENSION_ARTIFACT_OPENSSL_LICENSE),
+            &license,
+        )
+        .unwrap();
+        let error = load_prebuilt_extension_artifact(&construction).unwrap_err();
+        assert!(
+            error.to_string().contains("contains unsafe symlink"),
+            "unexpected construction license symlink error: {error}"
+        );
+
         let _ = fs::remove_dir_all(temp);
     }
 
