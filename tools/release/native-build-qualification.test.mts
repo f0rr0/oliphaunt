@@ -1112,3 +1112,70 @@ test('configured qualification follows TestRunner producer edges and rejects mis
     f.cleanup();
   }
 });
+
+test('batched graph digests preserve canonical JSON bytes across boundaries and seeded values', () => {
+  const canonical = (value: unknown): string => {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+    if (value !== null && typeof value === 'object')
+      return `{${Object.keys(value)
+        .sort()
+        .map(
+          (key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`,
+        )
+        .join(',')}}`;
+    return JSON.stringify(value);
+  };
+  const f = fixture();
+  try {
+    const graph = f.evidence.cohorts[0].aquery as Record<string, unknown>;
+    const values: unknown[] = [
+      {},
+      [],
+      null,
+      true,
+      false,
+      0,
+      -0,
+      1e30,
+      -1e-30,
+      { '2': 'two', '10': 'ten' },
+      { empty: '', escaped: 'quote" slash\\ line\n tab\t', unicode: 'é中文𝄞\ud800\udfff' },
+      { z: [], a: {}, b: [null, { beta: false, alpha: true }] },
+      'é中文𝄞'.repeat(16_000),
+      Array.from({ length: 32_768 }, (_, i) => i),
+    ];
+    let state = 0x9e3779b9;
+    const random = (bound: number) => {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      return (state >>> 0) % bound;
+    };
+    const generated = (depth: number): unknown => {
+      const leaves: unknown[] = [null, true, false, '', 'é\n𝄞\ud800', random(10_000) - 5000];
+      if (!depth || random(3) === 0) return leaves[random(leaves.length)];
+      if (random(2) === 0) return Array.from({ length: random(6) }, () => generated(depth - 1));
+      return Object.fromEntries(
+        Array.from({ length: random(6) }, (_, i) => [
+          `key-${random(100)}-${i}`,
+          generated(depth - 1),
+        ]),
+      );
+    };
+    for (let i = 0; i < 128; i++) values.push(generated(4));
+    for (const value of values) {
+      graph.digestFixture = value;
+      const expected = `sha256:${createHash('sha256').update(canonical(graph)).digest('hex')}`;
+      expect(validateNativeBuildEvidence(f.evidence, f.expected).cohorts[0].aqueryDigest).toBe(
+        expected,
+      );
+    }
+    delete graph.digestFixture;
+    const expected = `sha256:${createHash('sha256').update(canonical(graph)).digest('hex')}`;
+    expect(validateNativeBuildEvidence(f.evidence, f.expected).cohorts[0].aqueryDigest).toBe(
+      expected,
+    );
+  } finally {
+    f.cleanup();
+  }
+});

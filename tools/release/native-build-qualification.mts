@@ -152,28 +152,41 @@ function canonical(value: unknown): string {
 }
 function digest(value: unknown) {
   const hash = createHash('sha256');
+  // Batch canonical tokens instead of making a crypto call for every dep-set ID.
+  let chunks: string[] = [];
+  let characters = 0;
+  const emit = (chunk: string) => {
+    chunks.push(chunk);
+    characters += chunk.length;
+    if (characters >= 64 * 1024) {
+      hash.update(chunks.join(''));
+      chunks = [];
+      characters = 0;
+    }
+  };
   const update = (value: unknown) => {
     if (Array.isArray(value)) {
-      hash.update('[');
+      emit('[');
       for (let index = 0; index < value.length; index++) {
-        if (index) hash.update(',');
+        if (index) emit(',');
         update(value[index]);
       }
-      hash.update(']');
+      emit(']');
     } else if (value && typeof value === 'object') {
-      hash.update('{');
+      emit('{');
       let index = 0;
       for (const [key, item] of Object.entries(value).sort(([a], [b]) =>
         a < b ? -1 : a > b ? 1 : 0,
       )) {
-        if (index++) hash.update(',');
-        hash.update(`${JSON.stringify(key)}:`);
+        if (index++) emit(',');
+        emit(`${JSON.stringify(key)}:`);
         update(item);
       }
-      hash.update('}');
-    } else hash.update(JSON.stringify(value));
+      emit('}');
+    } else emit(JSON.stringify(value));
   };
   update(value);
+  if (chunks.length) hash.update(chunks.join(''));
   return `sha256:${hash.digest('hex')}`;
 }
 function equal(actual: unknown, expected: unknown, context: string) {

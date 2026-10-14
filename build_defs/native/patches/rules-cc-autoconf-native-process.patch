@@ -19,7 +19,8 @@ diff -ruN oliphaunt-rules-cc-autoconf-0.24.0/autoconf/macros/AC_C_RESTRICT/restr
              progress_message = "CcAutoconfCheck %{label} - " + cache_name,
 -            env = env | ctx.configuration.default_shell_env,
 +            env = {"LC_ALL": "C"} | env,
-             tools = toolchain_info.cc_toolchain.all_files,
+-            tools = toolchain_info.cc_toolchain.all_files,
++            tools = [toolchain_info.cc_toolchain.all_files],
              # TODO: https://github.com/periareon/rules_cc_autoconf/issues/148
              execution_requirements = {"supports-path-mapping": ""} if bazel_features.rules.write_action_has_execution_requirements else {},
 diff -ruN oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/autoconf_library.bzl oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/private/autoconf_library.bzl
@@ -31,7 +32,8 @@ diff -ruN oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/autoconf_library.b
              progress_message = "CcAutoconfCheck %{label} - " + check_name,
 -            env = env | ctx.configuration.default_shell_env,
 +            env = {"LC_ALL": "C"} | env,
-             tools = toolchain_info.cc_toolchain.all_files,
+-            tools = toolchain_info.cc_toolchain.all_files,
++            tools = [toolchain_info.cc_toolchain.all_files],
              # TODO: https://github.com/periareon/rules_cc_autoconf/issues/148
              execution_requirements = {"supports-path-mapping": ""} if bazel_features.rules.write_action_has_execution_requirements else {},
 diff -ruN oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/checker/BUILD.bazel oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/private/checker/BUILD.bazel

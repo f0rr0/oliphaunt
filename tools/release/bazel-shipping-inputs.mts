@@ -508,7 +508,8 @@ export function buildShippingInputView(
         captureInputs.add(inputPath);
       } else {
         const inputs = inputsOf(action);
-        for (const input of inputs) visit(input, new Set(stack).add(key));
+        const next = new Set(stack).add(key);
+        for (const input of inputs) visit(input, next);
         // ActionKey describes action declarations, not consumed content or a remote-cache key.
         descriptions.add(actionDescription(action, inputs));
       }

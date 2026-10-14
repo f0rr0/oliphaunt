@@ -5,6 +5,7 @@ load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
 load(":platform_config.bzl", "NATIVE_COMPATIBLE")
 load(":compiler_probes.bzl", "native_compiler_probe_targets")
 load(":mobile-profile-test.bzl", "native_mobile_profile_tests")
+load(":probe-tools-test.bzl", "compiler_probe_tool_inputs_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -29,6 +30,7 @@ platform(name = "linux_aarch64_glibc_2_28", constraint_values = ["@platforms//os
 
 native_compiler_probe_targets(name = "compiler_probe")
 native_mobile_profile_tests()
+compiler_probe_tool_inputs_test()
 
 cc_test(
     name = "probe_process_test",

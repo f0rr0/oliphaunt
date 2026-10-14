@@ -670,3 +670,61 @@ test('only consumed typed supplier Files join the required byte frontier', () =>
     'tools/packager',
   ]);
 });
+
+test('seeded shared input DAG factoring preserves declarations and malformed edges still fail', () => {
+  for (let seed = 1; seed <= 64; seed++) {
+    let state = seed;
+    const random = (bound: number) => {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      return (state >>> 0) % bound;
+    };
+    const shuffle = <T,>(items: T[]) => {
+      for (let i = items.length - 1; i > 0; i--) {
+        const j = random(i + 1);
+        [items[i], items[j]] = [items[j], items[i]];
+      }
+    };
+    const { exported, graph } = fixture();
+    for (let i = 0; i < 64; i++) {
+      const id = i + 100;
+      graph.pathFragments.push({ id, parentId: 1, label: `header-${i}.h` });
+      graph.artifacts.push({ id, pathFragmentId: id });
+      graph.depSetOfFiles[0].directArtifactIds.push(id);
+    }
+    const before = buildShippingInputView(exported, graph);
+    const groups: number[][] = Array.from({ length: 4 }, () => []);
+    for (const id of graph.depSetOfFiles[0].directArtifactIds) groups[random(4)].push(id);
+    const sets = graph.depSetOfFiles as {
+      id: number;
+      directArtifactIds?: number[];
+      transitiveDepSetIds?: number[];
+    }[];
+    for (let i = 0; i < groups.length; i++) {
+      shuffle(groups[i]);
+      sets.push({ id: 1000 + i, directArtifactIds: groups[i] });
+    }
+    const children = [1000, 1001, 1002, 1003];
+    shuffle(children);
+    sets[0] = { id: 1, transitiveDepSetIds: children };
+    sets.push({ id: 2000, transitiveDepSetIds: [1, 1000] });
+    graph.actions[0].inputDepSetIds = [2000];
+    shuffle(sets);
+    shuffle(graph.artifacts);
+    shuffle(graph.actions);
+    expect(buildShippingInputView(exported, graph)).toEqual(before);
+    const malformed = structuredClone(graph);
+    malformed.depSetOfFiles.push({ id: 3000, transitiveDepSetIds: [2000] } as any);
+    const root = malformed.depSetOfFiles.find((item) => item.id === 2000) as any;
+    root.transitiveDepSetIds.push(3000);
+    expect(() => buildShippingInputView(exported, malformed)).toThrow(
+      'cycle in aquery input dep sets',
+    );
+    root.transitiveDepSetIds = [9999];
+    expect(() => buildShippingInputView(exported, malformed)).toThrow('incomplete aquery');
+    root.transitiveDepSetIds = [];
+    root.directArtifactIds = [9999];
+    expect(() => buildShippingInputView(exported, malformed)).toThrow('incomplete aquery');
+  }
+});
