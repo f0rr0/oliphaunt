@@ -1828,7 +1828,7 @@ private final class ChunkBox: @unchecked Sendable {
     }
 }
 
-private actor AsyncStringSignal {
+actor AsyncStringSignal {
     private var result: String?
     private var waiters: [CheckedContinuation<String, Never>] = []
 

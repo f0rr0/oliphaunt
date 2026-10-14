@@ -50,12 +50,12 @@ struct NativeRuntimeTests {
             } catch CallbackFailure.stopped {}
             _ = try await database.query("SELECT 1")
 
-            let startCaller = DispatchSemaphore(value: 0)
+            let startCaller = AsyncStringSignal()
             let releaseCallback = DispatchSemaphore(value: 0)
             let firstChunk = DispatchSemaphore(value: 1)
             defer { firstChunk.signal() }
             let caller = Task.detached {
-                startCaller.wait()
+                _ = await startCaller.wait()
                 do {
                     return try await database.query("SELECT 9 AS answer")
                 } catch {
@@ -77,7 +77,7 @@ struct NativeRuntimeTests {
                     rejected.signal()
                 }
                 #expect(rejected.wait(timeout: .now() + 2) == .success)
-                startCaller.signal()
+                Task.detached { await startCaller.complete("entered") }
                 try #require(releaseCallback.wait(timeout: .now() + 2) == .success)
             }
             #expect(try await caller.value.rows[0].text(0) == "9")
