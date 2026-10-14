@@ -34,6 +34,18 @@ export type NativeRoot = {
   };
 };
 
+/** Physical containment uses the host path rules, not textual path spelling. */
+export function nativePathIsDescendant(parent: string, child: string, paths = path) {
+  if (!paths.isAbsolute(parent) || !paths.isAbsolute(child)) return false;
+  const relative = paths.relative(parent, child);
+  return (
+    relative !== '' &&
+    relative !== '..' &&
+    !relative.startsWith(`..${paths.sep}`) &&
+    !paths.isAbsolute(relative)
+  );
+}
+
 export function nativeOutputPath(executionRoot: string, relative: unknown) {
   if (
     typeof relative !== 'string' ||
@@ -43,15 +55,18 @@ export function nativeOutputPath(executionRoot: string, relative: unknown) {
     relative.split('/').some((part) => !part || part === '.' || part === '..')
   )
     throw new Error(`unsafe native output path: ${JSON.stringify(relative)}`);
-  const absolute = path.join(executionRoot, relative);
+  if (!path.isAbsolute(executionRoot))
+    throw new Error('native output requires the captured absolute executionRoot');
+  const physicalExecutionRoot = realpathSync(executionRoot);
+  const absolute = path.join(physicalExecutionRoot, relative);
   const stat = lstatSync(absolute);
   if (stat.isSymbolicLink() || (!stat.isFile() && !stat.isDirectory()))
     throw new Error(`native output is not a physical file or directory: ${absolute}`);
-  const physicalRoot = realpathSync(path.join(executionRoot, 'bazel-out'));
+  const physicalRoot = realpathSync(path.join(physicalExecutionRoot, 'bazel-out'));
   const physicalOutput = realpathSync(absolute);
   if (
-    !physicalRoot.startsWith(`${executionRoot}${path.sep}`) ||
-    !physicalOutput.startsWith(`${physicalRoot}${path.sep}`)
+    !nativePathIsDescendant(physicalExecutionRoot, physicalRoot) ||
+    !nativePathIsDescendant(physicalRoot, physicalOutput)
   )
     throw new Error(`native output escapes its captured executionRoot: ${absolute}`);
   return absolute;

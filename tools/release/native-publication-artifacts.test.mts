@@ -7,7 +7,11 @@ import { gzipSync } from 'node:zlib';
 import { iosBaseLegalMetadata } from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
-import { readNativePublicationArtifacts } from './native-publication-artifacts.mts';
+import {
+  nativeOutputPath,
+  nativePathIsDescendant,
+  readNativePublicationArtifacts,
+} from './native-publication-artifacts.mts';
 import { buildNativePublicationCandidate } from './native-publication-candidate.mts';
 import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
 import {
@@ -235,6 +239,56 @@ test('uses only the captured execroot and rejects missing, symlinked or incomple
   });
 });
 
+test('native output containment uses standard Windows and POSIX path semantics', () => {
+  const root = 'D:/a/_temp/b/execroot/_main';
+  for (const [parent, child, expected] of [
+    [root, `${root}/bazel-out/opt/bin/shipping.json`, true],
+    [root, 'D:\\a\\_temp\\b\\execroot\\_main\\bazel-out\\opt\\bin\\shipping.json', true],
+    [`${root}/`, 'd:\\A\\_TEMP\\B\\EXECROOT\\_MAIN\\bazel-out\\shipping.json', true],
+    [`${root}/.`, `${root}/bazel-out/shipping.json`, true],
+    [root, root, false],
+    [root, `${root}/`, false],
+    [root, `${root}/..`, false],
+    [root, `${root}/../outside/shipping.json`, false],
+    [root, `${root}-sibling/bazel-out/shipping.json`, false],
+    [root, 'E:/a/_temp/b/execroot/_main/bazel-out/shipping.json', false],
+    [root, 'D:relative/bazel-out/shipping.json', false],
+    ['D:relative', `${root}/bazel-out/shipping.json`, false],
+    ['D:/', 'd:\\a\\shipping.json', true],
+    ['//server/share/root', '\\\\SERVER\\SHARE\\root\\bazel-out\\shipping.json', true],
+    ['//server/share/root', '//server/other/root/shipping.json', false],
+    ['//server/share/root', '//other/share/root/shipping.json', false],
+  ] as const)
+    expect(nativePathIsDescendant(parent, child, path.win32)).toBe(expected);
+  for (const [parent, child, expected] of [
+    ['/execroot', '/execroot/bazel-out/shipping.json', true],
+    ['/execroot/', '/execroot/bazel-out/shipping.json', true],
+    ['/', '/execroot/bazel-out/shipping.json', true],
+    ['/execroot', '/execroot', false],
+    ['/execroot', '/execroot-sibling/shipping.json', false],
+    ['/execroot', '/Execroot/bazel-out/shipping.json', false],
+    ['/execroot', '/execroot/../outside/shipping.json', false],
+    ['relative', '/execroot/shipping.json', false],
+  ] as const)
+    expect(nativePathIsDescendant(parent, child, path.posix)).toBe(expected);
+});
+
+test('native outputs resolve the captured execroot before checking physical containment', () => {
+  fixture(({ executionRoot, archive }) => {
+    const output = 'bazel-out/fixture/bin/query.tgz';
+    for (const root of [
+      `${executionRoot}${path.sep}`,
+      `${executionRoot}${path.sep}.`,
+      executionRoot.split(path.sep).join('/'),
+    ])
+      expect(readFileSync(nativeOutputPath(root, output))).toEqual(readFileSync(archive));
+    const alias = path.join(executionRoot, 'captured-root-alias');
+    symlinkSync(executionRoot, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    expect(readFileSync(nativeOutputPath(alias, output))).toEqual(readFileSync(archive));
+    expect(() => nativeOutputPath('relative', output)).toThrow('captured absolute executionRoot');
+  });
+});
+
 test('rejects an output parent symlink that escapes the captured execroot', () => {
   fixture(({ archive, read }) => {
     const outside = mkdtempSync(path.join(os.tmpdir(), 'native-physical-outside-'));
@@ -243,6 +297,29 @@ test('rejects an output parent symlink that escapes the captured execroot', () =
       rmSync(path.dirname(archive), { recursive: true });
       symlinkSync(outside, path.dirname(archive));
       expect(read).toThrow('escapes its captured executionRoot');
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+test('rejects a physical bazel-out root outside the captured execroot', () => {
+  fixture(({ executionRoot, archive }) => {
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'native-output-root-outside-'));
+    try {
+      const output = 'bazel-out/fixture/bin/query.tgz';
+      const relocated = path.join(outside, 'fixture/bin/query.tgz');
+      mkdirSync(path.dirname(relocated), { recursive: true });
+      writeFileSync(relocated, readFileSync(archive));
+      rmSync(path.join(executionRoot, 'bazel-out'), { recursive: true });
+      symlinkSync(
+        outside,
+        path.join(executionRoot, 'bazel-out'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
+      expect(() => nativeOutputPath(executionRoot, output)).toThrow(
+        'escapes its captured executionRoot',
+      );
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
