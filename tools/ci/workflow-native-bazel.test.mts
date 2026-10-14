@@ -264,6 +264,9 @@ esac
     ]);
     const configuration = JSON.parse(readFileSync(argument('--configuration-json'), 'utf8'));
     assert.deepEqual(configuration.slice(0, 3), ['-c', 'opt', '--config=wasix-aot']);
+    assert.ok(!configuration.some((flag: string) => flag.startsWith('--jobs=')));
+    assert.ok(configuration.includes('--local_test_jobs=1'));
+    assert.ok(configuration.includes('--test_env=RUST_TEST_THREADS=1'));
     for (const flag of [
       '--platforms=//build_defs/native:linux_x86_64_glibc_2_28',
       '--host_platform=//build_defs/native:linux_x86_64_glibc_2_28',

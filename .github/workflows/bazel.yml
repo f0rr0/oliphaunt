@@ -776,7 +776,7 @@ jobs:
           jq -nc --arg cache "$RUNNER_TEMP/wasix-source-sdk-cache" \
             --arg chrome "$chrome_binary" --arg chromeReceipt "$RUNNER_TEMP/chrome-host.json" '[
             "-c","opt","--config=wasix-aot","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
-            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=2","--local_test_jobs=1",
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--local_test_jobs=1",
             "--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full","--test_env=XDG_CACHE_HOME="+$cache,"--test_env=RUST_TEST_THREADS=1",
             "--test_env=OLIPHAUNT_BROWSER_CHROME="+$chrome,"--test_env=OLIPHAUNT_BROWSER_CHROME_RECEIPT="+$chromeReceipt
           ]' > "$input_root/configuration.json"
