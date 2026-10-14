@@ -41,6 +41,12 @@ export interface ShippingInputView {
   captureInputs: string[];
 }
 
+export type ConfiguredFileWriteCheck = (
+  output: { path: string; owner: string },
+  configuration: string,
+  context: string,
+) => void;
+
 type Row = Record<string, unknown>;
 function row(value: unknown): Row {
   if (!value || Array.isArray(value) || typeof value !== 'object')
@@ -331,10 +337,13 @@ export function buildShippingInputView(
   {
     configurationByOutput,
     inspectPackageInputs,
+    inspectFileWrites,
   }: {
     configurationByOutput?: ReadonlyMap<string, string>;
     /** Check declared supplier Files against this package, never sibling roots. */
     inspectPackageInputs?: (pkg: Row, consumes: (path: string) => boolean) => void;
+    /** Check metadata against this call's validated graph without deriving another view. */
+    inspectFileWrites?: (check: ConfiguredFileWriteCheck) => void;
   } = {},
 ): ShippingInputView {
   const exported = row(exportValue);
@@ -445,6 +454,22 @@ export function buildShippingInputView(
     if (new Set(definitions).size !== 1)
       throw new Error(`ambiguous artifact producers for ${artifactPath}`);
   }
+  const configuredOutput = (output: Row, configurationsByOutput?: ReadonlyMap<string, string>) => {
+    const keys = required(byPath, text(output.path));
+    const key = keys.find((candidate) => {
+      const action = producers.get(candidate);
+      return (
+        action &&
+        canonicalShippingLabel(required(targets, id(action.targetId)).label) ===
+          canonicalShippingLabel(output.owner) &&
+        (configurationsByOutput?.has(text(output.path)) !== true ||
+          required(configurations, id(action.configurationId)).checksum ===
+            configurationsByOutput.get(text(output.path)))
+      );
+    });
+    if (!key) throw new Error(`shipping output owner disagrees with aquery: ${output.path}`);
+    return key;
+  };
   // Scalar reachability is shared for requested supplier Files only. Retaining
   // transitive header sets or walking the full graph per package is unnecessary.
   const supplierReachability = new Map<
@@ -520,19 +545,7 @@ export function buildShippingInputView(
     if (!outputs.length) throw new Error(`empty shipping outputs for ${identity}`);
     for (const outputValue of outputs) {
       const output = row(outputValue);
-      const keys = required(byPath, text(output.path));
-      const key = keys.find((candidate) => {
-        const action = producers.get(candidate);
-        return (
-          action &&
-          canonicalShippingLabel(required(targets, id(action.targetId)).label) ===
-            canonicalShippingLabel(output.owner) &&
-          (configurationByOutput?.has(text(output.path)) !== true ||
-            required(configurations, id(action.configurationId)).checksum ===
-              configurationByOutput.get(text(output.path)))
-        );
-      });
-      if (!key) throw new Error(`shipping output owner disagrees with aquery: ${output.path}`);
+      const key = configuredOutput(output, configurationByOutput);
       outputKeys.push(key);
       visit(key, new Set());
     }
@@ -546,6 +559,13 @@ export function buildShippingInputView(
         }
     inspectPackageInputs?.(pkg, (path) => outputKeys.some((key) => consumes(key, path)));
   }
+  inspectFileWrites?.((output, configuration, context) => {
+    const key = configuredOutput(output, new Map([[output.path, configuration]]));
+    const action = required(producers, key);
+    const definition = row(JSON.parse(actionDescription(action, inputsOf(action))));
+    if (definition.mnemonic !== 'FileWrite' || row(definition.inputs).count !== 0)
+      throw new Error(context);
+  });
   for (const view of Object.values(products))
     view.packages.sort((a, b) => {
       const left = canonical(a);

@@ -1147,6 +1147,51 @@ test('packet validation independently rejects substituted root inventory and man
   }
 });
 
+test('configured metadata FileWrites accept empty transitive sets and reject added or malformed inputs', () => {
+  for (const kind of ['manifest', 'owner'] as const) {
+    const f = ownerPolicyFixture();
+    try {
+      const before = captureNativeBuildEvidence(f.options).qualification;
+      const graph = f.options.cohorts[0].aquery;
+      const action = kind === 'manifest' ? f.manifestAction : f.action;
+      const child = {
+        id: 91,
+        directArtifactIds: [] as number[],
+        transitiveDepSetIds: [] as number[],
+      };
+      graph.depSetOfFiles.push(
+        { id: 90, directArtifactIds: [], transitiveDepSetIds: [91] } as any,
+        child,
+      );
+      action.inputDepSetIds = [90];
+      const after = captureNativeBuildEvidence(f.options).qualification;
+      expect(after.cohorts[0].actionDefinitionsDigest).toBe(
+        before.cohorts[0].actionDefinitionsDigest,
+      );
+      expect(after.cohorts[0].inputContentsDigest).toBe(before.cohorts[0].inputContentsDigest);
+      expect(after.cohorts[0].roots).toEqual(before.cohorts[0].roots);
+      const primaryOutput = action.primaryOutputId;
+      action.primaryOutputId = 999;
+      expect(() => captureNativeBuildEvidence(f.options)).toThrow('incomplete aquery');
+      action.primaryOutputId = primaryOutput;
+      child.directArtifactIds = [1];
+      expect(() => captureNativeBuildEvidence(f.options)).toThrow(
+        kind === 'manifest'
+          ? 'native shipping manifest requires its configured FileWrite action'
+          : 'native owner qualification requires its configured FileWrite action',
+      );
+      action.inputDepSetIds = [999];
+      expect(() => captureNativeBuildEvidence(f.options)).toThrow('incomplete aquery');
+      action.inputDepSetIds = [90];
+      child.directArtifactIds = [];
+      child.transitiveDepSetIds = [90];
+      expect(() => captureNativeBuildEvidence(f.options)).toThrow('cycle in aquery input dep sets');
+    } finally {
+      f.cleanup();
+    }
+  }
+});
+
 test('collector reads declared source/repository links and source trees after cache-backed success', () => {
   const f = fixture();
   try {

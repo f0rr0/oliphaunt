@@ -7,6 +7,7 @@ import {
 } from '../../build_defs/resources/seed_construction.mts';
 import {
   buildShippingInputView,
+  type ConfiguredFileWriteCheck,
   canonicalShippingLabel,
   configuredAqueryTargetInputs,
   type ShippingInputView,
@@ -974,6 +975,7 @@ export function validateNativeBuildEvidence(
       cohort.roots.map((root) => text(root.label)).sort(),
       'native configured root coverage',
     );
+    let checkFileWrite!: ConfiguredFileWriteCheck;
     const view = buildShippingInputView(
       {
         schema: 'oliphaunt-bazel-shipping-v1',
@@ -981,6 +983,11 @@ export function validateNativeBuildEvidence(
         packages: cohort.roots.map((root) => root.package),
       },
       cohort.aquery,
+      {
+        inspectFileWrites: (check) => {
+          checkFileWrite = check;
+        },
+      },
     );
     const graph = object(cohort.aquery);
     const configurationIds = new Map(
@@ -1028,28 +1035,12 @@ export function validateNativeBuildEvidence(
           configuration,
           'native analysis shipping configuration',
         );
-      const manifestView = buildShippingInputView(
-        {
-          schema: 'oliphaunt-bazel-shipping-v1',
-          scope: 'construction',
-          packages: bindings.map(({ root, path }) => ({
-            ...root.package,
-            outputs: [{ path, owner: root.label }],
-          })),
-        },
-        cohort.aquery,
-        {
-          configurationByOutput: new Map(
-            bindings.map(({ path, configuration }) => [path, configuration]),
-          ),
-        },
-      );
-      for (const product of Object.values(manifestView.products))
-        for (const action of product.actions) {
-          const definition = object(JSON.parse(action));
-          if (definition.mnemonic !== 'FileWrite' || definition.inputs.count !== 0)
-            throw new Error('native shipping manifest requires its configured FileWrite action');
-        }
+      for (const { root, path, configuration } of bindings)
+        checkFileWrite(
+          { path, owner: root.label },
+          configuration,
+          'native shipping manifest requires its configured FileWrite action',
+        );
     } else if (expected.requireShippingAnalysis === true)
       throw new Error('native qualification requires producing-analysis shipping manifests');
     const qualificationPolicy =
@@ -1059,38 +1050,14 @@ export function validateNativeBuildEvidence(
     if (qualificationPolicy) {
       for (const test of qualificationPolicy.requiredTests)
         policyTests.set(`${test.label}\0${test.configuration}`, test);
-      const policyView = buildShippingInputView(
+      checkFileWrite(
         {
-          schema: 'oliphaunt-bazel-shipping-v1',
-          scope: 'construction',
-          packages: [
-            {
-              ...cohort.roots[0].package,
-              outputs: [
-                {
-                  path: cohort.producerCapture!.qualificationManifest!.path,
-                  owner: qualificationPolicy.owner,
-                },
-              ],
-            },
-          ],
+          path: cohort.producerCapture!.qualificationManifest!.path,
+          owner: qualificationPolicy.owner,
         },
-        cohort.aquery,
-        {
-          configurationByOutput: new Map([
-            [
-              cohort.producerCapture!.qualificationManifest!.path,
-              qualificationPolicy.configuration,
-            ],
-          ]),
-        },
+        qualificationPolicy.configuration,
+        'native owner qualification requires its configured FileWrite action',
       );
-      for (const product of Object.values(policyView.products))
-        for (const action of product.actions) {
-          const definition = object(JSON.parse(action));
-          if (definition.mnemonic !== 'FileWrite' || definition.inputs.count !== 0)
-            throw new Error('native owner qualification requires its configured FileWrite action');
-        }
     }
     const qualificationInputs = validateNativeQualificationInputs(
       cohort.qualificationInputs,
