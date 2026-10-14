@@ -429,6 +429,46 @@ test('absolute source paths normalize; outside-workspace host observations are n
   });
 });
 
+test('collector keeps Windows workspace sources and omits other drives or network roots', async () => {
+  // Exercise the real collector with stock Windows path operations and real
+  // lock/marker files on this host. Bazel 8.8.1 itself does not support UNC roots.
+  for (const [workspace, absolute, expected] of [
+    ['D:/a/repo', 'D:/a/repo/src/lib.rs', 'src/lib.rs'],
+    ['d:/A/Repo', 'D:\\a\\repo\\src\\lib.rs', 'src/lib.rs'],
+    ['D:/a/repo', 'D:/a/repo', ''],
+    ['D:/a/repo', 'D:/a', undefined],
+    ['D:/a/repo', 'D:/a/repository/lib.rs', undefined],
+    ['D:/a/repo', 'C:/Program Files/SDK/header.h', undefined],
+    ['D:/a/repo', 'C:\\SDK\\header.h', undefined],
+    ['D:/a/repo', '\\\\host\\share\\SDK\\header.h', undefined],
+    ['\\\\host\\share\\repo', '\\\\host\\share\\repo\\src\\lib.rs', 'src/lib.rs'],
+    ['\\\\host\\share\\repo', '\\\\other\\share\\SDK\\header.h', undefined],
+    ['\\\\host\\share\\repo', '\\\\host\\other\\SDK\\header.h', undefined],
+  ] as const)
+    await fixture(async (f) => {
+      const originalRelative = path.relative;
+      const originalIsAbsolute = path.isAbsolute;
+      const windowsRelative = path.win32.relative;
+      const windowsIsAbsolute = path.win32.isAbsolute;
+      try {
+        path.relative = (parent, child) =>
+          parent === f.workspaceRoot
+            ? windowsRelative(workspace, child).split(path.win32.sep).join(path.sep)
+            : originalRelative(parent, child);
+        path.isAbsolute = windowsIsAbsolute;
+        f.source(lock([record('FILE', absolute)]));
+        assert.deepEqual(await collectBazelRecordedSourceInputs(f), {
+          files: expected === undefined ? [] : [expected],
+          trees: [],
+          directories: [],
+        });
+      } finally {
+        path.relative = originalRelative;
+        path.isAbsolute = originalIsAbsolute;
+      }
+    });
+});
+
 test('missing referenced repository markers reject an incomplete basis', async () => {
   await fixture(async (f) => {
     f.hidden(

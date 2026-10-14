@@ -446,7 +446,7 @@ export async function collectBazelRecordedSourceInputs(options: {
       relative = match[2];
     } else if (path.isAbsolute(record.location)) {
       relative = path.relative(workspace, record.location).split(path.sep).join('/');
-      if (relative === '..' || relative.startsWith('../')) return;
+      if (path.isAbsolute(relative) || relative === '..' || relative.startsWith('../')) return;
     } else incomplete('Unsupported recorded-input path');
     if (
       relative.includes('\\') ||

@@ -29,6 +29,7 @@ import {
   assertHermesBytecode,
   dexDefinedClasses,
   extractFinalAar,
+  extensionLinkReceipt,
   mobileBundleEnvironment,
   prepareAppRuntimeAssets,
   stageAndroidSelectedResources,
@@ -441,6 +442,91 @@ function elf(alignment: bigint, machine = 183) {
   bytes.writeBigUInt64LE(alignment, 112);
   return bytes;
 }
+
+test('static extension link proof retains required definitions beyond the child output buffer limit', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'android-static-symbol-output-'));
+  try {
+    const library = path.join(root, 'linked.so');
+    const archive = path.join(root, 'vector.a');
+    const registration = path.join(root, 'vector.json');
+    const registry = path.join(root, 'registry.c');
+    const nm = path.join(root, 'fixture-nm.mts');
+    const symbols = path.join(root, 'symbols.txt');
+    const status = path.join(root, 'status.txt');
+    writeFileSync(library, elf(16384n));
+    writeFileSync(archive, 'original static archive fixture bytes');
+    writeFileSync(registry, 'original generated registry fixture bytes');
+    const required = [
+      'liboliphaunt_selected_static_extensions',
+      'oliphaunt_static_vector_Pg_magic_func',
+      'oliphaunt_static_vector__PG_init',
+      'vector_dims',
+    ];
+    writeFileSync(
+      registration,
+      JSON.stringify({
+        sqlName: 'vector',
+        nativeModuleStem: 'vector',
+        magicSymbol: required[1],
+        initSymbol: required[2],
+        symbols: [{ name: 'vector_dims', address: required[3] }],
+      }),
+    );
+    const filler = Array.from(
+      { length: 30_000 },
+      (_, index) =>
+        `0000000000000000 T oliphaunt_boundary_export_abcdefghijklmnopqrstuvwxyz_${String(index).padStart(5, '0')}\n`,
+    ).join('');
+    assert(Buffer.byteLength(filler) > 1024 * 1024);
+    const definitions = (names: string[]) =>
+      filler + names.map((name) => `0000000000000000 T ${name}\n`).join('');
+    writeFileSync(symbols, definitions(required));
+    writeFileSync(status, '0');
+    writeFileSync(
+      nm,
+      `#!${process.execPath}\nimport { readFileSync } from 'node:fs';\nprocess.stdout.write(readFileSync(new URL('./symbols.txt', import.meta.url)));\nprocess.exitCode = Number(readFileSync(new URL('./status.txt', import.meta.url), 'utf8'));\nif (process.exitCode) process.stderr.write('fixture nm child failed');\n`,
+    );
+    chmodSync(nm, 0o755);
+    const spec = {
+      library,
+      registry,
+      members: [{ archive, registration }],
+      selectedExtensions: ['pgtap', 'vector'],
+      moduleStems: { pgtap: null, vector: 'vector' },
+      abi: 'arm64-v8a',
+      nm,
+      output: path.join(root, 'receipt.json'),
+    };
+    extensionLinkReceipt(spec);
+    const receipt = JSON.parse(readFileSync(spec.output, 'utf8'));
+    const digest = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
+    assert.equal(receipt.linkedSha256, digest(library));
+    assert.equal(receipt.registrySha256, digest(registry));
+    assert.deepEqual(receipt.selectedExtensions, spec.selectedExtensions);
+    assert.equal(receipt.members[0].archiveSha256, digest(archive));
+    assert.equal(receipt.members[0].registrationSha256, digest(registration));
+    assert.deepEqual(receipt.members[0].definedSymbols, required.slice(1).sort());
+    rmSync(spec.output);
+    writeFileSync(status, '7');
+    assert.throws(
+      () => extensionLinkReceipt(spec),
+      /declared llvm-nm failed: fixture nm child failed/u,
+    );
+    assert.throws(() => readFileSync(spec.output), { code: 'ENOENT' });
+    writeFileSync(status, '0');
+    writeFileSync(symbols, definitions(required.filter((name) => name !== 'vector_dims')));
+    assert.throws(
+      () => extensionLinkReceipt(spec),
+      /omitted actual archive definition vector\/vector_dims/u,
+    );
+    assert.throws(() => readFileSync(spec.output), { code: 'ENOENT' });
+    writeFileSync(symbols, definitions(required.slice(1)));
+    assert.throws(() => extensionLinkReceipt(spec), /Linked static extension registry is absent/u);
+    assert.throws(() => readFileSync(spec.output), { code: 'ENOENT' });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('actual APK proof rejects an unbound runtime manifest before deeper bytecode inspection', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'android-runtime-manifest-proof-'));

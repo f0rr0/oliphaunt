@@ -935,11 +935,12 @@ export function extensionLinkReceipt(spec: {
 }) {
   const bytes = readFileSync(spec.library);
   assertAndroidElf(bytes, spec.abi);
-  const symbols = execFileSync(
-    realpathSync(spec.nm),
-    ['-D', '--defined-only', realpathSync(spec.library)],
-    { encoding: 'utf8', env: { LC_ALL: 'C', LANG: 'C' } },
+  const result = Bun.spawnSync(
+    [realpathSync(spec.nm), '-D', '--defined-only', realpathSync(spec.library)],
+    { env: { LC_ALL: 'C', LANG: 'C' }, stdout: 'pipe', stderr: 'pipe' },
   );
+  assert.equal(result.exitCode, 0, `declared llvm-nm failed: ${result.stderr.toString('utf8')}`);
+  const symbols = result.stdout.toString('utf8');
   const defined = new Set(
     symbols
       .split('\n')
