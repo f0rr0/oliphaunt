@@ -539,7 +539,7 @@ public class OliphauntDatabase private constructor(
         } catch (error: Throwable) {
             withContext(NonCancellable) {
                 stateMutex.withLock {
-                    if (!session.isUsable()) {
+                    if (!closed && !session.isUsable()) {
                         terminalCloseFailure = error
                         closed = true
                     }

@@ -1436,8 +1436,10 @@ class OliphauntDatabaseTest {
         session.releaseClose()
         closing.join()
 
-        assertEquals(1, session.closeCount)
+        assertTrue(closing.isCancelled)
         assertTrue(database.isClosed)
+        database.close()
+        assertEquals(1, session.closeCount)
     }
 
     @Test
@@ -2043,6 +2045,8 @@ private class TestSession(
     override suspend fun cancel() {
         cancelCount += 1
     }
+
+    override fun isUsable(): Boolean = closeCount == 0
 
     override suspend fun close() {
         if (blockClose) {

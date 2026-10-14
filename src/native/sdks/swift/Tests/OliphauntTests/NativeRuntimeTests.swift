@@ -56,7 +56,12 @@ struct NativeRuntimeTests {
             defer { firstChunk.signal() }
             let caller = Task.detached {
                 startCaller.wait()
-                return try await database.query("SELECT 9 AS answer")
+                do {
+                    return try await database.query("SELECT 9 AS answer")
+                } catch {
+                    releaseCallback.signal()
+                    throw error
+                }
             }
             let queued = Task {
                 await database.waitUntilQueuedOperationCount(atLeast: 1)
@@ -73,10 +78,10 @@ struct NativeRuntimeTests {
                 }
                 #expect(rejected.wait(timeout: .now() + 2) == .success)
                 startCaller.signal()
-                #expect(releaseCallback.wait(timeout: .now() + 2) == .success)
+                try #require(releaseCallback.wait(timeout: .now() + 2) == .success)
             }
-            await queued.value
             #expect(try await caller.value.rows[0].text(0) == "9")
+            await queued.value
 
             let sleeping = Task { try await database.query("SELECT pg_sleep(60)") }
             try await Task.sleep(for: .milliseconds(100))
