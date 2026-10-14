@@ -6,6 +6,7 @@ import {
   assertMissingHostRuntime,
   extractNativePayload,
   hostRuntimeEnvironment,
+  runHostBinary,
 } from './host-runtime-test-helpers.mts';
 
 const ambient = {
@@ -127,6 +128,82 @@ function tar(names: string[]): Buffer {
 
 const root = mkdtempSync(join(tmpdir(), 'host-payload-helper-'));
 try {
+  assert.equal(
+    runHostBinary(
+      process.execPath,
+      ['--no-env-file', '-e', 'console.log("captured stdout")'],
+      process.env,
+      root,
+    ),
+    'captured stdout\n',
+  );
+  assert.throws(
+    () =>
+      runHostBinary(
+        process.execPath,
+        [
+          '--no-env-file',
+          '-e',
+          'console.log("captured stdout"); console.error("captured stderr"); process.exit(7)',
+        ],
+        process.env,
+        root,
+      ),
+    /captured stderr\s+captured stdout/u,
+  );
+  const controller = join(root, 'controller.mts');
+  writeFileSync(
+    controller,
+    `
+import { spawn } from 'node:child_process';
+import { existsSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+const [mode, release, done, pidFile, exitCode] = process.argv.slice(2);
+if (mode === 'descendant') {
+  const finish = (reason) => { writeFileSync(done, reason); process.exit(0); };
+  setTimeout(() => finish('deadline'), 10_000);
+  setInterval(() => { if (existsSync(release)) finish('released'); }, 10);
+} else {
+  const descendant = spawn(process.execPath,
+    ['--no-env-file', import.meta.path, 'descendant', release, done, pidFile],
+    { cwd: tmpdir(), detached: true, stdio: ['ignore', 'inherit', 'inherit'] });
+  descendant.unref();
+  writeFileSync(pidFile, String(descendant.pid));
+  process.exit(Number(exitCode));
+}
+`,
+  );
+  for (const exitCode of [0, 7]) {
+    const release = join(root, `release-${exitCode}`);
+    const done = join(root, `done-${exitCode}`);
+    const pidFile = join(root, `pid-${exitCode}`);
+    const runController = () =>
+      runHostBinary(
+        process.execPath,
+        ['--no-env-file', controller, 'controller', release, done, pidFile, String(exitCode)],
+        process.env,
+        root,
+        'inherit',
+      );
+    try {
+      if (exitCode === 0) assert.equal(runController(), '');
+      else
+        assert.throws(
+          runController,
+          (error) => error instanceof assert.AssertionError && error.actual === exitCode,
+        );
+      const pid = Number(readFileSync(pidFile, 'utf8'));
+      assert(Number.isSafeInteger(pid) && pid > 0);
+      assert.doesNotThrow(() => process.kill(pid, 0), 'descendant must outlive its controller');
+      assert(!existsSync(done), 'controller return must not wait for descendant output EOF');
+    } finally {
+      writeFileSync(release, 'release');
+      const deadline = Date.now() + 10_000;
+      while (!existsSync(done) && Date.now() < deadline) await Bun.sleep(10);
+      assert(existsSync(done), 'detached descendant did not finish cleanup');
+    }
+    assert.equal(readFileSync(done, 'utf8'), 'released');
+  }
   const archive = join(root, 'payload.tar');
   const destination = join(root, 'runtime');
   writeFileSync(archive, tar(['bin/probe']));

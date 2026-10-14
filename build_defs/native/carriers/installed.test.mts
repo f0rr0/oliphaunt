@@ -235,16 +235,22 @@ try {
   const options = windows ? `-h 127.0.0.1 -p ${env.PGPORT}` : `-k ${socket} -h '' -p ${env.PGPORT}`;
   const start = (directory: string) => {
     running = directory;
-    run(control, [
-      '-D',
-      directory,
-      '-l',
-      path.join(root, `${path.basename(directory)}.log`),
-      '-o',
-      options,
-      '-w',
-      'start',
-    ]);
+    runHostBinary(
+      control,
+      [
+        '-D',
+        directory,
+        '-l',
+        path.join(root, `${path.basename(directory)}.log`),
+        '-o',
+        options,
+        '-w',
+        'start',
+      ],
+      env,
+      root,
+      'inherit',
+    );
   };
   start(database);
   const connection = `host=${env.PGHOST} port=${env.PGPORT} user=${env.PGUSER} dbname=postgres`;

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import {
   extractNativePayload,
   hostRuntimeEnvironment,
@@ -27,8 +27,11 @@ const env: NodeJS.ProcessEnv = {
   PGDATABASE: 'postgres',
 };
 
-function run(binary: string, args: string[]): string {
-  return runHostBinary(binary, args, env, root);
+function run(binary: string, args: string[], output: 'pipe' | 'inherit' = 'pipe'): string {
+  console.log(`Native tools: ${basename(binary)} begin`);
+  const result = runHostBinary(binary, args, env, root, output);
+  console.log(`Native tools: ${basename(binary)} done`);
+  return result;
 }
 
 async function freeTcpPort(): Promise<string> {
@@ -47,8 +50,11 @@ async function freeTcpPort(): Promise<string> {
 
 let running = false;
 try {
+  console.log('Native tools: runtime extraction begin');
   await extractNativePayload(runtimeArchive, runtime);
+  console.log('Native tools: runtime extraction done; tools extraction begin');
   await extractNativePayload(toolsArchive, tools);
+  console.log('Native tools: tools extraction done');
   mkdirSync(database);
   const initdb = join(runtime, 'bin', 'initdb' + suffix);
   const control = join(runtime, 'bin', 'pg_ctl' + suffix);
@@ -70,16 +76,12 @@ try {
     ? `-h 127.0.0.1 -p ${env.PGPORT}`
     : `-k ${socket} -h '' -p ${env.PGPORT}`;
   running = true;
-  run(control, [
-    '-D',
-    database,
-    '-l',
-    join(root, 'postgres.log'),
-    '-o',
-    serverOptions,
-    '-w',
-    'start',
-  ]);
+  // Windows pg_ctl's CMD child keeps inherited handles until the server exits.
+  run(
+    control,
+    ['-D', database, '-l', join(root, 'postgres.log'), '-o', serverOptions, '-w', 'start'],
+    'inherit',
+  );
   const sql = (statement: string) =>
     run(psql, ['-X', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-c', statement]).trim();
   assert.equal(sql('SELECT 42'), '42');
@@ -90,6 +92,7 @@ try {
   assert.match(logical, /COPY public\.native_tools_probe/u);
   assert.match(logical, /7\tround trip/u);
   sql('DROP TABLE native_tools_probe');
+  console.log('Native tools: psql restore begin');
   const restore = Bun.spawnSync([psql, '-X', '-v', 'ON_ERROR_STOP=1'], {
     env,
     cwd: root,
@@ -98,6 +101,7 @@ try {
     stderr: 'pipe',
   });
   assert.equal(restore.exitCode, 0, restore.stderr.toString());
+  console.log('Native tools: psql restore done');
   assert.equal(sql('SELECT payload FROM native_tools_probe WHERE id=7'), 'round trip');
   const physical = join(root, 'physical-backup');
   run(backup, [
@@ -115,16 +119,11 @@ try {
   run(control, ['-D', database, '-m', 'fast', '-w', 'stop']);
   running = false;
   running = true;
-  run(control, [
-    '-D',
-    physical,
-    '-l',
-    join(root, 'backup-postgres.log'),
-    '-o',
-    serverOptions,
-    '-w',
-    'start',
-  ]);
+  run(
+    control,
+    ['-D', physical, '-l', join(root, 'backup-postgres.log'), '-o', serverOptions, '-w', 'start'],
+    'inherit',
+  );
   assert.equal(sql('SELECT payload FROM native_tools_probe WHERE id=7'), 'round trip');
   run(control, ['-D', physical, '-m', 'fast', '-w', 'stop']);
   running = false;

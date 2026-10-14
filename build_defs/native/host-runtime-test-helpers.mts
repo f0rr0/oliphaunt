@@ -83,14 +83,15 @@ export function runHostBinary(
   args: string[],
   env: NodeJS.ProcessEnv,
   cwd: string,
+  output: 'pipe' | 'inherit' = 'pipe',
 ): string {
-  const result = Bun.spawnSync([binary, ...args], { env, cwd, stdout: 'pipe', stderr: 'pipe' });
+  const result = Bun.spawnSync([binary, ...args], { env, cwd, stdout: output, stderr: output });
   assert.equal(
     result.exitCode,
     0,
-    `${binary}: ${result.stderr.toString()}\n${result.stdout.toString()}`,
+    `${binary}: ${result.stderr?.toString() ?? ''}\n${result.stdout?.toString() ?? ''}`,
   );
-  return result.stdout.toString();
+  return result.stdout?.toString() ?? '';
 }
 
 export function assertMissingHostRuntime(
