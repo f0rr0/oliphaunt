@@ -972,3 +972,6 @@ apple_captured_swift(
 # Lazy; ordinary SDK construction does not fetch emulator/system-image archives.
 android_emulator = use_repo_rule("//build_defs/languages/jvm:android-sdk-repository.bzl", "android_emulator_repository")
 android_emulator(name = "oliphaunt_android_emulator")
+
+bazel_disk_cache_gc = use_repo_rule("//build_defs/foundation:bazel-disk-cache-gc.bzl", "bazel_disk_cache_gc_repository")
+bazel_disk_cache_gc(name = "bazel_disk_cache_gc")

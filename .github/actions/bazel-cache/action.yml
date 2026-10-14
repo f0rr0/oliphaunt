@@ -73,7 +73,7 @@ runs:
         printf '\nbuild --config=ci-cache\nbuild --disk_cache="%s/disk"\ncommon --repository_cache="%s/repositories"\n' \
           "$cache_root" "$cache_root" >> "$HOME/.bazelrc"
 
-    - name: Stop the cohort writer and bound cache transport
+    - name: Freeze, collect and bound cache transport
       id: ready
       if: ${{ !cancelled() && inputs.phase == 'save' && inputs.disk-cache-hit != 'true' }}
       continue-on-error: true
@@ -88,19 +88,36 @@ runs:
         [[ -z "$OUTPUT_BASE" ]] || startup+=("--output_base=$OUTPUT_BASE")
         [[ -z "$JVM_ARGS" ]] || startup+=("--host_jvm_args=$JVM_ARGS")
         [[ -z "$SERVER_LOG" ]] || startup+=("--server_jvm_out=$SERVER_LOG")
-        # Stop the writer before measuring; shutdown does not certify idle GC completion.
-        if ! "${startup[@]}" shutdown; then
-          printf 'Bazel cache writer shutdown: failure\n' >&2
-          exit 0
-        fi
-        printf 'Bazel cache writer shutdown: success\n'
-        # Disk GC targets 2G of logical bytes; allocated transport includes
-        # filesystem overhead. Bound the action archive before uploading it.
+        freeze_writer() {
+          if ! "${startup[@]}" shutdown; then
+            printf 'Bazel cache writer shutdown: failure\n' >&2
+            return 1
+          fi
+          printf 'Bazel cache writer shutdown: success\n'
+        }
+        # Shutdown can interrupt idle GC. A frozen snapshot already within the
+        # allocated budget needs no additional tool construction or collection.
+        freeze_writer || exit 0
         cache_limit_kib=3145728
         cache_root="$HOME/.cache/oliphaunt/bazel-ci/disk"
         if [[ -d "$cache_root" ]]; then
           printf 'Bazel cache disk: present=true\n'
           cache_kib="$(du -sk "$cache_root" | cut -f1)"
+          if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib > cache_limit_kib )); then
+            gc_target=//tools/ci:bazel_disk_cache_gc
+            "${startup[@]}" build --jobs=2 "$gc_target"
+            gc_tool="$("${startup[@]}" cquery "config($gc_target, target)" --output=starlark \
+              '--starlark:expr=providers(target)["DefaultInfo"].files_to_run.executable.path')"
+            freeze_writer || exit 0
+            gc_root="$cache_root"
+            if [[ "$RUNNER_OS" == Windows ]]; then
+              gc_root="$(cygpath -m "$gc_root")"
+            fi
+            # The stock collector returns after collection completes. Its
+            # logical-byte target does not replace the allocated archive bound.
+            JAVABIN= "$gc_tool" "--disk_cache=$gc_root" --max_size=2G
+            cache_kib="$(du -sk "$cache_root" | cut -f1)"
+          fi
           printf 'Bazel cache disk: allocated_kib=%s limit_kib=%s\n' \
             "$cache_kib" "$cache_limit_kib"
           if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib <= cache_limit_kib )); then

@@ -53,6 +53,9 @@ type FixtureEnvironment = NodeJS.ProcessEnv & {
   HOME: string;
   GITHUB_OUTPUT: string;
   SHUTDOWN_ARGS: string;
+  COMMAND_TRACE: string;
+  GC_ARGS: string;
+  GC_TOOL: string;
 };
 
 function fixture(run: (directory: string, env: FixtureEnvironment) => void) {
@@ -69,17 +72,51 @@ function fixture(run: (directory: string, env: FixtureEnvironment) => void) {
   });
   writeFileSync(
     path.join(bin, 'cygpath'),
-    '#!/usr/bin/env bash\ntest "$1" = -m\nprintf "%s\\n" "C:/hosted home/bazel-ci"\n',
+    '#!/usr/bin/env bash\ntest "$1" = -m\ncase "${2##*/}" in disk) printf "%s\\n" "C:/hosted home/bazel-ci/disk" ;; *) printf "%s\\n" "C:/hosted home/bazel-ci" ;; esac\n',
     { mode: 0o755 },
   );
   writeFileSync(
     path.join(bin, 'du'),
-    `#!/usr/bin/env bash\ntest "\${2##*/}" = disk\nprintf "%s\\t%s\\n" "$DISK_KIB" "$2"\n`,
+    `#!/usr/bin/env bash\ntest "\${2##*/}" = disk\nsize="$DISK_KIB"\n[[ ! -f "$DISK_SIZE_FILE" ]] || size="$(cat "$DISK_SIZE_FILE")"\nprintf "%s\\t%s\\n" "$size" "$2"\n`,
     { mode: 0o755 },
   );
   writeFileSync(
     path.join(directory, 'tools/dev/bazel.sh'),
-    '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$SHUTDOWN_ARGS"\nexit "$SHUTDOWN_STATUS"\n',
+    `#!/usr/bin/env bash
+set -eu
+for argument in "$@"; do
+  case "$argument" in build|cquery|shutdown) fixture_command="$argument"; break ;; esac
+done
+printf '%s\\n' "$fixture_command" >> "$COMMAND_TRACE"
+case "$fixture_command" in
+  build) printf '%s\\n' "$@" > "$BUILD_ARGS"; exit "$BUILD_STATUS" ;;
+  cquery) printf '%s\\n' "$@" > "$QUERY_ARGS"; printf '%s\\n' "$GC_TOOL"; exit "$QUERY_STATUS" ;;
+  shutdown)
+    printf '%s\\n' "$@" > "$SHUTDOWN_ARGS"
+    fixture_shutdowns=0
+    while read -r fixture_line; do
+      [[ "$fixture_line" != shutdown ]] || fixture_shutdowns=$((fixture_shutdowns + 1))
+    done < "$COMMAND_TRACE"
+    [[ "$fixture_shutdowns" != 2 ]] || exit "$SECOND_SHUTDOWN_STATUS"
+    exit "$SHUTDOWN_STATUS" ;;
+esac
+`,
+  );
+  const gcTool = path.join(bin, 'stock gc fixture');
+  writeFileSync(
+    gcTool,
+    `#!/usr/bin/env bash
+set -eu
+test "$(tail -n 1 "$COMMAND_TRACE")" = shutdown
+test -z "\${JAVABIN:-}"
+printf '%s\\n' "$@" > "$GC_ARGS"
+printf 'gc begin\\n' >> "$COMMAND_TRACE"
+if [[ "$GC_STATUS" != 0 ]]; then exit "$GC_STATUS"; fi
+sleep 0.03
+printf '%s\\n' "$GC_DISK_KIB" > "$DISK_SIZE_FILE"
+printf 'gc done\\n' >> "$COMMAND_TRACE"
+`,
+    { mode: 0o755 },
   );
   const output = path.join(directory, 'outputs');
   writeFileSync(output, '');
@@ -103,6 +140,17 @@ function fixture(run: (directory: string, env: FixtureEnvironment) => void) {
     DISK_KIB: '1',
     SHUTDOWN_ARGS: path.join(directory, 'shutdown-args'),
     SHUTDOWN_STATUS: '0',
+    SECOND_SHUTDOWN_STATUS: '0',
+    COMMAND_TRACE: path.join(directory, 'command-trace'),
+    GC_ARGS: path.join(directory, 'gc-args'),
+    GC_TOOL: gcTool,
+    GC_STATUS: '0',
+    GC_DISK_KIB: '1',
+    DISK_SIZE_FILE: path.join(directory, 'disk-size'),
+    BUILD_ARGS: path.join(directory, 'build-args'),
+    BUILD_STATUS: '0',
+    QUERY_ARGS: path.join(directory, 'query-args'),
+    QUERY_STATUS: '0',
   };
   try {
     run(directory, env);
@@ -223,6 +271,7 @@ test('cache freeze stops exactly the configured writer before the action archive
           JVM_ARGS: explicit ? '-Xmx3g' : '',
           SERVER_LOG: serverLog,
           DISK_KIB: scenario.disk,
+          GC_DISK_KIB: scenario.disk,
           SHUTDOWN_STATUS: scenario.shutdown ?? '0',
         },
         script('ready'),
@@ -239,11 +288,67 @@ test('cache freeze stops exactly the configured writer before the action archive
           : ['shutdown'],
         scenario.name,
       );
+      if (scenario.disk !== '3145729')
+        assert.equal(readFileSync(env.COMMAND_TRACE, 'utf8'), 'shutdown\n', scenario.name);
       assert.deepEqual(
         readFileSync(env.GITHUB_OUTPUT, 'utf8').trim().split('\n').filter(Boolean),
         scenario.expected,
         scenario.name,
       );
+    });
+  }
+});
+
+test('oversized snapshots use completed stock GC after freezing its utility writer', () => {
+  for (const runnerOS of ['Linux', 'macOS', 'Windows']) {
+    fixture((directory, env) => {
+      execute(directory, env, script('Configure standard hosted Bazel caches'));
+      execute(
+        directory,
+        {
+          ...env,
+          RUNNER_OS: runnerOS,
+          DISK_KIB: '5865772',
+          GC_DISK_KIB: '2118144',
+          JAVABIN: '/ambient/java',
+        },
+        script('ready'),
+      );
+      assert.equal(
+        readFileSync(env.COMMAND_TRACE, 'utf8'),
+        'shutdown\nbuild\ncquery\nshutdown\ngc begin\ngc done\n',
+      );
+      assert.equal(readFileSync(env.GITHUB_OUTPUT, 'utf8'), 'disk=true\n');
+      assert.deepEqual(readFileSync(env.GC_ARGS, 'utf8').trim().split('\n'), [
+        `--disk_cache=${runnerOS === 'Windows' ? 'C:/hosted home/bazel-ci/disk' : path.join(env.HOME, '.cache/oliphaunt/bazel-ci/disk')}`,
+        '--max_size=2G',
+      ]);
+      assert.deepEqual(
+        readFileSync(path.join(directory, 'build-args'), 'utf8').trim().split('\n'),
+        ['build', '--jobs=2', '//tools/ci:bazel_disk_cache_gc'],
+      );
+    });
+  }
+});
+
+test('GC failures and logical-versus-allocated overage do not authorize transport', () => {
+  for (const scenario of [
+    { BUILD_STATUS: '1' },
+    { QUERY_STATUS: '1' },
+    { SECOND_SHUTDOWN_STATUS: '1' },
+    { GC_STATUS: '1' },
+    { GC_DISK_KIB: '3145729' },
+    { GC_DISK_KIB: 'invalid' },
+  ]) {
+    fixture((directory, env) => {
+      execute(directory, env, script('Configure standard hosted Bazel caches'));
+      const result = spawnSync('bash', ['-eu', '-c', script('ready')], {
+        cwd: directory,
+        env: { ...env, DISK_KIB: '5865772', ...scenario },
+      });
+      if (scenario.BUILD_STATUS || scenario.QUERY_STATUS || scenario.GC_STATUS)
+        assert.notEqual(result.status, 0);
+      assert.equal(readFileSync(env.GITHUB_OUTPUT, 'utf8'), '');
     });
   }
 });

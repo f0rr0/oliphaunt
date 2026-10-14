@@ -1,7 +1,10 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
+load(":bazel-disk-cache-gc.bzl", "bazel_disk_cache_gc")
 
 package(default_visibility = ["//visibility:public"])
+
+bazel_disk_cache_gc(name = "bazel_disk_cache_gc", tags = ["manual"])
 
 bun_test(
     name = "workflow_security_test",
