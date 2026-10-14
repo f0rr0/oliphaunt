@@ -1,15 +1,35 @@
+diff --git a/rules/min_sdk_version.bzl b/rules/min_sdk_version.bzl
+index 1f5e91b1..00005472 100644
 --- a/rules/min_sdk_version.bzl
 +++ b/rules/min_sdk_version.bzl
-@@ -23,7 +23,7 @@
+@@ -23,9 +23,8 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
  
  visibility(PROJECT_VISIBILITY)
  
 -_SETTING = "//rules/flags:min_sdk_version"
 +_SETTING = "//rules:min_sdk_version"
  _DEPOT_FLOOR = 23
- _MIN_SDK_LEVELS = sorted([_DEPOT_FLOOR, 24])
+-_MIN_SDK_LEVELS = sorted([_DEPOT_FLOOR, 24])
  
-@@ -49,12 +49,9 @@
+ _ATTRS = dict(
+     _min_sdk_version = attr.label(
+@@ -35,26 +34,16 @@ _ATTRS = dict(
+ )
+ 
+ def _clamp(min_sdk_version):
+-    # TODO(asinclair): Uncomment this once android_binary is Starlarkified and the order of the
+-    # Android Platforms Transition and Feature Flags transition is swapped.
+-    # clamped = _MIN_SDK_LEVELS[0]
+-    # for m in _MIN_SDK_LEVELS:
+-    #     if m > min_sdk_version:
+-    #         return clamped
+-    #     clamped = m
+-    # return clamped
+-    return 0
++    # All app dependencies share one setting; lowering it changes legal bytecode.
++    return min_sdk_version
+ 
+ def _get(ctx):
      # This is the case when an android_binary target does not set a value explicitly.
      # The configuration value defaults to 0
      # So in this case we use the depot floor.
@@ -25,3 +45,84 @@
  
  min_sdk_version = struct(
      attrs = _ATTRS,
+diff --git a/rules/android_binary/impl.bzl b/rules/android_binary/impl.bzl
+index 8d0ef2f1..1419c599 100644
+--- a/rules/android_binary/impl.bzl
++++ b/rules/android_binary/impl.bzl
+@@ -75,11 +75,14 @@ def _base_validations_processor(ctx, **_unused_ctxs):
+     )
+ 
+ def _process_manifest(ctx, **unused_ctxs):
++    configured_min_sdk_version = ctx.attr._min_sdk_version[BuildSettingInfo].value
++    if ctx.attr.min_sdk_version and configured_min_sdk_version > ctx.attr.min_sdk_version:
++        fail("Configured minimum SDK %d exceeds authored min_sdk_version %d" % (configured_min_sdk_version, ctx.attr.min_sdk_version))
+     manifest_ctx = _resources.bump_min_sdk(
+         ctx,
+         manifest = ctx.file.manifest,
+         manifest_values = ctx.attr.manifest_values,
+-        min_sdk_version = ctx.attr.min_sdk_version,
++        min_sdk_version = ctx.attr.min_sdk_version or configured_min_sdk_version,
+     )
+ 
+     return ProviderInfo(
+diff --git a/rules/dex.bzl b/rules/dex.bzl
+index c570af38..418597da 100644
+--- a/rules/dex.bzl
++++ b/rules/dex.bzl
+@@ -228,7 +228,7 @@ def _process_monolithic_dexing(
+     args.add("--dex")
+     args.add_all(dexopts)
+     if min_sdk_version > 0:
+-        args.add("--min_sdk_version", min_sdk_version)
++        args.add("--min-sdk-version", min_sdk_version)
+     args.add("--multi-dex")
+     if main_dex_list:
+         args.add(main_dex_list, format = "--main-dex-list=%s")
+diff --git a/rules/android_binary/r8.bzl b/rules/android_binary/r8.bzl
+index 973bc4d1..2c7393b2 100644
+--- a/rules/android_binary/r8.bzl
++++ b/rules/android_binary/r8.bzl
+@@ -35,12 +35,13 @@ load("//rules:visibility.bzl", "PROJECT_VISIBILITY")
+ 
+ visibility(PROJECT_VISIBILITY)
+ 
+-def process_r8(ctx, validation_ctx, jvm_ctx, packaged_resources_ctx, build_info_ctx, **_unused_ctxs):
++def process_r8(ctx, validation_ctx, manifest_ctx, jvm_ctx, packaged_resources_ctx, build_info_ctx, **_unused_ctxs):
+     """Runs R8 for desugaring, optimization, and dexing.
+ 
+     Args:
+       ctx: Rule contxt.
+       validation_ctx: Context from the base valdations processor.
++      manifest_ctx: Context from the manifest processor.
+       jvm_ctx: Context from the java processor.
+       packaged_resources_ctx: Context from resource processing.
+       build_info_ctx: Context from build info processor.
+@@ -80,7 +81,7 @@ def process_r8(ctx, validation_ctx, jvm_ctx, packaged_resources_ctx, build_info_
+ 
+     android_jar = get_android_sdk(ctx).android_jar
+     proguard_specs = proguard.get_proguard_specs(ctx, packaged_resources_ctx.resource_proguard_config)
+-    min_sdk_version = getattr(ctx.attr, "min_sdk_version", None)
++    min_sdk_version = manifest_ctx.processed_min_sdk_version
+ 
+     neverlink_infos = utils.collect_providers(StarlarkAndroidNeverlinkInfo, ctx.attr.deps)
+     neverlink_jars = depset(transitive = [info.transitive_neverlink_libraries for info in neverlink_infos])
+diff --git a/rules/android_binary/attrs.bzl b/rules/android_binary/attrs.bzl
+index 506578c8..b9618bdc 100644
+--- a/rules/android_binary/attrs.bzl
++++ b/rules/android_binary/attrs.bzl
+@@ -22,6 +22,7 @@ load(
+     _attrs = "attrs",
+ )
+ load("//rules:dex_desugar_aspect.bzl", "dex_desugar_aspect")
++load("//rules:min_sdk_version.bzl", "min_sdk_version")
+ load(
+     "//rules:native_deps.bzl",
+     "split_config_aspect",
+@@ -248,6 +249,7 @@ ATTRS = _attrs.replace(
+             ),
+         ),
+         _attrs.compilation_attributes(apply_android_transition = True),
++        min_sdk_version.attrs,
+         _attrs.DATA_CONTEXT,
+         _attrs.ANDROID_TOOLCHAIN_ATTRS,
+         _attrs.AUTOMATIC_EXEC_GROUPS_ENABLED,

@@ -4,7 +4,11 @@ load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts", "unittest")
 load(":app.bzl", "android_app_configuration", "android_workspace_npm", "mobile_query_input")
 load("@rules_android//rules:min_sdk_version.bzl", "min_sdk_version")
 load("@rules_android//rules:android_platforms_transition.bzl", platforms_transition = "testing")
-load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("@rules_android//rules:desugar.bzl", "desugar")
+load("@rules_android//rules:dex.bzl", "dex")
+load("@rules_android//rules/android_binary:impl.bzl", "PROCESSORS")
+load("@rules_android//android:rules.bzl", "android_binary")
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo", "int_flag")
 
 def _query_input_test_impl(ctx):
     env = unittest.begin(ctx)
@@ -53,7 +57,7 @@ def mobile_query_input_tests():
     _missing_query_test(name = "missing_query_test", target_under_test = ":missing_query_subject")
 
 def _android_min_sdk_test_impl(ctx):
-    env = unittest.begin(ctx)
+    env = analysistest.begin(ctx)
     # Exercise the actual maintained provider reader, including its unchanged default.
     for configured, expected in [(0, 23), (23, 23), (24, 24), (26, 26)]:
         subject = struct(attr = struct(_min_sdk_version = {BuildSettingInfo: BuildSettingInfo(value = configured)}))
@@ -75,9 +79,142 @@ def _android_min_sdk_test_impl(ctx):
                 transitioned = platforms_transition.impl(settings, struct(min_sdk_version = declared))
                 asserts.equals(env, minimum, transitioned[min_sdk_version.SETTING])
                 asserts.equals(env, configuration["//command_line_option:android_platforms"], transitioned["//command_line_option:platforms"])
-    return unittest.end(env)
+            # An authored minimum also propagates from an unconfigured root.
+            settings[min_sdk_version.SETTING] = 0
+            transitioned = platforms_transition.impl(settings, struct(min_sdk_version = minimum))
+            asserts.equals(env, minimum, transitioned[min_sdk_version.SETTING])
 
-_android_min_sdk_test = unittest.make(_android_min_sdk_test_impl)
+    subject = analysistest.target_under_test(env)
+    cases = subject[_MinimumSdkCases].cases
+    flags = {
+        "Desugar": "--min_sdk_version",
+        "DexBuilder": "--min_sdk_version",
+        "DexMerger": "--min_sdk_version",
+        "AndroidDexer": "--min-sdk-version",
+    }
+    observed = []
+    for action in analysistest.target_actions(env):
+        if action.mnemonic not in flags:
+            continue
+        output = action.outputs.to_list()[0]
+        case = [name for name in cases if name in output.path.split("/")][0]
+        minimum = cases[case]
+        flag = flags[action.mnemonic]
+        observed.append((case, action.mnemonic))
+        if minimum:
+            asserts.equals(env, 1, len([arg for arg in action.argv if arg == flag]))
+            asserts.equals(env, str(minimum), action.argv[action.argv.index(flag) + 1])
+        else:
+            asserts.false(env, flag in action.argv)
+        if action.mnemonic == "AndroidDexer":
+            asserts.false(env, "--min_sdk_version" in action.argv)
+    asserts.equals(env, sorted([(case, mnemonic) for case in cases for mnemonic in flags]), sorted(observed))
+    return analysistest.end(env)
+
+_MinimumSdkCases = provider(fields = ["cases"])
+
+def _android_dex_actions_impl(ctx):
+    tool = ctx.actions.declare_file(ctx.label.name + "/tool")
+    source = ctx.actions.declare_file(ctx.label.name + "/input.jar")
+    config = ctx.actions.declare_file(ctx.label.name + "/desugar.json")
+    ctx.actions.write(tool, "#!/bin/sh\nexit 1\n", is_executable = True)
+    ctx.actions.write(source, "analysis-only jar")
+    ctx.actions.write(config, "{}")
+    cases = {}
+    outputs = []
+    for index, (configured, declared, expected) in enumerate([(0, 0, 0), (23, 0, 23), (24, 0, 24), (26, 0, 26), (24, 26, 26)]):
+        case = ctx.label.name + "_" + str(index)
+        subject = struct(
+            actions = ctx.actions,
+            attr = struct(
+                min_sdk_version = declared,
+                manifest_values = {"minSdkVersion": str(expected)} if expected else {},
+                _min_sdk_version = {BuildSettingInfo: BuildSettingInfo(value = configured)},
+                _java_toolchain = ctx.attr._java_toolchain,
+            ),
+            file = struct(manifest = None),
+            fragments = ctx.fragments,
+            label = struct(name = case),
+            var = ctx.var,
+        )
+        manifest = PROCESSORS["ManifestProcessor"](subject).value
+        if manifest.processed_min_sdk_version != expected:
+            fail("Configured/declared minimum SDK did not reach the app manifest processor")
+        minimum = min_sdk_version.clamp(manifest.processed_min_sdk_version)
+        cases[case] = expected
+        desugared = ctx.actions.declare_file(case + "/desugared.jar")
+        incremental = ctx.actions.declare_file(case + "/incremental.dex.zip")
+        merged = ctx.actions.declare_file(case + "/merged.dex.zip")
+        monolithic = ctx.actions.declare_file(case + "/monolithic.dex.zip")
+        desugar.desugar(subject, input = source, output = desugared, classpath = depset(),
+                        min_sdk_version = minimum, desugar_exec = tool, desugared_lib_config = config)
+        dex.dex(subject, input = desugared, output = incremental, min_sdk_version = minimum, dex_exec = tool)
+        dex.dex_merge(subject, inputs = [incremental], output = merged, min_sdk_version = minimum, dexmerger = tool)
+        dex.process_monolithic_dexing(subject, input = desugared, output = monolithic,
+                                      min_sdk_version = manifest.processed_min_sdk_version, dexbuilder = tool)
+        outputs.extend([desugared, incremental, merged, monolithic])
+    return [DefaultInfo(files = depset(outputs)), _MinimumSdkCases(cases = cases)]
+
+_android_dex_actions = rule(
+    implementation = _android_dex_actions_impl,
+    attrs = {"_java_toolchain": attr.label(default = Label("@bazel_tools//tools/jdk:current_java_toolchain"))},
+    fragments = ["android"],
+    toolchains = ["@bazel_tools//tools/jdk:toolchain_type"],
+)
+
+_android_min_sdk_test = analysistest.make(_android_min_sdk_test_impl)
+
+def _android_binary_min_sdk_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    flags = {"AndroidDexer": "--min-sdk-version", "Desugar": "--min_sdk_version", "ValidateManifest": "--expected_min_sdk_version"}
+    observed = {}
+    for action in analysistest.target_actions(env):
+        if action.mnemonic in flags:
+            flag = flags[action.mnemonic]
+            asserts.equals(env, "26", action.argv[action.argv.index(flag) + 1])
+            observed[action.mnemonic] = True
+    asserts.equals(env, sorted(flags), sorted(observed))
+    return analysistest.end(env)
+
+_android_binary_min_sdk_test = analysistest.make(
+    _android_binary_min_sdk_test_impl,
+    config_settings = {
+        str(Label("@rules_android//rules:min_sdk_version")): 26,
+        "//command_line_option:android_platforms": [str(Label("//build_defs/android:android_x86_64"))],
+    },
+)
+
+def _android_manifest_subject_impl(ctx):
+    PROCESSORS["ManifestProcessor"](ctx)
+    return [DefaultInfo()]
+
+_android_manifest_subject = rule(
+    implementation = _android_manifest_subject_impl,
+    attrs = {
+        "_min_sdk_version": attr.label(default = Label(":android_min_sdk_conflict_setting"), providers = [BuildSettingInfo]),
+        "min_sdk_version": attr.int(),
+        "manifest_values": attr.string_dict(),
+        "manifest": attr.label(allow_single_file = True),
+    },
+)
+
+def _android_min_sdk_conflict_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    asserts.expect_failure(env, "Configured minimum SDK 26 exceeds authored min_sdk_version 24")
+    return analysistest.end(env)
+
+_android_min_sdk_conflict_test = analysistest.make(
+    _android_min_sdk_conflict_test_impl,
+    expect_failure = True,
+)
 
 def android_app_configuration_tests():
-    _android_min_sdk_test(name = "android_min_sdk_test")
+    _android_dex_actions(name = "android_min_sdk_actions", tags = ["manual"])
+    _android_min_sdk_test(name = "android_min_sdk_test", target_under_test = ":android_min_sdk_actions")
+    android_binary(name = "android_min_sdk_binary", manifest = "min-sdk-test.xml", custom_package = "dev.oliphaunt.min_sdk_test",
+                   manifest_values = {"minSdkVersion": "26"}, multidex = "native", incremental_dexing = 0, tags = ["manual"])
+    _android_binary_min_sdk_test(name = "android_binary_min_sdk_test", target_under_test = ":android_min_sdk_binary")
+    # Upstream's private setting remains private; this is a real local provider.
+    int_flag(name = "android_min_sdk_conflict_setting", build_setting_default = 26)
+    _android_manifest_subject(name = "android_min_sdk_conflict", min_sdk_version = 24, tags = ["manual"])
+    _android_min_sdk_conflict_test(name = "android_min_sdk_conflict_test", target_under_test = ":android_min_sdk_conflict")

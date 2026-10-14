@@ -618,6 +618,8 @@ jobs:
             "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=2","--local_test_jobs=1"]' \
             > "$input_root/configuration.json"
           jq -nc '[
+            "//build_defs/android:android_binary_min_sdk_test",
+            "//build_defs/android:android_min_sdk_conflict_test",
             "//build_defs/extensions/mobile/final:android_arm64_v8a_final_contract_test",
             "//build_defs/extensions/mobile/final:android_x86_64_final_contract_test",
             "//build_defs/extensions/mobile:android_arm64_all_members_consumer",
