@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { gzipSync, zstdCompressSync } from 'node:zlib';
@@ -19,6 +19,7 @@ import {
   assertWasixAotSmokeHost,
   type HostSmokeSpec,
   prepareWasixHostAotSmoke,
+  readWasixHostAotSmokeSpec,
 } from './host-aot-smoke.mts';
 
 const roots: string[] = [];
@@ -180,6 +181,43 @@ for (const [targetId, target] of Object.entries(AOT_TARGET_TRIPLES)) {
     expect(JSON.parse(readFileSync(tools.psql.manifest, 'utf8'))['target-triple']).toEqual(target);
   });
 }
+test('resolved main and external runfiles preserve exact host envelope inputs', async () => {
+  const { root, spec } = await fixture('linux-arm64-gnu');
+  const runfiles = path.join(root, 'runfiles');
+  const archiveFiles = Object.values(spec.crates).map((file, index) => {
+    const directory = path.join(
+      runfiles,
+      index === 0 ? '_main/generated-carriers' : '+_repo_rules32+wasix_runtime_carriers/host-smoke',
+    );
+    mkdirSync(directory, { recursive: true });
+    const output = path.join(directory, path.basename(file));
+    copyFileSync(file, output);
+    return output;
+  });
+  const specification = path.join(root, 'host.inputs.json');
+  const { crates: _crates, ...metadata } = spec;
+  writeFileSync(specification, JSON.stringify(metadata));
+  const resolved = readWasixHostAotSmokeSpec(specification, archiveFiles);
+  const packets = prepareWasixHostAotSmoke(resolved, path.join(root, 'from-runfiles'));
+  const tools = JSON.parse(readFileSync(packets.toolsPacket, 'utf8'));
+  expect(readFileSync(tools.pgDump.wasm)).toEqual(module);
+  expect(readFileSync(tools.psql.wasm)).toEqual(module);
+  expect(JSON.parse(readFileSync(tools.psql.manifest, 'utf8'))['target-triple']).toEqual(
+    spec.target,
+  );
+  expect(() => readWasixHostAotSmokeSpec(specification, archiveFiles.slice(1))).toThrow(
+    /five resolved/u,
+  );
+  expect(() =>
+    readWasixHostAotSmokeSpec(specification, [...archiveFiles.slice(1), archiveFiles[1]]),
+  ).toThrow(/unique/u);
+  expect(() =>
+    readWasixHostAotSmokeSpec(
+      specification,
+      archiveFiles.map((file) => path.relative(runfiles, file)),
+    ),
+  ).toThrow(/resolved declared/u);
+});
 test('rejects wrong target/source/core module and changed/missing utility inputs', async () => {
   for (const mutation of [
     'target',

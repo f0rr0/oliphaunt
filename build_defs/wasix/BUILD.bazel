@@ -8,6 +8,7 @@ load(":tools-carriers.bzl", "TOOLS_CARRIER_HELPERS")
 load(":aot-repeatability.bzl", "wasix_aot_repeatability_test")
 load(":napi.bzl", "NAPI_HELPERS", "NAPI_NOTICES")
 load(":host-aot-smoke.bzl", "wasix_host_aot_smoke_test")
+load(":host-aot-smoke-test.bzl", "wasix_host_aot_smoke_argument_tests")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -121,6 +122,8 @@ wasix_host_aot_smoke_test(
     timeout = "long",
     tags = ["manual", "installed-consumer"],
 )
+
+wasix_host_aot_smoke_argument_tests()
 
 bun_test(
     name = "host_aot_smoke_inputs_test",

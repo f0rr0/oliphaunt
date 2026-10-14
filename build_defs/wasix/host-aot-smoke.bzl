@@ -21,10 +21,9 @@ def _host_aot_smoke_impl(ctx):
         "target": ctx.attr.target_triple,
         "runtimeVersion": PRODUCTS["liboliphaunt-wasix"]["version"],
         "toolsVersion": PRODUCTS["postgres-tools-wasix"]["version"],
-        "crates": {file.basename: file.path for file in crates},
     }))
     files = crates + [spec, binary] + ctx.files._helpers
-    return bun_test_entrypoint(ctx, ctx.file._runner, [spec, binary], files,
+    return bun_test_entrypoint(ctx, ctx.file._runner, [spec, binary] + crates, files,
         source_files = [ctx.file._runner] + ctx.files._helpers,
         additional_runfiles = ctx.attr.binary[DefaultInfo].default_runfiles)
 

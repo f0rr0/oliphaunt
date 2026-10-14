@@ -39,6 +39,19 @@ export type HostSmokeSpec = {
 const PRODUCT = 'oliphaunt-extension-contrib-pg18';
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
+export function readWasixHostAotSmokeSpec(
+  specification: string,
+  crates: readonly string[],
+): HostSmokeSpec {
+  assert(
+    crates.length === 5 && crates.every((file) => path.isAbsolute(file)),
+    'WASIX host smoke requires five resolved declared archive Files',
+  );
+  const byName = Object.fromEntries(crates.map((file) => [path.basename(file), file]));
+  assert.equal(Object.keys(byName).length, 5, 'WASIX host smoke archive names must be unique');
+  return { ...JSON.parse(readFileSync(specification, 'utf8')), crates: byName };
+}
+
 export function assertWasixAotSmokeHost(
   target: string,
   platform: string = process.platform,
@@ -207,10 +220,10 @@ export function prepareWasixHostAotSmoke(spec: HostSmokeSpec, root: string) {
 if (import.meta.main) {
   assert.equal(
     process.argv.length,
-    4,
-    'WASIX host smoke requires its configured specification and Rust test binary',
+    9,
+    'WASIX host smoke requires its configured specification, Rust test binary and five archive Files',
   );
-  const spec: HostSmokeSpec = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+  const spec = readWasixHostAotSmokeSpec(process.argv[2], process.argv.slice(4));
   assertWasixAotSmokeHost(spec.target);
   const root = mkdtempSync(
     path.join(process.env.TEST_TMPDIR ?? os.tmpdir(), 'wasix-host-aot-smoke-'),
