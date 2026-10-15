@@ -110,6 +110,7 @@ def host_cc_profiles(sdk):
                     "objdump": "unsupported.sh",
                 },
                 compile_flags = ["-target", "arm64-apple-macosx" + minimum, "-resource-dir", prefix + sdk["resourceDirectory"], "-isysroot", prefix + "sdk_macosx"],
+                cxx_flags = ["-std=c++17"],
                 link_flags = ["-target", "arm64-apple-macosx" + minimum, "-resource-dir", prefix + sdk["resourceDirectory"], "-isysroot", prefix + "sdk_macosx"],
                 link_libs = ["-lc++"],
                 unfiltered_compile_flags = ["-Wno-overriding-option"],
