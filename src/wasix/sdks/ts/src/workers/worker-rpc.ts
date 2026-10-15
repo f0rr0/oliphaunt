@@ -320,7 +320,11 @@ export async function openWorkerDatabase(
   const rpc = new WorkerRpc(worker);
   try {
     await rpc.request({ method: 'open', options }, transfer);
-    return new WasixDatabaseImpl(new WorkerDatabaseSession(rpc, options));
+    return new WasixDatabaseImpl(
+      new WorkerDatabaseSession(rpc, options),
+      undefined,
+      options.admission,
+    );
   } catch (error) {
     return rethrowAfterWorkerTermination(
       rpc,

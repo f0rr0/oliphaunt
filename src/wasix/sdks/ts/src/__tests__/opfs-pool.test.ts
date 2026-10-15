@@ -15,10 +15,9 @@ import { restoreGlobals, stubGlobal } from './test-globals.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+afterEach(() => restoreGlobals());
 
 describe('WASIX pooled OPFS storage', () => {
-  afterEach(() => restoreGlobals());
-
   it.each([
     'data',
     'state',
@@ -396,6 +395,7 @@ type FakeIo = {
   lockReleaseFailure?: Error;
   syncAccessErrorName?: string;
   writes?: string[];
+  readBacking?: () => Promise<void>;
 };
 
 function installOpfs(io: FakeIo = {}): FakeDirectory {
@@ -502,7 +502,10 @@ class FakeFile {
     const bytes = this.#bytes.slice();
     return {
       size: bytes.byteLength,
-      arrayBuffer: async () => bytes.buffer,
+      arrayBuffer: async () => {
+        if (this.#path.includes('/data/')) await this.#io.readBacking?.();
+        return bytes.buffer;
+      },
       text: async () => decoder.decode(bytes),
     } as File;
   }
@@ -554,3 +557,40 @@ function lastPathSegment(path: string): string {
 function notFound(): DOMException {
   return new DOMException('missing', 'NotFoundError');
 }
+
+it.each([
+  1, 2, 5,
+])('OPFS snapshots bound slow backing I/O at %s concurrent reads', async (maxConcurrentIO) => {
+  let active = 0;
+  let peak = 0;
+  const io: FakeIo = {
+    readBacking: async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await Promise.resolve();
+      await Promise.resolve();
+      active--;
+    },
+  };
+  const root = installOpfs(io);
+  await seedPool(root, 'concurrency');
+  const database = await databaseDirectory(root, 'concurrency');
+  await applyPooledOpfsDelta(database.asHandle(), 'concurrency', compatible(), {
+    directories: ['base'],
+    files: Array.from({ length: 9 }, (_, index) => ({
+      path: `base/file${index}`,
+      bytes: Uint8Array.of(index),
+    })),
+    deleted: [],
+  });
+  const lease = await acquireOpfsStorage(
+    'concurrency',
+    clusterSeed(),
+    compatible(),
+    maxConcurrentIO,
+  );
+  expect(peak).toBe(maxConcurrentIO);
+  expect(lease.mount?.files['base/file8']).toEqual(Uint8Array.of(8));
+  await lease.close(undefined, 'failed');
+  restoreGlobals();
+});

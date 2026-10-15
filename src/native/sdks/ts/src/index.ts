@@ -36,6 +36,8 @@ export {
 } from './query.js';
 export type {
   BinaryInput,
+  FilePathInput,
+  AdmissionLimits,
   DatabaseStorage,
   DirectoryStorage,
   OliphauntClient,

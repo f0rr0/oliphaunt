@@ -4,7 +4,7 @@ import { arch, platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { NormalizedOpenConfig } from '../config.js';
+import { positiveIntegerTimeoutMs, type NormalizedOpenConfig } from '../config.js';
 import { simpleQuery } from '../protocol.js';
 import {
   envVar,
@@ -529,8 +529,8 @@ async function resolveBrokerNativeInstall(config: {
   runtimeDirectory?: string;
   extensions?: readonly string[];
   extensionDescriptors?: readonly import('../extensions.js').NativeExtension[];
-  seed?: import('../types.js').NativeResourceDirectory;
-  icuData?: import('../types.js').NativeResourceDirectory;
+  seed?: import('../config.js').NormalizedResourceDirectory;
+  icuData?: import('../config.js').NormalizedResourceDirectory;
 }): Promise<BrokerNativeInstall> {
   const extensions = config.extensions ?? [];
   const assets = await import('../native/assets.js');

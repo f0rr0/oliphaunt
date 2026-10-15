@@ -6,8 +6,8 @@ export type NativeBindingOptions = {
 export type NativeOpenConfig = {
   pgdata: string;
   runtimeDirectory?: string;
-  seed?: import('../types.js').NativeResourceDirectory;
-  icuData?: import('../types.js').NativeResourceDirectory;
+  seed?: import('../config.js').NormalizedResourceDirectory;
+  icuData?: import('../config.js').NormalizedResourceDirectory;
   username: string;
   database: string;
   extensions: string[];

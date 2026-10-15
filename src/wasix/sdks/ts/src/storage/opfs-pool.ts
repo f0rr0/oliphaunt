@@ -1,3 +1,4 @@
+import { DEFAULT_OPFS_MAX_CONCURRENT_IO } from './types.js';
 import type { WasixDirectoryMount } from '../resources/archive.js';
 import { parseJsonWithUniqueObjectKeys } from './database-root.js';
 import { WasixStorageError } from '../core/errors.js';
@@ -21,7 +22,6 @@ export const OPFS_POOL_ROOT = '.oliphaunt-wasix-pool-v1';
 const STATE_FILE = 'state.json';
 const DATA_DIRECTORY = 'data';
 const STATE_SCHEMA = 'oliphaunt-wasix-opfs-pool-v1';
-const MAX_PARALLEL_IO = 16;
 const UTF8_ENCODER = new TextEncoder();
 
 type StoredDirectory = Readonly<{ path: string; type: 'directory' }>;
@@ -45,9 +45,10 @@ export async function inspectPooledOpfsDatabase(
   database: FileSystemDirectoryHandle,
   name: string,
   physicalIdentity: WasixPhysicalIdentity,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<PooledOpfsDatabase> {
   const state = await readPoolState(database, name, physicalIdentity);
-  return inspectPoolState(database, name, physicalIdentity, state);
+  return inspectPoolState(database, name, physicalIdentity, state, maxConcurrentIO);
 }
 
 /** Reset only an unpublished first-open generation before portable hydration. */
@@ -56,6 +57,7 @@ export async function preparePooledOpfsDatabase(
   name: string,
   loadClusterSeed: WasixClusterSeedLoader,
   physicalIdentity: WasixPhysicalIdentity,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<PooledOpfsDatabase> {
   let state = await readPoolState(database, name, physicalIdentity);
   if (state?.phase === 'initializing') {
@@ -64,9 +66,10 @@ export async function preparePooledOpfsDatabase(
       name,
       await loadClusterSeed(),
       assertWasixPhysicalIdentity(physicalIdentity),
+      maxConcurrentIO,
     ));
   }
-  return inspectPoolState(database, name, physicalIdentity, state);
+  return inspectPoolState(database, name, physicalIdentity, state, maxConcurrentIO);
 }
 
 async function inspectPoolState(
@@ -74,6 +77,7 @@ async function inspectPoolState(
   name: string,
   physicalIdentity: WasixPhysicalIdentity,
   state: PoolState | undefined,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<PooledOpfsDatabase> {
   if (state === undefined) return { snapshot: undefined, state: 'new' };
   let data: FileSystemDirectoryHandle;
@@ -88,31 +92,35 @@ async function inspectPoolState(
   const entries = state.entries.filter((entry) => !VOLATILE_DATABASE_FILES.has(entry.path));
   if (entries.length !== state.entries.length) {
     await writePoolState(database, { ...state, entries });
-    await pruneUnreferencedData(data, entries).catch(() => undefined);
+    await pruneUnreferencedData(data, entries, maxConcurrentIO).catch(() => undefined);
   }
   const directories = entries
     .filter((entry): entry is StoredDirectory => entry.type === 'directory')
     .map(({ path }) => path);
   const storedFiles = entries.filter((entry): entry is StoredFile => entry.type === 'file');
-  const files = await parallelMap(storedFiles, async ({ path, backing }) => {
-    try {
-      return {
-        path,
-        bytes: new Uint8Array(
-          await (await (await data.getFileHandle(backing)).getFile()).arrayBuffer(),
-        ),
-      };
-    } catch (error) {
-      if (errorName(error) === 'NotFoundError') {
-        throw corrupt(
-          name,
-          `is missing backing ${JSON.stringify(backing)} for ${JSON.stringify(path)}`,
-          error,
-        );
+  const files = await parallelMap(
+    storedFiles,
+    async ({ path, backing }) => {
+      try {
+        return {
+          path,
+          bytes: new Uint8Array(
+            await (await (await data.getFileHandle(backing)).getFile()).arrayBuffer(),
+          ),
+        };
+      } catch (error) {
+        if (errorName(error) === 'NotFoundError') {
+          throw corrupt(
+            name,
+            `is missing backing ${JSON.stringify(backing)} for ${JSON.stringify(path)}`,
+            error,
+          );
+        }
+        throw error;
       }
-      throw error;
-    }
-  });
+    },
+    maxConcurrentIO,
+  );
   return {
     snapshot: validateStoredSnapshot(
       { schema: 'oliphaunt-wasix-directory-snapshot-v1', directories, files },
@@ -131,6 +139,7 @@ export async function applyPooledOpfsDelta(
   name: string,
   physicalIdentity: WasixPhysicalIdentity,
   delta: StorageDelta,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<void> {
   validateDeltaPaths(delta, name);
   const data = await database.getDirectoryHandle(DATA_DIRECTORY, { create: true });
@@ -138,7 +147,7 @@ export async function applyPooledOpfsDelta(
   const entries = new Map<string, StoredEntry>(
     existing?.entries.map((entry) => [entry.path, entry]),
   );
-  await pruneUnreferencedData(data, entries.values()).catch(() => undefined);
+  await pruneUnreferencedData(data, entries.values(), maxConcurrentIO).catch(() => undefined);
   const deletes = splitStorageDeltaDeletes(delta);
   for (const path of deletes.replacements) removeStoredPath(entries, path);
   for (const path of delta.directories) entries.set(path, { path, type: 'directory' });
@@ -157,7 +166,7 @@ export async function applyPooledOpfsDelta(
     physicalIdentity: assertWasixPhysicalIdentity(physicalIdentity),
     entries: [...entries.values()].sort(compareStoredEntries),
   });
-  await pruneUnreferencedData(data, entries.values()).catch(() => undefined);
+  await pruneUnreferencedData(data, entries.values(), maxConcurrentIO).catch(() => undefined);
 }
 
 export async function openPooledDatabaseDirectory(
@@ -178,16 +187,21 @@ async function initializePoolState(
   name: string,
   clusterSeed: WasixDirectoryMount,
   physicalIdentity: WasixPhysicalIdentity,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<PoolState> {
   const entries: StoredEntry[] = [...new Set(clusterSeed.directories)].map((path) => ({
     path,
     type: 'directory',
   }));
-  const files = await parallelMap(Object.entries(clusterSeed.files), async ([path, bytes]) => {
-    const backing = newBackingName();
-    await writeAtomicDataFile(data, backing, bytes);
-    return { path, type: 'file', backing } satisfies StoredFile;
-  });
+  const files = await parallelMap(
+    Object.entries(clusterSeed.files),
+    async ([path, bytes]) => {
+      const backing = newBackingName();
+      await writeAtomicDataFile(data, backing, bytes);
+      return { path, type: 'file', backing } satisfies StoredFile;
+    },
+    maxConcurrentIO,
+  );
   entries.push(...files);
   const state: PoolState = {
     schema: STATE_SCHEMA,
@@ -205,6 +219,7 @@ async function resetPoolClusterSeed(
   name: string,
   clusterSeed: WasixDirectoryMount,
   physicalIdentity: WasixPhysicalIdentity,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<{ data: FileSystemDirectoryHandle; state: PoolState }> {
   try {
     await database.removeEntry(DATA_DIRECTORY, { recursive: true });
@@ -212,7 +227,14 @@ async function resetPoolClusterSeed(
     if (errorName(error) !== 'NotFoundError') throw error;
   }
   const data = await database.getDirectoryHandle(DATA_DIRECTORY, { create: true });
-  const state = await initializePoolState(database, data, name, clusterSeed, physicalIdentity);
+  const state = await initializePoolState(
+    database,
+    data,
+    name,
+    clusterSeed,
+    physicalIdentity,
+    maxConcurrentIO,
+  );
   return { data, state };
 }
 
@@ -348,6 +370,7 @@ function removeStoredPath(entries: Map<string, StoredEntry>, path: string): void
 async function pruneUnreferencedData(
   data: FileSystemDirectoryHandle,
   entries: Iterable<StoredEntry>,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<void> {
   const referenced = new Set(
     [...entries].flatMap((entry) => (entry.type === 'file' ? [entry.backing] : [])),
@@ -356,7 +379,7 @@ async function pruneUnreferencedData(
   for await (const backing of data.keys()) {
     if (!referenced.has(backing)) removals.push(backing);
   }
-  await parallelMap(removals, (backing) => data.removeEntry(backing));
+  await parallelMap(removals, (backing) => data.removeEntry(backing), maxConcurrentIO);
 }
 
 function validateDeltaPaths(delta: StorageDelta, name: string): void {
@@ -446,6 +469,7 @@ async function requireOpfsRoot(): Promise<FileSystemDirectoryHandle> {
 async function parallelMap<Input, Output>(
   values: readonly Input[],
   operation: (value: Input) => Promise<Output>,
+  maxConcurrentIO: number,
 ): Promise<Output[]> {
   const output = new Array<Output>(values.length);
   let cursor = 0;
@@ -464,7 +488,7 @@ async function parallelMap<Input, Output>(
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(MAX_PARALLEL_IO, values.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(maxConcurrentIO, values.length) }, worker));
   if (failed) throw failure;
   return output;
 }

@@ -1,5 +1,7 @@
 import {
   OperationBudget,
+  TRANSACTION_BEGIN_REQUEST_BYTES,
+  type AdmissionLimits,
   snapshotProtocolInput,
 } from '@oliphaunt/ts-query/internal/operation-budget';
 import { composeWasixStorageFailure, WasixStorageError } from './errors.js';
@@ -238,7 +240,7 @@ const forgottenDatabaseRegistry =
 
 /** @internal Public database state machine; construction stays behind Oliphaunt.open(). */
 export class WasixDatabaseImpl implements OliphauntDatabase {
-  readonly #operationBudget = new OperationBudget();
+  readonly #operationBudget: OperationBudget;
 
   readonly #session: WasixDatabaseSession;
   readonly #identity: WasixDatabaseIdentity;
@@ -259,7 +261,9 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   constructor(
     session: WasixDatabaseSession,
     forgottenRegistry: WasixForgottenDatabaseRegistry | undefined = forgottenDatabaseRegistry,
+    admission?: AdmissionLimits,
   ) {
+    this.#operationBudget = new OperationBudget(admission);
     this.#session = session;
     this.#forgottenRegistry = forgottenRegistry;
     this.#forgottenRegistration = forgottenRegistry?.register(this, session);
@@ -286,7 +290,13 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     return this.#operationBudget.admit(
       (retain) => {
         this.#assertAvailable();
-        const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+        const plan = planQuery(
+          sql,
+          parameters,
+          snapshotParameterOptions(options),
+          retain,
+          this.#operationBudget.configured,
+        );
         return this.#serialize(() => this.#runDatabasePlanUnlocked(plan, parseCommandResponse));
       },
       () => this.#tail,
@@ -302,7 +312,13 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       (retain) => {
         this.#assertAvailable();
         const stableOptions = snapshotQueryOptions(options);
-        const plan = planQuery(sql, parameters, stableOptions, retain);
+        const plan = planQuery(
+          sql,
+          parameters,
+          stableOptions,
+          retain,
+          this.#operationBudget.configured,
+        );
         return this.#serialize(() =>
           this.#runDatabasePlanUnlocked(plan, (response) =>
             decodeQueryResult<Row, Options>(parseQueryRawResponse(response), stableOptions),
@@ -321,7 +337,13 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     return this.#operationBudget.admit(
       (retain) => {
         this.#assertAvailable();
-        const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+        const plan = planQuery(
+          sql,
+          parameters,
+          snapshotParameterOptions(options),
+          retain,
+          this.#operationBudget.configured,
+        );
         return this.#serialize(() => this.#runDatabasePlanUnlocked(plan, parseQueryRawResponse));
       },
       () => this.#tail,
@@ -335,8 +357,9 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     return this.#operationBudget.admit(
       (retain) => {
         this.#assertAvailable();
-        const input = structuredSimpleQuery(sql);
-        retain(input.byteLength);
+        const input = this.#operationBudget.snapshotEncodedInput(retain, sql.length * 3 + 6, () =>
+          structuredSimpleQuery(sql),
+        );
         const stableOptions = snapshotReadOptions(options);
         return this.#serialize(() =>
           this.#runDatabaseStructuredUnlocked(input, (response) =>
@@ -355,8 +378,11 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     return this.#operationBudget.admit(
       (retain) => {
         this.#assertAvailable();
-        const input = describeQuery(sql, [...parameterTypeOids]);
-        retain(input.byteLength);
+        const input = this.#operationBudget.snapshotEncodedInput(
+          retain,
+          sql.length * 3 + 21 + parameterTypeOids.length * 4,
+          () => describeQuery(sql, [...parameterTypeOids]),
+        );
         return this.#serialize(() =>
           this.#runDatabaseStructuredUnlocked(input, parseDescribeResponse),
         );
@@ -807,124 +833,150 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     }
     this.#activeTransaction = true;
     transactionPinnedTargets.add(this);
-    const attempt = this.#serialize(async () => {
-      // A close may cancel this transaction while it is still queued behind
-      // an unstarted protocol reservation. Once execution enters PostgreSQL,
-      // close remains prohibited until the callback transaction is finished.
-      this.#assertOpen();
-      this.#transactionRunning = true;
-      const transaction = new WasixTransactionImpl(
-        (plan, decode) => this.#runTransactionPlanUnlocked(plan, decode),
-        (input, decode) => this.#runTransactionStructuredUnlocked(input, decode),
-        () => this.#executeTransactionControlUnlocked('ROLLBACK').then(() => undefined),
-      );
-      try {
-        try {
-          await this.#executeTransactionControlUnlocked('BEGIN');
-        } catch (error) {
-          if (this.#transactionFailure === undefined && this.#persistenceFailure === undefined) {
-            try {
-              await this.#syncPersistence('operation');
-            } catch (persistenceError) {
-              throw composeWasixStorageFailure(
-                persistenceError as WasixStorageError,
-                'transaction also failed',
-                error,
-              );
-            }
-          }
-          throw error;
-        }
-
-        let result: T;
-        try {
-          result = await body(transaction);
-          await transaction.sealAndDrain();
-        } catch (error) {
-          transaction.seal();
-          await transaction.drain();
-          let rolledBack = transaction.rolledBack;
-          let rollbackFailure: unknown;
-          if (transaction.rollbackStarted) {
-            try {
-              await transaction.waitForRollback();
-              rolledBack = transaction.rolledBack;
-            } catch (rollbackError) {
-              rollbackFailure = rollbackError;
-            }
-          } else if (
-            this.#transactionFailure === undefined &&
-            this.#persistenceFailure === undefined
-          ) {
-            try {
-              await this.#executeTransactionControlUnlocked('ROLLBACK');
-              rolledBack = true;
-            } catch (rollbackError) {
-              rollbackFailure = rollbackError;
-            }
-          }
-          if (rollbackFailure !== undefined && rollbackFailure !== error) {
-            throw transactionCallbackAggregate(
-              error,
-              rollbackFailure,
-              'transaction callback and rollback both failed',
-            );
-          }
-          if (rolledBack) {
-            try {
-              await this.#syncPersistence('operation');
-            } catch (persistenceError) {
-              throw composeWasixStorageFailure(
-                persistenceError as WasixStorageError,
-                'transaction also failed',
-                error,
-              );
-            }
-          }
-          const sessionFailure = this.#persistenceFailure ?? this.#transactionFailure;
-          const databaseFailure =
-            sessionFailure === undefined ? undefined : (transaction.firstFailure ?? sessionFailure);
-          if (databaseFailure !== undefined && databaseFailure !== error) {
-            throw transactionCallbackAggregate(
-              error,
-              databaseFailure,
-              'transaction callback and an independent database failure both occurred',
-            );
-          }
-          throw error;
-        }
-
-        if (transaction.rolledBack) {
-          await this.#syncPersistence('operation');
-          return result;
-        }
-        if (this.#transactionFailure !== undefined && transaction.firstFailure !== undefined) {
-          throw transaction.firstFailure;
-        }
-
-        const outcome = await this.#executeTransactionControlUnlocked('COMMIT');
-        if (outcome === 'committed') {
-          await this.#syncPersistence('operation');
-          return result;
-        }
-        const primary =
-          transaction.firstFailure ??
-          new Error('PostgreSQL rolled back the transaction instead of committing');
-        try {
-          await this.#syncPersistence('operation');
-        } catch (persistenceError) {
-          throw composeWasixStorageFailure(
-            persistenceError as WasixStorageError,
-            'transaction also failed',
-            primary,
+    let attempt: Promise<T>;
+    try {
+      const enter = (releaseBegin?: () => void) =>
+        this.#serialize(async () => {
+          // A close may cancel this transaction while it is still queued behind
+          // an unstarted protocol reservation. Once execution enters PostgreSQL,
+          // close remains prohibited until the callback transaction is finished.
+          this.#assertOpen();
+          this.#transactionRunning = true;
+          const transaction = new WasixTransactionImpl(
+            (plan, decode) => this.#runTransactionPlanUnlocked(plan, decode),
+            (input, decode) => this.#runTransactionStructuredUnlocked(input, decode),
+            () => this.#executeTransactionControlUnlocked('ROLLBACK').then(() => undefined),
+            this.#operationBudget.configured ? this.#operationBudget : undefined,
           );
-        }
-        throw primary;
-      } finally {
-        transaction.deactivate();
-        this.#transactionRunning = false;
-      }
-    });
+          try {
+            try {
+              await this.#executeTransactionControlUnlocked('BEGIN');
+            } catch (error) {
+              if (
+                this.#transactionFailure === undefined &&
+                this.#persistenceFailure === undefined
+              ) {
+                try {
+                  await this.#syncPersistence('operation');
+                } catch (persistenceError) {
+                  throw composeWasixStorageFailure(
+                    persistenceError as WasixStorageError,
+                    'transaction also failed',
+                    error,
+                  );
+                }
+              }
+              throw error;
+            } finally {
+              // The transaction lease does not consume an ordinary operation slot.
+              releaseBegin?.();
+            }
+
+            let result: T;
+            try {
+              result = await body(transaction);
+              await transaction.sealAndDrain();
+            } catch (error) {
+              transaction.seal();
+              await transaction.drain();
+              let rolledBack = transaction.rolledBack;
+              let rollbackFailure: unknown;
+              if (transaction.rollbackStarted) {
+                try {
+                  await transaction.waitForRollback();
+                  rolledBack = transaction.rolledBack;
+                } catch (rollbackError) {
+                  rollbackFailure = rollbackError;
+                }
+              } else if (
+                this.#transactionFailure === undefined &&
+                this.#persistenceFailure === undefined
+              ) {
+                try {
+                  await this.#executeTransactionControlUnlocked('ROLLBACK');
+                  rolledBack = true;
+                } catch (rollbackError) {
+                  rollbackFailure = rollbackError;
+                }
+              }
+              if (rollbackFailure !== undefined && rollbackFailure !== error) {
+                throw transactionCallbackAggregate(
+                  error,
+                  rollbackFailure,
+                  'transaction callback and rollback both failed',
+                );
+              }
+              if (rolledBack) {
+                try {
+                  await this.#syncPersistence('operation');
+                } catch (persistenceError) {
+                  throw composeWasixStorageFailure(
+                    persistenceError as WasixStorageError,
+                    'transaction also failed',
+                    error,
+                  );
+                }
+              }
+              const sessionFailure = this.#persistenceFailure ?? this.#transactionFailure;
+              const databaseFailure =
+                sessionFailure === undefined
+                  ? undefined
+                  : (transaction.firstFailure ?? sessionFailure);
+              if (databaseFailure !== undefined && databaseFailure !== error) {
+                throw transactionCallbackAggregate(
+                  error,
+                  databaseFailure,
+                  'transaction callback and an independent database failure both occurred',
+                );
+              }
+              throw error;
+            }
+
+            if (transaction.rolledBack) {
+              await this.#syncPersistence('operation');
+              return result;
+            }
+            if (this.#transactionFailure !== undefined && transaction.firstFailure !== undefined) {
+              throw transaction.firstFailure;
+            }
+
+            const outcome = await this.#executeTransactionControlUnlocked('COMMIT');
+            if (outcome === 'committed') {
+              await this.#syncPersistence('operation');
+              return result;
+            }
+            const primary =
+              transaction.firstFailure ??
+              new Error('PostgreSQL rolled back the transaction instead of committing');
+            try {
+              await this.#syncPersistence('operation');
+            } catch (persistenceError) {
+              throw composeWasixStorageFailure(
+                persistenceError as WasixStorageError,
+                'transaction also failed',
+                primary,
+              );
+            }
+            throw primary;
+          } finally {
+            transaction.deactivate();
+            this.#transactionRunning = false;
+          }
+        });
+      attempt = !this.#operationBudget.configured
+        ? enter()
+        : this.#operationBudget.admit(
+            (retain, release) => {
+              retain(TRANSACTION_BEGIN_REQUEST_BYTES);
+              return enter(release);
+            },
+            () => this.#tail,
+          );
+    } catch (error) {
+      this.#activeTransaction = false;
+      transactionPinnedTargets.delete(this);
+      throw error;
+    }
     return await attempt.finally(() => {
       this.#activeTransaction = false;
       transactionPinnedTargets.delete(this);
@@ -1274,7 +1326,7 @@ class WasixCloseTimeoutError extends Error {
 }
 
 class WasixTransactionImpl implements OliphauntTransaction {
-  readonly #operationBudget = new OperationBudget();
+  readonly #operationBudget: OperationBudget;
 
   readonly #runPlan: <Result extends NoticeCarrier>(
     plan: QueryPlan,
@@ -1302,7 +1354,9 @@ class WasixTransactionImpl implements OliphauntTransaction {
       decode: (response: Uint8Array) => Result,
     ) => Promise<Result>,
     rollbackControl: () => Promise<void>,
+    operationBudget = new OperationBudget(),
   ) {
+    this.#operationBudget = operationBudget;
     this.#runPlan = runPlan;
     this.#runStructured = runStructured;
     this.#rollbackControl = rollbackControl;
@@ -1333,7 +1387,13 @@ class WasixTransactionImpl implements OliphauntTransaction {
       return this.#operationBudget.admit(
         (retain) => {
           assertNoTransactionChain(sql);
-          const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+          const plan = planQuery(
+            sql,
+            parameters,
+            snapshotParameterOptions(options),
+            retain,
+            this.#operationBudget.configured,
+          );
           return this.#enqueue(() => this.#runPlan(plan, parseCommandResponse));
         },
         () => this.#tail,
@@ -1351,7 +1411,13 @@ class WasixTransactionImpl implements OliphauntTransaction {
         (retain) => {
           assertNoTransactionChain(sql);
           const stableOptions = snapshotQueryOptions(options);
-          const plan = planQuery(sql, parameters, stableOptions, retain);
+          const plan = planQuery(
+            sql,
+            parameters,
+            stableOptions,
+            retain,
+            this.#operationBudget.configured,
+          );
           return this.#enqueue(async () =>
             decodeQueryResult<Row, Options>(
               await this.#runPlan(plan, parseQueryRawResponse),
@@ -1373,7 +1439,13 @@ class WasixTransactionImpl implements OliphauntTransaction {
       return this.#operationBudget.admit(
         (retain) => {
           assertNoTransactionChain(sql);
-          const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+          const plan = planQuery(
+            sql,
+            parameters,
+            snapshotParameterOptions(options),
+            retain,
+            this.#operationBudget.configured,
+          );
           return this.#enqueue(() => this.#runPlan(plan, parseQueryRawResponse));
         },
         () => this.#tail,
@@ -1389,8 +1461,9 @@ class WasixTransactionImpl implements OliphauntTransaction {
       return this.#operationBudget.admit(
         (retain) => {
           assertNoTransactionChain(sql);
-          const input = structuredSimpleQuery(sql);
-          retain(input.byteLength);
+          const input = this.#operationBudget.snapshotEncodedInput(retain, sql.length * 3 + 6, () =>
+            structuredSimpleQuery(sql),
+          );
           const stableOptions = snapshotReadOptions(options);
           return this.#enqueue(() =>
             this.#runStructured(input, (response) =>
@@ -1407,8 +1480,11 @@ class WasixTransactionImpl implements OliphauntTransaction {
     return this.#publicPromise(() => {
       return this.#operationBudget.admit(
         (retain) => {
-          const input = describeQuery(sql, [...parameterTypeOids]);
-          retain(input.byteLength);
+          const input = this.#operationBudget.snapshotEncodedInput(
+            retain,
+            sql.length * 3 + 21 + parameterTypeOids.length * 4,
+            () => describeQuery(sql, [...parameterTypeOids]),
+          );
           return this.#enqueue(() => this.#runStructured(input, parseDescribeResponse));
         },
         () => this.#tail,

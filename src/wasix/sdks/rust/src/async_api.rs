@@ -36,6 +36,7 @@ use crate::{
     TransactionError, TransactionResult,
 };
 
+// Slots release at dispatch; input bytes remain charged through the owner action.
 const OWNER_QUEUE_CAPACITY: usize = 64;
 const OWNER_QUEUE_BYTES: usize = 128 * 1024 * 1024;
 const OWNER_OPEN: u8 = 0;
@@ -351,7 +352,9 @@ struct OwnerMessage {
     // Ordinary work and transaction begin consume bounded admission. Lifecycle
     // controls omit the permit so close/rollback can always enter the same
     // ordered queue without overtaking already-admitted work.
+    hold_admission: bool,
     _permit: Option<OwnedSemaphorePermit>,
+    // Keep input charged while the action still owns it, after the slot releases.
     _bytes: Option<OwnedSemaphorePermit>,
     operation: OwnerOperation,
 }
@@ -443,6 +446,7 @@ struct DatabaseOwnerInner {
     ordinary_order: Arc<AsyncMutex<()>>,
     ordinary_capacity: Arc<Semaphore>,
     ordinary_bytes: Arc<Semaphore>,
+    limits: Option<crate::AdmissionLimits>,
     state: Arc<AtomicU8>,
     close_epoch: AtomicU64,
     close_attempt: Arc<Mutex<Option<Arc<CloseAttempt>>>>,
@@ -454,6 +458,7 @@ impl Drop for DatabaseOwnerInner {
     fn drop(&mut self) {
         let _admission = self.admission.lock().ok();
         let _ = self.queue.send(OwnerMessage {
+            hold_admission: false,
             _permit: None,
             _bytes: None,
             operation: OwnerOperation::Control(OwnerControl::Shutdown),
@@ -464,7 +469,7 @@ impl Drop for DatabaseOwnerInner {
 impl DatabaseOwner {
     fn open_with_completion<F, C>(configure: F, completion: C)
     where
-        F: FnOnce() -> Result<DirectOliphauntBuilder> + Send + 'static,
+        F: FnOnce() -> Result<AsyncOliphauntBuilder> + Send + 'static,
         C: FnOnce(Result<Self>) + Send + 'static,
     {
         let completion = SharedCompletion::new(completion);
@@ -472,8 +477,6 @@ impl DatabaseOwner {
         let (queue, queue_rx) = mpsc::channel();
         let state = Arc::new(AtomicU8::new(OWNER_OPEN));
         let ordinary_order = Arc::new(AsyncMutex::new(()));
-        let ordinary_capacity = Arc::new(Semaphore::new(OWNER_QUEUE_CAPACITY));
-        let ordinary_bytes = Arc::new(Semaphore::new(OWNER_QUEUE_BYTES));
         let admission = Arc::new(Mutex::new(()));
         let close_attempt = Arc::new(Mutex::new(None));
         let thread_state = Arc::clone(&state);
@@ -486,10 +489,23 @@ impl DatabaseOwner {
                     thread_completion,
                     "WASIX database owner stopped before open completed",
                 );
-                let opened =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| configure()?.open()));
+                let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let builder = configure()?;
+                    builder.validate_admission()?;
+                    let limits = builder.admission;
+                    builder.inner.open().map(|database| (database, limits))
+                }));
                 let database = match opened {
-                    Ok(Ok(database)) => {
+                    Ok(Ok((database, limits))) => {
+                        let ordinary_capacity = Arc::new(Semaphore::new(
+                            limits.map_or(OWNER_QUEUE_CAPACITY, |limits| {
+                                limits.max_pending_operations
+                            }),
+                        ));
+                        let ordinary_bytes =
+                            Arc::new(Semaphore::new(limits.map_or(OWNER_QUEUE_BYTES, |limits| {
+                                limits.high_water_mark_bytes
+                            })));
                         completion.complete(Ok(Self {
                             inner: Arc::new(DatabaseOwnerInner {
                                 queue,
@@ -497,6 +513,7 @@ impl DatabaseOwner {
                                 ordinary_order,
                                 ordinary_capacity,
                                 ordinary_bytes,
+                                limits,
                                 state,
                                 close_epoch: AtomicU64::new(0),
                                 close_attempt,
@@ -580,6 +597,25 @@ impl DatabaseOwner {
         self.enqueue_ordinary_factory(0, || operation).await
     }
 
+    fn ordinary_count_permits(&self, bytes: usize) -> u32 {
+        // An oversized operation also waits for earlier zero-input work to finish.
+        self.inner.limits.map_or(1, |limits| {
+            if bytes > limits.high_water_mark_bytes {
+                limits.max_pending_operations as u32
+            } else {
+                1
+            }
+        })
+    }
+
+    fn ordinary_byte_permits(&self, bytes: usize) -> u32 {
+        bytes.min(
+            self.inner
+                .limits
+                .map_or(OWNER_QUEUE_BYTES, |limits| limits.high_water_mark_bytes),
+        ) as u32
+    }
+
     async fn enqueue_ordinary_factory(
         &self,
         bytes: usize,
@@ -591,13 +627,23 @@ impl DatabaseOwner {
             self.inner.close_epoch.load(Ordering::SeqCst)
         };
         let _order = self.inner.ordinary_order.lock().await;
+        let count = self.ordinary_count_permits(bytes);
         let permit = Arc::clone(&self.inner.ordinary_capacity)
-            .acquire_owned()
+            .acquire_many_owned(count)
             .await
             .map_err(|_| Error::lifecycle("WASIX database owner admission has stopped"))?;
         // A single oversized input retains its existing limit and runs alone.
+        // Even zero-input work must wait while a larger single operation owns the watermark.
+        if self.inner.limits.is_some() && bytes == 0 {
+            drop(
+                Arc::clone(&self.inner.ordinary_bytes)
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| Error::lifecycle("WASIX database owner admission has stopped"))?,
+            );
+        }
         let byte_permit = Arc::clone(&self.inner.ordinary_bytes)
-            .acquire_many_owned(bytes.min(OWNER_QUEUE_BYTES) as u32)
+            .acquire_many_owned(self.ordinary_byte_permits(bytes))
             .await
             .map_err(|_| Error::lifecycle("WASIX database owner admission has stopped"))?;
         let _admission = self.lock_admission()?;
@@ -610,6 +656,7 @@ impl DatabaseOwner {
         self.inner
             .queue
             .send(OwnerMessage {
+                hold_admission: self.inner.limits.is_some(),
                 _permit: Some(permit),
                 _bytes: Some(byte_permit),
                 operation: operation(),
@@ -651,8 +698,9 @@ impl DatabaseOwner {
                         None,
                     )
                 })?;
+            let count = self.ordinary_count_permits(bytes);
             let permit = Arc::clone(&self.inner.ordinary_capacity)
-                .try_acquire_owned()
+                .try_acquire_many_owned(count)
                 .map_err(|error| {
                     (
                         match error {
@@ -666,8 +714,22 @@ impl DatabaseOwner {
                         None,
                     )
                 })?;
+            if self.inner.limits.is_some() && bytes == 0 {
+                drop(
+                    Arc::clone(&self.inner.ordinary_bytes)
+                        .try_acquire_owned()
+                        .map_err(|_| {
+                            (
+                                Error::message(
+                                    "WASIX database owner command byte capacity is full",
+                                ),
+                                None,
+                            )
+                        })?,
+                );
+            }
             let byte_permit = Arc::clone(&self.inner.ordinary_bytes)
-                .try_acquire_many_owned(bytes.min(OWNER_QUEUE_BYTES) as u32)
+                .try_acquire_many_owned(self.ordinary_byte_permits(bytes))
                 .map_err(|_| {
                     (
                         Error::message("WASIX database owner command byte capacity is full"),
@@ -677,6 +739,7 @@ impl DatabaseOwner {
             self.inner
                 .queue
                 .send(OwnerMessage {
+                    hold_admission: self.inner.limits.is_some(),
                     _permit: Some(permit),
                     _bytes: Some(byte_permit),
                     operation: operation(),
@@ -700,6 +763,7 @@ impl DatabaseOwner {
         self.inner
             .queue
             .send(OwnerMessage {
+                hold_admission: self.inner.limits.is_some(),
                 _permit: None,
                 _bytes: None,
                 operation: OwnerOperation::Control(control),
@@ -895,6 +959,7 @@ impl DatabaseOwner {
                         .inner
                         .queue
                         .send(OwnerMessage {
+                            hold_admission: false,
                             _permit: None,
                             _bytes: None,
                             operation: OwnerOperation::Control(OwnerControl::Close {
@@ -1201,13 +1266,18 @@ fn run_database_owner(
     loop {
         match queue.recv() {
             Ok(OwnerMessage {
+                hold_admission,
                 _permit,
                 _bytes,
                 operation: OwnerOperation::Control(message),
             }) => {
-                // Release bounded admission when the message leaves the queue,
-                // before potentially long PostgreSQL work begins.
-                drop(_permit);
+                // Explicit policy retains the slot through execution; omitted policy releases at dispatch.
+                let _reservation = if hold_admission {
+                    _permit
+                } else {
+                    drop(_permit);
+                    None
+                };
                 match message {
                     OwnerControl::Close { attempt } if active_transaction.is_none() => {
                         let result = database.close();
@@ -1251,11 +1321,17 @@ fn run_database_owner(
                 }
             }
             Ok(OwnerMessage {
+                hold_admission,
                 _permit,
                 _bytes,
                 operation: OwnerOperation::Command(command),
             }) => {
-                drop(_permit);
+                let _reservation = if hold_admission {
+                    _permit
+                } else {
+                    drop(_permit);
+                    None
+                };
                 let admission = match (command.transaction, active_transaction) {
                     (None, None) => Ok(()),
                     (None, Some(_)) => Err(Error::transaction_active(
@@ -1969,6 +2045,7 @@ impl AsyncOliphaunt {
 /// Builder for an owner-thread [`AsyncOliphaunt`] database.
 #[derive(Debug, Clone)]
 pub struct AsyncOliphauntBuilder {
+    admission: Option<crate::AdmissionLimits>,
     inner: DirectOliphauntBuilder,
 }
 
@@ -1979,9 +2056,35 @@ impl Default for AsyncOliphauntBuilder {
 }
 
 impl AsyncOliphauntBuilder {
+    /// Bound pending preparation, queued and executing work shared by clones and transactions.
+    /// Omitting this preserves the legacy count release at dispatch.
+    pub fn admission(mut self, limits: crate::AdmissionLimits) -> Self {
+        self.admission = Some(limits);
+        self
+    }
+
+    fn validate_admission(&self) -> Result<()> {
+        if let Some(limits) = self.admission {
+            limits.validate().map_err(|message| {
+                Error::from_anyhow(crate::error::invalid_configuration(message))
+            })?;
+            if limits.max_pending_operations > Semaphore::MAX_PERMITS
+                || limits.max_pending_operations > u32::MAX as usize
+                || limits.high_water_mark_bytes > Semaphore::MAX_PERMITS
+                || limits.high_water_mark_bytes > u32::MAX as usize
+            {
+                return Err(Error::from_anyhow(crate::error::invalid_configuration(
+                    "admission limits exceed the WASIX owner semaphore range",
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Create a builder for an in-memory database.
     pub fn new() -> Self {
         Self {
+            admission: None,
             inner: DirectOliphauntBuilder::new(),
         }
     }
@@ -2056,9 +2159,10 @@ impl AsyncOliphauntBuilder {
 
     /// Construct the Wasmer runtime and PostgreSQL session on its permanent owner thread.
     pub async fn open(self) -> Result<AsyncOliphaunt> {
+        self.validate_admission()?;
         let (reply, receiver) = oneshot::channel();
         DatabaseOwner::open_with_completion(
-            move || Ok(self.inner),
+            move || Ok(self),
             move |result| {
                 let _ = reply.send(result.map(|owner| AsyncOliphaunt { owner }));
             },
@@ -2094,7 +2198,6 @@ impl AsyncOliphauntBuilder {
         DatabaseOwner::open_with_completion(
             move || {
                 configure()
-                    .map(|builder| builder.inner)
                     .map_err(|error| Error::from_anyhow(crate::error::invalid_configuration(error)))
             },
             move |result| {
@@ -2578,6 +2681,7 @@ mod close_tests {
                     ordinary_order: Arc::new(AsyncMutex::new(())),
                     ordinary_capacity: Arc::new(Semaphore::new(capacity)),
                     ordinary_bytes: Arc::new(Semaphore::new(OWNER_QUEUE_BYTES)),
+                    limits: None,
                     state: Arc::new(AtomicU8::new(OWNER_OPEN)),
                     close_epoch: AtomicU64::new(0),
                     close_attempt: Arc::new(Mutex::new(None)),
@@ -2592,6 +2696,33 @@ mod close_tests {
     fn begin_operation(token: u64) -> OwnerOperation {
         let (reply, _receiver) = oneshot::channel();
         OwnerOperation::Control(OwnerControl::Begin { token, reply })
+    }
+
+    #[test]
+    fn explicit_oversize_waits_for_zero_input_work_and_blocks_following_work() {
+        let other_thread = thread::spawn(|| thread::current().id()).join().unwrap();
+        let (mut owner, receiver) = detached_owner(2, other_thread);
+        let inner = Arc::get_mut(&mut owner.inner).unwrap();
+        inner.limits = Some(crate::AdmissionLimits::new(2, 8));
+        inner.ordinary_bytes = Arc::new(Semaphore::new(8));
+        let mut zero = Box::pin(owner.enqueue_ordinary_factory(0, || begin_operation(1)));
+        assert!(poll_once(zero.as_mut()).is_ready());
+        let first = receiver.recv().unwrap();
+        let mut oversized = Box::pin(owner.enqueue_ordinary_factory(9, || begin_operation(2)));
+        assert!(poll_once(oversized.as_mut()).is_pending());
+        drop(first);
+        assert!(poll_once(oversized.as_mut()).is_ready());
+        let active = receiver.recv().unwrap();
+        let mut next = Box::pin(owner.enqueue_ordinary_factory(0, || begin_operation(3)));
+        assert!(poll_once(next.as_mut()).is_pending());
+        owner.enqueue_control(OwnerControl::Shutdown).unwrap();
+        assert!(matches!(
+            receiver.recv().unwrap().operation,
+            OwnerOperation::Control(OwnerControl::Shutdown)
+        ));
+        drop(active);
+        assert!(poll_once(next.as_mut()).is_ready());
+        drop(receiver.recv().unwrap());
     }
 
     #[test]
@@ -3305,6 +3436,7 @@ mod close_tests {
                     ordinary_order: Arc::new(AsyncMutex::new(())),
                     ordinary_capacity: Arc::new(Semaphore::new(OWNER_QUEUE_CAPACITY)),
                     ordinary_bytes: Arc::new(Semaphore::new(OWNER_QUEUE_BYTES)),
+                    limits: None,
                     state,
                     close_epoch: AtomicU64::new(0),
                     close_attempt,
@@ -3332,6 +3464,7 @@ mod close_tests {
                 ordinary_order: Arc::new(AsyncMutex::new(())),
                 ordinary_capacity: Arc::new(Semaphore::new(OWNER_QUEUE_CAPACITY)),
                 ordinary_bytes: Arc::new(Semaphore::new(OWNER_QUEUE_BYTES)),
+                limits: None,
                 state: Arc::new(AtomicU8::new(OWNER_OPEN)),
                 close_epoch: AtomicU64::new(0),
                 close_attempt: Arc::new(Mutex::new(None)),

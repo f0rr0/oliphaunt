@@ -1,3 +1,4 @@
+import { normalizeAdmissionLimits } from '@oliphaunt/ts-query/internal/operation-budget';
 import {
   WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES,
   type WasixDatabaseSession,
@@ -64,13 +65,18 @@ export function createWorkerSessionDispatcher(
         throw new Error('Oliphaunt WASIX worker session is closed');
       }
       switch (request.method) {
-        case 'open':
+        case 'open': {
           if (process !== undefined) {
             throw new Error('this worker already owns an Oliphaunt WASIX process');
           }
-          process = await openSession(request.options);
+          const admission = normalizeAdmissionLimits(request.options.admission);
+          process = await openSession({
+            ...request.options,
+            ...(admission === undefined ? {} : { admission }),
+          });
           respond({ id: request.id, ok: true });
           return;
+        }
         case 'restore':
           if (process !== undefined) {
             throw new Error('this worker already owns an Oliphaunt WASIX process');

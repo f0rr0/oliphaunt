@@ -181,3 +181,19 @@ describe('WASIX storage descriptors', () => {
     });
   });
 });
+
+it('OPFS concurrency snapshots and serializes without changing omitted descriptors', () => {
+  const options = { maxConcurrentIO: 2 };
+  const storage = opfs('tuned', options);
+  options.maxConcurrentIO = 99;
+  expect(serializeWasixStorage(storage)).toEqual({
+    schema: 'oliphaunt-wasix-storage-v1',
+    kind: 'opfs',
+    name: 'tuned',
+    maxConcurrentIO: 2,
+  });
+  for (const value of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    expect(() => opfs('invalid', { maxConcurrentIO: value })).toThrow(/positive safe integer/);
+  }
+  expect(() => opfs('invalid', { typo: 2 } as never)).toThrow(/unknown OPFS option/);
+});

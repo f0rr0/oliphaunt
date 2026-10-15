@@ -102,7 +102,29 @@ pub struct NativeExtensionPackage {
 }
 
 #[napi(object)]
+pub struct NativeAdmissionOptions {
+    pub max_pending_operations: f64,
+    pub high_water_mark_bytes: f64,
+}
+
+fn resolve_admission(options: &NativeAdmissionOptions) -> Result<oliphaunt_wasix::AdmissionLimits> {
+    fn value(value: f64) -> Result<usize> {
+        if !value.is_finite() || value < 1.0 || value.fract() != 0.0 || value > u32::MAX as f64 {
+            return Err(invalid_argument(
+                "admission limits must be positive integers within the WASIX owner range",
+            ));
+        }
+        Ok(value as usize)
+    }
+    Ok(oliphaunt_wasix::AdmissionLimits::new(
+        value(options.max_pending_operations)?,
+        value(options.high_water_mark_bytes)?,
+    ))
+}
+
+#[napi(object)]
 pub struct NativeOpenOptions {
+    pub admission: Option<NativeAdmissionOptions>,
     pub profile: String,
     pub storage: NativeStorageOptions,
     pub username: String,
@@ -1024,6 +1046,7 @@ pub fn extension_identity(sql_name: String) -> Result<String> {
 
 fn configure_direct_database(options: NativeOpenOptions) -> Result<OliphauntBuilder> {
     let NativeOpenOptions {
+        admission,
         profile,
         storage,
         username,
@@ -1034,6 +1057,11 @@ fn configure_direct_database(options: NativeOpenOptions) -> Result<OliphauntBuil
         seed,
         icu_data,
     } = options;
+    if admission.is_some() {
+        return Err(invalid_argument(
+            "direct native sessions have no admission queue",
+        ));
+    }
     let mut builder = Oliphaunt::builder()
         .storage(resolve_storage(storage)?)
         .catalog_profile(resolve_profile(&profile)?)
@@ -1057,6 +1085,7 @@ fn configure_direct_database(options: NativeOpenOptions) -> Result<OliphauntBuil
 
 fn configure_actor_database(options: NativeOpenOptions) -> Result<AsyncOliphauntBuilder> {
     let NativeOpenOptions {
+        admission,
         profile,
         storage,
         username,
@@ -1073,6 +1102,9 @@ fn configure_actor_database(options: NativeOpenOptions) -> Result<AsyncOliphaunt
         .username(username)
         .database(database)
         .startup_gucs(startup_gucs);
+    if let Some(admission) = admission {
+        builder = builder.admission(resolve_admission(&admission)?);
+    }
     if let Some(seed) = seed {
         builder = builder.seed(ClusterSeed::new(
             seed.archive.to_vec(),
@@ -1576,6 +1608,41 @@ fn embedded_identity(label: &str, bytes: Option<&[u8]>, sha256: &str) -> Result<
 #[cfg(test)]
 mod tests {
     #[test]
+    fn admission_boundary_rejects_fractional_zero_and_overflow_before_snapshotting() {
+        for value in [
+            0.0,
+            -1.0,
+            1.5,
+            f64::NAN,
+            f64::INFINITY,
+            u32::MAX as f64 + 1.0,
+        ] {
+            assert!(
+                super::resolve_admission(&super::NativeAdmissionOptions {
+                    max_pending_operations: value,
+                    high_water_mark_bytes: 8.0
+                })
+                .is_err()
+            );
+            assert!(
+                super::resolve_admission(&super::NativeAdmissionOptions {
+                    max_pending_operations: 1.0,
+                    high_water_mark_bytes: value
+                })
+                .is_err()
+            );
+        }
+        assert_eq!(
+            super::resolve_admission(&super::NativeAdmissionOptions {
+                max_pending_operations: 1.0,
+                high_water_mark_bytes: 8.0
+            })
+            .unwrap(),
+            oliphaunt_wasix::AdmissionLimits::new(1, 8)
+        );
+    }
+
+    #[test]
     fn environment_shutdown_releases_both_output_waiters() {
         let environment = super::StreamEnvironment::new();
         let stdout = std::sync::Arc::new(super::StreamAck::default());
@@ -1684,6 +1751,9 @@ impl ObjectFinalize for NativeWasixActorDatabase {}
 impl NativeWasixActorDatabase {
     #[napi(catch_unwind, ts_return_type = "Promise<NativeWasixActorDatabase>")]
     pub fn open(env: Env, mut options: NativeOpenOptions) -> Result<Object<'static>> {
+        if let Some(admission) = &options.admission {
+            resolve_admission(admission)?;
+        }
         snapshot_resources(&mut options.seed, &mut options.icu_data);
         let (deferred, promise) = env.create_deferred()?;
         AsyncOliphauntBuilder::open_configured_with_completion(

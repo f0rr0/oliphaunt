@@ -7,6 +7,7 @@ export type {
   DatabaseStorage,
   RestoreDestination,
   OpenConfig,
+  AdmissionLimits,
   BrokerOptions,
   RestoreOptions,
   OliphauntDatabase,

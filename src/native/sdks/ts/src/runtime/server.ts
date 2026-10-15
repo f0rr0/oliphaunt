@@ -5,7 +5,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 
-import type { NormalizedOpenConfig } from '../config.js';
+import { positiveIntegerTimeoutMs, type NormalizedOpenConfig } from '../config.js';
 import {
   materializeExtensionInstall,
   resolveNativeInstall,
@@ -24,7 +24,7 @@ import {
   nativePostgresChildEnvironment,
 } from '../native/initialize.js';
 import { resolveExactNativeRuntimeProfile } from '../native/runtime-profile.js';
-import type { ServerListen } from '../types.js';
+import type { NormalizedServerListen as ServerListen } from '../config.js';
 import { throwCollectedCloseFailures } from './close.js';
 import { createForgottenRuntimeHandleCleanup } from './forgotten-handle.js';
 import {
@@ -560,7 +560,7 @@ export async function resolveServerTools(options: {
   runtimeDirectory?: string;
   extensions?: readonly string[];
   extensionDescriptors?: readonly import('../extensions.js').NativeExtension[];
-  icuData?: import('../types.js').NativeResourceDirectory;
+  icuData?: import('../config.js').NormalizedResourceDirectory;
 }): Promise<ServerTools> {
   const candidates = [
     options.serverExecutable,
@@ -615,7 +615,7 @@ export async function resolveServerTools(options: {
 
 async function resolvePackageManagedServerInstall(
   extensions: readonly string[],
-  icuData?: import('../types.js').NativeResourceDirectory,
+  icuData?: import('../config.js').NormalizedResourceDirectory,
   descriptors?: readonly import('../extensions.js').NativeExtension[],
 ): Promise<{
   runtimeDirectory?: string;

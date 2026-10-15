@@ -36,9 +36,9 @@ impl ExecutorStreamOutcome {
     }
 }
 
-/// Ordinary application work is bounded. Lifecycle and transaction-recovery
-/// commands share the same FIFO but do not consume this capacity, so cleanup
-/// can always be admitted without inventing a public queue-tuning surface.
+/// These budgets cover queued commands; both release when the owner starts work.
+/// Larger budgets absorb bursts at the cost of retained input and queue delay.
+/// Lifecycle and recovery controls bypass capacity while keeping the same FIFO.
 const ORDINARY_QUEUE_CAPACITY: usize = 256;
 const ORDINARY_QUEUE_BYTES: usize = 128 * 1024 * 1024;
 
@@ -183,9 +183,14 @@ impl ExecutorShared {
         fallback
     }
 
+    #[cfg(test)]
     fn new() -> Self {
+        Self::with_admission(None)
+    }
+
+    fn with_admission(limits: Option<crate::AdmissionLimits>) -> Self {
         Self {
-            queue: CommandQueue::new(),
+            queue: CommandQueue::with_admission(limits),
             admission: Mutex::new(()),
             cancellation: CancellationGate::pending(),
             active_work: AtomicBool::new(false),
@@ -211,6 +216,7 @@ struct CloseState {
 }
 
 struct CommandQueue {
+    limits: Option<crate::AdmissionLimits>,
     state: Mutex<CommandQueueState>,
     ready: Condvar,
 }
@@ -254,8 +260,24 @@ impl Drop for AdmissionRegistration<'_> {
 }
 
 impl CommandQueue {
+    #[cfg(test)]
     fn new() -> Self {
+        Self::with_admission(None)
+    }
+
+    fn count_limit(&self) -> usize {
+        self.limits.map_or(ORDINARY_QUEUE_CAPACITY, |limits| {
+            limits.max_pending_operations
+        })
+    }
+    fn byte_limit(&self) -> usize {
+        self.limits
+            .map_or(ORDINARY_QUEUE_BYTES, |limits| limits.high_water_mark_bytes)
+    }
+
+    fn with_admission(limits: Option<crate::AdmissionLimits>) -> Self {
         Self {
+            limits,
             state: Mutex::new(CommandQueueState {
                 commands: VecDeque::new(),
                 ordinary_count: 0,
@@ -323,18 +345,27 @@ impl CommandQueue {
             None => state.admission_waiters.is_empty(),
         };
         let bytes_fit = state.ordinary_count == 0
-            || bytes <= ORDINARY_QUEUE_BYTES.saturating_sub(state.ordinary_bytes);
-        if state.ordinary_count < ORDINARY_QUEUE_CAPACITY && bytes_fit && is_next {
+            || (self.limits.is_none() || state.ordinary_bytes < self.byte_limit())
+                && bytes <= self.byte_limit().saturating_sub(state.ordinary_bytes);
+        if state.ordinary_count < self.count_limit() && bytes_fit && is_next {
             if position.is_some() {
                 state.admission_waiters.pop_front();
             }
             let result = command().map(|command| {
                 debug_assert!(command.retained_bytes() <= bytes);
+                let command = if self.limits.is_some() {
+                    Command::Admitted {
+                        command: Box::new(command),
+                        bytes,
+                    }
+                } else {
+                    command
+                };
                 state.ordinary_count += 1;
                 state.ordinary_bytes += command.retained_bytes();
                 state.commands.push_back(command);
             });
-            let next = (state.ordinary_count < ORDINARY_QUEUE_CAPACITY)
+            let next = (state.ordinary_count < self.count_limit())
                 .then(|| {
                     state
                         .admission_waiters
@@ -379,7 +410,7 @@ impl CommandQueue {
         };
         let was_next = position == 0;
         state.admission_waiters.remove(position);
-        let next = (was_next && state.ordinary_count < ORDINARY_QUEUE_CAPACITY)
+        let next = (was_next && state.ordinary_count < self.count_limit())
             .then(|| {
                 state
                     .admission_waiters
@@ -409,7 +440,7 @@ impl CommandQueue {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         loop {
             if let Some(command) = state.commands.pop_front() {
-                if command.is_ordinary() {
+                if command.is_ordinary() && self.limits.is_none() {
                     state.ordinary_count -= 1;
                     state.ordinary_bytes -= command.retained_bytes();
                 }
@@ -430,6 +461,26 @@ impl CommandQueue {
                 .ready
                 .wait(state)
                 .unwrap_or_else(|error| error.into_inner());
+        }
+    }
+
+    fn release_completed(&self, ordinary: bool, bytes: usize) {
+        if !ordinary || self.limits.is_none() {
+            return;
+        }
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.stopped {
+            return;
+        }
+        state.ordinary_count -= 1;
+        state.ordinary_bytes -= bytes;
+        let next = state
+            .admission_waiters
+            .front()
+            .map(|waiter| waiter.waker.clone());
+        drop(state);
+        if let Some(waker) = next {
+            waker.wake();
         }
     }
 
@@ -537,6 +588,19 @@ impl EngineExecutor {
         Ok((executor, metadata))
     }
 
+    pub(crate) async fn open_with_admission<M, F>(
+        thread_name: &'static str,
+        limits: Option<crate::AdmissionLimits>,
+        operation: F,
+    ) -> Result<(Arc<Self>, M)>
+    where
+        M: Send + 'static,
+        F: FnOnce() -> Result<(Box<dyn EngineSession>, M)> + Send + 'static,
+    {
+        let (executor, opened) = Self::start_owner_with_admission(thread_name, limits, operation)?;
+        Ok((executor, opened.await?))
+    }
+
     fn start_owner<M, F>(
         thread_name: &'static str,
         operation: F,
@@ -545,7 +609,19 @@ impl EngineExecutor {
         M: Send + 'static,
         F: FnOnce() -> Result<(Box<dyn EngineSession>, M)> + Send + 'static,
     {
-        let shared = Arc::new(ExecutorShared::new());
+        Self::start_owner_with_admission(thread_name, None, operation)
+    }
+
+    fn start_owner_with_admission<M, F>(
+        thread_name: &'static str,
+        limits: Option<crate::AdmissionLimits>,
+        operation: F,
+    ) -> Result<(Arc<Self>, reply::Receiver<M>)>
+    where
+        M: Send + 'static,
+        F: FnOnce() -> Result<(Box<dyn EngineSession>, M)> + Send + 'static,
+    {
+        let shared = Arc::new(ExecutorShared::with_admission(limits));
         let executor = Arc::new(Self {
             shared: Arc::clone(&shared),
         });
@@ -931,6 +1007,10 @@ impl Drop for EngineExecutor {
 }
 
 enum Command {
+    Admitted {
+        command: Box<Command>,
+        bytes: usize,
+    },
     #[cfg(feature = "mobile-bindings")]
     Cancellable {
         command: Box<Command>,
@@ -986,6 +1066,7 @@ enum Command {
 impl Command {
     fn retained_bytes(&self) -> usize {
         match self {
+            Self::Admitted { bytes, .. } => *bytes,
             #[cfg(feature = "mobile-bindings")]
             Self::Cancellable { command, .. } => command.retained_bytes(),
             Self::Exec { request, .. }
@@ -1009,6 +1090,7 @@ impl Command {
 
     fn is_abandoned(&self) -> bool {
         match self {
+            Self::Admitted { command, .. } => command.is_abandoned(),
             #[cfg(feature = "mobile-bindings")]
             Self::Cancellable {
                 command,
@@ -1094,7 +1176,11 @@ fn owner_thread<M, F>(
         next_pin: 1,
     };
     while let Some(command) = shared.queue.receive() {
+        let ordinary = command.is_ordinary();
+        let bytes = command.retained_bytes();
         if command.is_abandoned() {
+            drop(command);
+            shared.queue.release_completed(ordinary, bytes);
             continue;
         }
         let action = catch_unwind(AssertUnwindSafe(|| {
@@ -1105,6 +1191,7 @@ fn owner_thread<M, F>(
                 command,
             )
         }));
+        shared.queue.release_completed(ordinary, bytes);
         match action {
             Ok(OwnerAction::Continue) => {}
             Ok(OwnerAction::RetryableClose(error)) => {
@@ -1166,6 +1253,9 @@ fn execute_command(
     command: Command,
 ) -> OwnerAction {
     match command {
+        Command::Admitted { command, .. } => {
+            return execute_command(session, shared, owner, *command);
+        }
         #[cfg(feature = "mobile-bindings")]
         Command::Cancellable {
             command,
@@ -1919,6 +2009,51 @@ mod tests {
                 Poll::Ready(Ok(()))
             ));
         }
+    }
+
+    #[test]
+    fn explicit_admission_retains_execution_and_blocks_zero_input_after_an_oversize() {
+        let queue = CommandQueue::with_admission(Some(crate::AdmissionLimits::new(2, 8)));
+        let mut first = AdmissionRegistration::new(&queue);
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(
+            queue
+                .poll_send_ordinary_factory(
+                    &mut first.token,
+                    9,
+                    || Ok(abandoned_ordinary_command(1)),
+                    &mut context
+                )
+                .0
+                .is_ready()
+        );
+        let active = queue.receive().unwrap();
+        let mut next = AdmissionRegistration::new(&queue);
+        let prepared = AtomicUsize::new(0);
+        let prepare = || {
+            prepared.fetch_add(1, Ordering::SeqCst);
+            Ok(abandoned_ordinary_command(2))
+        };
+        assert!(
+            queue
+                .poll_send_ordinary_factory(&mut next.token, 0, prepare, &mut context)
+                .0
+                .is_pending()
+        );
+        assert_eq!(prepared.load(Ordering::SeqCst), 0);
+        queue.send_control(Command::Close).unwrap();
+        assert!(matches!(queue.receive(), Some(Command::Close)));
+        let bytes = active.retained_bytes();
+        drop(active);
+        queue.release_completed(true, bytes);
+        assert!(
+            queue
+                .poll_send_ordinary_factory(&mut next.token, 1, prepare, &mut context)
+                .0
+                .is_ready()
+        );
+        assert_eq!(prepared.load(Ordering::SeqCst), 1);
+        drop(queue.stop());
     }
 
     #[test]

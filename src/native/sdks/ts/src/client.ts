@@ -1,5 +1,8 @@
 import {
   OperationBudget,
+  TRANSACTION_BEGIN_REQUEST_BYTES,
+  normalizeAdmissionLimits,
+  type AdmissionLimits,
   snapshotProtocolInput,
 } from '@oliphaunt/ts-query/internal/operation-budget';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
@@ -9,6 +12,11 @@ import { join } from 'node:path';
 import {
   normalizeDatabaseTopology,
   normalizeOpenConfig,
+  normalizeFilePath,
+  filePathString,
+  validateOptionalPathOverride,
+  validateResourceDirectory,
+  type NormalizedServerListen,
   validateDirectoryPath,
   validateNativeStartupGUCs,
 } from './config.js';
@@ -49,6 +57,7 @@ import { createServerRuntimeBinding } from './runtime/server.js';
 import type { RuntimeBinding, RuntimeHandle } from './runtime/types.js';
 import type {
   BinaryInput,
+  FilePathInput,
   DatabaseStorage,
   OliphauntClient,
   OliphauntDatabase,
@@ -73,7 +82,7 @@ type RuntimeBindingOverrides = {
 type QueryReadOptions = Omit<QueryOptions, 'encoders'>;
 
 class OliphauntDatabaseBase {
-  readonly #operationBudget = new OperationBudget();
+  readonly #operationBudget: OperationBudget;
 
   protected readonly binding: RuntimeBinding;
   protected readonly handle: RuntimeHandle;
@@ -104,7 +113,13 @@ class OliphauntDatabaseBase {
     }
   }
 
-  constructor(binding: RuntimeBinding, handle: RuntimeHandle, releaseOwnership?: () => void) {
+  constructor(
+    binding: RuntimeBinding,
+    handle: RuntimeHandle,
+    releaseOwnership?: () => void,
+    admission?: AdmissionLimits,
+  ) {
+    this.#operationBudget = new OperationBudget(admission);
     this.binding = binding;
     this.handle = handle;
     if (releaseOwnership !== undefined) {
@@ -152,7 +167,13 @@ class OliphauntDatabaseBase {
     return this.#operationBudget.admit(
       (retain) => {
         this.assertNoActiveTransaction();
-        const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+        const plan = planQuery(
+          sql,
+          parameters,
+          snapshotParameterOptions(options),
+          retain,
+          this.#operationBudget.configured,
+        );
         return this.withSessionOperation(() =>
           this.#runPlannedUnlocked(plan, 'database', parseCommandResponse),
         );
@@ -170,7 +191,13 @@ class OliphauntDatabaseBase {
       (retain) => {
         this.assertNoActiveTransaction();
         const stableOptions = snapshotQueryOptions(options);
-        const plan = planQuery(sql, parameters, stableOptions, retain);
+        const plan = planQuery(
+          sql,
+          parameters,
+          stableOptions,
+          retain,
+          this.#operationBudget.configured,
+        );
         return this.withSessionOperation(async () =>
           decodeQueryResult<Row, Options>(
             await this.#runPlannedUnlocked(plan, 'database', parseQueryRawResponse),
@@ -190,7 +217,13 @@ class OliphauntDatabaseBase {
     return this.#operationBudget.admit(
       (retain) => {
         this.assertNoActiveTransaction();
-        const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+        const plan = planQuery(
+          sql,
+          parameters,
+          snapshotParameterOptions(options),
+          retain,
+          this.#operationBudget.configured,
+        );
         return this.withSessionOperation(() =>
           this.#runPlannedUnlocked(plan, 'database', parseQueryRawResponse),
         );
@@ -206,8 +239,9 @@ class OliphauntDatabaseBase {
     return this.#operationBudget.admit(
       (retain) => {
         this.assertNoActiveTransaction();
-        const input = structuredSimpleQuery(sql);
-        retain(input.byteLength);
+        const input = this.#operationBudget.snapshotEncodedInput(retain, sql.length * 3 + 6, () =>
+          structuredSimpleQuery(sql),
+        );
         const stableOptions = snapshotReadOptions(options);
         return this.withSessionOperation(() =>
           this.#runStructuredUnlocked(input, 'database', (response) =>
@@ -226,8 +260,11 @@ class OliphauntDatabaseBase {
     return this.#operationBudget.admit(
       (retain) => {
         this.assertNoActiveTransaction();
-        const input = describeQuery(sql, [...parameterTypeOids]);
-        retain(input.byteLength);
+        const input = this.#operationBudget.snapshotEncodedInput(
+          retain,
+          sql.length * 3 + 21 + parameterTypeOids.length * 4,
+          () => describeQuery(sql, [...parameterTypeOids]),
+        );
         return this.withSessionOperation(() =>
           this.#runStructuredUnlocked(input, 'database', parseDescribeResponse),
         );
@@ -290,72 +327,88 @@ class OliphauntDatabaseBase {
     this.#activeTransaction = true;
     let attempt: Promise<T>;
     try {
-      attempt = this.withSessionOperation(async () => {
-        const transaction = new OliphauntTransactionHandle(
-          (plan, decode) => this.#runPlannedUnlocked(plan, 'transaction', decode),
-          (input, decode) => this.#runStructuredUnlocked(input, 'transaction', decode),
-          () => this.#executeTransactionControlUnlocked('ROLLBACK').then(() => undefined),
-        );
-        try {
-          await this.#executeTransactionControlUnlocked('BEGIN');
-
-          let result: T;
+      const enter = (releaseBegin?: () => void) =>
+        this.withSessionOperation(async () => {
+          const transaction = new OliphauntTransactionHandle(
+            (plan, decode) => this.#runPlannedUnlocked(plan, 'transaction', decode),
+            (input, decode) => this.#runStructuredUnlocked(input, 'transaction', decode),
+            () => this.#executeTransactionControlUnlocked('ROLLBACK').then(() => undefined),
+            this.#operationBudget.configured ? this.#operationBudget : undefined,
+          );
           try {
-            result = await body(transaction);
-            await transaction.sealAndDrain();
-          } catch (error) {
-            transaction.seal();
-            await transaction.drain().catch(() => undefined);
-            let rollbackFailure: unknown;
-            if (transaction.rollbackStarted) {
-              try {
-                await transaction.waitForRollback();
-              } catch (rollbackError) {
-                rollbackFailure = rollbackError;
-              }
-            } else if (this.#sessionFailure === undefined) {
-              try {
-                await this.#executeTransactionControlUnlocked('ROLLBACK');
-              } catch (rollbackError) {
-                rollbackFailure = rollbackError;
-              }
+            try {
+              await this.#executeTransactionControlUnlocked('BEGIN');
+            } finally {
+              // The transaction lease does not consume an ordinary operation slot.
+              releaseBegin?.();
             }
-            if (rollbackFailure !== undefined && rollbackFailure !== error) {
-              throw transactionCallbackAggregate(
-                error,
-                rollbackFailure,
-                'transaction callback and rollback both failed',
-              );
-            }
-            const databaseFailure =
-              this.#sessionFailure === undefined
-                ? undefined
-                : (transaction.firstFailure ?? this.#sessionFailure);
-            if (databaseFailure !== undefined && databaseFailure !== error) {
-              throw transactionCallbackAggregate(
-                error,
-                databaseFailure,
-                'transaction callback and an independent database failure both occurred',
-              );
-            }
-            throw error;
-          }
 
-          if (transaction.rolledBack) {
+            let result: T;
+            try {
+              result = await body(transaction);
+              await transaction.sealAndDrain();
+            } catch (error) {
+              transaction.seal();
+              await transaction.drain().catch(() => undefined);
+              let rollbackFailure: unknown;
+              if (transaction.rollbackStarted) {
+                try {
+                  await transaction.waitForRollback();
+                } catch (rollbackError) {
+                  rollbackFailure = rollbackError;
+                }
+              } else if (this.#sessionFailure === undefined) {
+                try {
+                  await this.#executeTransactionControlUnlocked('ROLLBACK');
+                } catch (rollbackError) {
+                  rollbackFailure = rollbackError;
+                }
+              }
+              if (rollbackFailure !== undefined && rollbackFailure !== error) {
+                throw transactionCallbackAggregate(
+                  error,
+                  rollbackFailure,
+                  'transaction callback and rollback both failed',
+                );
+              }
+              const databaseFailure =
+                this.#sessionFailure === undefined
+                  ? undefined
+                  : (transaction.firstFailure ?? this.#sessionFailure);
+              if (databaseFailure !== undefined && databaseFailure !== error) {
+                throw transactionCallbackAggregate(
+                  error,
+                  databaseFailure,
+                  'transaction callback and an independent database failure both occurred',
+                );
+              }
+              throw error;
+            }
+
+            if (transaction.rolledBack) {
+              return result;
+            }
+            if (this.#sessionFailure !== undefined && transaction.firstFailure !== undefined) {
+              throw transaction.firstFailure;
+            }
+            const outcome = await this.#executeTransactionControlUnlocked('COMMIT');
+            if (outcome === 'rolledBack') {
+              throw transaction.firstFailure ?? transactionTagError('COMMIT', 'ROLLBACK');
+            }
             return result;
+          } finally {
+            transaction.deactivate();
           }
-          if (this.#sessionFailure !== undefined && transaction.firstFailure !== undefined) {
-            throw transaction.firstFailure;
-          }
-          const outcome = await this.#executeTransactionControlUnlocked('COMMIT');
-          if (outcome === 'rolledBack') {
-            throw transaction.firstFailure ?? transactionTagError('COMMIT', 'ROLLBACK');
-          }
-          return result;
-        } finally {
-          transaction.deactivate();
-        }
-      });
+        });
+      attempt = !this.#operationBudget.configured
+        ? enter()
+        : this.#operationBudget.admit(
+            (retain, release) => {
+              retain(TRANSACTION_BEGIN_REQUEST_BYTES);
+              return enter(release);
+            },
+            () => this.#operationTail,
+          );
     } catch (error) {
       this.#activeTransaction = false;
       throw error;
@@ -700,23 +753,20 @@ class OliphauntDatabaseBase {
 }
 
 class OliphauntDatabaseImpl extends OliphauntDatabaseBase implements OliphauntDatabase {
-  async backupToFile(destination: string): Promise<void> {
+  async backupToFile(destination: FilePathInput): Promise<void> {
     return this.admitOperation((retain) => {
       this.assertNoActiveTransaction();
-      if (
-        typeof destination !== 'string' ||
-        destination.length === 0 ||
-        destination.includes('\0')
-      ) {
+      const path = filePathString(destination, 'backup destination');
+      if (path.length === 0 || path.includes('\0')) {
         throw new TypeError('backup destination must be a nonempty host path without NUL bytes');
       }
-      retain(destination.length * 3);
+      retain(path.length * 3);
       const backup = this.binding.backupStream;
       if (backup === undefined) {
         throw new Error('database runtime binding does not implement file backup');
       }
       return this.withSessionOperation(() =>
-        writeArchiveFile(destination, (onChunk) => backup(this.handle, onChunk)),
+        writeArchiveFile(path, (onChunk) => backup(this.handle, onChunk)),
       );
     });
   }
@@ -761,7 +811,7 @@ class OliphauntServerImpl implements OliphauntServer {
 }
 
 class OliphauntTransactionHandle implements OliphauntTransaction {
-  readonly #operationBudget = new OperationBudget();
+  readonly #operationBudget: OperationBudget;
 
   readonly #runPlan: <Result extends NoticeCarrier>(
     plan: QueryPlan,
@@ -788,7 +838,9 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
       decode: (response: Uint8Array) => Result,
     ) => Promise<Result>,
     rollbackControl: () => Promise<void>,
+    operationBudget = new OperationBudget(),
   ) {
+    this.#operationBudget = operationBudget;
     this.#runPlan = runPlan;
     this.#runStructured = runStructured;
     this.#rollbackControl = rollbackControl;
@@ -819,7 +871,13 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
       return this.#operationBudget.admit(
         (retain) => {
           assertNoTransactionChain(sql);
-          const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+          const plan = planQuery(
+            sql,
+            parameters,
+            snapshotParameterOptions(options),
+            retain,
+            this.#operationBudget.configured,
+          );
           return this.#enqueue(() => this.#runPlan(plan, parseCommandResponse));
         },
         () => this.#tail,
@@ -837,7 +895,13 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
         (retain) => {
           assertNoTransactionChain(sql);
           const stableOptions = snapshotQueryOptions(options);
-          const plan = planQuery(sql, parameters, stableOptions, retain);
+          const plan = planQuery(
+            sql,
+            parameters,
+            stableOptions,
+            retain,
+            this.#operationBudget.configured,
+          );
           return this.#enqueue(async () => {
             return decodeQueryResult<Row, Options>(
               await this.#runPlan(plan, parseQueryRawResponse),
@@ -859,7 +923,13 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
       return this.#operationBudget.admit(
         (retain) => {
           assertNoTransactionChain(sql);
-          const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+          const plan = planQuery(
+            sql,
+            parameters,
+            snapshotParameterOptions(options),
+            retain,
+            this.#operationBudget.configured,
+          );
           return this.#enqueue(() => this.#runPlan(plan, parseQueryRawResponse));
         },
         () => this.#tail,
@@ -875,8 +945,9 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
       return this.#operationBudget.admit(
         (retain) => {
           assertNoTransactionChain(sql);
-          const input = structuredSimpleQuery(sql);
-          retain(input.byteLength);
+          const input = this.#operationBudget.snapshotEncodedInput(retain, sql.length * 3 + 6, () =>
+            structuredSimpleQuery(sql),
+          );
           const stableOptions = snapshotReadOptions(options);
           return this.#enqueue(() =>
             this.#runStructured(input, (response) =>
@@ -893,8 +964,11 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     return promiseFromSynchronousCall(() => {
       return this.#operationBudget.admit(
         (retain) => {
-          const input = describeQuery(sql, [...parameterTypeOids]);
-          retain(input.byteLength);
+          const input = this.#operationBudget.snapshotEncodedInput(
+            retain,
+            sql.length * 3 + 21 + parameterTypeOids.length * 4,
+            () => describeQuery(sql, [...parameterTypeOids]),
+          );
           return this.#enqueue(() => this.#runStructured(input, parseDescribeResponse));
         },
         () => this.#tail,
@@ -1107,7 +1181,9 @@ export function createOliphauntClient(
   }
 
   async function openDatabase(
-    effectiveConfig: OpenConfig | (ServerOpenConfig & { topology: 'server' }),
+    effectiveConfig:
+      | ReturnType<typeof snapshotOpenConfig>
+      | ReturnType<typeof snapshotServerOpenConfig>,
   ): Promise<OliphauntDatabaseImpl | OliphauntServerImpl> {
     const direct = effectiveConfig.topology === 'direct';
     if (direct && directResident.activeOwner !== undefined) {
@@ -1154,7 +1230,14 @@ export function createOliphauntClient(
         return new OliphauntServerImpl(owner, connectionString);
       }
       if (!direct) {
-        return await OliphauntDatabaseBase.publish(new OliphauntDatabaseImpl(binding, handle));
+        return await OliphauntDatabaseBase.publish(
+          new OliphauntDatabaseImpl(
+            binding,
+            handle,
+            undefined,
+            'admission' in effectiveConfig ? effectiveConfig.admission : undefined,
+          ),
+        );
       }
 
       if (resolvedStorage.temporaryDirectory) {
@@ -1163,11 +1246,16 @@ export function createOliphauntClient(
       const owner = Symbol('native-direct-owner');
       directResident.activeOwner = owner;
       return await OliphauntDatabaseBase.publish(
-        new OliphauntDatabaseImpl(binding, handle, () => {
-          if (directResident.activeOwner === owner) {
-            directResident.activeOwner = undefined;
-          }
-        }),
+        new OliphauntDatabaseImpl(
+          binding,
+          handle,
+          () => {
+            if (directResident.activeOwner === owner) {
+              directResident.activeOwner = undefined;
+            }
+          },
+          'admission' in effectiveConfig ? effectiveConfig.admission : undefined,
+        ),
       );
     } catch (error) {
       if (resolvedStorage.createdTemporaryDirectory) {
@@ -1215,16 +1303,16 @@ export function createOliphauntClient(
       backup: BinaryInput,
       options: RestoreOptions = {},
     ): Promise<void> {
+      if ('admission' in options && options.admission !== undefined) {
+        throw new TypeError('restore has no operation admission queue; set admission on open');
+      }
       if (destination?.kind !== 'directory') {
         throw new TypeError('restore destination must be directory storage');
       }
-      const path = destination.path;
-      if (typeof path !== 'string') {
-        throw new TypeError('restore destination path must be a string');
-      }
-      validateDirectoryPath(path, 'restore destination');
+      const path = normalizeFilePath(destination.path, 'restore destination');
+      const libraryPath = validateOptionalPathOverride(options.libraryPath, 'libraryPath');
       const bytes = toUint8Array(backup).slice();
-      const binding = await bindingFor({ libraryPath: options.libraryPath });
+      const binding = await bindingFor({ libraryPath });
       await binding.restore({
         destination: path,
         bytes,
@@ -1233,14 +1321,15 @@ export function createOliphauntClient(
   };
 }
 
-function snapshotOpenConfig(config: OpenConfig): OpenConfig & { topology: 'direct' | 'broker' } {
+function snapshotOpenConfig(config: OpenConfig) {
   const topology = normalizeDatabaseTopology(config.topology);
   validateNativeStartupGUCs(topology, config.startupGUCs ?? {});
   return {
     ...snapshotCommonOpenConfig(config),
+    admission: normalizeAdmissionLimits(config.admission),
     topology,
-    libraryPath: config.libraryPath,
-    brokerExecutable: config.brokerExecutable,
+    libraryPath: validateOptionalPathOverride(config.libraryPath, 'libraryPath'),
+    brokerExecutable: validateOptionalPathOverride(config.brokerExecutable, 'brokerExecutable'),
   };
 }
 
@@ -1271,14 +1360,14 @@ async function closeRuntimeHandleFailure(
   }
 }
 
-function snapshotServerOpenConfig(
-  config: ServerOpenConfig,
-): ServerOpenConfig & { topology: 'server' } {
+function snapshotServerOpenConfig(config: ServerOpenConfig) {
+  if ('admission' in config && config.admission !== undefined)
+    throw new TypeError('server handles do not have a database admission queue');
   validateNativeStartupGUCs('server', config.startupGUCs ?? {});
   return {
     ...snapshotCommonOpenConfig(config),
-    topology: 'server',
-    serverExecutable: config.serverExecutable,
+    topology: 'server' as const,
+    serverExecutable: validateOptionalPathOverride(config.serverExecutable, 'serverExecutable'),
     listen: snapshotServerListen(config.listen),
   };
 }
@@ -1293,28 +1382,40 @@ function snapshotCommonOpenConfig(config: OpenConfig | ServerOpenConfig) {
       config.extensions === undefined
         ? undefined
         : config.extensions.map((value) => ({ ...value })),
-    runtimeDirectory: config.runtimeDirectory,
-    ...('seed' in config && config.seed !== undefined ? { seed: { ...config.seed } } : {}),
-    ...(config.icuData !== undefined ? { icuData: { ...config.icuData } } : {}),
+    runtimeDirectory: validateOptionalPathOverride(config.runtimeDirectory, 'runtimeDirectory'),
+    ...('seed' in config && config.seed !== undefined
+      ? { seed: validateResourceDirectory(config.seed, 'seed') }
+      : {}),
+    ...(config.icuData !== undefined
+      ? { icuData: validateResourceDirectory(config.icuData, 'icuData') }
+      : {}),
   };
 }
 
-function snapshotStorage(storage: DatabaseStorage | undefined): DatabaseStorage | undefined {
+function snapshotStorage(
+  storage: DatabaseStorage | undefined,
+): { kind: 'directory'; path: string } | { kind: 'temporaryDirectory' } | undefined {
   if (storage === undefined) return undefined;
   return storage.kind === 'directory'
-    ? { kind: 'directory', path: storage.path }
+    ? { kind: 'directory', path: normalizeFilePath(storage.path, 'database storage directory') }
     : { kind: storage.kind };
 }
 
-function snapshotServerListen(listen: ServerListen | undefined): ServerListen | undefined {
+function snapshotServerListen(
+  listen: ServerListen | undefined,
+): NormalizedServerListen | undefined {
   if (listen === undefined) return undefined;
   return listen.transport === 'tcp'
     ? { transport: 'tcp', port: listen.port }
-    : { transport: 'unix', directory: listen.directory, port: listen.port };
+    : {
+        transport: 'unix',
+        directory: normalizeFilePath(listen.directory, 'server Unix socket directory'),
+        port: listen.port,
+      };
 }
 
 async function materializeStorage(
-  storage: DatabaseStorage | undefined,
+  storage: ReturnType<typeof snapshotStorage>,
   reusableTemporaryDirectory?: string,
 ): Promise<{
   instanceDirectory: string;

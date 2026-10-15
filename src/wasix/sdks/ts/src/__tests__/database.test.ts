@@ -13,25 +13,36 @@ import type { OliphauntTransaction } from '../core/types.js';
 import { runWasixToolProcess } from '../internal.node.js';
 
 describe('WASIX database recovery state', () => {
-  it('shares query and tool admission before preparation and snapshots accepted inputs', async () => {
+  it.each([
+    undefined,
+    1,
+    2,
+    65,
+  ])('shares query and tool admission before preparation and snapshots accepted inputs (capacity %s)', async (capacity) => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => {
       release = resolve;
     });
     const seen: string[] = [];
-    const database = new WasixDatabaseImpl({
-      async exec() {
-        seen.push('query');
-        await blocked;
-        return ready();
+    const database = new WasixDatabaseImpl(
+      {
+        async exec() {
+          seen.push('query');
+          await blocked;
+          return ready();
+        },
+        async runTool(options) {
+          seen.push(`${options.args[0]}:${options.stdin?.[0]}`);
+          return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() };
+        },
+        async sync() {},
+        async close() {},
       },
-      async runTool(options) {
-        seen.push(`${options.args[0]}:${options.stdin?.[0]}`);
-        return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() };
-      },
-      async sync() {},
-      async close() {},
-    });
+      undefined,
+      capacity === undefined
+        ? undefined
+        : { maxPendingOperations: capacity, highWaterMarkBytes: 4096 },
+    );
     const options = {
       runtimeVersion: '0.1.1',
       tool: { name: 'psql' as const, sha256: 'a'.repeat(64), size: 1, source: Uint8Array.of(1) },
@@ -44,7 +55,7 @@ describe('WASIX database recovery state', () => {
       }),
     ).toThrow('bad input');
     const pending: Promise<unknown>[] = [database.execProtocolRaw(Uint8Array.of(1))];
-    for (let index = 0; index < 63; index++) {
+    for (let index = 0; index < (capacity ?? 64) - 1; index++) {
       const args = [`tool${index}`];
       const stdin = Uint8Array.of(index);
       pending.push(runWasixToolProcess(database, { ...options, args, stdin }));
@@ -66,9 +77,72 @@ describe('WASIX database recovery state', () => {
     await Promise.all(pending);
     expect(seen).toEqual([
       'query',
-      ...Array.from({ length: 63 }, (_, index) => `tool${index}:${index}`),
+      ...Array.from({ length: (capacity ?? 64) - 1 }, (_, index) => `tool${index}:${index}`),
     ]);
     await database.execProtocolRaw(Uint8Array.of(3));
+    await database.close();
+  });
+
+  it.each([
+    { maxPendingOperations: 1, highWaterMarkBytes: 1024 },
+    { maxPendingOperations: 2, highWaterMarkBytes: 1 },
+    { maxPendingOperations: 2, highWaterMarkBytes: 32 },
+  ])('BEGIN rejects saturated admission without pinning the database (%j)', async (admission) => {
+    let release!: () => void;
+    let started!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const statements: string[] = [];
+    const database = new WasixDatabaseImpl(
+      {
+        async exec(input) {
+          if (input[0] !== 0x51 && input[0] !== 0x50) {
+            started();
+            await blocked;
+            return ready();
+          }
+          const sql = querySql(input);
+          statements.push(sql);
+          if (sql === 'BEGIN') return completed('BEGIN', 'T');
+          if (sql === 'COMMIT' || sql === 'ROLLBACK') return completed(sql, 'I');
+          return completed('UPDATE 1', 'T');
+        },
+        async sync() {},
+        async close() {},
+      },
+      undefined,
+      admission,
+    );
+    const first = database.execProtocolRaw(Uint8Array.of(1));
+    await running;
+    let called = false;
+    await expect(
+      database.transaction(() => {
+        called = true;
+      }),
+    ).rejects.toThrow(/queue is full/);
+    expect(called).toBe(false);
+    expect(statements).toEqual([]);
+    release();
+    await first;
+    await database.transaction(async (transaction) => {
+      await transaction.execute('UPDATE things SET value = 1');
+      await transaction.execute('UPDATE things SET value = 2');
+      await transaction.rollback();
+    });
+    await database.transaction(() => 7);
+    expect(statements).toEqual([
+      'BEGIN',
+      'UPDATE things SET value = 1',
+      'UPDATE things SET value = 2',
+      'ROLLBACK',
+      'BEGIN',
+      'COMMIT',
+    ]);
     await database.close();
   });
 
@@ -235,7 +309,11 @@ describe('WASIX database recovery state', () => {
     expect(() => assertWasixProtocolConnectionTarget(database)).not.toThrow();
   });
 
-  it('pins callback transactions, commits results, and expires the transaction handle', async () => {
+  it.each([
+    undefined,
+    1,
+    2,
+  ])('pins callback transactions, commits results, and expires the transaction handle (capacity %s)', async (capacity) => {
     const statements: string[] = [];
     const persistenceModes: Array<string | undefined> = [];
     const syncBoundaries: string[] = [];
@@ -253,7 +331,13 @@ describe('WASIX database recovery state', () => {
       },
       async close() {},
     };
-    const database = new WasixDatabaseImpl(session);
+    const database = new WasixDatabaseImpl(
+      session,
+      undefined,
+      capacity === undefined
+        ? undefined
+        : { maxPendingOperations: capacity, highWaterMarkBytes: 1024 },
+    );
     let expired: OliphauntTransaction | undefined;
 
     const value = await database.transaction(async (transaction) => {

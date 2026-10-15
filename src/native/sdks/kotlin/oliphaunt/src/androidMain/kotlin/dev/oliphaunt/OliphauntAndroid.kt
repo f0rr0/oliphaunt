@@ -11,12 +11,13 @@ public sealed interface DatabaseStorage {
     public data class Directory(val path: File) : DatabaseStorage
 }
 
-public data class OliphauntConfig(
+public data class OliphauntConfig @JvmOverloads constructor(
     val storage: DatabaseStorage = DatabaseStorage.TemporaryDirectory,
     val startupGucs: List<PostgresStartupGuc> = emptyList(),
     val username: String? = null,
     val database: String? = null,
     val extensions: List<OliphauntExtension> = emptyList(),
+    val admission: AdmissionLimits? = null,
 )
 
 public object Oliphaunt {
@@ -64,6 +65,7 @@ internal fun OliphauntConfig.toEngineConfig(): EngineConfig = EngineConfig(
     username = username,
     database = database,
     extensions = extensions.map(OliphauntExtension::sqlName),
+    admission = admission,
 )
 
 internal fun DatabaseStorage.toEngineStorage(): EngineStorage = when (this) {

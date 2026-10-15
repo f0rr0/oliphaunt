@@ -21,6 +21,7 @@ export type NativeWasixExtensionPackage = Readonly<{
 export type NativeProfile = 'standard' | 'icu';
 
 export type NativeWasixOpenOptions = Readonly<{
+  admission?: import('../../core/types.js').AdmissionLimits;
   profile: NativeProfile;
   storage: NativeWasixStorage;
   username: string;
@@ -36,7 +37,7 @@ export type NativeWasixServerListen =
   | Readonly<{ transport: 'tcp'; port?: number }>
   | Readonly<{ transport: 'unix'; directory: string; port?: number }>;
 
-export type NativeWasixServerOpenOptions = NativeWasixOpenOptions &
+export type NativeWasixServerOpenOptions = Omit<NativeWasixOpenOptions, 'admission'> &
   Readonly<{ listen: NativeWasixServerListen }>;
 
 export type NativeWasixToolSummary = Readonly<{

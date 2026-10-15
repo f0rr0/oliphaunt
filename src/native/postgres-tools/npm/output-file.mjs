@@ -1,9 +1,11 @@
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { link, open, unlink } from 'node:fs/promises';
 import path from 'node:path';
 
 // The destination stays create-only, even if another writer publishes first.
 export async function writeNewFile(destination, write) {
+  if (destination instanceof URL) destination = fileURLToPath(destination);
   if (typeof destination !== 'string' || destination.length === 0 || destination.includes('\0')) {
     throw new TypeError('output destination must be a non-empty host path without NUL bytes');
   }

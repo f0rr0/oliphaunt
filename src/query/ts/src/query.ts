@@ -442,9 +442,12 @@ export function planQuery(
   parameters: ReadonlyArray<QueryParam> = [],
   options: ParameterOptions = {},
   retain?: (bytes: number) => void,
+  reserveBeforeEncoding = false,
 ): QueryPlan {
   validateStatementInput(sql, parameters);
   assertNoTopLevelCopy(sql);
+  // UTF-16 code units need at most three UTF-8 bytes each; reserve scratch before encoding.
+  if (reserveBeforeEncoding) retain?.(sql.length * 3);
   const snapshot = Array.from(parameters, (parameter) => snapshotQueryParam(parameter, retain));
   const encoders =
     options.encoders === undefined ? undefined : Object.freeze({ ...options.encoders });
@@ -453,12 +456,15 @@ export function planQuery(
     const normalized = snapshot.map((parameter, index) =>
       normalizeQueryParam(parameter, declaredTypeOids[index]!, encoders),
     );
+    if (reserveBeforeEncoding)
+      retain?.(parseBindExecuteLength(sql.length * 3, declaredTypeOids.length, normalized));
     const input = encodeParseBindExecute(sql, declaredTypeOids, normalized);
-    retain?.(input.byteLength);
+    if (!reserveBeforeEncoding) retain?.(input.byteLength);
     return { kind: 'complete', input };
   }
+  if (reserveBeforeEncoding) retain?.(sql.length * 3 + 21 + declaredTypeOids.length * 4);
   const input = describeQuery(sql, declaredTypeOids);
-  retain?.(input.byteLength);
+  if (!reserveBeforeEncoding) retain?.(input.byteLength);
   return {
     kind: 'describe',
     input,
@@ -474,6 +480,8 @@ export function planQuery(
       const normalized = snapshot.map((parameter, index) =>
         normalizeQueryParam(parameter, parameterTypeOids[index]!, encoders),
       );
+      if (reserveBeforeEncoding)
+        retain?.(parseBindExecuteLength(sql.length * 3, parameterTypeOids.length, normalized));
       return encodeParseBindExecute(sql, parameterTypeOids, normalized);
     },
   };
@@ -509,15 +517,25 @@ export function describeQuery(
   return packet.finish();
 }
 
+// Share Parse/Bind/Describe/Execute/Sync framing between admission and allocation.
+function parseBindExecuteLength(
+  sqlBytes: number,
+  typeCount: number,
+  parameters: ReadonlyArray<NormalizedParam>,
+): number {
+  const parseBodyBytes = sqlBytes + 4 + typeCount * 4;
+  return parseBodyBytes + bindLength(parameters) + 32;
+}
+
 function encodeParseBindExecute(
   sql: string,
   parameterTypeOids: ReadonlyArray<number>,
   parameters: ReadonlyArray<NormalizedParam>,
 ): Uint8Array {
   const sqlBytes = utf8Encoder.encode(sql);
-  const parseBodyLength = sqlBytes.length + 4 + parameterTypeOids.length * 4;
-  const bindBodyLength = bindLength(parameters);
-  const packet = new ByteWriter(parseBodyLength + bindBodyLength + 32);
+  const packet = new ByteWriter(
+    parseBindExecuteLength(sqlBytes.length, parameterTypeOids.length, parameters),
+  );
   writeParse(packet, sqlBytes, parameterTypeOids);
   writeBindExecute(packet, parameters);
   return packet.finish();

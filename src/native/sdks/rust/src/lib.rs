@@ -59,3 +59,6 @@ pub use query::{
     StatementResult, TypeOid, ValueFormat, ValueRef,
 };
 pub use storage::DatabaseStorage;
+
+/// Admission policy shared by asynchronous database owners.
+pub use oliphaunt_query::AdmissionLimits;

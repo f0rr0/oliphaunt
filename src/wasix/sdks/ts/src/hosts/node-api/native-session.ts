@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { validateNativeOwnerAdmission } from '../../core/open-config.js';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -249,10 +250,12 @@ export class NativeWasixActorSession implements WasixDatabaseSession {
   }
 
   static async open(options: SerializedOpenOptions): Promise<NativeWasixActorSession> {
+    validateNativeOwnerAdmission(options);
     const addon = requireCompatibleNativeWasixAddon(options);
     try {
       const handle = await addon.NativeWasixActorDatabase.open({
         ...nativeWasixOpenOptions(options, nativeStorage(options)),
+        ...(options.admission === undefined ? {} : { admission: options.admission }),
         ...(await loadNativeResources(options)),
       });
       validateActorDatabaseHandle(handle);

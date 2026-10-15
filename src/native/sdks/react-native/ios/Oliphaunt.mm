@@ -257,6 +257,8 @@ static NSDictionary *OliphauntNativeOpenConfigToDictionary(
 {
   NSMutableDictionary *dictionary = [NSMutableDictionary new];
   dictionary[@"storageKind"] = config.storageKind();
+  if (config.admissionMaxPendingOperations()) dictionary[@"admissionMaxPendingOperations"] = @(*config.admissionMaxPendingOperations());
+  if (config.admissionHighWaterMarkBytes()) dictionary[@"admissionHighWaterMarkBytes"] = @(*config.admissionHighWaterMarkBytes());
   if (config.startupTimeoutMs()) dictionary[@"startupTimeoutMs"] = @(*config.startupTimeoutMs());
   if (config.operationTimeoutMs()) dictionary[@"operationTimeoutMs"] = @(*config.operationTimeoutMs());
   OliphauntSetIfPresent(dictionary, @"storagePath", config.storagePath());

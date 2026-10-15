@@ -54,11 +54,11 @@ export function psqlToStream(
 /** Stage a private host file and publish it create-only after successful tool completion and close. */
 export function pgDumpToFile(
   connectionString: string,
-  destination: string,
+  destination: string | URL,
   options?: PgDumpOptions & PostgresToolOutputOptions,
 ): Promise<PostgresToolSummary>;
 export function psqlToFile(
   connectionString: string,
-  destination: string,
+  destination: string | URL,
   options?: PsqlOptions & PostgresToolOutputOptions,
 ): Promise<PostgresToolSummary>;

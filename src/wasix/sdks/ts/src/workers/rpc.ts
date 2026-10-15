@@ -93,6 +93,7 @@ export type SerializedSeed = { archive: SerializedAssetSource; manifest: Seriali
 
 /** Host-ready open options shared by both public execution surfaces. */
 export type SerializedOpenOptions = {
+  admission?: import('../core/types.js').AdmissionLimits;
   runtime: SerializedRuntimeDescriptor;
   icu?: SerializedIcuDescriptor;
   seed?: SerializedSeed;

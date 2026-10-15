@@ -20,6 +20,7 @@ export async function acquireOpfsStorage(
   name: string,
   loadClusterSeed: WasixClusterSeedLoader,
   physicalIdentity: WasixPhysicalIdentity,
+  maxConcurrentIO?: number,
 ): Promise<WasixStorageLease> {
   const label = `OPFS storage ${JSON.stringify(name)}`;
   let lock: ExclusiveStorageLock | undefined;
@@ -40,12 +41,14 @@ export async function acquireOpfsStorage(
               name,
               loadClusterSeed,
               physicalIdentity,
+              maxConcurrentIO,
             );
             initializationState = opened.state;
             return opened.snapshot;
           },
           initializationState: () => initializationState,
-          apply: (delta) => applyPooledOpfsDelta(database, name, physicalIdentity, delta),
+          apply: (delta) =>
+            applyPooledOpfsDelta(database, name, physicalIdentity, delta, maxConcurrentIO),
           close() {},
         };
       },
@@ -67,6 +70,7 @@ export async function restoreOpfsStorage(
   name: string,
   snapshot: StoredSnapshot,
   physicalIdentity: WasixPhysicalIdentity,
+  maxConcurrentIO?: number,
 ): Promise<void> {
   const label = `OPFS storage ${JSON.stringify(name)}`;
   const lock = await acquireExclusiveWebLock(`@oliphaunt/wasix-ts:opfs:${name}`, label);
@@ -85,7 +89,12 @@ export async function restoreOpfsStorage(
       if (!isNotFound(error)) throw error;
       database = await root.getDirectoryHandle(name, { create: true });
     }
-    const destination = await inspectPooledOpfsDatabase(database, name, physicalIdentity);
+    const destination = await inspectPooledOpfsDatabase(
+      database,
+      name,
+      physicalIdentity,
+      maxConcurrentIO,
+    );
     if (destination.state === 'existing') {
       throw new WasixStorageError(`${label} already exists`, {
         code: 'incomplete',
@@ -100,11 +109,17 @@ export async function restoreOpfsStorage(
       database = await root.getDirectoryHandle(name, { create: true });
     }
     commitState = 'unknown';
-    await applyPooledOpfsDelta(database, name, physicalIdentity, {
-      directories: snapshot.directories,
-      files: snapshot.files,
-      deleted: [],
-    });
+    await applyPooledOpfsDelta(
+      database,
+      name,
+      physicalIdentity,
+      {
+        directories: snapshot.directories,
+        files: snapshot.files,
+        deleted: [],
+      },
+      maxConcurrentIO,
+    );
     cleanupDestination = false;
     commitState = 'persisted';
   } catch (error) {

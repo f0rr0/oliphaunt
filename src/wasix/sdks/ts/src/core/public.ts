@@ -51,6 +51,7 @@ export type {
   OliphauntDatabase,
   OliphauntTransaction,
   OpenConfig,
+  AdmissionLimits,
   WasixAssetSource,
   WasixExtensionDescriptor,
   WasixSeed,

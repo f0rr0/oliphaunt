@@ -15,6 +15,21 @@
 #define OLIPHAUNT_ERROR_CAPACITY 1024
 #define OLIPHAUNT_EMBEDDED_IO_ABI_VERSION 1U
 
+/* Resource overrides are decimal integers, never prefixes, signs or wrapped sizes.
+ * Invalid legacy environment values retain their documented fallback. */
+static inline size_t oliphaunt_resource_size(
+    const char *value, size_t minimum, size_t maximum, size_t fallback) {
+    if (value == NULL || *value == '\0') return fallback;
+    size_t parsed = 0;
+    for (const unsigned char *cursor = (const unsigned char *)value; *cursor != '\0'; cursor++) {
+        if (*cursor < '0' || *cursor > '9') return fallback;
+        size_t digit = (size_t)(*cursor - '0');
+        if (parsed > maximum / 10 || (parsed == maximum / 10 && digit > maximum % 10)) return fallback;
+        parsed = parsed * 10 + digit;
+    }
+    return parsed >= minimum ? parsed : fallback;
+}
+
 #define OLIPHAUNT_EMBEDDED_WAKE_NONE 0U
 #define OLIPHAUNT_EMBEDDED_WAKE_POSIX_FD 1U
 #define OLIPHAUNT_EMBEDDED_WAKE_WIN32_EVENT 2U

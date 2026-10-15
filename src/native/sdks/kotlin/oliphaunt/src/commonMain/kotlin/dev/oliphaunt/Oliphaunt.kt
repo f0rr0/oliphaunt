@@ -9,6 +9,20 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+/** Pending preparation, queued and executing work for one database and its transactions. */
+public data class AdmissionLimits(
+    val maxPendingOperations: Int,
+    /** Conservative retained input allowance; a larger operation runs alone. */
+    val highWaterMarkBytes: Long,
+) {
+    internal fun validate() {
+        require(maxPendingOperations > 0 && highWaterMarkBytes > 0) { "admission limits must be positive" }
+    }
+}
+
+// More admitted work absorbs bursts while retaining more input; preserve the existing default.
+private val defaultAdmissionLimits = AdmissionLimits(64, 128L * 1024 * 1024)
+
 public data class PostgresStartupGuc(
     val name: String,
     val value: String,
@@ -25,6 +39,7 @@ internal sealed interface EngineStorage {
 }
 
 internal data class EngineConfig(
+    val admission: AdmissionLimits? = null,
     val storage: EngineStorage = EngineStorage.TemporaryDirectory,
     val startupGucs: List<PostgresStartupGuc> = emptyList(),
     val username: String? = null,
@@ -209,6 +224,7 @@ public class PostgresException(
 
 public class OliphauntDatabase private constructor(
     private val session: OliphauntSession,
+    private val admissionLimits: AdmissionLimits?,
 ) {
     private sealed interface TransactionCompletion {
         data object Active : TransactionCompletion
@@ -319,11 +335,20 @@ public class OliphauntDatabase private constructor(
                 ensureNoProtocolStreamCallbackReentry()
                 ensureOpenLocked()
                 if (activeTransaction != null) throw OliphauntException(sessionPinnedMessage)
+                // BEGIN is ordinary work; its completion releases before the callback.
+                val operation = if (admissionLimits == null) {
+                    enqueueOperationLocked()
+                } else {
+                    enqueuePreparedOperationLocked { retain ->
+                        retain("BEGIN".length.toLong() * 3 + 6)
+                        ByteArray(0)
+                    }.first
+                }
                 val allocated = nextTransactionToken
                 nextTransactionToken = if (nextTransactionToken == Long.MAX_VALUE) 1L else nextTransactionToken + 1
                 val lease = TransactionLease()
                 activeTransaction = ActiveTransaction(allocated, lease)
-                BeginAdmission(allocated, lease, enqueueOperationLocked())
+                BeginAdmission(allocated, lease, operation)
             }
         val token = beginAdmission.token
         val transaction = OliphauntTransaction(this, token, beginAdmission.lease)
@@ -1064,6 +1089,7 @@ public class OliphauntDatabase private constructor(
 
     private suspend fun admitOperation(transactionToken: Long?): Admission = admitPreparedOperation(transactionToken) { ByteArray(0) }.first
 
+    // Reserve before encoding; keep the input charged through its ordered completion.
     private suspend fun admitPreparedOperation(
         transactionToken: Long?,
         prepare: ((Long) -> Unit) -> ByteArray,
@@ -1071,10 +1097,14 @@ public class OliphauntDatabase private constructor(
         ensureNoProtocolStreamCallbackReentry()
         ensureOpenLocked()
         ensureTransactionAccessLocked(transactionToken)
+        enqueuePreparedOperationLocked(prepare)
+    }
+
+    private suspend fun enqueuePreparedOperationLocked(prepare: ((Long) -> Unit) -> ByteArray): Pair<Admission, ByteArray> {
         pendingOperations.entries.removeAll { it.key.isCompleted }
         val pendingBytes = pendingOperations.values.sum()
-        val byteLimit = 128L * 1024 * 1024
-        if (pendingOperations.size >= 64 || pendingBytes >= byteLimit) {
+        val byteLimit = (admissionLimits ?: defaultAdmissionLimits).highWaterMarkBytes
+        if (pendingOperations.size >= (admissionLimits ?: defaultAdmissionLimits).maxPendingOperations || pendingBytes >= byteLimit) {
             throw OliphauntException("operation queue is full; wait for pending work to finish")
         }
         var retainedBytes = 0L
@@ -1083,11 +1113,12 @@ public class OliphauntDatabase private constructor(
             if (pendingOperations.isNotEmpty() && bytes > byteLimit - pendingBytes - retainedBytes) {
                 throw OliphauntException("operation queue is full; wait for pending work to finish")
             }
+            require(bytes <= Long.MAX_VALUE - retainedBytes - pendingBytes) { "retained byte count overflow" }
             retainedBytes += bytes
         }
         val admission = enqueueOperationLocked()
         pendingOperations[admission.completion] = retainedBytes
-        admission to request
+        return admission to request
     }
 
     private suspend fun enqueueOperationLocked(): Admission {
@@ -1200,6 +1231,7 @@ public class OliphauntDatabase private constructor(
             config: EngineConfig,
             engine: OliphauntEngine,
         ): OliphauntDatabase {
+            config.admission?.validate()
             val startupGucs = config.startupGucs.toList()
             val extensions = config.extensions.toList()
             validateDatabaseStorage(config.storage)
@@ -1211,7 +1243,7 @@ public class OliphauntDatabase private constructor(
                     startupGucs = startupGucs,
                     extensions = validateGeneratedExtensionIds(extensions),
                 )
-            return OliphauntDatabase(engine.open(normalized))
+            return OliphauntDatabase(engine.open(normalized), normalized.admission)
         }
 
         internal suspend fun restore(

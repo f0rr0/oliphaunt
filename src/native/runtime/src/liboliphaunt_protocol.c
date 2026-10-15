@@ -196,20 +196,8 @@ static bool scan_stream_ready_locked(OliphauntHandle *handle, const unsigned cha
 }
 
 static size_t stream_queue_max_bytes(void) {
-    const char *value = getenv("OLIPHAUNT_STREAM_QUEUE_MAX_BYTES");
-    if (value == NULL || value[0] == '\0') {
-        return DEFAULT_STREAM_QUEUE_MAX_BYTES;
-    }
-
-    char *end = NULL;
-    unsigned long long parsed = strtoull(value, &end, 10);
-    if (end == value || parsed == 0) {
-        return DEFAULT_STREAM_QUEUE_MAX_BYTES;
-    }
-    if (parsed > (unsigned long long)SIZE_MAX) {
-        return SIZE_MAX;
-    }
-    return (size_t)parsed;
+    return oliphaunt_resource_size(getenv("OLIPHAUNT_STREAM_QUEUE_MAX_BYTES"),
+                                  1, SIZE_MAX, DEFAULT_STREAM_QUEUE_MAX_BYTES);
 }
 
 static bool stream_queue_has_room_locked(OliphauntHandle *handle, size_t len, size_t max_bytes) {
@@ -377,8 +365,7 @@ int oliphaunt_startup_timeout_ms(void) {
     if (value == NULL || value[0] == '\0') {
         return DEFAULT_STARTUP_TIMEOUT_MS;
     }
-    int parsed = atoi(value);
-    return parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
+    return (int)oliphaunt_resource_size(value, 1, INT_MAX, DEFAULT_STARTUP_TIMEOUT_MS);
 }
 
 static void add_ms_to_timespec(struct timespec *ts, long ms) {

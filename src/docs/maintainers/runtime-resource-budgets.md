@@ -5,6 +5,12 @@ a queue watermark, and a protocol rejection limit must have separate owners.
 This guide describes the owning constants and their trade-offs, not optimal
 values for every workload. MiB and KiB mean powers of 1024.
 
+The [resource configuration proposal](../architecture/resource-policy.md)
+defines units, scopes, admission lifetime and validation. Its status separates
+implemented admission/OPFS/path controls from the remaining proposed APIs. The public
+[performance guide](../content/reference/performance.mdx) explains the controls
+and tradeoffs available to developers today.
+
 ## Read this first: what a size means
 
 - **A batch is a delivery box.** A 64 KiB batch moves up to that much at a time.
@@ -28,15 +34,15 @@ These are explanations of the mechanisms, not measured speedup claims.
 ## Scope and ownership
 
 This guide covers first-party runtime, SDK, transport and build resource limits.
-It does not duplicate dependency internals or describe test workloads, timeouts,
-ports and binary field offsets as tuning choices.
+It does not duplicate dependency internals or describe test workloads, ports
+and binary field offsets as tuning choices. Lifecycle deadlines are separate
+from SQL statement deadlines and buffer capacities.
 
 Central documentation does not mean one global constant: equal numbers with
 different purposes stay separately owned. The shared protocol contract generates
 the embedded bridge C and SDK Rust/TS values. Browser-host patch literals are
 still separately pinned and checked by `src/wasix/browser-host/build-sdk.sh`.
-SQL startup
-defaults and broker-frame limits also still have multiple language owners.
+SQL startup defaults and broker-frame limits also still have multiple language owners.
 Change and check every consumer together until those contracts are unified.
 
 ## Is this PostgreSQL, our choice, or a platform rule?
@@ -97,8 +103,9 @@ Streaming avoids retaining the complete transport output, but an SDK method
 that collects decoded rows can still retain the full application result. An
 error after streaming a prefix cannot retract bytes already delivered.
 
-Other similarly sized values have different owners: TS
-filesystem bridge, not the PostgreSQL transport. TS
+Other similarly sized values have different owners. The optional browser-host
+synchronous filesystem bridge is separate from PostgreSQL transport and the
+current OPFS copy-on-write snapshot provider. TS
 `direct-client-common.ts::CHROMIUM_SYNC_WASM_LIMIT_BYTES` is an 8 MiB module-size
 admission threshold for synchronous extension loading in a Chromium Window;
 larger modules require the worker placement, not a larger query buffer. Native
@@ -112,7 +119,8 @@ PostgreSQL configuration, not transport tunables.
 | --- | --- | --- |
 | `src/wasix/runtime/assets/build/wasix_shim/oliphaunt_wasix_bridge.c`, input reserve and output append | 8 KiB initially, doubles | Starting containers for guest input/output. Ordinary SQL results grow automatically. Output reset retains capacity for reuse, trading memory after a large response for fewer later allocations; streaming avoids retaining the complete response. |
 | `src/native/sdks/rust/src/pgwire.rs` | 64 KiB read buffer; 8 KiB initial response vector | Socket delivery box and growing result container, respectively. Neither limits the total result to that size. |
-| `src/native/sdks/rust/src/ipc.rs` and `src/native/sdks/ts/src/runtime/broker-frames.ts` | 128 MiB frame limit | Rejects a single oversized broker message; independent of the similarly sized PostgreSQL frontend-frame limit. |
+| `src/native/broker/src/ipc.rs` and `src/native/sdks/ts/src/runtime/broker-frames.ts` | 128 MiB frame limit | Rejects a single oversized broker management message; independent of the similarly sized PostgreSQL frontend-frame limit. |
+| Native TS `runtime/broker.ts::execProtocolRaw`; `runtime/pgwire.ts` | 128 MiB collected response; 128 MiB backend length field and complete request | Three separate acceptance policies. Streaming avoids the aggregate collector, but its reader still rejects one oversized backend message. The length-field check excludes the message type byte. None is owned by the admission watermark. |
 | `wasix-rust/tools.rs::DIRECT_TOOL_SOCKET_BUFFER` | 256 KiB | Waiting space in the in-process tool socket. Larger capacity can absorb bursts, not speed up SQL itself. |
 | Guest direct tool socket reads (`protocol-contract/contract.json`) | 64 KiB maximum read batch | Keeps libpq's large receive-buffer requests below Wasmer's per-read capability. This is separate from the size of one PostgreSQL value and total tool output. Ordinary tool responses stream from the backend before COPY starts. |
 | Rust native/WASIX tools and JS tool collectors | Complete output in memory; no application byte quota | Available memory and host Vec/Buffer/string-size limits apply. Fallible capture failures discard partial stdout and stderr. Native pipes continue draining. Rust collectors grow amortized and release buffers on failure. |
@@ -123,19 +131,32 @@ PostgreSQL configuration, not transport tunables.
 | Native TypeScript `backupToFile()` (direct and broker) | Bounded archive chunks; no JavaScript archive collector | Uses synchronous file writes within the native callback, including Deno's borrowed FFI callback. Slow storage can block the JavaScript thread during a write. Same-directory private staging is published without overwriting the destination after backup and file close; completion does not promise power-loss durability. |
 | `src/native/postgres-tools/crates/tools/src/lib.rs`, captured pipe reader | 32 KiB | Tool-output read batch; total capture is governed by the separate contract above. |
 | Native `liboliphaunt_archive_tar.c::buffer_reserve` | 4 KiB initially, doubles | Backup archive starting container. The full archive still grows in memory; larger initial capacity does not solve large-backup memory use. |
-| `wasix-ts/protocol/pgwire-connection.ts`, chunk-list compaction | 1,024 consumed chunks and at least half the list consumed | Removes old list entries in batches. More frequent removal frees references sooner but spends more time moving list entries. Not a byte limit. |
+| `wasix-ts/protocol/pgwire-connection.ts`, chunk-list compaction | More than 256 consumed chunks and at least half the list consumed | Removes old list entries in batches. More frequent removal frees references sooner but spends more time moving list entries. Not a byte limit. |
+| `src/native/broker/src/mobile.rs::CHUNK_BYTES`, `INPUT_BYTES` | 256 KiB data records; 128 MiB complete frontend input | Separate mobile bulk transport. Results and archives use many data records; the complete ordinary query input has its own hard ceiling. Smaller delivery chunks can preserve this record maximum. Changing the record ceiling requires coherent producer/consumer validation. |
 | `wasix-rust/postgres_mod/stdio.rs`, `sync_host_fs.rs`, tool fallback and browser stderr patch | 8 KiB write-readiness report | Says a file/stream is writable with this advertised amount; does not allocate an 8 KiB buffer or guarantee a complete write. |
 | Guest `oliphaunt_wasix_bridge.c`, emulated `SO_SNDBUF`/`SO_RCVBUF` | 32 KiB | Socket-option compatibility answers, not real kernel socket allocations. Do not tune these as if they were queue capacities. |
+| `src/wasix/browser-host/adapter/streams.rs` | 256-byte stream watermark; 10,000,000-byte scratch ceiling; 128-byte fallback | Generic host stdio policy. The queuing strategy measures chunk bytes; the scratch request follows the controller's desired size. These are separate from the bounded protocol/tool rings and do not define a whole-output memory limit. |
 
 ### Browser storage and counted resources
 
 | Owner | Selection | In simple words; effect |
 | --- | --- | --- |
-| Same file, `MAX_PARALLEL_IO` | 16 operations | Limits simultaneous work in the helper's file batches. More may speed setup/publication, or compete for the same storage. Not 16 concurrent SQL queries. |
+| `wasix-ts/storage/types.ts::DEFAULT_OPFS_MAX_CONCURRENT_IO` | 16 operations; `opfs(name, { maxConcurrentIO })` | Limits parallel initialization, snapshot reads and cleanup. Changed-file writes remain ordered before namespace publication. Increasing helper concurrency does not parallelize SQL or bound the memory of the complete reopened mount. |
 | `wasix-ts/hosts/browser/direct-client-common.ts::MAX_PREPARED_RUNTIMES` | 1 cached runtime identity | Avoids repeating preparation for the same assets. More entries help switching between runtime versions but retain more assets; eviction does not close live databases. |
-| `src/wasix/sdks/rust/src/async_api.rs::OWNER_QUEUE_CAPACITY`, `OWNER_QUEUE_BYTES` | 64 ordinary work permits; 128 MiB admitted input | FIFO admission precedes raw/SQL copies; permits cover structured SQL, parameters and tool inputs through owner completion. Already-owned caller inputs and output collectors remain outside a total process-memory bound. One oversized input runs alone. Controls bypass ordinary admission. |
-| `src/native/sdks/rust/src/executor.rs::ORDINARY_QUEUE_CAPACITY`, `ORDINARY_QUEUE_BYTES` | 256 ordinary queued commands; 128 MiB queued input | Raw copies and structured encoding occur after FIFO admission. Admission reserves a conservative encoding allowance; queued bytes track actual request allocation capacity and release when the owner starts the command. Caller-owned inputs remain outside this bound. Cleanup/recovery commands bypass these slots. One oversized input runs alone. |
-| `src/query/ts/src/operation-budget.ts`; native Swift and Kotlin operation gates | 64 ordinary operations; 128 MiB retained input | JS/Swift/Kotlin reject excess ordinary admission before their protected copies. Expired queued work retains ordering until its predecessor settles; controls bypass ordinary limits. This is not a bound on query results, database memory, or caller-owned data. |
+| `src/wasix/sdks/rust/src/async_api.rs::OWNER_QUEUE_CAPACITY`, `OWNER_QUEUE_BYTES` | 64 ordinary queued slots; 128 MiB input allowance | FIFO admission precedes raw/SQL construction. Count permits release on dequeue; byte permits remain through the owner action. Oversized inputs acquire the complete byte budget; zero-byte operations do not acquire byte permits. Caller-owned input and output collectors remain outside a total memory bound. Controls bypass ordinary admission. |
+| `src/native/sdks/rust/src/executor.rs::ORDINARY_QUEUE_CAPACITY`, `ORDINARY_QUEUE_BYTES` | 256 ordinary queued commands; 128 MiB queued input | Raw copies and structured encoding occur after FIFO admission. Admission checks a conservative encoding allowance, then counts actual queued request capacity. Both budgets release on dequeue. An oversized input may enter an empty ordinary queue; later zero-byte commands can still fit. Executing/caller-owned inputs remain outside this bound. Recovery controls bypass these slots. |
+| `src/query/ts/src/operation-budget.ts`; native Kotlin admission | 64 ordinary pending operations; 128 MiB retained allowances | Count and bytes include active work through ordered completion. Admission precedes protected copies/encoding; JS expiry alone does not release a still-queued closure. Browser tools also charge fixed channel allocations. Controls bypass ordinary limits. Results, PostgreSQL memory and caller-owned inputs are excluded. |
+| Swift `OliphauntAsyncSerialGate`; `OliphauntQuery.swift` | 64 ordinary pending operations; 128 MiB encoded request bytes | Omitted policy preserves encoded-request accounting. Explicit admission reserves a checked packet allowance before encoding. The same gate covers transaction operations. Active release or removal of an expired waiter releases its reservation. Controls enter the serial gate without ordinary charges. |
+
+The table records omitted-policy behavior. Explicit `admission` supplies both
+`maxPendingOperations` and `highWaterMarkBytes`: preparation, queued and executing
+work stays charged through completion, an oversized operation runs alone, and
+following zero-input work cannot bypass it. JS shares normalization/accounting
+in the query package; Rust shares the public limits type in its query package.
+Rust owners retain their existing fair waiting and mobile/JS owners their
+rejection behavior. Boundary and recovery tests cover these changes. A transaction
+lease is separate from an operation reservation, so child queries must not
+inherit an occupied parent slot for the entire callback.
 
 Optional WASIX JavaScript tools share the query admission budget through complete
 execution and cleanup. Strings reserve a conservative UTF-8 allowance before
@@ -174,7 +195,7 @@ this audit did not benchmark alternative settings.
 
 Checked 2026-09-08 against the installed **`@electric-sql/pglite@0.5.8`**
 distribution and its source maps. A fresh in-memory Node 24.18.0 instance
-reported PostgreSQL **18.3**; Oliphaunt targets **18.4**. The SQL column above
+reported PostgreSQL **18.3**; the Oliphaunt comparison then targeted **18.4**. The SQL column above
 comes from that running instance's `pg_settings` (including `unit`, `source`
 and `boot_val`), not guesses from a build script. No directory/browser replay
 or performance comparison was run for this documentation update.
@@ -196,8 +217,8 @@ to prove the exact compiler provenance of the published npm binary.
 | PostgreSQL's internal protocol buffers | Separate from our bridge allocations | Pinned PGlite PostgreSQL still defines 8 KiB receive and initial send buffers [P4] | These come from PostgreSQL; matching 8 KiB bridge starts do not make them the same allocation. |
 | 4 MiB queue / 256 KiB channels | Our native streaming / browser-tool transports | No direct matching fixed-byte waiting room found in inspected PGlite core | Compare streaming/copy counts and retained memory, not invented size parity. |
 | 64/256 ordinary-work limits | Our async/SDK admission policies | Query/transaction mutexes serialize PGlite work; no corresponding numeric admission bound found [P3] | A mutex orders work; it is not itself a bounded request queue. |
-| Browser filesystem transfer | 1 MiB bridge batch, 64 KiB directory page; 8 KiB starting staged files | OPFS AHP reads/writes requested file slices using synchronous access handles [P5] | Same filesystem problem, different route. No matching 1 MiB bridge/staging budget found there. |
-| OPFS spare files | 32 maintained spares | Configurable 1,000 initially, 100 maintained [P5] | Directly comparable concept, not identical lifecycle. PGlite spends more setup/resources preparing spare files; fewer spares can mean more later replenishment. |
+| Browser filesystem transfer | Current OPFS reopens a complete stored snapshot; the separate generic host sync bridge accepts 8 KiB–4 MiB capacity and 64 KiB directory pages | OPFS AHP reads/writes requested file slices using synchronous access handles [P5] | Different memory and I/O ownership. The former direct OPFS adapter's 1 MiB bridge and staged-file starts do not describe the current provider. |
+| OPFS spare files | No maintained spare-file pool in the current copy-on-write provider | Configurable 1,000 initially, 100 maintained in the inspected version [P5] | The old Oliphaunt pool and its 32-spare selection were removed. That value is no longer a tuning candidate. |
 | OPFS batch concurrency | 16 helper operations | Pool work gathered with `Promise.all`; no matching 16-operation cap in inspected implementation [P5] | More parallel setup may help or contend for the same storage. Does not add SQL execution parallelism. |
 | Cached prepared runtime | One retained identity | URL-keyed compiled-module cache; no numeric eviction bound found [P6] | Related reuse policy, not identical cached objects. More retained identities can avoid setup while retaining more memory. |
 | Whole backup/archive handling | Initial containers, extraction ceilings and per-role checks documented below | TAR/compression helpers also gather whole data/chunks; no matching set of our archive ceilings found [P7] | Neither whole-result path becomes constant-memory just because reads are chunked. |
@@ -276,12 +297,28 @@ startup descriptor ABI in `oliphaunt_wasix_bridge.c`. These are diagnostic bound
 not SQL result caps. Raising them retains/copies more diagnostic data; it cannot
 speed up successful queries or repair error recovery.
 
-Native `liboliphaunt_internal.h::OLIPHAUNT_ERROR_CAPACITY` and Rust SDK
-`liboliphaunt/ffi.rs::ERROR_CAPTURE_CAPACITY` use 1 KiB for error text. Native
+Native `liboliphaunt_internal.h::OLIPHAUNT_ERROR_CAPACITY` and native Rust bindings
+`liboliphaunt/ffi.rs::ERROR_CAPTURE_CAPACITY` use 1 KiB for error text. This is
+also the public C error-capture layout; changing it needs a coherent ABI update,
+not a diagnostic-tail option. Native
 temporary error strings also use 128/256/512/1,024 bytes; symbol-scope diagnostics
 use 512 bytes. Deno's error-copy buffer starts at 1 KiB and can grow.
 The JS broker startup-ready line has an 8 KiB limit in `runtime/node-adapter.ts`.
 These determine how much diagnostic text is retained/accepted, not query speed.
+
+## Lifecycle and scheduling
+
+| Owner | Current selection | Meaning and tuning boundary |
+| --- | --- | --- |
+| Native Rust `broker.rs`, `server.rs` | 20 s startup; 5 s shutdown | Owned transport/process deadlines; ordinary SQL is separate. No public timeout builder option today. |
+| Native C `liboliphaunt_protocol.c::oliphaunt_startup_timeout_ms` | 60 s by default, `OLIPHAUNT_STARTUP_TIMEOUT_MS` override | Backend readiness wait beneath SDK lifecycle deadlines. The current `atoi` parser accepts a numeric prefix and does not perform checked range validation. A future SDK deadline must reach this owner rather than be silently defeated by its separate timeout. |
+| Native Rust `server.rs::CONNECT_ATTEMPT_TIMEOUT` | 250 ms per readiness connection attempt | One probe within the overall startup/shutdown deadline; not an independent limit on total startup duration. Keep it internal or derive it from remaining time. |
+| Native TS `runtime/broker.ts`, `runtime/server.ts` | 60 s startup; 5 s shutdown | Startup uses `OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS` or `OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS`. Current parsers accept delays above the host timer range; do not treat a positive integer alone as valid. |
+| Native TS `native/assets.ts` runtime-cache lock | 25 ms polling; 30 s acquisition timeout; stale after 5 minutes | Asset preparation can time out before runtime startup begins. Staleness currently uses directory age, not owner liveness, so a live builder lasting over 5 minutes can lose its lock. Do not expose a stale-age tuning option as if it established safe abandoned-owner recovery. |
+| Swift/Kotlin mobile broker options; React Native broker options | 30 s startup by default; optional operation timeout | Existing typed broker controls. Operation budgets include queued time and preserve submitted/unsubmitted and terminal outcomes. |
+| WASIX TS `core/database.ts`, `hosts/browser/direct-client-common.ts` | 120 s close/startup deadlines | Owned lifecycle deadlines; not SQL preemption or a deadline for arbitrary blocked host callbacks. |
+| Native npm tool runner | 5 s termination grace | Escalates SIGTERM to SIGKILL after abort; subprocess cleanup remains owned. |
+| Browser `adapter/clock.rs`; embedded PostgreSQL timeout patches | Canonical fallback after 16 ms or 1,024 reads per clock domain; deadline clock sampled every 32 interrupt predicates | Internal scheduling policies trading host calls against responsiveness. Blocking boundaries still check deadlines directly. A sampling count is not a wall-clock cancellation guarantee. |
 
 ## Postmaster-specific budgets
 
@@ -293,6 +330,8 @@ Do not apply these numbers to the embedded Rust/TS defaults above.
 | `lib/common.sh`, fresh linear-memory profile | 4,096 Wasm pages = 256 MiB maximum | A ceiling on guest linear-memory growth for that profile, not a fixed allocation per query. |
 | Same profile and Wasmer patch `0008-postmaster-executor-and-build-closure.patch` | 65,536-page = 4 GiB static address bound, plus 2 GiB guard reservation on the specified U64 engine layout | Reserved address space for safe memory access. This does **not** mean 6 GiB of physical RAM is filled for every instance. It is part of the engine safety contract, not free memory to give to SQL. |
 | `profiles/runtime-footprints/embedded-concurrent-v1.gucs` | 32 MiB shared buffers; 8 connections | This specific profile trades cache and connection capacity for a smaller footprint. Not the embedded SDK's 128 MiB cache default. |
+| `profiles/runtime-task-budgets/embedded-postmaster-v1.tsv`; `executor/src/runtime.rs`, `execute.rs` | Shared 96 guest-thread/blocking-pool ceiling; two async worker threads; one blocking core thread; 1,000 ms excess blocking-worker idle timeout | Receipt-bound thread/pool policy, derived with PostgreSQL child-role and authentication-overlap capacity. The value goes to guest `threading.max_threads` and the blocking pool's `max_size`; it is not a bound on all async tasks. A connection/worker profile change needs a consistent budget and fresh carrier evidence. |
+| `executor/src/runtime.rs::WASIX_STACK_RLIMIT_DIVISOR` | Reports one eighth of the selected engine stack through the guest resource limit | Couples PostgreSQL's stack guard to the host execution stack. It is a safety policy needing recursion evidence, not an ordinary per-open throughput control. |
 | Wasmer patch `0007-wasix-instance-linker-and-sealed-runtime.patch` | 64 KiB preinitialized-image alignment | Required layout boundary for the memory image. Not a file-read batch. |
 | Wasmer patch `0002-virtual-fs-file-description-and-writeback.patch::ZERO_WRITE_CHUNK_LEN` | 8 KiB | Reusable batch for writing zeros. Larger batches may reduce write calls while using more scratch space. |
 
@@ -309,6 +348,7 @@ that limit as a streaming decompression memory guarantee.
 | Owner (repository-relative) | Selection | Meaning / cost |
 | --- | --- | --- |
 | `src/wasix/sdks/ts/src/resources/archive.ts` | 2 GiB tar; 512 MiB entry; 65,536 entries; 1,024-byte paths; 64 path levels | Runtime archive acceptance limits. Larger allowances accept larger archives and increase worst-case processing/memory exposure. |
+| `src/native/rust-bindings/src/liboliphaunt/root/resources.rs` | 1 GiB resource bytes; 8,192 files | Separate seed/ICU resource acceptance. Streamed reads use the byte ceiling, while an already-owned archive still exists outside a total process-memory bound. |
 | `src/extensions/contracts/extension-artifact-archive-policy.properties` | 128 MiB compressed; 512 MiB expanded; 256 MiB member; 4,096 members | Separate extension archive policy shared across consumers. Not the general runtime archive policy. |
 | `src/native/sdks/ts/src/native/assets.ts` | 4,096 extension-runtime files; 48 MiB per file; 256 MiB total; 4,096-byte path check | Limits installed extension runtime resources, not query results. |
 | `tools/packaging/portable-archive.mts::DEFAULT_PORTABLE_ARCHIVE_LIMITS` | 512 MiB archive/member; 1 GiB expanded; 32,768 entries | Default package-verifier envelope; callers can use a role-specific envelope. |
@@ -324,8 +364,8 @@ that limit as a streaming decompression memory guarantee.
 | `src/native/sdks/swift/tools/render-extension-products.mts` | 32,768 files; 512 MiB file; 2 GiB tree | XCFramework inspection envelope. |
 | Android Gradle plugin `ResolveOliphauntAndroidAssetsTask.java`, `OliphauntExtensionLegalCatalog.java`, `LinkOliphauntAndroidExtensionsTask.java` | 64 KiB artifact manifest; 1 MiB bundle/registry/legal-resource metadata; 4 MiB linker output | Metadata and diagnostic limits during Android builds. |
 | Android archive/resolver/linker helpers | 128 KiB extraction/hash, 64 KiB reads, 16 KiB linker-output reads | Independent build-time I/O batches. |
-| Postmaster `lib/durable_publication.py` | 16 MiB comparison; 256 MiB publication; 1 MiB copy batches | Safe publication of carrier metadata/files, not a cap on PGDATA. |
-| Postmaster `lib/sealed_export_chain.py` and `linear_memory_transaction.py` | 512 MiB uninventoried input; 16 MiB small metadata; 1 MiB read/copy batches | Build/provenance validation envelopes. |
+| Postmaster `lib/durable-publication.mts`, `lib/receipt-files.mts` | 256 MiB publication input; 16 MiB metadata; 1 MiB read/copy batches | Safe publication of carrier metadata/files, not a cap on PGDATA. |
+| Postmaster `lib/sealed-export-chain.mts` | 512 MiB uninventoried input | Build/provenance validation envelope. The retired Python helpers are not current policy owners. |
 | Postmaster Wasmer patch `0008-postmaster-executor-and-build-closure.patch` | 4 MiB linear-memory receipt; 16 MiB export proof; 1 MiB manifest; 4 KiB proof line; 128 KiB hashes | Carrier admission/proof limits and verification batch, not runtime SQL buffers. |
 
 ## Fixed formats, platform bounds, and unbounded growth
@@ -339,6 +379,9 @@ that limit as a streaming decompression memory guarantee.
   control is six 32-bit words. Digest lengths, TAR field widths, null
   terminators and wire headers follow their formats. Changing them requires
   changing the format/ABI, not performance tuning.
+- Mobile bulk records have a 36-byte header and up to 1 KiB of terminal error
+  detail. The header is a format layout; error-detail capacity is a shared
+  diagnostic protocol policy, not the tool-runner stderr tail.
 - Native path scratch includes a 4,096-byte cwd buffer and smaller leaf/name
   arrays. Windows module-path discovery grows from `MAX_PATH` and stops
   retrying after its capacity exceeds 32,768. These can affect accepted paths,
@@ -355,6 +398,45 @@ When changing a size, update this guide and its owning constant/contract, check
 mirrored consumers, and test both small and large inputs. Include slow readers,
 multiple databases and memory peaks. Do not add an environment flag merely to
 make every number adjustable.
+
+## Follow-up review: constructors, justification and upstream
+
+The 2026-10-15 follow-up checked storage constructors and path declarations in
+all seven SDKs, numeric/declaration candidates across the runtime, SDK,
+transport, import and producer sources, and the owning code for the additions
+above. The candidate search also matches test values and format fields; it
+does not prove that every dependency or numeric literal was audited. Inline
+Swift/Kotlin admission checks and allocations were checked separately from
+named constants. The previous 1,024-chunk compaction entry was stale; current
+source uses more than 256.
+
+The channel's 64 KiB batch/256 KiB capacity and OPFS's 16-operation helper cap
+trace to the runtime/SDK consolidation history. Admission hardening describes
+overload and retained-input ownership. That establishes purpose, not an optimum:
+no workload sweep proving these exact admission/channel/OPFS values was found
+in the inspected benchmark or architecture records. Preserve existing defaults
+until there is comparative evidence; expose useful owner controls without
+relabeling arbitrary policy as a PostgreSQL or platform requirement.
+
+PGlite upstream was rechecked at commit
+`550943fbca8c40a0185a2d02d11afdcea97fa869` (source, not a new installed-package
+probe). Its [core](https://github.com/electric-sql/pglite/blob/550943fbca8c40a0185a2d02d11afdcea97fa869/packages/pglite/src/pglite.ts)
+still chooses 128 MiB initial memory unless `initialMemory` is supplied and a
+2 GiB maximum, starts receive storage at 1 MiB, and uses query/transaction
+mutexes without the matching numerical operation-admission policy in that
+path. The named 1 GiB receive-buffer maximum still does not bound the earlier
+allocation-size calculation. Its
+[OPFS implementation](https://github.com/electric-sql/pglite/blob/550943fbca8c40a0185a2d02d11afdcea97fa869/packages/pglite/src/fs/opfs-ahp.ts)
+exposes initial/maintained pool counts of 1,000/100 and gathers pool work with
+`Promise.all`. Those are different resource owners from our helper-I/O cap.
+PGlite has numerical policies; absence of our corresponding queue or broker
+limit is not proof that our mechanism or selected value is unnecessary.
+
+Twenty existing JS storage/configuration tests passed. Direct native-directory
+probes verified strings, file URL objects, percent decoding and rejection of
+non-file/NUL URLs. At that review point, a native seed URL-object probe reproduced the
+string-only validation failure; the implementation now normalizes file URLs. No Android/Swift runtime, alternative-size
+benchmark or PGlite execution was run for this follow-up.
 
 ## Small queries, large results, and tuning
 
@@ -379,3 +461,76 @@ make every number adjustable.
 These budgets apply independently of memory-backed versus directory-backed
 PGDATA. They do not relax WAL synchronization, filesystem durability, or Wasm
 memory-access/trap semantics.
+
+## Wider packaging and release sweep
+
+The follow-up enumerated 2,256 production/tool files and collected 2,083 numeric
+candidate locations across native, WASIX, shared query, resources, extensions,
+source acquisition, packaging and release tools. These are search candidates,
+not independent budgets: format tags, identity fields and inline tests also
+match. The additional owner-reviewed families are below. They are maintainer
+controls and service constraints, not database-open settings.
+
+| Owner | Current policy | Purpose and tuning direction |
+| --- | --- | --- |
+| `tools/packaging/portable-archive.mts` | Zstandard compression level 19 | Smaller distribution archives at greater packaging CPU cost; select at the canonical archive producer and qualify decompression compatibility. |
+| `tools/packaging/archive-directory.mts` | ZIP deflate level 9 | The same packaging CPU/size tradeoff for ZIP carriers; does not affect database execution. |
+| `tools/packaging/release-carrier.mts` | 2 archive-entry cache records | Bounds retained packaging scans; a larger shared cache retains more archive metadata. Keep scope at the carrier reader. |
+| `tools/packaging/native-cargo-payload.mts` | 64 MiB maximum payload part | Already accepts `partBytes` for smaller parts; larger parts require carrier/envelope proof. This is upload/package partitioning, not a query limit. |
+| Extension carrier producer | Cargo envelope 10 MiB, split target 9 MiB, npm safety envelope 100 MiB | Keep registry ceilings distinct from the smaller split target and safety margin; lowering targets produces more carriers. External service ceilings are not arbitrary consumer knobs. |
+| GitHub content writes / crates reads | 10 s write spacing / 250 ms read-start spacing | Avoid service throttling; owned by shared release HTTP pacing. Per-product overrides would defeat shared coordination. |
+| GitHub asset uploads | At most 5 concurrent product uploads | Bounds release-network and upload pressure; tune at the upload scheduler with retry/throttling evidence. |
+| GitHub asset upload phases | 31 min overall; phase deadlines 5, 5, 5, 10 and 6 min | Lifecycle deadlines at the release owner; account for artifact size and slow networks without resetting the overall deadline. |
+| Release HTTP / npm publication / attestation asset retrieval | HTTP deadlines 15–60 s; npm publication 2 min; attestation retrieval 10 min | Different operations and timeout scopes; retain operation-specific names rather than one global network timeout. |
+| Maven Central staging | Response capture 1 MiB; bundle envelope 1,000,000,000 bytes; visibility poll 1 s | Diagnostic retention, externally constrained bundle acceptance, and polling latency are separate policies. |
+| Registry mutation retries | Output capture 4 MiB; base backoff 1 s | Retained diagnostics and transient retry pressure; tune on the shared mutation runner. |
+| Frozen Cargo rate-limit recovery | 3 retries, maximum wait 9 min, response capture 64 KiB, clock skew allowance 2 s | Bound release delay and diagnostics while honoring rate-limit evidence; change the retry owner and its fault tests together. |
+
+No comparative benchmark establishes these values as optimal. Existing named
+producer/retry policies remain at their owners; exposing them in SDK open
+options would accept settings those SDKs cannot enforce.
+
+## Implemented controls and qualification
+
+This checkout implements explicit admission on all seven asynchronous SDK
+surfaces, OPFS helper concurrency, native TypeScript file-URL inputs and strict
+legacy numeric override validation. Omitted admission preserves each product's
+release points and defaults. Explicit BEGIN admission releases before the
+transaction callback; the transaction lease has its own lifetime. Recovery
+controls remain outside ordinary admission;
+server endpoints and static restore reject a database admission setting.
+
+The product-owned Moon checks passed for native/WASIX Rust, shared Rust/TS query,
+native/WASIX TypeScript, React Native source/codegen, portable Swift, Kotlin JVM
+and Android unit/lint lanes, native C queue/lifecycle tests, native tool file
+publication and the docs build/check/smoke lanes. The JavaScript suites include
+count capacities 1, 2 and 65, and the native actor rejects a value outside its
+permit width before Worker construction. Rust tests cover executing ownership
+and oversized work preceding/following zero-input work. Swift verifies rejection
+before typed encoding; its omitted path performs no extra size scan. BEGIN
+saturation tests verify rejection without invoking callbacks or leaving a pinned
+database, followed by successful sequential work and transaction settlement.
+The three JavaScript owners derive BEGIN packet accounting from the shared
+extended-query encoder; the byte-boundary tests cover its complete framing.
+React Native's `test-android` owner task compiles the adapter and runs its numeric
+boundary tests against the local Kotlin SDK. Both Android and iOS adapters
+forward the explicit limits to their SDK configuration; iOS code generation
+confirms the bridge getters, while Apple compilation remains unqualified here. OPFS backing
+read tests exercise concurrency 1, 2 and 5 without changing publication order.
+
+Candidate packages were staged for the Rust SDKs/query core, TypeScript SDKs/query
+core and Kotlin Maven artifacts; Swift's source archive passed. Android packaging
+needed the pinned Rust Android standard-library targets installed on this host
+and then passed. Full React Native/Swift Apple packaging requires Darwin and was
+not qualified here. No registry publication, installed-device run, complete
+native/WASIX runtime integration matrix or alternative-size benchmark was run.
+The docs build type-checks the existing quickstarts; it does not execute them.
+
+A Node 24.18.0 probe verified the maximum accepted lifecycle delay on the actual
+host timer and rejection of the next integer before scheduling. Node documents
+that a larger timer delay becomes 1 ms, which is why this bound is validation,
+not a tunable performance default: [timer scheduling](https://nodejs.org/api/timers.html#settimeoutcallback-delay-args).
+The source evidence and candidate checks do not establish zero regressions on
+unrun hosts or justify selecting different numerical defaults. Remaining
+transport/protocol, additional tool, typed runtime/lifecycle and producer-profile
+APIs are still proposals in the architecture contract.

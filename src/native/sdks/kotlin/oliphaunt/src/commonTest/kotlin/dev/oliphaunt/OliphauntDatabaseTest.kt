@@ -1287,31 +1287,67 @@ class OliphauntDatabaseTest {
     @Test
     fun ordinaryCapacityIsReusableAndDoesNotBlockClose() = runTest {
         for (closeWhileFull in listOf(false, true)) {
-            val session = AdmissionOrderSession()
-            val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
-            val first = async(start = CoroutineStart.UNDISPATCHED) {
-                database.execProtocolRaw(byteArrayOf(1))
-            }
-            session.awaitFirstRaw()
-            val pending = List(63) {
-                async(start = CoroutineStart.UNDISPATCHED) {
-                    database.execProtocolRaw(byteArrayOf(2))
+            for (capacity in listOf(64, 2, 1)) {
+                val session = AdmissionOrderSession()
+                val database = OliphauntDatabase.open(EngineConfig(admission = if (capacity == 64) null else AdmissionLimits(capacity, 8)), TestEngine(session))
+                val first = async(start = CoroutineStart.UNDISPATCHED) {
+                    database.execProtocolRaw(byteArrayOf(1))
                 }
+                session.awaitFirstRaw()
+                val pending = List(capacity - 1) {
+                    async(start = CoroutineStart.UNDISPATCHED) {
+                        database.execProtocolRaw(byteArrayOf(2))
+                    }
+                }
+                val failure = runCatching { database.execProtocolRaw(byteArrayOf(3)) }.exceptionOrNull()
+                assertTrue(assertNotNull(failure).message.orEmpty().contains("operation queue is full"))
+                val closing = if (closeWhileFull) async(start = CoroutineStart.UNDISPATCHED) { database.close() } else null
+                session.releaseFirstRaw()
+                assertContentEquals(byteArrayOf(1), first.await())
+                pending.forEach { assertContentEquals(byteArrayOf(2), it.await()) }
+                if (closing != null) {
+                    closing.await()
+                } else {
+                    assertContentEquals(byteArrayOf(3), database.execProtocolRaw(byteArrayOf(3)))
+                    database.close()
+                }
+                assertEquals("close", session.events.last())
             }
-            val failure = runCatching { database.execProtocolRaw(byteArrayOf(3)) }.exceptionOrNull()
-            assertTrue(assertNotNull(failure).message.orEmpty().contains("operation queue is full"))
-            val closing = if (closeWhileFull) async(start = CoroutineStart.UNDISPATCHED) { database.close() } else null
-            session.releaseFirstRaw()
-            assertContentEquals(byteArrayOf(1), first.await())
-            pending.forEach { assertContentEquals(byteArrayOf(2), it.await()) }
-            if (closing != null) {
-                closing.await()
-            } else {
-                assertContentEquals(byteArrayOf(3), database.execProtocolRaw(byteArrayOf(3)))
-                database.close()
-            }
-            assertEquals("close", session.events.last())
         }
+    }
+
+    @Test
+    fun beginRejectsSaturatedAdmissionWithoutPinningDatabase() = runTest {
+        for (limits in listOf(AdmissionLimits(1, 1024), AdmissionLimits(2, 1))) {
+            val session = AdmissionOrderSession()
+            val database = OliphauntDatabase.open(EngineConfig(admission = limits), TestEngine(session))
+            val first = async(start = CoroutineStart.UNDISPATCHED) { database.execProtocolRaw(byteArrayOf(1)) }
+            session.awaitFirstRaw()
+            var called = false
+            val failure = runCatching { database.transaction { called = true } }.exceptionOrNull()
+            assertTrue(assertNotNull(failure).message.orEmpty().contains("queue is full"))
+            assertFalse(called)
+            assertEquals(listOf("raw:1"), session.events)
+            database.cancel()
+            session.releaseFirstRaw()
+            first.await()
+            assertEquals(7, database.transaction { 7 })
+            database.close()
+        }
+    }
+
+    @Test
+    fun configuredTransactionReleasesBeginBeforeSequentialWorkAndRollback() = runTest {
+        val session = TestSession(commandResponse("UPDATE 1"))
+        val database = OliphauntDatabase.open(EngineConfig(admission = AdmissionLimits(1, 1)), TestEngine(session))
+        database.transaction { transaction ->
+            transaction.execute("UPDATE things SET value = 1")
+            transaction.execute("UPDATE things SET value = 2")
+            transaction.rollback()
+        }
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+        assertEquals(7, database.transaction { 7 })
+        database.close()
     }
 
     @Test

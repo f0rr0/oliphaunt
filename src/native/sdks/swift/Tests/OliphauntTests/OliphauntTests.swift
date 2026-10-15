@@ -1365,19 +1365,19 @@ func closeCutsOffLaterCallsButDrainsEveryEarlierAdmission() async throws {
     #expect(await session.events() == ["raw:1", "raw:2", "close"])
 }
 
-@Test(arguments: [false, true])
-func ordinaryCapacityIsReusableAndDoesNotBlockClose(closeWhileFull: Bool) async throws {
+@Test(arguments: [false, true], [64, 2, 1])
+func ordinaryCapacityIsReusableAndDoesNotBlockClose(closeWhileFull: Bool, capacity: Int) async throws {
     let session = AdmissionOrderSession()
-    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let database = try await OliphauntDatabase.open(configuration: .init(admission: capacity == 64 ? nil : .init(maxPendingOperations: capacity, highWaterMarkBytes: 8)), engine: TestEngine(session: session))
     let first = Task { try await database.execProtocolRaw(Data([1])) }
     await session.waitUntilFirstRawStarted()
-    let pending = (0..<63).map { _ in Task { try await database.execProtocolRaw(Data([2])) } }
-    await database.waitUntilQueuedOperationCount(atLeast: 63)
+    let pending = (0..<(capacity - 1)).map { _ in Task { try await database.execProtocolRaw(Data([2])) } }
+    await database.waitUntilQueuedOperationCount(atLeast: capacity - 1)
     await #expect(throws: OliphauntError.self) {
         _ = try await database.execProtocolRaw(Data([3]))
     }
     let closing = closeWhileFull ? Task { try await database.close() } : nil
-    if closeWhileFull { await database.waitUntilQueuedOperationCount(atLeast: 64) }
+    if closeWhileFull { await database.waitUntilQueuedOperationCount(atLeast: capacity) }
     await session.releaseFirstRaw()
     #expect(try await first.value == Data([1]))
     for operation in pending { #expect(try await operation.value == Data([2])) }
@@ -1388,6 +1388,41 @@ func ordinaryCapacityIsReusableAndDoesNotBlockClose(closeWhileFull: Bool) async 
         try await database.close()
     }
     #expect(await session.events().last == "close")
+}
+
+@Test(arguments: [OliphauntAdmissionLimits(maxPendingOperations: 1, highWaterMarkBytes: 1024), .init(maxPendingOperations: 2, highWaterMarkBytes: 1)])
+func beginRejectsSaturatedAdmissionWithoutPinningDatabase(limits: OliphauntAdmissionLimits) async throws {
+    let session = AdmissionOrderSession()
+    let database = try await OliphauntDatabase.open(configuration: .init(admission: limits), engine: TestEngine(session: session))
+    let first = Task { try await database.execProtocolRaw(Data([1])) }
+    await session.waitUntilFirstRawStarted()
+    do {
+        _ = try await database.transaction { _ in
+            Issue.record("saturated BEGIN must not invoke the callback")
+            return 0
+        }
+        Issue.record("saturated BEGIN should reject")
+    } catch { #expect(String(describing: error).contains("queue is full")) }
+    #expect(await session.events() == ["raw:1"])
+    try await database.cancel()
+    await session.releaseFirstRaw()
+    _ = try await first.value
+    #expect(try await database.transaction { _ in 7 } == 7)
+    try await database.close()
+}
+
+@Test
+func configuredTransactionReleasesBeginBeforeSequentialWorkAndRollback() async throws {
+    let session = TestSession(response: commandResponse("UPDATE 1"))
+    let database = try await OliphauntDatabase.open(configuration: .init(admission: .init(maxPendingOperations: 1, highWaterMarkBytes: 1)), engine: TestEngine(session: session))
+    try await database.transaction { transaction in
+        _ = try await transaction.execute("UPDATE things SET value = 1")
+        _ = try await transaction.execute("UPDATE things SET value = 2")
+        try await transaction.rollback()
+    }
+    #expect(await session.simpleQueries() == ["BEGIN", "ROLLBACK"])
+    #expect(try await database.transaction { _ in 7 } == 7)
+    try await database.close()
 }
 
 @Test
@@ -2652,4 +2687,26 @@ func retryableCloseFailureKeepsSwiftSessionUsable() async throws {
     try await database.close()
     try await database.close()
     #expect(await session.closeCount() == 2)
+}
+
+
+@Test
+func configuredAdmissionDefersTypedEncodingAndRecoversAfterPreparationFailure() async throws {
+    let session = AdmissionOrderSession()
+    let database = try await OliphauntDatabase.open(configuration: .init(admission: .init(maxPendingOperations: 1, highWaterMarkBytes: 8)), engine: TestEngine(session: session))
+    let first = Task { try await database.execProtocolRaw(Data([1])) }
+    await session.waitUntilFirstRawStarted()
+    do {
+        _ = try await database.execute("SELECT $1", parameters: [.typedNull(.init(0))])
+        Issue.record("saturated admission should reject before packet encoding")
+    } catch {
+        #expect(String(describing: error).contains("queue is full"))
+    }
+    await session.releaseFirstRaw()
+    _ = try await first.value
+    await #expect(throws: OliphauntError.self) {
+        _ = try await database.execute("SELECT $1", parameters: [.typedNull(.init(0))])
+    }
+    #expect(try await database.execProtocolRaw(Data([2])) == Data([2]))
+    try await database.close()
 }

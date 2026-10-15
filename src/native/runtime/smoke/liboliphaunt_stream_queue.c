@@ -20,6 +20,14 @@ static void *produce(void *context) {
 }
 
 int main(void) {
+    assert(oliphaunt_resource_size("17", 1, SIZE_MAX, 8) == 17);
+    assert(oliphaunt_resource_size("0", 1, SIZE_MAX, 8) == 8);
+    assert(oliphaunt_resource_size("17suffix", 1, SIZE_MAX, 8) == 8);
+    assert(oliphaunt_resource_size("-1", 1, SIZE_MAX, 8) == 8);
+    assert(oliphaunt_resource_size("+17", 1, SIZE_MAX, 8) == 8);
+    assert(oliphaunt_resource_size("9999999999999999999999999999999999999999", 1, SIZE_MAX, 8) == 8);
+    assert(oliphaunt_resource_size("2147483648", 1, INT_MAX, 8) == 8);
+
     OliphauntHandle handle = {0};
     assert(pthread_mutex_init(&handle.mutex, NULL) == 0);
     assert(pthread_cond_init(&handle.output_cond, NULL) == 0);
