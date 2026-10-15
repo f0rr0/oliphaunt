@@ -203,7 +203,7 @@ export function packageSeedCarriers(
     const crate = packageGeneratedCargoSource(
       path.join(stage, 'Cargo.toml'),
       path.join(output, 'cargo'),
-      { root: ROOT },
+      { root: ROOT, fixedFileMode: 0o644 },
     );
     if (statSync(crate).size > 10 * 1024 * 1024)
       throw new Error(`${identity.cargo} exceeds the registry package limit`);

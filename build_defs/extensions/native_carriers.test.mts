@@ -282,6 +282,8 @@ try {
     const crates = readdirSync(spec.outputs.cargo).filter((name) => name.endsWith('.crate'));
     assert.equal(crates.length, 1);
     const crate = readPortableArchiveEntries(path.join(spec.outputs.cargo, crates[0]));
+    for (const [name, entry] of crate)
+      assert.equal(entry.mode, entry.isDirectory ? 0o755 : 0o644, name);
     const crateRoot = crates[0].slice(0, -'.crate'.length);
     const cargo = Bun.TOML.parse(crate.get(`${crateRoot}/Cargo.toml`)!.data().toString('utf8'));
     assert.equal(
@@ -340,6 +342,15 @@ try {
     postgis.target,
   );
   assert(dependencyModules.length > 0, 'canonical PostGIS must exercise dependency modules');
+  // Cross the real Cargo split threshold once without adding a production test flag.
+  const splitPayload = Buffer.alloc(10 * 1024 * 1024);
+  let state = 0x5eed;
+  for (let offset = 0; offset < splitPayload.length; offset += 4) {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    splitPayload.writeUInt32LE(state >>> 0, offset);
+  }
   const actual = {
     schema: 'oliphaunt-extension-member-payload-v1',
     sql_name: postgis.sqlName,
@@ -382,7 +393,12 @@ try {
       [moduleFile, ...dependencyModules].map((name) => ({
         source: put(
           `inputs/lib/${profile}/${name}`,
-          Buffer.concat([elfFixture(), Buffer.from(`${profile}/${name}`)]),
+          Buffer.concat([
+            elfFixture(),
+            profile === 'modules' && name === moduleFile
+              ? splitPayload
+              : Buffer.from(`${profile}/${name}`),
+          ]),
         ),
         destination: `lib/${profile}/${name}`,
       })),
@@ -406,6 +422,15 @@ try {
   };
   assert.throws(() => frozenNativeMember(spec, { ...actual, dependency_modules: [] }));
   packageNativeCarriers(spec);
+  const splitCrates = readdirSync(spec.outputs.cargo).filter((name) => name.endsWith('.crate'));
+  assert(
+    splitCrates.some((name) => name.includes('-part-')),
+    'expected actual split part crates',
+  );
+  assert.equal(splitCrates.filter((name) => !name.includes('-part-')).length, 1);
+  for (const file of splitCrates)
+    for (const [name, entry] of readPortableArchiveEntries(path.join(spec.outputs.cargo, file)))
+      assert.equal(entry.mode, entry.isDirectory ? 0o755 : 0o644, name);
   const artifact = path.join(directory, 'public');
   extractPortableArchiveTree(spec.outputs.github, artifact);
   const sidecar = dependencyModules[0];

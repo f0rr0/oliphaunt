@@ -381,6 +381,8 @@ for (const [index, profile] of seedProfiles.entries()) {
   }
   assert(npmManifest.directory.emptyDirectories.includes('pg_twophase'));
   const crateEntries = readPortableArchiveEntries(cargo);
+  for (const [name, entry] of crateEntries)
+    assert.equal(entry.mode, entry.isDirectory ? 0o755 : 0o644, name);
   const crateRoot = `${identity.cargo}-${version}`;
   const cargoManifest = Bun.TOML.parse(
     member(crateEntries, `${crateRoot}/Cargo.toml`).data().toString(),

@@ -199,6 +199,8 @@ test('the final mobile verifier consumes conventional Android and iOS package wr
             sourceDir: path.join(root, `${target}-${profile}-sources`),
           },
         );
+        for (const [name, entry] of readPortableArchiveEntries(carrier.crate))
+          expect(entry.mode, name).toBe(entry.isDirectory ? 0o755 : 0o644);
         seeds.push({
           profile,
           frozen,

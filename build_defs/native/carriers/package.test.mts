@@ -39,6 +39,10 @@ function requiredMember(
   assert(entry?.isFile, `missing regular archive member ${name}`);
   return Buffer.from(entry.data());
 }
+function assertCargoDataModes(entries: ReturnType<typeof readPortableArchiveEntries>): void {
+  for (const [name, entry] of entries)
+    assert.equal(entry.mode, entry.isDirectory ? 0o755 : 0o644, name);
+}
 let scenarios = 0;
 try {
   // Exercise the exact declared payload tool tree, without the envelope tool's
@@ -271,6 +275,7 @@ try {
   };
   packageToolsFacade(cargoFacade);
   const cargo = readPortableArchiveEntries(cargoFacade.output);
+  assertCargoDataModes(cargo);
   const text = requiredMember(
     cargo,
     `oliphaunt-tools-${specification.version}/Cargo.toml`,
@@ -294,6 +299,8 @@ try {
   chmodSync(path.join(payload, 'runtime/bin/psql'), 0o755);
   for (const name of ['pg_dump', 'pg_basebackup'])
     writeFileSync(path.join(payload, 'runtime/bin', name), 'archive executable');
+  chmodSync(path.join(payload, 'runtime/bin/pg_dump'), 0o444);
+  chmodSync(path.join(payload, 'runtime/bin/pg_basebackup'), 0o666);
   writeFileSync(path.join(payload, 'runtime/bin/provider.dll'), 'provider library');
   writeFileSync(path.join(payload, 'runtime/bin/provider-receipt.json'), '{}');
   // Reproduce Bazel's generated-tree permissions, rather than assuming those
@@ -351,14 +358,18 @@ try {
   assert.equal(index.schema, 'oliphaunt-liboliphaunt-cargo-artifacts-v1');
   assert(index.packages.filter(({ role }) => role === 'part').length > 4);
   assert.equal(index.packages.filter(({ role }) => role === 'aggregator').length, 1);
+  const cargoEntries = new Map<string, ReturnType<typeof readPortableArchiveEntries>>();
   for (const pkg of index.packages) {
     assert(!pkg.manifestPath.includes('native-envelope-'));
     assert(statSync(pkg.cratePath).size <= 10 * 1024 * 1024);
+    const entries = readPortableArchiveEntries(pkg.cratePath);
+    assertCargoDataModes(entries);
+    cargoEntries.set(pkg.cratePath, entries);
   }
   const chunks = index.packages
     .filter(({ role }) => role === 'part')
     .flatMap(({ cratePath }) =>
-      [...readPortableArchiveEntries(cratePath).values()]
+      [...cargoEntries.get(cratePath)!.values()]
         .filter((entry) => entry.isFile && /\/psql\.part\d{3}$/u.test(entry.name))
         .map((entry) => Buffer.from(entry.data())),
     );
@@ -366,7 +377,7 @@ try {
   assert.deepEqual(Buffer.concat(chunks), readFileSync(path.join(payload, 'runtime/bin/psql')));
   const aggregator = index.packages.find(({ role }) => role === 'aggregator');
   const build = requiredMember(
-    readPortableArchiveEntries(aggregator.cratePath),
+    cargoEntries.get(aggregator.cratePath)!,
     `${aggregator.name}-${specification.version}/build.rs`,
   ).toString();
   for (const executable of ['pg_dump', 'pg_basebackup', 'psql'])

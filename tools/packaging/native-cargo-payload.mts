@@ -655,7 +655,7 @@ export function freezeSourceCrate(
   const generated = packageGeneratedCargoSource(
     packageData.manifestPath,
     path.join(cargoTargetDir, 'strict-package', packageData.name),
-    { root: ROOT, fail, rel },
+    { root: ROOT, fail, rel, fixedFileMode: 0o644 },
   );
   assertReleaseNoticesInArchive(generated, {
     prefix: `${packageData.name}-${packageData.version}`,
@@ -707,7 +707,9 @@ export function packagePayload(
       const crate = path.join(probeDir, `${packageRoot}.crate`);
       writeFileSync(
         crate,
-        canonicalGzipSync(createDeterministicTar(partDir, packageRoot, { fail })),
+        canonicalGzipSync(
+          createDeterministicTar(partDir, packageRoot, { fail, fixedFileMode: 0o644 }),
+        ),
       );
       return crate;
     },

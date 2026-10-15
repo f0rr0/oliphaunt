@@ -2779,6 +2779,7 @@ function cargoPackage(crateDir, targetDir, legal) {
     {
       fail: localFail,
       rel,
+      fixedFileMode: 0o644,
       // The caller splits using the finished archive's compressed size.
       packageSizeLimitBytes: Number.MAX_SAFE_INTEGER,
     },
@@ -3044,7 +3045,7 @@ export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, st
   mkdirSync(outputDir, { recursive: true });
 
   const outputs = [];
-  const packageOptions = { root: ROOT, fail: localFail, rel };
+  const packageOptions = { root: ROOT, fail: localFail, rel, fixedFileMode: 0o644 };
   const stagedIdentities = new Map();
   try {
     for (const manifestPath of manifests) {
