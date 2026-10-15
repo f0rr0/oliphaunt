@@ -147,6 +147,7 @@ def native_contrib_members(crypto = None):
         inputs = contrib_extension_inputs(name = name, member = member, crypto = crypto)
         native_extension_modules(
             name = name,
+            additional_compiler_inputs = ["//build_defs/extensions:uuid_config.h"] if name == "uuid_ossp" else [],
             **inputs
         )
         resources = name + "_sql_resources"

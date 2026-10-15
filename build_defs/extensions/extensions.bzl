@@ -317,7 +317,7 @@ extension_source_headers = rule(
     },
 )
 
-def native_extension_modules(name, srcs, hdrs = [], copts = [], deps = [], includes = [], defines = [], linkopts = [], dynamic_deps = [], linux_only = False):
+def native_extension_modules(name, srcs, hdrs = [], copts = [], deps = [], includes = [], defines = [], linkopts = [], dynamic_deps = [], linux_only = False, additional_compiler_inputs = []):
     """Compile separate PostgreSQL-server and embedded ABI variants directly."""
     for variant, headers, runtime_deps in [
         ("server", "//src/native/runtime:postgres_server_headers", select({"//build_defs/native:windows_x64": ["@postgres//:server_import_library"], "//conditions:default": []})),
@@ -327,7 +327,7 @@ def native_extension_modules(name, srcs, hdrs = [], copts = [], deps = [], inclu
             name = name + "_" + variant + "_objects",
             srcs = srcs,
             hdrs = hdrs,
-            additional_compiler_inputs = hdrs,
+            additional_compiler_inputs = additional_compiler_inputs,
             deps = [headers] + deps,
             copts = copts + select({"//build_defs/native:windows_x64": WINDOWS_COPTS, "//conditions:default": []}),
             includes = includes,

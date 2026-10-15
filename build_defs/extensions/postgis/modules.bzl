@@ -79,11 +79,13 @@ def postgis_dependency_module(name):
 
 def native_postgis_modules(name, standalone, dependency_module):
     prefix = "@postgis//:"
+    compatibility_inputs = select({"//build_defs/native:windows_x64": ["//src/extensions/external/postgis:tools/windows/postgis-compat.h"], "//conditions:default": []})
     native_extension_modules(name = name,
                              srcs = select({"//build_defs/native:windows_x64": [standalone + "_windows_pg_sources"], "//conditions:default": [prefix + source for source in POSTGIS_PG_SOURCES]}),
                              deps = [standalone + "_config"] + select({"//build_defs/native:windows_x64": [standalone + "_windows_sources"], "//conditions:default": [standalone + "_headers"]}) + [standalone + "_lwgeom", standalone + "_flatgeobuf", "//build_defs/extensions/postgis:libxml2"],
                              copts = select({"//build_defs/native:windows_x64": ["/D_USE_MATH_DEFINES", "/FI$(location //src/extensions/external/postgis:tools/windows/postgis-compat.h)"], "//conditions:default": []}),
-                             hdrs = select({"//build_defs/native:windows_x64": ["//src/extensions/external/postgis:tools/windows/postgis-compat.h"], "//conditions:default": []}),
+                             hdrs = compatibility_inputs,
+                             additional_compiler_inputs = compatibility_inputs,
                              dynamic_deps = [dependency_module], linkopts = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": ["-Wl,-rpath,@loader_path"], "//conditions:default": ["-Wl,-rpath,$$ORIGIN"]}))
 
 def _mobile_standalone(name, profile):

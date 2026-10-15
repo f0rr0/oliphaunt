@@ -147,7 +147,9 @@ def native_external_extension_modules(name, sql_name = None):
         if sql_name == "pg_textsearch":
             compatibility = prepared + "_compatibility"
             native.filegroup(name = compatibility, srcs = [":" + prepared], output_group = "compatibility_header", target_compatible_with = NATIVE_WINDOWS_COMPATIBLE)
-            attrs["hdrs"] = attrs["hdrs"] + select({"//build_defs/native:windows_x64": [":" + compatibility], "//conditions:default": []})
+            compatibility_inputs = select({"//build_defs/native:windows_x64": [":" + compatibility], "//conditions:default": []})
+            attrs["hdrs"] = attrs["hdrs"] + compatibility_inputs
+            attrs["additional_compiler_inputs"] = compatibility_inputs
             attrs["copts"] = select({"//build_defs/native:windows_x64": ["/FI$(location :%s)" % compatibility, '/DPG_TEXTSEARCH_VERSION="%s"' % extension_default_version(sql_name)], "//conditions:default": attrs["copts"]})
     if sql_name == "vector":
         # Clang's EVEX width permission preserves upstream's optional AVX512

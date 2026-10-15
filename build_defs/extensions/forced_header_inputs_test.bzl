@@ -16,23 +16,30 @@ def _inputs_test_impl(ctx):
     target = analysistest.target_under_test(env)
     headers = [file for file in target[CcInfo].compilation_context.headers.to_list() if file.basename == "forced_header_fixture.h"]
     asserts.equals(env, 1, len(headers))
+    ordinary_headers = [file for file in target[CcInfo].compilation_context.headers.to_list() if file.basename == "ordinary_header_fixture.h"]
+    asserts.equals(env, 1, len(ordinary_headers))
     compiles = [action for action in analysistest.target_actions(env) if action.mnemonic == "CppCompile"]
     asserts.true(env, len(compiles) > 0, "object target must retain its real C compile actions")
     for header in headers:
         for action in compiles:
             asserts.true(env, header.path in [file.path for file in action.inputs.to_list()], "forced header is absent from compile inputs")
             asserts.true(env, "-include" in action.argv and header.path in action.argv, "forced-header location is not expanded in compile flags")
+    for header in ordinary_headers:
+        for action in compiles:
+            asserts.false(env, header.path in [file.path for file in action.inputs.to_list()], "ordinary headers must remain eligible for input discovery")
     return analysistest.end(env)
 
 _inputs_test = analysistest.make(_inputs_test_impl)
 
 def native_forced_header_input_tests():
     _header(name = "forced_header_fixture", tags = ["manual"])
+    _header(name = "ordinary_header_fixture", tags = ["manual"])
     native.filegroup(name = "forced_header_inputs", srcs = [":forced_header_fixture"], tags = ["manual"])
     native_extension_modules(
         name = "forced_header_location",
         srcs = [":native_extension_smoke.c"],
-        hdrs = [":forced_header_inputs"],
+        hdrs = [":forced_header_inputs", ":ordinary_header_fixture"],
+        additional_compiler_inputs = [":forced_header_inputs"],
         copts = ["-include", "$(location :forced_header_inputs)"],
         linux_only = True,
     )
