@@ -1813,8 +1813,8 @@ fn validate_manifest_identity(manifest: &SealedManifest, engine: &Engine) -> Res
         Target::default().triple()
     );
     ensure!(
-        manifest.engine == "llvm-opta-ro_ftable",
-        "sealed manifest producer engine must be 'llvm-opta-ro_ftable'"
+        manifest.engine == "llvm-opta",
+        "sealed manifest producer engine must be 'llvm-opta'"
     );
     ensure_nonempty("compiler-config", &manifest.compiler_config)?;
     ensure!(
@@ -2545,7 +2545,7 @@ mod tests {
             postgres_version: "18.4".to_string(),
             target_triple: "test-target".to_string(),
             host_abi: "test-abi".to_string(),
-            engine: "llvm-opta-ro_ftable".to_string(),
+            engine: "llvm-opta".to_string(),
             compiler_config: "test-compiler".to_string(),
             cpu_policy: "generic-baseline".to_string(),
             cpu_features: Vec::new(),

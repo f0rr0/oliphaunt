@@ -1603,7 +1603,7 @@ fresh_wasmer_compiler_cache_bucket() {
 
   case "$(fresh_normalize_wasmer_compiler "$compiler")" in
     llvm)
-      printf 'llvm-%s-ro_ftable-v%s\n' "$(fresh_wasmer_llvm_opt_suffix "$llvm_opt_level")" "$artifact_version"
+      printf 'llvm-%s-v%s\n' "$(fresh_wasmer_llvm_opt_suffix "$llvm_opt_level")" "$artifact_version"
       ;;
   esac
 }

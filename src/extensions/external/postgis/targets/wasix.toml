@@ -48,7 +48,7 @@ excluded_sql_extensions = [
 name = "postgis_deps"
 runtime_path = "lib/postgresql/liboliphaunt_postgis_deps.so"
 build_path = "postgis/postgis/liboliphaunt_postgis_deps.so"
-aot_file = "postgis_deps-llvm-opta-ro_ftable.bin.zst"
+aot_file = "postgis_deps-llvm-opta.bin.zst"
 
 [staging]
 module_source_dir = "postgis/postgis"

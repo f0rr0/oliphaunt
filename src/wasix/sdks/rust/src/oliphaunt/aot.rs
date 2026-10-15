@@ -17,14 +17,13 @@ use super::assets;
 
 const RUNTIME_ARTIFACT: &str = "runtime:oliphaunt";
 #[cfg(not(windows))]
-const EXPECTED_AOT_ENGINE: &str = "llvm-opta-ro_ftable";
+const EXPECTED_AOT_ENGINE: &str = "llvm-opta";
 #[cfg(windows)]
 const EXPECTED_AOT_ENGINE: &str = "v8";
 const EXPECTED_WASMER_VERSION: &str = "7.5.0";
 const EXPECTED_WASMER_WASIX_VERSION: &str = "0.705.0";
 #[cfg(not(windows))]
-const AOT_ENGINE_ID: &str =
-    "engine=llvm-opta-ro_ftable;wasmer=7.5.0;wasmer-wasix=0.705.0;cpu=sse41-or-neon";
+const AOT_ENGINE_ID: &str = "engine=llvm-opta;wasmer=7.5.0;wasmer-wasix=0.705.0;cpu=sse41-or-neon";
 #[cfg(windows)]
 const AOT_ENGINE_ID: &str =
     "engine=v8;wasmer=7.5.0;wasmer-wasix=0.705.0;wee8=11.9.7;v8=13.6.233.17;cpu=sse41";
