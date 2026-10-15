@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { copyFile, mkdir, readFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   extractPortableArchiveTree,
@@ -54,10 +54,9 @@ async function installedConsumerTest(args: string[]) {
   );
   const directory = join(process.env.TEST_TMPDIR, 'query-cargo-consumer');
   await mkdir(directory, { recursive: true });
-  const installedArchive = join(directory, 'query.crate');
-  await copyFile(archive, installedArchive);
-  const prefix = sourceCrateRoot(installedArchive);
-  extractPortableArchiveTree(installedArchive, join(directory, 'installed'), prefix);
+  const sourceArchive = await realpath(archive);
+  const prefix = sourceCrateRoot(sourceArchive);
+  extractPortableArchiveTree(sourceArchive, join(directory, 'installed'), prefix);
   const consumer = join(directory, 'consumer');
   await mkdir(join(consumer, 'src'), { recursive: true });
   await copyFile(manifest, join(consumer, 'Cargo.toml'));
