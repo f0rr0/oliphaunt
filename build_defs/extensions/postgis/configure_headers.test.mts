@@ -1,5 +1,9 @@
 import { test } from 'bun:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { compilerFacts, configure, targetSubstitutions } from './configure_headers.mts';
 
 const facts = (target: string) =>
@@ -172,4 +176,66 @@ test('mobile and desktop configuration selectors cannot substitute one another',
     () => targetSubstitutions({}, 'macos-arm64', facts('macos-arm64'), 'unknown'),
     /unsupported PostGIS profile/u,
   );
+});
+
+test('libiconv configures every pinned template with numeric visibility and preserves strict unknown keys', () => {
+  const root = mkdtempSync(join(tmpdir(), 'libiconv-template-'));
+  try {
+    for (const visibility of [undefined, '0', '1']) {
+      const expected = visibility ?? '0';
+      const selected = {
+        ...facts('windows-x64-msvc'),
+        ...(visibility === undefined ? {} : { HAVE_VISIBILITY: visibility }),
+      };
+      const header = join(root, 'facts.h');
+      writeFileSync(
+        header,
+        Object.entries(selected)
+          .map(([key, value]) => '#define ' + key + ' ' + value)
+          .join('\n'),
+      );
+      const output = join(root, visibility ?? 'absent');
+      const result = Bun.spawnSync(
+        [
+          process.execPath,
+          '--no-install',
+          '--no-env-file',
+          fileURLToPath(new URL('./configure_headers.mts', import.meta.url)),
+          '--kind',
+          'libiconv',
+          '--source',
+          fileURLToPath(new URL('./libiconv_templates/', import.meta.url)),
+          '--output',
+          output,
+          '--target',
+          'windows-x64-msvc',
+          '--facts',
+          header,
+        ],
+        { stdout: 'pipe', stderr: 'pipe' },
+      );
+      assert.equal(result.exitCode, 0, Buffer.from(result.stderr).toString('utf8').slice(-8000));
+      assert.match(
+        readFileSync(join(output, 'config.h'), 'utf8'),
+        new RegExp('^#define HAVE_VISIBILITY ' + expected + '$', 'mu'),
+      );
+      for (const name of ['iconv.h', 'localcharset.h', 'libcharset.h']) {
+        const configured = readFileSync(join(output, name), 'utf8');
+        assert.match(configured, new RegExp('^#if ' + expected + ' && BUILDING_LIB', 'mu'));
+        assert.match(configured, /^#elif defined _MSC_VER && BUILDING_LIB/mu);
+      }
+      for (const name of ['config.h', 'iconv.h', 'localcharset.h', 'libcharset.h'])
+        assert.doesNotMatch(
+          readFileSync(join(output, name), 'utf8'),
+          /@[A-Za-z_][A-Za-z_0-9]*@|\$\{[A-Za-z_][A-Za-z_0-9]*\}/u,
+        );
+    }
+    assert.throws(
+      () => configure('@UNKNOWN_UPSTREAM_KEY@', {}),
+      /unconfigured upstream template key UNKNOWN_UPSTREAM_KEY/u,
+    );
+    assert.equal(configure('#undef HAVE_UNAVAILABLE\n', {}), '#undef HAVE_UNAVAILABLE\n');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

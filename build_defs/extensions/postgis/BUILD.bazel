@@ -1,4 +1,5 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@bazel_lib//lib:copy_file.bzl", "copy_file")
 load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_script_test", "bun_test")
 load(":compiler_facts.bzl", "postgis_compiler_facts")
 load(":sqlite.bzl", "postgis_sqlite")
@@ -12,7 +13,11 @@ package(default_visibility = ["//visibility:public"])
 exports_files(glob(["*.bzl", "*.mts"]))
 bun_binary(name = "sqlite_generate", entry_point = "sqlite_generate.mts")
 bun_binary(name = "configure_headers", entry_point = "configure_headers.mts")
-bun_test(name = "configure_headers_test", entry_point = "configure_headers.test.mts", data = ["configure_headers.mts"], size = "small")
+copy_file(name = "libiconv_config_template", src = "@postgis_libiconv//:lib/config.h.in", out = "libiconv_templates/lib/config.h.in")
+copy_file(name = "libiconv_iconv_template", src = "@postgis_libiconv//:include/iconv.h.build.in", out = "libiconv_templates/include/iconv.h.build.in")
+copy_file(name = "libiconv_localcharset_template", src = "@postgis_libiconv//:libcharset/include/localcharset.h.build.in", out = "libiconv_templates/libcharset/include/localcharset.h.build.in")
+copy_file(name = "libiconv_libcharset_template", src = "@postgis_libiconv//:libcharset/include/libcharset.h.build.in", out = "libiconv_templates/libcharset/include/libcharset.h.build.in")
+bun_test(name = "configure_headers_test", entry_point = "configure_headers.test.mts", data = ["configure_headers.mts", ":libiconv_config_template", ":libiconv_iconv_template", ":libiconv_localcharset_template", ":libiconv_libcharset_template"], size = "small")
 bun_script_test(
     name = "gpp_test",
     entry_point = "gpp.test.mts",

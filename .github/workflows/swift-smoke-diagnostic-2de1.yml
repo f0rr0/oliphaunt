@@ -1,4 +1,4 @@
-name: Apple preparation analysis diagnostic
+name: Windows libiconv configuration diagnostic
 
 on:
   push:
@@ -17,14 +17,14 @@ defaults:
 
 jobs:
   smoke:
-    name: Analyze complete Apple preparation
-    runs-on: macos-26
+    name: Generate Windows libiconv headers and test pinned templates
+    runs-on: windows-2025-vs2026
     timeout-minutes: 25
     steps:
       - name: Checkout immutable tested source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: e127827d606814bde361daefb8be323197778f05
+          ref: bb841660476a0b7dbddaea7b5d8828d99bc91ea7
           fetch-depth: 1
           persist-credentials: false
 
@@ -32,36 +32,21 @@ jobs:
         run: |
           tested_commit="$(git rev-parse HEAD)"
           tested_tree="$(git rev-parse 'HEAD^{tree}')"
-          test "$tested_commit" = e127827d606814bde361daefb8be323197778f05
-          test "$tested_tree" = 0740ad8b3db059a66931af441aab1176252e3084
+          test "$tested_commit" = bb841660476a0b7dbddaea7b5d8828d99bc91ea7
+          test "$tested_tree" = 5efda73eb5cd9ee45b6eef5f7fd743e0b907fa67
           printf 'TESTED_SOURCE_COMMIT=%s\nTESTED_SOURCE_TREE=%s\n' "$tested_commit" "$tested_tree"
 
-      - name: Install locked release tooling
-        run: bash tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
+      - name: Select declared MSVC SDK
+        uses: ./.github/actions/setup-msvc
 
-      - name: Acquire the source publication context used by CI
+      - name: Generate actual Windows libiconv headers and run template regression
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: | # zizmor: ignore[github-env] only the source-validated snapshot path is exported.
-          snapshot="$(bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
-            tools/release/native-release-preparation.mts --publication-inputs \
-            --output-directory "$RUNNER_TEMP/native-public-acquisition")"
-          test -f "$snapshot"
-          printf 'OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=%s\n' "$snapshot" >> "$GITHUB_ENV"
-
-      - name: Select declared Apple SDK
-        uses: ./.github/actions/setup-apple
-        with:
-          install-build-dependencies: "false"
-
-      - name: Analyze actual Apple qualification targets
-        env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/swift-smoke-bootstrap
+          XDG_CACHE_HOME: ${{ runner.temp }}/iconv-config-bootstrap
         run: |
           bash tools/dev/bazel.sh --nohome_rc --nosystem_rc \
-            --output_base="$RUNNER_TEMP/swift-smoke" --host_jvm_args=-Xmx3g \
-            cquery 'set(//:native_apple_preparation_export //build_defs/host:host_swift_smoke //src/native/sdks/swift:installed_consumer_test)' \
-            --output=label_kind -c opt --config=macos-sandbox \
-            --platforms=//build_defs/host:apple_package_macos_arm64 \
-            --host_platform=//build_defs/host:native_macos_arm64 --jobs=1 --local_test_jobs=1 \
-            --lockfile_mode=error --repository_cache= --disk_cache=
+            --output_base="$RUNNER_TEMP/iconv-config" --host_jvm_args=-Xmx3g \
+            test //build_defs/extensions/postgis:iconv_config \
+            //build_defs/extensions/postgis:configure_headers_test -c opt \
+            --platforms=//build_defs/host:native_windows_x64 \
+            --host_platform=//build_defs/host:native_windows_x64 --jobs=2 --local_test_jobs=1 \
+            --lockfile_mode=error --repository_cache= --disk_cache= --test_output=all
