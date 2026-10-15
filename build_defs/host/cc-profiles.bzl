@@ -139,6 +139,7 @@ def host_cc_profiles(sdk):
                 libtool = ":exec_libtool",
                 module_map = ":modulemap",
                 c_flags = ["-resource-dir", prefix + sdk["resourceDirectory"]],
+                link_flags = ["-resource-dir", prefix + sdk["resourceDirectory"]],
                 cxx_flags = ["-std=c++20"] if selected_sdk in ["iphoneos", "iphonesimulator"] else [],
                 cxx_builtin_include_directories = host_builtin_include_directories(prefix, [sdk["resourceDirectory"] + "/include", "sdk_" + selected_sdk + "/usr/include", "sdk_" + selected_sdk + "/System/Library/Frameworks", "toolchain/include/c++/v1"]),
                 # Bazel owns the reserved Xcode environment; drivers consume our captured paths.
