@@ -20,8 +20,6 @@ jobs:
     name: Generate Windows libiconv headers and test pinned templates
     runs-on: windows-2025-vs2026
     timeout-minutes: 25
-    env:
-      XDG_CACHE_HOME: ${{ runner.temp }}/iconv-config-bootstrap
     steps:
       - name: Checkout immutable tested source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -42,6 +40,8 @@ jobs:
         uses: ./.github/actions/setup-msvc
 
       - name: Compare named and stdin hashes of the same pinned Windows binary
+        env:
+          XDG_CACHE_HOME: ${{ runner.temp }}/iconv-config-bootstrap
         run: |
           version="$(tr -d '\r' < .bazelversion)"
           asset="bazel-$version-windows-x86_64.exe"
@@ -61,6 +61,8 @@ jobs:
           chmod +x "$binary"
 
       - name: Generate actual Windows libiconv headers and run template regression
+        env:
+          XDG_CACHE_HOME: ${{ runner.temp }}/iconv-config-bootstrap
         run: |
           bash tools/dev/bazel.sh --nohome_rc --nosystem_rc \
             --output_base="$RUNNER_TEMP/iconv-config" --host_jvm_args=-Xmx3g \
