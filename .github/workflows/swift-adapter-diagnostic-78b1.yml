@@ -1,0 +1,67 @@
+name: Swift adapter analysis diagnostic (78b120a20)
+
+on:
+  push:
+    branches: [f0rr0/diagnostic-swift-base-78b1]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-adapter-analysis-${{ github.run_id }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  analyze:
+    name: Analyze actual Swift adapter providers
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - name: Checkout immutable tested source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 78b120a205294b996cee8fb4e8cb64876583a269
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify tested commit and tree
+        run: |
+          tested_commit="$(git rev-parse HEAD)"
+          tested_tree="$(git rev-parse 'HEAD^{tree}')"
+          test "$tested_commit" = 78b120a205294b996cee8fb4e8cb64876583a269
+          test "$tested_tree" = 972576940d99b04fe68602261a18ed8026a9698b
+          printf 'TESTED_SOURCE_COMMIT=%s\nTESTED_SOURCE_TREE=%s\n' "$tested_commit" "$tested_tree"
+
+      - name: Select declared Apple SDK
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
+
+      - name: Analyze three real Swift adapters
+        env:
+          XDG_CACHE_HOME: ${{ runner.temp }}/swift-adapter-bootstrap
+        run: |
+          for record in \
+            swift:apple_package_macos_arm64 \
+            swift_ios:ios_device_arm64 \
+            swift_ios_simulator:ios_simulator_arm64; do
+            target="${record%%:*}"
+            profile="${record#*:}"
+            summary="$RUNNER_TEMP/swift-adapter-$target.json"
+            printf 'ANALYSIS_TARGET=@native_apple_sdk//:%s PLATFORM=//build_defs/host:%s\n' "$target" "$profile"
+            bash tools/dev/bazel.sh --nohome_rc --nosystem_rc \
+              --output_base="$RUNNER_TEMP/swift-adapter-analysis" --host_jvm_args=-Xmx3g \
+              cquery "@native_apple_sdk//:$target" -c opt --config=macos-sandbox \
+              "--platforms=//build_defs/host:$profile" \
+              --host_platform=//build_defs/host:native_macos_arm64 --jobs=1 \
+              --lockfile_mode=error --repository_cache= --disk_cache= \
+              --output=starlark \
+              '--starlark:expr=json.encode({"target": str(target.label), "provider_keys": sorted(providers(target).keys())})' \
+              > "$summary"
+            test -s "$summary"
+            cat "$summary"
+          done
