@@ -471,6 +471,7 @@ struct RuntimeResourceExtension {
     creates_extension: bool,
     native_module_stem: Option<String>,
     native_module_file: Option<String>,
+    native_dependency_module_files: Vec<String>,
     native_target: Option<String>,
     dependencies: Vec<String>,
     data_files: Vec<PathBuf>,
@@ -794,6 +795,11 @@ fn built_in_runtime_resource_extension(extension: Extension) -> RuntimeResourceE
             .native_module_stem
             .as_deref()
             .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX)),
+        native_dependency_module_files: extension
+            .native_dependency_module_stems()
+            .iter()
+            .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX))
+            .collect(),
         native_target: None,
         dependencies: catalog.dependencies.clone(),
         data_files: catalog
@@ -995,12 +1001,13 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
         &mobile_static_dependency_archives,
     )?;
 
-    let extension = RuntimeResourceExtension {
+    let mut extension = RuntimeResourceExtension {
         sql_name,
         native_runtime_version: Some(native_runtime_version),
         creates_extension,
         native_module_stem,
         native_module_file,
+        native_dependency_module_files: Vec::new(),
         native_target,
         dependencies,
         data_files,
@@ -1019,11 +1026,18 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
             files_root,
         },
     };
-    validate_prebuilt_extension_leaf_inventory(root, &manifest_path, &extension)?;
+    validate_prebuilt_extension_leaf_inventory(root, &manifest_path, &mut extension)?;
     Ok(extension)
 }
 
 impl RuntimeResourceExtension {
+    fn native_module_files(&self) -> impl Iterator<Item = &str> {
+        self.native_module_file
+            .iter()
+            .chain(&self.native_dependency_module_files)
+            .map(String::as_str)
+    }
+
     fn dependencies(&self) -> Vec<&str> {
         self.dependencies.iter().map(String::as_str).collect()
     }
@@ -2939,6 +2953,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             &postgis_licenses,
         );
         let loaded = load_prebuilt_extension_artifact(&postgis).unwrap();
+        assert!(loaded.native_dependency_module_files.is_empty());
         assert_eq!(
             loaded.license_profile,
             Some(NativeExtensionArtifactLicenseProfile::ExternalNative)
@@ -2948,6 +2963,293 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             postgis_licenses.map(PathBuf::from).to_vec()
         );
 
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn canonical_native_dependency_modules_preserve_profiles_and_runtime_accounting() {
+        let temp = unique_temp_root("canonical-native-dependency-modules");
+        let canonical = Extension::POSTGIS;
+        let stem = canonical.native_module_stem().unwrap();
+        assert!(!canonical.native_dependency_module_stems().is_empty());
+        let fixture = |root: &Path, target: &str, suffix: &str, slices: &[&str]| {
+            write_profiled_extension_artifact(
+                root,
+                canonical.sql_name(),
+                stem,
+                target,
+                NativeExtensionArtifactLicenseProfile::ExternalNative,
+                &["share/licenses/postgis/COPYING"],
+            );
+            let module = format!("{stem}.{suffix}");
+            if suffix != "so" {
+                for profile in ["postgresql", "modules"] {
+                    fs::rename(
+                        root.join(format!("files/lib/{profile}/{stem}.so")),
+                        root.join(format!("files/lib/{profile}/{module}")),
+                    )
+                    .unwrap();
+                }
+            }
+            let mut text = fs::read_to_string(root.join("manifest.properties"))
+                .unwrap()
+                .replace(
+                    &format!("nativeModuleFile={stem}.so\n"),
+                    &format!("nativeModuleFile={module}\n"),
+                );
+            if !slices.is_empty() {
+                fs::remove_dir_all(root.join("files/lib/modules")).unwrap();
+                let archives = slices
+                    .iter()
+                    .map(|target| {
+                        let file = mobile_static_archive_artifact_relative_path(target, stem);
+                        write_file(&root.join(&file), b"fixture static extension archive\n");
+                        format!("{target}:{}", file.display().to_string().replace('\\', "/"))
+                    })
+                    .collect::<Vec<_>>();
+                text = text
+                    .replace("mobilePrebuilt=no\n", "mobilePrebuilt=yes\n")
+                    .replace(
+                        "mobileStaticArchives=\n",
+                        &format!("mobileStaticArchives={}\n", archives.join(",")),
+                    )
+                    .replace(
+                        "staticSymbolPrefix=\n",
+                        "staticSymbolPrefix=oliphaunt_static_postgis_3\n",
+                    );
+            }
+            fs::write(root.join("manifest.properties"), text).unwrap();
+            let modules = canonical
+                .native_dependency_module_stems()
+                .iter()
+                .map(|stem| format!("{stem}.{suffix}"))
+                .collect::<Vec<_>>();
+            for module in &modules {
+                write_file(
+                    &root.join("files/lib/postgresql").join(module),
+                    b"fixture standalone dependency\n",
+                );
+                if slices.is_empty() {
+                    write_file(
+                        &root.join("files/lib/modules").join(module),
+                        b"fixture embedded dependency\n",
+                    );
+                }
+            }
+            modules
+        };
+
+        for (target, suffix, slices) in [
+            ("linux-x64-gnu", "so", &[][..]),
+            ("linux-arm64-gnu", "so", &[][..]),
+            ("macos-arm64", "dylib", &[][..]),
+            ("windows-x64-msvc", "dll", &[][..]),
+            ("android-arm64-v8a", "so", &["android-arm64-v8a"][..]),
+            ("android-x86_64", "so", &["android-x86_64"][..]),
+            (
+                "ios-xcframework",
+                "dylib",
+                &["ios-device", "ios-simulator"][..],
+            ),
+        ] {
+            let artifact = temp.join(target);
+            let modules = fixture(&artifact, target, suffix, slices);
+            let loaded = load_prebuilt_extension_artifact(&artifact).unwrap();
+            assert_eq!(loaded.native_dependency_module_files, modules);
+            let extensions = [loaded];
+            let registered = if slices.is_empty() {
+                Vec::new()
+            } else {
+                vec![stem.to_owned()]
+            };
+            let registry = mobile_static_registry_metadata(&extensions, &registered).unwrap();
+            let resources = temp.join(format!("resources-{target}"));
+            let runtime = resources.join("runtime/files");
+            let base = temp.join(format!("base-{target}"));
+            for module in extensions[0].native_module_files() {
+                write_file(
+                    &base.join("lib/postgresql").join(module),
+                    b"stale base module\n",
+                );
+            }
+            write_runtime_resource_tree(
+                &resources,
+                &MaterializedNativeResources {
+                    runtime_dir: base,
+                    runtime_cache_key: "fixture-runtime".to_owned(),
+                },
+                &extensions,
+                &[],
+                &[],
+                &registry,
+                Some(target),
+                None,
+            )
+            .unwrap();
+            for module in &modules {
+                let output = runtime.join("lib/postgresql").join(module);
+                if slices.is_empty() {
+                    assert_eq!(fs::read(output).unwrap(), b"fixture embedded dependency\n");
+                } else {
+                    assert!(
+                        !output.exists(),
+                        "complete static registry leaked dynamic sidecar"
+                    );
+                }
+            }
+            let report =
+                runtime_resource_size_report(&resources, &extensions, Some(target), &registry)
+                    .unwrap();
+            assert_eq!(
+                report.extensions[0].file_count,
+                if slices.is_empty() {
+                    4 + modules.len()
+                } else {
+                    3
+                }
+            );
+            let mut expected = vec![
+                PathBuf::from("share/postgresql/extension/postgis.control"),
+                PathBuf::from("share/postgresql/extension/postgis--1.0.sql"),
+                PathBuf::from("share/licenses/postgis/COPYING"),
+            ];
+            if slices.is_empty() {
+                expected.extend(
+                    extensions[0]
+                        .native_module_files()
+                        .map(|module| PathBuf::from("lib/postgresql").join(module)),
+                );
+            }
+            let bytes = expected
+                .iter()
+                .map(|file| fs::metadata(runtime.join(file)).unwrap().len())
+                .sum::<u64>();
+            assert_eq!(report.extensions[0].bytes, bytes);
+        }
+
+        for fault in ["missing", "extra", "wrong-suffix", "wrong-main"] {
+            let artifact = temp.join(format!("negative-{fault}"));
+            let modules = fixture(&artifact, "linux-x64-gnu", "so", &[]);
+            let module = &modules[0];
+            match fault {
+                "missing" => {
+                    fs::remove_file(artifact.join("files/lib/modules").join(module)).unwrap()
+                }
+                "extra" => write_file(
+                    &artifact.join("files/lib/postgresql/undeclared.so"),
+                    b"undeclared dependency\n",
+                ),
+                "wrong-suffix" => {
+                    for profile in ["postgresql", "modules"] {
+                        fs::rename(
+                            artifact.join(format!("files/lib/{profile}/{module}")),
+                            artifact.join(format!(
+                                "files/lib/{profile}/{}.dll",
+                                canonical.native_dependency_module_stems()[0]
+                            )),
+                        )
+                        .unwrap();
+                    }
+                }
+                _ => {
+                    let manifest = artifact.join("manifest.properties");
+                    let text = fs::read_to_string(&manifest)
+                        .unwrap()
+                        .replace(
+                            &format!("nativeModuleStem={stem}\n"),
+                            "nativeModuleStem=foreign\n",
+                        )
+                        .replace(
+                            &format!("nativeModuleFile={stem}.so\n"),
+                            "nativeModuleFile=foreign.so\n",
+                        );
+                    fs::write(manifest, text).unwrap();
+                    for profile in ["postgresql", "modules"] {
+                        fs::rename(
+                            artifact.join(format!("files/lib/{profile}/{stem}.so")),
+                            artifact.join(format!("files/lib/{profile}/foreign.so")),
+                        )
+                        .unwrap();
+                    }
+                }
+            }
+            let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+            assert!(
+                error.to_string().contains("leaf inventory mismatch"),
+                "{error}"
+            );
+        }
+        let duplicate = temp.join("duplicate-sidecar");
+        let modules = fixture(&duplicate, "linux-x64-gnu", "so", &[]);
+        let archive = temp.join("duplicate-sidecar.tar");
+        let mut writer = tar::Builder::new(File::create(&archive).unwrap());
+        writer.append_dir_all("extension", &duplicate).unwrap();
+        let member = PathBuf::from("files/lib/modules").join(&modules[0]);
+        writer
+            .append_path_with_name(
+                duplicate.join(&member),
+                Path::new("extension").join(&member),
+            )
+            .unwrap();
+        writer.finish().unwrap();
+        let error =
+            PreparedPrebuiltExtensionArtifacts::prepare(&[NativePrebuiltExtensionArtifact::new(
+                &archive,
+            )])
+            .unwrap_err();
+        assert!(error.to_string().contains("repeats file entry"), "{error}");
+
+        let other = temp.join("other-member");
+        write_profiled_extension_artifact(
+            &other,
+            "cube",
+            "cube",
+            "linux-x64-gnu",
+            NativeExtensionArtifactLicenseProfile::ContribNative,
+            &[],
+        );
+        write_file(
+            &other.join("files/lib/postgresql").join(format!(
+                "{}.so",
+                canonical.native_dependency_module_stems()[0]
+            )),
+            b"foreign member dependency\n",
+        );
+        let error = load_prebuilt_extension_artifact(&other).unwrap_err();
+        assert!(error.to_string().contains("undeclared:"), "{error}");
+
+        let built_in = built_in_runtime_resource_extension(canonical);
+        let base = temp.join("built-in-base");
+        for module in built_in.native_module_files() {
+            write_file(
+                &base.join("lib/postgresql").join(module),
+                b"built-in module\n",
+            );
+        }
+        let registry = mobile_static_registry_metadata(&[], &[]).unwrap();
+        let resources = temp.join("built-in-prune");
+        write_runtime_resource_tree(
+            &resources,
+            &MaterializedNativeResources {
+                runtime_dir: base,
+                runtime_cache_key: "fixture-runtime".to_owned(),
+            },
+            &[],
+            &[],
+            &[],
+            &registry,
+            None,
+            None,
+        )
+        .unwrap();
+        for module in built_in.native_module_files() {
+            assert!(
+                !resources
+                    .join("runtime/files/lib/postgresql")
+                    .join(module)
+                    .exists()
+            );
+        }
         let _ = fs::remove_dir_all(temp);
     }
 

@@ -3,13 +3,22 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
 import {
+  nativeDependencyModuleBasenames,
+  validateExtensionArtifactArchive,
+} from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
+import {
+  extractPortableArchiveTree,
+  readPortableArchiveEntries,
+} from '../../tools/packaging/portable-archive.mts';
+import {
+  elfFixture,
   machoFixture,
   windowsPeFixture,
 } from '../../tools/packaging/testdata/release-fixture-utils.mts';
 import { assemble } from './member_payload.mts';
 import {
+  exactArchive,
   frozenNativeMember,
   type NativeCarrierSpec,
   packageNativeCarriers,
@@ -17,8 +26,9 @@ import {
   validateNativeShippingModule,
 } from './native_carriers.mts';
 
-const [input] = process.argv.slice(2);
+const [input, resourcesCli] = process.argv.slice(2);
 assert(input, 'expected canonical pgtap carrier metadata');
+if (process.platform !== 'win32') assert(resourcesCli, 'expected declared Rust resources CLI');
 const metadata = JSON.parse(readFileSync(input, 'utf8'));
 assert.throws(
   () =>
@@ -294,6 +304,179 @@ try {
         outputs: { ...spec.outputs, github: path.join(root, 'wrong.tar.gz') },
       }),
     );
+  }
+  const postgis = metadata.postgisMember;
+  assert.equal(postgis.sqlName, 'postgis');
+  const directory = path.join(root, 'postgis');
+  const put = (name: string, bytes: string | Buffer, mode = 0o644): string => {
+    const file = path.join(directory, name);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, bytes, { mode });
+    return file;
+  };
+  const artifacts = postgis.recipe.artifacts;
+  const moduleFile = path.posix.basename(postgis.descriptor['native-module-file']);
+  const dependencyModules = nativeDependencyModuleBasenames(
+    artifacts.native_dependency_modules,
+    postgis.target,
+  );
+  assert(dependencyModules.length > 0, 'canonical PostGIS must exercise dependency modules');
+  const actual = {
+    schema: 'oliphaunt-extension-member-payload-v1',
+    sql_name: postgis.sqlName,
+    owner: postgis.product,
+    version: postgis.version,
+    family: 'native',
+    configuration: postgis.target,
+    source_kind: postgis.descriptor['source-kind'],
+    postgres_major: 18,
+    default_version: postgis.source['extension-control']['default-version'],
+    creates_extension: postgis.descriptor.lifecycle['create-extension'],
+    dependencies: postgis.descriptor.dependencies,
+    module_profiles: ['postgresql', 'modules'],
+    module_file: moduleFile,
+    dependency_modules: dependencyModules,
+    data_files: artifacts.data_files ?? [],
+    sql_prefixes: artifacts.extension_sql_file_prefixes ?? [],
+    sql_files: artifacts.extension_sql_file_names ?? [],
+    source: postgis.source,
+  };
+  const inputs = [
+    ...[
+      `${postgis.sqlName}.control`,
+      `${postgis.sqlName}--${actual.default_version}.sql`,
+      ...actual.sql_files,
+    ].map((name) => ({
+      source: put(
+        `inputs/sql/${name}`,
+        name.endsWith('.control')
+          ? `default_version = '${actual.default_version}'\nrelocatable = false\n`
+          : 'SELECT 1;\n',
+      ),
+      destination: `share/postgresql/extension/${name}`,
+    })),
+    ...actual.data_files.map((name: string) => ({
+      source: put(`inputs/${name}`, `fixture ${name}\n`),
+      destination: name,
+    })),
+    ...actual.module_profiles.flatMap((profile) =>
+      [moduleFile, ...dependencyModules].map((name) => ({
+        source: put(
+          `inputs/lib/${profile}/${name}`,
+          Buffer.concat([elfFixture(), Buffer.from(`${profile}/${name}`)]),
+        ),
+        destination: `lib/${profile}/${name}`,
+      })),
+    ),
+  ];
+  const archive = path.join(directory, 'member.tar.gz');
+  await assemble({ descriptor: actual, inputs }, archive, path.join(directory, 'inventory.json'));
+  const spec: NativeCarrierSpec = {
+    ...postgis,
+    archive,
+    outputs: {
+      github: path.join(
+        directory,
+        `${postgis.product}-${postgis.version}-native-${postgis.target}-runtime.tar.gz`,
+      ),
+      npm: path.join(directory, 'npm.tgz'),
+      cargo: path.join(directory, 'cargo'),
+      manifest: path.join(directory, 'manifest.json'),
+      frozen: path.join(directory, 'extension-artifacts.json'),
+    },
+  };
+  assert.throws(() => frozenNativeMember(spec, { ...actual, dependency_modules: [] }));
+  packageNativeCarriers(spec);
+  const artifact = path.join(directory, 'public');
+  extractPortableArchiveTree(spec.outputs.github, artifact);
+  const sidecar = dependencyModules[0];
+  const sidecarPaths = actual.module_profiles.map((profile) =>
+    path.join(artifact, 'files/lib', profile, sidecar),
+  );
+  const sidecarBytes = sidecarPaths.map((file) => readFileSync(file));
+  for (const file of sidecarPaths) rmSync(file);
+  const missingArchive = path.join(directory, 'missing-sidecars.tar.gz');
+  exactArchive(artifact, missingArchive);
+  assert.throws(() =>
+    validateExtensionArtifactArchive({
+      file: missingArchive,
+      metadata: frozenNativeMember(spec, actual),
+      product: spec.product,
+      target: spec.target,
+      nativeRuntimeVersion: spec.runtimeVersion,
+    }),
+  );
+  for (const [index, file] of sidecarPaths.entries())
+    writeFileSync(file, sidecarBytes[index], { mode: 0o755 });
+  if (process.platform !== 'win32') {
+    // Match the resources CLI's existing prepared-install fixture; no native binary is executed.
+    const install = path.join(directory, 'install');
+    for (const tool of ['postgres', 'initdb', 'pg_ctl', 'pg_basebackup', 'pg_dump', 'psql'])
+      put(`install/bin/${tool}`, tool, 0o755);
+    put('install/share/postgresql/postgresql.conf.sample', '# sample\n');
+    put('install/share/postgresql/extension/plpgsql.control', "comment = 'PL/pgSQL'\n");
+    put('install/share/postgresql/extension/plpgsql--1.0.sql', "SELECT 'plpgsql';\n");
+    mkdirSync(path.join(install, 'lib/postgresql'), { recursive: true });
+    for (const name of ['dict_snowball', 'plpgsql'])
+      put(`out/modules/${name}${process.platform === 'darwin' ? '.dylib' : '.so'}`, 'core fixture');
+    const run = (input: string, name: string) =>
+      Bun.spawnSync({
+        cmd: [
+          resourcesCli!,
+          '--output',
+          path.join(directory, name),
+          '--prebuilt-extension',
+          input,
+          '--extension-target',
+          spec.target,
+          '--liboliphaunt-native-version',
+          spec.runtimeVersion,
+        ],
+        env: {
+          ...process.env,
+          OLIPHAUNT_RESOURCES_DIR: undefined,
+          OLIPHAUNT_POSTGRES: undefined,
+          OLIPHAUNT_INITDB: undefined,
+          OLIPHAUNT_INSTALL_DIR: install,
+          OLIPHAUNT_RUNTIME_CACHE_DIR: path.join(directory, 'runtime-cache'),
+          OLIPHAUNT_EMBEDDED_MODULE_DIR: path.join(directory, 'out/modules'),
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+    const accepted = run(spec.outputs.github, 'accepted');
+    assert.equal(accepted.exitCode, 0, accepted.stderr.toString());
+    const runtime = path.join(directory, 'accepted/oliphaunt/runtime/files');
+    for (const name of [moduleFile, ...dependencyModules])
+      assert.deepEqual(
+        readFileSync(path.join(runtime, 'lib/postgresql', name)),
+        readFileSync(path.join(artifact, 'files/lib/modules', name)),
+      );
+    const delivered = [...readPortableArchiveEntries(spec.outputs.github).values()].filter(
+      (entry) =>
+        !entry.isDirectory &&
+        entry.name.startsWith('files/') &&
+        !entry.name.startsWith('files/lib/postgresql/'),
+    );
+    const report = readFileSync(path.join(directory, 'accepted/oliphaunt/package-size.tsv'), 'utf8')
+      .split('\n')
+      .find((line) => line.startsWith('extension\tpostgis\t'))!
+      .split('\t');
+    assert.equal(Number(report[3]), delivered.length);
+    assert.equal(
+      Number(report[4]),
+      delivered.reduce((bytes, entry) => bytes + entry.data().length, 0),
+    );
+    rmSync(sidecarPaths[1]);
+    const missing = run(artifact, 'missing');
+    assert.notEqual(missing.exitCode, 0);
+    assert(missing.stderr.toString().includes(sidecar), missing.stderr.toString());
+    writeFileSync(sidecarPaths[1], sidecarBytes[1], { mode: 0o755 });
+    const extra = path.join(artifact, 'files/lib/modules/undeclared.so');
+    writeFileSync(extra, sidecarBytes[1], { mode: 0o755 });
+    const undeclared = run(artifact, 'extra');
+    assert.notEqual(undeclared.exitCode, 0);
+    assert.match(undeclared.stderr.toString(), /undeclared/u);
   }
   console.log(
     'Native extension final envelopes preserve canonical identities, compatibility, legal files, payload layout and deterministic bytes.',

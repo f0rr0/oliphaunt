@@ -181,27 +181,26 @@ fn prune_built_in_extension_module_files(
 ) -> Result<()> {
     let mut selected_modules = BTreeSet::new();
     for extension in selected_built_in {
-        if extension_dynamic_module_required(extension, extension_target, mobile_static_registry)?
-            && let Some(module) = &extension.native_module_file
-        {
-            selected_modules.insert(module.clone());
+        if extension_dynamic_module_required(extension, extension_target, mobile_static_registry)? {
+            selected_modules.extend(extension.native_module_files().map(str::to_owned));
         }
     }
     for extension in Extension::ALL {
-        let Some(stem) = catalog::for_extension(*extension)
-            .native_module_stem
-            .as_deref()
-        else {
-            continue;
-        };
-        let module = format!("{stem}{}", std::env::consts::DLL_SUFFIX);
-        if selected_modules.contains(&module) {
-            continue;
+        let modules = extension.native_module_file().into_iter().chain(
+            extension
+                .native_dependency_module_stems()
+                .iter()
+                .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX)),
+        );
+        for module in modules {
+            if selected_modules.contains(&module) {
+                continue;
+            }
+            remove_runtime_file_if_present(
+                runtime_files,
+                &PathBuf::from("lib/postgresql").join(module),
+            )?;
         }
-        remove_runtime_file_if_present(
-            runtime_files,
-            &PathBuf::from("lib/postgresql").join(module),
-        )?;
     }
     Ok(())
 }
@@ -235,7 +234,7 @@ fn prune_prebuilt_extension_base_artifact_paths(
                 &PathBuf::from("share/postgresql").join(relative),
             )?;
         }
-        if let Some(module) = &extension.native_module_file {
+        for module in extension.native_module_files() {
             remove_runtime_file_if_present(
                 runtime_files,
                 &PathBuf::from("lib/postgresql").join(module),
@@ -273,15 +272,14 @@ pub(super) fn copy_prebuilt_extension_artifacts(
             extension_target,
             mobile_static_registry,
         )? {
-            let Some(module) = &extension.native_module_file else {
-                continue;
-            };
-            copy_artifact_runtime_file_to(
-                files_root,
-                runtime_files,
-                &PathBuf::from("lib/modules").join(module),
-                &PathBuf::from("lib/postgresql").join(module),
-            )?;
+            for module in extension.native_module_files() {
+                copy_artifact_runtime_file_to(
+                    files_root,
+                    runtime_files,
+                    &PathBuf::from("lib/modules").join(module),
+                    &PathBuf::from("lib/postgresql").join(module),
+                )?;
+            }
         }
     }
     Ok(())
@@ -485,12 +483,11 @@ fn extension_asset_paths(
             paths.insert(relative.clone());
         }
         if extension_dynamic_module_required(extension, extension_target, mobile_static_registry)? {
-            let Some(module) = &extension.native_module_file else {
-                continue;
-            };
-            let relative = PathBuf::from("lib/postgresql").join(module);
-            require_report_file(runtime_files, &relative)?;
-            paths.insert(relative);
+            for module in extension.native_module_files() {
+                let relative = PathBuf::from("lib/postgresql").join(module);
+                require_report_file(runtime_files, &relative)?;
+                paths.insert(relative);
+            }
         }
     }
     Ok(paths)

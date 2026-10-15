@@ -141,7 +141,7 @@ pub(super) fn validate_extension_artifact_license_profile(
 pub(super) fn validate_prebuilt_extension_leaf_inventory(
     root: &Path,
     manifest_path: &Path,
-    extension: &RuntimeResourceExtension,
+    extension: &mut RuntimeResourceExtension,
 ) -> Result<()> {
     let profile = extension.license_profile.ok_or_else(|| {
         Error::Engine(format!(
@@ -204,7 +204,29 @@ pub(super) fn validate_prebuilt_extension_leaf_inventory(
     for relative in &extension.data_files {
         expected.insert(PathBuf::from("files/share/postgresql").join(relative));
     }
-    if let Some(module) = &extension.native_module_file {
+    if let Some(module) = &extension.native_module_file
+        && let Some((_, suffix @ ("so" | "dylib" | "dll"))) = module.rsplit_once('.')
+        && let Some(canonical) = Extension::by_sql_name(&extension.sql_name)
+        && let Some(stem) = canonical.native_module_stem()
+        && extension.native_module_stem.as_deref() == Some(stem)
+        && module == &format!("{stem}.{suffix}")
+    {
+        let dependencies = canonical
+            .native_dependency_module_stems()
+            .iter()
+            .map(|stem| format!("{stem}.{suffix}"))
+            .collect::<Vec<_>>();
+        // Historical carriers may incorporate these dependencies into the main
+        // module. A separate canonical sidecar requires its complete profile.
+        if dependencies.iter().any(|module| {
+            ["files/lib/postgresql", "files/lib/modules"]
+                .iter()
+                .any(|prefix| actual.contains(&PathBuf::from(prefix).join(module)))
+        }) {
+            extension.native_dependency_module_files = dependencies;
+        }
+    }
+    for module in extension.native_module_files() {
         expected.insert(PathBuf::from("files/lib/postgresql").join(module));
         let embedded = PathBuf::from("files/lib/modules").join(module);
         if extension

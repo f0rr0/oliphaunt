@@ -167,6 +167,7 @@ def _unit_inputs_impl(ctx):
     output = ctx.actions.declare_file(ctx.label.name + ".json")
     metadata = native_external_carrier_metadata("pgtap", "linux-x64-gnu")
     metadata["compiledMember"] = native_external_carrier_metadata("pg_uuidv7", "linux-x64-gnu")
+    metadata["postgisMember"] = native_external_carrier_metadata("postgis", "linux-x64-gnu")
     products = dict(PRODUCTS)
     runtime = dict(products["liboliphaunt-native"])
     parts = runtime["version"].split(".")

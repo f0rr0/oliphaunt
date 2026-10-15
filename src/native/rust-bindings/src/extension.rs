@@ -42,6 +42,13 @@ impl Extension {
             .map(|stem| format!("{}{}", stem, std::env::consts::DLL_SUFFIX))
     }
 
+    /// Canonical dependency modules consumed by unpublished native packaging.
+    #[cfg(feature = "internal-native-packaging")]
+    #[doc(hidden)]
+    pub const fn native_dependency_module_stems(self) -> &'static [&'static str] {
+        generated_extensions::native_dependency_module_stems(self)
+    }
+
     pub(crate) fn native_module_files(self) -> impl Iterator<Item = String> {
         self.native_module_stem()
             .into_iter()

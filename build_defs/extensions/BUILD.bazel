@@ -204,8 +204,8 @@ test_suite(
 bun_script_test(
     name = "native_carriers_test",
     entry_point = "native_carriers.test.mts",
-    args = ["$(location :native_carrier_unit_inputs)"],
-    data = [":native_carrier_unit_inputs", "native_carriers.mts", "member_payload.mts", "//:tools/packaging/testdata/release-fixture-utils.mts"] + native_extension_carrier_helpers() + native_extension_carrier_legal("pgtap"),
+    args = ["$(location :native_carrier_unit_inputs)"] + select({"//build_defs/native:windows_x64": [], "//conditions:default": ["$(location //src/native/runtime/packaging:resources)"]}),
+    data = {label: True for label in [":native_carrier_unit_inputs", "native_carriers.mts", "member_payload.mts", "//:tools/packaging/testdata/release-fixture-utils.mts"] + native_extension_carrier_helpers() + native_extension_carrier_legal("pgtap") + native_extension_carrier_legal("postgis")}.keys() + select({"//build_defs/native:windows_x64": [], "//conditions:default": ["//src/native/runtime/packaging:resources"]}),
     size = "small",
 )
 
