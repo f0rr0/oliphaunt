@@ -84,6 +84,8 @@ export async function fixture(
     'Sources/Oliphaunt/Oliphaunt.swift': '// source fixture\n',
     'Templates/OliphauntBroker/Info.plist': 'fixture\n',
     'Tests/test.swift': '// test fixture\n',
+    'Tests/Fixtures/swiftpm-extension-resources/runtime/files/share/postgresql/extension/fixture.control':
+      'declared test fixture\n',
   })) {
     const file = path.join(source, member);
     mkdirSync(path.dirname(file), { recursive: true });

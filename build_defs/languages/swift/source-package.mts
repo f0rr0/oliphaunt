@@ -14,6 +14,10 @@ import path from 'node:path';
 import { validateFrozenNativeCarrierIdentity } from '../../../src/native/sdks/swift/tools/swift-native-carrier-contract.mts';
 import { renderSwiftReleaseManifest } from '../../../src/native/sdks/swift/tools/swift-release-manifest.mts';
 import {
+  SWIFT_SOURCE_FIXTURE_PREFIX,
+  validateSwiftSourceFixtureEntries,
+} from '../../../src/native/sdks/swift/tools/swift-source-fixture-contract.mts';
+import {
   readNativeAppleHeader,
   validateAppleXcframeworkAsset,
 } from '../../../src/native/sdks/swift/tools/swift-xcframework-contract.mts';
@@ -24,6 +28,7 @@ import {
   assertReleaseNoticesInDirectory,
   stageReleaseNotices,
 } from '../../../tools/packaging/release-notices.mts';
+import { findSdkRuntimePayloadViolation } from '../../../tools/packaging/sdk-runtime-payload.mts';
 
 const REPOSITORY = 'https://github.com/f0rr0/oliphaunt';
 const SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u;
@@ -228,6 +233,24 @@ export async function packageSwiftSource(
       path.join(outputRoot, 'Oliphaunt-source.zip'),
       await createDeterministicZip(sourcePackage, { keepParent: true }),
       { mode: 0o644 },
+    );
+    const archive = path.join(outputRoot, 'Oliphaunt-source.zip');
+    const entries = readPortableArchiveEntries(archive);
+    const fixtures = new Map(
+      Object.entries(spec.sources)
+        .filter(([member]) => `package/${member}`.startsWith(SWIFT_SOURCE_FIXTURE_PREFIX))
+        .map(([member, source]) => [`package/${member}`, readFileSync(source)]),
+    );
+    const allowed = validateSwiftSourceFixtureEntries(archive, entries, fixtures);
+    const violation = findSdkRuntimePayloadViolation(
+      'oliphaunt-swift',
+      [...entries].filter(([, entry]) => entry.isFile).map(([name]) => name),
+      allowed,
+    );
+    assert.equal(
+      violation,
+      null,
+      `Swift source ZIP must not include runtime/extension payload ${violation}`,
     );
   } finally {
     rmSync(scratch, { recursive: true, force: true });

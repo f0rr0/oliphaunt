@@ -18,6 +18,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createDeterministicZip } from '../../tools/packaging/archive-directory.mts';
 import {
   extractPortableArchiveTree,
@@ -230,6 +231,92 @@ function invokeJson(node: string, script: string, args: string[], cwd: string) {
       maxBuffer: 16 * 1024 * 1024,
     }),
   );
+}
+
+/** Preserve the original packed SDK/ICU consumer checks with declared CLI Files. */
+export async function runAutolinkingConsumer(spec: NodeInputs & { icuArchive: string }) {
+  const runfiles = process.env.OLIPHAUNT_BAZEL_RUNFILES;
+  assert(runfiles && path.isAbsolute(runfiles), 'Autolinking requires declared runfiles');
+  const input = (file: string) => path.join(runfiles, member(file));
+  const inputs: NodeInputs = {
+    ...spec,
+    sources: spec.sources.map((source) => ({ ...source, source: input(source.source) })),
+    packages: Object.fromEntries(
+      Object.entries(spec.packages).map(([id, row]) => [id, { ...row, source: input(row.source) }]),
+    ),
+    node: input(spec.node),
+    tar: input(spec.tar),
+  };
+  const fixture = fileURLToPath(
+    new URL(
+      '../../src/native/sdks/react-native/tools/icu-autolinking-fixture.mts',
+      import.meta.url,
+    ),
+  );
+  await scratch(async (root) => {
+    const tools = path.join(root, 'tools');
+    mkdirSync(tools);
+    const stores = stageNodeInputs(tools, inputs);
+    const work = path.join(root, 'fixture');
+    mkdirSync(work);
+    const sdk = inputs.packages[inputs.roots['@oliphaunt/react-native']];
+    assert(sdk, 'Autolinking requires the declared final React Native npm package');
+    invoke(
+      process.execPath,
+      fixture,
+      [
+        'prepare-packed',
+        work,
+        realpathSync(sdk.source),
+        realpathSync(input(spec.icuArchive)),
+        tools,
+      ],
+      tools,
+    );
+    const consumer = path.join(work, 'consumer');
+    const bareCli = readFileSync(path.join(work, 'cli'), 'utf8');
+    const expoAutolinker =
+      stores[inputs.packages[inputs.roots.expo].dependencies['expo-modules-autolinking']];
+    assert(expoAutolinker, 'Declared Expo closure omitted its autolinker');
+    const bin = JSON.parse(readFileSync(path.join(expoAutolinker, 'package.json'), 'utf8')).bin;
+    const expoCli = path.join(
+      expoAutolinker,
+      typeof bin === 'string' ? bin : bin['expo-modules-autolinking'],
+    );
+    for (const kind of ['candidate', 'control']) {
+      if (kind === 'control') invoke(process.execPath, fixture, ['control', work], consumer);
+      for (const platform of kind === 'candidate' ? ['ios', 'android'] : ['ios']) {
+        for (const cli of [
+          {
+            script: expoCli,
+            args: [
+              'react-native-config',
+              path.join(consumer, 'node_modules'),
+              '--project-root',
+              consumer,
+              '--platform',
+              platform,
+              '--json',
+            ],
+          },
+          { script: bareCli, args: ['config', '--platform', platform] },
+        ]) {
+          const output = path.join(work, 'config.json');
+          writeFileSync(
+            output,
+            JSON.stringify(invokeJson(inputs.node, cli.script, cli.args, consumer)),
+          );
+          invoke(
+            inputs.node,
+            '--experimental-strip-types',
+            [fixture, 'check', work, kind, platform, output],
+            consumer,
+          );
+        }
+      }
+    }
+    console.log('Packed React Native and ICU Expo/bare autolinking passed');
+  });
 }
 function kotlinTemplate(file: string, name: string) {
   const source = readFileSync(file, 'utf8');
@@ -1548,6 +1635,7 @@ if (import.meta.main) {
   assert(mode && file, 'Android app action needs a mode and declared specification');
   const spec = JSON.parse(readFileSync(file, 'utf8'));
   if (mode === 'codegen') await generateReactNativeCodegen(spec);
+  else if (mode === 'autolinking-test') await runAutolinkingConsumer(spec);
   else if (mode === 'project') await generateExpoAndroidProject(spec);
   else if (mode === 'bundle') await bundleExpoAndroid(spec);
   else if (mode === 'prefab') extractPrefab(spec);

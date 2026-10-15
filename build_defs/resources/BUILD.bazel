@@ -49,6 +49,7 @@ filegroup(name = "helpers", srcs = [
     "//:tools/packaging/package-archive.mts",
     "//:tools/packaging/portable-archive.mts",
     "//:tools/packaging/release-carrier.mts",
+    "//:tools/packaging/sdk-runtime-payload.mts",
     "//:tools/packaging/release-directory-safety.mts",
     "//:tools/packaging/release-notices.mts",
     "//:tools/packaging/rust-dependency-license-contract.mts",

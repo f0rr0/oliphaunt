@@ -83,9 +83,11 @@ _swift_source = rule(
         "_helpers": attr.label_list(default = [
             Label("//src/native/sdks/swift:tools/swift-native-carrier-contract.mts"),
             Label("//src/native/sdks/swift:tools/swift-release-manifest.mts"),
+            Label("//src/native/sdks/swift:tools/swift-source-fixture-contract.mts"),
             Label("//src/native/sdks/swift:tools/swift-xcframework-contract.mts"),
             Label("//:tools/packaging/archive-directory.mts"),
             Label("//:tools/packaging/portable-archive.mts"),
+            Label("//:tools/packaging/sdk-runtime-payload.mts"),
             Label("//:tools/packaging/release-notices.mts"),
             Label("//:tools/packaging/release-directory-safety.mts"),
             Label("//:tools/packaging/emit-javascript.mts"),

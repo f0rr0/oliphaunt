@@ -36,6 +36,8 @@ native_installed_sql_test(
         "//build_defs/native:windows_x64": "@node_frozen_native_windows_x64_msvc//:archive",
     }),
     artifact_crate = "//src/native/broker:artifact_crate",
+    deno = select({"//build_defs/native:linux_x86_64": "@deno_linux_x64//:deno", "//conditions:default": None}),
+    contract_hosts = select({"//build_defs/native:linux_x86_64": ["node", "bun", "deno"], "//conditions:default": ["node"]}),
     target_compatible_with = NATIVE_COMPATIBLE,
     size = "medium",
 )

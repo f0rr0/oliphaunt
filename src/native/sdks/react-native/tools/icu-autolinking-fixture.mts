@@ -10,7 +10,7 @@ const icuRoot = path.join(consumer, 'node_modules/@oliphaunt/icu');
 const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
 const writeJson = (file, value) => writeFileSync(file, JSON.stringify(value));
 
-if (phase === 'prepare') {
+if (phase === 'prepare' || phase === 'prepare-packed') {
   const [reactNativeTarball, icuSource, expoProject] = args;
   const resolver = createRequire(path.join(expoProject, 'package.json'));
   const dependencies = {};
@@ -50,14 +50,18 @@ if (phase === 'prepare') {
     path.join(consumer, 'node_modules/@oliphaunt/react-native'),
     'package',
   );
-  const source = path.join(root, 'icu-source');
-  mkdirSync(source);
-  for (const file of ['package.json', 'OliphauntICU.podspec'])
-    cpSync(path.join(icuSource, file), path.join(source, file));
-  cpSync(
-    path.join(icuSource, 'react-native.config.cts'),
-    path.join(source, 'react-native.config.js'),
-  );
+  if (phase === 'prepare-packed') {
+    extractPortableArchiveTree(icuSource, icuRoot, 'package');
+  } else {
+    const source = path.join(root, 'icu-source');
+    mkdirSync(source);
+    for (const file of ['package.json', 'OliphauntICU.podspec'])
+      cpSync(path.join(icuSource, file), path.join(source, file));
+    cpSync(
+      path.join(icuSource, 'react-native.config.cts'),
+      path.join(source, 'react-native.config.js'),
+    );
+  }
 } else if (phase === 'extract') {
   extractPortableArchiveTree(args[0], icuRoot, 'package');
 } else if (phase === 'control') {

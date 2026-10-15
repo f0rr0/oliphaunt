@@ -804,6 +804,7 @@ jobs:
             "//build_defs/extensions/mobile:android_x86_64_all_members_consumer",
             "//build_defs/extensions:mobile_maven_test",
             "//src/examples/native/react-native-expo:android_release",
+            "//src/examples/native/react-native-expo:autolinking_consumer_test",
             "//src/examples/native/react-native-expo:android_installed_test"
           ]' > "$input_root/targets.json"
           printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"

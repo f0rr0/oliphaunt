@@ -18,6 +18,7 @@ _MODULE_OUT_DIR = "lib"
 
 exports_files(["package.json", "release.toml"])
 exports_files(["src/native/extension-contract.ts"])
+exports_files(["src/__tests__/native-smoke.mts", "src/__tests__/native-direct-contract.mts"])
 
 SDK = JAVASCRIPT["@oliphaunt/ts"]
 QUERY = JAVASCRIPT["@oliphaunt/ts-query"]

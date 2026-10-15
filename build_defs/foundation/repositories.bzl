@@ -1,7 +1,7 @@
 """Tracked projections of the existing pinned language tools and lockfile."""
 
 def _quoted_assignments(text):
-    """Read the quoted scalar assignments used by the Bun acquisition manifest."""
+    """Read the quoted scalar assignments used by the runtime acquisition manifests."""
     result = {}
     section = ""
     for raw in text.splitlines():
@@ -15,10 +15,10 @@ def _quoted_assignments(text):
             key, value = line.split("=", 1)
             value = value.strip()
             if not section or not value.startswith('"') or not value.endswith('"'):
-                fail("Expected a section and quoted scalar in tools/dev/bun.toml: " + line)
+                fail("Expected a section and quoted scalar in a runtime acquisition manifest: " + line)
             result[section][key.strip()] = value[1:-1]
         else:
-            fail("Unsupported tools/dev/bun.toml entry: " + line)
+            fail("Unsupported runtime acquisition manifest entry: " + line)
     return result
 
 def _host_bun_platform(ctx):
@@ -51,6 +51,22 @@ def _bun_runtime_impl(ctx):
 bun_runtime_repository = repository_rule(
     implementation = _bun_runtime_impl,
     attrs = {"manifest": attr.label(default = Label("//tools/dev:bun.toml"), allow_single_file = True)},
+)
+
+def _deno_linux_x64_impl(ctx):
+    asset = _quoted_assignments(ctx.read(ctx.attr.manifest)).get("assets.x86_64-unknown-linux-gnu")
+    if not asset:
+        fail("No declared Deno asset for x86_64-unknown-linux-gnu")
+    for field in ["url", "mirror_url", "sha256", "binary_path"]:
+        if not asset.get(field):
+            fail("Deno Linux x64 asset is missing " + field)
+    ctx.download_and_extract(url = [asset["url"], asset["mirror_url"]], sha256 = asset["sha256"])
+    ctx.file("BUILD.bazel", 'exports_files([%s], visibility = ["//visibility:public"])\n' % repr(asset["binary_path"]))
+    return ctx.repo_metadata(reproducible = True)
+
+deno_linux_x64_repository = repository_rule(
+    implementation = _deno_linux_x64_impl,
+    attrs = {"manifest": attr.label(default = Label("//tools/dev:deno.toml"), allow_single_file = True)},
 )
 
 _BUN_PLATFORMS = {

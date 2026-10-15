@@ -577,6 +577,7 @@ test('Android qualification constructs ARM and installs the exact x64 APK once',
     const targets = JSON.parse(readFileSync(args[args.indexOf('--targets-json') + 1], 'utf8'));
     for (const label of [
       '//src/examples/native/react-native-expo:android_release',
+      '//src/examples/native/react-native-expo:autolinking_consumer_test',
       '//src/examples/native/react-native-expo:android_installed_test',
     ])
       assert.equal(targets.filter((target: string) => target === label).length, 1);

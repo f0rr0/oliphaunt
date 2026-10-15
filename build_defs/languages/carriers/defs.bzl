@@ -243,10 +243,14 @@ def _installed_sql_impl(ctx):
     rust = ctx.toolchains["@rules_rust//rust:toolchain_type"]
     if not rust.cargo:
         fail("Installed broker Cargo leaf requires the pinned Cargo executable")
+    if "deno" in ctx.attr.contract_hosts and not ctx.executable.deno:
+        fail("Installed native SDK contracts require the declared pinned Deno executable")
     cc = cargo_test_toolchain(ctx)
-    arguments = [ctx.file.sdk, ctx.file.query, ctx.file.addon, ctx.file.broker, ctx.file.runtime, node, ctx.file._consumer, ctx.file.artifact_crate, rust.cargo, rust.rustc, rust.rust_doc, cc.configuration]
-    files = arguments + ctx.files._helpers + rust.all_files.to_list() + cc.files
-    return bun_test_entrypoint(ctx, runner = ctx.file._runner, arguments = arguments, files = files, runfiles_argument = True, source_files = [ctx.file._runner] + ctx.files._helpers)
+    arguments = [ctx.file.sdk, ctx.file.query, ctx.file.addon, ctx.file.broker, ctx.file.runtime, node, ctx.file._consumer, ctx.file.artifact_crate, rust.cargo, rust.rustc, rust.rust_doc, cc.configuration,
+                 ctx.file._contract_entry, ctx.file._contract_assertions, ctx.executable.deno or "", json.encode(ctx.attr.contract_hosts)]
+    files = arguments[:14] + ([ctx.executable.deno] if ctx.executable.deno else []) + ctx.files._helpers + rust.all_files.to_list() + cc.files
+    return bun_test_entrypoint(ctx, runner = ctx.file._runner, arguments = arguments, files = files, runfiles_argument = True, source_files = [ctx.file._runner] + ctx.files._helpers,
+                               additional_runfiles = ctx.attr.deno[DefaultInfo].default_runfiles if ctx.attr.deno else None)
 
 _native_installed_sql_test = rule(
     implementation = _installed_sql_impl,
@@ -260,6 +264,10 @@ _native_installed_sql_test = rule(
         "broker": attr.label(mandatory = True, allow_single_file = [".tgz"]),
         "runtime": attr.label(mandatory = True, allow_single_file = [".tgz"]),
         "artifact_crate": attr.label(mandatory = True, allow_single_file = [".crate"]),
+        "deno": attr.label(executable = True, cfg = "exec", allow_files = True),
+        "contract_hosts": attr.string_list(default = ["node"]),
+        "_contract_entry": attr.label(default = Label("//src/native/sdks/ts:src/__tests__/native-smoke.mts"), allow_single_file = True),
+        "_contract_assertions": attr.label(default = Label("//src/native/sdks/ts:src/__tests__/native-direct-contract.mts"), allow_single_file = True),
         "_runner": attr.label(default = Label("//build_defs/languages/carriers:installed-sql.test.mts"), allow_single_file = True),
         "_consumer": attr.label(default = Label("//build_defs/languages/carriers:sql-consumer.mts"), allow_single_file = True),
         "_helpers": attr.label_list(default = [Label("//:tools/packaging/portable-archive.mts"), Label("//:tools/packaging/windows-vc-runtime-closure.mts"), Label("//:tools/packaging/windows-vc-runtime-policy.json"), Label("//build_defs/native:host-runtime-test-helpers.mts"), Label("//build_defs/languages:cargo-environment.mts"), Label("//build_defs/languages/carriers:cargo-consumer.mts")], allow_files = True),

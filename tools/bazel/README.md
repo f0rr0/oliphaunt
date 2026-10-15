@@ -45,8 +45,20 @@ extension modules. Linux ARM64 and Android have separate configured targets.
 Cross-compilation proves construction and binary contracts; runtime behavior
 still requires the actual host or device.
 
-Run CI's installed package and frozen-resource cohort locally with the same
-Linux profile and optimized package construction:
+Installed SDK checks also consume the completed dependencies declared by their
+manifests. With an existing GitHub CLI login, acquire their source-bound public
+input snapshot once:
+
+```sh
+inputs_root="$(mktemp -d)"
+public_inputs="$(GH_TOKEN="$(gh auth token)" bash tools/release/with-source.sh HEAD \
+  bash tools/dev/bun.sh tools/release/native-release-preparation.mts \
+  --publication-inputs --output-directory "$inputs_root/public")"
+```
+
+Only acquisition receives the credential; Bazel receives the snapshot path. CI
+acquires this snapshot once before its producer jobs. Reuse it for the following
+installed-package checks with the same Linux profile and optimized construction:
 
 ```sh
 profile=//build_defs/native:linux_x86_64_glibc_2_28
@@ -66,12 +78,14 @@ bash tools/dev/bazel.sh test -c opt \
   //src/database-resources:android_datum64_icu_carriers \
   //src/native/sdks/react-native:source_consumer_test \
   //src/native/sdks/react-native:lifecycle_test \
+  //src/examples/native/react-native-expo:autolinking_consumer_test \
   //src/native/sdks/kotlin:android_maven \
   //src/native/sdks/kotlin:installed_public_api_consumer \
   //src/native/sdks/kotlin:android_test \
   //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:contract_test \
   //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:plugin_maven \
   //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:marker_maven \
+  --repo_env=OLIPHAUNT_NATIVE_PUBLICATION_INPUTS="$public_inputs" \
   --platforms="$profile" --host_platform="$profile" \
   --java_runtime_version=remotejdk_17 --tool_java_runtime_version=remotejdk_17 --jobs=2
 ```
@@ -88,13 +102,16 @@ execution platform. Its build tools require glibc 2.34; public native Linux
 packages retain their glibc 2.28 target profile. Cross-target AOT construction
 still needs deserialization and runtime checks on each supported host.
 
-Construct the four Linux x64 AOT images and exercise the source SDK locally:
+Construct the four Linux x64 AOT images and exercise the Rust and TypeScript SDKs
+locally, reusing the public input snapshot above:
 
 ```sh
 sdk_cache="$(mktemp -d)"
 bash tools/dev/bazel.sh test --config=wasix-aot \
   //src/wasix/runtime:aot_linux_x64_gnu_payload \
   //src/wasix/sdks/rust:postgres_regression_test \
+  //src/wasix/sdks/ts:installed_host_test \
+  --repo_env=OLIPHAUNT_NATIVE_PUBLICATION_INPUTS="$public_inputs" \
   --platforms=//build_defs/native:linux_x86_64_glibc_2_28 \
   --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=1 --local_test_jobs=1 \
   --test_env=OLIPHAUNT_WASM_AOT_VERIFY=full \

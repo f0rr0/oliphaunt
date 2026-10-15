@@ -39,6 +39,7 @@ def native_carrier_helpers():
         "//:tools/packaging/npm-trusted-publishing.mts", "//:tools/packaging/package-archive.mts",
         "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/portable-archive.mts",
         "//:tools/packaging/release-carrier.mts", "//:tools/packaging/release-directory-safety.mts",
+        "//:tools/packaging/sdk-runtime-payload.mts",
         "//:tools/packaging/release-notices.mts", "//:tools/packaging/rust-native-targets.mts",
         "//:tools/packaging/rust-dependency-license-contract.mts",
         "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json",

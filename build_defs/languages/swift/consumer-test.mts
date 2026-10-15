@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { localizeSwiftReleaseManifest } from '../../../src/native/sdks/swift/tools/prepare-swift-release-consumer.mts';
 import { extractPortableArchiveTree } from '../../../tools/packaging/portable-archive.mts';
@@ -88,6 +88,12 @@ writeFileSync(
   path.join(consumerRoot, 'Sources/InstalledConsumer/main.swift'),
   readFileSync(consumer),
 );
+const nativeTests = path.join(consumerRoot, 'Tests/NativeRuntimeTests');
+mkdirSync(nativeTests, { recursive: true });
+copyFileSync(
+  path.join(packageRoot, 'Tests/OliphauntTests/NativeRuntimeTests.swift'),
+  path.join(nativeTests, 'NativeRuntimeTests.swift'),
+);
 const facts = JSON.parse(readFileSync(receipt, 'utf8'));
 assert.equal(
   triple,
@@ -98,7 +104,7 @@ writeFileSync(
   path.join(consumerRoot, 'Package.swift'),
   `// swift-tools-version: 6.0
 import PackageDescription
-let package = Package(name: "InstalledConsumer", platforms: [.macOS("${facts.deploymentTargets.package_macos}")], dependencies: [.package(name: "OliphauntSDK", path: "../package")], targets: [.executableTarget(name: "InstalledConsumer", dependencies: [${['COliphaunt', 'Oliphaunt', 'OliphauntCore', 'OliphauntBroker', 'OliphauntBrokerExtension', 'OliphauntExtensionSupport'].map((product) => `.product(name: "${product}", package: "OliphauntSDK")`).join(', ')}])])
+let package = Package(name: "InstalledConsumer", platforms: [.macOS("${facts.deploymentTargets.package_macos}")], dependencies: [.package(name: "OliphauntSDK", path: "../package")], targets: [.executableTarget(name: "InstalledConsumer", dependencies: [${['COliphaunt', 'Oliphaunt', 'OliphauntCore', 'OliphauntBroker', 'OliphauntBrokerExtension', 'OliphauntExtensionSupport'].map((product) => `.product(name: "${product}", package: "OliphauntSDK")`).join(', ')}]), .testTarget(name: "NativeRuntimeTests", dependencies: [.product(name: "Oliphaunt", package: "OliphauntSDK"), .product(name: "OliphauntCore", package: "OliphauntSDK")])])
 `,
 );
 const environment = {
@@ -112,55 +118,64 @@ const environment = {
   CXX: clangxx,
 };
 const build = path.join(root, 'build');
-const result = spawnSync(
-  swift,
-  [
-    'build',
-    '--package-path',
-    consumerRoot,
-    '--scratch-path',
-    build,
-    '--cache-path',
-    path.join(root, 'cache'),
-    '--config-path',
-    path.join(root, 'configuration'),
-    '--security-path',
-    path.join(root, 'security'),
-    '--sdk',
-    sdk,
-    '--triple',
-    triple,
-    '--jobs',
-    '2',
-    '--disable-sandbox',
-    '-Xswiftc',
-    '-resource-dir',
-    '-Xswiftc',
-    path.resolve(path.dirname(swift), '../lib/swift'),
-    '-Xcc',
-    '-isysroot',
-    '-Xcc',
-    sdk,
-  ],
-  { env: environment, stdio: 'inherit' },
-);
+const swiftOptions = [
+  '--package-path',
+  consumerRoot,
+  '--scratch-path',
+  build,
+  '--cache-path',
+  path.join(root, 'cache'),
+  '--config-path',
+  path.join(root, 'configuration'),
+  '--security-path',
+  path.join(root, 'security'),
+  '--sdk',
+  sdk,
+  '--triple',
+  triple,
+  '--jobs',
+  '2',
+  '--disable-sandbox',
+  '-Xswiftc',
+  '-enable-testing',
+  '-Xswiftc',
+  '-resource-dir',
+  '-Xswiftc',
+  path.resolve(path.dirname(swift), '../lib/swift'),
+  '-Xcc',
+  '-isysroot',
+  '-Xcc',
+  sdk,
+];
+const result = spawnSync(swift, ['build', ...swiftOptions], { env: environment, stdio: 'inherit' });
 assert.equal(result.error, undefined, String(result.error));
 assert.equal(result.status, 0, 'Installed Swift source ZIP failed to compile/link');
 const executable = path.join(build, 'debug/InstalledConsumer');
+const runtimeEnvironment = {
+  ...environment,
+  ...(mode === 'frozen'
+    ? { OLIPHAUNT_RUNTIME_DIR: path.join(runtimeRoot, 'oliphaunt/runtime/files') }
+    : {}),
+};
 for (const phase of ['create', 'reopen']) {
   const run = spawnSync(executable, [phase, path.join(root, 'database')], {
-    env: {
-      ...environment,
-      ...(mode === 'frozen'
-        ? { OLIPHAUNT_RUNTIME_DIR: path.join(runtimeRoot, 'oliphaunt/runtime/files') }
-        : {}),
-    },
+    env: runtimeEnvironment,
     encoding: 'utf8',
   });
   assert.equal(run.error, undefined, String(run.error));
   assert.equal(run.status, 0, `Installed Swift ${phase} failed: ${run.stderr}`);
   assert.equal(run.stdout.trim(), `installed-swift-${phase}-42`);
 }
+const native = spawnSync(swift, ['test', ...swiftOptions, '--filter', 'NativeRuntimeTests'], {
+  env: { ...runtimeEnvironment, OLIPHAUNT_SWIFT_REQUIRE_NATIVE: '1' },
+  encoding: 'utf8',
+  maxBuffer: 32 * 1024 * 1024,
+});
+assert.equal(native.error, undefined, String(native.error));
+const nativeOutput = `${native.stdout}\n${native.stderr}`;
+assert.equal(native.status, 0, `Installed Swift native suite failed:\n${nativeOutput}`);
+assert.match(nativeOutput, /Test run with [1-9][0-9]* tests? .*passed/u);
+console.log(nativeOutput);
 const output = process.env.TEST_UNDECLARED_OUTPUTS_DIR ?? root;
 mkdirSync(output, { recursive: true });
 writeFileSync(
@@ -177,7 +192,7 @@ writeFileSync(
       ),
       triple,
       resourceResolution: mode === 'bundled-candidate' ? 'framework-bundle' : 'explicit-runtime',
-      cases: ['create-query-42', 'reopen-query-42'],
+      cases: ['create-query-42', 'reopen-query-42', 'native-runtime-suite'],
     },
     null,
     2,

@@ -22,6 +22,10 @@ const [
   rustc,
   rustdoc,
   compiler,
+  contractEntry,
+  contractAssertions,
+  deno,
+  contractHostsJson,
   runfiles,
 ] = process.argv.slice(2);
 assert(
@@ -37,6 +41,9 @@ assert(
     rustc &&
     rustdoc &&
     compiler &&
+    contractEntry &&
+    contractAssertions &&
+    contractHostsJson &&
     runfiles,
   'expected actual npm carriers and pinned Node consumer tools',
 );
@@ -151,6 +158,61 @@ try {
       writeFileSync(metadata, JSON.stringify(package_.manifest));
     }
   }
+  const contractHosts = JSON.parse(contractHostsJson) as string[];
+  assert(
+    Array.isArray(contractHosts) &&
+      contractHosts.length > 0 &&
+      new Set(contractHosts).size === contractHosts.length &&
+      contractHosts.every((host) => ['node', 'bun', 'deno'].includes(host)),
+    'native SDK contracts require explicit unique supported hosts',
+  );
+  if (contractHosts.includes('deno')) assert(deno, 'pinned Deno is required');
+  const contracts = path.join(root, 'contracts');
+  mkdirSync(contracts);
+  const contractDatabases = path.join(root, 'contract-databases');
+  mkdirSync(contractDatabases);
+  const entry = path.join(contracts, 'native-smoke.mts');
+  copyFileSync(contractEntry, entry);
+  copyFileSync(contractAssertions, path.join(contracts, 'native-direct-contract.mts'));
+  for (const host of contractHosts) {
+    const command =
+      host === 'node'
+        ? [node, '--experimental-strip-types', entry]
+        : host === 'bun'
+          ? [process.execPath, '--no-install', '--no-env-file', entry]
+          : [deno, 'run', '--no-config', '--node-modules-dir=manual', '--allow-all', entry];
+    for (const phase of ['source', 'restored']) {
+      const result = Bun.spawnSync(command, {
+        cwd: root,
+        env: {
+          ...env,
+          OLIPHAUNT_SMOKE_SDK: path.join(sdkPackage.directory, 'lib/index.js'),
+          OLIPHAUNT_SMOKE_ROOT: contractDatabases,
+          OLIPHAUNT_SMOKE_HOST: host,
+          OLIPHAUNT_SMOKE_PHASE: phase,
+          LIBOLIPHAUNT_PATH: path.join(held.directory, held.manifest.oliphaunt.libraryRelativePath),
+          OLIPHAUNT_INSTALL_DIR: runtimeDirectory,
+          OLIPHAUNT_RUNTIME_DIR: runtimeDirectory,
+          OLIPHAUNT_BROKER: path.join(
+            brokerPackage.directory,
+            brokerPackage.manifest.oliphaunt.executableRelativePath,
+          ),
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+        timeout: 90_000,
+        killSignal: 'SIGKILL',
+      });
+      assert.equal(
+        result.exitCode,
+        0,
+        `original native SDK contract ${host}/${phase}: ${result.stderr.toString()}\n${result.stdout.toString()}`,
+      );
+    }
+  }
+  console.log(
+    `Original installed native SDK contracts: ${contractHosts.join(', ')} source/restored: PASS`,
+  );
   console.log(
     'Installed public native SDK: default optional resolution, held runtime, direct/broker init + process reopen, broker reap, three incompatible-version rejections: PASS',
   );

@@ -11,6 +11,10 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import {
+  SWIFT_SOURCE_FIXTURE_PREFIX,
+  validateSwiftSourceFixtureEntries,
+} from '../../../src/native/sdks/swift/tools/swift-source-fixture-contract.mts';
 import { readNativeAppleHeader } from '../../../src/native/sdks/swift/tools/swift-xcframework-contract.mts';
 import { createDeterministicTar } from '../../../tools/packaging/archive-directory.mts';
 import {
@@ -128,6 +132,34 @@ test('final source envelope preserves held native version, exact source-tag path
       ).equals(readFileSync(spec.carrier)),
     ).toBeTrue();
     const entries = readPortableArchiveEntries(path.join(first, 'Oliphaunt-source.zip'));
+    const fixtures = new Map(
+      Object.entries(spec.sources)
+        .filter(([member]) => `package/${member}`.startsWith(SWIFT_SOURCE_FIXTURE_PREFIX))
+        .map(([member, file]) => [`package/${member}`, readFileSync(file)]),
+    );
+    const [fixtureName] = fixtures.keys();
+    assert(fixtureName);
+    const fixtureEntry = entries.get(fixtureName);
+    assert(fixtureEntry?.isFile);
+    for (const [fault, message] of [
+      ['missing', 'file set must exactly match'],
+      ['extra', 'file set must exactly match'],
+      ['tampered', 'must byte-for-byte match'],
+    ]) {
+      const changed = new Map(entries);
+      if (fault === 'missing') changed.delete(fixtureName);
+      else
+        changed.set(
+          fault === 'extra' ? `${SWIFT_SOURCE_FIXTURE_PREFIX}extra.control` : fixtureName,
+          {
+            ...fixtureEntry,
+            data: () => Buffer.from('changed fixture'),
+          },
+        );
+      expect(() => validateSwiftSourceFixtureEntries('changed.zip', changed, fixtures)).toThrow(
+        message,
+      );
+    }
     const tree = path.join(first, 'release-tree');
     const treeManifest = readFileSync(path.join(tree, 'Package.swift'));
     // This is the publisher's Git100644 fixture, not a claim about NTFS
@@ -278,6 +310,11 @@ test('final source envelope preserves held native version, exact source-tag path
       content('package/Sources/OliphauntNativeBindings/OliphauntNativeBindings.swift').toString(),
     ).toBe('// generated fixture\n');
     expect(entries.has('package/Tests/test.swift')).toBeTrue();
+    expect(
+      entries.has(
+        'package/Tests/Fixtures/swiftpm-extension-resources/runtime/files/share/postgresql/extension/fixture.control',
+      ),
+    ).toBeTrue();
     expect(entries.has('package/Templates/OliphauntBroker/Info.plist')).toBeTrue();
     expect(content('package/Sources/COliphaunt/include/oliphaunt.h').toString()).toBe(
       '// genuine held native fixture header\n',
@@ -306,6 +343,16 @@ test('final source envelope preserves held native version, exact source-tag path
         sources: { ...spec.sources, '../escape': spec.generatedSwift },
       }),
     ).rejects.toThrow('Unsafe Swift source');
+    await expect(
+      packageSwiftSource(path.join(scratch, 'runtime-payload'), {
+        ...spec,
+        sources: {
+          ...spec.sources,
+          'Sources/Oliphaunt/Resources/runtime/files/share/postgresql/extension/pgtap.control':
+            spec.generatedSwift,
+        },
+      }),
+    ).rejects.toThrow('must not include runtime/extension payload');
     for (const member of [
       'Package.swift',
       'VERSION',

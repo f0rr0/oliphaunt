@@ -118,7 +118,7 @@ filegroup(name = "ios_carrier_input", srcs = [":npm"], output_group = "carrier")
 react_native_package_test(name = "package_test", archive = ":npm", carrier_output = ":ios_carrier_input", source_archive = ":source_npm", manifest = "package.json", size = "small")
 shipping_package(name = "ios_carrier_shipping", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":ios_carrier_input"], ecosystem = "github", package_name = "oliphaunt-react-native-ios-carriers.json", configuration = "portable", role = "release-input", suppliers = "@react_native_swift_package//:package_suppliers")
 shipping_package(name = "package", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":npm"], ecosystem = "npm", package_name = SDK["name"], configuration = "portable", role = "source-sdk", suppliers = "@react_native_swift_package//:package_suppliers")
-shipping_export(name = "apple_shipping_export", packages = [":construction", ":package", ":ios_carrier_shipping"], qualification = [":package_test", ":installed_consumer_test", "//src/examples/native/react-native-expo:ios_installed_test"], testonly = True, target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64"])
+shipping_export(name = "apple_shipping_export", packages = [":construction", ":package", ":ios_carrier_shipping"], qualification = [":package_test", ":installed_consumer_test", "//src/examples/native/react-native-expo:autolinking_consumer_test", "//src/examples/native/react-native-expo:ios_installed_test"], testonly = True, target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64"])
 
 CONSUMER_COMPILER_IDS = [key for root in COMPILER_INPUTS[SDK["name"]].values() for key in COMPILER_CLOSURES[root]]
 CONSUMER_COMPILER_PACKAGES = {key: row for key, row in COMPILER_PACKAGES.items() if key in CONSUMER_COMPILER_IDS}
@@ -166,7 +166,7 @@ filegroup(name = "cpp_headers", srcs = glob(["cpp/*.h"]))
 
 # Original source helpers used by the E2E_ONLY installed path. No build wrappers
 # execute: the actual stock application archive is the test's declared input.
-exports_files(["tools/stage-ios-app.mts", "tools/native-resource-closure.mts"])
+exports_files(["tools/stage-ios-app.mts", "tools/native-resource-closure.mts", "tools/icu-autolinking-fixture.mts"])
 filegroup(name = "mobile_ios_e2e_sources", srcs = [
     "package.json", "tools/mobile-e2e.sh", "tools/expo-ios-runner.sh",
     "tools/expo-runner-common.sh", "tools/expo-runner-common.mts",

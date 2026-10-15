@@ -11,12 +11,14 @@ load("//build_defs/languages/ts:unit-tests.bzl", "sdk_unit_test")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/resources:resources.bzl", "wasix_current_seed_assets")
 load("//build_defs/wasix/browser:defs.bzl", "browser_host_assets", "browser_sql_consumer", "browser_sql_lifecycle")
+load("//build_defs/wasix:sdk-installed.bzl", "wasix_sdk_installed_test")
 
 package(default_visibility = ["//visibility:public"])
 
 _MODULE_OUT_DIR = "lib"
 exports_files(["package.json", "tsconfig.json", "tools/package.mts", "tools/frozen-browser-consumer.mts", "tools/browser-cdp.mts"])
 exports_files(["tools/pgwire-client.mts"])
+exports_files(["tools/integration/verify-host.mts"])
 exports_files([
     "src/resources/extensions.ts",
     "src/resources/archive.ts",
@@ -106,7 +108,20 @@ shipping_package(
     role = [carrier["role"] for carrier in PUBLICATION_CARRIERS if carrier["product"] == "oliphaunt-wasix-ts" and carrier["ecosystem"] == "npm" and carrier["name"] == SDK["name"]][0],
 )
 
-shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = [":browser_sql_consumer", ":unit_test", ":package_policy_test"], testonly = True)
+shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = [":browser_sql_consumer", ":installed_host_test", ":unit_test", ":package_policy_test"], testonly = True)
+
+wasix_sdk_installed_test(
+    name = "installed_host_test",
+    sdk = ":npm",
+    extension = "//src/extensions/external/pgtap:wasix_npm_shipping_files",
+    fixture = "tools/integration/verify-host.mts",
+    pgwire = "tools/pgwire-client.mts",
+    packages = {":query_package": QUERY["name"]} | {"@javascript_packages//:" + identity: name for name, identity in SDK["packages"].items()},
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "large",
+    timeout = "long",
+    tags = ["manual", "installed-consumer"],
+)
 
 wasix_current_seed_assets(name = "browser_seed")
 

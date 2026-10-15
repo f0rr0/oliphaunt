@@ -23,6 +23,7 @@ SOURCE_COMPATIBILITY = select({
 })
 exports_files(["Package.swift", "VERSION", "LIBOLIPHAUNT_VERSION", "tools/swift-native-carrier-contract.mts", "tools/native-legal-source-basis.mts", "tools/swift-xcframework-contract.mts", "tools/swift-release-manifest.mts", "tools/prepare-swift-release-consumer.mts"])
 exports_files(["tools/ios-carrier-manifest.mts"])
+exports_files(["tools/swift-source-fixture-contract.mts"])
 exports_files(["tools/swift-extension-release-consumer-inputs.mts", "tools/swift-source-carrier-contract.mts", "tools/extension-release-consumer.mts"])
 
 filegroup(name = "broker_templates", srcs = glob(["Templates/OliphauntBroker/*"]))

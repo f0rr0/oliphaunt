@@ -18,7 +18,7 @@ load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_ARTIFACTS", "EXTE
 load("@rules_android//android:rules.bzl", "aar_import", "android_binary", "android_library")
 load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
-load("//build_defs/android:app.bzl", "android_aar_native", "android_apk_proof", "android_app_runtime_assets", "android_extension_receipt", "android_final_aar", "android_header_tree", "android_jni_aar", "android_workspace_npm", "expo_android_bundle", "expo_android_project", "mobile_query_input", "react_native_android_codegen")
+load("//build_defs/android:app.bzl", "android_aar_native", "android_apk_proof", "android_app_runtime_assets", "android_extension_receipt", "android_final_aar", "android_header_tree", "android_jni_aar", "android_workspace_npm", "expo_android_bundle", "expo_android_project", "expo_autolinking_test", "mobile_query_input", "react_native_android_codegen")
 load("//build_defs/android:native-cpp.bzl", "REACT_NATIVE_RELEASE_DEFINES")
 load("//build_defs/extensions:mobile.bzl", "mobile_extension_registry")
 load("//build_defs/extensions:mobile_members.bzl", "MOBILE_MEMBER_LIBRARIES", "MOBILE_MEMBER_TARGETS", "MOBILE_SQL_ONLY_MEMBERS")
@@ -65,6 +65,11 @@ COMMON_INPUTS = {
     "workspace_inputs": WORKSPACE_INPUTS, "workspace_identities": WORKSPACE_IDENTITIES,
     "exec_compatible_with": ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 }
+
+expo_autolinking_test(name = "autolinking_consumer_test",
+    icu_archive = "//src/database-resources:icu_carriers_npm_files",
+    sources = {}, package_inputs = INPUTS, package_identities = IDENTITIES,
+    package_roots = ROOTS, workspace_inputs = WORKSPACE_INPUTS, workspace_identities = WORKSPACE_IDENTITIES)
 
 expo_android_project(name = "android_project", sources = COMMON_INPUTS["sources"], package_inputs = INPUTS, package_identities = IDENTITIES,
     package_roots = ROOTS, workspace_inputs = WORKSPACE_INPUTS, workspace_identities = WORKSPACE_IDENTITIES,

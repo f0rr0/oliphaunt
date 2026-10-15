@@ -6,7 +6,7 @@ load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@rules_java//java/common:java_common.bzl", "java_common")
-load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/extensions:mobile.bzl", "MobileExtensionInfo")
 load("//build_defs/extensions:final_leaf.bzl", "ExtensionFinalLeafInfo")
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS")
@@ -23,7 +23,12 @@ _HELPERS = [
     Label("//:tools/packaging/portable-archive.mts"),
 ]
 
-def _sources(ctx):
+def _input_path(ctx, file, runfiles):
+    if not runfiles:
+        return file.path
+    return file.short_path[3:] if file.short_path.startswith("../") else ctx.workspace_name + "/" + file.short_path
+
+def _sources(ctx, runfiles = False):
     inputs, sources, names = [], [], {}
     for target, destination in ctx.attr.sources.items():
         for file in target[DefaultInfo].files.to_list():
@@ -37,10 +42,10 @@ def _sources(ctx):
                 fail("Duplicate app source destination " + relative)
             names[relative] = True
             inputs.append(file)
-            sources.append({"source": file.path, "destination": relative})
+            sources.append({"source": _input_path(ctx, file, runfiles), "destination": relative})
     return sources, inputs
 
-def _node_inputs(ctx):
+def _node_inputs(ctx, runfiles = False):
     if sorted(ctx.attr.package_inputs.values()) != sorted(ctx.attr.package_identities.keys()):
         fail("App packages must cover their exact conventional lock closure")
     packages, inputs = {}, []
@@ -49,7 +54,7 @@ def _node_inputs(ctx):
         row = json.decode(ctx.attr.package_identities[identity])
         if row["package"] != package.package or row["version"] != package.version:
             fail("App package identity differs from the canonical acquisition " + identity)
-        packages[identity] = row | {"source": package.src.path}
+        packages[identity] = row | {"source": _input_path(ctx, package.src, runfiles)}
         inputs.append(package.src)
     roots = dict(ctx.attr.package_roots)
     for target, identity in ctx.attr.workspace_inputs.items():
@@ -59,14 +64,14 @@ def _node_inputs(ctx):
             fail("App workspace package differs from its source artifact " + identity)
         if identity in packages:
             fail("App workspace package collides with an acquired package " + identity)
-        packages[identity] = row | {"source": package.src.path, "local": True, "integrity": ""}
+        packages[identity] = row | {"source": _input_path(ctx, package.src, runfiles), "local": True, "integrity": ""}
         roots[package.package] = identity
         inputs.append(package.src)
-    sources, source_files = _sources(ctx)
+    sources, source_files = _sources(ctx, runfiles)
     node = ctx.toolchains[_NODE].nodeinfo
     tar = ctx.toolchains[_TAR]
-    return {"sources": sources, "packages": packages, "roots": roots, "node": node.node.path,
-            "tar": tar.tarinfo.binary.path, "tarEnvironment": tar.tarinfo.default_env}, inputs + source_files + [node.node] + tar.default.files.to_list()
+    return {"sources": sources, "packages": packages, "roots": roots, "node": _input_path(ctx, node.node, runfiles),
+            "tar": _input_path(ctx, tar.tarinfo.binary, runfiles), "tarEnvironment": tar.tarinfo.default_env}, inputs + source_files + [node.node] + tar.default.files.to_list()
 
 app_node_inputs = _node_inputs
 
@@ -94,6 +99,26 @@ _NODE_INPUTS = dict(_RUNNER, **{
 })
 
 APP_NODE_INPUT_ATTRS = _NODE_INPUTS
+
+def _autolinking_test_impl(ctx):
+    specification, inputs = _node_inputs(ctx, runfiles = True)
+    spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
+    ctx.actions.write(spec, json.encode(specification | {"icuArchive": _input_path(ctx, ctx.file.icu_archive, True)}) + "\n")
+    helpers = ctx.files._helpers + [ctx.file._fixture]
+    return bun_test_entrypoint(ctx, ctx.file._runner, ["autolinking-test", spec],
+        inputs + [spec, ctx.file.icu_archive, ctx.file._runner] + helpers,
+        source_files = [ctx.file._runner] + helpers,
+        runfiles_environment = ["OLIPHAUNT_BAZEL_RUNFILES"])
+
+_expo_autolinking_test = rule(implementation = _autolinking_test_impl, test = True,
+    toolchains = BUN_SOURCE_TOOLCHAINS + [_NODE, _TAR],
+    attrs = _NODE_INPUTS | BUN_TEST_ENTRYPOINT_ATTRS | {
+        "icu_archive": attr.label(mandatory = True, allow_single_file = [".tgz"]),
+        "_fixture": attr.label(default = Label("//src/native/sdks/react-native:tools/icu-autolinking-fixture.mts"), allow_single_file = True),
+    })
+
+def expo_autolinking_test(name, **kwargs):
+    _expo_autolinking_test(name = name, args = bun_test_entrypoint_args(name), size = "medium", **kwargs)
 
 def _codegen_impl(ctx):
     specification, inputs = _node_inputs(ctx)
