@@ -6,7 +6,7 @@ import {
 
 export { WASIX_TOOLCHAIN_PATH };
 export const STABLE_WASIX_SOURCE_LANE = 'stable';
-export const WASIX_AOT_ENGINE = 'llvm-opta-ro_ftable';
+export const WASIX_AOT_ENGINE = 'llvm-opta';
 
 export function wasixAotEngine(target) {
   return target === 'x86_64-pc-windows-msvc' ? 'v8' : WASIX_AOT_ENGINE;

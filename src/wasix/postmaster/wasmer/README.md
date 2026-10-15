@@ -28,9 +28,10 @@ hashes. Runtime selection never falls back to a stock or `PATH` Wasmer.
 The ordered `series` files, not directory globs, select patches. Their digest
 includes the manifest, member names and contents; editing or reordering a patch
 invalidates receipts. The product executor lives in `../executor`.
-Patch 0009 separately disables LLVM nonvolatile memory operations for shared
-guest memory; the product compiler and artifact verifier use the same strict
-policy. Carriers and AOT artifacts must be rebuilt, never relabelled.
+The compiler and verifier retain the nonvolatile-memory profile. Strict LLVM
+memory semantics are a separate change in
+[#242](https://github.com/f0rr0/oliphaunt/pull/242). Compiler policy changes require
+rebuilt carriers with matching identities.
 Patch 0011 gives each blocking future an owned signal-waker registration.
 Completion/cancellation removes its registration without pruning other waits;
 signal delivery invokes wakers after releasing the registry lock. The patch
