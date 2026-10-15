@@ -27,6 +27,8 @@ const work = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'sqlite-generators
 mkdirSync(output, { recursive: true });
 
 function run(tool: string, args: string[], stdout?: string, stdin?: Uint8Array): void {
+  // Upstream Tcl also parses paths as list elements, which interpret backslashes.
+  if (process.platform === 'win32') args = args.map((argument) => argument.replaceAll('\\', '/'));
   const result = Bun.spawnSync([tool, ...args], {
     cwd: work,
     env: { ...process.env, LC_ALL: 'C', TCLLIBPATH: '', TCL_LIBRARY: '', JIMLIB: '' },
