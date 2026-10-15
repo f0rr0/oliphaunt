@@ -17,7 +17,10 @@ def _probe_tools_impl(ctx):
             tools = tools,
             mnemonic = "ProbeToolInputs",
         )
-    return [_ProbeToolsInfo(files = files)]
+    return [
+        _ProbeToolsInfo(files = files),
+        DefaultInfo(files = depset([ctx.executable.checker]), runfiles = ctx.attr.checker[DefaultInfo].default_runfiles),
+    ]
 
 _probe_tools = rule(
     implementation = _probe_tools_impl,

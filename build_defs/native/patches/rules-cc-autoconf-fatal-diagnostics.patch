@@ -1,0 +1,110 @@
+diff --git a/autoconf/private/checker/check_runner.cc b/autoconf/private/checker/check_runner.cc
+index 782e81023..b70ccd7c3 100644
+--- a/autoconf/private/checker/check_runner.cc
++++ b/autoconf/private/checker/check_runner.cc
+@@ -516,7 +516,7 @@ CheckResult CheckRunner::check_compute_int(const Check& check) {
+     }
+     std::optional<int> value = find_compile_time_int_bisect(
+         *check.code(), check.language(), /*search_begin=*/-1024,
+-        /*search_end=*/1024, extra_copts);
++        /*search_end=*/1024, extra_copts, /*diagnose_failure=*/true);
+ 
+     if (value.has_value()) {
+         return CheckResult(id, std::to_string(*value), true,
+@@ -815,7 +815,7 @@ static std::pair<std::string, std::string> split_code_expr(
+ std::optional<int> CheckRunner::find_compile_time_int_bisect(
+     const std::string& base_code_template, const std::string& language,
+     const int search_begin, const int search_end,
+-    const std::vector<std::string>& extra_copts) {
++    const std::vector<std::string>& extra_copts, bool diagnose_failure) {
+     const std::pair<std::string, std::string> code_expr =
+         split_code_expr(base_code_template);
+     // int type for target might not be same as host
+@@ -846,6 +846,14 @@ std::optional<int> CheckRunner::find_compile_time_int_bisect(
+                      language, extra_copts)) {
+         // at least search_begin < constant or constant < search_end should
+         // compile if none compile, means expr can't evaluate at compile time
++        if (diagnose_failure) {
++            // Replay one failed comparison with compiler diagnostics. A
++            // successful retry must not change the already-failed result.
++            try_compile(gen_less_compare(code_expr.first,
++                                         std::to_string(search_begin),
++                                         code_expr.second),
++                        language, extra_copts, /*diagnostics=*/true);
++        }
+         throw std::runtime_error(
+             "'" + code_expr.second +
+             "' can't be evaluated (non-exist constant, invalid expression, or "
+diff --git a/autoconf/private/checker/check_runner.h b/autoconf/private/checker/check_runner.h
+index 759b5ee53..4bb6f56f5 100644
+--- a/autoconf/private/checker/check_runner.h
++++ b/autoconf/private/checker/check_runner.h
+@@ -136,7 +136,8 @@ class CheckRunner {
+      * @return true if compilation succeeded, false otherwise.
+      */
+     bool try_compile(const std::string& code, const std::string& language = "c",
+-                     const std::vector<std::string>& extra_copts = {});
++                     const std::vector<std::string>& extra_copts = {},
++                     bool diagnostics = false);
+ 
+     /**
+      * @brief Try to link an object file into an executable.
+@@ -303,7 +304,8 @@ class CheckRunner {
+     std::optional<int> find_compile_time_int_bisect(
+         const std::string& base_code_template, const std::string& language,
+         const int search_begin = -1024, const int search_end = 1024,
+-        const std::vector<std::string>& extra_copts = {});
++        const std::vector<std::string>& extra_copts = {},
++        bool diagnose_failure = false);
+ 
+     /**
+      * @brief Resolve compile_defines from check and build #define
+diff --git a/autoconf/private/checker/compilation.cc b/autoconf/private/checker/compilation.cc
+index 46ad1c7d0..342712939 100644
+--- a/autoconf/private/checker/compilation.cc
++++ b/autoconf/private/checker/compilation.cc
+@@ -23,6 +23,11 @@ namespace rules_cc_autoconf {
+ 
+ constexpr const char* kCoptsMarker = "{rules_cc_autoconf:copts}";
+ constexpr const char* kLinkoptsMarker = "{rules_cc_autoconf:linkopts}";
++#ifdef _WIN32
++constexpr const char* kNullOutput = "NUL";
++#else
++constexpr const char* kNullOutput = "/dev/null";
++#endif
+ 
+ namespace {
+ 
+@@ -69,9 +74,11 @@ bool is_msvc_output_flag(std::string_view arg) {
+         });
+ }
+ 
+-int run_command(const std::string& label, const std::vector<std::string>& cmd) {
++int run_command(const std::string& label, const std::vector<std::string>& cmd,
++                bool diagnostics = false) {
+     DebugLogger::debug("Executing declared native " + label + " tool: " + cmd.front());
+-    return run_native_process(cmd, !DebugLogger::is_verbose_debug_enabled());
++    return run_native_process(cmd, !diagnostics && !DebugLogger::is_verbose_debug_enabled(),
++                              diagnostics ? kNullOutput : "");
+ }
+ 
+ /**
+@@ -240,7 +247,8 @@ std::string CheckRunner::get_file_extension(const std::string& language) {
+ 
+ bool CheckRunner::try_compile(const std::string& code,
+                               const std::string& language,
+-                              const std::vector<std::string>& extra_copts) {
++                              const std::vector<std::string>& extra_copts,
++                              bool diagnostics) {
+     BuildDir tmp(source_id_, source_dir_);
+     std::optional<std::filesystem::path> source_file =
+         tmp.write_source(code, get_file_extension(language));
+@@ -261,7 +269,7 @@ bool CheckRunner::try_compile(const std::string& code,
+         cmd.push_back(tmp.object_path(false).string());
+     }
+ 
+-    return run_command("compile", cmd) == 0;
++    return run_command("compile", cmd, diagnostics) == 0;
+ }
+ 
+ bool CheckRunner::try_link(const std::filesystem::path& object_file,

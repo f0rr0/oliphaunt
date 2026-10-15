@@ -64,7 +64,7 @@ single_version_override(
 single_version_override(
     module_name = "rules_cc_autoconf",
     version = "0.24.0",
-    patches = ["//build_defs/native:patches/rules-cc-autoconf-native-process.patch"],
+    patches = ["//build_defs/native:patches/rules-cc-autoconf-native-process.patch", "//build_defs/native:patches/rules-cc-autoconf-fatal-diagnostics.patch"],
     patch_strip = 1,
 )
 single_version_override(
