@@ -22,6 +22,7 @@ import path from 'node:path';
 import { readPortableArchiveEntries } from '../../packaging/portable-archive.mts';
 import {
   buildShippingInputView,
+  canonicalShippingLabel,
   type ShippingInputView,
   selectShippingChanges,
 } from '../../release/bazel-shipping-inputs.mts';
@@ -204,7 +205,39 @@ function ignoreGeneratedOutputDirectories() {
     'source discovery must prune incomplete generated outputs and keep the source input graph unchanged',
   );
   rmSync(generated, { recursive: true });
-  console.log(JSON.stringify({ generatedOutputDiscovery: 'pruned' }));
+  const authored = [
+    'build_defs/quality/fixtures/bazel-authored.ts',
+    'build_defs/quality/fixtures/bazel-authored/nested.ts',
+  ];
+  try {
+    for (const file of authored) {
+      mkdirSync(path.dirname(path.join(workspace, file)), { recursive: true });
+      writeFileSync(path.join(workspace, file), 'export const fixture = true;\n');
+    }
+    const qualitySources = new Set(
+      bazel('query', [
+        'labels(srcs, //build_defs/quality:quality_sources)',
+        '--output=label',
+        '--noshow_progress',
+      ])
+        .stdout.split(/\r?\n/u)
+        .filter(Boolean)
+        .map(canonicalShippingLabel),
+    );
+    for (const file of authored)
+      assert.ok(
+        qualitySources.has(
+          `//build_defs/quality:${path.posix.relative('build_defs/quality', file)}`,
+        ),
+        'authored bazel-* files and nested directories must remain quality sources',
+      );
+  } finally {
+    rmSync(path.join(workspace, authored[0]), { force: true });
+    rmSync(path.dirname(path.join(workspace, authored[1])), { recursive: true, force: true });
+  }
+  console.log(
+    JSON.stringify({ generatedOutputDiscovery: 'pruned', nestedBazelSources: 'included' }),
+  );
 }
 
 function cargoBuildScriptParity() {
