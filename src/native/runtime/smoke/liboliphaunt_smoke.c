@@ -175,6 +175,26 @@ static void push_query(unsigned char **buf, size_t *len, const char *sql) {
     memcpy(*buf + 5, sql, sql_len);
 }
 
+static void push_extended_query(unsigned char **buf, size_t *len, const char *sql) {
+    static const unsigned char tail[] = {
+        'B', 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0,
+        'E', 0, 0, 0, 9, 0, 0, 0, 0, 0,
+        'S', 0, 0, 0, 4,
+    };
+    size_t sql_len = strlen(sql) + 1;
+    size_t parse_len = sql_len + 8;
+    size_t frame_len = parse_len - 1;
+    *len = parse_len + sizeof(tail);
+    *buf = (unsigned char *)calloc(*len, 1);
+    (*buf)[0] = 'P';
+    (*buf)[1] = (unsigned char)(frame_len >> 24);
+    (*buf)[2] = (unsigned char)(frame_len >> 16);
+    (*buf)[3] = (unsigned char)(frame_len >> 8);
+    (*buf)[4] = (unsigned char)frame_len;
+    memcpy(*buf + 6, sql, sql_len);
+    memcpy(*buf + parse_len, tail, sizeof(tail));
+}
+
 static int expect_error_contains(OliphauntHandle *db, const char *context, const char *needle) {
     const char *message = last_error_message(db);
     if (message == NULL || strstr(message, needle) == NULL) {
@@ -1205,6 +1225,7 @@ static int32_t finish_incremental_input(void *context, const uint8_t *data, size
     if (probe->token == 0) {
         static const uint8_t sync[] = {'S', 0, 0, 0, 4};
         static const uint8_t extra_sync[] = {'S', 0, 0, 0, 4, 'S', 0, 0, 0, 4};
+        static const uint8_t query[] = {'Q', 0, 0, 0, 5, 0};
         OliphauntErrorCapture error;
         probe->token = oliphaunt_protocol_stream_token(probe->db);
         if (probe->token == 0 || probe->token == probe->previous_token ||
@@ -1216,6 +1237,10 @@ static int32_t finish_incremental_input(void *context, const uint8_t *data, size
                 sync, sizeof(sync) - 1, &error) != -1 ||
             oliphaunt_feed_protocol_stream(probe->db, probe->token,
                 extra_sync, sizeof(extra_sync), &error) != -1) {
+            probe->failed = 1;
+        }
+        if (oliphaunt_feed_protocol_stream(probe->db, probe->token,
+                query, sizeof(query), &error) != -1) {
             probe->failed = 1;
         }
         if (oliphaunt_feed_protocol_stream(probe->db, probe->token,
@@ -1324,7 +1349,34 @@ static int exec_stream_callback_failure_recovers(OliphauntHandle *db) {
         return 1;
     }
     const unsigned char select_tags[] = {'T', 'D', 'C', 'Z'};
-    return exec_query_expect_tags(db, "SELECT 4 AS recovered_after_callback_failure", select_tags, sizeof(select_tags));
+    if (exec_query_expect_tags(db, "SELECT 4 AS recovered_after_callback_failure", select_tags, sizeof(select_tags))) return 1;
+    for (int extended_copy = 0; extended_copy < 2; extended_copy++) {
+        unsigned char *first = NULL, *copy = NULL;
+        size_t first_len = 0, copy_len = 0;
+        if (extended_copy) {
+            push_query(&first, &first_len, "SELECT 1");
+            push_extended_query(&copy, &copy_len, "COPY incremental_copy FROM STDIN");
+        } else {
+            push_extended_query(&first, &first_len, "SELECT 1");
+            push_query(&copy, &copy_len, "COPY incremental_copy FROM STDIN");
+        }
+        query_len = first_len + copy_len;
+        query = (unsigned char *)malloc(query_len);
+        memcpy(query, first, first_len);
+        memcpy(query + first_len, copy, copy_len);
+        free(first);
+        free(copy);
+        acc = (StreamAccumulator){0};
+        rc = oliphaunt_exec_protocol_raw_stream(db, query, query_len, fail_stream_chunk, &acc);
+        free(query);
+        free(acc.data);
+        if (rc != OLIPHAUNT_STREAM_CALLBACK_ABORTED ||
+            exec_query_expect_tags(db, "SELECT 4 AS recovered_after_copy_pipeline", select_tags, sizeof(select_tags))) {
+            fprintf(stderr, "COPY pipeline callback recovery failed: extended=%d rc=%d\n", extended_copy, rc);
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static int exec_stream_reentrancy_is_rejected(OliphauntHandle *db) {

@@ -76,6 +76,15 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
 
+  test-tools:
+    tags: ["runtime", "integration", "requires-rust", "ci-wasix-release-regression"]
+    command: "bash src/wasix/runtime/tools/runtime-smoke.sh tools"
+    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-aot", "postgres-tools-wasix:build-aot"]
+    inputs: ["@group(code)", "@group(cargo-workspace)", "/src/wasix/runtime/tools/{runtime-smoke,runtime-preflight,cargo-test-filter}.sh"]
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
   format:
     command: "cargo fmt -p oliphaunt-wasix"
     options:

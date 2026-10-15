@@ -15,6 +15,21 @@
 #define OLIPHAUNT_ERROR_CAPACITY 1024
 #define OLIPHAUNT_EMBEDDED_IO_ABI_VERSION 1U
 
+/* Resource overrides are decimal integers, never prefixes, signs or wrapped sizes.
+ * Invalid legacy environment values retain their documented fallback. */
+static inline size_t oliphaunt_resource_size(
+    const char *value, size_t minimum, size_t maximum, size_t fallback) {
+    if (value == NULL || *value == '\0') return fallback;
+    size_t parsed = 0;
+    for (const unsigned char *cursor = (const unsigned char *)value; *cursor != '\0'; cursor++) {
+        if (*cursor < '0' || *cursor > '9') return fallback;
+        size_t digit = (size_t)(*cursor - '0');
+        if (parsed > maximum / 10 || (parsed == maximum / 10 && digit > maximum % 10)) return fallback;
+        parsed = parsed * 10 + digit;
+    }
+    return parsed >= minimum ? parsed : fallback;
+}
+
 #define OLIPHAUNT_EMBEDDED_WAKE_NONE 0U
 #define OLIPHAUNT_EMBEDDED_WAKE_POSIX_FD 1U
 #define OLIPHAUNT_EMBEDDED_WAKE_WIN32_EVENT 2U
@@ -209,12 +224,14 @@ struct OliphauntHandle {
     size_t output_cap;
     size_t output_scan_off;
     bool output_ready;
+    size_t ready_remaining;
     unsigned char transaction_status;
     bool backup_mode_exit_unconfirmed;
 
     bool streaming;
     uint64_t stream_token;
     bool stream_input_closed;
+    bool stream_extended_pending;
     bool stream_copy_input;
     bool stream_failed;
     OliphauntOutputChunk *stream_head;
@@ -398,7 +415,6 @@ int oliphaunt_archive_append_wal_range(
 int oliphaunt_archive_append_text(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const char *contents);
 int oliphaunt_archive_append_bytes(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const uint8_t *contents, size_t len);
 int oliphaunt_archive_finish(OliphauntByteBuffer *archive, OliphauntHandle *handle);
-int oliphaunt_unpack_physical_archive(OliphauntHandle *handle, const uint8_t *data, size_t len, const char *staging_root);
 int oliphaunt_unpack_physical_archive_stream(OliphauntHandle *handle, OliphauntArchiveReadCallback read, void *context, const char *staging_root);
 
 #define set_error oliphaunt_set_error

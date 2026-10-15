@@ -1191,14 +1191,17 @@ impl ArtifactManifest {
             ArtifactKind::WasixToolsAot => {
                 self.require_files(
                     &relatives,
-                    &["pg_dump-llvm-opta.bin.zst", "psql-llvm-opta.bin.zst"],
+                    &[
+                        "pg_dump-llvm-opta-ro_ftable.bin.zst",
+                        "psql-llvm-opta-ro_ftable.bin.zst",
+                    ],
                 )?;
                 self.reject_files(
                     &relatives,
                     &[
-                        "postgres-llvm-opta.bin.zst",
-                        "initdb-llvm-opta.bin.zst",
-                        "pg_ctl-llvm-opta.bin.zst",
+                        "postgres-llvm-opta-ro_ftable.bin.zst",
+                        "initdb-llvm-opta-ro_ftable.bin.zst",
+                        "pg_ctl-llvm-opta-ro_ftable.bin.zst",
                     ],
                 )?;
             }
@@ -1207,9 +1210,9 @@ impl ArtifactManifest {
                 self.reject_files(
                     &relatives,
                     &[
-                        "pg_ctl-llvm-opta.bin.zst",
-                        "pg_dump-llvm-opta.bin.zst",
-                        "psql-llvm-opta.bin.zst",
+                        "pg_ctl-llvm-opta-ro_ftable.bin.zst",
+                        "pg_dump-llvm-opta-ro_ftable.bin.zst",
+                        "psql-llvm-opta-ro_ftable.bin.zst",
                     ],
                 )?;
             }
@@ -2175,7 +2178,7 @@ runtime-version = "0.1.0"
             "wasix-aot",
             "x86_64-unknown-linux-gnu",
             None,
-            "oliphaunt-llvm-opta.bin.zst",
+            "oliphaunt-llvm-opta-ro_ftable.bin.zst",
         );
         let context = BuildContext {
             manifest_dir: temp.path().to_path_buf(),
@@ -2239,7 +2242,7 @@ extensions = ["earthdistance"]
             "wasix-aot",
             "x86_64-unknown-linux-gnu",
             None,
-            "oliphaunt-llvm-opta.bin.zst",
+            "oliphaunt-llvm-opta-ro_ftable.bin.zst",
         );
         let portable_extensions = write_bundle_artifact_manifest(
             &temp,
@@ -2320,7 +2323,7 @@ runtime-version = "0.1.0"
             "wasix-aot",
             "x86_64-unknown-linux-gnu",
             None,
-            "oliphaunt-llvm-opta.bin.zst",
+            "oliphaunt-llvm-opta-ro_ftable.bin.zst",
         );
         let tools_aot_manifest = write_artifact_manifest(
             &temp,
@@ -2330,7 +2333,7 @@ runtime-version = "0.1.0"
             "wasix-tools-aot",
             "x86_64-unknown-linux-gnu",
             None,
-            "pg_dump-llvm-opta.bin.zst",
+            "pg_dump-llvm-opta-ro_ftable.bin.zst",
         );
         let context = BuildContext {
             manifest_dir: temp.path().to_path_buf(),
@@ -2366,7 +2369,7 @@ runtime-version = "0.1.0"
         assert!(
             output
                 .resources_dir
-                .join("wasix-tools-aot/oliphaunt-wasix-tools/pg_dump-llvm-opta.bin.zst")
+                .join("wasix-tools-aot/oliphaunt-wasix-tools/pg_dump-llvm-opta-ro_ftable.bin.zst")
                 .is_file()
         );
     }
@@ -2802,13 +2805,13 @@ executable = false
             ],
             "wasix-aot" => vec![
                 "manifest.json".to_owned(),
-                "oliphaunt-llvm-opta.bin.zst".to_owned(),
-                "initdb-llvm-opta.bin.zst".to_owned(),
+                "oliphaunt-llvm-opta-ro_ftable.bin.zst".to_owned(),
+                "initdb-llvm-opta-ro_ftable.bin.zst".to_owned(),
             ],
             "wasix-tools-aot" => vec![
                 "manifest.json".to_owned(),
-                "pg_dump-llvm-opta.bin.zst".to_owned(),
-                "psql-llvm-opta.bin.zst".to_owned(),
+                "pg_dump-llvm-opta-ro_ftable.bin.zst".to_owned(),
+                "psql-llvm-opta-ro_ftable.bin.zst".to_owned(),
             ],
             _ => vec![primary.to_owned()],
         };

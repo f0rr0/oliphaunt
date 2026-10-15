@@ -165,6 +165,9 @@ export type WasixAssetManifest = {
   extensions: readonly [];
 };
 
+export type AdmissionLimits =
+  import('@oliphaunt/ts-query/internal/operation-budget').AdmissionLimits;
+
 export type OpenConfig<Kind extends WasixStorageKind = WasixStorageKind> = {
   /** Existing login role. Honors role defaults and LOGIN/CONNECT restrictions; the host authenticates the caller. */
   username?: string;
@@ -179,6 +182,7 @@ export type OpenConfig<Kind extends WasixStorageKind = WasixStorageKind> = {
   extensions?: readonly WasixExtensionDescriptor[];
   /** Fresh memory by default, or an explicitly imported host storage adapter. */
   storage?: WasixStorage<Kind>;
+  admission?: AdmissionLimits;
 };
 
 export type OliphauntDatabase = {

@@ -11,6 +11,8 @@ export type OliphauntToolOutput = Readonly<{
   code: number;
   stdoutBytes: Uint8Array;
   stderrBytes: Uint8Array;
+  stdoutCount?: number;
+  stderrTruncated?: boolean;
 }>;
 
 export type DirectoryEntry = Readonly<{
@@ -118,6 +120,8 @@ export function runOliphauntToolDirect(
   protocolRead: (maximumBytes: number) => Uint8Array,
   /** Owned bytes: the receiver may retain or mutate this callback-local copy. */
   protocolWrite: (chunk: Uint8Array) => void,
+  stdoutWrite?: (chunk: Uint8Array) => void,
+  stderrWrite?: (chunk: Uint8Array) => void,
 ): Promise<OliphauntToolOutput>;
 export function instantiateOliphauntDirect(
   module: WebAssembly.Module,

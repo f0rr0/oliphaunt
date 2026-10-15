@@ -15,7 +15,7 @@ export type ServerListen =
   | Readonly<{ transport: 'tcp'; port?: number }>
   | Readonly<{ transport: 'unix'; directory: string; port?: number }>;
 
-export type ServerOpenConfig = OpenConfig & Readonly<{ listen?: ServerListen }>;
+export type ServerOpenConfig = Omit<OpenConfig, 'admission'> & Readonly<{ listen?: ServerListen }>;
 
 export type OliphauntServer = Readonly<{
   connectionString: string;
@@ -28,6 +28,8 @@ export type OliphauntServer = Readonly<{
 /** Open the Rust WASIX local server without a JavaScript socket/protocol relay. */
 export async function openServer(config: ServerOpenConfig = {}): Promise<OliphauntServer> {
   const { listen: requestedListen, ...databaseConfig } = config;
+  if ('admission' in config && config.admission !== undefined)
+    throw new TypeError('server handles do not have a database admission queue');
   const options = serializeOpenConfig(databaseConfig);
   requireNodeStorage(options);
   const addon = requireCompatibleNativeWasixAddon(options);

@@ -65,7 +65,7 @@ const PSQL_VALUE_OPTIONS: &[&str] = &[
 /// Options for the bundled, in-memory WASIX `pg_dump` runner.
 ///
 /// Captures complete output in memory, subject to available memory and host
-/// string-size limits. A streaming or sink API is not currently available.
+/// string-size limits. Use a destination API to avoid retaining stdout.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PgDumpOptions {
     args: Vec<String>,
@@ -97,6 +97,10 @@ impl ToolAssets {
 }
 
 impl PgDumpOptions {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        tool_input_bytes(&self.args, self.assets.as_deref())
+    }
+
     /// Use separately installed utility assets instead of bundled Cargo assets.
     pub fn assets(mut self, assets: ToolAssets) -> Self {
         self.assets = Some(Arc::new(assets));
@@ -116,6 +120,7 @@ pub struct PostgresToolError {
     stderr: String,
     stdout_bytes: Vec<u8>,
     stderr_bytes: Vec<u8>,
+    stderr_truncated: bool,
     cause: anyhow::Error,
 }
 
@@ -199,6 +204,7 @@ impl PostgresToolError {
             stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
             stdout_bytes,
             stderr_bytes,
+            stderr_truncated: false,
             cause,
         }
     }
@@ -224,6 +230,11 @@ impl PostgresToolError {
     /// This is empty after output-capture overflow.
     pub fn stderr(&self) -> &str {
         &self.stderr
+    }
+
+    /// Whether earlier diagnostics were discarded on a destination invocation.
+    pub fn stderr_truncated(&self) -> bool {
+        self.stderr_truncated
     }
 
     /// Exact stdout bytes, including output which is not valid UTF-8.
@@ -301,7 +312,7 @@ impl PgDumpOptions {
 /// Options for the bundled, in-memory WASIX `psql` runner.
 ///
 /// Captures complete output in memory, subject to available memory and host
-/// string-size limits. A streaming or sink API is not currently available.
+/// string-size limits. Use a destination API to avoid retaining stdout.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PsqlOptions {
     args: Vec<String>,
@@ -316,6 +327,14 @@ enum PsqlInput {
 }
 
 impl PsqlOptions {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        let input = match &self.input {
+            Some(PsqlInput::Command(value) | PsqlInput::Script(value)) => value.capacity(),
+            None => 0,
+        };
+        tool_input_bytes(&self.args, self.assets.as_deref()).saturating_add(input)
+    }
+
     /// Use separately installed utility assets instead of bundled Cargo assets.
     pub fn assets(mut self, assets: ToolAssets) -> Self {
         self.assets = Some(Arc::new(assets));
@@ -374,6 +393,19 @@ impl PsqlOptions {
         }
         Ok(())
     }
+}
+
+fn tool_input_bytes(args: &[String], assets: Option<&ToolAssets>) -> usize {
+    let bytes = args.iter().fold(
+        args.len().saturating_mul(size_of::<String>()),
+        |bytes, arg| bytes.saturating_add(arg.capacity()),
+    );
+    assets.map_or(bytes, |assets| {
+        bytes
+            .saturating_add(assets.wasm.capacity())
+            .saturating_add(assets.aot.capacity())
+            .saturating_add(assets.manifest.capacity())
+    })
 }
 
 fn validate_tool_args(
@@ -556,6 +588,8 @@ fn psql_wasm_asset() -> Result<&'static [u8]> {
 pub struct PostgresToolOutput {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    stdout_bytes: usize,
+    stderr_truncated: bool,
 }
 
 impl PostgresToolOutput {
@@ -575,6 +609,75 @@ impl PostgresToolOutput {
     }
 }
 
+pub(crate) fn write_tool_file(
+    tool: &'static str,
+    destination: &Path,
+    run: impl FnOnce(std::fs::File) -> Result<PostgresToolSummary>,
+) -> Result<PostgresToolSummary> {
+    let before_execution = |cause: std::io::Error| {
+        anyhow::Error::new(PostgresToolError::from_output(
+            tool,
+            None,
+            Vec::new(),
+            Vec::new(),
+            anyhow::Error::new(cause),
+        ))
+    };
+    let mut staging = tempfile::Builder::new()
+        .prefix(".oliphaunt-tool-")
+        .tempfile_in(destination.parent().unwrap_or(Path::new(".")))
+        .map_err(before_execution)?;
+    let output = run(staging.reopen().map_err(before_execution)?)?;
+    let failure = |cause: std::io::Error| {
+        let mut error = PostgresToolError::from_output(
+            tool,
+            Some(0),
+            Vec::new(),
+            output.stderr.as_bytes().to_vec(),
+            anyhow::Error::new(cause),
+        );
+        error.stderr_truncated = output.stderr_truncated;
+        anyhow::Error::new(error)
+    };
+    staging.flush().map_err(failure)?;
+    let staging = staging.into_temp_path();
+    std::fs::hard_link(&staging, destination).map_err(failure)?;
+    staging.close().map_err(|cause| {
+        failure(std::io::Error::new(
+            cause.kind(),
+            format!(
+                "output was published to {}; staging cleanup failed: {cause}",
+                destination.display()
+            ),
+        ))
+    })?;
+    Ok(output)
+}
+
+/// Completion of a tool invocation writing exact bytes to a destination.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostgresToolSummary {
+    pub stdout_bytes: usize,
+    /// Latest 8 KiB of diagnostics, decoded lossily as UTF-8.
+    pub stderr: String,
+    pub stderr_truncated: bool,
+}
+
+impl PostgresToolOutput {
+    pub(crate) fn summary(self) -> PostgresToolSummary {
+        PostgresToolSummary {
+            stdout_bytes: self.stdout_bytes,
+            stderr: String::from_utf8_lossy(&self.stderr).into_owned(),
+            stderr_truncated: self.stderr_truncated,
+        }
+    }
+}
+
+pub(crate) struct ToolWriters {
+    pub stdout: Box<dyn Write + Send>,
+    pub stderr: Option<Box<dyn Write + Send>>,
+}
+
 type SharedToolOutputCapture = Arc<Mutex<ToolOutputCapture>>;
 
 struct ToolInvocation<'a, N> {
@@ -589,7 +692,10 @@ struct ToolInvocation<'a, N> {
 }
 
 #[allow(unsafe_code)]
-fn run_wasix_client_tool<N>(invocation: ToolInvocation<'_, N>) -> Result<PostgresToolOutput>
+fn run_wasix_client_tool<N>(
+    invocation: ToolInvocation<'_, N>,
+    writers: Option<ToolWriters>,
+) -> Result<PostgresToolOutput>
 where
     N: VirtualNetworking + Sync,
 {
@@ -644,7 +750,21 @@ where
         (host_fs, wasix_runtime)
     };
 
-    let capture = Arc::new(Mutex::new(ToolOutputCapture::default()));
+    let capture = Arc::new(Mutex::new(ToolOutputCapture {
+        bounded_diagnostics: writers.is_some(),
+        ..ToolOutputCapture::default()
+    }));
+    let (stdout_destination, stderr_destination) = writers
+        .map(|writers| (Some(writers.stdout), writers.stderr))
+        .unwrap_or_default();
+    let stdout_file = CaptureFile::new(Arc::clone(&capture), ToolOutputStream::Stdout)
+        .destination(stdout_destination);
+    let stderr_file = CaptureFile::new(Arc::clone(&capture), ToolOutputStream::Stderr)
+        .destination(stderr_destination);
+    let destinations = [
+        stdout_file.destination.clone(),
+        stderr_file.destination.clone(),
+    ];
     let mut runner = WasiRunner::new();
     runner
         .with_mount("/".to_owned(), Arc::clone(&host_fs))
@@ -656,14 +776,8 @@ where
             ("PGSSLMODE", "disable"),
             ("PGCLIENTENCODING", "UTF8"),
         ])
-        .with_stdout(Box::new(CaptureFile::new(
-            Arc::clone(&capture),
-            ToolOutputStream::Stdout,
-        )))
-        .with_stderr(Box::new(CaptureFile::new(
-            Arc::clone(&capture),
-            ToolOutputStream::Stderr,
-        )));
+        .with_stdout(Box::new(stdout_file))
+        .with_stderr(Box::new(stderr_file));
     if name == "psql" {
         runner.with_envs([("OLIPHAUNT_PSQL_NONINTERACTIVE", "1")]);
     }
@@ -677,6 +791,21 @@ where
         module,
         ModuleHash::sha256(wasm),
     );
+    // Owned writers cannot be flushed by the caller after moving to the tool.
+    // Observe buffered destination errors before reporting a completed invocation.
+    for destination in destinations.into_iter().flatten() {
+        let result = destination
+            .lock()
+            .map_err(|_| std::io::Error::other("tool destination writer lock poisoned"))
+            .and_then(|mut writer| writer.flush());
+        if let Err(error) = result {
+            capture
+                .lock()
+                .map_err(|_| anyhow!("tool capture lock poisoned"))?
+                .write_failure
+                .get_or_insert(error);
+        }
+    }
     finish_wasix_client_tool_run(name, run_result, capture)
 }
 
@@ -694,12 +823,41 @@ fn finish_wasix_client_tool_run(
             .map(|code| code.raw()),
     };
 
+    let write_failure = capture
+        .lock()
+        .ok()
+        .and_then(|mut capture| capture.write_failure.take());
     let output = take_tool_output(&capture);
+    if let (Some(failure), Ok(output)) = (write_failure, &output) {
+        let mut cause = anyhow::Error::new(failure);
+        if let Err(runner_failure) = run_result {
+            cause = cause.context(format!("WASIX tool also failed: {runner_failure:#}"));
+        }
+        let mut error = PostgresToolError::from_output(
+            tool,
+            exit_code,
+            Vec::new(),
+            output.stderr.clone(),
+            cause,
+        );
+        error.stderr_truncated = output.stderr_truncated;
+        return Err(anyhow::Error::new(error));
+    }
     match (run_result, output) {
         (Ok(()), Ok(output)) => Ok(output),
-        (Err(cause), Ok(PostgresToolOutput { stdout, stderr })) => Err(anyhow::Error::new(
-            PostgresToolError::from_output(tool, exit_code, stdout, stderr, cause),
-        )),
+        (
+            Err(cause),
+            Ok(PostgresToolOutput {
+                stdout,
+                stderr,
+                stderr_truncated,
+                ..
+            }),
+        ) => {
+            let mut error = PostgresToolError::from_output(tool, exit_code, stdout, stderr, cause);
+            error.stderr_truncated = stderr_truncated;
+            Err(anyhow::Error::new(error))
+        }
         (run_result, Err(failure)) => {
             let runner_failure = run_result.err().map(|cause| format!("{cause:#}"));
             Err(anyhow::Error::new(PostgresToolError::from_output(
@@ -726,9 +884,16 @@ fn take_tool_output(
         capture.clear_buffers();
         return Err(failure);
     }
+    let stdout_bytes = if capture.bounded_diagnostics {
+        capture.stdout_bytes
+    } else {
+        capture.stdout.len()
+    };
     let output = PostgresToolOutput {
         stdout: std::mem::take(&mut capture.stdout),
         stderr: std::mem::take(&mut capture.stderr),
+        stdout_bytes,
+        stderr_truncated: capture.stderr_truncated,
     };
     Ok(output)
 }
@@ -739,6 +904,7 @@ fn pg_dump_with_networking<N>(
     database: &str,
     options: &PgDumpOptions,
     networking: N,
+    writers: Option<ToolWriters>,
 ) -> Result<PostgresToolOutput>
 where
     N: VirtualNetworking + Sync,
@@ -753,19 +919,22 @@ where
         format!("--port={}", addr.port()),
         format!("--dbname={database}"),
     ]);
-    run_wasix_client_tool(ToolInvocation {
-        name: "pg_dump",
-        wasm: match &options.assets {
-            Some(assets) => &assets.wasm,
-            None => pg_dump_wasm_asset()?,
+    run_wasix_client_tool(
+        ToolInvocation {
+            name: "pg_dump",
+            wasm: match &options.assets {
+                Some(assets) => &assets.wasm,
+                None => pg_dump_wasm_asset()?,
+            },
+            load_module: aot::load_pg_dump_module,
+            assets: options.assets.as_deref(),
+            username,
+            networking,
+            stdin: None,
+            args,
         },
-        load_module: aot::load_pg_dump_module,
-        assets: options.assets.as_deref(),
-        username,
-        networking,
-        stdin: None,
-        args,
-    })
+        writers,
+    )
 }
 
 fn run_psql_with_networking<N>(
@@ -774,6 +943,7 @@ fn run_psql_with_networking<N>(
     database: &str,
     options: &PsqlOptions,
     networking: N,
+    writers: Option<ToolWriters>,
 ) -> Result<PostgresToolOutput>
 where
     N: VirtualNetworking + Sync,
@@ -784,19 +954,22 @@ where
         _ => None,
     };
     let args = psql_args(addr, username, database, options);
-    run_wasix_client_tool(ToolInvocation {
-        name: "psql",
-        wasm: match &options.assets {
-            Some(assets) => &assets.wasm,
-            None => psql_wasm_asset()?,
+    run_wasix_client_tool(
+        ToolInvocation {
+            name: "psql",
+            wasm: match &options.assets {
+                Some(assets) => &assets.wasm,
+                None => psql_wasm_asset()?,
+            },
+            load_module: aot::load_psql_module,
+            assets: options.assets.as_deref(),
+            username,
+            networking,
+            stdin,
+            args,
         },
-        load_module: aot::load_psql_module,
-        assets: options.assets.as_deref(),
-        username,
-        networking,
-        stdin,
-        args,
-    })
+        writers,
+    )
 }
 
 fn psql_args(
@@ -826,7 +999,7 @@ fn psql_args(
 }
 
 pub(crate) fn decode_tool_output(tool: &'static str, output: PostgresToolOutput) -> Result<String> {
-    let PostgresToolOutput { stdout, stderr } = output;
+    let PostgresToolOutput { stdout, stderr, .. } = output;
     String::from_utf8(stdout).map_err(|cause| {
         let stdout = cause.as_bytes().to_vec();
         anyhow::Error::new(PostgresToolError::from_output(
@@ -845,6 +1018,7 @@ pub(crate) fn run_direct_pg_dump_output<F>(
     username: &str,
     database: &str,
     options: &PgDumpOptions,
+    writers: Option<ToolWriters>,
     serve: F,
 ) -> Result<PostgresToolOutput>
 where
@@ -855,7 +1029,14 @@ where
     let options = options.clone();
     run_direct_tool(
         move |networking| {
-            pg_dump_with_networking(DIRECT_TOOL_ADDR, &username, &database, &options, networking)
+            pg_dump_with_networking(
+                DIRECT_TOOL_ADDR,
+                &username,
+                &database,
+                &options,
+                networking,
+                writers,
+            )
         },
         serve,
     )
@@ -865,6 +1046,7 @@ pub(crate) fn run_direct_psql_output<F>(
     username: &str,
     database: &str,
     options: &PsqlOptions,
+    writers: Option<ToolWriters>,
     serve: F,
 ) -> Result<PostgresToolOutput>
 where
@@ -875,7 +1057,14 @@ where
     let options = options.clone();
     run_direct_tool(
         move |networking| {
-            run_psql_with_networking(DIRECT_TOOL_ADDR, &username, &database, &options, networking)
+            run_psql_with_networking(
+                DIRECT_TOOL_ADDR,
+                &username,
+                &database,
+                &options,
+                networking,
+                writers,
+            )
         },
         serve,
     )
@@ -1147,11 +1336,16 @@ struct ToolOutputCapture {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     failure: Option<ToolOutputCaptureFailure>,
+    bounded_diagnostics: bool,
+    write_failure: Option<std::io::Error>,
+    stdout_bytes: usize,
+    stderr_truncated: bool,
 }
 
 impl ToolOutputCapture {
     fn stream_len(&self, stream: ToolOutputStream) -> usize {
         match stream {
+            ToolOutputStream::Stdout if self.bounded_diagnostics => self.stdout_bytes,
             ToolOutputStream::Stdout => self.stdout.len(),
             ToolOutputStream::Stderr => self.stderr.len(),
         }
@@ -1186,6 +1380,35 @@ impl ToolOutputCapture {
     }
 
     fn write(&mut self, stream: ToolOutputStream, bytes: &[u8]) -> std::io::Result<usize> {
+        if let Some(failure) = self.failure {
+            return Err(failure.io_error());
+        }
+        if self.bounded_diagnostics {
+            if matches!(stream, ToolOutputStream::Stderr) {
+                const TAIL_BYTES: usize = 8 * 1024;
+                let excess = self
+                    .stderr
+                    .len()
+                    .saturating_add(bytes.len())
+                    .saturating_sub(TAIL_BYTES);
+                self.stderr_truncated |= excess > 0;
+                let tail = if bytes.len() >= TAIL_BYTES {
+                    self.stderr.clear();
+                    &bytes[bytes.len() - TAIL_BYTES..]
+                } else {
+                    self.stderr.drain(..excess);
+                    bytes
+                };
+                self.reserve_for(stream, tail.len())?;
+                self.stderr.extend_from_slice(tail);
+            }
+            if matches!(stream, ToolOutputStream::Stdout) {
+                self.stdout_bytes = self.stdout_bytes.saturating_add(bytes.len());
+            }
+            // Keep the tool and protocol draining after a destination failure;
+            // report that failure only after its real exit and session cleanup.
+            return Ok(bytes.len());
+        }
         self.reserve_for(stream, bytes.len())?;
         self.stream_mut(stream).extend_from_slice(bytes);
         Ok(bytes.len())
@@ -1211,15 +1434,35 @@ impl ToolOutputCapture {
     }
 }
 
-#[derive(Debug)]
+type DestinationWriter = Arc<Mutex<Box<dyn Write + Send>>>;
+
 struct CaptureFile {
     capture: SharedToolOutputCapture,
     stream: ToolOutputStream,
+    destination: Option<DestinationWriter>,
+}
+
+impl fmt::Debug for CaptureFile {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CaptureFile")
+            .field("stream", &self.stream)
+            .finish_non_exhaustive()
+    }
 }
 
 impl CaptureFile {
     fn new(capture: SharedToolOutputCapture, stream: ToolOutputStream) -> Self {
-        Self { capture, stream }
+        Self {
+            capture,
+            stream,
+            destination: None,
+        }
+    }
+
+    fn destination(mut self, writer: Option<Box<dyn Write + Send>>) -> Self {
+        self.destination = writer.map(|writer| Arc::new(Mutex::new(writer)));
+        self
     }
 
     fn capture_lock(&self) -> std::io::Result<std::sync::MutexGuard<'_, ToolOutputCapture>> {
@@ -1339,13 +1582,45 @@ impl Read for CaptureFile {
 
 impl Write for CaptureFile {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let stream = self.stream;
-        self.capture_lock()?.write(stream, buf)
+        {
+            let mut capture = self.capture_lock()?;
+            capture.write(self.stream, buf)?;
+            if capture.write_failure.is_some() {
+                return Ok(buf.len());
+            }
+        }
+        if let Some(destination) = &self.destination {
+            // Each stream owns its writer lock; a blocked stdout destination
+            // never holds the shared diagnostic/error-state lock.
+            let result = destination
+                .lock()
+                .map_err(|_| std::io::Error::other("tool destination writer lock poisoned"))
+                .and_then(|mut writer| {
+                    for chunk in buf.chunks(64 * 1024) {
+                        writer.write_all(chunk)?;
+                    }
+                    Ok(())
+                });
+            if let Err(error) = result {
+                self.capture_lock()?.write_failure.get_or_insert(error);
+            }
+        }
+        Ok(buf.len())
     }
 
     fn write_vectored(&mut self, buffers: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
-        let stream = self.stream;
-        self.capture_lock()?.write_vectored(stream, buffers)
+        let bounded = self.capture_lock()?.bounded_diagnostics;
+        if bounded {
+            let mut written = 0_usize;
+            for buffer in buffers {
+                written = written
+                    .checked_add(self.write(buffer)?)
+                    .ok_or_else(|| std::io::Error::other("tool vectored byte count overflow"))?;
+            }
+            Ok(written)
+        } else {
+            self.capture_lock()?.write_vectored(self.stream, buffers)
+        }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -1368,6 +1643,80 @@ mod tests {
         let stdout = CaptureFile::new(Arc::clone(&capture), ToolOutputStream::Stdout);
         let stderr = CaptureFile::new(Arc::clone(&capture), ToolOutputStream::Stderr);
         (capture, stdout, stderr)
+    }
+
+    #[test]
+    fn destination_failure_drains_and_preserves_completed_exit_and_diagnostic_tail() {
+        let capture = Arc::new(Mutex::new(ToolOutputCapture {
+            bounded_diagnostics: true,
+            ..ToolOutputCapture::default()
+        }));
+        let mut stdout = CaptureFile::new(Arc::clone(&capture), ToolOutputStream::Stdout)
+            .destination(Some(Box::new(Cursor::new([]))));
+        let mut stderr = CaptureFile::new(Arc::clone(&capture), ToolOutputStream::Stderr);
+        stdout.write_all(&vec![b'x'; 130_000]).unwrap();
+        stdout.write_all(b"later").unwrap();
+        stderr.write_all(&vec![b'w'; 16_000]).unwrap();
+        assert!(capture.lock().unwrap().stdout.is_empty());
+        let error = finish_wasix_client_tool_run("psql", Ok(()), capture).unwrap_err();
+        let error = error.downcast_ref::<PostgresToolError>().unwrap();
+        assert_eq!(error.exit_code(), Some(0));
+        assert!(error.stdout_bytes().is_empty());
+        assert_eq!(error.stderr_bytes().len(), 8192);
+        assert!(error.stderr_truncated());
+        assert_eq!(
+            error.cause.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::WriteZero
+        );
+    }
+
+    #[test]
+    fn blocked_stdout_does_not_hold_the_stderr_capture_lock() {
+        struct GatedWriter {
+            entered: mpsc::Sender<()>,
+            release: Option<Receiver<()>>,
+        }
+        impl Write for GatedWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                assert!(bytes.len() <= 64 * 1024);
+                if let Some(release) = self.release.take() {
+                    self.entered.send(()).unwrap();
+                    release.recv().unwrap();
+                }
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let capture = Arc::new(Mutex::new(ToolOutputCapture {
+            bounded_diagnostics: true,
+            ..ToolOutputCapture::default()
+        }));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut stdout = CaptureFile::new(Arc::clone(&capture), ToolOutputStream::Stdout)
+            .destination(Some(Box::new(GatedWriter {
+                entered: entered_tx,
+                release: Some(release_rx),
+            })));
+        let mut stderr = CaptureFile::new(Arc::clone(&capture), ToolOutputStream::Stderr);
+        let stdout_thread = thread::spawn(move || stdout.write_all(&vec![b'x'; 130_000]));
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let (drained_tx, drained_rx) = mpsc::channel();
+        let stderr_thread = thread::spawn(move || {
+            stderr.write_all(b"diagnostic").unwrap();
+            drained_tx.send(()).unwrap();
+        });
+        let drained = drained_rx.recv_timeout(Duration::from_secs(1));
+        release_tx.send(()).unwrap();
+        stdout_thread.join().unwrap().unwrap();
+        stderr_thread.join().unwrap();
+        drained.expect("stderr must drain while stdout is blocked");
+        let output = finish_wasix_client_tool_run("pg_dump", Ok(()), capture).unwrap();
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stdout_bytes, 130_000);
+        assert_eq!(output.stderr, b"diagnostic");
     }
 
     #[test]
@@ -1617,6 +1966,8 @@ mod tests {
             PostgresToolOutput {
                 stdout: vec![0xff, 0, b'a'],
                 stderr: vec![0x80, 0xfe],
+                stdout_bytes: 3,
+                stderr_truncated: false,
             },
         )
         .expect_err("invalid UTF-8 must remain a structured tool failure");
@@ -1730,6 +2081,136 @@ mod tests {
             Some(normalized_matches.as_str())
         );
         assert_eq!(result.get_text(0, "extension_loaded")?, Some("t"));
+        restored.close()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "tools")]
+    #[test]
+    #[ignore = "requires prepared runtime and tools assets"]
+    fn public_tool_destinations_large_dump_restore_and_failure_recovery() -> crate::Result<()> {
+        let root = tempfile::tempdir().unwrap();
+        let storage = crate::DatabaseStorage::Directory(root.path().join("source"));
+        let mut source = crate::Oliphaunt::builder()
+            .storage(storage.clone())
+            .open()?;
+        source.execute("CREATE ROLE logical_owner SUPERUSER LOGIN")?;
+        source.close()?;
+        let mut source = crate::Oliphaunt::builder()
+            .storage(storage.clone())
+            .username("logical_owner")
+            .open()?;
+        source.execute("CREATE TABLE dump_payload AS SELECT g AS id, repeat('λ', 4096) AS value FROM generate_series(1, 8193) AS g")?;
+        source.execute("CREATE TABLE effects(value integer)")?;
+        let options = || PgDumpOptions::new().arg("--restrict-key=oliphauntOutputTest");
+        let destination = root.path().join("dump.sql");
+        let summary = source.pg_dump_to_file(options(), &destination, None)?;
+        assert!(summary.stdout_bytes > 64 * 1024 * 1024);
+        let dump = std::fs::read_to_string(&destination).unwrap();
+        assert_eq!(source.pg_dump(options())?, dump);
+        assert_eq!(dump.len(), summary.stdout_bytes);
+        let error = source
+            .pg_dump_to_file(options(), &destination, None)
+            .unwrap_err();
+        assert_eq!(error.tool_error().unwrap().exit_code(), Some(0));
+        assert_eq!(
+            std::fs::metadata(&destination).unwrap().len(),
+            dump.len() as u64
+        );
+        let error = source
+            .psql_to_writer(
+                PsqlOptions::new()
+                    .command("INSERT INTO effects VALUES (1); SELECT repeat('x', 100000)"),
+                Cursor::new([]),
+                None,
+            )
+            .unwrap_err();
+        assert_eq!(error.tool_error().unwrap().exit_code(), Some(0));
+        assert_eq!(
+            source
+                .query("SELECT count(*)::text AS count FROM effects")?
+                .get_text(0, "count")?,
+            Some("1")
+        );
+        let failed = root.path().join("failed.sql");
+        assert!(
+            source
+                .psql_to_file(
+                    PsqlOptions::new().script("SELECT 1; SELECT 1 / 0"),
+                    &failed,
+                    None
+                )
+                .is_err()
+        );
+        assert!(!failed.exists());
+        assert!(std::fs::read_dir(root.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".oliphaunt-tool-")
+        }));
+        let large_value = root.path().join("large-value.txt");
+        let summary = source.psql_to_file(
+            PsqlOptions::new()
+                .args(["--tuples-only", "--no-align"])
+                .command(format!("SELECT repeat('X', {})", 65 * 1024 * 1024)),
+            &large_value,
+            None,
+        )?;
+        assert_eq!(summary.stdout_bytes, 65 * 1024 * 1024 + 1);
+        assert_eq!(
+            std::fs::metadata(&large_value).unwrap().len(),
+            summary.stdout_bytes as u64
+        );
+        let updated_dump_bytes = source.pg_dump(options())?.len();
+        source.close()?;
+
+        struct Counter(Arc<std::sync::atomic::AtomicUsize>);
+        impl Write for Counter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                assert!(bytes.len() <= 64 * 1024);
+                self.0
+                    .fetch_add(bytes.len(), std::sync::atomic::Ordering::Relaxed);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        struct FlushFailure;
+        impl Write for FlushFailure {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::Error::other("flush failed"))
+            }
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let database = crate::AsyncOliphaunt::builder().storage(storage).username("logical_owner").open().await?;
+            let bytes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let summary = database.pg_dump_to_writer(options(), Counter(Arc::clone(&bytes)), None).await?;
+            assert_eq!(summary.stdout_bytes, updated_dump_bytes);
+            assert_eq!(bytes.load(std::sync::atomic::Ordering::Relaxed), updated_dump_bytes);
+            let diagnostics = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let summary = database.psql_to_writer(PsqlOptions::new().command("DO $$ BEGIN FOR i IN 1..100 LOOP RAISE WARNING '%', repeat('w', 1024); END LOOP; END $$"), Counter(bytes), Some(Box::new(Counter(Arc::clone(&diagnostics))))).await?;
+            assert!(summary.stderr_truncated);
+            assert_eq!(summary.stderr.len(), 8192);
+            assert!(diagnostics.load(std::sync::atomic::Ordering::Relaxed) > 100 * 1024);
+            let error = database.psql_to_writer(PsqlOptions::new().command("SELECT 1"), FlushFailure, None).await.unwrap_err();
+            assert_eq!(error.tool_error().unwrap().exit_code(), Some(0));
+            assert_eq!(database.query("SELECT 43::text AS value").await?.get_text(0, "value")?, Some("43"));
+            database.close().await
+        })?;
+        let mut restored = crate::Oliphaunt::builder().open()?;
+        restored.execute("CREATE ROLE logical_owner SUPERUSER LOGIN")?;
+        restored.psql(PsqlOptions::new().script(dump))?;
+        assert_eq!(restored.query("SELECT count(*)::text AS count FROM dump_payload WHERE octet_length(value) = 8192")?.get_text(0, "count")?, Some("8193"));
         restored.close()?;
         Ok(())
     }

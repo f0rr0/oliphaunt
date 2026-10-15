@@ -117,34 +117,21 @@ Memory is the default. Persistent providers are selective imports:
 - `storage/node`, `storage/bun`, and `storage/deno` on those runtimes.
 
 IndexedDB hydrates a Wasmer memory directory and publishes journaled changes.
-OPFS Worker execution uses synchronous access handles for exact-range I/O to an
-opaque backing-file pool; the root direct entry point and browsers without that
-facility publish the same journal to that same format.
+OPFS publishes changed files through copy-on-write backings in every browser
+placement, then atomically replaces its namespace state. Existing ready pool
+metadata and unpublished initializing generations retain their format.
 Node, Bun, Deno, and Electron directory providers publish below the managed root's
 `pgdata` child. Ordinary operations complete a provider boundary after
 `ReadyForQuery`; callback transactions do so once after confirmed `COMMIT` or
-`ROLLBACK`. A new persistent direct-OPFS database uses one separate internal
-full-publication boundary after initialization. That boundary is not a public
-operation or option. Applications that need a PostgreSQL checkpoint issue
-`execute("CHECKPOINT")`; it completes the same ordinary provider boundary as
-another successful statement.
+`ROLLBACK`. Initialization publishes only after its full boundary succeeds.
+Applications that need a PostgreSQL checkpoint issue `execute("CHECKPOINT")`;
+it completes the same ordinary provider boundary as another successful statement.
 
-IndexedDB publication is one transaction. OPFS honors guest file flushes,
-drains WAL at operation boundaries, and flushes all dirty files in PostgreSQL
-order for checkpoint, close, or namespace publication. Its portable path uses
-copy-on-write file backings and publishes namespace state last. A publication
-failure poisons the handle because the live guest may be ahead of durable
-storage. PostgreSQL statement errors that recover through `ReadyForQuery` do
-not poison storage.
-
-The synchronous OPFS path reserves a bounded set of preopened backing files for the
-synchronous hot path. A larger creation burst is staged only until the mandatory
-host boundary. That boundary allocates, writes, and flushes every staged file
-before publishing namespace state; failure poisons the live handle and leaves
-the previous namespace authoritative. Reserve replenishment after a successful
-boundary is best-effort housekeeping and cannot change that boundary's reported
-commit state; initial capacity failure selects the portable path. Reserve size
-is an internal performance detail, not a database-capacity setting.
+IndexedDB publication is one transaction. OPFS writes changed WAL before ordinary
+files and `global/pg_control`, and publishes namespace state last. A failure leaves
+the preceding stored generation authoritative and poisons the handle because the
+live guest may be ahead of storage. PostgreSQL statement errors that recover
+through `ReadyForQuery` do not poison storage.
 
 `backup()` produces the exact WASIX physical archive. `Oliphaunt.restore()`
 accepts that archive and new or empty persistent storage. Restore rejects
@@ -178,13 +165,18 @@ TypeScript still has no cancellation or dedicated typed COPY API. Those
 absences are recorded in the SDK parity policy rather than represented as
 capability flags.
 
-In the current Rust WASIX runtime, accepting SQL `statement_timeout` does not
-guarantee interruption of CPU-bound guest queries. A caller-side future timeout
-also does not stop guest execution. Neither is an execution-resource boundary;
-the missing timer/interrupt delivery semantics are separate from SQL error
-recovery and from Native PostgreSQL's timeout behavior. See
-[resource budgets](runtime-resource-budgets.md) for the separate stack, buffer,
-queue and output limits; increasing a buffer does not repair interruption.
+Both bindings use PostgreSQL's timeout queue for SQL `statement_timeout`.
+Expiry cancels CPU work at PostgreSQL interrupt points and shortens PostgreSQL
+waits, returning SQLSTATE `57014`. Propagating that error from a managed
+transaction rolls it back; an ordinary canceled statement leaves the session
+usable. Resetting the setting to zero disarms it, and changing it replaces the
+previous deadline.
+
+WASIX delivery is cooperative: it cannot interrupt an inactive guest or an
+arbitrary blocked host call. Dormant idle deadlines are serviced on guest
+re-entry. A caller-side future timeout does not stop guest execution. These
+settings are separate from the stack, buffer, queue and output limits in
+[resource budgets](runtime-resource-budgets.md).
 
 Across both bindings, selecting extensions supplies exact runtime artifacts,
 dependencies, and required pre-start preload/GUC configuration only. Open and

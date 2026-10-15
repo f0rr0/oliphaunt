@@ -48,7 +48,6 @@ pub(crate) trait EngineSession: Send + 'static {
         ))
     }
 
-    #[cfg(feature = "mobile-bindings")]
     fn backup_to(&mut self, writer: &mut dyn std::io::Write) -> Result<()> {
         writer
             .write_all(&self.backup()?)

@@ -3,6 +3,7 @@
 #endif
 
 #include "liboliphaunt_internal.h"
+#include "../src/liboliphaunt_archive_tar.c"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -97,6 +98,20 @@ static void fixture_file(const char *root, const char *name, const char *content
 
 int main(int argc, char **argv) {
     assert(argc == 2);
+    ArchiveEntry paths[] = {
+        {.path = "pgdata/a", .directory = true},
+        {.path = "pgdata/a-b", .directory = false},
+        {.path = "pgdata/a/b", .directory = false},
+    };
+    assert(validate_archive_entries(NULL, paths, 3) == 0);
+    paths[0].directory = false;
+    assert(validate_archive_entries(NULL, paths, 3) != 0);
+    ArchiveEntry duplicate[] = {
+        {.path = "pgdata/a", .directory = true},
+        {.path = "pgdata/a", .directory = true},
+    };
+    assert(validate_archive_entries(NULL, duplicate, 2) != 0);
+
     char *source = oliphaunt_join_path(argv[1], "source");
     char *destination = oliphaunt_join_path(argv[1], "restored");
     assert(oliphaunt_mkdir_p(source, 0700) == 0);

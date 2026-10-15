@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { OliphauntClient, OliphauntDatabase, OpenConfig } from '../types.js';
@@ -34,6 +35,10 @@ export async function assertNativeDatabaseContract(
     if (phase === 'restored') {
       const restored = await database.query('SELECT value FROM backup_probe');
       assert.deepEqual(restored.rows, [{ value: label }]);
+      assert.deepEqual(
+        (await database.query('SELECT count(*)::int AS rows FROM file_backup_payload')).rows,
+        [{ rows: 140000 }],
+      );
       return;
     }
     const callbackError = new Error('stream consumer stopped');
@@ -49,7 +54,23 @@ export async function assertNativeDatabaseContract(
     assert.deepEqual((await database.query('SELECT 42 AS answer')).rows, [{ answer: 42 }]);
     await database.exec('CREATE TABLE backup_probe (value text NOT NULL)');
     await database.query('INSERT INTO backup_probe VALUES ($1)', [label]);
-    const backup = await database.backup();
+    assert.ok((await database.backup()).byteLength > 0);
+    // The heap stores poorly compressible data so the physical archive exceeds the old management-frame quota.
+    await database.execute(
+      'CREATE TABLE file_backup_payload AS SELECT i, repeat(md5(i::text), 32) AS value FROM generate_series(1, 140000) i',
+    );
+    const archivePath = join(root, 'archive');
+    await database.backupToFile(archivePath);
+    const metadata = await stat(archivePath);
+    assert.ok(metadata.size > 128 * 1024 * 1024, 'streamed file backup must exceed 128 MiB');
+    if (process.platform !== 'win32') assert.equal(metadata.mode & 0o777, 0o600);
+    await assert.rejects(database.backupToFile(archivePath), /exists|EEXIST/i);
+    assert.equal((await stat(archivePath)).size, metadata.size);
+    assert.equal(
+      (await readdir(root)).some((name) => name.startsWith('.oliphaunt-backup-')),
+      false,
+    );
+    const backup = await readFile(archivePath);
     assert.ok(backup.byteLength > 0);
     await assertStructuredQueryContract(database, label);
     await database.close();

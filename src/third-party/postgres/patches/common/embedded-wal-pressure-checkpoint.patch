@@ -1,0 +1,113 @@
+From: Sid Jain <sid_26@outlook.com>
+Subject: [PATCH] Defer embedded WAL-pressure checkpoints to idle query boundaries
+
+Embedded backends have no checkpointer process. Retain PostgreSQL's normal
+WAL-size pressure check, record it in XLogWrite, and service it outside a
+transaction at the next ReadyForQuery boundary. Clear the request only after
+successful checkpoint completion. Normal postmaster backends retain their
+background-checkpointer path. Native and WASIX share this implementation;
+their respective traffic cops own the idle-boundary call.
+
+diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
+--- a/src/backend/access/transam/xlog.c
++++ b/src/backend/access/transam/xlog.c
+@@ -100,6 +100,7 @@
+ #include "utils/ps_status.h"
+ #include "utils/relmapper.h"
++#include "utils/resowner.h"
+ #include "utils/snapmgr.h"
+ #include "utils/timeout.h"
+ #include "utils/timestamp.h"
+ #include "utils/varlena.h"
+@@ -166,6 +167,10 @@
+  */
+ static bool check_wal_consistency_checking_deferred = false;
+ 
++#if defined(OLIPHAUNT_EMBEDDED) || defined(OLIPHAUNT_WASM_SINGLE_USER)
++static bool oliphaunt_checkpoint_deferred = false;
++#endif
++
+ /*
+  * GUC support
+  */
+@@ -2288,6 +2292,35 @@
+ 	return false;
+ }
+ 
++#if defined(OLIPHAUNT_EMBEDDED) || defined(OLIPHAUNT_WASM_SINGLE_USER)
++void
++OliphauntPerformDeferredCheckpoint(void)
++{
++	ResourceOwner saved_owner = CurrentResourceOwner;
++	volatile bool completed = false;
++
++	if (!oliphaunt_checkpoint_deferred)
++		return;
++
++	/* Idle backends have no transaction resource owner. */
++	Assert(saved_owner == NULL);
++	Assert(AuxProcessResourceOwner != NULL);
++	CurrentResourceOwner = AuxProcessResourceOwner;
++	PG_TRY();
++	{
++		RequestCheckpoint(CHECKPOINT_CAUSE_XLOG);
++		completed = true;
++		oliphaunt_checkpoint_deferred = false;
++	}
++	PG_FINALLY();
++	{
++		ReleaseAuxProcessResources(completed);
++		CurrentResourceOwner = saved_owner;
++	}
++	PG_END_TRY();
++}
++#endif
++
+ /*
+  * Write and/or fsync the log at least as far as WriteRqst indicates.
+  *
+@@ -2496,6 +2511,18 @@
+ 				 * like a checkpoint is needed, forcibly update RedoRecPtr and
+ 				 * recheck.
+ 				 */
++#if defined(OLIPHAUNT_EMBEDDED) || defined(OLIPHAUNT_WASM_SINGLE_USER)
++				if (!IsUnderPostmaster)
++				{
++					if (XLogCheckpointNeeded(openLogSegNo))
++					{
++						(void) GetRedoRecPtr();
++						if (XLogCheckpointNeeded(openLogSegNo))
++							oliphaunt_checkpoint_deferred = true;
++					}
++				}
++				else
++#endif
+ 				if (IsUnderPostmaster && XLogCheckpointNeeded(openLogSegNo))
+ 				{
+ 					(void) GetRedoRecPtr();
+diff --git a/src/include/access/xlog.h b/src/include/access/xlog.h
+--- a/src/include/access/xlog.h
++++ b/src/include/access/xlog.h
+@@ -244,6 +244,9 @@
+ extern void StartupXLOG(void);
+ extern void ShutdownXLOG(int code, Datum arg);
+ extern bool CreateCheckPoint(int flags);
++#if defined(OLIPHAUNT_EMBEDDED) || defined(OLIPHAUNT_WASM_SINGLE_USER)
++extern void OliphauntPerformDeferredCheckpoint(void);
++#endif
+ extern bool CreateRestartPoint(int flags);
+ extern WALAvailability GetWALAvailability(XLogRecPtr targetLSN);
+ extern void XLogPutNextOid(Oid nextOid);
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -34,6 +34,9 @@
+ #include "access/parallel.h"
+ #include "access/printtup.h"
+ #include "access/xact.h"
++#if defined(OLIPHAUNT_EMBEDDED) || defined(OLIPHAUNT_WASM_SINGLE_USER)
++#include "access/xlog.h"
++#endif
+ #include "catalog/pg_type.h"
+ #include "commands/async.h"
+ #include "commands/event_trigger.h"

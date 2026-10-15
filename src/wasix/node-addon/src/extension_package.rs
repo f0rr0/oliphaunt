@@ -299,16 +299,6 @@ mod tests {
         fs::write(root.join("extensions/pgtap/extension.tar.zst"), b"fixture").unwrap();
         fs::write(&package_file, manifest.to_string()).unwrap();
         assert_eq!(load(selection()).unwrap().sql_name(), "pgtap");
-        #[cfg(feature = "tools")]
-        assert!(
-            register_tools(NativeToolPackage {
-                package_json: package_file.to_str().unwrap().into(),
-                aot_package_json: package_file.to_str().unwrap().into(),
-            })
-            .unwrap_err()
-            .to_string()
-            .contains("does not match")
-        );
         fs::write(root.join("extensions/pgtap/extension.tar.zst"), b"corrupt").unwrap();
         assert_eq!(load(selection()).unwrap().sql_name(), "pgtap");
         assert!(

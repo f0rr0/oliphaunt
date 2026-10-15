@@ -73,6 +73,8 @@ The synchronous handle remains on one OS thread for its entire lifetime. Do not 
 
 Inspect `error.kind()` and `error.postgres_error()` for structured failures. PostgreSQL errors include SQLSTATE. Transaction errors preserve callback and rollback/database failures when both occur.
 
+Use SQL `statement_timeout` for a cooperative statement deadline. It cancels CPU work at PostgreSQL interrupt points and PostgreSQL waits with SQLSTATE `57014`. Propagate the error from a transaction callback to roll back. It cannot interrupt an inactive guest or an arbitrary blocked host call.
+
 Close explicitly to observe shutdown errors. After a terminal failure, stop using the handle and reopen persistent storage when appropriate. The SDK does not expose direct-query cancellation; dropping a future does not guarantee that an already-running statement stops.
 
 | Symptom | Check |

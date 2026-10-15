@@ -43,6 +43,15 @@
       "input": "buffered",
       "output": "streamed",
       "streamActive": "false-output-only-does-not-claim-duplex"
+    },
+    {
+      "name": "buffered-input-streamed-output-with-copy",
+      "value": 4,
+      "input": "buffered-until-copy-then-streamed",
+      "output": "streamed",
+      "transition": "reported-copy-response",
+      "activation": "after-copy-response-write-succeeds",
+      "streamActive": "false-until-transition-then-true"
     }
   ],
   "copyStates": [
@@ -79,6 +88,10 @@
     "javascriptOwnership": "fresh-owned-copy-per-callback",
     "rustOwnership": "borrowed-only-for-synchronous-callback",
     "failure": "terminal-no-further-delivery-already-delivered-prefix-is-not-retracted"
+  },
+  "directToolInput": {
+    "readBatchMaxBytes": 65536,
+    "meaning": "socket-read-batch-not-a-value-or-response-size-limit"
   },
   "flush": {
     "name": "oliphaunt_wasix_pq_flush",

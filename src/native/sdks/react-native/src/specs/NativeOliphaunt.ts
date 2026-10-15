@@ -2,6 +2,8 @@ import type { TurboModule } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
 
 export type NativeOpenConfig = {
+  admissionMaxPendingOperations?: number;
+  admissionHighWaterMarkBytes?: number;
   startupTimeoutMs?: number;
   operationTimeoutMs?: number;
   storageKind: string;

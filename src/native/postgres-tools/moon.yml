@@ -39,7 +39,7 @@ tasks:
       set -e
       cargo build -p oliphaunt-tools --locked
       bun run --cwd src/native/postgres-tools/npm build
-    inputs: ["crates/tools/**/*", "@group(cargo-workspace)", "npm/index.mts", "npm/output-capture.mjs", "/tools/packaging/emit-javascript.mts"]
+    inputs: ["crates/tools/**/*", "@group(cargo-workspace)", "npm/index.mts", "npm/output-*.mjs", "/tools/packaging/emit-javascript.mts"]
     outputs: ["npm/index.js", "/target/debug/liboliphaunt_tools.rlib"]
     options:
       runFromWorkspaceRoot: true
@@ -53,6 +53,7 @@ tasks:
       - "crates/tools/**/*"
       - "npm/index.mts"
       - "npm/output-capture.mjs"
+      - "npm/output-file.mjs"
       - "npm/output-capture.test.mjs"
       - "@group(cargo-workspace)"
       - project: "shared-test-fixtures"
@@ -72,6 +73,20 @@ tasks:
       - "@group(packaging-source)"
       - "@group(legal-files)"
     outputs: ["/target/postgres-tools/native/release-assets/**/*"]
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  test-integration:
+    tags: ["integration", "ci-native-consumers", "requires-rust"]
+    command: "bash src/native/sdks/tests/with-runtime.sh --tools cargo test -p oliphaunt-tools --locked --test output_integration -- --ignored"
+    deps: ["liboliphaunt-native:package-runtime-desktop-target", "postgres-tools-native:package-assets"]
+    inputs:
+      - "crates/tools/**/*"
+      - "npm/**/*"
+      - "tools/{package-carriers.mts,smoke-packed-tools-npm.*}"
+      - "/src/native/sdks/tests/with-runtime.sh"
+      - "/src/native/runtime/tools/runtime-preflight.sh"
+      - "@group(cargo-workspace)"
     options:
       cache: false
       runFromWorkspaceRoot: true

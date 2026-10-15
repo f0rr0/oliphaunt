@@ -1,3 +1,8 @@
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { writeNewFile } from './output-file.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCapturedOutput, captureOutput, finishCapture } from './output-capture.mjs';
@@ -54,4 +59,26 @@ test('concatenation failure releases chunks and never returns a prefix', () => {
   assert.deepEqual(captured.stdout, []);
   assert.deepEqual(captured.stderr, []);
   assert.throws(() => finishCapture(captured), TypeError);
+});
+
+test('tool file destinations accept platform file URLs and retain create-only publication', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-tool-file-'));
+  try {
+    const destination = join(root, 'output with spaces');
+    const write = async (stream) => {
+      const writer = stream.getWriter();
+      try {
+        await writer.write(Uint8Array.of(1, 2, 3));
+      } finally {
+        writer.releaseLock();
+      }
+    };
+    await writeNewFile(pathToFileURL(destination), write);
+    assert.deepEqual(await readFile(destination), Buffer.from([1, 2, 3]));
+    await assert.rejects(writeNewFile(pathToFileURL(destination), write), /EEXIST/);
+    await assert.rejects(writeNewFile(new URL('https://example.com/out'), write), /file/);
+    assert.deepEqual(await readdir(root), ['output with spaces']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

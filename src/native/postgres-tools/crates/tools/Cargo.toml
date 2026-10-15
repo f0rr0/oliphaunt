@@ -17,6 +17,7 @@ include = [
   "build_support.rs",
   "src/**",
   "testdata/**",
+  "tests/**",
   "LICENSE",
   "THIRD_PARTY_NOTICES.md",
 ]

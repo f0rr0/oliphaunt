@@ -286,7 +286,7 @@ index 687f6ce..38062d1 100644
              flags: _flags,
          }
      }
-@@ -482,6 +591,370 @@ impl File {
+@@ -482,6 +591,344 @@ impl File {
          // FIXME: no unwrap!
          self.inner_std.metadata().unwrap()
      }
@@ -447,24 +447,6 @@ index 687f6ce..38062d1 100644
 +const ZERO_WRITE_CHUNK_LEN: usize = 8192;
 +static ZERO_WRITE_CHUNK: [u8; ZERO_WRITE_CHUNK_LEN] = [0; ZERO_WRITE_CHUNK_LEN];
 +
-+fn try_extend_with_zeroes(file: &fs::File, len: u64, offset: u64) -> io::Result<Option<usize>> {
-+    let written = usize::try_from(len).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
-+    let end = offset
-+        .checked_add(len)
-+        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-+
-+    if len == 0 {
-+        return Ok(Some(0));
-+    }
-+
-+    if offset >= file.metadata()?.len() {
-+        file.set_len(end)?;
-+        return Ok(Some(written));
-+    }
-+
-+    Ok(None)
-+}
-+
 +#[cfg(unix)]
 +fn host_iov_max() -> usize {
 +    static IOV_MAX: OnceLock<usize> = OnceLock::new();
@@ -476,10 +458,6 @@ index 687f6ce..38062d1 100644
 +
 +#[cfg(unix)]
 +fn positioned_write_zeroes(file: &fs::File, len: u64, offset: u64) -> io::Result<usize> {
-+    if let Some(written) = try_extend_with_zeroes(file, len, offset)? {
-+        return Ok(written);
-+    }
-+
 +    let mut written = 0usize;
 +    let mut remaining = len;
 +    let max_batch = host_iov_max().max(1) * ZERO_WRITE_CHUNK_LEN;
@@ -554,10 +532,6 @@ index 687f6ce..38062d1 100644
 +
 +#[cfg(not(unix))]
 +fn positioned_write_zeroes(file: &mut fs::File, len: u64, offset: u64) -> io::Result<usize> {
-+    if let Some(written) = try_extend_with_zeroes(file, len, offset)? {
-+        return Ok(written);
-+    }
-+
 +    let mut written = 0usize;
 +    while (written as u64) < len {
 +        let remaining = (len - written as u64) as usize;

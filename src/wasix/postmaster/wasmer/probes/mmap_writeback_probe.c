@@ -202,6 +202,61 @@ main(void)
 		return 20;
 	}
 
+	/* Repeated full and partial unmaps must recycle only runtime-owned pages,
+	 * without growing the guest heap or overwriting its MORECORE interval. */
+	if (ftruncate(fd, 4 * 65536) < 0)
+	{
+		perror("extend mapping churn file");
+		return 21;
+	}
+	frontier_after_map = NULL;
+	for (i = 0; i < 64; i++)
+	{
+		char *large = mmap(NULL, 3 * 65536, PROT_READ | PROT_WRITE,
+						   MAP_SHARED, fd, 0);
+		char *peer = mmap(NULL, 65536, PROT_READ | PROT_WRITE,
+						  MAP_SHARED, fd, 3 * 65536);
+		char *replacement;
+
+		if (large == MAP_FAILED || peer == MAP_FAILED)
+		{
+			perror("mapping churn allocation");
+			return 22;
+		}
+		if (i == 0)
+			frontier_after_map = sbrk(0);
+		large[0] = 'A';
+		large[2 * 65536] = 'C';
+		peer[0] = 'B';
+		if (munmap(large + 65536, 65536) < 0)
+		{
+			perror("partial mapping churn unmap");
+			return 23;
+		}
+		replacement = mmap(NULL, 65536, PROT_READ | PROT_WRITE,
+						   MAP_SHARED, fd, 65536);
+		if (replacement == MAP_FAILED || replacement != large + 65536)
+		{
+			fprintf(stderr, "partial mapping interval was not recycled\n");
+			return 24;
+		}
+		replacement[0] = 'R';
+		if (sbrk(0) != frontier_after_map || large[0] != 'A' ||
+			large[2 * 65536] != 'C' || peer[0] != 'B' ||
+			morecore_segment[0] != 0x5a || morecore_segment[65535] != 0x5a)
+		{
+			fprintf(stderr, "mapping churn grew memory or corrupted another owner\n");
+			return 25;
+		}
+		if (munmap(large, 65536) < 0 ||
+			munmap(large + 2 * 65536, 65536) < 0 ||
+			munmap(replacement, 65536) < 0 || munmap(peer, 65536) < 0)
+		{
+			perror("mapping churn final unmap");
+			return 26;
+		}
+	}
+
 	if (reset_file(fd, initial, sizeof(initial) - 1) < 0)
 	{
 		perror("reset private");

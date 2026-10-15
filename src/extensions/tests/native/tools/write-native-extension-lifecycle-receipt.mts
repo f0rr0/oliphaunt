@@ -9,6 +9,11 @@ import {
   extensionSqlNames,
 } from '../../../../../tools/release/release-artifact-targets.mts';
 
+import {
+  assertLifecycleByMode,
+  NATIVE_EXTENSION_LIFECYCLE_BY_MODE,
+} from './verify-native-extension-lifecycle-receipts.mts';
+
 function fail(message) {
   throw new Error(`write-native-extension-lifecycle-receipt.mts: ${message}`);
 }
@@ -46,7 +51,7 @@ function canonicalExtensions() {
 function verifyInputEnvelope(inputs) {
   const { inputEnvelopeSha256, ...core } = inputs;
   if (inputEnvelopeSha256 !== sha256(JSON.stringify(core))) fail('input envelope digest mismatch');
-  if (inputs.schema !== 'oliphaunt-native-extension-lifecycle-inputs-v1')
+  if (inputs.schema !== 'oliphaunt-native-extension-lifecycle-inputs-v2')
     fail('unknown input envelope schema');
   if (
     !/^[0-9a-f]{40}$/u.test(inputs.candidateSha) ||
@@ -70,9 +75,7 @@ function verifyInputEnvelope(inputs) {
     );
   if (inputs.modes?.join(',') !== 'direct,broker,server')
     fail('input envelope has incomplete modes');
-  if (inputs.lifecycle?.join(',') !== 'install,load,restart,backup,restore') {
-    fail('input envelope has incomplete lifecycle');
-  }
+  assertLifecycleByMode(inputs.lifecycleByMode);
   const expectedIdentities = [
     'broker',
     'broker-checksum',
@@ -130,29 +133,30 @@ export function writeReceipt(options) {
   }
   const expected = inputs.extensions.filter((_, index) => index % shardCount === shardIndex);
   const passPattern =
-    /OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_PASS shard=(\d+)\/(\d+) extension=([^ ]+) modes=([^ ]+) lifecycle=([^\s]+)/gu;
+    /OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_PASS shard=(\d+)\/(\d+) extension=([^ ]+) mode=([^ ]+) lifecycle=([^\s]+)/gu;
   const passRecords = [...log.matchAll(passPattern)].map((match) => ({
     shardIndex: Number(match[1]),
     shardCount: Number(match[2]),
     extension: match[3],
-    modes: match[4].split(','),
+    mode: match[4],
     lifecycle: match[5].split('-'),
   }));
   if (
-    passRecords.length !== expected.length ||
-    new Set(passRecords.map((row) => row.extension)).size !== passRecords.length
+    passRecords.length !== expected.length * inputs.modes.length ||
+    new Set(passRecords.map((row) => `${row.extension}:${row.mode}`)).size !== passRecords.length
   ) {
-    fail(`shard ${shardIndex} must contain ${expected.length} unique extension PASS records`);
+    fail(
+      `shard ${shardIndex} must contain ${expected.length * inputs.modes.length} unique extension PASS records`,
+    );
   }
   for (const record of passRecords) {
     if (record.shardIndex !== shardIndex || record.shardCount !== shardCount)
       fail('extension PASS record has wrong shard identity');
-    if (record.modes.join(',') !== 'direct,broker,server')
-      fail(`${record.extension} PASS record has incomplete modes`);
-    if (record.lifecycle.join(',') !== 'install,load,restart,backup,restore')
-      fail(`${record.extension} PASS record has incomplete lifecycle`);
+    const lifecycle = NATIVE_EXTENSION_LIFECYCLE_BY_MODE[record.mode];
+    if (!lifecycle || record.lifecycle.join(',') !== lifecycle.join(','))
+      fail(`${record.extension}:${record.mode} PASS record has incomplete lifecycle`);
   }
-  const actual = passRecords.map((row) => row.extension).sort();
+  const actual = [...new Set(passRecords.map((row) => row.extension))].sort();
   if (actual.join('\0') !== [...expected].sort().join('\0')) {
     fail(
       `shard ${shardIndex} extension set drift: expected=${expected.join(',')}; actual=${actual.join(',')}`,
@@ -163,7 +167,7 @@ export function writeReceipt(options) {
     fail(`shard ${shardIndex} must contain exactly one final PASS marker`);
 
   const receiptCore = {
-    schema: 'oliphaunt-native-extension-lifecycle-shard-receipt-v1',
+    schema: 'oliphaunt-native-extension-lifecycle-shard-receipt-v2',
     candidateSha: inputs.candidateSha,
     candidateTree: inputs.candidateTree,
     target: inputs.target,
@@ -173,7 +177,7 @@ export function writeReceipt(options) {
     extensionCount: expected.length,
     extensions: expected,
     modes: inputs.modes,
-    lifecycle: inputs.lifecycle,
+    lifecycleByMode: inputs.lifecycleByMode,
     inputEnvelopeSha256: inputs.inputEnvelopeSha256,
     consumedArtifacts: inputs.consumedArtifacts,
     proofLogSha256: sha256(log),

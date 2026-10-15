@@ -86,8 +86,8 @@ for (const [id, template, kind, payloadDirName, ancestorAssets, variable, expres
       'bin/initdb.wasix.wasm',
       'bin/pg_dump.wasix.wasm',
       'bin/psql.wasix.wasm',
-      'oliphaunt-llvm-opta.bin.zst',
-      'pg_dump-llvm-opta.bin.zst',
+      'oliphaunt-llvm-opta-ro_ftable.bin.zst',
+      'pg_dump-llvm-opta-ro_ftable.bin.zst',
     ]) {
       writeFileSync(path.join(payloadRoot, file), 'selected-payload');
     }
@@ -103,8 +103,8 @@ for (const [id, template, kind, payloadDirName, ancestorAssets, variable, expres
                   name: id === 'tools-aot' ? 'tool:pg_dump' : 'runtime:oliphaunt',
                   path:
                     id === 'tools-aot'
-                      ? 'pg_dump-llvm-opta.bin.zst'
-                      : 'oliphaunt-llvm-opta.bin.zst',
+                      ? 'pg_dump-llvm-opta-ro_ftable.bin.zst'
+                      : 'oliphaunt-llvm-opta-ro_ftable.bin.zst',
                 },
               ],
             }

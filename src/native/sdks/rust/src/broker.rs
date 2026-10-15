@@ -185,13 +185,30 @@ impl EngineSession for NativeBrokerSession {
     }
 
     fn backup(&mut self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        self.backup_to(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    fn backup_to(&mut self, writer: &mut dyn Write) -> Result<()> {
         self.ensure_transport()?;
         let control = self.control.as_mut().ok_or(Error::EngineStopped)?;
-        let response =
-            write_request(control, RequestFrame::Backup).and_then(|()| read_response(control));
-        match self.read_response_or_mark_failed(response)? {
-            ResponseFrame::Ok(bytes) => Ok(bytes),
-            ResponseFrame::Error(message) => Err(Error::Engine(message)),
+        let response = write_request(control, RequestFrame::BackupStream).and_then(|()| {
+            oliphaunt_broker::ipc::read_backup_response(control, writer).map_err(Into::into)
+        });
+        let (response, destination_failure) = match response {
+            Ok(response) => response,
+            Err(error) => return Err(self.mark_broker_failed(error)),
+        };
+        match (response, destination_failure) {
+            (ResponseFrame::Ok(_), None) => Ok(()),
+            (ResponseFrame::Ok(_), Some(error)) => {
+                Err(Error::Engine(format!("write backup destination: {error}")))
+            }
+            (ResponseFrame::Error(message), None) => Err(Error::Engine(message)),
+            (ResponseFrame::Error(message), Some(error)) => Err(Error::Engine(format!(
+                "{message}; write backup destination: {error}"
+            ))),
         }
     }
 
@@ -337,19 +354,6 @@ impl NativeBrokerSession {
             .transport
             .as_mut()
             .expect("native broker transport was checked above"))
-    }
-
-    fn read_response_or_mark_failed(
-        &mut self,
-        response: Result<ResponseFrame>,
-    ) -> Result<ResponseFrame> {
-        match response {
-            Ok(frame) => Ok(frame),
-            Err(error) => {
-                self.mark_broker_failed(error.clone());
-                Err(error)
-            }
-        }
     }
 
     fn mark_broker_failed(&mut self, error: Error) -> Error {

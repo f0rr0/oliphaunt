@@ -87,7 +87,7 @@ impl Request {
     pub async fn backup_to(&self, writer: impl std::io::Write + Send + 'static) -> Result<()> {
         self.database
             .executor
-            .backup_to(Box::new(writer), Arc::clone(&self.cancellation))
+            .backup_to_cancellable(Box::new(writer), Arc::clone(&self.cancellation))
             .await
     }
 }

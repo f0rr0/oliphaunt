@@ -41,8 +41,9 @@ use crate::oliphaunt::storage::PgDataStorage;
 use crate::oliphaunt::storage::StorageRoot;
 #[cfg(feature = "tools-execution")]
 use crate::oliphaunt::tools::{
-    DirectToolSocket, PgDumpOptions, PostgresToolOutput, PsqlOptions, decode_tool_output,
-    is_direct_tool_outcome_unknown, run_direct_pg_dump_output, run_direct_psql_output,
+    DirectToolSocket, PgDumpOptions, PostgresToolOutput, PostgresToolSummary, PsqlOptions,
+    ToolWriters, decode_tool_output, is_direct_tool_outcome_unknown, run_direct_pg_dump_output,
+    run_direct_psql_output, write_tool_file,
 };
 #[cfg(feature = "tools-execution")]
 use oliphaunt_query::wire::{FrontendFrameKind, FrontendFrameReader, classify_frontend_message};
@@ -1033,13 +1034,25 @@ impl Oliphaunt {
         &mut self,
         options: PgDumpOptions,
     ) -> Result<PostgresToolOutput> {
+        self.run_pg_dump_tool_with_writers(options, None)
+    }
+
+    #[cfg(feature = "tools-execution")]
+    fn run_pg_dump_tool_with_writers(
+        &mut self,
+        options: PgDumpOptions,
+        writers: Option<ToolWriters>,
+    ) -> Result<PostgresToolOutput> {
         options.validate()?;
         self.prepare_tool_session()?;
         let startup = self.backend.startup_config().clone();
-        let result =
-            run_direct_pg_dump_output(&startup.username, &startup.database, &options, |socket| {
-                self.serve_direct_tool_protocol(socket)
-            });
+        let result = run_direct_pg_dump_output(
+            &startup.username,
+            &startup.database,
+            &options,
+            writers,
+            |socket| self.serve_direct_tool_protocol(socket),
+        );
         self.finish_tool_session(result)
     }
 
@@ -1054,13 +1067,25 @@ impl Oliphaunt {
         &mut self,
         options: PsqlOptions,
     ) -> Result<PostgresToolOutput> {
+        self.run_psql_tool_with_writers(options, None)
+    }
+
+    #[cfg(feature = "tools-execution")]
+    fn run_psql_tool_with_writers(
+        &mut self,
+        options: PsqlOptions,
+        writers: Option<ToolWriters>,
+    ) -> Result<PostgresToolOutput> {
         options.validate()?;
         self.prepare_tool_session()?;
         let startup = self.backend.startup_config().clone();
-        let result =
-            run_direct_psql_output(&startup.username, &startup.database, &options, |socket| {
-                self.serve_direct_tool_protocol(socket)
-            });
+        let result = run_direct_psql_output(
+            &startup.username,
+            &startup.database,
+            &options,
+            writers,
+            |socket| self.serve_direct_tool_protocol(socket),
+        );
         self.finish_tool_session(result)
     }
 
@@ -1221,6 +1246,52 @@ impl Oliphaunt {
         crate::error::public_result(self.run_pg_dump_tool_output(options))
     }
 
+    /// Write exact tool stdout without retaining the result. The tool owns the
+    /// writer until execution and database session cleanup finish. Writers may
+    /// contain partial output on failure. Owned destinations are flushed before
+    /// completion; the caller owns publication and durability.
+    /// Optional diagnostics receive complete stderr alongside the 8 KiB tail.
+    #[cfg(feature = "tools-execution")]
+    pub fn pg_dump_to_writer(
+        &mut self,
+        options: PgDumpOptions,
+        writer: impl Write + Send + 'static,
+        diagnostics: Option<Box<dyn Write + Send>>,
+    ) -> crate::Result<PostgresToolSummary> {
+        crate::error::public_result(
+            self.run_pg_dump_tool_with_writers(
+                options,
+                Some(ToolWriters {
+                    stdout: Box::new(writer),
+                    stderr: diagnostics,
+                }),
+            )
+            .map(PostgresToolOutput::summary),
+        )
+    }
+
+    /// Stage a private host file and publish it create-only after the tool and
+    /// database session cleanup succeed. This does not promise power-loss durability.
+    #[cfg(feature = "tools-execution")]
+    pub fn pg_dump_to_file(
+        &mut self,
+        options: PgDumpOptions,
+        destination: impl AsRef<std::path::Path>,
+        diagnostics: Option<Box<dyn Write + Send>>,
+    ) -> crate::Result<PostgresToolSummary> {
+        crate::error::public_result(options.validate())?;
+        crate::error::public_result(write_tool_file("pg_dump", destination.as_ref(), |writer| {
+            self.run_pg_dump_tool_with_writers(
+                options,
+                Some(ToolWriters {
+                    stdout: Box::new(writer),
+                    stderr: diagnostics,
+                }),
+            )
+            .map(PostgresToolOutput::summary)
+        }))
+    }
+
     /// Run packaged non-interactive `psql` directly against this database.
     #[cfg(feature = "tools-execution")]
     pub fn psql(&mut self, options: PsqlOptions) -> crate::Result<String> {
@@ -1231,6 +1302,52 @@ impl Oliphaunt {
     #[cfg(feature = "tools-execution")]
     pub fn psql_output(&mut self, options: PsqlOptions) -> crate::Result<PostgresToolOutput> {
         crate::error::public_result(self.run_psql_tool_output(options))
+    }
+
+    /// Write exact tool stdout without retaining the result. The tool owns the
+    /// writer until execution and database session cleanup finish. Writers may
+    /// contain partial output on failure. Owned destinations are flushed before
+    /// completion; the caller owns publication and durability.
+    /// Optional diagnostics receive complete stderr alongside the 8 KiB tail.
+    #[cfg(feature = "tools-execution")]
+    pub fn psql_to_writer(
+        &mut self,
+        options: PsqlOptions,
+        writer: impl Write + Send + 'static,
+        diagnostics: Option<Box<dyn Write + Send>>,
+    ) -> crate::Result<PostgresToolSummary> {
+        crate::error::public_result(
+            self.run_psql_tool_with_writers(
+                options,
+                Some(ToolWriters {
+                    stdout: Box::new(writer),
+                    stderr: diagnostics,
+                }),
+            )
+            .map(PostgresToolOutput::summary),
+        )
+    }
+
+    /// Stage a private host file and publish it create-only after the tool and
+    /// database session cleanup succeed. This does not promise power-loss durability.
+    #[cfg(feature = "tools-execution")]
+    pub fn psql_to_file(
+        &mut self,
+        options: PsqlOptions,
+        destination: impl AsRef<std::path::Path>,
+        diagnostics: Option<Box<dyn Write + Send>>,
+    ) -> crate::Result<PostgresToolSummary> {
+        crate::error::public_result(options.validate())?;
+        crate::error::public_result(write_tool_file("psql", destination.as_ref(), |writer| {
+            self.run_psql_tool_with_writers(
+                options,
+                Some(ToolWriters {
+                    stdout: Box::new(writer),
+                    stderr: diagnostics,
+                }),
+            )
+            .map(PostgresToolOutput::summary)
+        }))
     }
 
     fn backup_inner(&mut self) -> Result<Vec<u8>> {

@@ -1,7 +1,10 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { verifyRegisteredOutputCleanup } from './registered-output-cleanup.mjs';
 
 import {
   connect,
@@ -16,6 +19,7 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
 const runtimeName = readRuntime(process.argv.slice(3));
+const entrypointRuntime = runtimeName === 'electron' ? 'node' : runtimeName;
 const seed = await readFile(
   resolve(root, 'src/test-fixtures/postgres/logical-tools-seed.sql'),
   'utf8',
@@ -35,16 +39,26 @@ const runtime = (
   await import(pathToFileURL(resolve(packageRoot(packed.packages.runtime.name), 'index.js')).href)
 ).default;
 const { default: Oliphaunt } = await import(
-  pathToFileURL(resolve(packageRoot(packed.packages.binding.name), `lib/index.${runtimeName}.js`))
-    .href
+  pathToFileURL(
+    resolve(packageRoot(packed.packages.binding.name), `lib/index.${entrypointRuntime}.js`),
+  ).href
 );
 const { default: WorkerOliphaunt } = await import(
   pathToFileURL(
-    resolve(packageRoot(packed.packages.binding.name), `lib/worker-entry.${runtimeName}.js`),
+    resolve(packageRoot(packed.packages.binding.name), `lib/worker-entry.${entrypointRuntime}.js`),
   ).href
 );
-const { PostgresToolError, pgDump, psql } = await import(
-  pathToFileURL(resolve(packageRoot(packed.packages.toolsFacade.name), 'lib/index.js')).href
+const { PostgresToolError, pgDump, psql, pgDumpToFile, psqlToFile, pgDumpToStream, psqlToStream } =
+  await import(
+    pathToFileURL(resolve(packageRoot(packed.packages.toolsFacade.name), 'lib/index.js')).href
+  );
+const { default: DirectOliphaunt } = await import(
+  pathToFileURL(resolve(packageRoot(packed.packages.binding.name), 'lib/direct.node.js')).href
+);
+const { directory: directoryStorage } = await import(
+  pathToFileURL(
+    resolve(packageRoot(packed.packages.binding.name), `lib/storage/${entrypointRuntime}.js`),
+  ).href
 );
 const { openServer } = await import(
   pathToFileURL(resolve(packageRoot(packed.packages.binding.name), 'lib/server.node.js')).href
@@ -52,6 +66,19 @@ const { openServer } = await import(
 const { default: extension } = await import(
   pathToFileURL(resolve(packageRoot(packed.packages.extension.name), 'index.js')).href
 );
+
+const { default: tools } = await import(
+  pathToFileURL(resolve(packageRoot(packed.packages.toolsCarrier.name), 'native.js')).href
+);
+const [wasm, aot, manifest] = await Promise.all([
+  readFile(new URL(tools.psql.source)),
+  readFile(new URL(tools.psql.aot.source)),
+  readFile(new URL(tools.psql.aot.manifest), 'utf8'),
+]);
+const addonPath = createRequire(join(packed.consumer, 'package.json')).resolve(
+  `${packed.packages.nativeCarrier.name}/oliphaunt_wasix_napi.node`,
+);
+await verifyRegisteredOutputCleanup(addonPath, { wasm, aot, manifest }, runtimeName);
 
 console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: logical tools`);
 await verifyLogicalTools({
@@ -62,6 +89,13 @@ await verifyLogicalTools({
   psql,
   extension,
 });
+for (const [placement, Binding] of [
+  ['root', Oliphaunt],
+  ['direct', DirectOliphaunt],
+  ['worker', WorkerOliphaunt],
+]) {
+  await verifyFileDestinations(placement, Binding);
+}
 console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: TCP server`);
 await verifyServer(openServer, { transport: 'tcp' });
 if (process.platform !== 'win32') {
@@ -75,6 +109,247 @@ if (process.platform !== 'win32') {
 }
 
 console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: PASS`);
+
+async function verifyFileDestinations(placement, Binding) {
+  console.log(`WASIX TypeScript ${runtimeName} ${placement}: tool file destinations`);
+  const directory = await mkdtemp(join(tmpdir(), `oliphaunt-wasix-tools-${placement}-`));
+  const storage = directoryStorage(join(directory, 'database'));
+  let source;
+  let restored;
+  try {
+    source = await Binding.open({ storage });
+    await source.execute('CREATE ROLE logical_owner LOGIN SUPERUSER');
+    await source.close();
+    source = await Binding.open({ storage, username: 'logical_owner' });
+    await source.execute('CREATE TABLE tool_large_dump (id integer PRIMARY KEY, value text)');
+    await source.execute(
+      "INSERT INTO tool_large_dump SELECT i, repeat('λ', 4096) FROM generate_series(1, 8193) i",
+    );
+    await source.execute('CREATE TABLE tool_effects (value integer)');
+    const options = { args: ['--restrict-key=OliphauntFileDestinationTest'] };
+    const destination = join(directory, 'dump.sql');
+    const summary = await pgDumpToFile(source, destination, options);
+    const file = await readFile(destination);
+    if (summary.stdoutBytes !== file.length || file.length <= 64 * 1024 * 1024) {
+      throw new Error(`${placement} file dump was truncated or did not exceed 64 MiB`);
+    }
+    if (process.platform !== 'win32' && ((await stat(destination)).mode & 0o777) !== 0o600) {
+      throw new Error(`${placement} tool output did not preserve private staging permissions`);
+    }
+    const sql = await pgDump(source, options);
+    if (file.toString('utf8') !== sql || !sql.includes('COPY public.tool_large_dump')) {
+      throw new Error(`${placement} file output differed from the complete plain COPY collector`);
+    }
+    restored = await Binding.open();
+    await restored.execute('CREATE ROLE logical_owner LOGIN');
+    await psql(restored, { script: sql });
+    if (
+      (await restored.queryRaw('SELECT count(*)::int AS rows FROM tool_large_dump')).getText(
+        0,
+        'rows',
+      ) !== '8193'
+    ) {
+      throw new Error(`${placement} file dump did not restore all rows`);
+    }
+    if (placement === 'direct') {
+      const rejected = await psqlToStream(source, new WritableStream(), {
+        command: 'INSERT INTO tool_effects VALUES (99)',
+      }).catch((error) => error);
+      if (!(rejected instanceof PostgresToolError) || !rejected.message.includes('/direct'))
+        throw new Error('direct async destination did not fail before execution');
+      if (
+        (await source.queryRaw('SELECT count(*)::int AS rows FROM tool_effects')).getText(
+          0,
+          'rows',
+        ) !== '0'
+      )
+        throw new Error('unsupported direct destination executed SQL');
+    } else {
+      await verifyStreamDestinations(source, placement, options, file);
+    }
+    const largeValuePath = join(directory, 'large-value.txt');
+    const largeValue = await psqlToFile(source, largeValuePath, {
+      args: ['--tuples-only', '--no-align'],
+      command: `SELECT repeat('X', ${65 * 1024 * 1024})`,
+    });
+    if (
+      largeValue.stdoutBytes !== 65 * 1024 * 1024 + 1 ||
+      (await stat(largeValuePath)).size !== largeValue.stdoutBytes
+    ) {
+      throw new Error(`${placement} file output truncated one value larger than 64 MiB`);
+    }
+    const existing = await psqlToFile(source, destination, {
+      command: 'INSERT INTO tool_effects VALUES (1)',
+    }).catch((error) => error);
+    if (
+      !(existing instanceof PostgresToolError) ||
+      existing.exitCode !== 0 ||
+      (await stat(destination)).size !== file.length
+    ) {
+      throw new Error(
+        `${placement} existing destination lost completed-tool metadata or replaced output`,
+      );
+    }
+    if (
+      (await source.queryRaw('SELECT count(*)::int AS rows FROM tool_effects')).getText(
+        0,
+        'rows',
+      ) !== '1'
+    ) {
+      throw new Error(`${placement} publication failure retried or rolled back committed SQL`);
+    }
+    const failedDestination = join(directory, 'failed.sql');
+    const failed = await psqlToFile(source, failedDestination, { command: 'SELECT 1/0' }).catch(
+      (error) => error,
+    );
+    if (
+      !(failed instanceof PostgresToolError) ||
+      !Number.isSafeInteger(failed.exitCode) ||
+      failed.exitCode === 0
+    ) {
+      throw new Error(`${placement} failed psql did not report its real exit code`);
+    }
+    if (
+      (await readdir(directory)).some(
+        (name) => name === 'failed.sql' || name.startsWith('.oliphaunt-tool-'),
+      )
+    ) {
+      throw new Error(`${placement} failed tool left published or owned staging output`);
+    }
+    const diagnostics = await psqlToFile(source, join(directory, 'warnings.txt'), {
+      command:
+        "DO $$ BEGIN FOR i IN 1..24 LOOP RAISE WARNING '%', repeat('diagnostic', 1024); END LOOP; RAISE WARNING 'last diagnostic'; END $$",
+    });
+    if (
+      !diagnostics.stderrTruncated ||
+      Buffer.byteLength(diagnostics.stderr) > 8192 ||
+      !diagnostics.stderr.includes('last diagnostic')
+    ) {
+      throw new Error(`${placement} file output did not keep a marked diagnostic tail`);
+    }
+    if ((await source.queryRaw('SELECT 42 AS answer')).getText(0, 'answer') !== '42') {
+      throw new Error(`${placement} database was not usable after file destination failures`);
+    }
+  } finally {
+    await restored?.close();
+    await source?.close();
+    await rm(directory, { force: true, recursive: true });
+  }
+}
+
+async function verifyStreamDestinations(source, placement, options, file) {
+  let bytes = 0;
+  let largest = 0;
+  let firstByteMs;
+  let peakRss = process.memoryUsage().rss;
+  const start = performance.now();
+  const sample = setInterval(() => {
+    peakRss = Math.max(peakRss, process.memoryUsage().rss);
+  }, 20);
+  const hash = createHash('sha256');
+  const destination = new WritableStream({
+    async write(chunk) {
+      if (firstByteMs === undefined) {
+        firstByteMs = performance.now() - start;
+        const owned = Buffer.from(chunk);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        if (!owned.equals(chunk))
+          throw new Error('output chunk lifetime ended before destination acceptance');
+      }
+      bytes += chunk.length;
+      largest = Math.max(largest, chunk.length);
+      hash.update(chunk);
+    },
+  });
+  let summary;
+  try {
+    summary = await pgDumpToStream(source, destination, options);
+  } finally {
+    clearInterval(sample);
+  }
+  if (
+    bytes !== file.length ||
+    summary.stdoutBytes !== bytes ||
+    largest > 64 * 1024 ||
+    destination.locked ||
+    hash.digest('hex') !== createHash('sha256').update(file).digest('hex')
+  ) {
+    throw new Error(`${placement} async dump differed from file output or violated owned batching`);
+  }
+  console.log(
+    `WASIX ${runtimeName} ${placement} stream: ${JSON.stringify({ bytes, largest, firstByteMs, elapsedMs: performance.now() - start, peakRss })}`,
+  );
+  let hugeBytes = 0;
+  await psqlToStream(
+    source,
+    new WritableStream({
+      write(chunk) {
+        if (chunk.length > 64 * 1024) throw new Error('oversized output callback');
+        for (const byte of chunk) {
+          if (byte !== (hugeBytes === 65 * 1024 * 1024 ? 10 : 88))
+            throw new Error('huge stream value changed');
+          hugeBytes++;
+        }
+      },
+    }),
+    { args: ['--tuples-only', '--no-align'], command: `SELECT repeat('X', ${65 * 1024 * 1024})` },
+  );
+  if (hugeBytes !== 65 * 1024 * 1024 + 1) throw new Error('huge stream value was truncated');
+  const failure = new Error('installed sink failure');
+  const failed = await psqlToStream(
+    source,
+    new WritableStream({
+      write() {
+        throw failure;
+      },
+    }),
+    { command: "INSERT INTO tool_effects VALUES (2); SELECT repeat('z', 1000000)" },
+  ).catch((error) => error);
+  if (!(failed instanceof PostgresToolError) || failed.exitCode !== 0 || failed.cause !== failure)
+    throw new Error('sink failure lost completed-tool metadata');
+  if (
+    (await source.queryRaw('SELECT count(*)::int AS rows FROM tool_effects')).getText(0, 'rows') !==
+    '1'
+  )
+    throw new Error('sink failure changed committed SQL');
+  await source.execute('TRUNCATE tool_effects');
+  let diagnostics = 0;
+  const diagnosticSummary = await psqlToStream(source, new WritableStream({ write() {} }), {
+    command:
+      "DO $$ BEGIN FOR i IN 1..24 LOOP RAISE WARNING '%', repeat('diagnostic', 1024); END LOOP; RAISE WARNING 'last diagnostic'; END $$",
+    stderr: new WritableStream({
+      write(chunk) {
+        diagnostics += chunk.length;
+      },
+    }),
+  });
+  if (
+    diagnostics <= 8192 ||
+    !diagnosticSummary.stderrTruncated ||
+    Buffer.byteLength(diagnosticSummary.stderr) > 8192 ||
+    !diagnosticSummary.stderr.includes('last diagnostic')
+  )
+    throw new Error('full stderr or bounded marked tail was lost');
+  const controller = new AbortController();
+  const reason = new Error('cancel installed sink');
+  const cancelled = await psqlToStream(
+    source,
+    new WritableStream({
+      write() {
+        controller.abort(reason);
+        return new Promise(() => {});
+      },
+    }),
+    {
+      command: "SELECT repeat('c', 2000000)",
+      signal: controller.signal,
+    },
+  ).catch((error) => error);
+  if (!(cancelled instanceof PostgresToolError) || cancelled.cause !== reason)
+    throw new Error('stalled destination cancellation lost its cause');
+  if ((await source.queryRaw('SELECT 42 AS answer')).getText(0, 'answer') !== '42')
+    throw new Error('database was unusable after destination cancellation');
+}
 
 async function verifyLogicalTools({
   Oliphaunt,
@@ -112,7 +387,7 @@ async function verifyLogicalTools({
     await source.close();
   }
 
-  if (runtimeName === 'node') {
+  if (entrypointRuntime === 'node') {
     await verifyDirectPgDump(Oliphaunt, pgDump);
   }
 
@@ -282,8 +557,12 @@ async function expectStillPending(operation, observationMs, label) {
 }
 
 function readRuntime(args) {
-  if (args.length !== 2 || args[0] !== '--runtime' || !['node', 'bun', 'deno'].includes(args[1])) {
-    throw new Error('usage: smoke-host.mjs --runtime node|bun|deno');
+  if (
+    args.length !== 2 ||
+    args[0] !== '--runtime' ||
+    !['node', 'bun', 'deno', 'electron'].includes(args[1])
+  ) {
+    throw new Error('usage: smoke-host.mjs --runtime node|bun|deno|electron');
   }
   return args[1];
 }

@@ -211,7 +211,7 @@ int EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_set_protocol_transport(int mode)
 {
 	if (mode < OLIPHAUNT_WASIX_PROTOCOL_BUFFERED ||
-		mode > OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT)
+		mode > OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY)
 	{
 		errno = EINVAL;
 		return -1;
@@ -220,7 +220,8 @@ oliphaunt_wasix_set_protocol_transport(int mode)
 	int previous = oliphaunt_wasix_protocol_transport;
 	oliphaunt_wasix_protocol_transport = mode;
 	oliphaunt_wasix_protocol_stream_active_value = mode == OLIPHAUNT_WASIX_PROTOCOL_STREAM;
-	if (mode != OLIPHAUNT_WASIX_PROTOCOL_HYBRID)
+	if (mode != OLIPHAUNT_WASIX_PROTOCOL_HYBRID &&
+		mode != OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY)
 	{
 		oliphaunt_wasix_protocol_copy_state_value = OLIPHAUNT_WASIX_PROTOCOL_COPY_NONE;
 		oliphaunt_wasix_protocol_stream_requested = false;
@@ -245,7 +246,8 @@ oliphaunt_wasix_protocol_report_copy_response(int state)
 	}
 	oliphaunt_wasix_protocol_copy_state_value = state;
 	oliphaunt_wasix_protocol_stream_requested =
-		oliphaunt_wasix_protocol_transport == OLIPHAUNT_WASIX_PROTOCOL_HYBRID &&
+		(oliphaunt_wasix_protocol_transport == OLIPHAUNT_WASIX_PROTOCOL_HYBRID ||
+		 oliphaunt_wasix_protocol_transport == OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY) &&
 		state != OLIPHAUNT_WASIX_PROTOCOL_COPY_NONE;
 }
 
@@ -1188,6 +1190,10 @@ oliphaunt_wasix_getsockname(int fd, struct sockaddr *addr, socklen_t *len)
 ssize_t EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_recv(int fd, void *buf, size_t n, int flags)
 {
+	/* libpq can request a whole large value; keep each WASIX socket read bounded. */
+	if ((fd != oliphaunt_wasix_protocol_fd || oliphaunt_wasix_direct_tool_active) &&
+		n > OLIPHAUNT_WASIX_DIRECT_TOOL_READ_BATCH_MAX)
+		n = OLIPHAUNT_WASIX_DIRECT_TOOL_READ_BATCH_MAX;
 	if (fd != oliphaunt_wasix_protocol_fd)
 		return recv(fd, buf, n, flags);
 	if (oliphaunt_wasix_protocol_transport == OLIPHAUNT_WASIX_PROTOCOL_STREAM ||
@@ -1214,11 +1220,17 @@ oliphaunt_wasix_send(int fd, const void *buf, size_t n, int flags)
 	if (oliphaunt_wasix_output_failure_status != 0)
 		return oliphaunt_wasix_record_output_failure(
 			oliphaunt_wasix_output_failure_status);
-	if (oliphaunt_wasix_protocol_transport ==
-		OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT)
+	if (oliphaunt_wasix_protocol_transport == OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT ||
+		oliphaunt_wasix_protocol_transport == OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY)
 	{
 		(void) flags;
-		return oliphaunt_wasix_stream_write(STDOUT_FILENO, buf, n);
+		ssize_t written = oliphaunt_wasix_stream_write(STDOUT_FILENO, buf, n);
+		if (written > 0 && oliphaunt_wasix_protocol_stream_requested)
+		{
+			oliphaunt_wasix_protocol_stream_active_value = true;
+			oliphaunt_wasix_protocol_stream_requested = false;
+		}
+		return written;
 	}
 	if (oliphaunt_wasix_protocol_transport == OLIPHAUNT_WASIX_PROTOCOL_STREAM ||
 		oliphaunt_wasix_protocol_stream_active_value)

@@ -1,5 +1,6 @@
 import { rejects } from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { expectSqlDeadlines } from './sql-deadlines.mjs';
 const fixture: {
   candidate: string;
   extension: string | undefined;
@@ -181,6 +182,7 @@ if (packageOnly) {
     const db = await client.open({ extensions: [pgtap] });
     await db.execute('CREATE EXTENSION pgtap');
     const structuredApi = await verifyStructuredApi(db);
+    await expectSqlDeadlines(db);
     const version = (await db.queryRaw('SELECT pgtap_version()::text AS version')).getText(
       0,
       'version',

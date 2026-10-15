@@ -51,6 +51,29 @@ fileGroups:
     - "!moon.yml"
     - "!release.toml"
 tasks:
+  test-android:
+    tags: [quality, unit, requires-android-sdk, requires-rust]
+    deps:
+      - oliphaunt-mobile-bindings:generate
+      - {target: oliphaunt-mobile-bindings:cargo-sources, cacheStrategy: hash}
+    script: |
+      bash src/native/sdks/kotlin/gradlew -p src/native/sdks/react-native/android \
+        -PoliphauntKotlinSdkDir="$PWD/src/native/sdks/kotlin/oliphaunt" \
+        -PoliphauntBuildRoot="$PWD/target/oliphaunt-react-native/android-tests" \
+        :testDebugUnitTest --configuration-cache
+    inputs:
+      - "@group(code)"
+      - /src/native/sdks/kotlin/gradle/**/*
+      - /src/native/sdks/kotlin/gradlew
+      - /src/native/sdks/kotlin/oliphaunt/build.gradle.kts
+      - /src/native/sdks/kotlin/oliphaunt/src/**/*
+      - /src/native/runtime/include/oliphaunt.h
+      - "!/src/native/sdks/react-native/**/node_modules/**"
+      - "!/src/native/sdks/react-native/**/.gradle/**"
+      - "!/src/native/sdks/react-native/**/.cxx/**"
+      - "!/src/native/sdks/react-native/**/build/**"
+    options:
+      runFromWorkspaceRoot: true
   test-cpp:
     tags: [quality, unit]
     command: "bash tools/test-cpp.sh"
