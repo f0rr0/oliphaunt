@@ -7,3 +7,6 @@ commit = "b66487f7a6f8deee3998e858d773e19923e4bd4b"
 sql-name = "pg_ivm"
 source-path = "pg_ivm.control"
 default-version = "1.13"
+
+[archive]
+sha256 = "a7c29129e959dd4233a7e565883e15e97bf9aa8e40650597868447227788fd12"

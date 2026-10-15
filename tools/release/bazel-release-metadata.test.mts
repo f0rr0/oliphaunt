@@ -165,7 +165,7 @@ function fixture(run: (root: string, write: (name: string, content: string) => v
   write('src/extensions/external/example/native-version', '1.0.0\n');
   write(
     'src/extensions/external/example/source.toml',
-    `name="example"\nurl="https://example.invalid/example.git"\nbranch="0.8.2"\ncommit="${'a'.repeat(40)}"\nversion="0.8.2"\n`,
+    `name="example"\nurl="https://github.com/upstream/example.git"\nbranch="0.8.2"\ncommit="${'a'.repeat(40)}"\nversion="0.8.2"\n[archive]\nsha256="${'c'.repeat(64)}"\n`,
   );
   write(
     'src/extensions/contrib/carriers.toml',
@@ -983,6 +983,104 @@ parser="toml:dependencies.broker-carrier.version"
   });
 });
 
+test('Git sources and dependencies derive archives from their exact commit and declared remote', () => {
+  fixture((root, write) => {
+    write(
+      'src/extensions/external/example/dependencies/library/source.toml',
+      `name="logical-library"\nurl="https://gitlab.gnome.org/upstream/library.git"\nmirror_url="https://github.com/mirror/physical-library.git/"\ncommit="${'b'.repeat(40)}"\n[archive]\nsha256="${'d'.repeat(64)}"\n`,
+    );
+    const metadata = loadReleaseMetadata(root);
+    const acquisition = (value = metadata) => {
+      const rendered = renderReleaseMetadata(value, '@//build_defs/release:identity.bzl');
+      const [sources, dependencies] = rendered.extensionSourcesBzl
+        .slice('EXTENSION_SOURCES = '.length)
+        .split('\n\nEXTENSION_DEPENDENCIES = ');
+      return { sources: JSON.parse(sources), dependencies: JSON.parse(dependencies) };
+    };
+    const initial = acquisition();
+    expect(initial.sources.example).toEqual({
+      name: 'example',
+      url: 'https://github.com/upstream/example.git',
+      commit: 'a'.repeat(40),
+      archive: {
+        url: `https://codeload.github.com/upstream/example/tar.gz/${'a'.repeat(40)}`,
+        sha256: 'c'.repeat(64),
+        strip_prefix: `example-${'a'.repeat(40)}`,
+      },
+    });
+    expect(initial.dependencies.example.library).toMatchObject({
+      name: 'logical-library',
+      url: 'https://gitlab.gnome.org/upstream/library.git',
+      mirror_url: 'https://github.com/mirror/physical-library.git/',
+      commit: 'b'.repeat(40),
+      archive: {
+        url: `https://codeload.github.com/mirror/physical-library/tar.gz/${'b'.repeat(40)}`,
+        sha256: 'd'.repeat(64),
+        strip_prefix: `physical-library-${'b'.repeat(40)}`,
+      },
+    });
+    expect(metadata.extensionDependencies.example.library.archive).toEqual({
+      sha256: 'd'.repeat(64),
+    });
+    for (const remote of [
+      'https://github.com/upstream/example.git',
+      'https://github.com/upstream/example',
+      'https://github.com/upstream/example/',
+      'https://github.com/upstream/example.git/',
+    ]) {
+      const changed = structuredClone(metadata);
+      changed.extensionSources.example.url = remote;
+      expect(acquisition(changed).sources.example.archive).toEqual(initial.sources.example.archive);
+    }
+    const changed = structuredClone(metadata);
+    changed.extensionSources.example.commit = 'e'.repeat(40);
+    changed.extensionDependencies.example.library.commit = 'f'.repeat(40);
+    const next = acquisition(changed);
+    expect(next.sources.example.archive).toEqual({
+      ...initial.sources.example.archive,
+      url: `https://codeload.github.com/upstream/example/tar.gz/${'e'.repeat(40)}`,
+      strip_prefix: `example-${'e'.repeat(40)}`,
+    });
+    expect(next.dependencies.example.library.archive).toEqual({
+      ...initial.dependencies.example.library.archive,
+      url: `https://codeload.github.com/mirror/physical-library/tar.gz/${'f'.repeat(40)}`,
+      strip_prefix: `physical-library-${'f'.repeat(40)}`,
+    });
+  });
+});
+
+test('Git source and dependency acquisition requires a checksum without independent archive authority', () => {
+  fixture((root, write) => {
+    write(
+      'src/extensions/external/example/dependencies/library/source.toml',
+      `name="library"\nurl="https://github.com/upstream/library.git"\ncommit="${'b'.repeat(40)}"\n[archive]\nsha256="${'d'.repeat(64)}"\n`,
+    );
+    const metadata = loadReleaseMetadata(root);
+    for (const location of ['source', 'dependency']) {
+      const invalidRows = [
+        { archive: undefined },
+        { archive: { sha256: 'latest' } },
+        { archive: { sha256: 'c'.repeat(64), url: 'https://other.invalid/archive.tar.gz' } },
+        { archive: { sha256: 'c'.repeat(64), strip_prefix: 'other-root' } },
+        { commit: 'main' },
+        { url: 'https://gitlab.gnome.org/upstream/library.git' },
+        { mirror_url: 'https://mirror.invalid/library.git' },
+      ];
+      for (const invalid of invalidRows) {
+        const changed = structuredClone(metadata);
+        const source =
+          location === 'source'
+            ? changed.extensionSources.example
+            : changed.extensionDependencies.example.library;
+        Object.assign(source, invalid);
+        expect(() =>
+          renderReleaseMetadata(changed, '@//build_defs/release:identity.bzl'),
+        ).toThrow();
+      }
+    }
+  });
+});
+
 test('metadata paths cannot escape; rendered identities have no construction dependencies', () => {
   for (const value of ['', '../elsewhere', '/absolute', 'a/../b', 'a//b', 'a\\b', 'a\0b']) {
     expect(() => repositoryPath(value)).toThrow('inside the repository');
@@ -1008,17 +1106,19 @@ test('metadata paths cannot escape; rendered identities have no construction dep
     const ownershipChanged = renderReleaseMetadata(bumped, '@//build_defs/release:identity.bzl');
     expect(ownershipChanged.bzl).not.toBe(next.bzl);
     expect(ownershipChanged.extensionSourcesBzl).toBe(rendered.extensionSourcesBzl);
-    bumped.extensionSources.example.mirror_url = 'https://mirror.example.invalid/example.git';
+    bumped.extensionSources.example.mirror_url = 'https://github.com/mirror/example.git';
     const mirrored = renderReleaseMetadata(bumped, '@//build_defs/release:identity.bzl');
     expect(mirrored.extensionSourcesBzl).toContain(
-      '"mirror_url": "https://mirror.example.invalid/example.git"',
+      '"mirror_url": "https://github.com/mirror/example.git"',
     );
-    expect(mirrored.extensionSourcesBzl).toContain('"url": "https://example.invalid/example.git"');
+    expect(mirrored.extensionSourcesBzl).toContain(
+      '"url": "https://github.com/upstream/example.git"',
+    );
     expect(mirrored.extensionSourcesBzl).toContain(
       '"commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"',
     );
     expect(mirrored.extensionSourcesBzl).not.toBe(ownershipChanged.extensionSourcesBzl);
-    bumped.extensionSources.example.mirror_url = 'https://other.example.invalid/example.git';
+    bumped.extensionSources.example.mirror_url = 'https://github.com/other/example.git';
     const mirrorChanged = renderReleaseMetadata(bumped, '@//build_defs/release:identity.bzl');
     expect(mirrorChanged.extensionSourcesBzl).not.toBe(mirrored.extensionSourcesBzl);
     bumped.extensionSources.example.commit = 'b'.repeat(40);

@@ -7,3 +7,6 @@ commit = "d238409becebb8172fe696ffa776badfad4b631c"
 sql-name = "vector"
 source-path = "vector.control"
 default-version = "0.8.2"
+
+[archive]
+sha256 = "64692fe3b2da7c1c3f53a37d6100400597008375960ab4ce3ddd79e0cd188226"

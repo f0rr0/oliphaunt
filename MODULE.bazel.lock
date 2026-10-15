@@ -310,7 +310,7 @@
   "moduleExtensions": {
     "//build_defs/extensions:repositories.bzl%extension_sources": {
       "general": {
-        "bzlTransitiveDigest": "PBah3X431NEvxJn8AKLqmPNwpN4MIVMr8aOlV3PXCeA=",
+        "bzlTransitiveDigest": "oA0XZPhhh9wQOfjhePD2DPBGK0XR2KVF2dFwcy+fq20=",
         "usagesDigest": "Tut2HerGPqUSZPlpLEwzkw93ZjcmZpcPTu5KYnSIT3A=",
         "recordedInputs": [
           "REPO_MAPPING:,bazel_tools bazel_tools",
@@ -318,74 +318,110 @@
         ],
         "generatedRepoSpecs": {
           "pg_hashids": {
-            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
             "attributes": {
-              "remote": "https://github.com/iCyberon/pg_hashids",
-              "commit": "8c404dd86408f3a987a3ff6825ac7e42bd618b98",
+              "urls": [
+                "https://codeload.github.com/iCyberon/pg_hashids/tar.gz/8c404dd86408f3a987a3ff6825ac7e42bd618b98"
+              ],
+              "sha256": "01805af758549c7f3da80198451c42db976167ef7a1a5a8abafd10292ee128ab",
+              "strip_prefix": "pg_hashids-8c404dd86408f3a987a3ff6825ac7e42bd618b98",
+              "type": "tar.gz",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(\n    name = \"sql_inputs\",\n    srcs = glob([\"*.control\", \"sql/*.sql\", \"sql/*.sql.in\", \"compat/install-*.patch\", \"compat/gencore\", \"Makefile\"], allow_empty = True),\n)\nfilegroup(name = \"headers\", srcs = glob([\"src/**/*.h\"], allow_empty = True))\nfilegroup(name = \"sql_resources\", srcs = glob([\"*.control\", \"*--*.sql\", \"sql/*--*.sql\"], allow_empty = True))\n"
             }
           },
           "pg_ivm": {
-            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
             "attributes": {
-              "remote": "https://github.com/sraoss/pg_ivm.git",
-              "commit": "b66487f7a6f8deee3998e858d773e19923e4bd4b",
+              "urls": [
+                "https://codeload.github.com/sraoss/pg_ivm/tar.gz/b66487f7a6f8deee3998e858d773e19923e4bd4b"
+              ],
+              "sha256": "a7c29129e959dd4233a7e565883e15e97bf9aa8e40650597868447227788fd12",
+              "strip_prefix": "pg_ivm-b66487f7a6f8deee3998e858d773e19923e4bd4b",
+              "type": "tar.gz",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(\n    name = \"sql_inputs\",\n    srcs = glob([\"*.control\", \"sql/*.sql\", \"sql/*.sql.in\", \"compat/install-*.patch\", \"compat/gencore\", \"Makefile\"], allow_empty = True),\n)\nfilegroup(name = \"headers\", srcs = glob([\"src/**/*.h\"], allow_empty = True))\nfilegroup(name = \"sql_resources\", srcs = glob([\"*.control\", \"*--*.sql\", \"sql/*--*.sql\"], allow_empty = True))\n"
             }
           },
           "pg_textsearch": {
-            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
             "attributes": {
-              "remote": "https://github.com/timescale/pg_textsearch.git",
-              "commit": "07936f7cd67f7a183659d3acd459c0a5efc93756",
+              "urls": [
+                "https://codeload.github.com/timescale/pg_textsearch/tar.gz/07936f7cd67f7a183659d3acd459c0a5efc93756"
+              ],
+              "sha256": "7ea1578c622667eb48937a3205ed1449ae470abea43e1fdee6df0c81aeff4914",
+              "strip_prefix": "pg_textsearch-07936f7cd67f7a183659d3acd459c0a5efc93756",
+              "type": "tar.gz",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(\n    name = \"sql_inputs\",\n    srcs = glob([\"*.control\", \"sql/*.sql\", \"sql/*.sql.in\", \"compat/install-*.patch\", \"compat/gencore\", \"Makefile\"], allow_empty = True),\n)\nfilegroup(name = \"headers\", srcs = glob([\"src/**/*.h\"], allow_empty = True))\nfilegroup(name = \"sql_resources\", srcs = glob([\"*.control\", \"*--*.sql\", \"sql/*--*.sql\"], allow_empty = True))\n"
             }
           },
           "pg_uuidv7": {
-            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
             "attributes": {
-              "remote": "https://github.com/fboulnois/pg_uuidv7/",
-              "commit": "c707aae2411181be4802f5fa565b44d9c0bcbc29",
+              "urls": [
+                "https://codeload.github.com/fboulnois/pg_uuidv7/tar.gz/c707aae2411181be4802f5fa565b44d9c0bcbc29"
+              ],
+              "sha256": "422b882887ace16a1358150eb8bcfcf41a74ae60db89818929ba4f59ba360251",
+              "strip_prefix": "pg_uuidv7-c707aae2411181be4802f5fa565b44d9c0bcbc29",
+              "type": "tar.gz",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(\n    name = \"sql_inputs\",\n    srcs = glob([\"*.control\", \"sql/*.sql\", \"sql/*.sql.in\", \"compat/install-*.patch\", \"compat/gencore\", \"Makefile\"], allow_empty = True),\n)\nfilegroup(name = \"headers\", srcs = glob([\"src/**/*.h\"], allow_empty = True))\nfilegroup(name = \"sql_resources\", srcs = glob([\"*.control\", \"*--*.sql\", \"sql/*--*.sql\"], allow_empty = True))\n"
             }
           },
           "pgtap": {
-            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
             "attributes": {
-              "remote": "https://github.com/theory/pgtap.git",
-              "commit": "b89585a64ffef012ff0f219de9197c669aa8485b",
+              "urls": [
+                "https://codeload.github.com/theory/pgtap/tar.gz/b89585a64ffef012ff0f219de9197c669aa8485b"
+              ],
+              "sha256": "ffd501f27670a7d3d7f0cfd4ea7f291848112c2ef408a0b73e4cb727ac83e604",
+              "strip_prefix": "pgtap-b89585a64ffef012ff0f219de9197c669aa8485b",
+              "type": "tar.gz",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(\n    name = \"sql_inputs\",\n    srcs = glob([\"*.control\", \"sql/*.sql\", \"sql/*.sql.in\", \"compat/install-*.patch\", \"compat/gencore\", \"Makefile\"], allow_empty = True),\n)\nfilegroup(name = \"headers\", srcs = glob([\"src/**/*.h\"], allow_empty = True))\nfilegroup(name = \"sql_resources\", srcs = glob([\"*.control\", \"*--*.sql\", \"sql/*--*.sql\"], allow_empty = True))\n"
             }
           },
           "postgis": {
-            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
             "attributes": {
-              "remote": "https://github.com/postgis/postgis.git",
-              "commit": "3d12666588a84b23a3147618eaa9b40b0fe5e796",
+              "urls": [
+                "https://codeload.github.com/postgis/postgis/tar.gz/3d12666588a84b23a3147618eaa9b40b0fe5e796"
+              ],
+              "sha256": "0cab012a4e470b2479d4dcaa6a64f5322fe64092e5c3018da94dfcfd106ef874",
+              "strip_prefix": "postgis-3d12666588a84b23a3147618eaa9b40b0fe5e796",
+              "type": "tar.gz",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(\n    name = \"sql_inputs\",\n    srcs = glob([\"*.control\", \"sql/*.sql\", \"sql/*.sql.in\", \"compat/install-*.patch\", \"compat/gencore\", \"Makefile\"], allow_empty = True),\n)\nfilegroup(name = \"headers\", srcs = glob([\"src/**/*.h\"], allow_empty = True))\nfilegroup(name = \"sql_resources\", srcs = glob([\"*.control\", \"*--*.sql\", \"sql/*--*.sql\"], allow_empty = True))\n\nfilegroup(name = \"postgis_headers\", srcs = glob([\"**/*.h\", \"**/*.hpp\", \"**/*.inl\", \"**/*.inc\"], allow_empty = True))\nfilegroup(name = \"postgis_sql_inputs\", srcs = glob([\"Version.config\", \"postgis/*.sql.in\", \"postgis/*.sql.in.*\", \"postgis/*.sql\", \"postgis/*.h\", \"libpgcommon/*.h\", \"extensions/**/*.sql\", \"extensions/**/*.sql.in\", \"extensions/**/Makefile.in\", \"extensions/upgrade-paths-rules.mk\", \"utils/*.pl\", \"raster/rt_pg/*.sql.in\", \"raster/rt_pg/*.sql.in.*\", \"raster/rt_pg/*.sql\", \"postgis/Makefile.in\", \"raster/rt_pg/Makefile.in\"], allow_empty = True))\n"
             }
           },
           "pgvector": {
-            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
             "attributes": {
-              "remote": "https://github.com/pgvector/pgvector.git",
-              "commit": "d238409becebb8172fe696ffa776badfad4b631c",
+              "urls": [
+                "https://codeload.github.com/pgvector/pgvector/tar.gz/d238409becebb8172fe696ffa776badfad4b631c"
+              ],
+              "sha256": "64692fe3b2da7c1c3f53a37d6100400597008375960ab4ce3ddd79e0cd188226",
+              "strip_prefix": "pgvector-d238409becebb8172fe696ffa776badfad4b631c",
+              "type": "tar.gz",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(\n    name = \"sql_inputs\",\n    srcs = glob([\"*.control\", \"sql/*.sql\", \"sql/*.sql.in\", \"compat/install-*.patch\", \"compat/gencore\", \"Makefile\"], allow_empty = True),\n)\nfilegroup(name = \"headers\", srcs = glob([\"src/**/*.h\"], allow_empty = True))\nfilegroup(name = \"sql_resources\", srcs = glob([\"*.control\", \"*--*.sql\", \"sql/*--*.sql\"], allow_empty = True))\n"
             }
           },
           "postgis_geos": {
-            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
             "attributes": {
-              "remote": "https://github.com/libgeos/geos.git",
-              "commit": "c389f532d25fe6228861d9b19339f9cb57ca4bdb",
+              "urls": [
+                "https://codeload.github.com/libgeos/geos/tar.gz/c389f532d25fe6228861d9b19339f9cb57ca4bdb"
+              ],
+              "sha256": "c6ef7660abd410d20b4f30085dfc1b0f804f487967aeddda6eca2aaa36abfa5a",
+              "strip_prefix": "geos-c389f532d25fe6228861d9b19339f9cb57ca4bdb",
+              "type": "tar.gz",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(name = \"all_sources\", srcs = glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(name = \"headers\", srcs = glob([\"**/*.h\", \"**/*.hpp\", \"**/*.inl\", \"**/*.inc\"], allow_empty = True))\n\nfilegroup(name = \"native_sources\", srcs = glob([\"src/**/*.cpp\", \"capi/*.cpp\"]))\nfilegroup(name = \"native_c_sources\", srcs = glob([\"src/deps/**/*.c\"]))\nfilegroup(name = \"native_core_sources\", srcs = glob([\"src/**/*.cpp\"]))\nfilegroup(name = \"native_capi_sources\", srcs = glob([\"capi/*.cpp\"]))\n"
             }
           },
           "postgis_json_c": {
-            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
             "attributes": {
-              "remote": "https://github.com/json-c/json-c.git",
-              "commit": "41a55cfcedb54d9c1874f2f0eb07b504091d7e37",
+              "urls": [
+                "https://codeload.github.com/json-c/json-c/tar.gz/41a55cfcedb54d9c1874f2f0eb07b504091d7e37"
+              ],
+              "sha256": "a090046b2d24901eb8dca4d370c28991299e8c7cfb698b44e09ce809b1ff20b4",
+              "strip_prefix": "json-c-41a55cfcedb54d9c1874f2f0eb07b504091d7e37",
+              "type": "tar.gz",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(name = \"all_sources\", srcs = glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(name = \"headers\", srcs = glob([\"**/*.h\", \"**/*.hpp\", \"**/*.inl\", \"**/*.inc\"], allow_empty = True))\n"
             }
           },
@@ -402,26 +438,38 @@
             }
           },
           "postgis_libxml2": {
-            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
             "attributes": {
-              "remote": "https://github.com/GNOME/libxml2.git",
-              "commit": "d23960a130c5bb82779c9405fbbf85e65fb3c57c",
+              "urls": [
+                "https://codeload.github.com/GNOME/libxml2/tar.gz/d23960a130c5bb82779c9405fbbf85e65fb3c57c"
+              ],
+              "sha256": "2ac9ff16a006d9793ed23d31b40867aa41d23ae7762f8a25868f733944d5d775",
+              "strip_prefix": "libxml2-d23960a130c5bb82779c9405fbbf85e65fb3c57c",
+              "type": "tar.gz",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(name = \"all_sources\", srcs = glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(name = \"headers\", srcs = glob([\"**/*.h\", \"**/*.hpp\", \"**/*.inl\", \"**/*.inc\"], allow_empty = True))\n"
             }
           },
           "postgis_proj": {
-            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
             "attributes": {
-              "remote": "https://github.com/OSGeo/PROJ.git",
-              "commit": "f08fa86c478c4bbbf003b1ec751dd84aa6eca486",
+              "urls": [
+                "https://codeload.github.com/OSGeo/PROJ/tar.gz/f08fa86c478c4bbbf003b1ec751dd84aa6eca486"
+              ],
+              "sha256": "db00adb24cb064895f9055095ea21fecc1349ffac1f225def2ef38f3dbc4831b",
+              "strip_prefix": "PROJ-f08fa86c478c4bbbf003b1ec751dd84aa6eca486",
+              "type": "tar.gz",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(name = \"all_sources\", srcs = glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(name = \"headers\", srcs = glob([\"**/*.h\", \"**/*.hpp\", \"**/*.inl\", \"**/*.inc\"], allow_empty = True))\n\nfilegroup(name = \"native_sources\", srcs = glob([\"src/*.cpp\", \"src/projections/*.cpp\", \"src/conversions/*.cpp\", \"src/transformations/*.cpp\", \"src/iso19111/**/*.cpp\"]))\nfilegroup(name = \"native_c_sources\", srcs = glob([\"src/*.c\"], exclude = [\"src/embedded_resources.c\", \"src/memvfs.c\"]))\n"
             }
           },
           "postgis_sqlite": {
-            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:git.bzl%git_repository",
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
             "attributes": {
-              "remote": "https://github.com/sqlite/sqlite.git",
-              "commit": "ccd445d76a9362c63add000354fac84ba9022176",
+              "urls": [
+                "https://codeload.github.com/sqlite/sqlite/tar.gz/ccd445d76a9362c63add000354fac84ba9022176"
+              ],
+              "sha256": "96f14610a11721fbd5bd254db3ca833de9e4d922ce3da7122e092fdb19838b30",
+              "strip_prefix": "sqlite-ccd445d76a9362c63add000354fac84ba9022176",
+              "type": "tar.gz",
               "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nexports_files(glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(name = \"all_sources\", srcs = glob([\"**\"], exclude = [\"BUILD\", \"BUILD.bazel\", \"WORKSPACE\", \"WORKSPACE.bazel\", \"MODULE.bazel\"], allow_empty = True))\nfilegroup(name = \"headers\", srcs = glob([\"**/*.h\", \"**/*.hpp\", \"**/*.inl\", \"**/*.inc\"], allow_empty = True))\n"
             }
           }

@@ -1,6 +1,5 @@
 """Import immutable external extension sources from the canonical metadata."""
 
-load("@bazel_tools//tools/build_defs/repo:git.bzl", "new_git_repository")
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@oliphaunt_metadata//:extension-sources.bzl", "EXTENSION_DEPENDENCIES", "EXTENSION_SOURCES")
 
@@ -32,20 +31,22 @@ filegroup(name = "postgis_headers", srcs = glob(["**/*.h", "**/*.hpp", "**/*.inl
 filegroup(name = "postgis_sql_inputs", srcs = glob(["Version.config", "postgis/*.sql.in", "postgis/*.sql.in.*", "postgis/*.sql", "postgis/*.h", "libpgcommon/*.h", "extensions/**/*.sql", "extensions/**/*.sql.in", "extensions/**/Makefile.in", "extensions/upgrade-paths-rules.mk", "utils/*.pl", "raster/rt_pg/*.sql.in", "raster/rt_pg/*.sql.in.*", "raster/rt_pg/*.sql", "postgis/Makefile.in", "raster/rt_pg/Makefile.in"], allow_empty = True))
 """
 
-def _git_commit(commit, description):
-    if len(commit) != 40 or any([character not in "0123456789abcdef" for character in commit.elems()]):
-        fail("%s requires an immutable full Git commit" % description)
+def _git_source_archive(name, source, build_file_content):
+    archive = source["archive"]
+    http_archive(
+        name = name,
+        urls = [archive["url"]],
+        sha256 = archive["sha256"],
+        strip_prefix = archive["strip_prefix"],
+        type = "tar.gz",
+        build_file_content = build_file_content,
+    )
 
 def _extension_sources_impl(module_ctx):
     for sql_name, source in EXTENSION_SOURCES.items():
-        commit = source.get("commit", "")
-        _git_commit(commit, "extension " + sql_name)
-        new_git_repository(
+        _git_source_archive(
             name = source["name"],
-            # Stock Git rules accept one remote. Prefer the reviewed mirror;
-            # canonical source attribution and the exact commit stay unchanged.
-            remote = source.get("mirror_url", source["url"]),
-            commit = commit,
+            source = source,
             build_file_content = _BUILD + (_POSTGIS_INPUTS if sql_name == "postgis" else ""),
         )
     for sql_name, dependencies in EXTENSION_DEPENDENCIES.items():
@@ -53,11 +54,9 @@ def _extension_sources_impl(module_ctx):
             name = sql_name.replace("-", "_") + "_" + directory.replace("-", "_")
             kind = source.get("kind", "git")
             if kind == "git":
-                _git_commit(source.get("commit", ""), "dependency %s/%s" % (sql_name, directory))
-                new_git_repository(
+                _git_source_archive(
                     name = name,
-                    remote = source.get("mirror_url", source["url"]),
-                    commit = source["commit"],
+                    source = source,
                     build_file_content = _DEPENDENCY_BUILD + _DEPENDENCY_INPUTS.get(directory, ""),
                 )
             elif kind == "archive":

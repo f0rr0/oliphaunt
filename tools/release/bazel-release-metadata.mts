@@ -907,6 +907,28 @@ export function nativePublicationInputProjection(value: unknown, _metadata?: Rel
   };
 }
 
+function gitSourceArchive(source: Record<string, unknown>, context: string) {
+  const commit = string(source.commit, `${context} acquisition commit`);
+  if (!/^[a-f0-9]{40}$/u.test(commit))
+    throw new Error(`${context} archive requires an immutable full Git commit`);
+  const archive = object(source.archive, `${context} required archive SHA-256 pin`);
+  if (Object.keys(archive).some((key) => key !== 'sha256'))
+    throw new Error(`${context} source archive accepts only its SHA-256 pin`);
+  const sha256 = string(archive.sha256, `${context} acquisition archive SHA-256`);
+  if (!/^[a-f0-9]{64}$/u.test(sha256))
+    throw new Error(`${context} archive requires an exact SHA-256`);
+  const remote = string(source.mirror_url ?? source.url, `${context} acquisition URL`);
+  const github = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/?$/u.exec(remote);
+  const repository = github?.[2]?.replace(/\.git$/u, '');
+  if (!github || !repository || repository === '.' || repository === '..')
+    throw new Error(`${context} source archive requires its declared GitHub Git remote`);
+  return {
+    url: `https://codeload.github.com/${github[1]}/${repository}/tar.gz/${commit}`,
+    sha256,
+    strip_prefix: `${repository}-${commit}`,
+  };
+}
+
 export function renderReleaseMetadata(
   metadata: ReleaseMetadata,
   identityRule: string,
@@ -985,14 +1007,30 @@ export function renderReleaseMetadata(
   const acquisitionSources = Object.fromEntries(
     Object.entries(metadata.extensionSources).map(([sqlName, source]) => [
       sqlName,
-      Object.fromEntries(
-        ['name', 'url', 'commit', ...(source.mirror_url === undefined ? [] : ['mirror_url'])].map(
-          (key) => [key, string(source[key], `${sqlName} acquisition ${key}`)],
+      {
+        ...Object.fromEntries(
+          ['name', 'url', 'commit', ...(source.mirror_url === undefined ? [] : ['mirror_url'])].map(
+            (key) => [key, string(source[key], `${sqlName} acquisition ${key}`)],
+          ),
         ),
+        archive: gitSourceArchive(source, sqlName),
+      },
+    ]),
+  );
+  const acquisitionDependencies = Object.fromEntries(
+    Object.entries(metadata.extensionDependencies).map(([sqlName, dependencies]) => [
+      sqlName,
+      Object.fromEntries(
+        Object.entries(dependencies).map(([directory, source]) => [
+          directory,
+          (source.kind ?? 'git') === 'git'
+            ? { ...source, archive: gitSourceArchive(source, `${sqlName}/${directory}`) }
+            : source,
+        ]),
       ),
     ]),
   );
-  const extensionSourcesBzl = `EXTENSION_SOURCES = ${starlark(acquisitionSources)}\n\nEXTENSION_DEPENDENCIES = ${starlark(metadata.extensionDependencies)}\n`;
+  const extensionSourcesBzl = `EXTENSION_SOURCES = ${starlark(acquisitionSources)}\n\nEXTENSION_DEPENDENCIES = ${starlark(acquisitionDependencies)}\n`;
   return {
     bzl,
     extensionSourcesBzl,

@@ -2,3 +2,6 @@ name = "proj"
 url = "https://github.com/OSGeo/PROJ.git"
 branch = "9.8.1"
 commit = "f08fa86c478c4bbbf003b1ec751dd84aa6eca486"
+
+[archive]
+sha256 = "db00adb24cb064895f9055095ea21fecc1349ffac1f225def2ef38f3dbc4831b"
