@@ -119,6 +119,7 @@ export function targetSubstitutions(
   if (Object.hasOwn(result, 'EILSEQ')) {
     if (!facts.EILSEQ) throw new Error('libiconv requires compiler-derived EILSEQ');
     result.EILSEQ = facts.EILSEQ;
+    result.HAVE_VISIBILITY = facts.HAVE_VISIBILITY ?? '0';
     result.USE_MBSTATE_T = facts.HAVE_MBSTATE_T ? '1' : '0';
     if (!facts.HAVE_INLINE) {
       if (!facts.HAVE___INLINE) throw new Error('libiconv requires a supported inline spelling');
