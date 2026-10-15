@@ -1083,12 +1083,9 @@ mod tests {
             &cache_dir.join(".manifest"),
             runtime_cache_manifest(NativeRuntimeProfile::PostgresServer, key, &[]).as_bytes(),
         );
-        write_file(&cache_dir.join("bin/postgres"), b"postgres");
-        write_file(&cache_dir.join("bin/initdb"), b"initdb");
-        write_file(&cache_dir.join("bin/pg_ctl"), b"pg_ctl");
-        write_file(&cache_dir.join("bin/pg_basebackup"), b"pg_basebackup");
-        write_file(&cache_dir.join("bin/pg_dump"), b"pg_dump");
-        write_file(&cache_dir.join("bin/psql"), b"psql");
+        for tool in NATIVE_RUNTIME_TOOLS {
+            write_file(&native_tool_path(cache_dir, tool), tool.as_bytes());
+        }
         write_file(
             &cache_dir.join("share/postgresql/postgresql.conf.sample"),
             b"# sample\n",

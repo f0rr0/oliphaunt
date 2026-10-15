@@ -33,6 +33,7 @@ export function listArchiveEntries(directory) {
 export function createDeterministicTar(stageDir, packageRoot, options) {
   const chunks = [];
   const fixedFileMode = options.fixedFileMode;
+  const executableFiles = options.executableFiles ?? new Set();
   if (
     fixedFileMode !== undefined &&
     (!Number.isInteger(fixedFileMode) || fixedFileMode < 0 || fixedFileMode > 0o777)
@@ -54,7 +55,8 @@ export function createDeterministicTar(stageDir, packageRoot, options) {
     const stats = statSync(file);
     const isDirectory = stats.isDirectory();
     const data = isDirectory ? Buffer.alloc(0) : readFileSync(file);
-    const mode = isDirectory ? 0o755 : (fixedFileMode ?? stats.mode & 0o777);
+    const mode =
+      isDirectory || executableFiles.has(relative) ? 0o755 : (fixedFileMode ?? stats.mode & 0o777);
     chunks.push(tarHeader({ name: archivePath, isDirectory }, data.length, mode));
     chunks.push(data);
     const remainder = data.length % 512;

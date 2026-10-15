@@ -87,7 +87,7 @@ def _declared_xcode_swift_impl(ctx):
 declared_xcode_swift_toolchain = rule(
     implementation = _declared_xcode_swift_impl,
     attrs = {
-        "base": attr.label(default = "@rules_swift//swift/toolchains:xcode-sdk-toolchain", providers = [SwiftToolchainInfo]),
+        "base": attr.label(default = Label("//build_defs/host:xcode_swift_base"), providers = [SwiftToolchainInfo]),
         "sdk": attr.label_list(allow_files = True, mandatory = True),
         "tools": attr.label_keyed_string_dict(allow_files = True, mandatory = True),
         "sdkroot": attr.string(mandatory = True),

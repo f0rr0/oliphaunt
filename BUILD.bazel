@@ -77,6 +77,7 @@ exports_files([
     "tools/packaging/maven-artifact-manifest.mts",
     "tools/packaging/maven-artifact-staging.mts",
     "tools/packaging/npm-package.mts",
+    "tools/packaging/npm-package.test.mts",
     "tools/packaging/release-carrier.mts",
     "tools/packaging/sdk-runtime-payload.mts",
     "tools/packaging/wasix-cargo-payload.mts",

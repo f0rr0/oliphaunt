@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   nativeDependencyModuleBasenames,
   validateExtensionArtifactArchive,
@@ -30,6 +31,24 @@ const [input, resourcesCli] = process.argv.slice(2);
 assert(input, 'expected canonical pgtap carrier metadata');
 if (process.platform !== 'win32') assert(resourcesCli, 'expected declared Rust resources CLI');
 const metadata = JSON.parse(readFileSync(input, 'utf8'));
+const modes = Bun.spawnSync({
+  cmd: [
+    process.execPath,
+    '--no-env-file',
+    '--no-install',
+    'test',
+    fileURLToPath(new URL('../../tools/packaging/npm-package.test.mts', import.meta.url)),
+  ],
+  stdout: 'pipe',
+  stderr: 'pipe',
+});
+assert.equal(
+  modes.exitCode,
+  0,
+  `${Buffer.from(modes.stdout).toString('utf8')}\n${Buffer.from(modes.stderr).toString('utf8')}`.slice(
+    -8000,
+  ),
+);
 assert.throws(
   () =>
     validateNativeShippingModule(
