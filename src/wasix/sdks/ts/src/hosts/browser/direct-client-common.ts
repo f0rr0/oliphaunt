@@ -133,7 +133,7 @@ export async function openWasixDirect(
   environment: DirectWasixEnvironment = 'browser-main',
 ): Promise<OliphauntDatabase> {
   const session = await DirectWasixSession.open(options, host, defaultDependencies, environment);
-  return new WasixDatabaseImpl(session);
+  return new WasixDatabaseImpl(session, undefined, options.admission);
 }
 
 /** @internal Open a direct-memory session inside the dedicated browser worker realm. */

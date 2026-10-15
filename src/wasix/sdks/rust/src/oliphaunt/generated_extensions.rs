@@ -397,121 +397,82 @@ const DEFINITION_VECTOR: Extension = Extension {
 
 impl Extension {
     /// Select the `amcheck` artifact.
-
     pub const AMCHECK: Self = DEFINITION_AMCHECK;
     /// Select the `auto_explain` artifact.
-
     pub const AUTO_EXPLAIN: Self = DEFINITION_AUTO_EXPLAIN;
     /// Select the `bloom` artifact.
-
     pub const BLOOM: Self = DEFINITION_BLOOM;
     /// Select the `btree_gin` artifact.
-
     pub const BTREE_GIN: Self = DEFINITION_BTREE_GIN;
     /// Select the `btree_gist` artifact.
-
     pub const BTREE_GIST: Self = DEFINITION_BTREE_GIST;
     /// Select the `citext` artifact.
-
     pub const CITEXT: Self = DEFINITION_CITEXT;
     /// Select the `cube` artifact.
-
     pub const CUBE: Self = DEFINITION_CUBE;
     /// Select the `dict_int` artifact.
-
     pub const DICT_INT: Self = DEFINITION_DICT_INT;
     /// Select the `dict_xsyn` artifact.
-
     pub const DICT_XSYN: Self = DEFINITION_DICT_XSYN;
     /// Select the `earthdistance` artifact.
-
     pub const EARTHDISTANCE: Self = DEFINITION_EARTHDISTANCE;
     /// Select the `file_fdw` artifact.
-
     pub const FILE_FDW: Self = DEFINITION_FILE_FDW;
     /// Select the `fuzzystrmatch` artifact.
-
     pub const FUZZYSTRMATCH: Self = DEFINITION_FUZZYSTRMATCH;
     /// Select the `hstore` artifact.
-
     pub const HSTORE: Self = DEFINITION_HSTORE;
     /// Select the `intarray` artifact.
-
     pub const INTARRAY: Self = DEFINITION_INTARRAY;
     /// Select the `isn` artifact.
-
     pub const ISN: Self = DEFINITION_ISN;
     /// Select the `lo` artifact.
-
     pub const LO: Self = DEFINITION_LO;
     /// Select the `ltree` artifact.
-
     pub const LTREE: Self = DEFINITION_LTREE;
     /// Select the `pageinspect` artifact.
-
     pub const PAGEINSPECT: Self = DEFINITION_PAGEINSPECT;
     /// Select the `pg_buffercache` artifact.
-
     pub const PG_BUFFERCACHE: Self = DEFINITION_PG_BUFFERCACHE;
     /// Select the `pg_freespacemap` artifact.
-
     pub const PG_FREESPACEMAP: Self = DEFINITION_PG_FREESPACEMAP;
     /// Select the `pg_hashids` artifact.
-
     pub const PG_HASHIDS: Self = DEFINITION_PG_HASHIDS;
     /// Select the `pg_ivm` artifact.
-
     pub const PG_IVM: Self = DEFINITION_PG_IVM;
     /// Select the `pg_surgery` artifact.
-
     pub const PG_SURGERY: Self = DEFINITION_PG_SURGERY;
     /// Select the `pg_textsearch` artifact.
-
     pub const PG_TEXTSEARCH: Self = DEFINITION_PG_TEXTSEARCH;
     /// Select the `pg_trgm` artifact.
-
     pub const PG_TRGM: Self = DEFINITION_PG_TRGM;
     /// Select the `pg_uuidv7` artifact.
-
     pub const PG_UUIDV7: Self = DEFINITION_PG_UUIDV7;
     /// Select the `pg_visibility` artifact.
-
     pub const PG_VISIBILITY: Self = DEFINITION_PG_VISIBILITY;
     /// Select the `pg_walinspect` artifact.
-
     pub const PG_WALINSPECT: Self = DEFINITION_PG_WALINSPECT;
     /// Select the `pgcrypto` artifact.
-
     pub const PGCRYPTO: Self = DEFINITION_PGCRYPTO;
     /// Select the `pgtap` artifact.
-
     pub const PGTAP: Self = DEFINITION_PGTAP;
     /// Select the `postgis` artifact.
-
     pub const POSTGIS: Self = DEFINITION_POSTGIS;
     /// Select the `seg` artifact.
-
     pub const SEG: Self = DEFINITION_SEG;
     /// Select the `tablefunc` artifact.
-
     pub const TABLEFUNC: Self = DEFINITION_TABLEFUNC;
     /// Select the `tcn` artifact.
-
     pub const TCN: Self = DEFINITION_TCN;
     /// Select the `tsm_system_rows` artifact.
-
     pub const TSM_SYSTEM_ROWS: Self = DEFINITION_TSM_SYSTEM_ROWS;
     /// Select the `tsm_system_time` artifact.
-
     pub const TSM_SYSTEM_TIME: Self = DEFINITION_TSM_SYSTEM_TIME;
     /// Select the `unaccent` artifact.
-
     pub const UNACCENT: Self = DEFINITION_UNACCENT;
     /// Select the `uuid-ossp` artifact.
-
     pub const UUID_OSSP: Self = DEFINITION_UUID_OSSP;
     /// Select the `vector` artifact.
-
     pub const VECTOR: Self = DEFINITION_VECTOR;
 
     /// Supported extension metadata; payloads are selected independently.
@@ -562,81 +523,43 @@ impl Extension {
 pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
     match extension.sql_name() {
         "amcheck" => true,
-
         "auto_explain" => false,
-
         "bloom" => true,
-
         "btree_gin" => true,
-
         "btree_gist" => true,
-
         "citext" => true,
-
         "cube" => true,
-
         "dict_int" => true,
-
         "dict_xsyn" => true,
-
         "earthdistance" => true,
-
         "file_fdw" => true,
-
         "fuzzystrmatch" => true,
-
         "hstore" => true,
-
         "intarray" => true,
-
         "isn" => true,
-
         "lo" => true,
-
         "ltree" => true,
-
         "pageinspect" => true,
-
         "pg_buffercache" => true,
-
         "pg_freespacemap" => true,
-
         "pg_hashids" => true,
-
         "pg_ivm" => true,
-
         "pg_surgery" => true,
-
         "pg_textsearch" => true,
-
         "pg_trgm" => true,
-
         "pg_uuidv7" => true,
-
         "pg_visibility" => true,
-
         "pg_walinspect" => true,
-
         "pgcrypto" => true,
-
         "pgtap" => true,
-
         "postgis" => true,
-
         "seg" => true,
-
         "tablefunc" => true,
-
         "tcn" => true,
-
         "tsm_system_rows" => true,
-
         "tsm_system_time" => true,
-
         "unaccent" => true,
-
         "uuid-ossp" => true,
-
         "vector" => true,
         _ => false,
     }
@@ -646,122 +569,84 @@ pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
 pub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'static str] {
     match extension.sql_name() {
         "amcheck" => &["CREATE EXTENSION IF NOT EXISTS \"amcheck\" WITH SCHEMA \"pg_catalog\";"],
-
         "auto_explain" => &[
             "LOAD 'auto_explain';",
             "SET auto_explain.log_min_duration = '0';",
             "SET auto_explain.log_analyze = 'true';",
             "SET auto_explain.log_level = 'NOTICE';",
         ],
-
         "bloom" => &["CREATE EXTENSION IF NOT EXISTS \"bloom\" WITH SCHEMA \"pg_catalog\";"],
-
         "btree_gin" => {
             &["CREATE EXTENSION IF NOT EXISTS \"btree_gin\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "btree_gist" => {
             &["CREATE EXTENSION IF NOT EXISTS \"btree_gist\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "citext" => &["CREATE EXTENSION IF NOT EXISTS \"citext\" WITH SCHEMA \"pg_catalog\";"],
-
         "cube" => &["CREATE EXTENSION IF NOT EXISTS \"cube\" WITH SCHEMA \"pg_catalog\";"],
-
         "dict_int" => &["CREATE EXTENSION IF NOT EXISTS \"dict_int\" WITH SCHEMA \"pg_catalog\";"],
-
         "dict_xsyn" => {
             &["CREATE EXTENSION IF NOT EXISTS \"dict_xsyn\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "earthdistance" => {
             &["CREATE EXTENSION IF NOT EXISTS \"earthdistance\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "file_fdw" => &["CREATE EXTENSION IF NOT EXISTS \"file_fdw\" WITH SCHEMA \"pg_catalog\";"],
-
         "fuzzystrmatch" => {
             &["CREATE EXTENSION IF NOT EXISTS \"fuzzystrmatch\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "hstore" => &["CREATE EXTENSION IF NOT EXISTS \"hstore\" WITH SCHEMA \"pg_catalog\";"],
-
         "intarray" => &["CREATE EXTENSION IF NOT EXISTS \"intarray\" WITH SCHEMA \"pg_catalog\";"],
-
         "isn" => &["CREATE EXTENSION IF NOT EXISTS \"isn\" WITH SCHEMA \"pg_catalog\";"],
-
         "lo" => &["CREATE EXTENSION IF NOT EXISTS \"lo\" WITH SCHEMA \"pg_catalog\";"],
-
         "ltree" => &["CREATE EXTENSION IF NOT EXISTS \"ltree\" WITH SCHEMA \"pg_catalog\";"],
-
         "pageinspect" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pageinspect\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "pg_buffercache" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_buffercache\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "pg_freespacemap" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_freespacemap\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "pg_hashids" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_hashids\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "pg_ivm" => &["CREATE EXTENSION IF NOT EXISTS \"pg_ivm\" WITH SCHEMA \"pg_catalog\";"],
-
         "pg_surgery" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_surgery\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "pg_textsearch" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_textsearch\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "pg_trgm" => &["CREATE EXTENSION IF NOT EXISTS \"pg_trgm\" WITH SCHEMA \"pg_catalog\";"],
-
         "pg_uuidv7" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_uuidv7\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "pg_visibility" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_visibility\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "pg_walinspect" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_walinspect\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "pgcrypto" => &["CREATE EXTENSION IF NOT EXISTS \"pgcrypto\";"],
-
         "pgtap" => &["CREATE EXTENSION IF NOT EXISTS \"pgtap\" WITH SCHEMA \"pg_catalog\";"],
-
         "postgis" => &["CREATE EXTENSION IF NOT EXISTS \"postgis\";"],
-
         "seg" => &["CREATE EXTENSION IF NOT EXISTS \"seg\" WITH SCHEMA \"pg_catalog\";"],
-
         "tablefunc" => {
             &["CREATE EXTENSION IF NOT EXISTS \"tablefunc\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "tcn" => &["CREATE EXTENSION IF NOT EXISTS \"tcn\" WITH SCHEMA \"pg_catalog\";"],
-
         "tsm_system_rows" => {
             &["CREATE EXTENSION IF NOT EXISTS \"tsm_system_rows\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "tsm_system_time" => {
             &["CREATE EXTENSION IF NOT EXISTS \"tsm_system_time\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "unaccent" => &["CREATE EXTENSION IF NOT EXISTS \"unaccent\" WITH SCHEMA \"pg_catalog\";"],
-
         "uuid-ossp" => {
             &["CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA \"pg_catalog\";"]
         }
-
         "vector" => &["CREATE EXTENSION IF NOT EXISTS \"vector\" WITH SCHEMA \"pg_catalog\";"],
         _ => &[],
     }

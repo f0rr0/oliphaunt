@@ -560,7 +560,7 @@ public suspend fun OliphauntDatabase.execute(
     parameters: List<QueryParam> = emptyList(),
 ): CommandResult {
     rejectStructuredSql(sql)
-    return runTypedOperation(extendedQueryProtocol(sql, parameters), null) { response ->
+    return runTypedOperation({ retain -> extendedQueryProtocol(sql, parameters, retain) }, null) { response ->
         parseCommandResponse(response, ExpectedProtocol.Extended).let { it to it.readyStatus }
     }
 }
@@ -570,14 +570,14 @@ public suspend fun OliphauntDatabase.query(
     parameters: List<QueryParam> = emptyList(),
 ): QueryResult {
     rejectStructuredSql(sql)
-    return runTypedOperation(extendedQueryProtocol(sql, parameters), null) { response ->
+    return runTypedOperation({ retain -> extendedQueryProtocol(sql, parameters, retain) }, null) { response ->
         parseQueryResponse(response, ExpectedProtocol.Extended).let { it to it.readyStatus }
     }
 }
 
 public suspend fun OliphauntDatabase.exec(sql: String): ExecResult {
     rejectStructuredSql(sql)
-    return runTypedOperation(simpleQueryProtocol(sql), null) { response ->
+    return runTypedOperation({ retain -> simpleQueryProtocol(sql, retain) }, null) { response ->
         parseExecResponse(response).let { it to it.readyStatus }
     }
 }
@@ -585,7 +585,7 @@ public suspend fun OliphauntDatabase.exec(sql: String): ExecResult {
 public suspend fun OliphauntDatabase.describe(
     sql: String,
     parameterTypes: List<PostgresOid> = emptyList(),
-): QueryDescription = runTypedOperation(describeQueryProtocol(sql, parameterTypes), null) { response ->
+): QueryDescription = runTypedOperation({ retain -> describeQueryProtocol(sql, parameterTypes, retain) }, null) { response ->
     parseDescribeResponse(response).let { it to it.readyStatus }
 }
 
@@ -594,7 +594,7 @@ public suspend fun OliphauntTransaction.execute(
     parameters: List<QueryParam> = emptyList(),
 ): CommandResult {
     rejectStructuredSql(sql, managedTransaction = true)
-    return runTypedOperation(extendedQueryProtocol(sql, parameters)) { response ->
+    return runTypedOperation({ retain -> extendedQueryProtocol(sql, parameters, retain) }) { response ->
         parseCommandResponse(response, ExpectedProtocol.Extended).let { it to it.readyStatus }
     }
 }
@@ -604,14 +604,14 @@ public suspend fun OliphauntTransaction.query(
     parameters: List<QueryParam> = emptyList(),
 ): QueryResult {
     rejectStructuredSql(sql, managedTransaction = true)
-    return runTypedOperation(extendedQueryProtocol(sql, parameters)) { response ->
+    return runTypedOperation({ retain -> extendedQueryProtocol(sql, parameters, retain) }) { response ->
         parseQueryResponse(response, ExpectedProtocol.Extended).let { it to it.readyStatus }
     }
 }
 
 public suspend fun OliphauntTransaction.exec(sql: String): ExecResult {
     rejectStructuredSql(sql, managedTransaction = true)
-    return runTypedOperation(simpleQueryProtocol(sql)) { response ->
+    return runTypedOperation({ retain -> simpleQueryProtocol(sql, retain) }) { response ->
         parseExecResponse(response).let { it to it.readyStatus }
     }
 }
@@ -619,13 +619,26 @@ public suspend fun OliphauntTransaction.exec(sql: String): ExecResult {
 public suspend fun OliphauntTransaction.describe(
     sql: String,
     parameterTypes: List<PostgresOid> = emptyList(),
-): QueryDescription = runTypedOperation(describeQueryProtocol(sql, parameterTypes)) { response ->
+): QueryDescription = runTypedOperation({ retain -> describeQueryProtocol(sql, parameterTypes, retain) }) { response ->
     parseDescribeResponse(response).let { it to it.readyStatus }
+}
+
+internal fun simpleQueryProtocol(sql: String, retain: (Long) -> Unit = {}): ByteArray {
+    requireSqlWithoutNul(sql, "simple query")
+    val sqlBytes = sql.encodeToByteArray()
+    val size = checkedFrontendPacketSize(6L + sqlBytes.size)
+    retain(size.toLong())
+    val packet = FrontendPacket(size)
+    packet.message('Q', size - 1)
+    packet.bytes(sqlBytes)
+    packet.byte(0)
+    return packet.finish()
 }
 
 internal fun extendedQueryProtocol(
     sql: String,
     parameters: List<QueryParam>,
+    retain: (Long) -> Unit = {},
 ): ByteArray {
     requireParameterCount(parameters.size, "extended query")
     requireSqlWithoutNul(sql, "extended query")
@@ -641,7 +654,9 @@ internal fun extendedQueryProtocol(
     val parseLength = sqlBytes.size.toLong() + 8 + 4L * parameters.size
     val payloadLength = parameters.sumOf { it.encodedBytes?.size?.toLong() ?: 0L }
     val bindLength = 14 + 6L * parameters.size + payloadLength
-    val packet = FrontendPacket(checkedFrontendPacketSize(parseLength + bindLength + 24))
+    val size = checkedFrontendPacketSize(parseLength + bindLength + 24)
+    retain(size.toLong())
+    val packet = FrontendPacket(size)
     packet.parse(sqlBytes, parameters.size) { parameters[it].typeOid?.value ?: 0u }
     packet.message('B', checkedFrontendPacketSize(bindLength))
     packet.byte(0)
@@ -667,12 +682,15 @@ internal fun extendedQueryProtocol(
 internal fun describeQueryProtocol(
     sql: String,
     parameterTypes: List<PostgresOid>,
+    retain: (Long) -> Unit = {},
 ): ByteArray {
     requireParameterCount(parameterTypes.size, "describe")
     requireSqlWithoutNul(sql, "describe")
     val sqlBytes = sql.encodeToByteArray()
     val parseLength = sqlBytes.size.toLong() + 8 + 4L * parameterTypes.size
-    val packet = FrontendPacket(checkedFrontendPacketSize(parseLength + 13))
+    val size = checkedFrontendPacketSize(parseLength + 13)
+    retain(size.toLong())
+    val packet = FrontendPacket(size)
     packet.parse(sqlBytes, parameterTypes.size) { parameterTypes[it].value }
     packet.describe('S')
     packet.message('S', 4)

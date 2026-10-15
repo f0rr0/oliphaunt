@@ -249,28 +249,28 @@ impl BuildOutputs {
                 name: "runtime:oliphaunt".to_owned(),
                 kind: "runtime".to_owned(),
                 path: build_dir.join("src/backend/oliphaunt"),
-                aot_file: "oliphaunt-llvm-opta.bin.zst".to_owned(),
+                aot_file: "oliphaunt-llvm-opta-ro_ftable.bin.zst".to_owned(),
                 requires_aot: true,
             },
             BuildModuleOutput {
                 name: "runtime-support:plpgsql".to_owned(),
                 kind: "runtime-support".to_owned(),
                 path: build_dir.join("src/pl/plpgsql/src/plpgsql.so"),
-                aot_file: "plpgsql-llvm-opta.bin.zst".to_owned(),
+                aot_file: "plpgsql-llvm-opta-ro_ftable.bin.zst".to_owned(),
                 requires_aot: true,
             },
             BuildModuleOutput {
                 name: "runtime-support:dict_snowball".to_owned(),
                 kind: "runtime-support".to_owned(),
                 path: build_dir.join("src/backend/snowball/dict_snowball.so"),
-                aot_file: "dict_snowball-llvm-opta.bin.zst".to_owned(),
+                aot_file: "dict_snowball-llvm-opta-ro_ftable.bin.zst".to_owned(),
                 requires_aot: true,
             },
             BuildModuleOutput {
                 name: "tool:initdb".to_owned(),
                 kind: "tool".to_owned(),
                 path: build_dir.join("src/bin/initdb/initdb"),
-                aot_file: "initdb-llvm-opta.bin.zst".to_owned(),
+                aot_file: "initdb-llvm-opta-ro_ftable.bin.zst".to_owned(),
                 requires_aot: true,
             },
         ];
@@ -279,14 +279,14 @@ impl BuildOutputs {
                 name: "tool:pg_dump".to_owned(),
                 kind: "tool".to_owned(),
                 path: build_dir.join("src/bin/pg_dump/pg_dump"),
-                aot_file: "pg_dump-llvm-opta.bin.zst".to_owned(),
+                aot_file: "pg_dump-llvm-opta-ro_ftable.bin.zst".to_owned(),
                 requires_aot: true,
             });
             modules.push(BuildModuleOutput {
                 name: "tool:psql".to_owned(),
                 kind: "tool".to_owned(),
                 path: build_dir.join("src/bin/psql/psql"),
-                aot_file: "psql-llvm-opta.bin.zst".to_owned(),
+                aot_file: "psql-llvm-opta-ro_ftable.bin.zst".to_owned(),
                 requires_aot: true,
             });
         }
@@ -307,7 +307,7 @@ impl BuildOutputs {
                         kind: "extension".to_owned(),
                         path: extension_build_module_path(&build_dir, &extension)?,
                         aot_file: format!(
-                            "{}-llvm-opta.bin.zst",
+                            "{}-llvm-opta-ro_ftable.bin.zst",
                             extension_aot_file_stem(&extension)
                         ),
                         requires_aot: true,
@@ -383,7 +383,7 @@ impl BuildOutputs {
             name: "runtime:oliphaunt".to_owned(),
             kind: "runtime".to_owned(),
             path: runtime_path,
-            aot_file: "oliphaunt-llvm-opta.bin.zst".to_owned(),
+            aot_file: "oliphaunt-llvm-opta-ro_ftable.bin.zst".to_owned(),
             requires_aot: true,
         }];
 
@@ -397,7 +397,7 @@ impl BuildOutputs {
                 name: format!("runtime-support:{}", support.name),
                 kind: "runtime-support".to_owned(),
                 path,
-                aot_file: format!("{}-llvm-opta.bin.zst", support.name),
+                aot_file: format!("{}-llvm-opta-ro_ftable.bin.zst", support.name),
                 requires_aot: true,
             });
         }
@@ -409,7 +409,7 @@ impl BuildOutputs {
                 name: "tool:pg_dump".to_owned(),
                 kind: "tool".to_owned(),
                 path,
-                aot_file: "pg_dump-llvm-opta.bin.zst".to_owned(),
+                aot_file: "pg_dump-llvm-opta-ro_ftable.bin.zst".to_owned(),
                 requires_aot: true,
             });
         }
@@ -420,7 +420,7 @@ impl BuildOutputs {
                 name: "tool:psql".to_owned(),
                 kind: "tool".to_owned(),
                 path,
-                aot_file: "psql-llvm-opta.bin.zst".to_owned(),
+                aot_file: "psql-llvm-opta-ro_ftable.bin.zst".to_owned(),
                 requires_aot: true,
             });
         }
@@ -434,7 +434,7 @@ impl BuildOutputs {
                 name: "tool:initdb".to_owned(),
                 kind: "tool".to_owned(),
                 path,
-                aot_file: "initdb-llvm-opta.bin.zst".to_owned(),
+                aot_file: "initdb-llvm-opta-ro_ftable.bin.zst".to_owned(),
                 requires_aot: true,
             });
         }
@@ -478,7 +478,10 @@ impl BuildOutputs {
                     },
                     kind: "extension".to_owned(),
                     path,
-                    aot_file: format!("{}-llvm-opta.bin.zst", native_module.name.replace('/', "_")),
+                    aot_file: format!(
+                        "{}-llvm-opta-ro_ftable.bin.zst",
+                        native_module.name.replace('/', "_")
+                    ),
                     requires_aot: true,
                 });
             }
@@ -1281,7 +1284,7 @@ fn has_wasm_export(link: &WasmLinkMetadataOut, name: &str) -> bool {
 
 fn aot_file(module: &BuildModuleOutput, target: &str) -> String {
     module.aot_file.replace(
-        "-llvm-opta.bin.zst",
+        "-llvm-opta-ro_ftable.bin.zst",
         &format!(
             "-{}.bin.zst",
             crate::aot_serializer::aot_engine_profile(target)

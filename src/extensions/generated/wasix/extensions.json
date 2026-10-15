@@ -713,7 +713,7 @@
       ],
       "native-support-modules": [
         {
-          "aot-file": "postgis_deps-llvm-opta.bin.zst",
+          "aot-file": "postgis_deps-llvm-opta-ro_ftable.bin.zst",
           "build-path": "postgis/postgis/liboliphaunt_postgis_deps.so",
           "name": "postgis_deps",
           "runtime-path": "lib/postgresql/liboliphaunt_postgis_deps.so"

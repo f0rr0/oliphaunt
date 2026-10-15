@@ -14,10 +14,10 @@ import { createForgottenRuntimeHandleCleanup } from '../runtime/forgotten-handle
 import {
   cleanupFailedManagedLaunch,
   connectEndpoint,
-  spawnManagedChild,
   parseReadyEndpoint,
   randomHexToken,
   readReadyLine,
+  spawnManagedChild,
   unixSocketPathsFit,
 } from '../runtime/node-adapter.js';
 import {
@@ -85,6 +85,93 @@ test('runtime adapters implement the shared internal operation boundary', async 
   assert.equal(brokerFailure.state, 'terminal');
   const serverFailure = await server.close({});
   assert.equal(serverFailure.state, 'terminal');
+});
+
+test('broker close expires stalled control I/O and reaches child reaping', async () => {
+  const config = normalizeOpenConfig(
+    { topology: 'broker' },
+    {
+      instanceDirectory: '/tmp/unused-broker-fixture',
+      temporaryDirectory: false,
+    },
+  );
+  let closeCount = 0;
+  let waited = false;
+  let rejectRead!: (error: Error) => void;
+  const read = new Promise<Uint8Array>((_, reject) => {
+    rejectRead = reject;
+  });
+  const stream = {
+    readExactly: () => read,
+    async writeAll() {},
+    async close() {
+      closeCount++;
+      rejectRead(new Error('owned control stream closed'));
+    },
+  };
+  const handle = new BrokerHandle(
+    config,
+    {
+      child: {
+        stdout: Readable.from([]),
+        kill() {},
+        async wait() {
+          waited = true;
+          return 0;
+        },
+        async exited() {
+          return 0;
+        },
+      },
+      stream,
+      client: new PostgresWireClient(new MemoryDuplexStream()),
+    },
+    15,
+  );
+  await assert.rejects(handle.detach(), (error: unknown) => {
+    assert.ok(error instanceof AggregateError);
+    assert.ok(error.errors.some((cause) => String(cause).includes('deadline exceeded')));
+    assert.ok(error.errors.some((cause) => String(cause).includes('owned control stream closed')));
+    return true;
+  });
+  assert.ok(closeCount >= 1);
+  assert.equal(waited, true);
+});
+
+test('PostgreSQL startup deadline closes a connected peer that never becomes ready', async () => {
+  let peerClosed!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    peerClosed = resolve;
+  });
+  const server = createServer((socket) => {
+    socket.on('data', () => {});
+    socket.on('close', peerClosed);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  try {
+    await assert.rejects(
+      PostgresWireClient.connect(
+        parseReadyEndpoint(`tcp:127.0.0.1:${address.port}`),
+        'postgres',
+        'postgres',
+        25,
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        assert.ok(
+          error.errors.some((cause) => String(cause).includes('startup deadline exceeded')),
+        );
+        return true;
+      },
+    );
+    await closed;
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 });
 
 test('native server quotes one Unix socket directory as one PostgreSQL GUC-list item', () => {
@@ -755,7 +842,13 @@ test('server readiness times out and closes a peer that never answers startup', 
         ),
         5_000,
       ),
-      /abort/i,
+      (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        assert.ok(
+          error.errors.some((cause) => String(cause).includes('startup deadline exceeded')),
+        );
+        return true;
+      },
     );
     await settleWithin(closed, 5_000);
   } finally {
@@ -899,6 +992,17 @@ test('buffered PostgreSQL rejects incomplete requests before writing and malform
     client.execProtocolStream(new Uint8Array([0x51, 0, 0, 0, 6, 0]), () => {}),
     /frontend frame length/,
   );
+  await assert.rejects(
+    client.execProtocolStream(
+      Uint8Array.of(0x50, 0, 0, 0, 4, 0x51, 0, 0, 0, 5, 0, 0x53, 0, 0, 0, 4),
+      () => {},
+    ),
+    /must follow Sync/,
+  );
+  await assert.rejects(
+    client.execProtocolStream(Uint8Array.of(0x51, 0, 0, 0, 5, 0, 0x48, 0, 0, 0, 4), () => {}),
+    /query or COPY boundary/,
+  );
   assert.equal(wire.output.length, 0);
   await assert.rejects(
     client.execProtocolStream(new Uint8Array([0x51, 0, 0, 0, 5, 0]), () => {}),
@@ -1041,4 +1145,44 @@ test('control deadline preserves operation and cleanup failures', async () => {
     ),
     (error) => error === operationError,
   );
+});
+
+test('PostgreSQL streams large frames in bounded chunks and drains after callback failure', async () => {
+  const response = new Uint8Array(192 * 1024 + 5 + 12);
+  response[0] = 0x44;
+  new DataView(response.buffer).setUint32(1, 192 * 1024 + 4);
+  response.set([0x5a, 0, 0, 0, 5, 0x49, 0x5a, 0, 0, 0, 5, 0x49], response.length - 12);
+  let offset = 0;
+  let closed = false;
+  const stream = {
+    async readExactly(length: number) {
+      assert.ok(length <= 64 * 1024);
+      assert.ok(offset + length <= response.length);
+      const bytes = response.slice(offset, offset + length);
+      offset += length;
+      return bytes;
+    },
+    async writeAll() {},
+    async close() {
+      closed = true;
+    },
+  };
+  const client = new PostgresWireClient(stream);
+  const request = Uint8Array.of(0x51, 0, 0, 0, 6, 0x61, 0, 0x51, 0, 0, 0, 6, 0x62, 0);
+  const chunks: Uint8Array[] = [];
+  await client.execProtocolStream(request, (chunk) => chunks.push(chunk));
+  assert.deepEqual(Buffer.concat(chunks), Buffer.from(response));
+  offset = 0;
+  const failure = new Error('sink failed');
+  let calls = 0;
+  await assert.rejects(
+    client.execProtocolStream(request, () => {
+      calls++;
+      throw failure;
+    }),
+    (error) => error === failure,
+  );
+  assert.equal(calls, 1);
+  assert.equal(offset, response.length);
+  assert.equal(closed, false);
 });

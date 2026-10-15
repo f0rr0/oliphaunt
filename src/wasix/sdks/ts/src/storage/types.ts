@@ -1,6 +1,10 @@
 declare const storageDescriptorBrand: unique symbol;
 declare const persistentStorageDescriptorBrand: unique symbol;
 
+/** Helper I/O concurrency; changed-file publication remains ordered. */
+export type OpfsOptions = Readonly<{ maxConcurrentIO?: number }>;
+export const DEFAULT_OPFS_MAX_CONCURRENT_IO = 16;
+
 /**
  * An opaque storage selection created by this package's storage factories.
  * The descriptor is deliberately not a bag of user-authored paths or assets.
@@ -33,6 +37,7 @@ export type SerializedWasixStorage =
       schema: 'oliphaunt-wasix-storage-v1';
       kind: 'opfs';
       name: string;
+      maxConcurrentIO?: number;
     }>
   | Readonly<{
       schema: 'oliphaunt-wasix-storage-v1';
@@ -64,12 +69,26 @@ export function defineIndexedDbStorage(name: string): PersistentWasixStorage<'in
 }
 
 /** @internal Used by the selectively imported OPFS adapter. */
-export function defineOpfsStorage(name: string): PersistentWasixStorage<'opfs'> {
+export function defineOpfsStorage(
+  name: string,
+  options: OpfsOptions = {},
+): PersistentWasixStorage<'opfs'> {
   validateOpfsDatabaseName(name);
+  if (
+    options === null ||
+    typeof options !== 'object' ||
+    Array.isArray(options) ||
+    Object.keys(options).some((key) => key !== 'maxConcurrentIO')
+  ) {
+    throw new TypeError('unknown OPFS option; expected maxConcurrentIO');
+  }
+  const maxConcurrentIO = options.maxConcurrentIO;
+  validateOpfsConcurrency(maxConcurrentIO);
   return defineStorage({
     schema: 'oliphaunt-wasix-storage-v1',
     kind: 'opfs',
     name,
+    ...(maxConcurrentIO === undefined ? {} : { maxConcurrentIO }),
   }) as PersistentWasixStorage<'opfs'>;
 }
 
@@ -124,6 +143,12 @@ export function validateOpfsDatabaseName(name: unknown): asserts name is string 
     throw new TypeError(
       'OPFS storage name must be 1-100 ASCII letters, digits, dot, dash, or underscore',
     );
+  }
+}
+
+export function validateOpfsConcurrency(value: unknown): void {
+  if (value !== undefined && (!Number.isSafeInteger(value) || (value as number) <= 0)) {
+    throw new TypeError('OPFS maxConcurrentIO must be a positive safe integer');
   }
 }
 

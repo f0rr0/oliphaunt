@@ -27,16 +27,23 @@
 extern void RequestTrustedEmbeddedTimeoutCheck(void);
 extern bool TrustedEmbeddedInterruptPending(void);
 
+static uint32_t read_be32(const unsigned char *ptr);
+
 static int wait_for_output_locked(
     OliphauntHandle *handle,
     const struct timespec *caller_deadline);
 
-static int validate_frontend_protocol_frames(OliphauntHandle *handle, const uint8_t *request, size_t request_len) {
+static int validate_frontend_protocol_frames(
+    OliphauntHandle *handle, const uint8_t *request, size_t request_len,
+    bool complete, bool *extended_pending, size_t *boundaries) {
     if (request_len == 0) {
         set_error(handle, "malformed frontend protocol request: empty request");
         return -1;
     }
     size_t off = 0;
+    size_t count = 0;
+    bool extended = *extended_pending;
+    uint8_t last = 0;
     while (off < request_len) {
         if (request_len - off < 5) {
             set_error(handle, "malformed frontend protocol request: truncated message header");
@@ -55,9 +62,38 @@ static int validate_frontend_protocol_frames(OliphauntHandle *handle, const uint
             set_error(handle, "malformed frontend protocol request: truncated message body");
             return -1;
         }
+        last = request[off];
+        if (last == 'Q' || last == 'F') {
+            /* An extended-protocol error ignores subsequent messages until
+             * Sync, including Query. Such a batch has no fixed ready count. */
+            if (extended) {
+                set_error(handle, "Query or FunctionCall must follow Sync after extended protocol messages");
+                return -1;
+            }
+            count++;
+        } else if (last == 'S') {
+            extended = false;
+            count++;
+        } else if (last == 'P' || last == 'B' || last == 'C' ||
+                   last == 'D' || last == 'E' || last == 'H') {
+            extended = true;
+        }
         off += total;
     }
+    if ((complete || count > 0) &&
+        (count == 0 || (last != 'Q' && last != 'F' && last != 'S' && last != 'c' && last != 'f'))) {
+        set_error(handle, "frontend protocol request must end at a complete Query, FunctionCall, Sync, or COPY boundary");
+        return -1;
+    }
+    *extended_pending = extended;
+    *boundaries = count;
     return 0;
+}
+
+static bool record_ready_locked(OliphauntHandle *handle, unsigned char status) {
+    handle->transaction_status = status;
+    if (handle->ready_remaining > 0) handle->ready_remaining--;
+    return handle->ready_remaining == 0;
 }
 
 static int append_output_locked(OliphauntHandle *handle, const void *buf, size_t len) {
@@ -124,7 +160,7 @@ static bool scan_stream_ready_locked(OliphauntHandle *handle, const unsigned cha
                 if (scanner->tag == 'G') handle->stream_copy_input = true;
                 if (scanner->tag == 'E' || ready) handle->stream_copy_input = false;
                 if (ready) {
-                    handle->transaction_status = 'I';
+                    ready = record_ready_locked(handle, 'I');
                 }
                 reset_protocol_scanner(scanner);
                 if (ready) {
@@ -147,7 +183,7 @@ static bool scan_stream_ready_locked(OliphauntHandle *handle, const unsigned cha
                 if (scanner->tag == 'G') handle->stream_copy_input = true;
                 if (scanner->tag == 'E' || ready) handle->stream_copy_input = false;
                 if (ready) {
-                    handle->transaction_status = scanner->ready_status_set ? scanner->ready_status : 'I';
+                    ready = record_ready_locked(handle, scanner->ready_status_set ? scanner->ready_status : 'I');
                 }
                 reset_protocol_scanner(scanner);
                 if (ready) {
@@ -160,20 +196,8 @@ static bool scan_stream_ready_locked(OliphauntHandle *handle, const unsigned cha
 }
 
 static size_t stream_queue_max_bytes(void) {
-    const char *value = getenv("OLIPHAUNT_STREAM_QUEUE_MAX_BYTES");
-    if (value == NULL || value[0] == '\0') {
-        return DEFAULT_STREAM_QUEUE_MAX_BYTES;
-    }
-
-    char *end = NULL;
-    unsigned long long parsed = strtoull(value, &end, 10);
-    if (end == value || parsed == 0) {
-        return DEFAULT_STREAM_QUEUE_MAX_BYTES;
-    }
-    if (parsed > (unsigned long long)SIZE_MAX) {
-        return SIZE_MAX;
-    }
-    return (size_t)parsed;
+    return oliphaunt_resource_size(getenv("OLIPHAUNT_STREAM_QUEUE_MAX_BYTES"),
+                                  1, SIZE_MAX, DEFAULT_STREAM_QUEUE_MAX_BYTES);
 }
 
 static bool stream_queue_has_room_locked(OliphauntHandle *handle, size_t len, size_t max_bytes) {
@@ -314,15 +338,17 @@ static bool scan_ready_for_query_locked(OliphauntHandle *handle) {
             return false;
         }
         if (tag == 'Z') {
-            handle->transaction_status = msg_len >= 5 ? handle->output[off + 5] : 'I';
-            handle->output_ready = true;
-            off += frame_len;
-            handle->output_scan_off = off;
-            if (trace) {
-                handle->trace_ready_scan_calls++;
-                handle->trace_ready_scan_ns += oliphaunt_elapsed_ns(scan_started);
+            handle->output_ready = record_ready_locked(
+                handle, msg_len >= 5 ? handle->output[off + 5] : 'I');
+            if (handle->output_ready) {
+                off += frame_len;
+                handle->output_scan_off = off;
+                if (trace) {
+                    handle->trace_ready_scan_calls++;
+                    handle->trace_ready_scan_ns += oliphaunt_elapsed_ns(scan_started);
+                }
+                return true;
             }
-            return true;
         }
         off += frame_len;
     }
@@ -339,8 +365,7 @@ int oliphaunt_startup_timeout_ms(void) {
     if (value == NULL || value[0] == '\0') {
         return DEFAULT_STARTUP_TIMEOUT_MS;
     }
-    int parsed = atoi(value);
-    return parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
+    return (int)oliphaunt_resource_size(value, 1, INT_MAX, DEFAULT_STARTUP_TIMEOUT_MS);
 }
 
 static void add_ms_to_timespec(struct timespec *ts, long ms) {
@@ -863,7 +888,10 @@ static int32_t oliphaunt_exec_protocol_impl(
     }
     out->data = NULL;
     out->len = 0;
-    if (validate_frontend_protocol_frames(handle, request, request_len) != 0) {
+    bool extended_pending = false;
+    size_t boundaries = 0;
+    if (validate_frontend_protocol_frames(handle, request, request_len,
+                                         true, &extended_pending, &boundaries) != 0) {
         return -1;
     }
 
@@ -897,6 +925,7 @@ static int32_t oliphaunt_exec_protocol_impl(
     handle->output_len = 0;
     handle->output_scan_off = 0;
     handle->output_ready = false;
+    handle->ready_remaining = boundaries;
     if (oliphaunt_set_input_locked(handle, request, request_len) != 0) {
         pthread_mutex_unlock(&handle->mutex);
         return -1;
@@ -1010,6 +1039,7 @@ static int32_t oliphaunt_exec_simple_query_impl(
     handle->output_len = 0;
     handle->output_scan_off = 0;
     handle->output_ready = false;
+    handle->ready_remaining = 1;
     if (oliphaunt_set_simple_query_input_locked(handle, sql, sql_len) != 0) {
         pthread_mutex_unlock(&handle->mutex);
         return -1;
@@ -1075,7 +1105,7 @@ int32_t oliphaunt_exec_simple_query_with_error(
 /* The caller has already validated complete frame lengths. */
 static bool request_closes_stream_input(const uint8_t *request, size_t len) {
     for (size_t off = 0; off < len; off += (size_t)read_be32(request + off + 1) + 1) {
-        if (request[off] == 'Q' || request[off] == 'S' || request[off] == 'X') {
+        if (request[off] == 'Q' || request[off] == 'F' || request[off] == 'S' || request[off] == 'X') {
             return true;
         }
     }
@@ -1112,18 +1142,6 @@ int32_t oliphaunt_feed_protocol_stream(
         set_error(handle, "invalid or oversized protocol stream input");
         goto done;
     }
-    if (validate_frontend_protocol_frames(handle, request, request_len) != 0) {
-        goto done;
-    }
-    for (size_t off = 0; off < request_len;) {
-        size_t end = off + (size_t)read_be32(request + off + 1) + 1;
-        if ((request[off] == 'Q' || request[off] == 'S' || request[off] == 'X') &&
-            end != request_len) {
-            set_error(handle, "protocol stream input continues beyond its completion frame");
-            goto done;
-        }
-        off = end;
-    }
     pthread_mutex_lock(&handle->mutex);
     if (!handle->streaming || handle->stream_token != token || !handle->logical_active ||
         handle->closing || handle->backend_exited || handle->stream_failed ||
@@ -1132,6 +1150,23 @@ int32_t oliphaunt_feed_protocol_stream(
     } else if (handle->input_len != 0) {
         rc = OLIPHAUNT_STREAM_INPUT_BUSY;
     } else {
+        bool extended_pending = handle->stream_extended_pending;
+        size_t boundaries = 0;
+        if (validate_frontend_protocol_frames(handle, request, request_len,
+                                             false, &extended_pending, &boundaries) != 0) {
+            pthread_mutex_unlock(&handle->mutex);
+            goto done;
+        }
+        for (size_t off = 0; off < request_len;) {
+            size_t end = off + (size_t)read_be32(request + off + 1) + 1;
+            if ((request[off] == 'Q' || request[off] == 'F' || request[off] == 'S' || request[off] == 'X') &&
+                end != request_len) {
+                set_error(handle, "protocol stream input continues beyond its completion frame");
+                pthread_mutex_unlock(&handle->mutex);
+                goto done;
+            }
+            off = end;
+        }
         bool copy_finished = false;
         if (handle->stream_copy_input) {
             for (size_t off = 0; off < request_len;) {
@@ -1149,6 +1184,7 @@ int32_t oliphaunt_feed_protocol_stream(
         }
         rc = oliphaunt_set_input_locked(handle, request, request_len);
         if (rc == 0) {
+            handle->stream_extended_pending = extended_pending;
             if (handle->stream_copy_input) {
                 if (copy_finished) handle->stream_copy_input = false;
             } else {
@@ -1176,7 +1212,10 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
         set_error(handle, "invalid oliphaunt_exec_protocol_raw_stream arguments");
         return -1;
     }
-    if (validate_frontend_protocol_frames(handle, request, request_len) != 0) {
+    bool extended_pending = false;
+    size_t boundaries = 0;
+    if (validate_frontend_protocol_frames(handle, request, request_len,
+                                         false, &extended_pending, &boundaries) != 0) {
         return -1;
     }
 
@@ -1209,11 +1248,14 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
     }
     handle->stream_token++;
     handle->stream_input_closed = request_closes_stream_input(request, request_len);
+    handle->stream_extended_pending = extended_pending;
     handle->stream_copy_input = false;
 
     handle->output_len = 0;
     handle->output_scan_off = 0;
     handle->output_ready = false;
+    /* Incremental input promises one boundary until its final Sync is fed. */
+    handle->ready_remaining = boundaries > 0 ? boundaries : 1;
     handle->streaming = true;
     handle->stream_failed = false;
     handle->stream_queue_max_bytes = stream_queue_max_bytes();
@@ -1260,7 +1302,20 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
                  * COPY consumes the original Sync, so supply its recovery Sync. */
                 static const uint8_t copy_fail[] = {'f', 0, 0, 0, 5, 0,
                                                    'S', 0, 0, 0, 4};
-                size_t length = request[0] == 'Q' ? 6 : sizeof(copy_fail);
+                bool extended_copy = true;
+                size_t completed = boundaries > handle->ready_remaining
+                    ? boundaries - handle->ready_remaining : 0;
+                for (size_t off = 0; off < request_len;
+                     off += (size_t)read_be32(request + off + 1) + 1) {
+                    uint8_t tag = request[off];
+                    if (tag != 'Q' && tag != 'F' && tag != 'S') continue;
+                    if (completed == 0) {
+                        extended_copy = tag == 'S';
+                        break;
+                    }
+                    completed--;
+                }
+                size_t length = extended_copy ? sizeof(copy_fail) : 6;
                 if (oliphaunt_set_input_locked(handle, copy_fail, length) != 0) {
                     status = -1;
                     break;

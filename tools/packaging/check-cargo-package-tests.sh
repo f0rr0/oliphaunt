@@ -40,6 +40,11 @@ fi
 while IFS= read -r name; do
   case "$name" in OLIPHAUNT_*) unset "$name" ;; esac
 done < <(compgen -e)
+# Preserve the caller's selected compiler when leaving its toolchain directory.
+if command -v rustup >/dev/null 2>&1; then
+  package_test_toolchain=$(rustup show active-toolchain)
+  export RUSTUP_TOOLCHAIN="${package_test_toolchain%% *}"
+fi
 cd "$scratch"
 # Populate the registry cache for the extracted package closure before offline compilation.
 "$timeout_bin" 1800 cargo --config net.offline=false fetch --manifest-path "$manifest"

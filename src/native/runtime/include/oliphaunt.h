@@ -137,10 +137,16 @@ typedef struct OliphauntRestoreOptions {
  * handle. Those calls fail with a busy error while streaming is active,
  * including from another thread, so the callback cannot corrupt protocol
  * ordering or free its own handle. A non-zero callback result stops later
- * callback delivery and drains the backend to ReadyForQuery. The stream then
+ * callback delivery and drains every admitted ReadyForQuery boundary. The stream then
  * returns OLIPHAUNT_STREAM_CALLBACK_ABORTED; negative results identify
  * validation, transport, backend, or recovery failures for which reuse may be
  * unsafe.
+ *
+ * Buffered raw requests must end at a Query, FunctionCall, Sync, or complete
+ * COPY boundary. A batch may contain multiple complete exchanges. Query and
+ * FunctionCall require Sync after any extended-protocol messages, since an
+ * extended-query error otherwise makes PostgreSQL ignore them. Raw streams
+ * also allow incomplete extended input completed through their stream token.
  */
 typedef int32_t (*OliphauntStreamCallback)(void *context, const uint8_t *data, size_t len);
 

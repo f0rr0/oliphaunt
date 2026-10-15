@@ -45,6 +45,117 @@ SELECT id, body FROM notes WHERE id = 42;
 
 Typed queries buffer results. Select only the columns you need and paginate large application reads. Batch related writes in bounded transactions instead of committing each row separately.
 
+## Understand resource budgets
+
+Treat a queue capacity, a read batch and an input limit as different settings. More queue space absorbs a burst and can increase waiting time. A larger read batch may reduce calls while retaining more scratch memory. A higher input limit accepts larger inputs; it does not speed up an already accepted query.
+
+| Resource | Current behavior | Developer tradeoff |
+| --- | --- | --- |
+| Async operation admission | Omitting `admission` preserves the defaults: 64 pending operations in TypeScript, Swift and Kotlin; 256 queued commands in native Rust and 64 in WASIX Rust. Explicit settings include executing work | More waiting work retains more input without adding SQL execution parallelism. Ordinary Rust futures wait for capacity; TS/Swift/Kotlin reject full admission |
+| Admitted input | These gates use a 128 MiB byte budget and permit a larger single input under their admission rules | This is a watermark for owned input, not a hard limit on total database or process memory. Explicit Swift settings reserve before structured packet encoding |
+| Browser tool channels | Each channel has 256 KiB of usable capacity; a tool uses separate protocol and optional output channels | Full channels apply backpressure. Multiple channels and databases multiply the allocation |
+| Read and callback batches | WASIX protocol callbacks deliver at most 64 KiB at a time | Large results can span many chunks. Chunk size does not limit total output or remove a single-message acceptance limit |
+| OPFS helper I/O | Initialization, snapshot reads and cleanup default to at most 16 concurrent operations per helper batch; `opfs(name, { maxConcurrentIO })` selects another positive count | Concurrency trades overlapping file work against storage contention. Changed-file publication retains its separate ordering |
+| Guest memory | Embedded WASIX artifacts start with 128 MiB of linear memory, including an 8 MiB guest C stack | These are artifact settings. More guest stack reduces heap headroom within the same memory. The host engine's execution stack is separate |
+
+Admission has the same explicit field meanings across the asynchronous SDKs. Omitting it retains each SDK's existing accounting. Transport, artifact and PostgreSQL settings have their own owners; these budgets do not establish a total process-memory bound.
+
+Native TypeScript broker mode separately limits a collected SQL response to 128 MiB. Raw response streaming avoids that aggregate collection, but the broker's PostgreSQL reader still limits each backend message to its 128 MiB length-field policy. One large row can exceed a message limit even when the transport delivers small chunks. Streaming tool destinations also avoid complete stdout collection, while PostgreSQL and your destination retain their own memory costs.
+
+## Tune the controls available today
+
+Set both admission limits when you want to control bursts:
+
+```ts
+// Native TypeScript, WASIX TypeScript and React Native use the same open field.
+const db = await Oliphaunt.open({
+  admission: {
+    maxPendingOperations: 16,
+    highWaterMarkBytes: 32 * 1024 * 1024,
+  },
+});
+```
+
+| Field | Meaning | Raising it |
+| --- | --- | --- |
+| `maxPendingOperations` | Admitted preparation, queued and executing operations on one database; transaction handles share it | Accepts a larger burst and can increase queue delay; SQL still runs in order |
+| `highWaterMarkBytes` | Conservative allowance for owned inputs and fixed transport allocations, retained until the owner finishes | Retains more waiting input; does not limit results or PostgreSQL memory |
+
+A single operation above the watermark runs alone. While it owns the allowance,
+zero-input operations also wait or reject. Rust futures wait fairly for capacity;
+TypeScript, Swift and Kotlin reject full admission. Rust futures still waiting
+for admission do not own a slot; their caller inputs are outside the allowance. Cancel, close and transaction
+settlement retain their recovery path. BEGIN uses ordinary admission and releases
+before the callback starts. The callback has a separate transaction lease, so a
+limit of one is usable.
+Known packet sizes and protected copies are reserved before allocation. JSON
+inspection and custom encoders must produce a value before its encoded size is
+known. Type inference or custom encoders can require an additional allowance
+and reject final packet preparation; user code and result allocations are
+outside the budget.
+
+Supply the same two values through each language's existing configuration:
+
+```rust
+// Native oliphaunt or oliphaunt-wasix; asynchronous database builders only.
+let db = AsyncOliphaunt::builder()
+    .admission(AdmissionLimits::new(16, 32 * 1024 * 1024))
+    .open().await?;
+```
+
+```swift
+let configuration = OliphauntConfiguration(
+    admission: .init(maxPendingOperations: 16, highWaterMarkBytes: 32 * 1024 * 1024)
+)
+```
+
+```kotlin
+val config = OliphauntConfig(
+    admission = AdmissionLimits(maxPendingOperations = 16, highWaterMarkBytes = 32L * 1024 * 1024),
+)
+```
+
+These fragments assume the imports from your [SDK quickstart](/docs/start).
+Blocking Rust databases and endpoint-only server handles have no application
+admission queue and do not accept this setting. WASIX Rust limits must fit its
+owner semaphore; the JavaScript native actor validates the same range before open.
+
+For browser OPFS, configure helper I/O on its storage constructor:
+
+```ts
+import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
+
+const storage = opfs('main', { maxConcurrentIO: 4 });
+```
+
+Lower concurrency reduces overlapping storage work. Higher concurrency can
+reduce snapshot time or rebuilding time after interrupted initialization until storage contention dominates. It
+also reaches cleanup and restore through the descriptor; changed-file writes
+still retain their publication order. This controls I/O concurrency, not the
+memory of the complete reopened snapshot. The omitted value remains 16.
+
+Use your SDK's PostgreSQL startup settings for database memory and SQL deadlines. Include units explicitly and inspect the effective values in the running database:
+
+```sql
+SELECT name, setting, unit, source
+FROM pg_settings
+WHERE name IN ('shared_buffers', 'work_mem', 'wal_buffers', 'statement_timeout')
+ORDER BY name;
+```
+
+| Setting | Purpose and tradeoff |
+| --- | --- |
+| `shared_buffers` | PostgreSQL data-page cache, selected at startup. A larger cache increases memory per instance |
+| `work_mem` | Working memory for each sort or hash operation before spilling. Several operations within one query can multiply its use |
+| `wal_buffers` | Buffers PostgreSQL WAL writes; independent of an SDK streaming queue |
+| `statement_timeout` | Limits server statement execution. Time spent waiting in an SDK queue is a separate cost |
+
+See PostgreSQL's [resource settings](https://www.postgresql.org/docs/18/runtime-config-resource.html) and [SQL timeout semantics](https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-STATEMENT-TIMEOUT). Available workers and background maintenance depend on the runtime product; changing a PostgreSQL setting does not add unsupported workers to an embedded session.
+
+The native C runtime also has process environment overrides: `OLIPHAUNT_STREAM_QUEUE_MAX_BYTES` selects the streaming queue capacity, normally 4 MiB, and is read when streaming starts; `OLIPHAUNT_STACK_BYTES` selects the backend thread stack, normally 8 MiB, before thread creation. Values must be complete positive decimal integers that fit the native size; invalid legacy overrides use the default. These are byte counts for native embedding hosts that can set the process environment. They are not per-database SDK options or WASIX settings. Raising PostgreSQL `max_stack_depth` does not allocate a larger thread or guest stack.
+
+Compare one change at a time. Measure queue delay, query latency, bulk throughput, first-byte latency, and peak and retained memory. Include a slow destination and verify error recovery and close; throughput alone can hide excess buffering or slower cancellation.
+
 ## Compare runtime modes
 
 Direct, broker, and server modes have different process and connection costs. Measure the mode you will ship. For async integrations, measure UI responsiveness or executor delay separately from SQL latency.

@@ -63,6 +63,14 @@ The quickstart uses direct mode. For a separate database process, follow [mobile
 
 ## Back up and restore
 
+To save an archive without copying it into JavaScript memory, write it directly to a file in your application's writable storage:
+
+```ts
+await db.backupToFile(archivePath);
+```
+
+Use a native filesystem path with an existing parent directory. The destination must not exist. Both direct and broker modes use the underlying Swift or Kotlin file writer; completion includes archive cleanup, file close, and publication. This guarantees a complete file on successful return, without a power-loss durability guarantee. Rebuild the app to install the bindings for this method. `backup()` remains available when you need the complete archive as a `Uint8Array`.
+
 Direct mode stays bound to one database root and configuration for the lifetime of the application process. Closing a handle does not let that process switch to another root. Prepare the restored data, then use it on the next launch.
 
 ```ts

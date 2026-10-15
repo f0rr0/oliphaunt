@@ -30,6 +30,12 @@ Embedded execution defaults to `fsync=off`; saved PostgreSQL configuration and `
 
 ## Build your integration
 
+Use `await db.backupToFile('./backup.tar')` to save a physical backup without
+collecting the archive in JavaScript memory. The destination must be new; its
+parent directory must exist. The file is published after backup and close
+succeed, with private permissions on Unix. Completion does not promise power-loss
+durability. `backup()` remains available when you need the archive bytes.
+
 - [Guide](https://oliphaunt.dev/docs/sdk/typescript/guide): parameters, transactions, extensions, backups, and shutdown.
 - [API reference](https://oliphaunt.dev/docs/sdk/typescript/api-reference): methods, configuration, results, and errors.
 - [Runtime support](https://oliphaunt.dev/docs/reference/capabilities): platforms, storage, and concurrency.

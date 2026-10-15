@@ -119,14 +119,6 @@ void oliphaunt_free_backend_argv(OliphauntBackendArgv *argv) {
 }
 
 size_t oliphaunt_backend_stack_size_bytes(void) {
-    const char *value = getenv("OLIPHAUNT_STACK_BYTES");
-    if (value == NULL || value[0] == '\0') {
-        return DEFAULT_BACKEND_STACK_BYTES;
-    }
-    char *end = NULL;
-    unsigned long long parsed = strtoull(value, &end, 10);
-    if (end == value || parsed < (unsigned long long)PTHREAD_STACK_MIN) {
-        return DEFAULT_BACKEND_STACK_BYTES;
-    }
-    return (size_t)parsed;
+    return oliphaunt_resource_size(getenv("OLIPHAUNT_STACK_BYTES"),
+                                  PTHREAD_STACK_MIN, SIZE_MAX, DEFAULT_BACKEND_STACK_BYTES);
 }

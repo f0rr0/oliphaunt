@@ -93,6 +93,7 @@ export type SerializedSeed = { archive: SerializedAssetSource; manifest: Seriali
 
 /** Host-ready open options shared by both public execution surfaces. */
 export type SerializedOpenOptions = {
+  admission?: import('../core/types.js').AdmissionLimits;
   runtime: SerializedRuntimeDescriptor;
   icu?: SerializedIcuDescriptor;
   seed?: SerializedSeed;
@@ -137,7 +138,22 @@ export type WorkerRequest =
   | {
       id: number;
       method: 'runTool';
-      options: WasixToolProcessOptions;
+      options: Omit<WasixToolProcessOptions, 'output'>;
+    }
+  | {
+      id: number;
+      method: 'runToolStream';
+      /** @internal Native parent output; browser transports omit this token. */
+      nativeOutputRegistration?: number;
+      options: Omit<WasixToolProcessOptions, 'output'>;
+      stderr: boolean;
+    }
+  | {
+      id: number;
+      method: 'toolOutputCredit';
+      stream: 'stdout' | 'stderr';
+      sequence: number;
+      error?: string;
     }
   | {
       id: number;
@@ -163,12 +179,20 @@ export type SerializedWorkerError =
       exitCode: number | null;
       stdout: Uint8Array;
       stderr: Uint8Array;
+      stderrTruncated?: boolean;
     }
   | { name: 'PostgresError'; fields: PostgresErrorField[] }
   | { name: 'Error'; message: string; errorName?: string; stack?: string };
 
 export type WorkerResponse =
   | { id: number; kind: 'chunk'; sequence: number; value: Uint8Array }
+  | {
+      id: number;
+      kind: 'toolChunk';
+      stream: 'stdout' | 'stderr';
+      sequence: number;
+      value: Uint8Array;
+    }
   | { id: number; ok: true; streamOutcome: WasixProtocolStreamOutcome }
   | { id: number; ok: true; value?: Uint8Array | WasixToolProcessResult }
   | { id: number; ok: false; error: SerializedWorkerError };
@@ -199,6 +223,7 @@ export function serializeWorkerError(error: unknown): SerializedWorkerError {
       exitCode: nativeTool.exitCode,
       stdout: nativeTool.stdout.slice(),
       stderr: nativeTool.stderr.slice(),
+      stderrTruncated: nativeTool.stderrTruncated ?? false,
     };
   }
   const generic = {
@@ -232,6 +257,7 @@ export function deserializeWorkerError(error: SerializedWorkerError): Error {
       exitCode: error.exitCode,
       stdout: error.stdout.slice(),
       stderr: error.stderr.slice(),
+      stderrTruncated: error.stderrTruncated ?? false,
     });
   }
   const restored = new Error(error.message);
@@ -246,6 +272,7 @@ type NativeToolError = Readonly<{
   exitCode: number | null;
   stdout: Uint8Array;
   stderr: Uint8Array;
+  stderrTruncated?: boolean;
 }>;
 
 function nativeToolError(error: unknown): NativeToolError | undefined {
@@ -259,7 +286,8 @@ function nativeToolError(error: unknown): NativeToolError | undefined {
     typeof candidate.tool !== 'string' ||
     (candidate.exitCode !== null && !Number.isSafeInteger(candidate.exitCode)) ||
     !(candidate.stdout instanceof Uint8Array) ||
-    !(candidate.stderr instanceof Uint8Array)
+    !(candidate.stderr instanceof Uint8Array) ||
+    (candidate.stderrTruncated !== undefined && typeof candidate.stderrTruncated !== 'boolean')
   ) {
     return undefined;
   }

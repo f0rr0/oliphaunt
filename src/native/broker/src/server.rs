@@ -73,6 +73,7 @@ enum Command {
     Execute(Vec<u8>, Socket, Reply<()>),
     Reset(Reply<()>),
     Backup(Reply<Vec<u8>>),
+    BackupStream(Socket, Reply<()>),
     Shutdown(Reply<()>),
 }
 
@@ -266,6 +267,13 @@ fn run_backend(
             Command::Backup(reply) => {
                 let _ = reply.send(session.backup().map_err(other));
             }
+            Command::BackupStream(mut socket, reply) => {
+                let _ = reply.send(
+                    session
+                        .backup_to(&mut BackupWriter(&mut socket))
+                        .map_err(other),
+                );
+            }
             Command::Shutdown(reply) => {
                 let result = session.close_terminal().map_err(other);
                 let failed = result.is_err();
@@ -317,6 +325,19 @@ fn startup_parameters(
     Ok(response)
 }
 
+struct BackupWriter<'a>(&'a mut Socket);
+
+impl Write for BackupWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        ipc::write_backup_chunk(self.0, bytes).map_err(other)?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
 fn management_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
     socket.read_timeout(Some(Duration::from_secs(5)))?;
     socket.write_timeout(Some(Duration::from_secs(5)))?;
@@ -353,6 +374,18 @@ fn management_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
                         .map_err(other)?;
                     let response = match done.recv().map_err(other)? {
                         Ok(bytes) => ResponseFrame::Ok(bytes),
+                        Err(error) => ResponseFrame::Error(error.to_string()),
+                    };
+                    ipc::write_response(&mut socket, response).map_err(other)?;
+                }
+                RequestFrame::BackupStream => {
+                    let (reply, done) = mpsc::channel();
+                    shared
+                        .commands
+                        .send(Command::BackupStream(socket.clone_socket()?, reply))
+                        .map_err(other)?;
+                    let response = match done.recv().map_err(other)? {
+                        Ok(()) => ResponseFrame::Ok(Vec::new()),
                         Err(error) => ResponseFrame::Error(error.to_string()),
                     };
                     ipc::write_response(&mut socket, response).map_err(other)?;

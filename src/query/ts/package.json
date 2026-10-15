@@ -21,6 +21,16 @@
         "types": "./dist/commonjs/query.d.ts",
         "default": "./dist/commonjs/query.js"
       }
+    },
+    "./internal/operation-budget": {
+      "import": {
+        "types": "./dist/module/operation-budget.d.ts",
+        "default": "./dist/module/operation-budget.js"
+      },
+      "require": {
+        "types": "./dist/commonjs/operation-budget.d.ts",
+        "default": "./dist/commonjs/operation-budget.js"
+      }
     }
   },
   "files": [

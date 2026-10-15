@@ -93,6 +93,8 @@ DirectFunctionCall4Coll
 DirectFunctionCall5Coll
 EOH_flatten_into
 EOH_get_flat_size
+EmbeddedTimeoutPending
+EmbeddedTimeoutsActive
 EncodeDateOnly
 EncodeDateTime
 EncodeSpecialDate
@@ -284,6 +286,7 @@ PreventCommandIfReadOnly
 PreventInTransactionBlock
 ProcDiePending
 ProcessCopyOptions
+ProcessEmbeddedTimeouts
 ProcessInterrupts
 ProcessStartupPacket
 ProcessUtility_hook

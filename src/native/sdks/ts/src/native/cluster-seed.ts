@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
-import type { NativeResourceDirectory } from '../types.js';
+import type { NormalizedResourceDirectory as NativeResourceDirectory } from '../config.js';
 
 export type NativeCatalogProfile = 'standard' | 'icu';
 

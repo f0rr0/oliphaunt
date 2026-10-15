@@ -17,7 +17,7 @@ import {
   validateSelectedIcuData,
   validateSelectedNativeSeed,
 } from './cluster-seed.js';
-import type { NativeResourceDirectory } from '../types.js';
+import type { NormalizedResourceDirectory as NativeResourceDirectory } from '../config.js';
 import { validateManagedRoot } from '../root-descriptor.js';
 import {
   liboliphauntPackageTarget,

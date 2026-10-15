@@ -1,6 +1,6 @@
 import { Worker } from 'node:worker_threads';
 
-import { serializeOpenConfig } from '../../core/open-config.js';
+import { serializeOpenConfig, validateNativeOwnerAdmission } from '../../core/open-config.js';
 import { hostRuntimeName } from './host-runtime.js';
 import { requireNodeStorage } from './node-client-common.js';
 import { nodeWorkerExecArgv } from './node-worker-options.js';
@@ -24,6 +24,7 @@ export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatab
   // Runtime and contrib assets are embedded in the addon; external extensions
   // still need their installed package URLs in the Worker.
   const openOptions = withoutNativeAssetPayloads(serializeOpenConfig(config));
+  validateNativeOwnerAdmission(openOptions);
   return openWasixWithWorker(createNodeWorker, openOptions, requireNodeStorage, false);
 }
 

@@ -252,6 +252,8 @@ pub(super) fn collect_extension_sql_symbols(
         ))
     })?;
     let mut symbols = BTreeSet::new();
+    let primary_module =
+        control_module_pathname(&extension_dir.join(format!("{}.control", extension.sql_name)))?;
     let mut found_sql_file = false;
     for entry in fs::read_dir(&extension_dir)
         .map_err(|err| Error::Engine(format!("read {}: {err}", extension_dir.display())))?
@@ -269,7 +271,19 @@ pub(super) fn collect_extension_sql_symbols(
         let text = fs::read_to_string(&path).map_err(|err| {
             Error::Engine(format!("read extension SQL {}: {err}", path.display()))
         })?;
-        for symbol in module_c_symbols(&text, module_stem)? {
+        let version = file_name
+            .strip_suffix(".sql")
+            .unwrap()
+            .rsplit("--")
+            .next()
+            .unwrap();
+        let secondary = extension_dir.join(format!("{}--{version}.control", extension.sql_name));
+        let effective_module = if secondary.exists() {
+            control_module_pathname(&secondary)?.or_else(|| primary_module.clone())
+        } else {
+            primary_module.clone()
+        };
+        for symbol in module_c_symbols_with_path(&text, module_stem, effective_module.as_deref())? {
             symbols.insert(symbol);
         }
     }
@@ -283,21 +297,137 @@ pub(super) fn collect_extension_sql_symbols(
     Ok(symbols.into_iter().collect())
 }
 
+#[derive(Debug, PartialEq)]
+enum SqlToken {
+    Word(String),
+    Identifier(String),
+    Literal(String),
+    UnsupportedLiteral,
+    Punctuation(char),
+}
+
+impl SqlToken {
+    fn keyword(&self, keyword: &str) -> bool {
+        matches!(self, Self::Word(word) if word.eq_ignore_ascii_case(keyword))
+    }
+
+    fn name(&self) -> Option<&str> {
+        match self {
+            Self::Word(value) | Self::Identifier(value) | Self::Literal(value) => Some(value),
+            Self::Punctuation(_) | Self::UnsupportedLiteral => None,
+        }
+    }
+}
+
+#[cfg(test)]
 pub(super) fn module_c_symbols(sql: &str, module_stem: &str) -> Result<Vec<String>> {
+    module_c_symbols_with_path(sql, module_stem, Some(&format!("$libdir/{module_stem}")))
+}
+
+fn module_c_symbols_with_path(
+    sql: &str,
+    module_stem: &str,
+    module_pathname: Option<&str>,
+) -> Result<Vec<String>> {
     let mut symbols = BTreeSet::new();
-    let stripped = strip_sql_line_comments(sql);
-    for statement in split_sql_statements(&stripped) {
-        if !has_language_c(statement) {
+    // PostgreSQL substitutes the raw script before lexing, including occurrences
+    // inside longer literals. Keep symbol selection on that same script.
+    let substituted;
+    let sql = if let Some(pathname) = module_pathname {
+        substituted = sql.replace("MODULE_PATHNAME", pathname);
+        substituted.as_str()
+    } else {
+        sql
+    };
+    let tokens = sql_tokens(sql)?;
+    let module = format!("$libdir/{module_stem}");
+    for statement in tokens.split(|token| *token == SqlToken::Punctuation(';')) {
+        if !statement
+            .first()
+            .is_some_and(|token| token.keyword("create"))
+        {
             continue;
         }
-        let Some(module_remainder) = matching_module_reference_remainder(statement, module_stem)
-        else {
+        let function = if statement
+            .get(1)
+            .is_some_and(|token| token.keyword("function"))
+        {
+            1
+        } else if statement.get(1).is_some_and(|token| token.keyword("or"))
+            && statement
+                .get(2)
+                .is_some_and(|token| token.keyword("replace"))
+            && statement
+                .get(3)
+                .is_some_and(|token| token.keyword("function"))
+        {
+            3
+        } else {
             continue;
         };
-        let Some(symbol) = explicit_module_symbol(module_remainder)
-            .or_else(|| implicit_function_symbol(statement))
-        else {
+        let mut depth = 0;
+        let options = statement[function + 1..]
+            .iter()
+            .enumerate()
+            .filter_map(|(index, token)| {
+                match token {
+                    SqlToken::Punctuation('(') => depth += 1,
+                    SqlToken::Punctuation(')') => depth -= 1,
+                    _ => {}
+                }
+                (depth == 0).then_some((function + 1 + index, token))
+            })
+            .collect::<Vec<_>>();
+        if !options.windows(2).any(|pair| {
+            let pair = [pair[0].1, pair[1].1];
+            pair[0].keyword("language")
+                && pair[1]
+                    .name()
+                    .is_some_and(|value| value.eq_ignore_ascii_case("c"))
+        }) {
             continue;
+        }
+        let Some(as_index) = options
+            .iter()
+            .find_map(|(index, token)| token.keyword("as").then_some(*index))
+        else {
+            return Err(Error::InvalidConfig(
+                "C function is missing its module literal".to_owned(),
+            ));
+        };
+        let Some(SqlToken::Literal(reference)) = statement.get(as_index + 1) else {
+            return Err(Error::InvalidConfig(
+                "unsupported C function module literal".to_owned(),
+            ));
+        };
+        if reference.contains("MODULE_PATHNAME") && module_pathname.is_none() {
+            return Err(Error::InvalidConfig(
+                "extension SQL uses MODULE_PATHNAME without control-file module_pathname"
+                    .to_owned(),
+            ));
+        }
+        if reference != &module {
+            continue;
+        }
+        let symbol = if statement.get(as_index + 2) == Some(&SqlToken::Punctuation(',')) {
+            match statement.get(as_index + 3) {
+                Some(SqlToken::Literal(symbol)) => symbol.clone(),
+                _ => {
+                    return Err(Error::InvalidConfig(
+                        "unsupported C function symbol literal".to_owned(),
+                    ));
+                }
+            }
+        } else {
+            statement[function + 1..]
+                .iter()
+                .take_while(|token| **token != SqlToken::Punctuation('('))
+                .filter_map(SqlToken::name)
+                .last()
+                .ok_or_else(|| {
+                    Error::InvalidConfig("C function is missing its SQL name".to_owned())
+                })?
+                .to_owned()
         };
         if !is_c_identifier(&symbol) {
             return Err(Error::InvalidConfig(format!(
@@ -309,198 +439,147 @@ pub(super) fn module_c_symbols(sql: &str, module_stem: &str) -> Result<Vec<Strin
     Ok(symbols.into_iter().collect())
 }
 
-fn strip_sql_line_comments(sql: &str) -> String {
-    let mut out = String::with_capacity(sql.len());
-    let mut chars = sql.chars().peekable();
-    let mut in_string = false;
-    while let Some(ch) = chars.next() {
-        if ch == '\'' {
-            out.push(ch);
-            if in_string && chars.peek() == Some(&'\'') {
-                if let Some(next) = chars.next() {
-                    out.push(next);
-                }
-            } else {
-                in_string = !in_string;
-            }
-            continue;
-        }
-        if !in_string && ch == '-' && chars.peek() == Some(&'-') {
-            let _ = chars.next();
-            for next in chars.by_ref() {
-                if next == '\n' {
-                    out.push('\n');
-                    break;
-                }
-            }
-            continue;
-        }
-        out.push(ch);
-    }
-    out
-}
-
-fn split_sql_statements(sql: &str) -> Vec<&str> {
-    let mut statements = Vec::new();
-    let mut start = 0;
-    let mut in_string = false;
-    let mut iter = sql.char_indices().peekable();
-    while let Some((index, ch)) = iter.next() {
-        if ch == '\'' {
-            if in_string && iter.peek().map(|(_, next)| *next) == Some('\'') {
-                let _ = iter.next();
-            } else {
-                in_string = !in_string;
-            }
-        } else if !in_string && ch == ';' {
-            statements.push(sql[start..index].trim());
-            start = index + ch.len_utf8();
-        }
-    }
-    if start < sql.len() {
-        statements.push(sql[start..].trim());
-    }
-    statements
-        .into_iter()
-        .filter(|value| !value.is_empty())
-        .collect()
-}
-
-fn matching_module_reference_remainder<'a>(
-    statement: &'a str,
-    module_stem: &str,
-) -> Option<&'a str> {
-    let explicit_module = format!("$libdir/{module_stem}");
-    let mut search_start = 0;
-    while let Some(as_index) = find_sql_keyword(statement, "as", search_start) {
-        let after_as = statement[as_index + "as".len()..].trim_start();
-        let Some((value, after_literal)) = parse_sql_single_quoted_literal(after_as) else {
-            search_start = as_index + "as".len();
+fn control_module_pathname(path: &Path) -> Result<Option<String>> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| Error::Engine(format!("read {}: {error}", path.display())))?;
+    let mut module = None;
+    for line in text.lines() {
+        let Some((name, value)) = line.split_once('=') else {
             continue;
         };
-        if value.eq_ignore_ascii_case("module_pathname") || value == explicit_module {
-            return Some(after_literal);
+        if name.trim() != "module_pathname" {
+            continue;
         }
-        search_start = as_index + "as".len();
+        let tokens = sql_tokens_inner(value, true)?;
+        let Some(SqlToken::Literal(value)) = tokens.first() else {
+            return Err(Error::InvalidConfig(format!(
+                "unsupported module_pathname in {}",
+                path.display()
+            )));
+        };
+        if tokens.len() != 1 {
+            return Err(Error::InvalidConfig(format!(
+                "unsupported module_pathname in {}",
+                path.display()
+            )));
+        }
+        module = Some(value.clone());
     }
-    None
+    Ok(module)
 }
 
-fn find_sql_keyword(statement: &str, keyword: &str, start: usize) -> Option<usize> {
-    debug_assert!(keyword.is_ascii());
-    let mut in_string = false;
-    let mut iter = statement.char_indices().peekable();
-    while let Some((index, ch)) = iter.next() {
-        if ch == '\'' {
-            if in_string && iter.peek().map(|(_, next)| *next) == Some('\'') {
-                let _ = iter.next();
-            } else {
-                in_string = !in_string;
+// One lexical pass keeps comments and function bodies out of keyword matching.
+fn sql_tokens(sql: &str) -> Result<Vec<SqlToken>> {
+    sql_tokens_inner(sql, false)
+}
+
+fn sql_tokens_inner(sql: &str, control: bool) -> Result<Vec<SqlToken>> {
+    let invalid = || Error::InvalidConfig("unterminated extension SQL quote or comment".to_owned());
+    let mut tokens = Vec::new();
+    let mut offset = 0;
+    while offset < sql.len() {
+        let rest = &sql[offset..];
+        let ch = rest.chars().next().unwrap();
+        if ch.is_whitespace() {
+            offset += ch.len_utf8();
+        } else if rest.starts_with("--") || ch == '\\' || (control && ch == '#') {
+            offset += rest.find('\n').unwrap_or(rest.len());
+        } else if rest.starts_with("/*") {
+            offset += 2;
+            let mut depth = 1;
+            while depth != 0 {
+                let rest = &sql[offset..];
+                if rest.starts_with("/*") {
+                    depth += 1;
+                    offset += 2;
+                } else if rest.starts_with("*/") {
+                    depth -= 1;
+                    offset += 2;
+                } else {
+                    offset += rest.chars().next().ok_or_else(invalid)?.len_utf8();
+                }
             }
-            continue;
+        } else if ch == '\''
+            || ch == '"'
+            || ((ch == 'e' || ch == 'E') && rest.as_bytes().get(1) == Some(&b'\''))
+        {
+            let prefixed = ch != '\'' && ch != '"';
+            let escaped = prefixed || (control && ch == '\'');
+            let quote = if prefixed { '\'' } else { ch };
+            offset += if prefixed { 2 } else { 1 };
+            let mut value = String::new();
+            let mut supported = true;
+            loop {
+                let next = sql[offset..].chars().next().ok_or_else(invalid)?;
+                offset += next.len_utf8();
+                if next == quote {
+                    if sql[offset..].starts_with(quote) {
+                        offset += 1;
+                        value.push(quote);
+                    } else {
+                        break;
+                    }
+                } else if escaped && next == '\\' {
+                    let next = sql[offset..].chars().next().ok_or_else(invalid)?;
+                    offset += next.len_utf8();
+                    if matches!(next, 'x' | 'u' | 'U' | '0'..='7') {
+                        supported = false;
+                    }
+                    value.push(match next {
+                        'b' => '\u{8}',
+                        'f' => '\u{c}',
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        other => other,
+                    });
+                } else {
+                    value.push(next);
+                }
+            }
+            tokens.push(if quote == '"' {
+                SqlToken::Identifier(value)
+            } else if supported {
+                SqlToken::Literal(value)
+            } else {
+                SqlToken::UnsupportedLiteral
+            });
+        } else if ch == '$' && dollar_quote_delimiter(rest).is_some() {
+            let delimiter = dollar_quote_delimiter(rest).unwrap();
+            offset += delimiter.len();
+            let end = sql[offset..].find(delimiter).ok_or_else(invalid)?;
+            tokens.push(SqlToken::Literal(sql[offset..offset + end].to_owned()));
+            offset += end + delimiter.len();
+        } else if ch == '_' || ch.is_alphabetic() {
+            let len = rest
+                .char_indices()
+                .find(|(_, ch)| !is_sql_identifier_char(*ch))
+                .map_or(rest.len(), |(index, _)| index);
+            tokens.push(SqlToken::Word(rest[..len].to_ascii_lowercase()));
+            offset += len;
+        } else {
+            tokens.push(SqlToken::Punctuation(ch));
+            offset += ch.len_utf8();
         }
-        if in_string || index < start {
-            continue;
-        }
-        let Some(candidate) = statement.get(index..index + keyword.len()) else {
-            continue;
-        };
-        if !candidate.eq_ignore_ascii_case(keyword) {
-            continue;
-        }
-        let before = statement[..index].chars().next_back();
-        let after = statement[index + keyword.len()..].chars().next();
-        if before.is_some_and(is_sql_identifier_char) || after.is_some_and(is_sql_identifier_char) {
-            continue;
-        }
-        return Some(index);
     }
-    None
+    Ok(tokens)
+}
+
+fn dollar_quote_delimiter(value: &str) -> Option<&str> {
+    let rest = value.strip_prefix('$')?;
+    let end = rest.find('$')?;
+    let tag = &rest[..end];
+    if !tag.is_empty()
+        && (!tag.starts_with(|ch: char| ch == '_' || ch.is_alphabetic())
+            || !tag.chars().all(|ch| ch == '_' || ch.is_alphanumeric()))
+    {
+        return None;
+    }
+    Some(&value[..end + 2])
 }
 
 fn is_sql_identifier_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
-}
-
-fn explicit_module_symbol(module_remainder: &str) -> Option<String> {
-    let rest = module_remainder
-        .trim_start()
-        .strip_prefix(',')?
-        .trim_start();
-    parse_sql_single_quoted_literal(rest).map(|(symbol, _)| symbol)
-}
-
-fn implicit_function_symbol(statement: &str) -> Option<String> {
-    let lower = statement.to_ascii_lowercase();
-    let function_index = lower.find("function")?;
-    let after_function = &statement[function_index + "function".len()..];
-    let name_end = after_function.find('(')?;
-    let raw_name = after_function[..name_end].trim();
-    let identifier = last_sql_identifier(raw_name)?;
-    if identifier.is_empty() {
-        None
-    } else {
-        Some(identifier)
-    }
-}
-
-fn parse_sql_single_quoted_literal(value: &str) -> Option<(String, &str)> {
-    let mut chars = value.char_indices();
-    let (_, first) = chars.next()?;
-    if first != '\'' {
-        return None;
-    }
-    let mut out = String::new();
-    while let Some((index, ch)) = chars.next() {
-        if ch == '\'' {
-            if let Some((_, '\'')) = chars.clone().next() {
-                let _ = chars.next();
-                out.push('\'');
-                continue;
-            }
-            let end = index + ch.len_utf8();
-            return Some((out, &value[end..]));
-        }
-        out.push(ch);
-    }
-    None
-}
-
-fn last_sql_identifier(raw_name: &str) -> Option<String> {
-    let mut parts = Vec::new();
-    let mut start = 0;
-    let mut in_quotes = false;
-    let mut iter = raw_name.char_indices().peekable();
-    while let Some((index, ch)) = iter.next() {
-        if ch == '"' {
-            if in_quotes && iter.peek().map(|(_, next)| *next) == Some('"') {
-                let _ = iter.next();
-            } else {
-                in_quotes = !in_quotes;
-            }
-        } else if !in_quotes && ch == '.' {
-            parts.push(raw_name[start..index].trim());
-            start = index + ch.len_utf8();
-        }
-    }
-    parts.push(raw_name[start..].trim());
-    let part = parts.last()?.trim();
-    if part.starts_with('"') && part.ends_with('"') && part.len() >= 2 {
-        Some(part[1..part.len() - 1].replace("\"\"", "\""))
-    } else {
-        Some(part.to_owned())
-    }
-}
-
-fn has_language_c(statement: &str) -> bool {
-    let tokens = statement
-        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-        .filter(|token| !token.is_empty())
-        .map(|token| token.to_ascii_lowercase())
-        .collect::<Vec<_>>();
-    tokens
-        .windows(2)
-        .any(|window| window[0] == "language" && window[1] == "c")
+    ch.is_alphanumeric() || ch == '_' || ch == '$'
 }
 
 fn static_registry_symbol_prefix(module_stem: &str) -> String {

@@ -156,16 +156,14 @@ EH+PIC sysroot, including SIMD, relaxed SIMD, and extended const. Adding an
 extra `-msimd128` did not change the generated AOT artifact sizes in the local
 release experiment, so it is not carried as a project-specific flag.
 
-Wasmer LLVM AOT is generated with the selected mainline codegen profile:
-nonvolatile memory operations and a readonly funcref table. Local exact Oliphaunt
-speed-suite measurements showed nonvolatile memory operations improving the
-server SQLx suite by about 9% geomean. Adding the readonly funcref table on top
-was about 1.4% faster geomean than nonvolatile-only and improved the indexed
-update cases (`557.152ms -> 534.737ms` and `695.663ms -> 681.778ms`), while
-regressing CREATE INDEX and DROP TABLE cases. Wasmer documents nonvolatile
-memory operations as faster but not fully WebAssembly-spec compliant; this is a
-conscious mainline runtime-profile decision for the packaged single-process
-Postgres runtime and must stay covered by the correctness matrix.
+Wasmer LLVM AOT uses the fixed `llvm-opta-ro_ftable` profile: spec-compliant
+memory operations and the existing readonly funcref optimization. Disabling
+the previous nonvolatile-memory optimization preserves Wasm memory semantics
+but can increase query latency. Compiler policy is not a consumer runtime knob;
+conflicting build-time overrides are rejected.
+
+The profile is part of the artifact identity. Rebuild AOT artifacts when it
+changes; legacy nonvolatile artifacts cannot be relabelled as strict.
 
 WebAssembly exceptions are mandatory for production artifacts. The Postgres
 runtime depends on exception/longjmp recovery across the main module and side

@@ -161,10 +161,18 @@ pub fn run_native_extension_release_proof(shard_index: usize, shard_count: usize
             extension.sql_name(),
         );
         run_direct_extension_smoke(extension);
+        println!(
+            "OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_PASS shard={shard_index}/{shard_count} extension={} mode=direct lifecycle=install-load-restart-backup-restore",
+            extension.sql_name()
+        );
         run_extension_smoke(TestMode::Broker, Some(&broker), extension).unwrap();
+        println!(
+            "OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_PASS shard={shard_index}/{shard_count} extension={} mode=broker lifecycle=install-load-restart-backup-restore",
+            extension.sql_name()
+        );
         run_extension_smoke(TestMode::Server, None, extension).unwrap();
         println!(
-            "OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_PASS shard={shard_index}/{shard_count} extension={} modes=direct,broker,server lifecycle=install-load-restart-backup-restore",
+            "OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_PASS shard={shard_index}/{shard_count} extension={} mode=server lifecycle=install-load-restart",
             extension.sql_name()
         );
     }

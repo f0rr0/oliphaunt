@@ -109,7 +109,7 @@ function manifest(args: string[]) {
     'postgres-version': pg,
     'target-triple': target,
     'host-abi': abi,
-    engine: 'llvm-opta',
+    engine: 'llvm-opta-ro_ftable',
     'compiler-config': config,
     'cpu-policy': 'generic-baseline',
     'cpu-features': [],

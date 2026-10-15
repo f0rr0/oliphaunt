@@ -9,6 +9,33 @@
 use std::sync::Arc;
 use std::{fmt, str};
 
+/// Pending preparation, queued and executing work for one asynchronous database owner.
+/// A single operation above the byte watermark runs alone; results and PostgreSQL
+/// allocations are not charged. Both limits must be positive and fit the host owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdmissionLimits {
+    pub max_pending_operations: usize,
+    pub high_water_mark_bytes: usize,
+}
+
+impl AdmissionLimits {
+    /// Select both limits explicitly. Builders validate before starting an owner.
+    pub const fn new(max_pending_operations: usize, high_water_mark_bytes: usize) -> Self {
+        Self {
+            max_pending_operations,
+            high_water_mark_bytes,
+        }
+    }
+
+    /// Check the runtime-neutral positive-limit contract.
+    pub fn validate(self) -> std::result::Result<(), &'static str> {
+        if self.max_pending_operations == 0 || self.high_water_mark_bytes == 0 {
+            return Err("admission limits must be positive");
+        }
+        Ok(())
+    }
+}
+
 /// PostgreSQL object identifier used for parameter and result types.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

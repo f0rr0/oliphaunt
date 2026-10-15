@@ -2,6 +2,7 @@
 #![deny(unsafe_code)]
 
 mod arguments;
+mod output_file;
 
 use std::error::Error as StdError;
 use std::ffi::OsString;
@@ -10,7 +11,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread;
 
 use arguments::{validate_pg_dump_arguments, validate_psql_arguments};
 
@@ -22,8 +23,8 @@ pub const KIND: &str = "native-tools";
 
 /// Options for the in-memory, plain-text `pg_dump` convenience API.
 ///
-/// Complete stdout and stderr are retained in memory. Available memory and
-/// host string sizes bound the output; a streaming API is not yet available.
+/// The convenience API retains complete stdout and stderr in memory. Use
+/// [`pg_dump_to_writer`] to write stdout without retaining the dump.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PgDumpOptions {
     args: Vec<String>,
@@ -50,8 +51,8 @@ impl PgDumpOptions {
 
 /// Options for an in-memory, non-interactive `psql` invocation.
 ///
-/// Complete stdout and stderr are retained in memory. Available memory and
-/// host string sizes bound the output; a streaming API is not yet available.
+/// The convenience API retains complete stdout and stderr in memory. Use
+/// [`psql_to_writer`] to write stdout without retaining the result.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PsqlOptions {
     args: Vec<String>,
@@ -112,6 +113,8 @@ pub struct PostgresToolError {
     /// This is empty after output-capture failure so no partial prefix is
     /// exposed.
     pub stderr: String,
+    /// Whether earlier diagnostics were discarded on a destination invocation.
+    pub stderr_truncated: bool,
     source: Option<std::io::Error>,
     output_capture_failure: Option<OutputCaptureFailure>,
 }
@@ -150,11 +153,75 @@ impl StdError for PostgresToolError {
 /// Run packaged `pg_dump` against a PostgreSQL connection string.
 ///
 /// Returns complete PostgreSQL UTF-8 output in memory. Capture failures return
-/// [`PostgresToolError`] without partial output. Streaming is not yet supported.
+/// [`PostgresToolError`] without partial output.
 pub fn pg_dump(
     connection_string: &str,
     options: PgDumpOptions,
 ) -> Result<String, PostgresToolError> {
+    run_tool(
+        "pg_dump",
+        pg_dump_invocation(connection_string, options)?,
+        None,
+        None,
+        None,
+    )
+    .map(|output| output.stdout)
+}
+
+/// Completion of a tool invocation writing stdout to a destination.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostgresToolSummary {
+    /// Number of exact stdout bytes written successfully.
+    pub stdout_bytes: usize,
+    /// Latest 8 KiB of diagnostics, decoded lossily as UTF-8.
+    pub stderr: String,
+    /// Whether earlier diagnostic bytes were discarded.
+    pub stderr_truncated: bool,
+}
+
+/// Run packaged pg_dump with bounded stdout retention and a scoped destination.
+///
+/// Writes exact bytes. The writer may contain partial output on failure; publish
+/// it only after success. The caller owns flushing and publication. Both pipes
+/// drain concurrently, including after a write failure, before this call returns.
+/// Supply `diagnostics` to also write complete stderr; `None` retains only its tail.
+pub fn pg_dump_to_writer(
+    connection_string: &str,
+    options: PgDumpOptions,
+    writer: &mut (dyn Write + Send),
+    diagnostics: Option<&mut (dyn Write + Send)>,
+) -> Result<PostgresToolSummary, PostgresToolError> {
+    run_tool(
+        "pg_dump",
+        pg_dump_invocation(connection_string, options)?,
+        None,
+        Some(writer),
+        diagnostics,
+    )
+    .map(|output| output.summary)
+}
+
+/// Write a dump to a new host file with create-only publication.
+///
+/// Output is staged beside the destination with private Unix permissions and
+/// published only after the tool succeeds and the file is flushed and closed.
+/// Existing destinations are preserved. This does not promise power-loss durability.
+pub fn pg_dump_to_file(
+    connection_string: &str,
+    options: PgDumpOptions,
+    destination: impl AsRef<Path>,
+    diagnostics: Option<&mut (dyn Write + Send)>,
+) -> Result<PostgresToolSummary, PostgresToolError> {
+    let arguments = pg_dump_invocation(connection_string, options)?;
+    output_file::write("pg_dump", destination.as_ref(), |writer| {
+        run_tool("pg_dump", arguments, None, Some(writer), diagnostics).map(|output| output.summary)
+    })
+}
+
+fn pg_dump_invocation(
+    connection_string: &str,
+    options: PgDumpOptions,
+) -> Result<Vec<OsString>, PostgresToolError> {
     validate_connection_string("pg_dump", connection_string)?;
     validate_pg_dump_arguments(&options.args)
         .map_err(|message| configuration_error("pg_dump", &message))?;
@@ -166,14 +233,49 @@ pub fn pg_dump(
     arguments.push(OsString::from("--encoding=UTF8"));
     arguments.push(OsString::from("--no-password"));
     arguments.push(OsString::from(format!("--dbname={connection_string}")));
-    run_tool("pg_dump", arguments, None)
+    Ok(arguments)
 }
 
 /// Run packaged non-interactive `psql` against a PostgreSQL connection string.
 ///
 /// Returns complete PostgreSQL UTF-8 output in memory. Capture failures return
-/// [`PostgresToolError`] without partial output. Streaming is not yet supported.
+/// [`PostgresToolError`] without partial output.
 pub fn psql(connection_string: &str, options: PsqlOptions) -> Result<String, PostgresToolError> {
+    let (arguments, stdin) = validated_psql_invocation(connection_string, options)?;
+    run_tool("psql", arguments, stdin, None, None).map(|output| output.stdout)
+}
+
+/// Run packaged psql writing exact stdout bytes without retaining the result.
+///
+/// Destination ownership, diagnostics and failure behavior match [`pg_dump_to_writer`].
+/// Script input remains buffered.
+pub fn psql_to_writer(
+    connection_string: &str,
+    options: PsqlOptions,
+    writer: &mut (dyn Write + Send),
+    diagnostics: Option<&mut (dyn Write + Send)>,
+) -> Result<PostgresToolSummary, PostgresToolError> {
+    let (arguments, stdin) = validated_psql_invocation(connection_string, options)?;
+    run_tool("psql", arguments, stdin, Some(writer), diagnostics).map(|output| output.summary)
+}
+
+/// Write psql stdout to a new host file with the publication policy of [`pg_dump_to_file`].
+pub fn psql_to_file(
+    connection_string: &str,
+    options: PsqlOptions,
+    destination: impl AsRef<Path>,
+    diagnostics: Option<&mut (dyn Write + Send)>,
+) -> Result<PostgresToolSummary, PostgresToolError> {
+    let (arguments, stdin) = validated_psql_invocation(connection_string, options)?;
+    output_file::write("psql", destination.as_ref(), |writer| {
+        run_tool("psql", arguments, stdin, Some(writer), diagnostics).map(|output| output.summary)
+    })
+}
+
+fn validated_psql_invocation(
+    connection_string: &str,
+    options: PsqlOptions,
+) -> Result<(Vec<OsString>, Option<Vec<u8>>), PostgresToolError> {
     validate_connection_string("psql", connection_string)?;
     validate_psql_arguments(&options.args)
         .map_err(|message| configuration_error("psql", &message))?;
@@ -188,8 +290,7 @@ pub fn psql(connection_string: &str, options: PsqlOptions) -> Result<String, Pos
         Some(PsqlInput::Script(script)) => validate_text("psql", "script", script)?,
         None => {}
     }
-    let (arguments, stdin) = psql_invocation(connection_string, options);
-    run_tool("psql", arguments, stdin)
+    Ok(psql_invocation(connection_string, options))
 }
 
 fn psql_invocation(
@@ -222,11 +323,18 @@ fn psql_invocation(
     (arguments, stdin)
 }
 
+struct ToolRunOutput {
+    stdout: String,
+    summary: PostgresToolSummary,
+}
+
 fn run_tool(
     tool: &'static str,
     arguments: Vec<OsString>,
     stdin: Option<Vec<u8>>,
-) -> Result<String, PostgresToolError> {
+    destination: Option<&mut (dyn Write + Send)>,
+    diagnostics: Option<&mut (dyn Write + Send)>,
+) -> Result<ToolRunOutput, PostgresToolError> {
     let executable = resolve_tool(tool)?;
     let mut command = Command::new(&executable);
     command
@@ -245,26 +353,22 @@ fn run_tool(
         exit_code: None,
         stdout: String::new(),
         stderr: String::new(),
+        stderr_truncated: false,
         source: Some(source),
         output_capture_failure: None,
     })?;
-    let captured = Arc::new(Mutex::new(CapturedOutput::default()));
-    let stdout_reader = spawn_output_reader(
-        child
-            .stdout
-            .take()
-            .expect("stdout is piped for PostgreSQL tools"),
-        Arc::clone(&captured),
-        OutputChannel::Stdout,
-    );
-    let stderr_reader = spawn_output_reader(
-        child
-            .stderr
-            .take()
-            .expect("stderr is piped for PostgreSQL tools"),
-        Arc::clone(&captured),
-        OutputChannel::Stderr,
-    );
+    let captured = Arc::new(Mutex::new(CapturedOutput {
+        bounded_diagnostics: destination.is_some(),
+        ..CapturedOutput::default()
+    }));
+    let stdout = child
+        .stdout
+        .take()
+        .expect("stdout is piped for PostgreSQL tools");
+    let stderr = child
+        .stderr
+        .take()
+        .expect("stderr is piped for PostgreSQL tools");
     // Drain stdout/stderr while a potentially large psql script is written.
     // Writing all stdin first can deadlock when the child fills an output pipe.
     let input_writer = stdin.and_then(|input| {
@@ -273,16 +377,28 @@ fn run_tool(
             .take()
             .map(|mut writer| thread::spawn(move || writer.write_all(&input)))
     });
-    let status = child.wait();
-    if status.is_err() {
-        // A failed wait can leave the process and its pipe readers alive.
-        // Terminate it before joining the readers so this error path cannot
-        // strand background threads.
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-    let stdout_failure = join_output_reader(stdout_reader, "stdout");
-    let stderr_failure = join_output_reader(stderr_reader, "stderr");
+    let (status, stdout_result, stderr_result) = thread::scope(|scope| {
+        let stdout_reader = scope.spawn(|| match destination {
+            Some(writer) => drain_destination(stdout, writer),
+            None => drain_output(stdout, &captured, OutputChannel::Stdout),
+        });
+        let stderr_reader = scope.spawn(|| {
+            drain_output_with_diagnostics(stderr, &captured, OutputChannel::Stderr, diagnostics)
+        });
+        let status = child.wait();
+        if status.is_err() {
+            // Reap before joining pipe readers after a failed wait.
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let stdout_result = stdout_reader
+            .join()
+            .unwrap_or_else(|_| Err(io::Error::other("PostgreSQL tool stdout reader panicked")));
+        let stderr_result = stderr_reader
+            .join()
+            .unwrap_or_else(|_| Err(io::Error::other("PostgreSQL tool stderr reader panicked")));
+        (status, stdout_result, stderr_result)
+    });
     let input_failure = input_writer.and_then(|writer| match writer.join() {
         Ok(Ok(())) => None,
         Ok(Err(error)) => Some(error),
@@ -299,6 +415,7 @@ fn run_tool(
             exit_code,
             stdout: String::new(),
             stderr: String::new(),
+            stderr_truncated: false,
             source: None,
             output_capture_failure: Some(failure),
         });
@@ -307,16 +424,27 @@ fn run_tool(
         Ok(status) => status,
         Err(source) => return Err(io_failure(tool, exit_code, captured, source)),
     };
-    if let Some(source) = stdout_failure.or(stderr_failure) {
+    let stdout_bytes = match stdout_result {
+        Ok(bytes) => bytes,
+        Err(source) => return Err(io_failure(tool, status.code(), captured, source)),
+    };
+    if let Err(source) = stderr_result {
         return Err(io_failure(tool, status.code(), captured, source));
     }
-    let CapturedOutput { stdout, stderr, .. } = captured;
+    let CapturedOutput {
+        stdout,
+        stderr,
+        stderr_truncated,
+        bounded_diagnostics,
+        ..
+    } = captured;
     if !status.success() {
         return Err(PostgresToolError {
             tool,
             exit_code: status.code(),
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            stderr_truncated,
             source: None,
             output_capture_failure: None,
         });
@@ -327,11 +455,12 @@ fn run_tool(
             exit_code: status.code(),
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            stderr_truncated,
             source: Some(source),
             output_capture_failure: None,
         });
     }
-    String::from_utf8(stdout).map_err(|error| PostgresToolError {
+    let stdout = String::from_utf8(stdout).map_err(|error| PostgresToolError {
         tool,
         exit_code: status.code(),
         stdout: String::from_utf8_lossy(error.as_bytes()).into_owned(),
@@ -340,8 +469,21 @@ fn run_tool(
             String::from_utf8_lossy(&stderr),
             tool
         ),
+        stderr_truncated,
         source: None,
         output_capture_failure: None,
+    })?;
+    Ok(ToolRunOutput {
+        stdout,
+        summary: PostgresToolSummary {
+            stdout_bytes,
+            stderr: if bounded_diagnostics {
+                String::from_utf8_lossy(&stderr).into_owned()
+            } else {
+                String::new()
+            },
+            stderr_truncated,
+        },
     })
 }
 
@@ -375,6 +517,8 @@ struct CapturedOutput {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     failure: Option<OutputCaptureFailure>,
+    bounded_diagnostics: bool,
+    stderr_truncated: bool,
 }
 
 impl CapturedOutput {
@@ -382,6 +526,24 @@ impl CapturedOutput {
         if self.failure.is_some() {
             return;
         }
+        let bytes = if self.bounded_diagnostics && matches!(channel, OutputChannel::Stderr) {
+            const DIAGNOSTIC_TAIL_BYTES: usize = 8 * 1024;
+            let excess = self
+                .stderr
+                .len()
+                .saturating_add(bytes.len())
+                .saturating_sub(DIAGNOSTIC_TAIL_BYTES);
+            self.stderr_truncated |= excess > 0;
+            if bytes.len() >= DIAGNOSTIC_TAIL_BYTES {
+                self.stderr.clear();
+                &bytes[bytes.len() - DIAGNOSTIC_TAIL_BYTES..]
+            } else {
+                self.stderr.drain(..excess);
+                bytes
+            }
+        } else {
+            bytes
+        };
         let destination = match channel {
             OutputChannel::Stdout => &mut self.stdout,
             OutputChannel::Stderr => &mut self.stderr,
@@ -401,22 +563,21 @@ impl CapturedOutput {
     }
 }
 
-fn spawn_output_reader<R>(
-    reader: R,
-    captured: Arc<Mutex<CapturedOutput>>,
-    channel: OutputChannel,
-) -> JoinHandle<io::Result<usize>>
-where
-    R: Read + Send + 'static,
-{
-    thread::spawn(move || drain_output(reader, &captured, channel))
-}
-
 fn drain_output(
-    mut reader: impl Read,
+    reader: impl Read,
     captured: &Mutex<CapturedOutput>,
     channel: OutputChannel,
 ) -> io::Result<usize> {
+    drain_output_with_diagnostics(reader, captured, channel, None)
+}
+
+fn drain_output_with_diagnostics(
+    mut reader: impl Read,
+    captured: &Mutex<CapturedOutput>,
+    channel: OutputChannel,
+    mut diagnostics: Option<&mut (dyn Write + Send)>,
+) -> io::Result<usize> {
+    let mut failure = None;
     let mut buffer = [0_u8; 32 * 1024];
     let mut observed_bytes = 0_usize;
     loop {
@@ -425,7 +586,12 @@ fn drain_output(
             result => result?,
         };
         if count == 0 {
-            return Ok(observed_bytes);
+            return failure.map_or(Ok(observed_bytes), Err);
+        }
+        if failure.is_none()
+            && let Some(writer) = diagnostics.as_mut()
+        {
+            failure = writer.write_all(&buffer[..count]).err();
         }
         observed_bytes = observed_bytes.saturating_add(count);
         match captured.lock() {
@@ -438,13 +604,22 @@ fn drain_output(
     }
 }
 
-fn join_output_reader(reader: JoinHandle<io::Result<usize>>, channel: &str) -> Option<io::Error> {
-    match reader.join() {
-        Ok(Ok(_)) => None,
-        Ok(Err(error)) => Some(error),
-        Err(_) => Some(io::Error::other(format!(
-            "PostgreSQL tool {channel} reader panicked"
-        ))),
+fn drain_destination(mut reader: impl Read, writer: &mut (dyn Write + Send)) -> io::Result<usize> {
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut observed_bytes = 0_usize;
+    let mut failure = None;
+    loop {
+        let count = match reader.read(&mut buffer) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
+        if count == 0 {
+            return failure.map_or(Ok(observed_bytes), Err);
+        }
+        observed_bytes = observed_bytes.saturating_add(count);
+        if failure.is_none() {
+            failure = writer.write_all(&buffer[..count]).err();
+        }
     }
 }
 
@@ -471,6 +646,7 @@ fn io_failure(
         exit_code,
         stdout: String::from_utf8_lossy(&captured.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&captured.stderr).into_owned(),
+        stderr_truncated: captured.stderr_truncated,
         source: Some(source),
         output_capture_failure: None,
     }
@@ -565,6 +741,7 @@ fn configuration_error(tool: &'static str, message: &str) -> PostgresToolError {
         exit_code: None,
         stdout: String::new(),
         stderr: message.to_owned(),
+        stderr_truncated: false,
         source: None,
         output_capture_failure: None,
     }
@@ -606,6 +783,39 @@ mod tests {
         assert_eq!(captured.failure, None);
         assert_eq!(captured.stdout, b"out");
         assert_eq!(captured.stderr, b"err!");
+    }
+
+    #[test]
+    fn destination_diagnostics_keep_only_the_marked_tail() {
+        let mut captured = CapturedOutput {
+            bounded_diagnostics: true,
+            ..CapturedOutput::default()
+        };
+        captured.retain(OutputChannel::Stderr, &vec![b'a'; 8191]);
+        assert!(!captured.stderr_truncated);
+        captured.retain(OutputChannel::Stderr, b"bc");
+        assert!(captured.stderr_truncated);
+        assert_eq!(captured.stderr.len(), 8192);
+        assert_eq!(&captured.stderr[8190..], b"bc");
+        captured.retain(OutputChannel::Stderr, &vec![b'd'; 65536]);
+        assert_eq!(captured.stderr, vec![b'd'; 8192]);
+    }
+
+    #[test]
+    fn destination_failure_drains_stdout_without_returning_success() {
+        let bytes = vec![0x80; 2 * 64 * 1024 + 17];
+        let mut reader = Cursor::new(&bytes);
+        let mut full = [];
+        let error =
+            drain_destination(&mut reader, &mut Cursor::new(full.as_mut_slice())).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WriteZero);
+        assert_eq!(reader.position(), bytes.len() as u64);
+        let mut exact = Vec::new();
+        assert_eq!(
+            drain_destination(Cursor::new(&bytes), &mut exact).unwrap(),
+            bytes.len()
+        );
+        assert_eq!(exact, bytes);
     }
 
     #[test]
@@ -687,6 +897,7 @@ mod tests {
             exit_code: Some(0),
             stdout: String::new(),
             stderr: String::new(),
+            stderr_truncated: false,
             source: None,
             output_capture_failure: Some(OutputCaptureFailure::AllocationFailed),
         };

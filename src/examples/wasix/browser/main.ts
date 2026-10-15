@@ -118,7 +118,6 @@ try {
       startupSqlstate: '3D000',
       directWorkers: 0,
       configuredIdentity: true,
-      opfsTransport: 'synchronous-access',
       opfsCrashAnswer: opfsCrash.answer,
       opfsCrashRelations: opfsCrash.relations,
       ...(firstUuid === undefined ? {} : { pg_uuidv7: firstUuid }),
@@ -421,7 +420,6 @@ async function expectOpfsPersistence(
 
   database = await WorkerOliphaunt.open({ storage, extensions });
   try {
-    await expectSynchronousOpfsTransport('browser-smoke');
     const reopened = await database.queryRaw(
       'SELECT string_agg(answer::text, $1 ORDER BY answer) AS answers FROM opfs_reopen_probe',
       [','],
@@ -431,8 +429,8 @@ async function expectOpfsPersistence(
       throw new Error(`browser smoke did not reopen OPFS state: ${answers}`);
     }
     await database.queryRaw('INSERT INTO opfs_reopen_probe VALUES (3)');
-    await database.queryRaw('CREATE TABLE opfs_sync_create_probe (answer integer NOT NULL)');
-    await database.queryRaw('INSERT INTO opfs_sync_create_probe VALUES (99)');
+    await database.queryRaw('CREATE TABLE opfs_create_probe (answer integer NOT NULL)');
+    await database.queryRaw('INSERT INTO opfs_create_probe VALUES (99)');
     await database.execute('CHECKPOINT');
   } finally {
     await database.close();
@@ -446,57 +444,15 @@ async function expectOpfsPersistence(
     );
     const answers = reopened.getText(0, 'answers');
     if (answers !== '1,2,3') {
-      throw new Error(`browser smoke did not reopen synchronous OPFS writes: ${answers}`);
+      throw new Error(`browser smoke did not reopen OPFS worker writes: ${answers}`);
     }
-    const created = await database.queryRaw('SELECT answer FROM opfs_sync_create_probe');
+    const created = await database.queryRaw('SELECT answer FROM opfs_create_probe');
     if (created.getText(0, 'answer') !== '99') {
-      throw new Error('browser smoke did not reopen a relation created through synchronous OPFS');
+      throw new Error('browser smoke did not reopen a relation created through the OPFS worker');
     }
     return answers;
   } finally {
     await database.close();
-  }
-}
-
-async function expectSynchronousOpfsTransport(name: string): Promise<void> {
-  const worker = new Worker(new URL('./opfs-transport-probe-worker.ts', import.meta.url), {
-    type: 'module',
-  });
-  try {
-    const response = await new Promise<
-      { ok: true; transport: 'synchronous-access' | 'portable' } | { ok: false; error: string }
-    >((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('OPFS transport probe timed out')), 10_000);
-      worker.addEventListener(
-        'error',
-        (event) => {
-          clearTimeout(timeout);
-          reject(event.error ?? new Error(event.message));
-        },
-        { once: true },
-      );
-      worker.addEventListener(
-        'message',
-        (event: MessageEvent) => {
-          clearTimeout(timeout);
-          resolve(
-            event.data as
-              | { ok: true; transport: 'synchronous-access' | 'portable' }
-              | { ok: false; error: string },
-          );
-        },
-        { once: true },
-      );
-      worker.postMessage({ name });
-    });
-    if (!response.ok) throw new Error(`OPFS transport probe failed: ${response.error}`);
-    if (response.transport !== 'synchronous-access') {
-      throw new Error(
-        'browser smoke selected portable OPFS instead of the synchronous-access Worker path',
-      );
-    }
-  } finally {
-    worker.terminate();
   }
 }
 

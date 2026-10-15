@@ -369,7 +369,7 @@ mod extension_tests {
     use crate::DatabaseStorage;
     use crate::Oliphaunt;
     use anyhow::{Context, Result, ensure};
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     #[test]

@@ -16,15 +16,57 @@ export type WasixToolProcessOptions = Readonly<{
   runtimeVersion: string;
   tool: WasixToolDescriptor;
   args: readonly string[];
-  /** @internal An exact ArrayBuffer-backed view is transferred and consumed. */
+  /** @internal The admitted database-owned copy may be transferred to a worker. */
   stdin?: Uint8Array;
+  /** Buffered text input; encode only after database admission. */
+  script?: string;
   command?: string;
+  /** Host path published create-only after tool and database cleanup succeed. */
+  outputFile?: string;
+  /** @internal Owned chunks; returning settles only after destination acceptance. */
+  output?: WasixToolOutputDestination;
 }>;
+
+export type WasixToolOutputDestination = Readonly<{
+  /** @internal Same-process native Worker output, registered in its parent realm. */
+  nativeRegistration?: number;
+  stdout(chunk: Uint8Array): Promise<void>;
+  stderr?(chunk: Uint8Array): Promise<void>;
+}>;
+
+export type WasixToolProcessInput = WasixToolProcessOptions | (() => WasixToolProcessOptions);
+
+/** @internal Snapshot queued work only after the shared database budget admits it. */
+export function snapshotWasixToolProcessOptions(
+  input: WasixToolProcessInput,
+  retain: (bytes: number) => void,
+): WasixToolProcessOptions {
+  const options = typeof input === 'function' ? input() : input;
+  if (options.stdin !== undefined && options.script !== undefined) {
+    throw new TypeError('WASIX tools accept stdin or script, not both');
+  }
+  // Three UTF-8 bytes per UTF-16 unit also covers unpaired surrogates.
+  retain(
+    options.args.reduce((bytes, argument) => bytes + argument.length * 3, 0) +
+      (options.command?.length ?? 0) * 3 +
+      (options.script?.length ?? 0) * 3 +
+      (options.outputFile?.length ?? 0) * 3 +
+      (options.stdin?.byteLength ?? 0),
+  );
+  return {
+    ...options,
+    tool: { ...options.tool },
+    args: [...options.args],
+    ...(options.stdin === undefined ? {} : { stdin: Uint8Array.from(options.stdin) }),
+  };
+}
 
 export type WasixToolProcessResult = Readonly<{
   exitCode: number;
   stdout: Uint8Array;
   stderr: Uint8Array;
+  stdoutBytes?: number;
+  stderrTruncated?: boolean;
 }>;
 
 /** @internal The already-open database worker does not need carrier runtime metadata again. */

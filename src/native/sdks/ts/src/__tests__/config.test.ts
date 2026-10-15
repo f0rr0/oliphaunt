@@ -1,3 +1,6 @@
+import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { extensions, normalizeExtensions } from '../extensions.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -194,4 +197,42 @@ test('rejects PostgreSQL startup GUCs owned by Oliphaunt storage', () => {
       );
     }
   }
+});
+
+test('normalizes file URL inputs consistently before native serialization', () => {
+  const runtimeDirectory = join(tmpdir(), 'runtime dir');
+  const serverExecutable = join(runtimeDirectory, 'bin', 'postgres');
+  const icuDirectory = join(tmpdir(), 'icu data');
+  const manifestPath = join(icuDirectory, 'manifest.json');
+  const socketDirectory = join(tmpdir(), 'socket dir');
+  const config = normalizeOpenConfig(
+    {
+      topology: 'server',
+      runtimeDirectory: pathToFileURL(runtimeDirectory),
+      serverExecutable: pathToFileURL(serverExecutable),
+      icuData: {
+        directory: pathToFileURL(icuDirectory),
+        manifestPath: pathToFileURL(manifestPath),
+      },
+      listen: { transport: 'unix', directory: pathToFileURL(socketDirectory) },
+    },
+    { instanceDirectory: '/database', temporaryDirectory: false },
+  );
+  assert.equal(config.runtimeDirectory, runtimeDirectory);
+  assert.equal(config.serverExecutable, serverExecutable);
+  assert.deepEqual(config.icuData, {
+    directory: icuDirectory,
+    manifestPath,
+  });
+  assert.deepEqual(config.serverListen, { transport: 'unix', directory: socketDirectory });
+  assert.throws(
+    () =>
+      normalizeOpenConfig(
+        {
+          seed: { directory: new URL('https://example.com/seed'), manifestPath: '/manifest.json' },
+        },
+        { instanceDirectory: '/database', temporaryDirectory: false },
+      ),
+    /file/,
+  );
 });

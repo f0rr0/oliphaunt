@@ -82,6 +82,18 @@ if [ "$command" != start ] && [ "${#gucs[@]}" -gt 0 ]; then
   fail '--guc is only valid with start'
 fi
 
+if [ "${#gucs[@]}" -gt 0 ]; then
+  for guc in "${gucs[@]}"; do
+    [[ "$guc" == *=* ]] || fail '--guc requires NAME=VALUE'
+    guc_name="$(printf '%s' "${guc%%=*}" | tr '[:upper:]-' '[:lower:]_')"
+    case "$guc_name" in
+      port|listen_addresses|data_directory|unix_socket_directories)
+        fail "--guc $guc_name is controlled by launcher options"
+        ;;
+    esac
+  done
+fi
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 package_root="$(cd "$script_dir/.." && pwd -P)"
 carrier_root="${OLIPHAUNT_WASIX_POSTMASTER_CARRIER_DIR:-$package_root/carrier}"
@@ -140,7 +152,9 @@ executor_args=(
   --volume "$state_dir/dev-shm:/dev/shm"
 )
 
-connection_uri="postgresql://$username@$host:$port/$database"
+uri_host="$host"
+case "$host" in *:*) uri_host="[$host]" ;; esac
+connection_uri="postgresql://$username@$uri_host:$port/$database"
 
 initialize() {
   if [ -e "$data_dir/PG_VERSION" ]; then
@@ -178,10 +192,11 @@ case "$command" in
       -p "$port"
       -c unix_socket_directories=
     )
-    for guc in "${gucs[@]}"; do
-      [[ "$guc" == *=* ]] || fail '--guc requires NAME=VALUE'
-      postgres_args+=(-c "$guc")
-    done
+    if [ "${#gucs[@]}" -gt 0 ]; then
+      for guc in "${gucs[@]}"; do
+        postgres_args+=(-c "$guc")
+      done
+    fi
     printf 'Oliphaunt WASIX postmaster: %s\n' "$connection_uri" >&2
     exec "$carrier_root/bin/wasmer-headless" "${executor_args[@]}" \
       "$carrier_root/bin/postgres" -- "${postgres_args[@]}"

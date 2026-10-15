@@ -3,6 +3,7 @@
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
+source "$FRESH_ROOT/lib/process-supervision.sh"
 
 port="${PGPORT:-55435}"
 suite_name="${WASIX_REGRESS_SUITE_NAME-wasix-regress-subset}"
@@ -117,7 +118,7 @@ wasmer_args+=(
   printf -- '- Wasmer compiler threads: `%s`\n' "$wasmer_compiler_threads"
 } >"$summary"
 
-env "${wasmer_env[@]}" \
+fresh_run_process_group_timeout 120 -- env "${wasmer_env[@]}" \
   "$wasmer_bin" "${wasmer_args[@]}" "$WASIX_INSTALL_DIR/bin/initdb" -- \
     -D "$pgdata" \
     -A trust \
@@ -126,29 +127,33 @@ env "${wasmer_env[@]}" \
     --no-instructions \
     >"$initdb_log" 2>&1
 
-set +e
-env "${wasmer_env[@]}" \
+fresh_spawn_process_group -- env "${wasmer_env[@]}" \
   "$wasmer_bin" "${wasmer_args[@]}" "$WASIX_INSTALL_DIR/bin/postgres" -- \
     -D "$pgdata" \
     -h 127.0.0.1 \
     -p "$port" \
     -c unix_socket_directories= \
-    >"$server_log" 2>&1 &
-server_pid=$!
-set -e
+    >"$server_log" 2>&1
+server_pid="$FRESH_PROCESS_GROUP_PID"
+server_pgid="$FRESH_PROCESS_GROUP_PGID"
+server_identity="$FRESH_PROCESS_GROUP_IDENTITY"
 
 cleanup() {
-  if kill -0 "$server_pid" 2>/dev/null; then
-    kill "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
-  fi
+  local status=$? cleanup_status=0
+  fresh_stop_owned_process_group TERM "$server_pgid" "$server_pid" "$server_identity" 5000 3000 || cleanup_status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  return "$cleanup_status"
 }
 trap cleanup EXIT
 
 : >"$wait_log"
 ready=0
-for _ in $(seq 1 150); do
-  if "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" \
+readiness_deadline=$(( $(fresh_supervision_now_ms) + 30000 ))
+while [ "$(fresh_supervision_now_ms)" -lt "$readiness_deadline" ]; do
+  probe_timeout=$((readiness_deadline - $(fresh_supervision_now_ms)))
+  [ "$probe_timeout" -gt 0 ] || break
+  [ "$probe_timeout" -le 2000 ] || probe_timeout=2000
+  if fresh_run_process_group_timeout_ms "$probe_timeout" -- "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" \
       "postgresql://wasix@127.0.0.1:$port/postgres" \
       -X -q -c 'select 1' >>"$wait_log" 2>&1; then
     ready=1
@@ -168,7 +173,7 @@ fi
 set +e
 (
   cd "$BASELINE_DIR/src/test/regress"
-  "$pg_regress_bin" \
+  fresh_run_process_group_timeout 900 -- "$pg_regress_bin" \
     --use-existing \
     --host=127.0.0.1 \
     --port="$port" \

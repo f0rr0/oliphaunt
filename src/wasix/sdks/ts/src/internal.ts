@@ -1,7 +1,7 @@
 import type { OliphauntDatabase } from './core/types.js';
+import type { WasixToolProcessInput } from './resources/tool-runtime.js';
 import {
   runWasixToolProcess as runTool,
-  type WasixToolProcessOptions,
   type WasixToolProcessResult,
   type WasixToolWorkerPort,
 } from './hosts/browser/internal-common.js';
@@ -21,30 +21,36 @@ export type {
 
 export function runWasixToolProcess(
   database: OliphauntDatabase,
-  options: WasixToolProcessOptions,
+  input: WasixToolProcessInput,
 ): Promise<WasixToolProcessResult> {
-  const identity = getWasixDatabaseIdentity(database);
-  const managed =
-    options.tool.name === 'pg_dump'
-      ? ['--encoding=UTF8', '--no-password']
-      : ['--no-psqlrc', '--no-password', '--set=ON_ERROR_STOP=1'];
   return runTool(
     database,
-    {
-      ...options,
-      args: [
-        ...options.args,
-        ...managed,
-        `--username=${identity.username}`,
-        '--host=127.0.0.1',
-        '--port=65432',
-        `--dbname=${identity.database}`,
-        ...(options.command !== undefined
-          ? ['--command', options.command]
-          : options.stdin !== undefined
-            ? ['--file=-']
-            : []),
-      ],
+    () => {
+      const options = typeof input === 'function' ? input() : input;
+      if (options.outputFile !== undefined) {
+        throw new Error('WASIX tool file destinations require Node.js, Bun, Deno, or Electron');
+      }
+      const identity = getWasixDatabaseIdentity(database);
+      const managed =
+        options.tool.name === 'pg_dump'
+          ? ['--encoding=UTF8', '--no-password']
+          : ['--no-psqlrc', '--no-password', '--set=ON_ERROR_STOP=1'];
+      return {
+        ...options,
+        args: [
+          ...options.args,
+          ...managed,
+          `--username=${identity.username}`,
+          '--host=127.0.0.1',
+          '--port=65432',
+          `--dbname=${identity.database}`,
+          ...(options.command !== undefined
+            ? ['--command', options.command]
+            : options.stdin !== undefined || options.script !== undefined
+              ? ['--file=-']
+              : []),
+        ],
+      };
     },
     createBrowserToolWorker,
   );
