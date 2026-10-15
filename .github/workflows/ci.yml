@@ -31,6 +31,9 @@ jobs:
           bun_binary="$(bash tools/dev/install-pinned-js-runtime.sh bun)"
           printf 'node=%s\nbun=%s\n' "$node_binary" "$bun_binary" >> "$GITHUB_OUTPUT"
 
+      - name: Select declared MSVC SDK
+        uses: ./.github/actions/setup-msvc
+
       - name: Exercise only the query source consumer
         id: consumer
         continue-on-error: true
