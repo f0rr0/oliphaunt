@@ -196,7 +196,7 @@ const request = { source: { commit: '${source.commit}', tree: '${source.tree}' }
 const library = await acquireNativePublicationInputs({ ...request, directory: 'library-only-inputs' }, transports);
 assert.deepEqual(registries, ['cargo:oliphaunt-broker@0.3.1']);
 assert.deepEqual(downloads, []);
-await assert.rejects(acquireNativePublicationInputs({ ...request, directory: 'missing-library-inputs' }, { ...transports, inventory: async (publication, options) => { const value = await fixtureCompletedNativeInventory(publication, options); return { ...value, carriers: value.carriers.filter(row => row.id !== 'cargo:oliphaunt-broker') }; } }), /requested Cargo supplier is absent/);
+await assert.rejects(acquireNativePublicationInputs({ ...request, directory: 'missing-library-inputs' }, { ...transports, inventory: async (publication, options) => { const value = await fixtureCompletedNativeInventory(publication, options); return { ...value, carriers: value.carriers.filter(row => row.id !== 'cargo:oliphaunt-broker') }; } }), /requested supplier is absent/);
 writeFileSync('${owner}/release.toml', readFileSync('${owner}/release.toml', 'utf8') + '\\n[compatibility_versions.broker_helper]\\npublic_support = false\\nsource_product = "oliphaunt-broker"\\npath = "${owner}/Cargo.toml"\\nparser = "toml:package.metadata.oliphaunt.broker-version"\\n');
 writeFileSync('${owner}/Cargo.toml', readFileSync('${owner}/Cargo.toml', 'utf8') + '\\n[package.metadata.oliphaunt]\\nbroker-version = "0.3.2"\\n');
 const mixed = await acquireNativePublicationInputs({ ...request, directory: 'mixed-role-inputs' }, transports);

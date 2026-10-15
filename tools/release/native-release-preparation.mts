@@ -403,6 +403,31 @@ export async function acquireNativePublicationInputs(
           const text = conventionalText(entry.path);
           const dependency = cargoCompatibilityDependency(entry, text);
           if (dependency?.path !== undefined) return [];
+          let requestedCarrier = dependency ? `cargo:${dependency.packageName}` : undefined;
+          if (entry.product === 'oliphaunt-wasix-ts') {
+            if (entry.sourceProduct === 'liboliphaunt-wasix') {
+              const names = authoredProducts[entry.sourceProduct].registry_packages.filter((name) =>
+                name.startsWith('npm:'),
+              );
+              assert.equal(names.length, 1, 'WASIX SDK needs its authored runtime npm identity');
+              requestedCarrier = names[0];
+            } else if (entry.sourceProduct === 'oliphaunt-wasix-napi') {
+              const manifest = JSON.parse(text);
+              const hosts = catalog.carriers.filter((carrier) => {
+                if (
+                  carrier.product !== entry.sourceProduct ||
+                  carrier.ecosystem !== 'npm' ||
+                  !Object.hasOwn(manifest.optionalDependencies ?? {}, carrier.name)
+                )
+                  return false;
+                const target = consumerHostTarget(carrier.target);
+                const platform = target && DESKTOP_TARGETS[target];
+                return platform?.npmOs === process.platform && platform?.npmCpu === process.arch;
+              });
+              assert.equal(hosts.length, 1, 'WASIX SDK needs its declared host NAPI npm identity');
+              requestedCarrier = hosts[0].id;
+            }
+          }
           return [
             {
               consumer: entry.product,
@@ -410,7 +435,7 @@ export async function acquireNativePublicationInputs(
               producerVersion: dependency
                 ? cargoDependencyMinimum(compatibilityVersionFromText(entry, text))
                 : compatibilityVersionFromText(entry, text),
-              ...(dependency ? { requestedCarrier: `cargo:${dependency.packageName}` } : {}),
+              ...(requestedCarrier ? { requestedCarrier } : {}),
             },
           ];
         })
@@ -771,7 +796,7 @@ export async function acquireNativePublicationInputs(
         const carrier = historical.carriers.find(
           (row) => row.product === binding.producer && row.id === binding.requestedCarrier,
         );
-        assert.ok(carrier, 'requested Cargo supplier is absent from its completed inventory');
+        assert.ok(carrier, 'requested supplier is absent from its completed inventory');
         await retainCarrier(completed, carrier);
         continue;
       }

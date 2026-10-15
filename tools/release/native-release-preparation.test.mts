@@ -554,14 +554,22 @@ test('historical acquisition retains retired identities and follows the old pare
   }
 });
 
-test('WASIX held host lookup uses the actual published facade NAPI pin, independent of its runtime version, once per carrier', async () => {
+test('WASIX source SDK and historical facade retain their own exact runtime and host packages once', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'native-facade-supplier-'));
   const hosts = allArtifactTargets({
     product: 'oliphaunt-wasix-napi',
     surface: 'npm-optional',
   }).filter((row) => row.npm_os === process.platform && row.npm_cpu === process.arch);
   expect(hosts).toHaveLength(1);
-  const retiredHost = '@oliphaunt/retired-host-native';
+  const sourceSdk = JSON.parse(sourceText('src/wasix/sdks/ts/package.json'));
+  const sourceHostVersion = sourceSdk.oliphaunt.wasixNapiVersion;
+  const coreName = loadProducts()['liboliphaunt-wasix'].registry_packages.find((name) =>
+    name.startsWith('npm:'),
+  )!;
+  let historicalHost = '@oliphaunt/retired-host-native';
+  let historicalHostVersion = '0.1.9';
+  let missingSourceHost = false;
+  expect(sourceHostVersion).not.toBe(historicalHostVersion);
   const facade = loadPublicationCatalog('published facade fixture').products.find(
     (product) => product.id === 'oliphaunt-wasix-ts',
   )!;
@@ -569,13 +577,23 @@ test('WASIX held host lookup uses the actual published facade NAPI pin, independ
   const transport = {
     inventory: async (publication) => {
       const value = await fixtureCompletedNativeInventory(publication);
+      if (publication.product === 'liboliphaunt-wasix')
+        expect(value.carriers.filter((row) => row.ecosystem === 'npm')).toHaveLength(2);
       if (publication.product !== 'oliphaunt-wasix-napi') return value;
       const host = value.carriers.find((row) => row.name === hosts[0].npm_package)!;
+      if (missingSourceHost && publication.version === sourceHostVersion)
+        return { ...value, carriers: value.carriers.filter((row) => row.name !== host.name) };
+      if (publication.version !== historicalHostVersion) return value;
       return {
         ...value,
         inputContext: undefined,
         carriers: [
-          { ...host, id: `npm:${retiredHost}`, name: retiredHost, role: 'previous-host-role' },
+          {
+            ...host,
+            id: `npm:${historicalHost}`,
+            name: historicalHost,
+            role: 'previous-host-role',
+          },
         ],
       };
     },
@@ -605,7 +623,7 @@ test('WASIX held host lookup uses the actual published facade NAPI pin, independ
                     name: carrier.name,
                     version: carrier.version,
                     oliphaunt: { runtimeVersion: '0.3.2' },
-                    optionalDependencies: { [retiredHost]: '0.2.1' },
+                    optionalDependencies: { [historicalHost]: historicalHostVersion },
                   }
                 : { name: carrier.name, version: carrier.version },
             ),
@@ -628,8 +646,10 @@ test('WASIX held host lookup uses the actual published facade NAPI pin, independ
     expect(acquisitions.toSorted()).toEqual(
       [
         'npm:@oliphaunt/ts-query@0.1.1',
+        `${coreName}@${sourceSdk.oliphaunt.runtimeVersion}`,
+        `npm:${hosts[0].npm_package}@${sourceHostVersion}`,
         `npm:@oliphaunt/wasix-ts@${facade.version}`,
-        `npm:${retiredHost}@0.2.1`,
+        `npm:${historicalHost}@${historicalHostVersion}`,
       ].sort(),
     );
     expect(result.snapshot.seedControls).toEqual([]);
@@ -640,8 +660,10 @@ test('WASIX held host lookup uses the actual published facade NAPI pin, independ
     ).toEqual(
       [
         ['npm:@oliphaunt/ts-query', '0.1.1'],
+        [coreName, sourceSdk.oliphaunt.runtimeVersion],
+        [`npm:${hosts[0].npm_package}`, sourceHostVersion],
         ['npm:@oliphaunt/wasix-ts', facade.version],
-        [`npm:${retiredHost}`, '0.2.1'],
+        [`npm:${historicalHost}`, historicalHostVersion],
       ].sort(),
     );
     expect(
@@ -649,7 +671,31 @@ test('WASIX held host lookup uses the actual published facade NAPI pin, independ
         (row) => fileIdentity(row.file.path).sha256 === row.file.sha256,
       ),
     ).toBe(true);
+    expect(new Set(acquisitions).size).toBe(acquisitions.length);
     expect(result.snapshot).not.toHaveProperty('ready');
+    acquisitions.length = 0;
+    historicalHost = hosts[0].npm_package;
+    historicalHostVersion = sourceHostVersion;
+    const shared = await acquireNativePublicationInputs(
+      { source, directory: path.join(directory, 'shared'), consumerProducts: [facade.id] },
+      transport,
+    );
+    expect(acquisitions).toHaveLength(4);
+    expect(new Set(acquisitions).size).toBe(acquisitions.length);
+    expect(
+      shared.snapshot.supplierArtifacts?.filter((row) => row.artifact === `npm:${historicalHost}`),
+    ).toHaveLength(1);
+    missingSourceHost = true;
+    await expect(
+      acquireNativePublicationInputs(
+        {
+          source,
+          directory: path.join(directory, 'missing-source-host'),
+          consumerProducts: [facade.id],
+        },
+        transport,
+      ),
+    ).rejects.toThrow('requested supplier is absent from its completed inventory');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
