@@ -31,6 +31,7 @@ def _generate_impl(ctx):
         outputs = outputs,
         arguments = [args],
         mnemonic = "SqliteUpstreamGenerators",
+        use_default_shell_env = True,
     )
     headers = [file for file in outputs if file.basename.endswith(".h")]
     return [DefaultInfo(files = depset(outputs)),
