@@ -689,7 +689,7 @@ jobs:
     needs: release-inputs
     runs-on: ${{ matrix.runner }}
     # Android construction and installed testing share the Linux x64 base.
-    timeout-minutes: ${{ matrix.platform == 'x86_64' && 180 || 120 }}
+    timeout-minutes: ${{ matrix.platform == 'x86_64' && 210 || 120 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.release-inputs.outputs.linux_matrix) }}
