@@ -6,10 +6,13 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import { canonicalShippingLabel } from '../release/bazel-shipping-inputs.mts';
 import {
+  NATIVE_AQUERY_FLAGS,
   type NativeBuildGithub,
   type NativeRequiredTest,
+  nativeAqueryExpression,
   nativeBuildEventIndex,
   nativeBuildMetadata,
 } from '../release/native-build-qualification.mts';
@@ -193,8 +196,39 @@ export async function runConfiguredRequest(request: ConfiguredRequest, workspace
       stdio: ['ignore', 'inherit', 'inherit'],
     });
     if (result.error) throw result.error;
-    if (result.status !== 0)
+    if (result.status !== 0) {
+      try {
+        await assertConfiguredCiSource(workspace, source);
+        const diagnostics = requireSafeDirectoryChain(
+          path.resolve(workspace, request.outputDirectory, 'diagnostics'),
+          { create: true, label: 'CI failure diagnostics' },
+        );
+        const query = spawnSync(
+          'bash',
+          [
+            'tools/dev/bazel.sh',
+            ...startup,
+            'aquery',
+            nativeAqueryExpression(request.targets),
+            ...request.configuration,
+            ...NATIVE_AQUERY_FLAGS,
+            `--output_file=${path.join(diagnostics, 'failed-aquery.json')}`,
+          ],
+          {
+            cwd: workspace,
+            stdio: ['ignore', 'inherit', 'inherit'],
+            timeout: 300000,
+            killSignal: 'SIGKILL',
+          },
+        );
+        if (query.error) throw query.error;
+        if (query.status !== 0)
+          throw new Error(`CI failure aquery failed (${query.signal ?? query.status})`);
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+      }
       throw new Error(`CI ${request.command} failed (${result.signal ?? result.status})`);
+    }
     const context = {
       id: request.id,
       job: request.job,

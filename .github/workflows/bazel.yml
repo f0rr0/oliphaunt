@@ -644,6 +644,7 @@ jobs:
             ${{ runner.temp }}/napi-build-capture/diagnostics
             ${{ runner.temp }}/native-build-capture/diagnostics
             ${{ runner.temp }}/ios-extension-build-capture/diagnostics
+            ${{ runner.temp }}/ci-requests/**/diagnostics
           if-no-files-found: ignore
           retention-days: 5
 

@@ -12,6 +12,10 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  NATIVE_AQUERY_FLAGS,
+  nativeAqueryExpression,
+} from '../release/native-build-qualification.mts';
 
 const runner = fileURLToPath(new URL('./run-configured-request.mts', import.meta.url));
 const metadata = fileURLToPath(
@@ -23,10 +27,14 @@ const wrapper = fileURLToPath(new URL('../release/with-source.sh', import.meta.u
 
 function fixture(mode: string, integrated = false) {
   const root = mkdtempSync(path.join(tmpdir(), 'configured-ci-request-'));
-  for (const directory of ['tools/ci', 'tools/dev', 'tools/release'])
+  for (const directory of ['tools/ci', 'tools/dev', 'tools/release', 'tools/packaging'])
     mkdirSync(path.join(root, directory), { recursive: true });
   copyFileSync(runner, path.join(root, 'tools/ci/run-configured-request.mts'));
   copyFileSync(wrapper, path.join(root, 'tools/release/with-source.sh'));
+  copyFileSync(
+    new URL('../packaging/release-directory-safety.mts', import.meta.url),
+    path.join(root, 'tools/packaging/release-directory-safety.mts'),
+  );
   copyFileSync(
     new URL('../release/qualified-release-replay.sh', import.meta.url),
     path.join(root, 'tools/release/qualified-release-replay.sh'),
@@ -71,7 +79,7 @@ export function captureConfiguredCiRequest(context){writeFileSync(path.join(cont
   ];
   const startup = ['--output_base=/fixture/short base', '--host_jvm_args=-Xmx3g'];
   const targets = [
-    mode === 'external-root'
+    mode.endsWith('external-root')
       ? '@icu//:windows_icu_smoke_test'
       : mode === 'alias-root'
         ? '//fixture:test_alias'
@@ -95,10 +103,15 @@ export function captureConfiguredCiRequest(context){writeFileSync(path.join(cont
     path.join(root, 'tools/dev/bazel-fixture.mts'),
     `import{appendFileSync,writeFileSync}from'node:fs';import path from'node:path';
 const args=process.argv.slice(2);appendFileSync('calls.jsonl',JSON.stringify(args)+'\\n');
-const command=args.find(arg=>['test','build','cquery','query'].includes(arg));
+const command=args.find(arg=>['test','build','cquery','query','aquery'].includes(arg));
+const mode=${JSON.stringify(mode)};
+if(command==='aquery') {
+ if(mode==='failed-build-query-failure')process.exit(2);
+ writeFileSync(args.find(arg=>arg.startsWith('--output_file=')).slice(14),'{"actions":[]}');process.exit(0);
+}
 if(command==='cquery') {console.log(JSON.stringify({configurations:[{id:1,checksum:'c'.repeat(64)}],results:['//fixture:archive','//fixture:executed_test'].map(name=>({configurationId:1,target:{rule:{name,configuredRuleInput:[{label:'//fixture:input.rs'}]}}})).concat([{target:{sourceFile:{name:'//fixture:input.rs'}}}])}));process.exit(0);}
 if(command==='query') {console.log('//fixture:BUILD');process.exit(0);}
-const mode=${JSON.stringify(mode)};if(mode==='failed-build')process.exit(1);
+if(mode.startsWith('failed-build'))process.exit(1);
 const bep=args.find(arg=>arg.startsWith('--build_event_json_file='));if(bep){
  const configuration=mode==='opaque'?'opaque-configuration-id':'c'.repeat(64);
  const testLabel=mode==='external-root'?'@icu+//:windows_icu_smoke_test':mode==='alias-root'?'//fixture:test_alias':'//fixture:executed_test';
@@ -323,7 +336,7 @@ for (const [mode, executionMode] of [
     try {
       const result = f.run(executionMode);
       expect(result.status).toBe(1);
-      expect(f.calls()).toHaveLength(1);
+      expect(f.calls()).toHaveLength(mode === 'failed-build' ? 2 : 1);
       expect(existsSync(path.join(f.output, 'ci-request.json'))).toBe(false);
       const bep = f.calls()[0].find((arg) => arg.startsWith('--build_event_json_file='));
       if (executionMode === 'full') expect(existsSync(bep.slice(24))).toBe(false);
@@ -342,6 +355,35 @@ test('plain build request keeps its command rather than silently running test', 
     f.cleanup();
   }
 });
+
+for (const mode of ['failed-build', 'failed-build-query-failure', 'failed-build-external-root'])
+  test(`${mode} preserves the build error and keeps its action graph diagnostic`, () => {
+    const f = fixture(mode);
+    try {
+      const result = f.run('full', 'build');
+      expect(result.status).toBe(1);
+      expect(result.stderr.toString()).toContain('CI build failed (1)');
+      const calls = f.calls();
+      expect(calls).toHaveLength(mode === 'failed-build-external-root' ? 1 : 2);
+      if (mode !== 'failed-build-external-root')
+        expect(calls[1]).toEqual([
+          ...f.startup,
+          'aquery',
+          nativeAqueryExpression(f.targets),
+          ...f.configuration,
+          ...NATIVE_AQUERY_FLAGS,
+          `--output_file=${path.join(f.output, 'diagnostics/failed-aquery.json')}`,
+        ]);
+      expect(existsSync(path.join(f.output, 'diagnostics/failed-aquery.json'))).toBe(
+        mode === 'failed-build',
+      );
+      expect(existsSync(path.join(f.output, 'ci-request.json'))).toBe(false);
+      expect(existsSync(path.join(f.output, 'analysis-deps.query'))).toBe(false);
+      expect(existsSync(path.join(f.output, 'evidence'))).toBe(false);
+    } finally {
+      f.cleanup();
+    }
+  });
 
 for (const [mode, command] of [
   ['built-only-test', 'test'],
