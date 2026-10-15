@@ -1,6 +1,21 @@
 diff --git a/wrapped_clang.cc b/wrapped_clang.cc
 --- a/wrapped_clang.cc
 +++ b/wrapped_clang.cc
+@@ -94,12 +94,12 @@ static std::string Unescape(const std::string& arg) {
+ }
+ 
+ // Converts an array of string arguments to char *arguments.
+-// The first arg is reduced to its basename as per execve conventions.
++// Preserve the executable path: Clang uses argv[0] for subprocess discovery.
+ // Note that the lifetime of the char* arguments in the returned array
+ // are controlled by the lifetime of the strings in args.
+ std::vector<const char*> ConvertToCArgs(const std::vector<std::string>& args) {
+   std::vector<const char*> c_args;
+-  c_args.push_back(Basename(args[0].c_str()));
++  c_args.push_back(args[0].c_str());
+   for (int i = 1; i < args.size(); i++) {
+     c_args.push_back(args[i].c_str());
+   }
 @@ -393,6 +393,14 @@
      FindAndReplace("__BAZEL_EXECUTION_ROOT_CANONICAL__", canonical_cwd,
                     &new_arg);
