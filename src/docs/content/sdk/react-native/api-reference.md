@@ -34,7 +34,7 @@ Transactions expose typed query methods and `rollback()`. They do not expose raw
 
 ## Lifecycle and errors
 
-`backup()` returns `Promise<Uint8Array>`. `cancel()` requests an interrupt. `close()` returns `Promise<void>`, `closed` reports state, and `Symbol.asyncDispose` supports explicit async disposal where the JavaScript runtime provides it.
+`backup()` returns `Promise<Uint8Array>`. `backupToFile(destination)` returns `Promise<void>` and streams the archive through the native SDK to a new file without retaining it in JavaScript. It requires a native filesystem path, an existing parent directory, and a native app rebuild. Both backup methods are unavailable while a managed transaction is active. `cancel()` requests an interrupt. `close()` returns `Promise<void>`, `closed` reports state, and `Symbol.asyncDispose` supports explicit async disposal where the JavaScript runtime provides it.
 
 `PostgresError` preserves SQLSTATE and backend diagnostics. Composite transaction failures use `AggregateError` with the callback failure followed by the rollback or database failure. Unknown commit outcomes are not automatically retried.
 

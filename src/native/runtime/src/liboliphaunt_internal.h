@@ -209,12 +209,14 @@ struct OliphauntHandle {
     size_t output_cap;
     size_t output_scan_off;
     bool output_ready;
+    size_t ready_remaining;
     unsigned char transaction_status;
     bool backup_mode_exit_unconfirmed;
 
     bool streaming;
     uint64_t stream_token;
     bool stream_input_closed;
+    bool stream_extended_pending;
     bool stream_copy_input;
     bool stream_failed;
     OliphauntOutputChunk *stream_head;
@@ -398,7 +400,6 @@ int oliphaunt_archive_append_wal_range(
 int oliphaunt_archive_append_text(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const char *contents);
 int oliphaunt_archive_append_bytes(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const uint8_t *contents, size_t len);
 int oliphaunt_archive_finish(OliphauntByteBuffer *archive, OliphauntHandle *handle);
-int oliphaunt_unpack_physical_archive(OliphauntHandle *handle, const uint8_t *data, size_t len, const char *staging_root);
 int oliphaunt_unpack_physical_archive_stream(OliphauntHandle *handle, OliphauntArchiveReadCallback read, void *context, const char *staging_root);
 
 #define set_error oliphaunt_set_error

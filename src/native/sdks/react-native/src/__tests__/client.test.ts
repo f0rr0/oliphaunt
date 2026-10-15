@@ -42,7 +42,9 @@ function assertInferredQueryTypes(database: OliphauntDatabase): void {
   const decoded: Promise<QueryResult<QueryObjectRow<QueryValue | Date>>> = database.query(
     'SELECT now()',
     [],
-    { decoders: { 1184: (value) => new Date(value) } },
+    {
+      decoders: { 1184: (value) => new Date(value) },
+    },
   );
   // @ts-expect-error Stream callbacks are synchronous backpressure acknowledgements.
   const asyncStreamed = database.execProtocolRawStream(Uint8Array.of(1), async () => {});
@@ -78,6 +80,7 @@ async function main(): Promise<void> {
   await testRawArrayExecAndDescribe();
   await testPhysicalSessionFifo();
   await testQueuedInputsAndCodecsAreSnapshotted();
+  await testBoundedPublicBurst();
   await testQueuedTransactionInputsAndCodecsAreSnapshotted();
   await testDescribeNoticesMergeIntoLogicalQuery();
   await testDecoderFailureAfterReadyDoesNotPoison();
@@ -92,6 +95,7 @@ async function main(): Promise<void> {
   await testProtocolStreamCallbackFailure();
   await testProtocolStreamRecoveryFailuresPoison();
   await testPhysicalBackupAndStaticRestore();
+  await testFileBackupKeepsNativeOwnership();
   await testTransactionsCommitAndRollback();
   await testTransactionPromiseMethodsNeverThrowSynchronously();
   await testCallbackAndRollbackFailuresAreBothPreserved();
@@ -363,6 +367,44 @@ async function testQueuedInputsAndCodecsAreSnapshotted(): Promise<void> {
   assert.match(native.requestTexts().find((request) => request.includes('before')) ?? '', /before/);
   assert.deepEqual(Array.from(await raw), [1, 0xaa]);
   await db.close();
+}
+
+async function testBoundedPublicBurst(): Promise<void> {
+  const native = new MockNative();
+  const db = await createOliphauntClient(native).open();
+  const gate = deferred<void>();
+  const started = deferred<void>();
+  native.pauseNextRequest = gate.promise;
+  native.onPausedRequest = () => started.resolve();
+  const requests = Array.from({ length: 64 }, (_, index) => Uint8Array.of(0xaa, index));
+  const accepted = requests.map((request) => db.execProtocolRaw(request));
+  await started.promise;
+  for (const request of requests) request.fill(0xff);
+  let inspected = false;
+  await assert.rejects(
+    db.query('SELECT $1::jsonb', [
+      {
+        get value() {
+          inspected = true;
+          return 1;
+        },
+      },
+    ]),
+    /operation queue is full/,
+  );
+  assert.equal(inspected, false);
+  assert.equal(native.execRequests.length, 1);
+  await db.cancel();
+  const closing = db.close();
+  assert.deepEqual(native.closedHandles, []);
+  gate.resolve();
+  await Promise.all(accepted);
+  await closing;
+  assert.deepEqual(
+    native.execRequests,
+    Array.from({ length: 64 }, (_, index) => Uint8Array.of(0xaa, index)),
+  );
+  assert.deepEqual(native.closedHandles, [1]);
 }
 
 async function testQueuedTransactionInputsAndCodecsAreSnapshotted(): Promise<void> {
@@ -743,6 +785,7 @@ async function testProtocolStreamCallbackFailure(): Promise<void> {
     ['execProtocolRaw', () => db.execProtocolRaw(Uint8Array.of(0xaa))],
     ['execProtocolRawStream', () => db.execProtocolRawStream(Uint8Array.of(0xaa), () => undefined)],
     ['backup', () => db.backup()],
+    ['backupToFile', () => db.backupToFile('/tmp/backup.oliphaunt')],
     ['transaction', () => db.transaction(() => undefined)],
     ['close', () => db.close()],
     ['asyncDispose', () => db[Symbol.asyncDispose]()],
@@ -828,6 +871,70 @@ async function testPhysicalBackupAndStaticRestore(): Promise<void> {
       payload: 'physical-backup',
     },
   ]);
+}
+
+async function testFileBackupKeepsNativeOwnership(): Promise<void> {
+  for (const topology of ['direct', 'broker']) {
+    const native = new MockNative(topology);
+    const db = await createOliphauntClient(native).open(
+      topology === 'broker' ? { broker: { operationTimeoutMs: 5_000 } } : {},
+    );
+    const started = deferred<void>();
+    const released = deferred<void>();
+    native.backupToFileJsi = async (handle, destination, deadline) => {
+      assert.equal(handle, 1);
+      assert.equal(destination, '/tmp/backup.oliphaunt');
+      assert.equal(deadline === undefined, topology === 'direct');
+      started.resolve();
+      await released.promise;
+    };
+    native.backupJsi = async () => {
+      throw new Error('file backup must not collect the archive across JSI');
+    };
+    let settled = false;
+    const backup = db.backupToFile('/tmp/backup.oliphaunt').then(() => {
+      settled = true;
+    });
+    await started.promise;
+    const queued = db.query('SELECT 1');
+    await Promise.resolve();
+    assert.equal(settled, false);
+    assert.equal(native.execRequests.length, 0);
+    released.resolve();
+    await backup;
+    await queued;
+    assert.equal(settled, true);
+
+    const failure = new Error('native file publication failed');
+    native.backupToFileJsi = async () => {
+      throw failure;
+    };
+    await assert.rejects(
+      () => db.backupToFile('/tmp/backup.oliphaunt'),
+      (error) => error === failure,
+    );
+    await db.query('SELECT 1');
+    await db.transaction(async () => {
+      await assert.rejects(
+        () => db.backupToFile('/tmp/backup.oliphaunt'),
+        /physical session is pinned/,
+      );
+    });
+    for (const path of ['', 'backup\0archive']) {
+      await assertRejectsWithoutSynchronousThrow(
+        () => db.backupToFile(path),
+        /nonempty host path without NUL/,
+      );
+    }
+    const transport = (globalThis as GlobalWithJsi).__oliphauntReactNativeJsi!;
+    delete transport.backupToFile;
+    await assert.rejects(
+      () => db.backupToFile('/tmp/backup.oliphaunt'),
+      /requires rebuilding the app/,
+    );
+    await db.query('SELECT 1');
+    await db.close();
+  }
 }
 
 async function testTransactionsCommitAndRollback(): Promise<void> {
@@ -1252,6 +1359,9 @@ class MockNative implements Spec {
       backup(handle) {
         return native.backupJsi(handle);
       },
+      backupToFile(handle, destination, deadline) {
+        return native.backupToFileJsi(handle, destination, deadline);
+      },
       restore(destination, artifact) {
         return native.restoreJsi(destination, artifact);
       },
@@ -1406,6 +1516,8 @@ class MockNative implements Spec {
     return encoder.encode('physical-backup');
   }
 
+  async backupToFileJsi(_handle: number, _destination: string, _deadline?: number): Promise<void> {}
+
   async restoreJsi(
     destination: {
       storageKind: 'directory' | 'applicationData';
@@ -1455,6 +1567,7 @@ type GlobalWithJsi = typeof globalThis & {
       onChunk: (chunk: ArrayBuffer | ArrayBufferView) => JsiProtocolChunkResult,
     ): Promise<void>;
     backup(handle: number): Promise<ArrayBuffer | ArrayBufferView>;
+    backupToFile?(handle: number, destination: string, deadline?: number): Promise<void>;
     restore(
       destination: {
         storageKind: 'directory' | 'applicationData';

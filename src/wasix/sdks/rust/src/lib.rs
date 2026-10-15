@@ -26,7 +26,8 @@ pub use oliphaunt::{
 #[cfg(feature = "tools-execution")]
 pub mod tools {
     pub use crate::oliphaunt::tools::{
-        PgDumpOptions, PostgresToolError, PostgresToolOutput, PsqlOptions, ToolAssets,
+        PgDumpOptions, PostgresToolError, PostgresToolOutput, PostgresToolSummary, PsqlOptions,
+        ToolAssets,
     };
 }
 

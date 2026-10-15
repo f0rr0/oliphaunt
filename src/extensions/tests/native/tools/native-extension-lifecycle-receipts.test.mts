@@ -31,7 +31,10 @@ import {
   selectedExtensionDependencies,
   stageExtensionCarrier,
 } from './stage-native-extension-lifecycle.mts';
-import { verifyReceipts } from './verify-native-extension-lifecycle-receipts.mts';
+import {
+  NATIVE_EXTENSION_LIFECYCLE_BY_MODE,
+  verifyReceipts,
+} from './verify-native-extension-lifecycle-receipts.mts';
 import { writeReceipt } from './write-native-extension-lifecycle-receipt.mts';
 
 const TEST_SHARD_COUNT = 3;
@@ -60,14 +63,14 @@ function inputEnvelope(extensions = canonicalExtensions()) {
     ...extensions.map((name) => `native-extension:${name}`),
   ].sort(compareText);
   const core = {
-    schema: 'oliphaunt-native-extension-lifecycle-inputs-v1',
+    schema: 'oliphaunt-native-extension-lifecycle-inputs-v2',
     candidateSha: CANDIDATE_SHA,
     candidateTree: CANDIDATE_TREE,
     target: 'linux-x64-gnu',
     extensionCount: extensions.length,
     extensions,
     modes: ['direct', 'broker', 'server'],
-    lifecycle: ['install', 'load', 'restart', 'backup', 'restore'],
+    lifecycleByMode: NATIVE_EXTENSION_LIFECYCLE_BY_MODE,
     consumedArtifacts: identities.map((identity, index) => ({
       identity,
       file: `artifact-${index}.tar.gz`,
@@ -84,9 +87,11 @@ function proofLog(inputs, shardIndex, shardCount) {
     `OLIPHAUNT_NATIVE_EXTENSION_PROOF_START shard=${shardIndex}/${shardCount} selected=${selected.length} planned=${inputs.extensions.length} modes=direct,broker,server`,
   ];
   for (const extension of selected) {
-    lines.push(
-      `OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_PASS shard=${shardIndex}/${shardCount} extension=${extension} modes=direct,broker,server lifecycle=install-load-restart-backup-restore`,
-    );
+    for (const [mode, lifecycle] of Object.entries(NATIVE_EXTENSION_LIFECYCLE_BY_MODE)) {
+      lines.push(
+        `OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_PASS shard=${shardIndex}/${shardCount} extension=${extension} mode=${mode} lifecycle=${lifecycle.join('-')}`,
+      );
+    }
   }
   lines.push(
     `OLIPHAUNT_NATIVE_EXTENSION_PROOF_PASS shard=${shardIndex}/${shardCount} planned=${inputs.extensions.length} modes=direct,broker,server`,
@@ -341,6 +346,34 @@ test('shard receipt generation rejects omitted extension PASS records and incomp
   }
 });
 
+test('lifecycle receipts reject combined claims and server backup/restore that was not executed', () => {
+  const value = fixture(['cube']);
+  try {
+    const log = proofLog(value.inputs, 0, 1);
+    assert.throws(
+      () =>
+        writeShard(value, 0, {
+          shardCount: 1,
+          logOverride: log.replace(
+            'mode=server lifecycle=install-load-restart',
+            'mode=server lifecycle=install-load-restart-backup-restore',
+          ),
+        }),
+      /incomplete lifecycle/,
+    );
+    assert.throws(
+      () =>
+        writeShard(value, 0, {
+          shardCount: 1,
+          logOverride: log.replace(/mode=(direct|broker|server)/g, 'modes=direct,broker,server'),
+        }),
+      /unique extension PASS records/,
+    );
+  } finally {
+    rmSync(value.root, { force: true, recursive: true });
+  }
+});
+
 test('aggregate verification rejects candidate, shard, and PASS-record drift even with recomputed receipts', () => {
   const mutations = [
     (receipt) => {
@@ -351,7 +384,7 @@ test('aggregate verification rejects candidate, shard, and PASS-record drift eve
       receipt.extensionCount -= 1;
     },
     (receipt) => {
-      receipt.passRecords[0].modes = ['direct', 'broker'];
+      receipt.passRecords[0].mode = 'server';
     },
   ];
   for (const mutate of mutations) {

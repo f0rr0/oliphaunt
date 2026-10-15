@@ -10,6 +10,9 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
+#[path = "../src/oliphaunt/test_fixtures.rs"]
+mod test_fixtures;
+
 // OLIPHAUNT_DOCS_SNIPPET wasix-rust-quickstart
 
 fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
@@ -199,6 +202,190 @@ fn configured_startup_identity_survives_reset_role() -> Result<()> {
     }
     // Rejected startup must leave the directory usable by a permitted session.
     Oliphaunt::builder().storage(storage).open()?.close()?;
+    Ok(())
+}
+
+#[test]
+fn wal_pressure_checkpoints_wait_for_idle_boundaries() -> Result<()> {
+    let mut database = Oliphaunt::builder()
+        .startup_guc("max_wal_size", "64MB")
+        .startup_guc("min_wal_size", "32MB")
+        .open()?;
+    for _ in 0..2 {
+        let before =
+            database.query("SELECT checkpoint_lsn::text AS lsn FROM pg_control_checkpoint()")?;
+        database.execute(&test_fixtures::text("postgres/checkpoint-pressure.sql"))?;
+        let after =
+            database.query("SELECT checkpoint_lsn::text AS lsn FROM pg_control_checkpoint()")?;
+        assert_ne!(before.get_text(0, "lsn")?, after.get_text(0, "lsn")?);
+        database.execute("DELETE FROM checkpoint_pressure")?;
+        database.execute("VACUUM (FREEZE, ANALYZE) checkpoint_pressure")?;
+    }
+    let wal = database.query(
+        "SELECT count(*)::text AS segments FROM pg_ls_waldir() WHERE name ~ '^[0-9A-F]{24}$'",
+    )?;
+    assert!(wal.get_text(0, "segments")?.unwrap().parse::<usize>()? <= 12);
+    database.close()?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SqlDeadlines {
+    timeout_milliseconds: u32,
+    expected_sqlstate: String,
+    cpu_query: String,
+    wait_query: String,
+    completed_query: String,
+}
+
+impl SqlDeadlines {
+    fn load() -> Self {
+        serde_json::from_str(&test_fixtures::text("postgres/sql-deadlines.json")).unwrap()
+    }
+
+    fn assert_timeout(&self, error: &Error) {
+        assert_eq!(
+            error
+                .postgres_error()
+                .and_then(|error| error.sqlstate.as_deref()),
+            Some(self.expected_sqlstate.as_str()),
+            "{error}",
+        );
+    }
+}
+
+#[test]
+fn sql_deadlines_cancel_cpu_and_waits_then_recover_and_reopen() -> Result<()> {
+    let fixture = SqlDeadlines::load();
+    let workspace = tempfile::tempdir()?;
+    for storage in [
+        DatabaseStorage::Memory,
+        DatabaseStorage::Directory(workspace.path().join("deadlines")),
+    ] {
+        let mut database = Oliphaunt::builder().storage(storage.clone()).open()?;
+        for sql in [&fixture.cpu_query, &fixture.wait_query] {
+            database.execute(&format!(
+                "SET statement_timeout = {}",
+                fixture.timeout_milliseconds
+            ))?;
+            fixture.assert_timeout(&database.query(sql).expect_err("statement must time out"));
+            database.execute("SET statement_timeout = 0")?;
+            database.query(&fixture.completed_query)?;
+        }
+        database.execute(&format!(
+            "SET statement_timeout = {}",
+            fixture.timeout_milliseconds
+        ))?;
+        database.execute("SET statement_timeout = 500")?;
+        database.query(&fixture.completed_query)?;
+        database.execute("SET statement_timeout = 0")?;
+        database.execute("CREATE TABLE deadline_rollback_probe(value integer)")?;
+        database.execute("INSERT INTO deadline_rollback_probe VALUES (1)")?;
+        let outcome: TransactionResult<(), Error> = database.transaction(|transaction| {
+            transaction.execute("INSERT INTO deadline_rollback_probe VALUES (2)")?;
+            transaction.execute(&format!(
+                "SET LOCAL statement_timeout = {}",
+                fixture.timeout_milliseconds
+            ))?;
+            transaction.query(&fixture.cpu_query).map(|_| ())
+        });
+        let error = outcome.expect_err("timed-out transaction must roll back");
+        fixture.assert_timeout(
+            error
+                .callback_error()
+                .or_else(|| error.database_error())
+                .unwrap(),
+        );
+        assert_eq!(
+            database
+                .query("SELECT count(*)::text AS value FROM deadline_rollback_probe")?
+                .get_text(0, "value")?,
+            Some("1")
+        );
+        assert_eq!(
+            database
+                .query("SELECT 42::text AS value")?
+                .get_text(0, "value")?,
+            Some("42")
+        );
+        database.close()?;
+        if matches!(storage, DatabaseStorage::Directory(_)) {
+            let mut reopened = Oliphaunt::builder().storage(storage).open()?;
+            assert_eq!(
+                reopened
+                    .query("SELECT count(*)::text AS value FROM deadline_rollback_probe")?
+                    .get_text(0, "value")?,
+                Some("1")
+            );
+            reopened.close()?;
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn async_sql_deadlines_cancel_cpu_and_waits_then_roll_back() -> Result<()> {
+    let fixture = SqlDeadlines::load();
+    let database = AsyncOliphaunt::builder().open().await?;
+    for sql in [&fixture.cpu_query, &fixture.wait_query] {
+        database
+            .execute(&format!(
+                "SET statement_timeout = {}",
+                fixture.timeout_milliseconds
+            ))
+            .await?;
+        fixture.assert_timeout(
+            &database
+                .query(sql)
+                .await
+                .expect_err("statement must time out"),
+        );
+        database.execute("SET statement_timeout = 0").await?;
+        database.query(&fixture.completed_query).await?;
+    }
+    database
+        .execute("CREATE TABLE deadline_rollback_probe(value integer)")
+        .await?;
+    database
+        .execute("INSERT INTO deadline_rollback_probe VALUES (1)")
+        .await?;
+    let outcome: TransactionResult<(), Error> = database
+        .transaction(async |transaction: &mut AsyncTransaction| {
+            transaction
+                .execute("INSERT INTO deadline_rollback_probe VALUES (2)")
+                .await?;
+            transaction
+                .execute(&format!(
+                    "SET LOCAL statement_timeout = {}",
+                    fixture.timeout_milliseconds
+                ))
+                .await?;
+            transaction.query(&fixture.cpu_query).await.map(|_| ())
+        })
+        .await;
+    let error = outcome.expect_err("timed-out async transaction must roll back");
+    fixture.assert_timeout(
+        error
+            .callback_error()
+            .or_else(|| error.database_error())
+            .unwrap(),
+    );
+    assert_eq!(
+        database
+            .query("SELECT count(*)::text AS value FROM deadline_rollback_probe")
+            .await?
+            .get_text(0, "value")?,
+        Some("1")
+    );
+    assert_eq!(
+        database
+            .query("SELECT 42::text AS value")
+            .await?
+            .get_text(0, "value")?,
+        Some("42")
+    );
+    database.close().await?;
     Ok(())
 }
 

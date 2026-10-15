@@ -247,10 +247,14 @@ extension OliphauntSession {
 
 private actor OliphauntAsyncSerialGate {
     private var locked = false
+    private var pendingCount = 0
+    private var pendingBytes = 0
+    private var currentRetainedBytes: Int?
     private struct Waiter {
         let id: UUID
         let resume: @Sendable (Result<Void, any Error>) -> Void
         var timer: Task<Void, Never>?
+        var retainedBytes: Int?
     }
     private var waiters: [Waiter] = []
     private var waiterCountObservers: [(Int, CheckedContinuation<Void, Never>)] = []
@@ -266,26 +270,40 @@ private actor OliphauntAsyncSerialGate {
         }
     }
 
-    func acquire(until deadline: ContinuousClock.Instant?) async throws {
-        guard let deadline else {
-            await acquire()
-            return
+    func acquire(until deadline: ContinuousClock.Instant?, retainedBytes: Int? = nil) async throws {
+        if let deadline, ContinuousClock.now >= deadline { throw expiredError() }
+        if let bytes = retainedBytes {
+            guard pendingCount < 64, pendingBytes < 128 * 1024 * 1024,
+                pendingCount == 0 || bytes <= 128 * 1024 * 1024 - pendingBytes
+            else { throw OliphauntError.engine("operation queue is full; wait for pending work to finish") }
+            pendingCount += 1
+            pendingBytes += bytes
         }
-        guard ContinuousClock.now < deadline else { throw expiredError() }
         if !locked {
             locked = true
+            currentRetainedBytes = retainedBytes
             return
         }
         try await withCheckedThrowingContinuation { continuation in
             let id = UUID()
-            let timer = Task {
-                do {
-                    try await ContinuousClock().sleep(until: deadline)
-                    expire(id)
-                } catch {}
+            let timer = deadline.map { deadline in
+                Task {
+                    do {
+                        try await ContinuousClock().sleep(until: deadline)
+                        expire(id)
+                    } catch {}
+                }
             }
-            waiters.append(Waiter(id: id, resume: { continuation.resume(with: $0) }, timer: timer))
+            waiters.append(Waiter(id: id, resume: { continuation.resume(with: $0) },
+                                  timer: timer, retainedBytes: retainedBytes))
             resumeSatisfiedWaiterCountObservers()
+        }
+    }
+
+    private func releaseReservation(_ bytes: Int?) {
+        if let bytes {
+            pendingCount -= 1
+            pendingBytes -= bytes
         }
     }
 
@@ -297,14 +315,19 @@ private actor OliphauntAsyncSerialGate {
 
     private func expire(_ id: UUID) {
         guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
-        waiters.remove(at: index).resume(.failure(expiredError()))
+        let waiter = waiters.remove(at: index)
+        releaseReservation(waiter.retainedBytes)
+        waiter.resume(.failure(expiredError()))
     }
 
     func release() {
+        releaseReservation(currentRetainedBytes)
+        currentRetainedBytes = nil
         if waiters.isEmpty {
             locked = false
         } else {
             let next = waiters.removeFirst()
+            currentRetainedBytes = next.retainedBytes
             next.timer?.cancel()
             next.resume(.success(()))
         }
@@ -689,7 +712,7 @@ public actor OliphauntDatabase {
 
     private func execProtocolRawOwned(_ bytes: Data) async throws -> Data {
         return try await runSessionOperation(
-            failurePolicy: .poisonRawProtocol
+            failurePolicy: .poisonRawProtocol, retainedBytes: bytes.count
         ) {
             try await $0.execProtocolRaw(bytes)
         }
@@ -702,7 +725,7 @@ public actor OliphauntDatabase {
         let callbackGate = protocolStreamCallbackGate
         let databaseID = protocolStreamDatabaseID
         let outcome = try await runSessionOperation(
-            failurePolicy: .poisonRawProtocol
+            failurePolicy: .poisonRawProtocol, retainedBytes: bytes.count
         ) {
             try await $0.execProtocolRawStream(bytes) { chunk in
                 try callbackGate.withCallback(databaseID: databaseID) {
@@ -932,7 +955,7 @@ public actor OliphauntDatabase {
         let deadline =
             OliphauntBridge.deadline
             ?? admittedSession.operationTimeout.map { ContinuousClock.now.advanced(by: $0) }
-        do { try await operationGate.acquire(until: deadline) } catch let error
+        do { try await operationGate.acquire(until: deadline, retainedBytes: request.count) } catch let error
             as OliphauntBrokerError
         {
             throw OliphauntBrokerError(
@@ -1187,6 +1210,7 @@ public actor OliphauntDatabase {
 
     private func runSessionOperation<T: Sendable>(
         failurePolicy: SessionFailurePolicy = .preserve,
+        retainedBytes: Int = 0,
         _ body: (any OliphauntSession) async throws -> T
     ) async throws -> T {
         try validateTransactionAccess(token: nil)
@@ -1194,7 +1218,7 @@ public actor OliphauntDatabase {
         let deadline =
             OliphauntBridge.deadline
             ?? admittedSession.operationTimeout.map { ContinuousClock.now.advanced(by: $0) }
-        do { try await operationGate.acquire(until: deadline) } catch let error
+        do { try await operationGate.acquire(until: deadline, retainedBytes: retainedBytes) } catch let error
             as OliphauntBrokerError
         {
             throw OliphauntBrokerError(

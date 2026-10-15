@@ -40,6 +40,7 @@ impl ExecutorStreamOutcome {
 /// commands share the same FIFO but do not consume this capacity, so cleanup
 /// can always be admitted without inventing a public queue-tuning surface.
 const ORDINARY_QUEUE_CAPACITY: usize = 256;
+const ORDINARY_QUEUE_BYTES: usize = 128 * 1024 * 1024;
 
 pub(crate) struct EngineExecutor {
     shared: Arc<ExecutorShared>,
@@ -217,6 +218,7 @@ struct CommandQueue {
 struct CommandQueueState {
     commands: VecDeque<Command>,
     ordinary_count: usize,
+    ordinary_bytes: usize,
     admission_waiters: VecDeque<AdmissionWaiter>,
     stopped: bool,
 }
@@ -257,6 +259,7 @@ impl CommandQueue {
             state: Mutex::new(CommandQueueState {
                 commands: VecDeque::new(),
                 ordinary_count: 0,
+                ordinary_bytes: 0,
                 admission_waiters: VecDeque::new(),
                 stopped: false,
             }),
@@ -275,6 +278,7 @@ impl CommandQueue {
         Ok(())
     }
 
+    #[cfg(test)]
     fn poll_send_ordinary(
         &self,
         token: &mut Option<Arc<AdmissionToken>>,
@@ -282,6 +286,22 @@ impl CommandQueue {
         cx: &mut Context<'_>,
     ) -> (Poll<Result<()>>, Option<Waker>) {
         debug_assert!(command.as_ref().is_some_and(Command::is_ordinary));
+        let bytes = command.as_ref().expect("pending command").retained_bytes();
+        self.poll_send_ordinary_factory(
+            token,
+            bytes,
+            || Ok(command.take().expect("pending command")),
+            cx,
+        )
+    }
+
+    fn poll_send_ordinary_factory(
+        &self,
+        token: &mut Option<Arc<AdmissionToken>>,
+        bytes: usize,
+        command: impl FnOnce() -> Result<Command>,
+        cx: &mut Context<'_>,
+    ) -> (Poll<Result<()>>, Option<Waker>) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.stopped
             || token
@@ -302,14 +322,18 @@ impl CommandQueue {
             Some(_) => false,
             None => state.admission_waiters.is_empty(),
         };
-        if state.ordinary_count < ORDINARY_QUEUE_CAPACITY && is_next {
+        let bytes_fit = state.ordinary_count == 0
+            || bytes <= ORDINARY_QUEUE_BYTES.saturating_sub(state.ordinary_bytes);
+        if state.ordinary_count < ORDINARY_QUEUE_CAPACITY && bytes_fit && is_next {
             if position.is_some() {
                 state.admission_waiters.pop_front();
             }
-            state.ordinary_count += 1;
-            state
-                .commands
-                .push_back(command.take().expect("ordinary command is admitted once"));
+            let result = command().map(|command| {
+                debug_assert!(command.retained_bytes() <= bytes);
+                state.ordinary_count += 1;
+                state.ordinary_bytes += command.retained_bytes();
+                state.commands.push_back(command);
+            });
             let next = (state.ordinary_count < ORDINARY_QUEUE_CAPACITY)
                 .then(|| {
                     state
@@ -318,8 +342,10 @@ impl CommandQueue {
                         .map(|waiter| waiter.waker.clone())
                 })
                 .flatten();
-            self.ready.notify_one();
-            return (Poll::Ready(Ok(())), next);
+            if result.is_ok() {
+                self.ready.notify_one();
+            }
+            return (Poll::Ready(result), next);
         }
 
         let token = token.get_or_insert_with(|| {
@@ -385,6 +411,7 @@ impl CommandQueue {
             if let Some(command) = state.commands.pop_front() {
                 if command.is_ordinary() {
                     state.ordinary_count -= 1;
+                    state.ordinary_bytes -= command.retained_bytes();
                 }
                 let next = state
                     .admission_waiters
@@ -410,6 +437,7 @@ impl CommandQueue {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.stopped = true;
         state.ordinary_count = 0;
+        state.ordinary_bytes = 0;
         let pending = state.commands.drain(..).collect();
         let wakers = state
             .admission_waiters
@@ -571,23 +599,31 @@ impl EngineExecutor {
 
     pub(crate) async fn exec_protocol_raw(
         &self,
-        request: ProtocolRequest,
+        request: impl AsRef<[u8]>,
     ) -> Result<ProtocolResponse> {
         let (reply, receiver) = reply::channel();
-        self.send(Command::Exec { request, reply }).await?;
+        let bytes = request.as_ref();
+        self.send_factory(bytes.len(), || Command::Exec {
+            request: ProtocolRequest::new(bytes),
+            reply,
+        })
+        .await?;
         receiver.await
     }
 
     pub(crate) async fn exec_structured(
         &self,
-        request: ProtocolRequest,
+        bytes: usize,
+        request: impl FnOnce() -> Result<ProtocolRequest>,
         operation: impl Into<String>,
     ) -> Result<ProtocolResponse> {
         let (reply, receiver) = reply::channel();
-        self.send(Command::StructuredExec {
-            request,
-            operation: operation.into(),
-            reply,
+        self.try_send_factory(bytes, || {
+            Ok(Command::StructuredExec {
+                request: request()?,
+                operation: operation.into(),
+                reply,
+            })
         })
         .await?;
         receiver.await
@@ -613,17 +649,20 @@ impl EngineExecutor {
     pub(crate) async fn pinned_exec_structured(
         &self,
         token: u64,
-        request: ProtocolRequest,
+        bytes: usize,
+        request: impl FnOnce() -> Result<ProtocolRequest>,
         operation: impl Into<String>,
         guard: Arc<TransactionGuard>,
     ) -> Result<ProtocolResponse> {
         let (reply, receiver) = reply::channel();
-        self.send(Command::PinnedStructuredExec {
-            token,
-            request,
-            operation: operation.into(),
-            guard,
-            reply,
+        self.try_send_factory(bytes, || {
+            Ok(Command::PinnedStructuredExec {
+                token,
+                request: request()?,
+                operation: operation.into(),
+                guard,
+                reply,
+            })
         })
         .await?;
         receiver.await
@@ -645,15 +684,16 @@ impl EngineExecutor {
 
     pub(crate) async fn exec_protocol_raw_stream_outcome<F>(
         &self,
-        request: ProtocolRequest,
+        request: impl AsRef<[u8]>,
         on_chunk: F,
     ) -> Result<ExecutorStreamOutcome>
     where
         F: FnMut(&[u8]) -> Result<()> + Send + 'static,
     {
         let (reply, receiver) = reply::channel();
-        self.send(Command::Stream {
-            request,
+        let bytes = request.as_ref();
+        self.send_factory(bytes.len(), || Command::Stream {
+            request: ProtocolRequest::new(bytes),
             on_chunk: Box::new(on_chunk),
             reply,
         })
@@ -715,8 +755,14 @@ impl EngineExecutor {
             .await
     }
 
+    pub(crate) async fn backup_to(&self, writer: Box<dyn std::io::Write + Send>) -> Result<()> {
+        let (reply, receiver) = reply::channel();
+        self.send(Command::BackupTo { writer, reply }).await?;
+        receiver.await
+    }
+
     #[cfg(feature = "mobile-bindings")]
-    pub(crate) async fn backup_to(
+    pub(crate) async fn backup_to_cancellable(
         &self,
         writer: Box<dyn std::io::Write + Send>,
         cancellation: Arc<RequestCancellation>,
@@ -770,6 +816,19 @@ impl EngineExecutor {
 
     async fn send(&self, command: Command) -> Result<()> {
         debug_assert!(command.is_ordinary());
+        self.send_factory(command.retained_bytes(), || command)
+            .await
+    }
+
+    async fn send_factory(&self, bytes: usize, command: impl FnOnce() -> Command) -> Result<()> {
+        self.try_send_factory(bytes, || Ok(command())).await
+    }
+
+    async fn try_send_factory(
+        &self,
+        bytes: usize,
+        command: impl FnOnce() -> Result<Command>,
+    ) -> Result<()> {
         let mut registration = AdmissionRegistration::new(&self.shared.queue);
         let mut command = Some(command);
         poll_fn(|cx| {
@@ -795,9 +854,12 @@ impl EngineExecutor {
                         .shared
                         .unsubmitted_error(Error::Engine(SESSION_STATE_UNKNOWN.to_owned()))));
                 }
-                self.shared
-                    .queue
-                    .poll_send_ordinary(&mut registration.token, &mut command, cx)
+                self.shared.queue.poll_send_ordinary_factory(
+                    &mut registration.token,
+                    bytes,
+                    || command.take().expect("ordinary command is admitted once")(),
+                    cx,
+                )
             };
             if let Some(waker) = next {
                 waker.wake();
@@ -914,7 +976,6 @@ enum Command {
     Backup {
         reply: reply::Sender<Vec<u8>>,
     },
-    #[cfg(feature = "mobile-bindings")]
     BackupTo {
         writer: Box<dyn std::io::Write + Send>,
         reply: reply::Sender<()>,
@@ -923,6 +984,19 @@ enum Command {
 }
 
 impl Command {
+    fn retained_bytes(&self) -> usize {
+        match self {
+            #[cfg(feature = "mobile-bindings")]
+            Self::Cancellable { command, .. } => command.retained_bytes(),
+            Self::Exec { request, .. }
+            | Self::StructuredExec { request, .. }
+            | Self::PinnedExec { request, .. }
+            | Self::PinnedStructuredExec { request, .. }
+            | Self::Stream { request, .. } => request.retained_bytes(),
+            _ => 0,
+        }
+    }
+
     fn is_ordinary(&self) -> bool {
         !matches!(
             self,
@@ -946,7 +1020,6 @@ impl Command {
             Self::Stream { reply, .. } => reply.is_abandoned(),
             Self::Begin { reply } => reply.is_abandoned(),
             Self::Backup { reply } => reply.is_abandoned(),
-            #[cfg(feature = "mobile-bindings")]
             Self::BackupTo { reply, .. } => reply.is_abandoned(),
             Self::PinnedExec { .. }
             | Self::ReleasePin { .. }
@@ -1246,12 +1319,16 @@ fn execute_command(
             }
             reply.send(result);
         }
-        #[cfg(feature = "mobile-bindings")]
         Command::BackupTo { mut writer, reply } => {
             let result = if owner.active_pin.is_some() {
                 Err(Error::TransactionActive)
             } else {
-                run_active_work(&shared.active_work, || session.backup_to(writer.as_mut()))
+                run_active_work(&shared.active_work, || {
+                    session.backup_to(writer.as_mut())?;
+                    writer.flush().map_err(|error| {
+                        Error::Engine(format!("flush backup destination: {error}"))
+                    })
+                })
             };
             #[cfg(feature = "mobile-bindings")]
             if let Err(error) = &result
@@ -1552,6 +1629,42 @@ mod tests {
     use crate::engine::EngineCancel;
     use crate::error::ErrorKind;
 
+    #[test]
+    fn owned_backup_writer_flush_failure_is_observable_and_recoverable() {
+        struct Session;
+        impl EngineSession for Session {
+            fn exec_protocol_raw(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse> {
+                Ok(ProtocolResponse::new(request.as_bytes()))
+            }
+            fn backup(&mut self) -> Result<Vec<u8>> {
+                Ok(vec![1, 2, 3])
+            }
+        }
+        struct Writer;
+        impl std::io::Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::Error::other("flush failed"))
+            }
+        }
+        let executor = EngineExecutor::spawn(Box::new(Session));
+        assert!(
+            block_on(executor.backup_to(Box::new(Writer)))
+                .unwrap_err()
+                .to_string()
+                .contains("flush failed")
+        );
+        assert_eq!(
+            block_on(executor.exec_protocol_raw(ProtocolRequest::new([42])))
+                .unwrap()
+                .as_bytes(),
+            &[42]
+        );
+        block_on(executor.close()).unwrap();
+    }
+
     #[cfg(feature = "mobile-bindings")]
     #[test]
     fn cancellation_between_abandonment_check_and_dispatch_is_not_submitted() {
@@ -1806,6 +1919,87 @@ mod tests {
                 Poll::Ready(Ok(()))
             ));
         }
+    }
+
+    #[test]
+    fn byte_capacity_defers_request_preparation_and_keeps_controls_available() {
+        let queue = CommandQueue::new();
+        let (reply, receiver) = reply::channel();
+        drop(receiver);
+        let mut command = Some(Command::Exec {
+            request: ProtocolRequest::new(Vec::with_capacity(ORDINARY_QUEUE_BYTES)),
+            reply,
+        });
+        let mut first = AdmissionRegistration::new(&queue);
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(poll_queue_send(&queue, &mut first, &mut command, &mut context).is_ready());
+
+        let prepared = AtomicUsize::new(0);
+        let mut next = AdmissionRegistration::new(&queue);
+        let prepare = || {
+            prepared.fetch_add(1, Ordering::SeqCst);
+            Ok(abandoned_ordinary_command(1))
+        };
+        assert!(
+            queue
+                .poll_send_ordinary_factory(&mut next.token, 1, prepare, &mut context)
+                .0
+                .is_pending()
+        );
+        assert_eq!(prepared.load(Ordering::SeqCst), 0);
+        queue
+            .send_control(Command::Close)
+            .expect("close bypasses ordinary byte capacity");
+        drop(queue.receive().expect("release full byte reservation"));
+        assert!(
+            queue
+                .poll_send_ordinary_factory(&mut next.token, 1, prepare, &mut context)
+                .0
+                .is_ready()
+        );
+        assert_eq!(prepared.load(Ordering::SeqCst), 1);
+        assert!(matches!(queue.receive(), Some(Command::Close)));
+        drop(queue.stop());
+    }
+
+    #[test]
+    fn preparation_failure_releases_capacity_and_wakes_its_fifo_successor() {
+        let queue = CommandQueue::new();
+        fill_ordinary_queue(&queue);
+        let mut first = AdmissionRegistration::new(&queue);
+        let mut context = Context::from_waker(Waker::noop());
+        let prepare = || Err(Error::InvalidConfig("invalid input".into()));
+        assert!(
+            queue
+                .poll_send_ordinary_factory(&mut first.token, 1, prepare, &mut context)
+                .0
+                .is_pending()
+        );
+        let wakes = Arc::new(WakeCounter(AtomicUsize::new(0)));
+        let waker = Waker::from(Arc::clone(&wakes));
+        let mut next = AdmissionRegistration::new(&queue);
+        let mut command = Some(abandoned_ordinary_command(7));
+        assert!(
+            poll_queue_send(
+                &queue,
+                &mut next,
+                &mut command,
+                &mut Context::from_waker(&waker)
+            )
+            .is_pending()
+        );
+        drop(queue.receive().unwrap());
+        let (poll, next_waker) =
+            queue.poll_send_ordinary_factory(&mut first.token, 1, prepare, &mut context);
+        assert_poll_error(poll, ErrorKind::InvalidConfiguration, "invalid input");
+        next_waker
+            .expect("preparation failure wakes the next admission")
+            .wake();
+        assert_eq!(wakes.0.load(Ordering::SeqCst), 1);
+        assert!(poll_queue_send(&queue, &mut next, &mut command, &mut context).is_ready());
+        let state = queue.state.lock().unwrap();
+        assert_eq!(state.ordinary_count, ORDINARY_QUEUE_CAPACITY);
+        assert_eq!(state.ordinary_bytes, ORDINARY_QUEUE_CAPACITY);
     }
 
     #[test]
@@ -2417,7 +2611,8 @@ mod tests {
         let guard = TransactionGuard::active();
         let mut pinned = Box::pin(executor.pinned_exec_structured(
             token,
-            ProtocolRequest::simple_query("SELECT 1").expect("query request"),
+            14,
+            || ProtocolRequest::simple_query("SELECT 1"),
             "transaction test",
             Arc::clone(&guard),
         ));

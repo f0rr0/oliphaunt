@@ -752,6 +752,36 @@ RCT_EXPORT_MODULE(Oliphaunt)
                 });
             return promiseConstructor.callAsConstructor(runtime, std::move(executor));
           }));
+  installBackupToFile(runtime, transport, callInvoker, lifetime,
+      [weakSelf](int64_t handle, const std::string &destination, double deadline, PendingPromise pending) {
+        auto resolve = pending.resolve;
+        auto reject = pending.reject;
+        Oliphaunt *strongSelf = weakSelf;
+        OliphauntAdapterDatabase *database = strongSelf == nil ? nil : [strongSelf sessionForHandle:handle];
+        if (database == nil) {
+          const std::string message = strongSelf == nil ? "liboliphaunt native module is unavailable" : "unknown Oliphaunt handle";
+          reject->call([message](facebook::jsi::Runtime &runtime, facebook::jsi::Function &callback) {
+            callback.call(runtime, createError(runtime, message));
+          });
+          return;
+        }
+        NSString *path = [[NSString alloc] initWithBytes:destination.data() length:destination.size() encoding:NSUTF8StringEncoding];
+        if (path == nil) throw std::invalid_argument("backup destination is not valid UTF-8");
+        [database backupToFile:path deadline:deadline completion:^(NSError *_Nullable error) {
+          if (error != nil) {
+            const auto failure = OliphauntBrokerFailure(error);
+            const char *errorMessage = error.localizedDescription.UTF8String;
+            std::string message = errorMessage != nullptr ? errorMessage : "liboliphaunt file backup failed";
+            reject->call([message, failure](facebook::jsi::Runtime &runtime, facebook::jsi::Function &callback) {
+              callback.call(runtime, createError(runtime, message, failure));
+            });
+            return;
+          }
+          resolve->call([](facebook::jsi::Runtime &runtime, facebook::jsi::Function &callback) {
+            callback.call(runtime, facebook::jsi::Value::undefined());
+          });
+        }];
+      });
   transport.setProperty(
       runtime,
       "backup",

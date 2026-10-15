@@ -37,6 +37,7 @@ use crate::{
 };
 
 const OWNER_QUEUE_CAPACITY: usize = 64;
+const OWNER_QUEUE_BYTES: usize = 128 * 1024 * 1024;
 const OWNER_OPEN: u8 = 0;
 const OWNER_CLOSED: u8 = 1;
 const OWNER_STOPPED: u8 = 2;
@@ -351,6 +352,7 @@ struct OwnerMessage {
     // controls omit the permit so close/rollback can always enter the same
     // ordered queue without overtaking already-admitted work.
     _permit: Option<OwnedSemaphorePermit>,
+    _bytes: Option<OwnedSemaphorePermit>,
     operation: OwnerOperation,
 }
 
@@ -440,6 +442,7 @@ struct DatabaseOwnerInner {
     admission: Arc<Mutex<()>>,
     ordinary_order: Arc<AsyncMutex<()>>,
     ordinary_capacity: Arc<Semaphore>,
+    ordinary_bytes: Arc<Semaphore>,
     state: Arc<AtomicU8>,
     close_epoch: AtomicU64,
     close_attempt: Arc<Mutex<Option<Arc<CloseAttempt>>>>,
@@ -452,6 +455,7 @@ impl Drop for DatabaseOwnerInner {
         let _admission = self.admission.lock().ok();
         let _ = self.queue.send(OwnerMessage {
             _permit: None,
+            _bytes: None,
             operation: OwnerOperation::Control(OwnerControl::Shutdown),
         });
     }
@@ -469,6 +473,7 @@ impl DatabaseOwner {
         let state = Arc::new(AtomicU8::new(OWNER_OPEN));
         let ordinary_order = Arc::new(AsyncMutex::new(()));
         let ordinary_capacity = Arc::new(Semaphore::new(OWNER_QUEUE_CAPACITY));
+        let ordinary_bytes = Arc::new(Semaphore::new(OWNER_QUEUE_BYTES));
         let admission = Arc::new(Mutex::new(()));
         let close_attempt = Arc::new(Mutex::new(None));
         let thread_state = Arc::clone(&state);
@@ -491,6 +496,7 @@ impl DatabaseOwner {
                                 admission,
                                 ordinary_order,
                                 ordinary_capacity,
+                                ordinary_bytes,
                                 state,
                                 close_epoch: AtomicU64::new(0),
                                 close_attempt,
@@ -571,6 +577,14 @@ impl DatabaseOwner {
     }
 
     async fn enqueue_ordinary(&self, operation: OwnerOperation) -> Result<()> {
+        self.enqueue_ordinary_factory(0, || operation).await
+    }
+
+    async fn enqueue_ordinary_factory(
+        &self,
+        bytes: usize,
+        operation: impl FnOnce() -> OwnerOperation,
+    ) -> Result<()> {
         let epoch = {
             let _admission = self.lock_admission()?;
             self.ensure_open()?;
@@ -579,6 +593,11 @@ impl DatabaseOwner {
         let _order = self.inner.ordinary_order.lock().await;
         let permit = Arc::clone(&self.inner.ordinary_capacity)
             .acquire_owned()
+            .await
+            .map_err(|_| Error::lifecycle("WASIX database owner admission has stopped"))?;
+        // A single oversized input retains its existing limit and runs alone.
+        let byte_permit = Arc::clone(&self.inner.ordinary_bytes)
+            .acquire_many_owned(bytes.min(OWNER_QUEUE_BYTES) as u32)
             .await
             .map_err(|_| Error::lifecycle("WASIX database owner admission has stopped"))?;
         let _admission = self.lock_admission()?;
@@ -592,13 +611,14 @@ impl DatabaseOwner {
             .queue
             .send(OwnerMessage {
                 _permit: Some(permit),
-                operation,
+                _bytes: Some(byte_permit),
+                operation: operation(),
             })
             .map_err(|_| Error::lifecycle("WASIX database owner has stopped"))
     }
 
     #[cfg(any(feature = "__internal-napi", test))]
-    fn try_enqueue_ordinary<F, R>(&self, operation: F, reject: R)
+    fn try_enqueue_ordinary<F, R>(&self, bytes: usize, operation: F, reject: R)
     where
         F: FnOnce() -> OwnerOperation,
         R: FnOnce(Error),
@@ -646,10 +666,19 @@ impl DatabaseOwner {
                         None,
                     )
                 })?;
+            let byte_permit = Arc::clone(&self.inner.ordinary_bytes)
+                .try_acquire_many_owned(bytes.min(OWNER_QUEUE_BYTES) as u32)
+                .map_err(|_| {
+                    (
+                        Error::message("WASIX database owner command byte capacity is full"),
+                        None,
+                    )
+                })?;
             self.inner
                 .queue
                 .send(OwnerMessage {
                     _permit: Some(permit),
+                    _bytes: Some(byte_permit),
                     operation: operation(),
                 })
                 .map_err(|error| {
@@ -672,6 +701,7 @@ impl DatabaseOwner {
             .queue
             .send(OwnerMessage {
                 _permit: None,
+                _bytes: None,
                 operation: OwnerOperation::Control(control),
             })
             .map_err(|_| Error::lifecycle("WASIX database owner has stopped"))
@@ -692,10 +722,26 @@ impl DatabaseOwner {
         F: FnOnce(&mut DirectOliphaunt) -> Result<T> + Send + 'static,
         C: FnOnce(Result<T>) + Send + 'static,
     {
+        self.call_with_completion_bytes(0, transaction, action, completion);
+    }
+
+    #[cfg(any(feature = "__internal-napi", test))]
+    fn call_with_completion_bytes<T, F, C>(
+        &self,
+        bytes: usize,
+        transaction: Option<u64>,
+        action: F,
+        completion: C,
+    ) where
+        T: Send + 'static,
+        F: FnOnce(&mut DirectOliphaunt) -> Result<T> + Send + 'static,
+        C: FnOnce(Result<T>) + Send + 'static,
+    {
         let completion = SharedCompletion::new(completion);
         let owner_completion = completion.clone();
         let rejection_completion = completion.clone();
         self.try_enqueue_ordinary(
+            bytes,
             move || {
                 let completion = CompletionGuard::new(
                     owner_completion,
@@ -705,19 +751,6 @@ impl DatabaseOwner {
             },
             move |error| rejection_completion.complete(Err(error)),
         );
-    }
-
-    async fn call_transaction<T, F>(
-        &self,
-        token: u64,
-        guard: Arc<TransactionOutcomeGuard>,
-        action: F,
-    ) -> Result<T>
-    where
-        T: Send + 'static,
-        F: FnOnce(&mut DirectOliphaunt) -> Result<T> + Send + 'static,
-    {
-        self.call_with_guard(Some(token), Some(guard), action).await
     }
 
     async fn call_with_guard<T, F>(
@@ -730,10 +763,27 @@ impl DatabaseOwner {
         T: Send + 'static,
         F: FnOnce(&mut DirectOliphaunt) -> Result<T> + Send + 'static,
     {
+        self.call_factory(0, transaction, transaction_guard, || action)
+            .await
+    }
+
+    async fn call_factory<T, F>(
+        &self,
+        bytes: usize,
+        transaction: Option<u64>,
+        transaction_guard: Option<Arc<TransactionOutcomeGuard>>,
+        action: impl FnOnce() -> F,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut DirectOliphaunt) -> Result<T> + Send + 'static,
+    {
         self.ensure_not_owner_thread()?;
         let (reply, receiver) = oneshot::channel();
-        let command = owner_command(transaction, transaction_guard, action, reply);
-        self.enqueue_ordinary(command).await?;
+        self.enqueue_ordinary_factory(bytes, || {
+            owner_command(transaction, transaction_guard, action(), reply)
+        })
+        .await?;
         receiver.await.map_err(|_| {
             Error::lifecycle("WASIX database owner stopped while running an operation")
         })?
@@ -846,6 +896,7 @@ impl DatabaseOwner {
                         .queue
                         .send(OwnerMessage {
                             _permit: None,
+                            _bytes: None,
                             operation: OwnerOperation::Control(OwnerControl::Close {
                                 attempt: Arc::clone(&attempt),
                             }),
@@ -888,7 +939,7 @@ impl DatabaseOwner {
 
 async fn exec_protocol_raw_stream_on_owner<F, O>(
     owner: &DatabaseOwner,
-    request: Vec<u8>,
+    request: &[u8],
     mut on_chunk: F,
 ) -> RawStreamResult<(), O::Error>
 where
@@ -905,33 +956,38 @@ where
     let session_unknown = Arc::new(AtomicU8::new(0));
     let session_unknown_on_owner = Arc::clone(&session_unknown);
     let outcome = owner
-        .call(None, move |database| {
-            let result = database.exec_protocol_raw_stream_on_owner(request, move |chunk| {
-                match on_chunk(chunk).into_raw_stream_callback_result() {
+        .call_factory(request.len(), None, None, || {
+            let request = request.to_vec();
+            move |database: &mut DirectOliphaunt| {
+                let result =
+                    database.exec_protocol_raw_stream_on_owner(
+                        request,
+                        move |chunk| match on_chunk(chunk).into_raw_stream_callback_result() {
+                            Ok(()) => Ok(()),
+                            Err(error) => {
+                                *callback_error_for_owner
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error);
+                                Err(Error::message(
+                                    "raw protocol stream callback stopped delivery",
+                                ))
+                            }
+                        },
+                    );
+                if database.owner_transaction_outcome_unknown() {
+                    session_unknown_on_owner.store(1, Ordering::SeqCst);
+                }
+                match result {
                     Ok(()) => Ok(()),
-                    Err(error) => {
-                        *callback_error_for_owner
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error);
-                        Err(Error::message(
-                            "raw protocol stream callback stopped delivery",
-                        ))
+                    Err(RawStreamError::Database(error)) => Err(error),
+                    Err(RawStreamError::Callback(error)) => {
+                        callback_recovered_on_owner.store(1, Ordering::SeqCst);
+                        Err(error)
                     }
-                }
-            });
-            if database.owner_transaction_outcome_unknown() {
-                session_unknown_on_owner.store(1, Ordering::SeqCst);
-            }
-            match result {
-                Ok(()) => Ok(()),
-                Err(RawStreamError::Database(error)) => Err(error),
-                Err(RawStreamError::Callback(error)) => {
-                    callback_recovered_on_owner.store(1, Ordering::SeqCst);
-                    Err(error)
-                }
-                Err(RawStreamError::CallbackPanicked(error)) => {
-                    callback_panicked_on_owner.store(1, Ordering::SeqCst);
-                    Err(error)
+                    Err(RawStreamError::CallbackPanicked(error)) => {
+                        callback_panicked_on_owner.store(1, Ordering::SeqCst);
+                        Err(error)
+                    }
                 }
             }
         })
@@ -1146,6 +1202,7 @@ fn run_database_owner(
         match queue.recv() {
             Ok(OwnerMessage {
                 _permit,
+                _bytes,
                 operation: OwnerOperation::Control(message),
             }) => {
                 // Release bounded admission when the message leaves the queue,
@@ -1195,6 +1252,7 @@ fn run_database_owner(
             }
             Ok(OwnerMessage {
                 _permit,
+                _bytes,
                 operation: OwnerOperation::Command(command),
             }) => {
                 drop(_permit);
@@ -1457,9 +1515,11 @@ impl AsyncOliphaunt {
 
     /// Execute possibly multi-statement SQL through PostgreSQL's simple-query protocol.
     pub async fn exec(&self, sql: &str) -> Result<ExecResult> {
-        let sql = sql.to_owned();
         self.owner
-            .call(None, move |database| database.exec(&sql))
+            .call_factory(sql.len(), None, None, || {
+                let sql = sql.to_owned();
+                move |database: &mut DirectOliphaunt| database.exec(&sql)
+            })
             .await
     }
 
@@ -1470,9 +1530,12 @@ impl AsyncOliphaunt {
 
     /// Execute raw PostgreSQL frontend-protocol bytes and buffer the response.
     pub async fn exec_protocol_raw(&self, request: impl AsRef<[u8]>) -> Result<Vec<u8>> {
-        let request = request.as_ref().to_vec();
+        let request = request.as_ref();
         self.owner
-            .call(None, move |database| database.exec_protocol_raw(request))
+            .call_factory(request.len(), None, None, || {
+                let request = request.to_vec();
+                move |database: &mut DirectOliphaunt| database.exec_protocol_raw(request)
+            })
             .await
     }
 
@@ -1488,7 +1551,8 @@ impl AsyncOliphaunt {
     where
         C: FnOnce(Result<Vec<u8>>) + Send + 'static,
     {
-        self.owner.call_with_completion(
+        self.owner.call_with_completion_bytes(
+            request.len(),
             None,
             move |database| database.exec_protocol_raw(request),
             completion,
@@ -1518,8 +1582,7 @@ impl AsyncOliphaunt {
         O: RawStreamCallbackOutput,
         O::Error: Send + 'static,
     {
-        let request = request.as_ref().to_vec();
-        exec_protocol_raw_stream_on_owner(&self.owner, request, on_chunk).await
+        exec_protocol_raw_stream_on_owner(&self.owner, request.as_ref(), on_chunk).await
     }
 
     /// Submit bounded raw-protocol streaming without creating or polling a
@@ -1551,7 +1614,8 @@ impl AsyncOliphaunt {
         let session_unknown = Arc::new(AtomicU8::new(0));
         let session_unknown_on_owner = Arc::clone(&session_unknown);
 
-        self.owner.call_with_completion(
+        self.owner.call_with_completion_bytes(
+            request.len(),
             None,
             move |database| {
                 let result =
@@ -1646,9 +1710,54 @@ impl AsyncOliphaunt {
     #[cfg(feature = "tools-execution")]
     pub async fn pg_dump(&self, options: crate::oliphaunt::tools::PgDumpOptions) -> Result<String> {
         self.owner
-            .call(None, move |database| {
-                crate::error::public_result(database.run_pg_dump_tool(options))
+            .call_factory(options.retained_bytes(), None, None, || {
+                move |database: &mut DirectOliphaunt| {
+                    crate::error::public_result(database.run_pg_dump_tool(options))
+                }
             })
+            .await
+    }
+
+    /// Write exact stdout to an owned destination on the database owner thread.
+    /// Diagnostics and partial-output behavior match the direct destination API.
+    #[cfg(feature = "tools-execution")]
+    pub async fn pg_dump_to_writer(
+        &self,
+        options: crate::oliphaunt::tools::PgDumpOptions,
+        writer: impl std::io::Write + Send + 'static,
+        diagnostics: Option<Box<dyn std::io::Write + Send>>,
+    ) -> Result<crate::oliphaunt::tools::PostgresToolSummary> {
+        self.owner
+            .call_factory(options.retained_bytes(), None, None, || {
+                move |database: &mut DirectOliphaunt| {
+                    database.pg_dump_to_writer(options, writer, diagnostics)
+                }
+            })
+            .await
+    }
+
+    /// Publish tool stdout to a new host file after execution and session cleanup.
+    #[cfg(feature = "tools-execution")]
+    pub async fn pg_dump_to_file(
+        &self,
+        options: crate::oliphaunt::tools::PgDumpOptions,
+        destination: impl Into<std::path::PathBuf>,
+        diagnostics: Option<Box<dyn std::io::Write + Send>>,
+    ) -> Result<crate::oliphaunt::tools::PostgresToolSummary> {
+        let destination = destination.into();
+        self.owner
+            .call_factory(
+                options
+                    .retained_bytes()
+                    .saturating_add(destination.as_os_str().len()),
+                None,
+                None,
+                || {
+                    move |database: &mut DirectOliphaunt| {
+                        database.pg_dump_to_file(options, destination, diagnostics)
+                    }
+                },
+            )
             .await
     }
 
@@ -1663,9 +1772,51 @@ impl AsyncOliphaunt {
     ) where
         C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolOutput>) + Send + 'static,
     {
-        self.owner.call_with_completion(
+        self.owner.call_with_completion_bytes(
+            options.retained_bytes(),
             None,
             move |database| database.pg_dump_output(options),
+            completion,
+        );
+    }
+
+    /// Submit host file output without creating or polling a Rust future.
+    #[cfg(all(feature = "tools-execution", any(feature = "__internal-napi", test)))]
+    #[doc(hidden)]
+    pub fn pg_dump_to_file_with_completion<C>(
+        &self,
+        options: crate::oliphaunt::tools::PgDumpOptions,
+        destination: std::path::PathBuf,
+        completion: C,
+    ) where
+        C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolSummary>) + Send + 'static,
+    {
+        self.owner.call_with_completion_bytes(
+            options
+                .retained_bytes()
+                .saturating_add(destination.as_os_str().len()),
+            None,
+            move |database| database.pg_dump_to_file(options, destination, None),
+            completion,
+        );
+    }
+
+    /// Submit an owned writer using the same owner admission and tool cleanup.
+    #[cfg(all(feature = "tools-execution", any(feature = "__internal-napi", test)))]
+    #[doc(hidden)]
+    pub fn pg_dump_to_writer_with_completion<C>(
+        &self,
+        options: crate::oliphaunt::tools::PgDumpOptions,
+        writer: impl std::io::Write + Send + 'static,
+        diagnostics: Option<Box<dyn std::io::Write + Send>>,
+        completion: C,
+    ) where
+        C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolSummary>) + Send + 'static,
+    {
+        self.owner.call_with_completion_bytes(
+            options.retained_bytes(),
+            None,
+            move |database| database.pg_dump_to_writer(options, writer, diagnostics),
             completion,
         );
     }
@@ -1674,9 +1825,54 @@ impl AsyncOliphaunt {
     #[cfg(feature = "tools-execution")]
     pub async fn psql(&self, options: crate::oliphaunt::tools::PsqlOptions) -> Result<String> {
         self.owner
-            .call(None, move |database| {
-                crate::error::public_result(database.run_psql_tool(options))
+            .call_factory(options.retained_bytes(), None, None, || {
+                move |database: &mut DirectOliphaunt| {
+                    crate::error::public_result(database.run_psql_tool(options))
+                }
             })
+            .await
+    }
+
+    /// Write exact stdout to an owned destination on the database owner thread.
+    /// Diagnostics and partial-output behavior match the direct destination API.
+    #[cfg(feature = "tools-execution")]
+    pub async fn psql_to_writer(
+        &self,
+        options: crate::oliphaunt::tools::PsqlOptions,
+        writer: impl std::io::Write + Send + 'static,
+        diagnostics: Option<Box<dyn std::io::Write + Send>>,
+    ) -> Result<crate::oliphaunt::tools::PostgresToolSummary> {
+        self.owner
+            .call_factory(options.retained_bytes(), None, None, || {
+                move |database: &mut DirectOliphaunt| {
+                    database.psql_to_writer(options, writer, diagnostics)
+                }
+            })
+            .await
+    }
+
+    /// Publish tool stdout to a new host file after execution and session cleanup.
+    #[cfg(feature = "tools-execution")]
+    pub async fn psql_to_file(
+        &self,
+        options: crate::oliphaunt::tools::PsqlOptions,
+        destination: impl Into<std::path::PathBuf>,
+        diagnostics: Option<Box<dyn std::io::Write + Send>>,
+    ) -> Result<crate::oliphaunt::tools::PostgresToolSummary> {
+        let destination = destination.into();
+        self.owner
+            .call_factory(
+                options
+                    .retained_bytes()
+                    .saturating_add(destination.as_os_str().len()),
+                None,
+                None,
+                || {
+                    move |database: &mut DirectOliphaunt| {
+                        database.psql_to_file(options, destination, diagnostics)
+                    }
+                },
+            )
             .await
     }
 
@@ -1691,9 +1887,51 @@ impl AsyncOliphaunt {
     ) where
         C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolOutput>) + Send + 'static,
     {
-        self.owner.call_with_completion(
+        self.owner.call_with_completion_bytes(
+            options.retained_bytes(),
             None,
             move |database| database.psql_output(options),
+            completion,
+        );
+    }
+
+    /// Submit host file output without creating or polling a Rust future.
+    #[cfg(all(feature = "tools-execution", any(feature = "__internal-napi", test)))]
+    #[doc(hidden)]
+    pub fn psql_to_file_with_completion<C>(
+        &self,
+        options: crate::oliphaunt::tools::PsqlOptions,
+        destination: std::path::PathBuf,
+        completion: C,
+    ) where
+        C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolSummary>) + Send + 'static,
+    {
+        self.owner.call_with_completion_bytes(
+            options
+                .retained_bytes()
+                .saturating_add(destination.as_os_str().len()),
+            None,
+            move |database| database.psql_to_file(options, destination, None),
+            completion,
+        );
+    }
+
+    /// Submit an owned writer using the same owner admission and tool cleanup.
+    #[cfg(all(feature = "tools-execution", any(feature = "__internal-napi", test)))]
+    #[doc(hidden)]
+    pub fn psql_to_writer_with_completion<C>(
+        &self,
+        options: crate::oliphaunt::tools::PsqlOptions,
+        writer: impl std::io::Write + Send + 'static,
+        diagnostics: Option<Box<dyn std::io::Write + Send>>,
+        completion: C,
+    ) where
+        C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolSummary>) + Send + 'static,
+    {
+        self.owner.call_with_completion_bytes(
+            options.retained_bytes(),
+            None,
+            move |database| database.psql_to_writer(options, writer, diagnostics),
             completion,
         );
     }
@@ -1917,29 +2155,58 @@ impl<'db, 'q> AsyncSql<'db, 'q> {
         self
     }
 
-    /// Execute this statement as a command.
-    pub async fn execute(self) -> Result<CommandResult> {
-        let sql = self.sql.into_owned();
-        let params = self.params;
-        let format = self.result_format;
-        match self.owner {
-            SqlOwner::Database(database) => {
-                database
-                    .owner
-                    .call(None, move |owner| owner.owner_execute(&sql, params, format))
-                    .await
-            }
+    async fn call<T, F, G>(self, database_action: F, transaction_action: G) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut DirectOliphaunt, &str, Vec<Parameter>, ValueFormat) -> Result<T>
+            + Send
+            + 'static,
+        G: FnOnce(&mut DirectOliphaunt, &str, Vec<Parameter>, ValueFormat) -> Result<T>
+            + Send
+            + 'static,
+    {
+        let bytes = self.params.iter().fold(
+            self.sql.len().saturating_add(
+                self.params
+                    .capacity()
+                    .saturating_mul(size_of::<Parameter>()),
+            ),
+            |bytes, parameter| bytes.saturating_add(parameter.value().map_or(0, <[u8]>::len)),
+        );
+        let (owner, token, guard) = match self.owner {
+            SqlOwner::Database(database) => (&database.owner, None, None),
             SqlOwner::AsyncTransaction(transaction) => {
                 transaction.ensure_active()?;
-                let token = transaction.token;
-                transaction
-                    .owner
-                    .call_transaction(token, Arc::clone(&transaction.guard), move |owner| {
-                        owner.owner_transaction_execute(&sql, params, format)
-                    })
-                    .await
+                (
+                    &transaction.owner,
+                    Some(transaction.token),
+                    Some(Arc::clone(&transaction.guard)),
+                )
             }
-        }
+        };
+        owner
+            .call_factory(bytes, token, guard, || {
+                let sql = self.sql.into_owned();
+                let params = self.params;
+                let format = self.result_format;
+                move |database: &mut DirectOliphaunt| {
+                    if token.is_some() {
+                        transaction_action(database, &sql, params, format)
+                    } else {
+                        database_action(database, &sql, params, format)
+                    }
+                }
+            })
+            .await
+    }
+
+    /// Execute this statement as a command.
+    pub async fn execute(self) -> Result<CommandResult> {
+        self.call(
+            DirectOliphaunt::owner_execute,
+            DirectOliphaunt::owner_transaction_execute,
+        )
+        .await
     }
 
     /// Execute this statement and return its row-shaped result.
@@ -1947,51 +2214,20 @@ impl<'db, 'q> AsyncSql<'db, 'q> {
     /// A command-only statement produces empty fields and rows while retaining
     /// its command tag and affected-row count.
     pub async fn query(self) -> Result<QueryResult> {
-        let sql = self.sql.into_owned();
-        let params = self.params;
-        let format = self.result_format;
-        match self.owner {
-            SqlOwner::Database(database) => {
-                database
-                    .owner
-                    .call(None, move |owner| owner.owner_query(&sql, params, format))
-                    .await
-            }
-            SqlOwner::AsyncTransaction(transaction) => {
-                transaction.ensure_active()?;
-                let token = transaction.token;
-                transaction
-                    .owner
-                    .call_transaction(token, Arc::clone(&transaction.guard), move |owner| {
-                        owner.owner_transaction_query(&sql, params, format)
-                    })
-                    .await
-            }
-        }
+        self.call(
+            DirectOliphaunt::owner_query,
+            DirectOliphaunt::owner_transaction_query,
+        )
+        .await
     }
 
     /// Describe this statement without executing it.
     pub async fn describe(self) -> Result<StatementDescription> {
-        let sql = self.sql.into_owned();
-        let params = self.params;
-        match self.owner {
-            SqlOwner::Database(database) => {
-                database
-                    .owner
-                    .call(None, move |owner| owner.owner_describe(&sql, params))
-                    .await
-            }
-            SqlOwner::AsyncTransaction(transaction) => {
-                transaction.ensure_active()?;
-                let token = transaction.token;
-                transaction
-                    .owner
-                    .call_transaction(token, Arc::clone(&transaction.guard), move |owner| {
-                        owner.owner_transaction_describe(&sql, params)
-                    })
-                    .await
-            }
-        }
+        self.call(
+            |database, sql, params, _| database.owner_describe(sql, params),
+            |database, sql, params, _| database.owner_transaction_describe(sql, params),
+        )
+        .await
     }
 }
 
@@ -2072,12 +2308,16 @@ impl AsyncTransaction {
     /// Execute possibly multi-statement SQL inside this transaction.
     pub async fn exec(&mut self, sql: &str) -> Result<ExecResult> {
         self.ensure_active()?;
-        let sql = sql.to_owned();
-        let token = self.token;
         self.owner
-            .call_transaction(token, Arc::clone(&self.guard), move |database| {
-                database.owner_transaction_exec(&sql)
-            })
+            .call_factory(
+                sql.len(),
+                Some(self.token),
+                Some(Arc::clone(&self.guard)),
+                || {
+                    let sql = sql.to_owned();
+                    move |database: &mut DirectOliphaunt| database.owner_transaction_exec(&sql)
+                },
+            )
             .await
     }
 
@@ -2337,6 +2577,7 @@ mod close_tests {
                     admission: Arc::new(Mutex::new(())),
                     ordinary_order: Arc::new(AsyncMutex::new(())),
                     ordinary_capacity: Arc::new(Semaphore::new(capacity)),
+                    ordinary_bytes: Arc::new(Semaphore::new(OWNER_QUEUE_BYTES)),
                     state: Arc::new(AtomicU8::new(OWNER_OPEN)),
                     close_epoch: AtomicU64::new(0),
                     close_attempt: Arc::new(Mutex::new(None)),
@@ -2351,6 +2592,83 @@ mod close_tests {
     fn begin_operation(token: u64) -> OwnerOperation {
         let (reply, _receiver) = oneshot::channel();
         OwnerOperation::Control(OwnerControl::Begin { token, reply })
+    }
+
+    #[test]
+    fn byte_capacity_precedes_input_preparation_and_controls_bypass_it() {
+        let other_thread = thread::spawn(|| thread::current().id()).join().unwrap();
+        let (owner, receiver) = detached_owner(OWNER_QUEUE_CAPACITY, other_thread);
+        let mut first =
+            Box::pin(owner.enqueue_ordinary_factory(OWNER_QUEUE_BYTES, || begin_operation(1)));
+        assert!(matches!(poll_once(first.as_mut()), Poll::Ready(Ok(()))));
+        let first_message = receiver.recv().unwrap();
+        let prepared = std::cell::Cell::new(false);
+        let mut next = Box::pin(owner.enqueue_ordinary_factory(1, || {
+            prepared.set(true);
+            begin_operation(2)
+        }));
+        assert!(poll_once(next.as_mut()).is_pending());
+        assert!(!prepared.get());
+        owner.enqueue_control(OwnerControl::Shutdown).unwrap();
+        assert!(matches!(
+            receiver.recv().unwrap().operation,
+            OwnerOperation::Control(OwnerControl::Shutdown)
+        ));
+        drop(first_message);
+        assert!(matches!(poll_once(next.as_mut()), Poll::Ready(Ok(()))));
+        assert!(prepared.get());
+        assert_eq!(begin_token(receiver.recv().unwrap()), 2);
+    }
+
+    #[test]
+    fn structured_sql_accounts_for_parameters_until_the_owner_finishes() {
+        let other_thread = thread::spawn(|| thread::current().id()).join().unwrap();
+        let (owner, receiver) = detached_owner(OWNER_QUEUE_CAPACITY, other_thread);
+        let occupied = Arc::clone(&owner.inner.ordinary_bytes)
+            .try_acquire_many_owned(OWNER_QUEUE_BYTES as u32)
+            .unwrap();
+        let database = AsyncOliphaunt {
+            owner: owner.clone(),
+        };
+        let mut query = Box::pin(database.sql("SELECT $1").bind("payload").query());
+        assert!(poll_once(query.as_mut()).is_pending());
+        assert!(receiver.try_recv().is_err());
+        drop(occupied);
+        assert!(poll_once(query.as_mut()).is_pending());
+        let message = receiver.recv().unwrap();
+        assert!(message._bytes.as_ref().unwrap().num_permits() >= "SELECT $1payload".len());
+        assert!(owner.inner.ordinary_bytes.available_permits() < OWNER_QUEUE_BYTES);
+        drop(message);
+        assert_eq!(
+            owner.inner.ordinary_bytes.available_permits(),
+            OWNER_QUEUE_BYTES
+        );
+        assert!(matches!(poll_once(query.as_mut()), Poll::Ready(Err(_))));
+    }
+
+    #[cfg(feature = "tools-execution")]
+    #[test]
+    fn tool_completion_admission_accounts_for_script_bytes() {
+        let other_thread = thread::spawn(|| thread::current().id()).join().unwrap();
+        let (owner, receiver) = detached_owner(OWNER_QUEUE_CAPACITY, other_thread);
+        let _occupied = Arc::clone(&owner.inner.ordinary_bytes)
+            .try_acquire_many_owned((OWNER_QUEUE_BYTES - 1) as u32)
+            .unwrap();
+        let database = AsyncOliphaunt { owner };
+        let (reply, result) = mpsc::channel();
+        database.psql_output_with_completion(
+            crate::oliphaunt::tools::PsqlOptions::new().script("SELECT 1;"),
+            move |outcome| reply.send(outcome).unwrap(),
+        );
+        assert!(
+            result
+                .recv()
+                .unwrap()
+                .unwrap_err()
+                .to_string()
+                .contains("byte capacity")
+        );
+        assert!(receiver.try_recv().is_err());
     }
 
     fn begin_token(message: OwnerMessage) -> u64 {
@@ -2986,6 +3304,7 @@ mod close_tests {
                     admission,
                     ordinary_order: Arc::new(AsyncMutex::new(())),
                     ordinary_capacity: Arc::new(Semaphore::new(OWNER_QUEUE_CAPACITY)),
+                    ordinary_bytes: Arc::new(Semaphore::new(OWNER_QUEUE_BYTES)),
                     state,
                     close_epoch: AtomicU64::new(0),
                     close_attempt,
@@ -3012,6 +3331,7 @@ mod close_tests {
                 admission: Arc::new(Mutex::new(())),
                 ordinary_order: Arc::new(AsyncMutex::new(())),
                 ordinary_capacity: Arc::new(Semaphore::new(OWNER_QUEUE_CAPACITY)),
+                ordinary_bytes: Arc::new(Semaphore::new(OWNER_QUEUE_BYTES)),
                 state: Arc::new(AtomicU8::new(OWNER_OPEN)),
                 close_epoch: AtomicU64::new(0),
                 close_attempt: Arc::new(Mutex::new(None)),

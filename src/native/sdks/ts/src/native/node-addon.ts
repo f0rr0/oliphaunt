@@ -17,6 +17,7 @@ export type NodeDirectAddon = {
   ): Promise<void>;
   execSimpleQuery(handle: NativeHandle, sql: string): Promise<Uint8Array | ArrayBuffer>;
   backup(handle: NativeHandle): Promise<Uint8Array | ArrayBuffer>;
+  backupStream?(handle: NativeHandle, onChunk: (chunk: Uint8Array) => void): Promise<void>;
   restore(options: NodeDirectRestoreOptions): Promise<void>;
   cancel(handle: NativeHandle): void;
   detach(handle: NativeHandle): Promise<void>;

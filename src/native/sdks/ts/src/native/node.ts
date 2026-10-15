@@ -101,6 +101,12 @@ export async function createNodeNativeBinding(
     async backup(handle: NativeHandle): Promise<Uint8Array> {
       return toUint8Array(await addon.backup(handle));
     },
+    async backupStream(handle: NativeHandle, onChunk: (chunk: Uint8Array) => void): Promise<void> {
+      if (addon.backupStream === undefined) {
+        throw new Error('native addon does not support file backup; update the native carrier');
+      }
+      await addon.backupStream(handle, onChunk);
+    },
     async restore(options: NativeRestoreOptions): Promise<void> {
       await addon.restore({
         libraryPath: install.libraryPath,

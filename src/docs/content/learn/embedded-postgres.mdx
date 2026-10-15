@@ -33,6 +33,14 @@ Await operations and close the database explicitly. Mobile operating systems may
 
 A terminal close stops further work, and repeated close calls report the same outcome. A failed teardown can retain the physical runtime and its storage lock until process exit. Do not delete or reuse that storage based only on the handle's closed state. A failure before teardown that leaves the session usable can be retried.
 
+Embedded databases default to `fsync=off`. Set the startup GUC `fsync=on` when persistent data requires PostgreSQL's file synchronization barriers. Browser providers still follow their own storage durability contract. Native server mode uses PostgreSQL's normal `fsync=on` default.
+
+## Maintain persistent databases
+
+Single-backend embedded databases have no background autovacuum worker. Schedule `VACUUM (ANALYZE)` outside application transactions, particularly after substantial updates or deletes. Vacuum makes dead-row space reusable and freezes old transaction IDs; analyze refreshes planner statistics. Use `ANALYZE` after bulk imports when statistics need updating. See PostgreSQL's [routine vacuuming guidance](https://www.postgresql.org/docs/18/routine-vacuuming.html) for workload-dependent scheduling.
+
+`CHECKPOINT` advances WAL recovery state; it does not replace vacuum or analyze. Run it outside application transactions when an explicit checkpoint is needed. Long transactions can retain WAL and prevent dead-row cleanup, so keep them short.
+
 ## Back up a database
 
 Use the SDK's `backup` and `restore` APIs. A live directory copy can miss files or WAL needed for a consistent database. Restore into a new or empty destination, then open that destination with the required extensions available.

@@ -5,6 +5,7 @@ import { DEFAULT_CONTROL_TIMEOUT_MS } from './timeouts.js';
 
 const PROTOCOL_VERSION_3 = 196_608;
 const MAX_FRAME_LEN = 128 * 1024 * 1024;
+const STREAM_CHUNK_BYTES = 64 * 1024;
 
 export class PostgresWireClient {
   readonly #stream: ByteStream;
@@ -53,11 +54,20 @@ export class PostgresWireClient {
     onChunk: (chunk: Uint8Array) => void,
   ): Promise<void> {
     let remaining = requestReadyBoundaries(request);
+    let callbackFailed = false;
+    let callbackError: unknown;
+    const emit = (chunk: Uint8Array) => {
+      if (callbackFailed) return;
+      try {
+        onChunk(chunk);
+      } catch (error) {
+        callbackFailed = true;
+        callbackError = error;
+      }
+    };
     const read = async () => {
       while (remaining > 0) {
-        const frame = await readBackendFrame(this.#stream);
-        onChunk(frame);
-        if (frame[0] === 0x5a) remaining--;
+        if (await readBackendFrameStream(this.#stream, emit)) remaining--;
       }
     };
     try {
@@ -72,6 +82,7 @@ export class PostgresWireClient {
       }
       throwCollectedCloseFailures(failures, 'PostgreSQL exchange cleanup failed');
     }
+    if (callbackFailed) throw callbackError;
   }
 
   async cancel(timeoutMs = DEFAULT_CONTROL_TIMEOUT_MS): Promise<void> {
@@ -191,6 +202,31 @@ async function readUntilReady(
   }
 }
 
+async function readBackendFrameStream(
+  stream: ByteStream,
+  onChunk: (chunk: Uint8Array) => void,
+): Promise<boolean> {
+  const header = await stream.readExactly(5);
+  const length = readI32(header, 1);
+  if (length < 4 || length > MAX_FRAME_LEN)
+    throw new Error(`invalid PostgreSQL message length ${length}`);
+  if (header[0] === 0x5a) {
+    if (length !== 5) throw new Error('invalid PostgreSQL ReadyForQuery frame');
+    const status = await stream.readExactly(1);
+    if (![0x49, 0x54, 0x45].includes(status[0]!))
+      throw new Error('invalid PostgreSQL ReadyForQuery frame');
+    onChunk(Uint8Array.of(...header, status[0]!));
+    return true;
+  }
+  onChunk(header);
+  for (let remaining = length - 4; remaining > 0; ) {
+    const count = Math.min(remaining, STREAM_CHUNK_BYTES);
+    onChunk(await stream.readExactly(count));
+    remaining -= count;
+  }
+  return false;
+}
+
 async function readBackendFrame(stream: ByteStream): Promise<Uint8Array> {
   const header = await stream.readExactly(5);
   const length = readI32(header, 1);
@@ -209,6 +245,7 @@ function requestReadyBoundaries(request: Uint8Array): number {
     throw new Error('invalid PostgreSQL request length');
   let count = 0;
   let lastTag = 0;
+  let extendedPending = false;
   for (let offset = 0; offset < request.length; ) {
     if (request.length - offset < 5) throw new Error('truncated PostgreSQL frontend header');
     const length = readI32(request, offset + 1);
@@ -217,12 +254,21 @@ function requestReadyBoundaries(request: Uint8Array): number {
     lastTag = request[offset]!;
     if (lastTag === 0x58 || lastTag === 0x70)
       throw new Error('PostgreSQL connection control is not a query request');
-    if (lastTag === 0x51 || lastTag === 0x53) count++;
+    if (lastTag === 0x51 || lastTag === 0x46) {
+      if (extendedPending)
+        throw new Error('Query or FunctionCall must follow Sync after extended protocol messages');
+      count++;
+    } else if (lastTag === 0x53) {
+      extendedPending = false;
+      count++;
+    } else if ([0x50, 0x42, 0x43, 0x44, 0x45, 0x48].includes(lastTag)) {
+      extendedPending = true;
+    }
     offset += length + 1;
   }
-  if (!count || ![0x51, 0x53, 0x63, 0x66].includes(lastTag))
+  if (!count || ![0x51, 0x46, 0x53, 0x63, 0x66].includes(lastTag))
     throw new Error(
-      'buffered PostgreSQL request must include Query or Sync and end at a query or COPY boundary',
+      'buffered PostgreSQL request must include Query, FunctionCall, or Sync and end at a query or COPY boundary',
     );
   return count;
 }

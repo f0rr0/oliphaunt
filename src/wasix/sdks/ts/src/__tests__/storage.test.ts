@@ -131,6 +131,7 @@ describe('WASIX storage descriptors', () => {
       exitCode: 0,
       stdout: Uint8Array.of(0xff, 0),
       stderr: Uint8Array.of(0x80, 0xfe),
+      stderrTruncated: true,
     });
 
     const roundTrip = deserializeWorkerError(serializeWorkerError(original));
@@ -144,6 +145,7 @@ describe('WASIX storage descriptors', () => {
       exitCode: 0,
       stdout: Uint8Array.of(0xff, 0),
       stderr: Uint8Array.of(0x80, 0xfe),
+      stderrTruncated: true,
     });
   });
 

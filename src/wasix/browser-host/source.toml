@@ -33,4 +33,5 @@ series = [
   "0043-wasmer-virtual-fs-preserve-io-errors-and-wakes.patch",
   "0044-wasmer-wasix-preserve-handle-and-seek-lifetimes.patch",
   "0045-wasmer-wasix-correct-browser-clock-domains.patch",
+  "0046-wasmer-wasix-owned-signal-waiters.patch",
 ]

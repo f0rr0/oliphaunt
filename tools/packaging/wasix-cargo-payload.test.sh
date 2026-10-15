@@ -3,6 +3,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
+# Extracted fixtures keep the repository compiler after leaving this checkout.
+cp rust-toolchain.toml "$scratch/"
 bun tools/packaging/wasix-cargo-payload.test.mts "$scratch"
 while IFS=$'\t' read -r crate payload variable external; do
   # Provision this fixture's locked dependencies before the offline assertions;

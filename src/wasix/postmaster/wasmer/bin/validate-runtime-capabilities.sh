@@ -750,7 +750,7 @@ compile_probes() {
 				-o "$PROBE_BUILD_DIR/mmap_fixed.pic.wasm"
 			fi
 			if selected_probe mmap-writeback; then
-				WASIXCC_WASM_EXCEPTIONS="$WASIXCC_EXCEPTION_MODE" wasixcc -O0 -g3 -fPIC -pthread \
+				WASIXCC_WASM_EXCEPTIONS="$WASIXCC_EXCEPTION_MODE" wasixcc -O2 -g3 -fPIC -pthread \
 				"$PROBE_SOURCE_DIR/mmap_writeback_probe.c" \
 				-o "$PROBE_BUILD_DIR/mmap_writeback.pic.wasm"
 			fi

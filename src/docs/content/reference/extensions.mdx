@@ -50,3 +50,9 @@ Read the extension and runtime release notes, back up the database, update the c
 ## Diagnose an unavailable extension
 
 Check the exact SQL name, target support, installed package, build-time selection, and open-time selection. For mobile apps, rebuild the native application after changing extensions. For a restored database, verify the destination app includes the original database's required extensions.
+
+### Custom WASIX libraries
+
+Copying a WASIX `.so` into the runtime does not make it loadable by the Rust SDK. Its headless engine needs the matching trusted AOT artifact, runtime and target identities, and extension metadata before PostgreSQL starts. The Rust SDK selects these resources through catalogued extension packages; it has no public arbitrary-module registration API.
+
+For an extension outside the catalog, such as `sqlite_fdw`, use the repository's [extension packaging procedure](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/maintainers/extension-packaging-policy.md) to build and qualify its archive, AOT resources, and SDK selection together. An extension archive alone is insufficient.

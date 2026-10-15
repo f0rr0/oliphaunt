@@ -12,8 +12,14 @@ Mode 0 buffers both directions. Mode 1 streams both directions. Mode 2 begins
 buffered and switches both directions to streaming only after PostgreSQL reports
 a COPY response and the complete buffered response prefix has flushed
 successfully. Mode 3 buffers the finite frontend request and streams ordinary
-non-COPY output. COPY must keep mode 2's duplex behavior; ordinary responses do
-not need to become duplex merely to avoid complete-output buffering.
+non-COPY output. Mode 4 streams output from the start and switches input to
+streaming after a COPY response is written. Direct tools use mode 4 for each
+request, so ordinary output stays unbuffered and the host consumes their final
+disconnect before resetting the reusable embedded session.
+
+Tool TCP socket and private protocol file reads use at most 64 KiB per call, below Wasmer's default
+16 MiB receive capability. A large libpq input buffer does not enlarge the read
+batch or impose a limit on the complete value.
 
 Buffered output grows on demand, up to the signed-i32 bridge length (2 GiB minus
 one byte) or available memory. There is no application-specific 64 MiB quota.
@@ -35,7 +41,7 @@ retract earlier callbacks.
 The guest flush export returns a signed status. It calls PostgreSQL's
 `pq_flush()` first, then samples the bridge's first sticky positive errno, and
 preserves PostgreSQL's nonzero status when both failed. Buffered writes, hybrid
-prefix flushes, and direct mode-1/mode-3 writes retain the first positive errno;
+prefix flushes, and direct mode-1/mode-3/mode-4 writes retain the first positive errno;
 once recorded it gates writes in every mode and is cleared only by output reset.
 This prevents PostgreSQL from publishing more stream bytes after a failed write
 while still allowing the host to observe the failure through the signed flush
@@ -45,7 +51,7 @@ Output reset clears buffered bytes and scan state, the buffered ErrorResponse
 marker, sticky buffered-output failure, COPY state, and a pending hybrid
 transition. It does not silently select another transport mode or retract an
 already-active duplex stream. The stream-active export reports full-duplex mode
-1 or an activated mode 2; output-only mode 3 deliberately leaves it false.
+1 or an activated mode 2 or mode 4; output-only mode 3 deliberately leaves it false.
 
 This is a downstream correctness and maintainability contract, not a claim that
 the branded ABI should be upstreamed unchanged.

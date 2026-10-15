@@ -1290,7 +1290,7 @@ index 497ce5e507bbf8ed18172d566c9c3733dc41868b..5a2fe0adf18c8140a5775f3c14c018c0
  	/* try to signal whole process group */
  	kill(-MyProcPid, SIGINT);
 diff --git a/src/backend/utils/misc/timeout.c b/src/backend/utils/misc/timeout.c
-index d92efa12550ae09df03c50829d5f6428dcb4f6f8..17b7582a072904a2cec0d0305f9aaa9fddbf8e31 100644
+index b3fe2cd..17b7582 100644
 --- a/src/backend/utils/misc/timeout.c
 +++ b/src/backend/utils/misc/timeout.c
 @@ -16,6 +16,9 @@
@@ -1350,110 +1350,7 @@ index d92efa12550ae09df03c50829d5f6428dcb4f6f8..17b7582a072904a2cec0d0305f9aaa9f
  	if (num_active_timeouts > 0)
  	{
  		struct itimerval timeval;
-@@ -350,6 +393,42 @@ schedule_alarm(TimestampTz now)
- }
- 
- 
-+/* Process every timeout due at or before now, preserving priority order. */
-+static void
-+process_expired_timeouts(TimestampTz now)
-+{
-+	while (num_active_timeouts > 0 &&
-+		   now >= active_timeouts[0]->fin_time)
-+	{
-+		timeout_params *this_timeout = active_timeouts[0];
-+
-+		remove_timeout_index(0);
-+		this_timeout->indicator = true;
-+		this_timeout->timeout_handler();
-+
-+		if (this_timeout->interval_in_ms > 0)
-+		{
-+			TimestampTz new_fin_time;
-+
-+			new_fin_time =
-+				TimestampTzPlusMilliseconds(this_timeout->fin_time,
-+										this_timeout->interval_in_ms);
-+			if (new_fin_time < now)
-+				new_fin_time =
-+					TimestampTzPlusMilliseconds(now,
-+										this_timeout->interval_in_ms);
-+			enable_timeout(this_timeout->index, now, new_fin_time,
-+						   this_timeout->interval_in_ms);
-+		}
-+
-+		/* A timeout handler such as deadlock detection need not be cheap. */
-+		now = GetCurrentTimestamp();
-+	}
-+
-+	schedule_alarm(now);
-+}
-+
-+
- /*****************************************************************************
-  * Signal handler
-  *****************************************************************************/
-@@ -395,58 +474,7 @@ handle_sig_alarm(SIGNAL_ARGS)
- 		disable_alarm();
- 
- 		if (num_active_timeouts > 0)
--		{
--			TimestampTz now = GetCurrentTimestamp();
--
--			/* While the first pending timeout has been reached ... */
--			while (num_active_timeouts > 0 &&
--				   now >= active_timeouts[0]->fin_time)
--			{
--				timeout_params *this_timeout = active_timeouts[0];
--
--				/* Remove it from the active list */
--				remove_timeout_index(0);
--
--				/* Mark it as fired */
--				this_timeout->indicator = true;
--
--				/* And call its handler function */
--				this_timeout->timeout_handler();
--
--				/* If it should fire repeatedly, re-enable it. */
--				if (this_timeout->interval_in_ms > 0)
--				{
--					TimestampTz new_fin_time;
--
--					/*
--					 * To guard against drift, schedule the next instance of
--					 * the timeout based on the intended firing time rather
--					 * than the actual firing time. But if the timeout was so
--					 * late that we missed an entire cycle, fall back to
--					 * scheduling based on the actual firing time.
--					 */
--					new_fin_time =
--						TimestampTzPlusMilliseconds(this_timeout->fin_time,
--													this_timeout->interval_in_ms);
--					if (new_fin_time < now)
--						new_fin_time =
--							TimestampTzPlusMilliseconds(now,
--														this_timeout->interval_in_ms);
--					enable_timeout(this_timeout->index, now, new_fin_time,
--								   this_timeout->interval_in_ms);
--				}
--
--				/*
--				 * The handler might not take negligible time (CheckDeadLock
--				 * for instance isn't too cheap), so let's update our idea of
--				 * "now" after each one.
--				 */
--				now = GetCurrentTimestamp();
--			}
--
--			/* Done firing timeouts, so reschedule next interrupt if any */
--			schedule_alarm(now);
--		}
-+			process_expired_timeouts(GetCurrentTimestamp());
- 	}
- 
- 	RESUME_INTERRUPTS();
-@@ -489,9 +517,67 @@ InitializeTimeouts(void)
+@@ -474,9 +517,67 @@ InitializeTimeouts(void)
  
  	all_timeouts_initialized = true;
  

@@ -108,6 +108,7 @@ pub fn completion_count(request: &[u8]) -> io::Result<usize> {
     let mut remaining = request;
     let mut count = 0;
     let mut last = 0;
+    let mut extended_pending = false;
     while !remaining.is_empty() {
         if remaining.len() < 5 {
             return Err(invalid("truncated frontend frame"));
@@ -117,17 +118,28 @@ pub fn completion_count(request: &[u8]) -> io::Result<usize> {
             return Err(invalid("invalid frontend frame length"));
         }
         last = remaining[0];
-        if matches!(last, b'Q' | b'S') {
-            count += 1;
+        match last {
+            b'Q' | b'F' if extended_pending => {
+                return Err(invalid(
+                    "Query or FunctionCall must follow Sync after extended protocol messages",
+                ));
+            }
+            b'Q' | b'F' => count += 1,
+            b'S' => {
+                extended_pending = false;
+                count += 1;
+            }
+            b'P' | b'B' | b'C' | b'D' | b'E' | b'H' => extended_pending = true,
+            _ => {}
         }
         if matches!(last, b'X' | b'p') {
             return Err(invalid("connection control is not a query request"));
         }
         remaining = &remaining[length + 1..];
     }
-    if count == 0 || !matches!(last, b'Q' | b'S' | b'c' | b'f') {
+    if count == 0 || !matches!(last, b'Q' | b'F' | b'S' | b'c' | b'f') {
         return Err(invalid(
-            "broker request must include a complete Query or Sync boundary",
+            "broker request must include a complete Query, FunctionCall, or Sync boundary",
         ));
     }
     Ok(count)
@@ -176,15 +188,40 @@ fn receive<E>(
 ) -> io::Result<Option<E>> {
     let mut callback_error = None;
     while boundaries != 0 {
-        let bytes = read_backend(stream)?;
-        if callback_error.is_none() {
-            callback_error = callback(&bytes).err();
+        let mut header = [0; 5];
+        stream.read_exact(&mut header)?;
+        let length = u32::from_be_bytes(header[1..].try_into().unwrap()) as usize;
+        if !(4..MAX_FRONTEND_MESSAGE).contains(&length) {
+            return Err(invalid("invalid backend message length"));
         }
-        if bytes[0] == b'Z' {
-            if bytes.len() != 6 || !matches!(bytes[5], b'I' | b'T' | b'E') {
+        if header[0] == b'Z' {
+            if length != 5 {
                 return Err(invalid("invalid ReadyForQuery frame"));
             }
+            let mut ready = [0; 6];
+            ready[..5].copy_from_slice(&header);
+            stream.read_exact(&mut ready[5..])?;
+            if !matches!(ready[5], b'I' | b'T' | b'E') {
+                return Err(invalid("invalid ReadyForQuery frame"));
+            }
+            if callback_error.is_none() {
+                callback_error = callback(&ready).err();
+            }
             boundaries -= 1;
+            continue;
+        }
+        if callback_error.is_none() {
+            callback_error = callback(&header).err();
+        }
+        let mut remaining = length - 4;
+        let mut chunk = [0; 64 * 1024];
+        while remaining != 0 {
+            let count = remaining.min(chunk.len());
+            stream.read_exact(&mut chunk[..count])?;
+            if callback_error.is_none() {
+                callback_error = callback(&chunk[..count]).err();
+            }
+            remaining -= count;
         }
     }
     Ok(callback_error)
@@ -207,11 +244,51 @@ fn read_backend(reader: &mut (impl Read + ?Sized)) -> io::Result<Vec<u8>> {
 mod tests {
     use super::*;
     #[test]
+    fn streamed_frames_are_bounded_and_callback_failure_drains_all_boundaries() {
+        let mut input = frame(b'D', &vec![7; 192 * 1024]);
+        input.extend(frame(b'Z', b"I"));
+        input.extend(frame(b'Z', b"T"));
+        let mut stream = std::io::Cursor::new(input);
+        let mut chunks = Vec::new();
+        let error = receive(&mut stream, 2, &mut |bytes: &[u8]| {
+            chunks.push(bytes.len());
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+        assert_eq!(error, None);
+        assert!(chunks.iter().all(|size| *size <= 64 * 1024));
+        assert_eq!(stream.position() as usize, stream.get_ref().len());
+        stream.set_position(0);
+        let mut calls = 0;
+        assert_eq!(
+            receive(&mut stream, 2, &mut |_: &[u8]| {
+                calls += 1;
+                Err("callback failure")
+            })
+            .unwrap(),
+            Some("callback failure")
+        );
+        assert_eq!(calls, 1);
+        assert_eq!(stream.position() as usize, stream.get_ref().len());
+    }
+
+    #[test]
     fn complete_batches_preserve_every_ready_boundary() {
         let mut bytes = oliphaunt_query::simple_query("SELECT 1").unwrap();
         bytes.extend(oliphaunt_query::simple_query("SELECT 2").unwrap());
         assert_eq!(completion_count(&bytes).unwrap(), 2);
         assert!(completion_count(&frame(b'H', b"")).is_err());
+        let mut mixed = frame(b'P', b"");
+        mixed.extend(oliphaunt_query::simple_query("SELECT 1").unwrap());
+        mixed.extend(frame(b'S', b""));
+        assert!(completion_count(&mixed).is_err());
+        let mut synchronized = frame(b'P', b"");
+        synchronized.extend(frame(b'S', b""));
+        synchronized.extend(oliphaunt_query::simple_query("SELECT 1").unwrap());
+        assert_eq!(completion_count(&synchronized).unwrap(), 2);
+        assert_eq!(completion_count(&frame(b'F', b"")).unwrap(), 1);
+        synchronized.extend(frame(b'H', b""));
+        assert!(completion_count(&synchronized).is_err());
         bytes.pop();
         assert!(completion_count(&bytes).is_err());
     }

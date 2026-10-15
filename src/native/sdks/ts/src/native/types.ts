@@ -40,6 +40,8 @@ export type NativeBinding = {
   ): Promise<void>;
   execSimpleQuery?(handle: NativeHandle, sql: string): Promise<Uint8Array>;
   backup(handle: NativeHandle): Promise<Uint8Array>;
+  /** Synchronous chunk acceptance; the native archive callback borrows its input. */
+  backupStream?(handle: NativeHandle, onChunk: (chunk: Uint8Array) => void): Promise<void>;
   restore(options: NativeRestoreOptions): Promise<void>;
   cancel(handle: NativeHandle): Promise<void>;
   /**

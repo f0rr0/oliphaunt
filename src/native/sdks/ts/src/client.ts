@@ -1,3 +1,7 @@
+import {
+  OperationBudget,
+  snapshotProtocolInput,
+} from '@oliphaunt/ts-query/internal/operation-budget';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +13,7 @@ import {
   validateNativeStartupGUCs,
 } from './config.js';
 import { createDefaultNativeBinding } from './native/default.js';
+import { writeArchiveFile } from './native/archive-file.js';
 import type { NativeBinding, NativeBindingOptions } from './native/types.js';
 import {
   assertNoTransactionChain,
@@ -68,6 +73,8 @@ type RuntimeBindingOverrides = {
 type QueryReadOptions = Omit<QueryOptions, 'encoders'>;
 
 class OliphauntDatabaseBase {
+  readonly #operationBudget = new OperationBudget();
+
   protected readonly binding: RuntimeBinding;
   protected readonly handle: RuntimeHandle;
   readonly #releaseOwnership?: () => void;
@@ -142,10 +149,15 @@ class OliphauntDatabaseBase {
     parameters: ReadonlyArray<QueryParam> = [],
     options: ParameterOptions = {},
   ): Promise<CommandResult> {
-    this.assertNoActiveTransaction();
-    const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
-    return this.withSessionOperation(() =>
-      this.#runPlannedUnlocked(plan, 'database', parseCommandResponse),
+    return this.#operationBudget.admit(
+      (retain) => {
+        this.assertNoActiveTransaction();
+        const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+        return this.withSessionOperation(() =>
+          this.#runPlannedUnlocked(plan, 'database', parseCommandResponse),
+        );
+      },
+      () => this.#operationTail,
     );
   }
 
@@ -154,14 +166,19 @@ class OliphauntDatabaseBase {
     parameters: ReadonlyArray<QueryParam> = [],
     options: Options & QueryOptions = {} as Options & QueryOptions,
   ): Promise<QueryResult<InferQueryRow<Options, Row>>> {
-    this.assertNoActiveTransaction();
-    const stableOptions = snapshotQueryOptions(options);
-    const plan = planQuery(sql, parameters, stableOptions);
-    return this.withSessionOperation(async () =>
-      decodeQueryResult<Row, Options>(
-        await this.#runPlannedUnlocked(plan, 'database', parseQueryRawResponse),
-        stableOptions,
-      ),
+    return this.#operationBudget.admit(
+      (retain) => {
+        this.assertNoActiveTransaction();
+        const stableOptions = snapshotQueryOptions(options);
+        const plan = planQuery(sql, parameters, stableOptions, retain);
+        return this.withSessionOperation(async () =>
+          decodeQueryResult<Row, Options>(
+            await this.#runPlannedUnlocked(plan, 'database', parseQueryRawResponse),
+            stableOptions,
+          ),
+        );
+      },
+      () => this.#operationTail,
     );
   }
 
@@ -170,10 +187,15 @@ class OliphauntDatabaseBase {
     parameters: ReadonlyArray<QueryParam> = [],
     options: ParameterOptions = {},
   ): Promise<RawQueryResult> {
-    this.assertNoActiveTransaction();
-    const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
-    return this.withSessionOperation(() =>
-      this.#runPlannedUnlocked(plan, 'database', parseQueryRawResponse),
+    return this.#operationBudget.admit(
+      (retain) => {
+        this.assertNoActiveTransaction();
+        const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+        return this.withSessionOperation(() =>
+          this.#runPlannedUnlocked(plan, 'database', parseQueryRawResponse),
+        );
+      },
+      () => this.#operationTail,
     );
   }
 
@@ -181,13 +203,19 @@ class OliphauntDatabaseBase {
     sql: string,
     options: Options & QueryReadOptions = {} as Options & QueryReadOptions,
   ): Promise<ExecResult<InferQueryRow<Options, Row>>> {
-    this.assertNoActiveTransaction();
-    const input = structuredSimpleQuery(sql);
-    const stableOptions = snapshotReadOptions(options);
-    return this.withSessionOperation(() =>
-      this.#runStructuredUnlocked(input, 'database', (response) =>
-        parseExecResponse<Row, Options>(response, stableOptions),
-      ),
+    return this.#operationBudget.admit(
+      (retain) => {
+        this.assertNoActiveTransaction();
+        const input = structuredSimpleQuery(sql);
+        retain(input.byteLength);
+        const stableOptions = snapshotReadOptions(options);
+        return this.withSessionOperation(() =>
+          this.#runStructuredUnlocked(input, 'database', (response) =>
+            parseExecResponse<Row, Options>(response, stableOptions),
+          ),
+        );
+      },
+      () => this.#operationTail,
     );
   }
 
@@ -195,26 +223,42 @@ class OliphauntDatabaseBase {
     sql: string,
     parameterTypeOids: ReadonlyArray<number> = [],
   ): Promise<DescribeResult> {
-    this.assertNoActiveTransaction();
-    const input = describeQuery(sql, [...parameterTypeOids]);
-    return this.withSessionOperation(() =>
-      this.#runStructuredUnlocked(input, 'database', parseDescribeResponse),
+    return this.#operationBudget.admit(
+      (retain) => {
+        this.assertNoActiveTransaction();
+        const input = describeQuery(sql, [...parameterTypeOids]);
+        retain(input.byteLength);
+        return this.withSessionOperation(() =>
+          this.#runStructuredUnlocked(input, 'database', parseDescribeResponse),
+        );
+      },
+      () => this.#operationTail,
     );
   }
 
   async execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
-    this.assertNoActiveTransaction();
-    const bytes = toUint8Array(input).slice();
-    return this.withSessionOperation(() => this.#runRawProtocolUnlocked(bytes));
+    return this.#operationBudget.admit(
+      (retain) => {
+        this.assertNoActiveTransaction();
+        const bytes = snapshotProtocolInput(input, retain);
+        return this.withSessionOperation(() => this.#runRawProtocolUnlocked(bytes));
+      },
+      () => this.#operationTail,
+    );
   }
 
   async execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
-    this.assertNoActiveTransaction();
-    if (typeof onChunk !== 'function') {
-      return Promise.reject(new TypeError('protocol stream callback must be a function'));
-    }
-    const bytes = toUint8Array(input).slice();
-    return this.withSessionOperation(() => this.#execProtocolStreamUnlocked(bytes, onChunk));
+    return this.#operationBudget.admit(
+      (retain) => {
+        this.assertNoActiveTransaction();
+        if (typeof onChunk !== 'function') {
+          return Promise.reject(new TypeError('protocol stream callback must be a function'));
+        }
+        const bytes = snapshotProtocolInput(input, retain);
+        return this.withSessionOperation(() => this.#execProtocolStreamUnlocked(bytes, onChunk));
+      },
+      () => this.#operationTail,
+    );
   }
 
   cancel(): Promise<void> {
@@ -617,6 +661,12 @@ class OliphauntDatabaseBase {
     return new AggregateError(failures, 'Oliphaunt owner retirement failed');
   }
 
+  protected admitOperation<T>(
+    prepare: (retain: (bytes: number) => void) => Promise<T>,
+  ): Promise<T> {
+    return this.#operationBudget.admit(prepare, () => this.#operationTail);
+  }
+
   protected withSessionOperation<T>(body: () => T | Promise<T>): Promise<T> {
     this.#assertOpen();
     const operation = this.#operationTail.then(async () => {
@@ -650,14 +700,37 @@ class OliphauntDatabaseBase {
 }
 
 class OliphauntDatabaseImpl extends OliphauntDatabaseBase implements OliphauntDatabase {
-  async backup(): Promise<Uint8Array> {
-    this.assertNoActiveTransaction();
-    return this.withSessionOperation(async () => {
-      const backup = this.binding.backup;
-      if (backup === undefined) {
-        throw new Error('database runtime binding does not implement backup');
+  async backupToFile(destination: string): Promise<void> {
+    return this.admitOperation((retain) => {
+      this.assertNoActiveTransaction();
+      if (
+        typeof destination !== 'string' ||
+        destination.length === 0 ||
+        destination.includes('\0')
+      ) {
+        throw new TypeError('backup destination must be a nonempty host path without NUL bytes');
       }
-      return this.runNativeOperation(() => backup(this.handle));
+      retain(destination.length * 3);
+      const backup = this.binding.backupStream;
+      if (backup === undefined) {
+        throw new Error('database runtime binding does not implement file backup');
+      }
+      return this.withSessionOperation(() =>
+        writeArchiveFile(destination, (onChunk) => backup(this.handle, onChunk)),
+      );
+    });
+  }
+
+  async backup(): Promise<Uint8Array> {
+    return this.admitOperation(() => {
+      this.assertNoActiveTransaction();
+      return this.withSessionOperation(async () => {
+        const backup = this.binding.backup;
+        if (backup === undefined) {
+          throw new Error('database runtime binding does not implement backup');
+        }
+        return this.runNativeOperation(() => backup(this.handle));
+      });
     });
   }
 }
@@ -688,6 +761,8 @@ class OliphauntServerImpl implements OliphauntServer {
 }
 
 class OliphauntTransactionHandle implements OliphauntTransaction {
+  readonly #operationBudget = new OperationBudget();
+
   readonly #runPlan: <Result extends NoticeCarrier>(
     plan: QueryPlan,
     decode: (response: Uint8Array) => Result,
@@ -741,9 +816,14 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     options: ParameterOptions = {},
   ): Promise<CommandResult> {
     return promiseFromSynchronousCall(() => {
-      assertNoTransactionChain(sql);
-      const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
-      return this.#enqueue(() => this.#runPlan(plan, parseCommandResponse));
+      return this.#operationBudget.admit(
+        (retain) => {
+          assertNoTransactionChain(sql);
+          const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+          return this.#enqueue(() => this.#runPlan(plan, parseCommandResponse));
+        },
+        () => this.#tail,
+      );
     });
   }
 
@@ -753,15 +833,20 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     options: Options & QueryOptions = {} as Options & QueryOptions,
   ): Promise<QueryResult<InferQueryRow<Options, Row>>> {
     return promiseFromSynchronousCall(() => {
-      assertNoTransactionChain(sql);
-      const stableOptions = snapshotQueryOptions(options);
-      const plan = planQuery(sql, parameters, stableOptions);
-      return this.#enqueue(async () => {
-        return decodeQueryResult<Row, Options>(
-          await this.#runPlan(plan, parseQueryRawResponse),
-          stableOptions,
-        );
-      });
+      return this.#operationBudget.admit(
+        (retain) => {
+          assertNoTransactionChain(sql);
+          const stableOptions = snapshotQueryOptions(options);
+          const plan = planQuery(sql, parameters, stableOptions, retain);
+          return this.#enqueue(async () => {
+            return decodeQueryResult<Row, Options>(
+              await this.#runPlan(plan, parseQueryRawResponse),
+              stableOptions,
+            );
+          });
+        },
+        () => this.#tail,
+      );
     });
   }
 
@@ -771,9 +856,14 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     options: ParameterOptions = {},
   ): Promise<RawQueryResult> {
     return promiseFromSynchronousCall(() => {
-      assertNoTransactionChain(sql);
-      const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
-      return this.#enqueue(() => this.#runPlan(plan, parseQueryRawResponse));
+      return this.#operationBudget.admit(
+        (retain) => {
+          assertNoTransactionChain(sql);
+          const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+          return this.#enqueue(() => this.#runPlan(plan, parseQueryRawResponse));
+        },
+        () => this.#tail,
+      );
     });
   }
 
@@ -782,21 +872,33 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     options: Options & QueryReadOptions = {} as Options & QueryReadOptions,
   ): Promise<ExecResult<InferQueryRow<Options, Row>>> {
     return promiseFromSynchronousCall(() => {
-      assertNoTransactionChain(sql);
-      const input = structuredSimpleQuery(sql);
-      const stableOptions = snapshotReadOptions(options);
-      return this.#enqueue(() =>
-        this.#runStructured(input, (response) =>
-          parseExecResponse<Row, Options>(response, stableOptions),
-        ),
+      return this.#operationBudget.admit(
+        (retain) => {
+          assertNoTransactionChain(sql);
+          const input = structuredSimpleQuery(sql);
+          retain(input.byteLength);
+          const stableOptions = snapshotReadOptions(options);
+          return this.#enqueue(() =>
+            this.#runStructured(input, (response) =>
+              parseExecResponse<Row, Options>(response, stableOptions),
+            ),
+          );
+        },
+        () => this.#tail,
       );
     });
   }
 
   describe(sql: string, parameterTypeOids: ReadonlyArray<number> = []): Promise<DescribeResult> {
     return promiseFromSynchronousCall(() => {
-      const input = describeQuery(sql, [...parameterTypeOids]);
-      return this.#enqueue(() => this.#runStructured(input, parseDescribeResponse));
+      return this.#operationBudget.admit(
+        (retain) => {
+          const input = describeQuery(sql, [...parameterTypeOids]);
+          retain(input.byteLength);
+          return this.#enqueue(() => this.#runStructured(input, parseDescribeResponse));
+        },
+        () => this.#tail,
+      );
     });
   }
 

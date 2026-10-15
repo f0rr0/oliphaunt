@@ -107,6 +107,8 @@ export type OliphauntDatabase = {
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
   execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   backup(): Promise<Uint8Array>;
+  /** Publish a streamed physical archive to a new host file after backup cleanup succeeds. */
+  backupToFile(destination: string): Promise<void>;
   cancel(): Promise<void>;
   /**
    * Own the session for one callback. Use callback return/throw or rollback()

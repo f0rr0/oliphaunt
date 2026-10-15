@@ -1365,6 +1365,31 @@ func closeCutsOffLaterCallsButDrainsEveryEarlierAdmission() async throws {
     #expect(await session.events() == ["raw:1", "raw:2", "close"])
 }
 
+@Test(arguments: [false, true])
+func ordinaryCapacityIsReusableAndDoesNotBlockClose(closeWhileFull: Bool) async throws {
+    let session = AdmissionOrderSession()
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let first = Task { try await database.execProtocolRaw(Data([1])) }
+    await session.waitUntilFirstRawStarted()
+    let pending = (0..<63).map { _ in Task { try await database.execProtocolRaw(Data([2])) } }
+    await database.waitUntilQueuedOperationCount(atLeast: 63)
+    await #expect(throws: OliphauntError.self) {
+        _ = try await database.execProtocolRaw(Data([3]))
+    }
+    let closing = closeWhileFull ? Task { try await database.close() } : nil
+    if closeWhileFull { await database.waitUntilQueuedOperationCount(atLeast: 64) }
+    await session.releaseFirstRaw()
+    #expect(try await first.value == Data([1]))
+    for operation in pending { #expect(try await operation.value == Data([2])) }
+    if let closing {
+        try await closing.value
+    } else {
+        #expect(try await database.execProtocolRaw(Data([3])) == Data([3]))
+        try await database.close()
+    }
+    #expect(await session.events().last == "close")
+}
+
 @Test
 func transactionPinningDoesNotRevokeEarlierAdmissions() async throws {
     let session = AdmissionOrderSession()
@@ -1476,6 +1501,31 @@ func rawStreamCallbackRejectsSameHandleReentryButAllowsCancellation() async thro
     }
     #expect(await cancellation.wait() == "success")
     #expect(await session.cancelCount() == 1)
+    #expect(await session.requests().count == 1)
+    try await database.close()
+}
+
+@Test
+func rawStreamCallbackRejectsDetachedTaskBeforeCallbackReturns() async throws {
+    let session = TestSession(response: commandResponse("OK"))
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let finished = DispatchSemaphore(value: 0)
+    let outcome = AsyncStringSignal()
+
+    try await database.execProtocolRawStream(Data([1])) { _ in
+        Task.detached {
+            do {
+                _ = try await database.execProtocolRaw(Data([2]))
+                await outcome.complete("unexpected success")
+            } catch {
+                await outcome.complete(String(describing: error))
+            }
+            finished.signal()
+        }
+        #expect(finished.wait(timeout: .now() + 2) == .success)
+    }
+
+    #expect(await outcome.wait().contains("must not reenter the same Oliphaunt database"))
     #expect(await session.requests().count == 1)
     try await database.close()
 }

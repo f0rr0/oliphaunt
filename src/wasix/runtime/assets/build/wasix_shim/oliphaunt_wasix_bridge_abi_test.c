@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <netinet/in.h>
@@ -247,6 +248,8 @@ check_stream_write_failure_is_sticky(int mode)
 
 	CHECK(oliphaunt_wasix_output_reset() == 0);
 	CHECK(oliphaunt_wasix_set_protocol_transport(mode) >= 0);
+	if (mode == OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY)
+		oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_IN);
 	saved_stdout = dup(STDOUT_FILENO);
 	CHECK(saved_stdout >= 0);
 	CHECK(close(STDOUT_FILENO) == 0);
@@ -259,6 +262,8 @@ check_stream_write_failure_is_sticky(int mode)
 	CHECK(failed_send == -1);
 	CHECK(failed_errno == EBADF);
 	CHECK(oliphaunt_wasix_output_status() == EBADF);
+	if (mode == OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY)
+		CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
 	CHECK(check_send_rejected_without_stdout("y", 1, EBADF) == 0);
 	CHECK(oliphaunt_wasix_output_status() == EBADF);
 
@@ -518,6 +523,8 @@ check_protocol_socket(void)
 			  OLIPHAUNT_WASIX_PROTOCOL_STREAM) == 0);
 	CHECK(check_stream_write_failure_is_sticky(
 			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT) == 0);
+	CHECK(check_stream_write_failure_is_sticky(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY) == 0);
 
 	errno = 0;
 	CHECK(oliphaunt_wasix_set_protocol_transport(99) == -1);
@@ -857,11 +864,100 @@ check_memory_and_shared_memory(void)
 }
 
 static int
+check_copy_output_stream(void)
+{
+	int input_fds[2];
+	CHECK(pipe(input_fds) == 0);
+	CHECK(write(input_fds[1], "copy", 4) == 4);
+	CHECK(close(input_fds[1]) == 0);
+	int saved_stdin = dup(STDIN_FILENO);
+	CHECK(saved_stdin >= 0);
+	CHECK(dup2(input_fds[0], STDIN_FILENO) == STDIN_FILENO);
+	CHECK(close(input_fds[0]) == 0);
+	CHECK(oliphaunt_wasix_input_reset() == 0);
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY) ==
+		  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED);
+	void *input = oliphaunt_wasix_input_reserve(1);
+	CHECK(input != NULL);
+	memcpy(input, "q", 1);
+	CHECK(oliphaunt_wasix_input_commit(1) == 1);
+	char buf[4];
+	CHECK(oliphaunt_wasix_recv(1, buf, 1, 0) == 1);
+	CHECK(buf[0] == 'q');
+	CHECK(check_send_reaches_stdout("ordinary", 8, "ordinary", 8) == 0);
+	CHECK(oliphaunt_wasix_output_len() == 0);
+	CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
+	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_IN);
+	CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
+	CHECK(check_send_reaches_stdout("G", 1, "G", 1) == 0);
+	CHECK(oliphaunt_wasix_protocol_stream_active() == 1);
+	CHECK(oliphaunt_wasix_recv(1, buf, sizeof(buf), 0) == 4);
+	CHECK(memcmp(buf, "copy", 4) == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED) ==
+		  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY);
+	CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
+	CHECK(dup2(saved_stdin, STDIN_FILENO) == STDIN_FILENO);
+	CHECK(close(saved_stdin) == 0);
+	return 0;
+}
+
+static int
+check_tool_socket_read_batch(void)
+{
+	int sockets[2];
+	CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+	size_t batch_size = OLIPHAUNT_WASIX_DIRECT_TOOL_READ_BATCH_MAX;
+	char *data = malloc(2 * batch_size);
+	CHECK(data != NULL);
+	memset(data, 'a', batch_size);
+	memset(data + batch_size, 'b', batch_size);
+	pid_t writer = fork();
+	CHECK(writer >= 0);
+	if (writer == 0)
+	{
+		close(sockets[0]);
+		size_t offset = 0;
+		while (offset < 2 * batch_size)
+		{
+			ssize_t written = write(sockets[1], data + offset, 2 * batch_size - offset);
+			if (written <= 0)
+				_exit(1);
+			offset += (size_t) written;
+		}
+		close(sockets[1]);
+		_exit(0);
+	}
+	CHECK(close(sockets[1]) == 0);
+	CHECK(oliphaunt_wasix_recv(sockets[0], data, 2 * batch_size, MSG_WAITALL) == (ssize_t) batch_size);
+	for (size_t i = 0; i < batch_size; i++)
+		CHECK(data[i] == 'a');
+	CHECK(oliphaunt_wasix_recv(sockets[0], data, 2 * batch_size, MSG_WAITALL) == (ssize_t) batch_size);
+	for (size_t i = 0; i < batch_size; i++)
+		CHECK(data[i] == 'b');
+	CHECK(oliphaunt_wasix_recv(sockets[0], data, 2 * batch_size, 0) == 0);
+	CHECK(close(sockets[0]) == 0);
+	int status;
+	CHECK(waitpid(writer, &status, 0) == writer);
+	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	free(data);
+	return 0;
+}
+
+static int
 check_direct_tool_transport(void)
 {
 	char protocol_path[] = "/tmp/oliphaunt-pgwire-XXXXXX";
 	int protocol_file = mkstemp(protocol_path);
 	CHECK(protocol_file >= 0);
+	size_t batch_size = OLIPHAUNT_WASIX_DIRECT_TOOL_READ_BATCH_MAX;
+	char *data = malloc(2 * batch_size);
+	CHECK(data != NULL);
+	memset(data, 'a', batch_size);
+	memset(data + batch_size, 'b', batch_size);
+	CHECK(write(protocol_file, data, 2 * batch_size) == (ssize_t) (2 * batch_size));
 	CHECK(close(protocol_file) == 0);
 	struct sockaddr_in target;
 	memset(&target, 0, sizeof(target));
@@ -890,6 +986,17 @@ check_direct_tool_transport(void)
 	struct pollfd blocking_read = {.fd = direct_fd, .events = POLLIN, .revents = 0};
 	CHECK(oliphaunt_wasix_poll(&blocking_read, 1, -1) == 1);
 	CHECK(blocking_read.revents == POLLIN);
+	CHECK(oliphaunt_wasix_recv(direct_fd, data, 2 * batch_size, 0) == (ssize_t) batch_size);
+	for (size_t i = 0; i < batch_size; i++)
+		CHECK(data[i] == 'a');
+	errno = 0;
+	CHECK(oliphaunt_wasix_recv(direct_fd, data, 2 * batch_size, 0) == -1);
+	CHECK(errno == EAGAIN);
+	CHECK(oliphaunt_wasix_poll(&blocking_read, 1, -1) == 1);
+	CHECK(oliphaunt_wasix_recv(direct_fd, data, 2 * batch_size, 0) == (ssize_t) batch_size);
+	for (size_t i = 0; i < batch_size; i++)
+		CHECK(data[i] == 'b');
+	free(data);
 	CHECK(close(direct_fd) == 0);
 	CHECK(unlink(protocol_path) == 0);
 	return 0;
@@ -904,6 +1011,8 @@ main(void)
 	CHECK(check_buffered_protocol_output_limit() == 0);
 	CHECK(check_startup_outcome() == 0);
 	CHECK(check_memory_and_shared_memory() == 0);
+	CHECK(check_copy_output_stream() == 0);
+	CHECK(check_tool_socket_read_batch() == 0);
 	CHECK(check_direct_tool_transport() == 0);
 	return 0;
 }

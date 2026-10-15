@@ -29,17 +29,18 @@ export type WasixToolWorkerRequest = WasixToolPrepareRequest | WasixToolRunReque
 export type WasixToolPrepareRequest = Readonly<{
   id: number;
   kind: 'prepare';
-  tool: WasixToolDescriptor & Readonly<{ name: 'psql' }>;
+  tool: WasixToolDescriptor;
 }>;
 
 export type WasixToolRunRequest = Readonly<{
   id: number;
   kind: 'run';
-  tool: 'psql';
+  tool: 'pg_dump' | 'psql';
   args: string[];
   stdin?: Uint8Array;
   frontend: WasixByteChannel;
   backend: WasixByteChannel;
+  output?: Readonly<{ stdout: WasixByteChannel; stderr?: WasixByteChannel }>;
 }>;
 
 export type WasixToolWorkerResponse =
@@ -51,6 +52,8 @@ export type WasixToolWorkerResponse =
       exitCode: number;
       stdout: Uint8Array;
       stderr: Uint8Array;
+      stdoutBytes?: number;
+      stderrTruncated?: boolean;
     }>
   | Readonly<{ id: number; ok: false; message: string }>;
 
@@ -64,6 +67,8 @@ export type WasixToolHost = Readonly<{
     protocolRead: (maximumBytes: number) => Uint8Array,
     /** Borrowed bytes: synchronously copy; never mutate or retain this view. */
     protocolWrite: (chunk: Uint8Array) => void,
+    stdoutWrite?: (chunk: Uint8Array) => void,
+    stderrWrite?: (chunk: Uint8Array) => void,
   ): Promise<OliphauntToolOutput>;
 }>;
 
@@ -78,7 +83,7 @@ export function createWasixToolWorkerDispatcher(
   host: WasixToolHost,
 ): (request: WasixToolWorkerRequest) => Promise<WasixToolWorkerResponse> {
   let hostInitialization: Promise<unknown> | undefined;
-  let tool: CachedTool | undefined;
+  const tools = new Map<'pg_dump' | 'psql', CachedTool>();
 
   const dispatch = async (request: WasixToolWorkerRequest): Promise<WasixToolWorkerResponse> => {
     try {
@@ -86,24 +91,30 @@ export function createWasixToolWorkerDispatcher(
       await hostInitialization;
       if (request.kind === 'prepare') {
         const toolIdentity = wasixToolAssetIdentity(request.tool);
+        const tool = tools.get(request.tool.name);
         if (tool === undefined) {
           const asset = await prepareWasixToolAsset(request.tool);
-          tool = {
+          tools.set(request.tool.name, {
             identity: toolIdentity,
             asset,
             prepared: host.prepareOliphauntTool(asset.module, asset.bytes),
-          };
+          });
         } else if (tool.identity !== toolIdentity) {
-          throw new Error('Oliphaunt WASIX tool worker cannot replace psql');
+          throw new Error(`Oliphaunt WASIX tool worker cannot replace ${request.tool.name}`);
         }
         return { id: request.id, ok: true, kind: 'prepared' };
       }
 
+      const tool = tools.get(request.tool);
       if (tool === undefined) throw new Error(`WASIX ${request.tool} module is not prepared`);
       return await runPreparedTool(request, host, tool);
     } catch (error) {
       if (request.kind === 'run') {
         finishFailedToolChannels(request);
+        if (request.output !== undefined) {
+          failWasixByteChannel(request.output.stdout);
+          if (request.output.stderr !== undefined) failWasixByteChannel(request.output.stderr);
+        }
       }
       return { id: request.id, ok: false, message: describeWorkerError(error) };
     }
@@ -141,9 +152,19 @@ async function runPreparedTool(
         markWasixByteChannelProtocolStarted(request.frontend);
         writeWasixByteChannelSync(request.frontend, chunk);
       },
+      request.output === undefined
+        ? undefined
+        : (chunk) => writeWasixByteChannelSync(request.output!.stdout, chunk),
+      request.output?.stderr === undefined
+        ? undefined
+        : (chunk) => writeWasixByteChannelSync(request.output!.stderr!, chunk),
     );
     markWasixByteChannelProtocolComplete(request.frontend);
     closeWasixByteChannel(request.frontend);
+    if (request.output !== undefined) {
+      closeWasixByteChannel(request.output.stdout);
+      if (request.output.stderr !== undefined) closeWasixByteChannel(request.output.stderr);
+    }
     response = {
       id: request.id,
       ok: true,
@@ -151,6 +172,9 @@ async function runPreparedTool(
       exitCode: output.code,
       stdout: output.stdoutBytes,
       stderr: output.stderrBytes,
+      ...(request.output === undefined
+        ? {}
+        : { stdoutBytes: output.stdoutCount, stderrTruncated: output.stderrTruncated }),
     };
   } catch (error) {
     failure = { primary: error };

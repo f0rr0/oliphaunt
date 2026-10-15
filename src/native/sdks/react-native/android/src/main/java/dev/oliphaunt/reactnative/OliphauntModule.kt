@@ -18,6 +18,7 @@ import dev.oliphaunt.OliphauntBrokerOptions
 import dev.oliphaunt.OliphauntConfig
 import dev.oliphaunt.OliphauntDatabase
 import dev.oliphaunt.PostgresStartupGuc
+import dev.oliphaunt.backup
 import dev.oliphaunt.withOliphauntBridgeDeadline
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -254,6 +255,34 @@ class OliphauntModule(
         withOliphauntBridgeDeadline(deadline) { session.backup() }
       }.fold(
         onSuccess = callback::resolveBytes,
+        onFailure = { error -> callback.reject(error) },
+      )
+    }
+  }
+
+  @DoNotStrip
+  fun backupToFile(
+    handle: Long,
+    destination: String,
+    deadline: Long,
+    callback: OliphauntJsiPromiseCallback,
+  ) {
+    val key = try {
+      requireReactNativeHandle(handle)
+    } catch (error: IllegalArgumentException) {
+      callback.reject("liboliphaunt_invalid_handle", error.message)
+      return
+    }
+    val session = sessions[key]
+    if (session == null) {
+      callback.reject("liboliphaunt_unknown_handle", "unknown Oliphaunt handle")
+      return
+    }
+    scope.launch {
+      runCatching {
+        withOliphauntBridgeDeadline(deadline) { session.backup(File(destination)) }
+      }.fold(
+        onSuccess = { callback.resolveUnit() },
         onFailure = { error -> callback.reject(error) },
       )
     }

@@ -4,6 +4,8 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "noEmit": true,
+    "resolveJsonModule": true,
+    "allowJs": true,
     "paths": {
       "@oliphaunt/liboliphaunt-wasix": ["../../../wasix/sdks/ts/src/runtime-carrier-shim.d.ts"],
       "@oliphaunt/wasix-ts": ["../../../wasix/sdks/ts/src/index.ts"],

@@ -1,0 +1,516 @@
+Subject: [PATCH] Reuse owned unmapped intervals within the current guest image
+
+Keep successful runtime munmap intervals in the authoritative mapping registry.
+Coalesce adjacent ranges and reuse aligned first-fit intervals before memory.grow,
+without inferring ownership from holes in guest heap memory. Publish reclamation
+and allocation only after the host remap succeeds under the existing lock order.
+
+Fork copies reusable ownership. Exec removes the old image intervals before
+instantiation, and its existing rollback guard restores both active mappings and
+reusable intervals on admission failure. Never reuse old-image heap addresses in
+a fresh image. Reused mappings install the new backing and futex identity.
+
+This is a correctness change after the source-equivalent split in 0001-0008.
+The runtime patch digest and receipts change; rebuild selected carriers. The
+ownership fix is generally applicable to WASIX persistent shared-file remaps.
+
+diff --git a/lib/wasix/src/state/mod.rs b/lib/wasix/src/state/mod.rs
+index c74fda1..a609675 100644
+--- a/lib/wasix/src/state/mod.rs
++++ b/lib/wasix/src/state/mod.rs
+@@ -396,6 +396,9 @@ impl WasiSharedMemoryMapping {
+ #[derive(Debug, Default, Clone)]
+ pub(crate) struct WasiSharedMemoryMappings {
+     mappings: Vec<WasiSharedMemoryMapping>,
++    // Sorted, coalesced intervals released by successful runtime munmap.
++    // Guest heap gaps and addresses from a previous exec image are excluded.
++    unmapped: Vec<std::ops::Range<u64>>,
+ }
+ 
+ impl WasiSharedMemoryMappings {
+@@ -403,6 +406,50 @@ impl WasiSharedMemoryMappings {
+         self.mappings.clone()
+     }
+ 
++    fn reusable_range(&self, len: u64) -> Result<Option<(usize, u64)>, Errno> {
++        // Preserve the guest's WebAssembly page alignment for non-fixed mmap.
++        const ALIGN: u64 = 65_536;
++        for (index, range) in self.unmapped.iter().enumerate() {
++            let start = range.start.checked_add(ALIGN - 1).ok_or(Errno::Overflow)? & !(ALIGN - 1);
++            if start.checked_add(len).ok_or(Errno::Overflow)? <= range.end {
++                return Ok(Some((index, start)));
++            }
++        }
++        Ok(None)
++    }
++
++    fn reclaim(&mut self, start: u64, len: u64) -> Result<(), Errno> {
++        let mut end = start.checked_add(len).ok_or(Errno::Overflow)?;
++        let index = self.unmapped.partition_point(|range| range.end < start);
++        let mut first = start;
++        let mut last = index;
++        while let Some(range) = self.unmapped.get(last) {
++            if range.start > end {
++                break;
++            }
++            first = first.min(range.start);
++            end = end.max(range.end);
++            last += 1;
++        }
++        self.unmapped.splice(index..last, [first..end]);
++        Ok(())
++    }
++
++    fn consume_reusable(&mut self, index: usize, start: u64, len: u64) -> Result<(), Errno> {
++        let end = start.checked_add(len).ok_or(Errno::Overflow)?;
++        let range = self.unmapped[index].clone();
++        self.unmapped.splice(
++            index..=index,
++            [
++                (range.start < start).then_some(range.start..start),
++                (end < range.end).then_some(end..range.end),
++            ]
++            .into_iter()
++            .flatten(),
++        );
++        Ok(())
++    }
++
+     fn max_end(&self) -> Result<Option<u64>, Errno> {
+         self.mappings.iter().try_fold(None, |maximum, mapping| {
+             let end = mapping.end()?;
+@@ -505,7 +552,10 @@ impl WasiSharedMemoryMappings {
+ 
+         updated.push(mapping);
+         updated.sort_by_key(|mapping| mapping.start);
+-        Ok(Self { mappings: updated })
++        Ok(Self {
++            mappings: updated,
++            unmapped: self.unmapped.clone(),
++        })
+     }
+ 
+     pub fn replace(&mut self, mapping: WasiSharedMemoryMapping) -> Result<(), Errno> {
+@@ -553,7 +603,10 @@ impl WasiSharedMemoryMappings {
+         }
+ 
+         updated.sort_by_key(|mapping| mapping.start);
+-        Ok(Self { mappings: updated })
++        Ok(Self {
++            mappings: updated,
++            unmapped: self.unmapped.clone(),
++        })
+     }
+ 
+     #[cfg(test)]
+@@ -578,8 +631,8 @@ impl WasiSharedMemoryMappings {
+ }
+ 
+ /// Identifies the fixed-address path. Runtime-selected mappings use a separate
+-/// API that atomically reserves fresh WebAssembly pages and therefore never
+-/// need permission to replace existing private memory.
++/// API that reuses owned unmapped intervals or atomically reserves fresh
++/// WebAssembly pages, without replacing guest heap memory.
+ #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+ pub(crate) enum WasiSharedMemoryMapOrigin {
+     GuestFixed,
+@@ -589,6 +642,7 @@ pub(crate) enum WasiSharedMemoryMapOrigin {
+ pub(crate) enum WasiSharedMemoryRuntimePlacement {
+     Fresh { minimum_start: u64 },
+     Inherited { start: u64 },
++    Reused { start: u64 },
+ }
+ 
+ /// Serializes the address-space handoff from an old process image to a fresh
+@@ -618,12 +672,16 @@ impl Default for WasiSharedMemoryExecPhase {
+ #[derive(Debug)]
+ pub(crate) struct WasiSharedMemoryExecTransition {
+     state: Arc<WasiState>,
+-    original_mappings: Option<Vec<WasiSharedMemoryMapping>>,
++    original_mappings: Option<WasiSharedMemoryMappings>,
+ }
+ 
+ impl WasiSharedMemoryExecTransition {
+     pub(crate) fn commit(mut self) {
+-        if self.original_mappings.is_some() {
++        if self
++            .original_mappings
++            .as_ref()
++            .is_some_and(|original| !original.mappings.is_empty())
++        {
+             self.state.commit_shared_memory_exec_transition();
+         }
+         self.original_mappings.take();
+@@ -642,7 +700,9 @@ impl Drop for WasiSharedMemoryExecTransition {
+             .shared_memory_exec_phase
+             .lock()
+             .unwrap_or_else(|err| err.into_inner());
+-        if !matches!(*phase, WasiSharedMemoryExecPhase::Transition { .. }) {
++        if !original_mappings.mappings.is_empty()
++            && !matches!(*phase, WasiSharedMemoryExecPhase::Transition { .. })
++        {
+             tracing::error!(
+                 ?phase,
+                 "shared-memory exec rollback refused after phase advanced"
+@@ -659,6 +719,15 @@ impl Drop for WasiSharedMemoryExecTransition {
+             .shared_memory_mappings
+             .lock()
+             .unwrap_or_else(|err| err.into_inner());
++        if original_mappings.mappings.is_empty() {
++            // There was no inherited backing to reattach. Any mappings made
++            // by the failed start belong to its discarded fresh memory; the
++            // old image retains its original reusable intervals.
++            if *phase == WasiSharedMemoryExecPhase::Normal && reservations.mappings.is_empty() {
++                *active = original_mappings;
++            }
++            return;
++        }
+         // Linker pre-growth marks reservations installed before synchronous
+         // Instance::new can fail. A start function may also have consumed
+         // exact reservations before trapping. Rollback is still safe when the
+@@ -668,7 +737,7 @@ impl Drop for WasiSharedMemoryExecTransition {
+         let mut current = reservations.snapshot();
+         current.extend(active.snapshot());
+         current.sort_by_key(|mapping| (mapping.start, mapping.len, mapping.file_offset));
+-        let mut original = original_mappings.clone();
++        let mut original = original_mappings.snapshot();
+         original.sort_by_key(|mapping| (mapping.start, mapping.len, mapping.file_offset));
+         let exact_partition = current.len() == original.len()
+             && current
+@@ -679,13 +748,13 @@ impl Drop for WasiSharedMemoryExecTransition {
+             tracing::error!(
+                 reservations = reservations.mappings.len(),
+                 active = active.mappings.len(),
+-                original = original_mappings.len(),
++                original = original_mappings.mappings.len(),
+                 "shared-memory exec rollback refused for a non-exact successor partition"
+             );
+             return;
+         }
+         reservations.mappings.clear();
+-        active.mappings = original_mappings;
++        *active = original_mappings;
+         *phase = WasiSharedMemoryExecPhase::Normal;
+     }
+ }
+@@ -817,11 +886,15 @@ impl WasiState {
+             .shared_memory_mappings
+             .lock()
+             .unwrap_or_else(|err| err.into_inner());
+-        let original_mappings = active.snapshot();
+-        if original_mappings.is_empty() {
++        let original_mappings = active.clone();
++        // Unmapped addresses belong to the old linear-memory image. They
++        // must never be offered to a new image's mmap, even by its start.
++        active.unmapped.clear();
++        if original_mappings.mappings.is_empty() {
+             return Ok(WasiSharedMemoryExecTransition {
+                 state: self.clone(),
+-                original_mappings: None,
++                original_mappings: (!original_mappings.unmapped.is_empty())
++                    .then_some(original_mappings),
+             });
+         }
+         *phase = WasiSharedMemoryExecPhase::Transition {
+@@ -1007,11 +1080,11 @@ impl WasiState {
+ 
+     /// Atomically installs an original non-fixed `mmap`. During exec, a
+     /// request for an inherited backing consumes its matching reservation and
+-    /// reuses that address; otherwise `reserve_and_remap` must use WebAssembly
+-    /// memory.grow and return its old end, which is unique even when another
+-    /// guest thread grows the heap concurrently. Holding the mapping locks
+-    /// across either operation serializes it with fixed remaps and keeps the
+-    /// registry publication atomic.
++    /// reuses that address. Otherwise it reuses an owned unmapped interval,
++    /// or `reserve_and_remap` uses WebAssembly memory.grow and returns its old
++    /// end, unique even when another guest thread grows the heap concurrently.
++    /// Holding the mapping locks serializes remaps, reclamation and registry
++    /// publication. Failed host operations never consume reusable intervals.
+     pub(crate) fn install_runtime_selected_shared_memory_mapping(
+         &self,
+         len: u64,
+@@ -1070,6 +1143,22 @@ impl WasiState {
+             return Err(Errno::Busy);
+         }
+ 
++        if let Some((index, start)) = active.reusable_range(len)? {
++            let mut updated_active = active.replacing(WasiSharedMemoryMapping {
++                start,
++                len,
++                file,
++                file_offset,
++                futexs,
++            })?;
++            updated_active.consume_reusable(index, start, len)?;
++            if reserve_and_remap(WasiSharedMemoryRuntimePlacement::Reused { start })? != start {
++                return Err(Errno::Inval);
++            }
++            *active = updated_active;
++            return Ok(start);
++        }
++
+         let minimum_start = reservations
+             .max_end()?
+             .into_iter()
+@@ -1239,7 +1328,8 @@ impl WasiState {
+         if reservations.overlaps(start, requested_len)? || !active.covers(start, operation_len)? {
+             return Err(Errno::Inval);
+         }
+-        let updated_active = active.removing(start, operation_len)?;
++        let mut updated_active = active.removing(start, operation_len)?;
++        updated_active.reclaim(start, operation_len)?;
+         restore_private()?;
+         *active = updated_active;
+         Ok(())
+@@ -1895,7 +1985,7 @@ mod tests {
+                     observed_placement = Some(placement);
+                     match placement {
+                         WasiSharedMemoryRuntimePlacement::Inherited { start } => Ok(start),
+-                        WasiSharedMemoryRuntimePlacement::Fresh { .. } => Err(Errno::Inval),
++                        _ => Err(Errno::Inval),
+                     }
+                 },
+             )
+@@ -1941,7 +2031,7 @@ mod tests {
+                 original.futexs.clone(),
+                 |placement| match placement {
+                     WasiSharedMemoryRuntimePlacement::Inherited { start } => Ok(start),
+-                    WasiSharedMemoryRuntimePlacement::Fresh { .. } => Err(Errno::Inval),
++                    _ => Err(Errno::Inval),
+                 },
+             )
+             .unwrap();
+@@ -2117,6 +2207,197 @@ mod tests {
+         assert_eq!(ranges, vec![(0, 4, 128), (4, 4, 512), (8, 8, 136)]);
+     }
+ 
++    #[test]
++    fn runtime_selected_mapping_reuses_coalesced_owned_ranges_transactionally() {
++        #[cfg(not(target_arch = "wasm32"))]
++        let runtime = tokio::runtime::Builder::new_current_thread()
++            .enable_all()
++            .build()
++            .unwrap();
++        #[cfg(not(target_arch = "wasm32"))]
++        let _runtime_guard = runtime.enter();
++        let state = test_state("shared-memory-unmapped-reuse-test");
++        let original = mapping(0x20_000, 0x40_000, 0);
++        let old_futexs = original.futexs.clone();
++        state.replace_shared_memory_mapping(original).unwrap();
++        assert_eq!(
++            state.remove_shared_memory_mapping(0x20_000, 0x10_000, 0x10_000, || Err(Errno::Io)),
++            Err(Errno::Io)
++        );
++        assert!(
++            state
++                .shared_memory_mappings
++                .lock()
++                .unwrap()
++                .unmapped
++                .is_empty()
++        );
++
++        // The first partial unmap alone has no full aligned guest page.
++        state
++            .remove_shared_memory_mapping(0x31_000, 0xf_000, 0xf_000, || Ok(()))
++            .unwrap();
++        state
++            .remove_shared_memory_mapping(0x40_000, 0x10_000, 0x10_000, || Ok(()))
++            .unwrap();
++        let replacement = mapping(0, 0x10_000, 0x10_000);
++        assert_eq!(
++            state.install_runtime_selected_shared_memory_mapping(
++                replacement.len,
++                replacement.file.clone(),
++                replacement.file_offset,
++                replacement.futexs.clone(),
++                |placement| {
++                    assert_eq!(
++                        placement,
++                        WasiSharedMemoryRuntimePlacement::Reused { start: 0x40_000 }
++                    );
++                    Err(Errno::Io)
++                }
++            ),
++            Err(Errno::Io)
++        );
++        assert_eq!(
++            state.shared_memory_mappings.lock().unwrap().unmapped,
++            vec![0x31_000..0x50_000]
++        );
++
++        let start = state
++            .install_runtime_selected_shared_memory_mapping(
++                replacement.len,
++                replacement.file,
++                replacement.file_offset,
++                replacement.futexs.clone(),
++                |placement| match placement {
++                    WasiSharedMemoryRuntimePlacement::Reused { start } => Ok(start),
++                    _ => panic!("owned interval was not reused"),
++                },
++            )
++            .unwrap();
++        assert_eq!(start, 0x40_000);
++        let (futexs, offset) = state.shared_futex_registry(start + 4).unwrap().unwrap();
++        assert!(Arc::ptr_eq(&futexs, &replacement.futexs));
++        assert!(!Arc::ptr_eq(&futexs, &old_futexs));
++        assert_eq!(offset, replacement.file_offset + 4);
++        assert_eq!(
++            state.remove_shared_memory_mapping(0x70_000, 1, 0x1000, || panic!("foreign unmap")),
++            Err(Errno::Noent)
++        );
++        state
++            .remove_shared_memory_mapping(start, 0x10_000, 0x10_000, || Ok(()))
++            .unwrap();
++        state
++            .remove_shared_memory_mapping(0x30_000, 0x1000, 0x1000, || Ok(()))
++            .unwrap();
++        assert_eq!(
++            state.shared_memory_mappings.lock().unwrap().unmapped,
++            vec![0x30_000..0x50_000]
++        );
++
++        let transition = state.prepare_shared_memory_for_exec().unwrap();
++        assert!(
++            state
++                .shared_memory_mappings
++                .lock()
++                .unwrap()
++                .unmapped
++                .is_empty()
++        );
++        drop(transition);
++        assert_eq!(
++            state.shared_memory_mappings.lock().unwrap().unmapped,
++            vec![0x30_000..0x50_000]
++        );
++    }
++
++    #[test]
++    fn reusable_shared_memory_ranges_follow_fork_and_exec_image_lifetimes() {
++        #[cfg(not(target_arch = "wasm32"))]
++        let runtime = tokio::runtime::Builder::new_current_thread()
++            .enable_all()
++            .build()
++            .unwrap();
++        #[cfg(not(target_arch = "wasm32"))]
++        let _runtime_guard = runtime.enter();
++        let state = test_state("shared-memory-unmapped-image-test");
++        state
++            .replace_shared_memory_mapping(mapping(0x20_000, 0x10_000, 0))
++            .unwrap();
++        state
++            .remove_shared_memory_mapping(0x20_000, 0x10_000, 0x10_000, || Ok(()))
++            .unwrap();
++        let child = state.fork().unwrap();
++        let replacement = mapping(0, 0x10_000, 0);
++        let map_into = |target: &WasiState, expected| {
++            target
++                .install_runtime_selected_shared_memory_mapping(
++                    replacement.len,
++                    replacement.file.clone(),
++                    replacement.file_offset,
++                    replacement.futexs.clone(),
++                    |placement| {
++                        assert_eq!(placement, expected);
++                        Ok(match placement {
++                            WasiSharedMemoryRuntimePlacement::Reused { start } => start,
++                            WasiSharedMemoryRuntimePlacement::Fresh { .. } => 0x80_000,
++                            _ => panic!("unexpected inherited mapping"),
++                        })
++                    },
++                )
++                .unwrap()
++        };
++        assert_eq!(
++            map_into(
++                &child,
++                WasiSharedMemoryRuntimePlacement::Reused { start: 0x20_000 }
++            ),
++            0x20_000
++        );
++        assert_eq!(
++            state.shared_memory_mappings.lock().unwrap().unmapped,
++            vec![0x20_000..0x30_000]
++        );
++
++        let transition = state.prepare_shared_memory_for_exec().unwrap();
++        assert_eq!(
++            map_into(
++                &state,
++                WasiSharedMemoryRuntimePlacement::Fresh { minimum_start: 0 }
++            ),
++            0x80_000
++        );
++        drop(transition);
++        assert!(
++            state
++                .shared_memory_mappings
++                .lock()
++                .unwrap()
++                .mappings
++                .is_empty()
++        );
++        assert_eq!(
++            state.shared_memory_mappings.lock().unwrap().unmapped,
++            vec![0x20_000..0x30_000]
++        );
++
++        state.prepare_shared_memory_for_exec().unwrap().commit();
++        assert_eq!(
++            map_into(
++                &state,
++                WasiSharedMemoryRuntimePlacement::Fresh { minimum_start: 0 }
++            ),
++            0x80_000
++        );
++        assert!(
++            state
++                .shared_memory_mappings
++                .lock()
++                .unwrap()
++                .unmapped
++                .is_empty()
++        );
++    }
++
+     #[test]
+     fn removing_shared_memory_mapping_splits_overlapping_ranges() {
+         let mut mappings = WasiSharedMemoryMappings::default();
+diff --git a/lib/wasix/src/syscalls/wasix/mem_mmap.rs b/lib/wasix/src/syscalls/wasix/mem_mmap.rs
+index 7a197de..9cd68ad 100644
+--- a/lib/wasix/src/syscalls/wasix/mem_mmap.rs
++++ b/lib/wasix/src/syscalls/wasix/mem_mmap.rs
+@@ -23,8 +23,8 @@ const MS_SYNC: u32 = 0x04;
+ /// Remaps a guest memory range to a host file-backed shared mapping.
+ ///
+ /// File-backed `MAP_SHARED` supports both runtime-selected and fixed mappings.
+-/// A non-fixed request atomically claims new WebAssembly pages using the old
+-/// size returned by memory.grow, so it cannot race a concurrent sbrk. A fixed
++/// A non-fixed request reuses a previously unmapped owned interval or claims
++/// new WebAssembly pages using memory.grow, without racing a concurrent sbrk. A fixed
+ /// request may replace only a fully tracked active mapping or an exact inherited
+ /// exec reservation whose range, offset, and backing identity all match.
+ #[instrument(
+@@ -219,11 +219,17 @@ pub fn mem_mmap<M: MemorySize>(
+                             })?;
+                         (start, selected_end)
+                     }
++                    WasiSharedMemoryRuntimePlacement::Reused { start } => {
++                        let selected_end = start
++                            .checked_add(mapped_len as u64)
++                            .ok_or(Errno::Overflow)?;
++                        (start, selected_end)
++                    }
+                 };
+                 let selected_usize: usize = selected.try_into().map_err(|_| Errno::Overflow)?;
+-                // SAFETY: memory.grow reserved this unique range for the currently leased
+-                // continuation, no MemoryView is live, and the mapping registry retains the file
+-                // and prevents guest-visible truncation while the mapping exists.
++                // SAFETY: the registry owns this inherited, unmapped or freshly grown range
++                // exclusively for the leased continuation. No MemoryView is live, and the
++                // registry retains the file and prevents guest-visible truncation.
+                 unsafe {
+                     memory.remap_shared_file_fixed(
+                         &mut ctx.as_store_mut(),

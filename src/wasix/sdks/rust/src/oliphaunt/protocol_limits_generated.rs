@@ -8,3 +8,4 @@ pub(crate) const PROTOCOL_BUFFERED: i32 = 0;
 pub(crate) const PROTOCOL_STREAM: i32 = 1;
 pub(crate) const PROTOCOL_HYBRID: i32 = 2;
 pub(crate) const PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT: i32 = 3;
+pub(crate) const PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY: i32 = 4;

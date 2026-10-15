@@ -59,7 +59,19 @@ The extension must match the native runtime and target platform. See [Extensions
 
 ## Back up and restore
 
-`backup()` returns a physical archive as a `Uint8Array`. Save or transfer those bytes using your host's file APIs. Restore to a new or empty directory:
+Use `backupToFile()` for a physical archive that may be large:
+
+```ts
+await db.backupToFile('./backup.tar');
+```
+
+The parent directory must exist and the destination must be new. The archive is
+written in bounded chunks and published after backup and file close succeed.
+Unix files use private permissions. Completion does not promise power-loss
+durability. Backup methods cannot run inside a transaction callback.
+
+`backup()` returns the complete physical archive as a `Uint8Array` when you need
+the bytes in memory. Restore accepts archive bytes and a new or empty directory:
 
 ```ts
 const archive = await db.backup();

@@ -206,6 +206,8 @@ enum ProtocolTransportMode {
     Hybrid = super::protocol_limits_generated::PROTOCOL_HYBRID,
     BufferedInputStreamedOutput =
         super::protocol_limits_generated::PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT,
+    BufferedInputStreamedOutputWithCopy =
+        super::protocol_limits_generated::PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY,
 }
 
 impl ProtocolTransportMode {
@@ -217,6 +219,9 @@ impl ProtocolTransportMode {
             super::protocol_limits_generated::PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT => {
                 Ok(Self::BufferedInputStreamedOutput)
             }
+            super::protocol_limits_generated::PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY => {
+                Ok(Self::BufferedInputStreamedOutputWithCopy)
+            }
             other => anyhow::bail!("invalid WASIX protocol transport mode {other}"),
         }
     }
@@ -226,7 +231,8 @@ impl ProtocolPumpScope {
     fn transport_mode(self) -> ProtocolTransportMode {
         match self {
             Self::OutputStream => ProtocolTransportMode::BufferedInputStreamedOutput,
-            Self::Copy | Self::Connection => ProtocolTransportMode::Hybrid,
+            Self::Copy => ProtocolTransportMode::BufferedInputStreamedOutputWithCopy,
+            Self::Connection => ProtocolTransportMode::Hybrid,
         }
     }
 }
@@ -503,11 +509,7 @@ impl PostgresMod {
     #[cfg(feature = "extensions")]
     pub fn preload_extension_module(&self, extension: Extension) -> Result<()> {
         for module in extension.native_support_modules() {
-            seed_extension_side_module(
-                &self.tokio_runtime,
-                &self.engine,
-                &self.wasix_module_cache,
-                &self.runtime_storage,
+            self.seed_extension_side_module(
                 module.runtime_path(),
                 module.aot_name(),
                 extension.package(),
@@ -522,17 +524,49 @@ impl PostgresMod {
         let Some(module_file) = extension.native_module_file() else {
             return Ok(());
         };
-        seed_extension_side_module(
-            &self.tokio_runtime,
-            &self.engine,
-            &self.wasix_module_cache,
-            &self.runtime_storage,
+        self.seed_extension_side_module(
             &format!("lib/postgresql/{module_file}"),
             extension.aot_name(),
             extension.package(),
             &format!("extension '{}'", extension.sql_name()),
         )?;
         Ok(())
+    }
+
+    #[cfg(feature = "extensions")]
+    fn seed_extension_side_module(
+        &self,
+        runtime_path: &str,
+        aot_name: Option<&'static str>,
+        package: Option<&super::extensions::ExtensionPackage>,
+        label: &str,
+    ) -> Result<()> {
+        let Some(aot_name) = aot_name else {
+            return Ok(());
+        };
+        let path = Path::new("/").join(runtime_path);
+        let wasm = self
+            .runtime_storage
+            .read(&path)
+            .with_context(|| format!("{label} is not installed at {}", path.display()))?;
+        if let Some(package) = package {
+            let module = aot::load_package_module(&self.engine, package, aot_name, &wasm)?;
+            block_on_tokio_runtime(
+                &self.tokio_runtime,
+                self.wasix_module_cache
+                    .save(ModuleHash::new(&wasm), &self.engine, &module),
+            )
+            .with_context(|| format!("seed Wasmer module cache for {label}"))
+        } else {
+            seed_wasix_module_cache_bytes(
+                &self.tokio_runtime,
+                &self.engine,
+                &self.wasix_module_cache,
+                &wasm,
+                aot_name,
+                label,
+            )
+        }
     }
 
     pub(crate) fn run_split_initdb(
@@ -614,13 +648,16 @@ impl PostgresMod {
                 )),
             };
         }
-        if scope == ProtocolPumpScope::OutputStream {
+        if matches!(
+            scope,
+            ProtocolPumpScope::OutputStream | ProtocolPumpScope::Copy
+        ) {
             let execution = result.and_then(|output| {
                 if output.is_empty() {
                     Ok(())
                 } else {
                     Err(self.terminal_guest_failure(format!(
-                        "buffered-input/streamed-output transport retained {} buffered response bytes",
+                        "streamed-output transport retained {} buffered response bytes",
                         output.len()
                     )))
                 }
@@ -637,13 +674,9 @@ impl PostgresMod {
         let active = self.protocol_stream_active()?;
         if active {
             let stream_result = match scope {
-                ProtocolPumpScope::OutputStream => {
-                    unreachable!("one-way output stream handled before COPY activation")
+                ProtocolPumpScope::OutputStream | ProtocolPumpScope::Copy => {
+                    unreachable!("finite output stream handled before COPY activation")
                 }
-                // The triggering PostgresMainLoopOnce call synchronously completes
-                // COPY. Starting another iteration would consume the next frontend
-                // frame (normally Terminate) as part of the borrowed session.
-                ProtocolPumpScope::Copy => result.map(|_| ()),
                 ProtocolPumpScope::Connection => result.and_then(|_| {
                     self.set_protocol_stream_prefix(continuation_prefix())?;
                     self.serve_protocol_stream_inner()
@@ -1601,36 +1634,6 @@ fn preload_runtime_side_modules(
     Ok(())
 }
 
-#[cfg(feature = "extensions")]
-fn seed_extension_side_module(
-    runtime: &TokioRuntime,
-    engine: &Engine,
-    module_cache: &Arc<SharedCache>,
-    runtime_root: &StorageRoot,
-    runtime_path: &str,
-    aot_name: Option<&'static str>,
-    package: Option<&super::extensions::ExtensionPackage>,
-    label: &str,
-) -> Result<()> {
-    let Some(aot_name) = aot_name else {
-        return Ok(());
-    };
-    let path = Path::new("/").join(runtime_path);
-    let wasm = runtime_root
-        .read(&path)
-        .with_context(|| format!("{label} is not installed at {}", path.display()))?;
-    if let Some(package) = package {
-        let module = aot::load_package_module(engine, package, aot_name, &wasm)?;
-        block_on_tokio_runtime(
-            runtime,
-            module_cache.save(ModuleHash::new(&wasm), engine, &module),
-        )
-        .with_context(|| format!("seed Wasmer module cache for {label}"))
-    } else {
-        seed_wasix_module_cache_bytes(runtime, engine, module_cache, &wasm, aot_name, label)
-    }
-}
-
 fn seed_wasix_module_cache(
     runtime: &TokioRuntime,
     engine: &Engine,
@@ -2468,7 +2471,11 @@ mod tests {
             ProtocolTransportMode::from_i32(3).unwrap(),
             ProtocolTransportMode::BufferedInputStreamedOutput
         );
-        for invalid in [-1, 4, 99] {
+        assert_eq!(
+            ProtocolTransportMode::from_i32(4).unwrap(),
+            ProtocolTransportMode::BufferedInputStreamedOutputWithCopy
+        );
+        for invalid in [-1, 5, 99] {
             assert!(ProtocolTransportMode::from_i32(invalid).is_err());
         }
 
@@ -2478,7 +2485,7 @@ mod tests {
         );
         assert_eq!(
             ProtocolPumpScope::Copy.transport_mode(),
-            ProtocolTransportMode::Hybrid
+            ProtocolTransportMode::BufferedInputStreamedOutputWithCopy
         );
         assert_eq!(
             ProtocolPumpScope::Connection.transport_mode(),

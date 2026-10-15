@@ -6,6 +6,20 @@ scratch=$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-cargo-closure-XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 crate=$(bun tools/packaging/cargo-package-test-closure.test.mts prepare "$scratch")
 script=tools/packaging/check-cargo-package-tests.sh
+mkdir "$scratch/bin"
+cat > "$scratch/bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$(rustc --version)" != "$PACKAGE_TEST_RUSTC_VERSION" ]]; then
+  echo 'package test changed the caller-selected compiler' >&2
+  exit 1
+fi
+exec "$PACKAGE_TEST_CARGO_BIN" "$@"
+EOF
+chmod +x "$scratch/bin/cargo"
+export PACKAGE_TEST_CARGO_BIN="$(command -v cargo)"
+export PACKAGE_TEST_RUSTC_VERSION="$(rustc --version)"
+export PATH="$scratch/bin:$PATH"
 bash "$script" --crate "$crate" --target-dir "$scratch/target" \
   --stub-dependency carrier --no-default-features --features forward --lib > "$scratch/checked.log"
 grep -q 'Cargo package test closure verified: closure-fixture-0.1.0' "$scratch/checked.log"

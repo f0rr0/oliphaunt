@@ -5,9 +5,13 @@
 //! no Tokio runtime or Node async-work queue participates in database work.
 
 use std::collections::BTreeMap;
+#[cfg(feature = "tools")]
+use std::collections::BTreeSet;
 use std::mem;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
+#[cfg(feature = "tools")]
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, ThreadId};
@@ -24,7 +28,9 @@ use oliphaunt_pgwire_server::{AsyncOliphauntServer, AsyncOliphauntServerBuilder,
 #[cfg(feature = "extensions")]
 use oliphaunt_wasix::Extension;
 #[cfg(feature = "tools")]
-use oliphaunt_wasix::tools::{PgDumpOptions, PostgresToolOutput, PsqlOptions, ToolAssets};
+use oliphaunt_wasix::tools::{
+    PgDumpOptions, PostgresToolOutput, PostgresToolSummary, PsqlOptions, ToolAssets,
+};
 use oliphaunt_wasix::{
     AsyncOliphaunt, AsyncOliphauntBuilder, CatalogProfile, ClusterSeed, DatabaseStorage, ErrorKind,
     IcuData, Oliphaunt, OliphauntBuilder, RawStreamError, StorageCommitState, StorageErrorCode,
@@ -138,6 +144,13 @@ pub struct NativeToolResult {
     pub status: i32,
     pub stdout: Uint8Array,
     pub stderr: Uint8Array,
+}
+
+#[napi(object)]
+pub struct NativeToolSummary {
+    pub stdout_bytes: f64,
+    pub stderr: String,
+    pub stderr_truncated: bool,
 }
 
 #[napi(object)]
@@ -416,6 +429,114 @@ impl NativeWasixDatabase {
         }
     }
 
+    #[napi(js_name = "pgDumpToFile", catch_unwind)]
+    pub fn pg_dump_to_file(
+        &mut self,
+        env: Env,
+        args: Vec<String>,
+        assets: NativeToolAssets,
+        destination: String,
+    ) -> Result<NativeToolSummary> {
+        #[cfg(feature = "tools")]
+        {
+            let options = PgDumpOptions::new().args(args).assets(tool_assets(assets));
+            let output = self.invoke_core(&env, "write WASIX pg_dump file", |database| {
+                database.pg_dump_to_file(options, destination, None)
+            })?;
+            native_tool_summary(&env, "write WASIX pg_dump file", output)
+        }
+        #[cfg(not(feature = "tools"))]
+        {
+            let _ = (env, args, assets, destination);
+            Err(missing_release_feature("tools", "pgDumpToFile"))
+        }
+    }
+
+    #[napi(js_name = "psqlToFile", catch_unwind)]
+    pub fn psql_to_file(
+        &mut self,
+        env: Env,
+        args: Vec<String>,
+        assets: NativeToolAssets,
+        destination: String,
+        command: Option<String>,
+        script: Option<String>,
+    ) -> Result<NativeToolSummary> {
+        if command.is_some() && script.is_some() {
+            return Err(invalid_argument(
+                "psql accepts either command or script, not both",
+            ));
+        }
+        #[cfg(feature = "tools")]
+        {
+            let options = psql_options(args, command, script).assets(tool_assets(assets));
+            let output = self.invoke_core(&env, "write WASIX psql file", |database| {
+                database.psql_to_file(options, destination, None)
+            })?;
+            native_tool_summary(&env, "write WASIX psql file", output)
+        }
+        #[cfg(not(feature = "tools"))]
+        {
+            let _ = (env, args, assets, destination, command, script);
+            Err(missing_release_feature("tools", "psqlToFile"))
+        }
+    }
+
+    #[napi(js_name = "pgDumpToRegisteredOutput", catch_unwind)]
+    pub fn pg_dump_to_registered_output(
+        &mut self,
+        env: Env,
+        args: Vec<String>,
+        assets: NativeToolAssets,
+        registration: u32,
+    ) -> Result<NativeToolSummary> {
+        #[cfg(feature = "tools")]
+        {
+            let writers = take_tool_output(registration)?;
+            let options = PgDumpOptions::new().args(args).assets(tool_assets(assets));
+            let output = self.invoke_core(&env, "stream WASIX pg_dump", |database| {
+                database.pg_dump_to_writer(options, writers.stdout, writers.stderr)
+            })?;
+            native_tool_summary(&env, "stream WASIX pg_dump", output)
+        }
+        #[cfg(not(feature = "tools"))]
+        {
+            let _ = (env, args, assets, registration);
+            Err(missing_release_feature("tools", "pgDumpToRegisteredOutput"))
+        }
+    }
+
+    #[napi(js_name = "psqlToRegisteredOutput", catch_unwind)]
+    pub fn psql_to_registered_output(
+        &mut self,
+        env: Env,
+        args: Vec<String>,
+        assets: NativeToolAssets,
+        registration: u32,
+        command: Option<String>,
+        script: Option<String>,
+    ) -> Result<NativeToolSummary> {
+        if command.is_some() && script.is_some() {
+            return Err(invalid_argument(
+                "psql accepts either command or script, not both",
+            ));
+        }
+        #[cfg(feature = "tools")]
+        {
+            let writers = take_tool_output(registration)?;
+            let options = psql_options(args, command, script).assets(tool_assets(assets));
+            let output = self.invoke_core(&env, "stream WASIX psql", |database| {
+                database.psql_to_writer(options, writers.stdout, writers.stderr)
+            })?;
+            native_tool_summary(&env, "stream WASIX psql", output)
+        }
+        #[cfg(not(feature = "tools"))]
+        {
+            let _ = (env, args, assets, registration, command, script);
+            Err(missing_release_feature("tools", "psqlToRegisteredOutput"))
+        }
+    }
+
     #[napi(catch_unwind)]
     pub fn close(&mut self, env: Env) -> Result<()> {
         self.invoke(&env, "close WASIX direct database", Oliphaunt::close)
@@ -425,14 +546,14 @@ impl NativeWasixDatabase {
 #[derive(Default)]
 struct StreamEnvironment {
     alive: AtomicBool,
-    active: Mutex<Option<Arc<StreamAck>>>,
+    active: Mutex<Vec<Arc<StreamAck>>>,
 }
 
 impl StreamEnvironment {
     fn new() -> Self {
         Self {
             alive: AtomicBool::new(true),
-            active: Mutex::new(None),
+            active: Mutex::new(Vec::new()),
         }
     }
 
@@ -447,7 +568,7 @@ impl StreamEnvironment {
                 "JavaScript environment is closing",
             ));
         }
-        *active = Some(ack);
+        active.push(ack);
         Ok(())
     }
 
@@ -455,12 +576,7 @@ impl StreamEnvironment {
         let Ok(mut active) = self.active.lock() else {
             return;
         };
-        if active
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, ack))
-        {
-            active.take();
-        }
+        active.retain(|current| !Arc::ptr_eq(current, ack));
     }
 
     fn shutdown(&self) {
@@ -470,14 +586,243 @@ impl StreamEnvironment {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             self.alive.store(false, Ordering::Release);
-            active.take()
+            std::mem::take(&mut *active)
         };
-        if let Some(active) = active {
+        for active in active {
             active.complete(Err(Error::new(
                 Status::Closing,
-                "JavaScript environment closed during protocol streaming",
+                "JavaScript environment closed during streaming",
             )));
         }
+    }
+}
+
+#[cfg(feature = "tools")]
+struct JsToolWriter<F>(F);
+
+#[cfg(feature = "tools")]
+impl<F: FnMut(&[u8]) -> std::io::Result<()>> std::io::Write for JsToolWriter<F> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        (self.0)(bytes)?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "tools")]
+struct ToolChunk {
+    bytes: Vec<u8>,
+    ack: Arc<StreamAck>,
+}
+
+#[cfg(feature = "tools")]
+fn js_tool_writer(
+    callback: Function<'_, Object<'static>, ()>,
+    environment: Arc<StreamEnvironment>,
+) -> Result<impl std::io::Write + Send + 'static> {
+    let threadsafe = callback
+        .build_threadsafe_function::<ToolChunk>()
+        .max_queue_size::<1>()
+        .build_callback(|context: ThreadsafeCallContext<ToolChunk>| {
+            let mut packet = Object::new(&context.env)?;
+            packet
+                .set_named_property("chunk", v8_owned_bytes(&context.env, &context.value.bytes)?)?;
+            let ack = context.value.ack;
+            let acknowledge = context
+                .env
+                .create_function_from_closure::<Option<String>, (), _>(
+                    "acknowledge",
+                    move |context| {
+                        let result = (if context.length() == 0 {
+                            Ok(None)
+                        } else {
+                            context.get::<Option<String>>(0)
+                        })
+                        .and_then(|failure| {
+                            failure.map_or(Ok(()), |message| {
+                                Err(Error::new(Status::GenericFailure, message))
+                            })
+                        });
+                        ack.complete(result);
+                        Ok(())
+                    },
+                )?;
+            packet.set_named_property("acknowledge", acknowledge)?;
+            Ok(static_object(&context.env, packet))
+        })?;
+    Ok(JsToolWriter(move |bytes: &[u8]| {
+        let ack = Arc::new(StreamAck::default());
+        environment
+            .activate(Arc::clone(&ack))
+            .map_err(std::io::Error::other)?;
+        let callback_ack = Arc::clone(&ack);
+        let status = threadsafe.call_with_return_value(
+            ToolChunk {
+                bytes: bytes.to_vec(),
+                ack: Arc::clone(&ack),
+            },
+            ThreadsafeFunctionCallMode::Blocking,
+            move |result, _env| {
+                // Returning a Promise is not destination credit. Only the
+                // explicit acknowledgement after its write releases this wait.
+                if let Err(error) = result {
+                    callback_ack.complete(Err(error));
+                }
+                Ok(())
+            },
+        );
+        if status != Status::Ok {
+            ack.complete(Err(Error::new(
+                status,
+                "queue tool output on the JavaScript thread",
+            )));
+        }
+        let result = ack.wait();
+        environment.deactivate(&ack);
+        result.map_err(std::io::Error::other)
+    }))
+}
+
+// Output callbacks belong to the responsive parent realm. A same-process
+// Worker consumes the writers once while keeping its synchronous database.
+#[cfg(feature = "tools")]
+struct RegisteredToolOutput {
+    environment_key: usize,
+    environment: Arc<StreamEnvironment>,
+    writers: Option<ToolOutputWriters>,
+}
+
+#[cfg(feature = "tools")]
+struct ToolOutputWriters {
+    stdout: Box<dyn std::io::Write + Send>,
+    stderr: Option<Box<dyn std::io::Write + Send>>,
+}
+
+#[cfg(feature = "tools")]
+#[derive(Default)]
+struct ToolOutputRegistry {
+    outputs: BTreeMap<u32, RegisteredToolOutput>,
+    environments: BTreeSet<usize>,
+}
+
+#[cfg(feature = "tools")]
+fn tool_output_registry() -> &'static Mutex<ToolOutputRegistry> {
+    static REGISTRY: OnceLock<Mutex<ToolOutputRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(ToolOutputRegistry::default()))
+}
+
+#[cfg(feature = "tools")]
+fn release_tool_output(id: u32) {
+    let output = tool_output_registry()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .outputs
+        .remove(&id);
+    if let Some(output) = output {
+        output.environment.shutdown();
+    }
+}
+
+#[cfg(feature = "tools")]
+fn release_tool_environment(environment_key: usize) {
+    let outputs = {
+        let mut registry = tool_output_registry()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        registry.environments.remove(&environment_key);
+        registry
+            .outputs
+            .extract_if(.., |_, output| output.environment_key == environment_key)
+            .map(|(_, output)| output)
+            .collect::<Vec<_>>()
+    };
+    for output in outputs {
+        output.environment.shutdown();
+    }
+}
+
+#[cfg(feature = "tools")]
+fn take_tool_output(id: u32) -> Result<ToolOutputWriters> {
+    tool_output_registry()
+        .lock()
+        .map_err(|_| Error::new(Status::GenericFailure, "tool output registry lock poisoned"))?
+        .outputs
+        .get_mut(&id)
+        .and_then(|output| output.writers.take())
+        .ok_or_else(|| invalid_argument("tool output registration is closed or already consumed"))
+}
+
+/// Private, one-shot output handoff between same-process JavaScript realms.
+#[cfg(feature = "tools")]
+#[napi(custom_finalize)]
+pub struct NativeWasixToolOutput {
+    id: u32,
+}
+
+#[cfg(feature = "tools")]
+impl ObjectFinalize for NativeWasixToolOutput {}
+
+#[cfg(feature = "tools")]
+impl Drop for NativeWasixToolOutput {
+    fn drop(&mut self) {
+        release_tool_output(self.id);
+    }
+}
+
+#[cfg(feature = "tools")]
+#[napi]
+impl NativeWasixToolOutput {
+    #[napi(factory, catch_unwind)]
+    pub fn open(env: Env, destination: Object<'_>) -> Result<Self> {
+        static NEXT_ID: AtomicU32 = AtomicU32::new(1);
+        let id = NEXT_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map_err(|_| Error::new(Status::GenericFailure, "tool output identifiers exhausted"))?;
+        let environment = Arc::new(StreamEnvironment::new());
+        let stdout = js_tool_writer(
+            destination.get_named_property("stdout")?,
+            Arc::clone(&environment),
+        )?;
+        let stderr = destination
+            .get_named_property::<Option<Function<'_, Object<'static>, ()>>>("stderr")?
+            .map(|callback| js_tool_writer(callback, Arc::clone(&environment)))
+            .transpose()?
+            .map(|writer| Box::new(writer) as Box<dyn std::io::Write + Send>);
+        let environment_key = env.raw() as usize;
+        let mut registry = tool_output_registry().lock().map_err(|_| {
+            Error::new(Status::GenericFailure, "tool output registry lock poisoned")
+        })?;
+        // Keep one cleanup hook per environment, rather than retaining one
+        // hook and its callback state for every completed tool invocation.
+        if !registry.environments.contains(&environment_key) {
+            env.add_env_cleanup_hook(environment_key, release_tool_environment)?;
+            registry.environments.insert(environment_key);
+        }
+        registry.outputs.insert(
+            id,
+            RegisteredToolOutput {
+                environment_key,
+                environment,
+                writers: Some(ToolOutputWriters {
+                    stdout: Box::new(stdout),
+                    stderr,
+                }),
+            },
+        );
+        Ok(Self { id })
+    }
+
+    #[napi(getter)]
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+
+    #[napi(catch_unwind)]
+    pub fn close(&self) {
+        release_tool_output(self.id);
     }
 }
 
@@ -999,6 +1344,25 @@ fn native_tool_result(
     }
 }
 
+#[cfg(feature = "tools")]
+fn native_tool_summary(
+    env: &Env,
+    operation: &'static str,
+    result: oliphaunt_wasix::Result<PostgresToolSummary>,
+) -> Result<NativeToolSummary> {
+    match result {
+        Ok(output) => Ok(NativeToolSummary {
+            stdout_bytes: output.stdout_bytes as f64,
+            stderr: output.stderr,
+            stderr_truncated: output.stderr_truncated,
+        }),
+        Err(error) => match error.tool_error() {
+            Some(tool) => Err(native_tool_error(env, operation, tool)),
+            None => Err(native_runtime_error(env, operation, error)),
+        },
+    }
+}
+
 fn invalid_argument(reason: impl Into<String>) -> Error {
     Error::new(Status::InvalidArg, reason.into())
 }
@@ -1133,6 +1497,7 @@ fn native_tool_error(
         object.set_named_property("exitCode", tool.exit_code())?;
         object.set_named_property("stdout", v8_owned_bytes(env, tool.stdout_bytes())?)?;
         object.set_named_property("stderr", v8_owned_bytes(env, tool.stderr_bytes())?)?;
+        object.set_named_property("stderrTruncated", tool.stderr_truncated())?;
         Ok(Error::from_unknown_without_coercion(
             object.into_unknown(env)?,
         ))
@@ -1210,6 +1575,45 @@ fn embedded_identity(label: &str, bytes: Option<&[u8]>, sha256: &str) -> Result<
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn environment_shutdown_releases_both_output_waiters() {
+        let environment = super::StreamEnvironment::new();
+        let stdout = std::sync::Arc::new(super::StreamAck::default());
+        let stderr = std::sync::Arc::new(super::StreamAck::default());
+        environment
+            .activate(std::sync::Arc::clone(&stdout))
+            .unwrap();
+        environment
+            .activate(std::sync::Arc::clone(&stderr))
+            .unwrap();
+        environment.shutdown();
+        assert!(stdout.wait().is_err());
+        assert!(stderr.wait().is_err());
+        assert!(
+            environment
+                .activate(std::sync::Arc::new(super::StreamAck::default()))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn acknowledging_stdout_does_not_remove_stderr_waiter() {
+        let environment = super::StreamEnvironment::new();
+        let stdout = std::sync::Arc::new(super::StreamAck::default());
+        let stderr = std::sync::Arc::new(super::StreamAck::default());
+        environment
+            .activate(std::sync::Arc::clone(&stdout))
+            .unwrap();
+        environment
+            .activate(std::sync::Arc::clone(&stderr))
+            .unwrap();
+        stdout.complete(Ok(()));
+        environment.deactivate(&stdout);
+        assert!(stdout.wait().is_ok());
+        environment.shutdown();
+        assert!(stderr.wait().is_err());
+    }
+
     use std::sync::atomic::AtomicUsize;
 
     use super::*;
@@ -1470,6 +1874,175 @@ impl NativeWasixActorDatabase {
         {
             let _ = (env, args, assets, command, script);
             Err(missing_release_feature("tools", "psql"))
+        }
+    }
+
+    #[napi(
+        js_name = "pgDumpToFile",
+        catch_unwind,
+        ts_return_type = "Promise<NativeToolSummary>"
+    )]
+    pub fn pg_dump_to_file(
+        &self,
+        env: Env,
+        args: Vec<String>,
+        assets: NativeToolAssets,
+        destination: String,
+    ) -> Result<Object<'static>> {
+        #[cfg(feature = "tools")]
+        {
+            let database = self.database.clone();
+            let (deferred, promise) = env.create_deferred()?;
+            database.pg_dump_to_file_with_completion(
+                PgDumpOptions::new().args(args).assets(tool_assets(assets)),
+                PathBuf::from(destination),
+                move |result| {
+                    deferred.resolve(move |env| {
+                        native_tool_summary(&env, "write WASIX pg_dump file", result)
+                    });
+                },
+            );
+            Ok(static_object(&env, promise))
+        }
+        #[cfg(not(feature = "tools"))]
+        {
+            let _ = (env, args, assets, destination);
+            Err(missing_release_feature("tools", "pgDumpToFile"))
+        }
+    }
+
+    #[napi(
+        js_name = "psqlToFile",
+        catch_unwind,
+        ts_return_type = "Promise<NativeToolSummary>"
+    )]
+    pub fn psql_to_file(
+        &self,
+        env: Env,
+        args: Vec<String>,
+        assets: NativeToolAssets,
+        destination: String,
+        command: Option<String>,
+        script: Option<String>,
+    ) -> Result<Object<'static>> {
+        if command.is_some() && script.is_some() {
+            return Err(invalid_argument(
+                "psql accepts either command or script, not both",
+            ));
+        }
+        #[cfg(feature = "tools")]
+        {
+            let database = self.database.clone();
+            let (deferred, promise) = env.create_deferred()?;
+            database.psql_to_file_with_completion(
+                psql_options(args, command, script).assets(tool_assets(assets)),
+                PathBuf::from(destination),
+                move |result| {
+                    deferred.resolve(move |env| {
+                        native_tool_summary(&env, "write WASIX psql file", result)
+                    });
+                },
+            );
+            Ok(static_object(&env, promise))
+        }
+        #[cfg(not(feature = "tools"))]
+        {
+            let _ = (env, args, assets, destination, command, script);
+            Err(missing_release_feature("tools", "psqlToFile"))
+        }
+    }
+
+    #[napi(
+        js_name = "pgDumpToStream",
+        catch_unwind,
+        ts_return_type = "Promise<NativeToolSummary>"
+    )]
+    pub fn pg_dump_to_stream(
+        &self,
+        env: Env,
+        args: Vec<String>,
+        assets: NativeToolAssets,
+        destination: Object<'_>,
+    ) -> Result<Object<'static>> {
+        #[cfg(feature = "tools")]
+        {
+            let writer = js_tool_writer(
+                destination.get_named_property("stdout")?,
+                Arc::clone(&self.stream_environment),
+            )?;
+            let stderr = destination
+                .get_named_property::<Option<Function<'_, Object<'static>, ()>>>("stderr")?;
+            let diagnostics = stderr
+                .map(|callback| js_tool_writer(callback, Arc::clone(&self.stream_environment)))
+                .transpose()?
+                .map(|writer| Box::new(writer) as Box<dyn std::io::Write + Send>);
+            let (deferred, promise) = env.create_deferred()?;
+            self.database.pg_dump_to_writer_with_completion(
+                PgDumpOptions::new().args(args).assets(tool_assets(assets)),
+                writer,
+                diagnostics,
+                move |result| {
+                    deferred.resolve(move |env| {
+                        native_tool_summary(&env, "stream WASIX pg_dump", result)
+                    });
+                },
+            );
+            Ok(static_object(&env, promise))
+        }
+        #[cfg(not(feature = "tools"))]
+        {
+            let _ = (env, args, assets, destination);
+            Err(missing_release_feature("tools", "pgDumpToStream"))
+        }
+    }
+
+    #[napi(
+        js_name = "psqlToStream",
+        catch_unwind,
+        ts_return_type = "Promise<NativeToolSummary>"
+    )]
+    pub fn psql_to_stream(
+        &self,
+        env: Env,
+        args: Vec<String>,
+        assets: NativeToolAssets,
+        destination: Object<'_>,
+        command: Option<String>,
+        script: Option<String>,
+    ) -> Result<Object<'static>> {
+        if command.is_some() && script.is_some() {
+            return Err(invalid_argument(
+                "psql accepts either command or script, not both",
+            ));
+        }
+        #[cfg(feature = "tools")]
+        {
+            let writer = js_tool_writer(
+                destination.get_named_property("stdout")?,
+                Arc::clone(&self.stream_environment),
+            )?;
+            let stderr = destination
+                .get_named_property::<Option<Function<'_, Object<'static>, ()>>>("stderr")?;
+            let diagnostics = stderr
+                .map(|callback| js_tool_writer(callback, Arc::clone(&self.stream_environment)))
+                .transpose()?
+                .map(|writer| Box::new(writer) as Box<dyn std::io::Write + Send>);
+            let (deferred, promise) = env.create_deferred()?;
+            self.database.psql_to_writer_with_completion(
+                psql_options(args, command, script).assets(tool_assets(assets)),
+                writer,
+                diagnostics,
+                move |result| {
+                    deferred
+                        .resolve(move |env| native_tool_summary(&env, "stream WASIX psql", result));
+                },
+            );
+            Ok(static_object(&env, promise))
+        }
+        #[cfg(not(feature = "tools"))]
+        {
+            let _ = (env, args, assets, destination, command, script);
+            Err(missing_release_feature("tools", "psqlToStream"))
         }
     }
 

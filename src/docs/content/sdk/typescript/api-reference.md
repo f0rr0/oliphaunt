@@ -45,7 +45,13 @@ Parameters are positional values corresponding to `$1`, `$2`, and so on. Explici
 
 ## Database lifecycle
 
-`backup()` returns `Promise<Uint8Array>`. `cancel()` requests interruption of active work. `close()` returns `Promise<void>` and `closed` reports terminal state. The handle also implements `Symbol.asyncDispose` for `await using` in runtimes that support it.
+`backup()` returns `Promise<Uint8Array>`. `backupToFile(destination: string)`
+returns `Promise<void>` and writes a physical archive without collecting it in
+JavaScript memory. The parent directory must exist; an existing destination is
+preserved. Successful completion includes backup cleanup and file close, without
+a power-loss durability guarantee. Both methods require an idle transaction.
+
+`cancel()` requests interruption of active work. `close()` returns `Promise<void>` and `closed` reports terminal state. The handle also implements `Symbol.asyncDispose` for `await using` in runtimes that support it.
 
 The transaction object exposes the typed query methods and `rollback()`. It expires when the callback settles and cannot escape into later application work. It has no raw-protocol or backup methods.
 

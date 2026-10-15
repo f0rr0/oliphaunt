@@ -39,6 +39,49 @@ export type NativeWasixServerListen =
 export type NativeWasixServerOpenOptions = NativeWasixOpenOptions &
   Readonly<{ listen: NativeWasixServerListen }>;
 
+export type NativeWasixToolSummary = Readonly<{
+  stdoutBytes: number;
+  stderr: string;
+  stderrTruncated: boolean;
+}>;
+
+export type NativeWasixFileTool<Result> = (
+  args: readonly string[],
+  assets: NativeWasixToolAssets,
+  destination: string,
+  command?: string,
+  script?: string,
+) => Result;
+
+export type NativeWasixToolChunk = Readonly<{
+  chunk: Uint8Array;
+  acknowledge(error?: string): void;
+}>;
+
+export type NativeWasixToolOutputHandle = Readonly<{
+  id: number;
+  close(): void;
+}>;
+
+export type NativeWasixRegisteredOutputTool = (
+  args: readonly string[],
+  assets: NativeWasixToolAssets,
+  registration: number,
+  command?: string,
+  script?: string,
+) => NativeWasixToolSummary;
+
+export type NativeWasixStreamTool = (
+  args: readonly string[],
+  assets: NativeWasixToolAssets,
+  destination: {
+    stdout(packet: NativeWasixToolChunk): void;
+    stderr?(packet: NativeWasixToolChunk): void;
+  },
+  command?: string,
+  script?: string,
+) => Promise<NativeWasixToolSummary>;
+
 export type NativeWasixDatabaseHandle = {
   readonly closed: boolean;
   execProtocolRaw(request: Uint8Array): Uint8Array;
@@ -47,6 +90,10 @@ export type NativeWasixDatabaseHandle = {
     onChunk: (chunk: Uint8Array) => void,
   ): 'complete' | 'callbackAborted';
   backup(): Uint8Array;
+  pgDumpToRegisteredOutput?: NativeWasixRegisteredOutputTool;
+  psqlToRegisteredOutput?: NativeWasixRegisteredOutputTool;
+  pgDumpToFile?: NativeWasixFileTool<NativeWasixToolSummary>;
+  psqlToFile?: NativeWasixFileTool<NativeWasixToolSummary>;
   pgDump(args: readonly string[], assets: NativeWasixToolAssets): NativeWasixToolResult;
   psql(
     args: readonly string[],
@@ -65,6 +112,10 @@ export type NativeWasixActorDatabaseHandle = {
     onChunk: (chunk: Uint8Array) => void,
   ): Promise<'complete' | 'callbackAborted'>;
   backup(): Promise<Uint8Array>;
+  pgDumpToFile?: NativeWasixFileTool<Promise<NativeWasixToolSummary>>;
+  psqlToFile?: NativeWasixFileTool<Promise<NativeWasixToolSummary>>;
+  pgDumpToStream?: NativeWasixStreamTool;
+  psqlToStream?: NativeWasixStreamTool;
   pgDump(args: readonly string[], assets: NativeWasixToolAssets): Promise<NativeWasixToolResult>;
   psql(
     args: readonly string[],
@@ -94,6 +145,12 @@ export type NativeWasixServerHandle = {
 };
 
 export type NativeWasixAddon = {
+  NativeWasixToolOutput?: {
+    open(destination: {
+      stdout(packet: NativeWasixToolChunk): void;
+      stderr?(packet: NativeWasixToolChunk): void;
+    }): NativeWasixToolOutputHandle;
+  };
   NativeWasixDatabase: {
     open(options: NativeWasixOpenOptions): NativeWasixDatabaseHandle;
     readonly prototype: NativeWasixDatabaseHandle;
@@ -115,6 +172,15 @@ export type NativeWasixAddon = {
   payloadIdentity(component: 'runtimeArchive'): string;
   extensionIdentity(sqlName: string): string;
 };
+
+/** @internal Both realms must agree before selecting direct Worker output. */
+export function supportsNativeWorkerOutput(addon: NativeWasixAddon): boolean {
+  return (
+    typeof addon.NativeWasixToolOutput?.open === 'function' &&
+    typeof addon.NativeWasixDatabase.prototype.pgDumpToRegisteredOutput === 'function' &&
+    typeof addon.NativeWasixDatabase.prototype.psqlToRegisteredOutput === 'function'
+  );
+}
 
 type WasixPackageMetadata = Readonly<{
   name?: string;

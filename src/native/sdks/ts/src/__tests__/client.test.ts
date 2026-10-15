@@ -1,7 +1,7 @@
 import { extensions as contrib, type NativeExtension } from '../extensions.js';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'bun:test';
@@ -83,6 +83,57 @@ test('exposes the minimal database lifecycle and byte backup contract', async ()
       { libraryPath: '/opt/oliphaunt/liboliphaunt.so' },
     ]);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('file backup publishes only completed streamed archives and preserves the next operation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-backup-file-'));
+  const binding = new FakeBinding();
+  let finish!: () => void;
+  let started!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const writing = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let fail = false;
+  binding.backupStream = async (_handle, onChunk) => {
+    binding.operationEvents.push('backup-stream');
+    onChunk(new Uint8Array([1, 2]));
+    started();
+    await gate;
+    if (fail) throw new Error('backup cleanup failed');
+    onChunk(new Uint8Array([3]));
+  };
+  const client = createOliphauntClient(() => binding);
+  const database = await client.open({ storage: directory(join(root, 'database')) });
+  try {
+    const destination = join(root, 'archive');
+    const backup = database.backupToFile(destination);
+    await writing;
+    await assert.rejects(stat(destination), /ENOENT/);
+    const query = database.query('SELECT 42');
+    assert.deepEqual(binding.operationEvents, ['backup-stream']);
+    finish();
+    await backup;
+    await query;
+    assert.deepEqual(await readFile(destination), Buffer.from([1, 2, 3]));
+    if (process.platform !== 'win32') assert.equal((await stat(destination)).mode & 0o777, 0o600);
+    await assert.rejects(database.backupToFile(destination), /EEXIST/);
+    assert.deepEqual(await readFile(destination), Buffer.from([1, 2, 3]));
+    fail = true;
+    await assert.rejects(database.backupToFile(join(root, 'failed')), /backup cleanup failed/);
+    assert.deepEqual((await readdir(root)).sort(), ['archive', 'database']);
+    assert.equal(binding.operationEvents.includes('backup'), false);
+    await database.query('SELECT 42');
+    await assert.rejects(database.backupToFile('invalid\0path'), /NUL/);
+    await database.transaction(async () => {
+      await assert.rejects(database.backupToFile(join(root, 'transaction')), /pinned/);
+    });
+  } finally {
+    await database.close();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -197,7 +248,9 @@ test('snapshots server storage and nested configuration before asynchronous work
   const startupGUCs: Record<string, string> = { work_mem: '8MB' };
   const extensions: NativeExtension[] = [];
   const config: ServerOpenConfig = { storage, listen, startupGUCs, extensions };
-  const client = createOliphauntClient(() => new FakeBinding(), { server: serverRuntime });
+  const client = createOliphauntClient(() => new FakeBinding(), {
+    server: serverRuntime,
+  });
 
   try {
     const opening = client.openServer(config);
@@ -254,7 +307,9 @@ test('server open preserves both a missing endpoint and handle cleanup failure',
     closeCalls += 1;
     return { state: 'terminal', error: cleanupFailure };
   };
-  const client = createOliphauntClient(() => new FakeBinding(), { server: runtime });
+  const client = createOliphauntClient(() => new FakeBinding(), {
+    server: runtime,
+  });
 
   try {
     const failure = await client
@@ -305,7 +360,10 @@ test('copies restore destination and bytes before asynchronous binding resolutio
   const backup = Buffer.from([0, 7, 8, 0]).subarray(1, 3);
 
   try {
-    const destination = { kind: 'directory' as const, path: join(root, 'restored') };
+    const destination = {
+      kind: 'directory' as const,
+      path: join(root, 'restored'),
+    };
     const restoring = client.restore(destination, backup);
     destination.path = join(root, 'changed');
     backup.fill(0);
@@ -866,7 +924,10 @@ test('registers forgotten direct cleanup and releases only the collected owner',
     await assert.rejects(
       () =>
         client.open({
-          storage: { kind: 'directory', path: join(root, 'stale-must-not-release-current') },
+          storage: {
+            kind: 'directory',
+            path: join(root, 'stale-must-not-release-current'),
+          },
         }),
       /active process-wide instance/,
     );
@@ -974,6 +1035,57 @@ test('broker facade preserves FIFO session ownership', async () => {
     ]);
     await database.close();
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('public admission rejects a burst before planning and drains accepted snapshots before close', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-admission-'));
+  const binding = new FakeBinding();
+  const started = deferred<void>();
+  const release = deferred<void>();
+  binding.protocolStarted = () => started.resolve();
+  binding.protocolGate = release.promise;
+  const database = await createOliphauntClient(() => binding).open({
+    storage: { kind: 'directory', path: root },
+  });
+  try {
+    const requests = Array.from({ length: 64 }, (_, index) => Uint8Array.of(0xaa, index));
+    const accepted = requests.map((request) => database.execProtocolRaw(request));
+    await started.promise;
+    for (const request of requests) request.fill(0xff);
+    let inspected = false;
+    await assert.rejects(
+      database.query('SELECT $1::jsonb', [
+        {
+          get value() {
+            inspected = true;
+            return 1;
+          },
+        },
+      ]),
+      /operation queue is full/,
+    );
+    assert.equal(inspected, false);
+    assert.equal(binding.requests.length, 1);
+    await database.cancel();
+    const closing = database.close();
+    assert.equal(binding.detachCalls, 0);
+    binding.protocolGate = undefined;
+    release.resolve();
+    await Promise.all(accepted);
+    await closing;
+    assert.deepEqual(
+      binding.requests,
+      Array.from({ length: 64 }, (_, index) => Uint8Array.of(0xaa, index)),
+    );
+    assert.equal(binding.maxConcurrentProtocolOperations, 1);
+    assert.equal(binding.cancelCalls, 1);
+    assert.equal(binding.detachCalls, 1);
+  } finally {
+    binding.protocolGate = undefined;
+    release.resolve();
+    await database.close();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1186,6 +1298,7 @@ test('transaction ownership is enforced from complete protocol responses before 
 });
 
 class FakeBinding implements NativeBinding {
+  backupStream?: NativeBinding['backupStream'];
   readonly openCalls: NativeOpenConfig[] = [];
   readonly restoreCalls: NativeRestoreOptions[] = [];
   readonly sqlCalls: string[] = [];

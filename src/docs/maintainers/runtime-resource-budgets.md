@@ -53,7 +53,7 @@ limits, some are compatibility requirements, and some are tuning candidates.
 | PostgreSQL's own 8 KiB receive/send buffers | **PostgreSQL implementation choices.** Separate from our bridge buffers even when equal. | Yes, `src/backend/libpq/pqcomm.c`; send storage can grow. |
 | Our 64 KiB batches, 4 MiB stream queue cap, 256 KiB channels, initial growing containers and compaction thresholds | **Oliphaunt transport/allocation tuning.** Trade calls/copies against memory and waiting. | A server also buffers I/O, but does not have these SDK bridge constants. Their exact values need workload evidence. |
 | 64/256 work admission counts | **Oliphaunt overload control.** Bounds waiting work, not backend parallelism. | Client pools/server connection admission are analogous, but not the same queues or units. |
-| OPFS bridge sizes, 32 spares, 16 parallel file operations, one cached runtime | **Oliphaunt browser/startup tuning.** Reuse and batching can reduce setup work. | No OPFS or compiled-Wasm module cache in a normal native server. |
+| 16 parallel OPFS file operations, one cached runtime | **Oliphaunt browser/startup tuning.** Reuse and batching can reduce setup work. | No OPFS or compiled-Wasm module cache in a normal native server. |
 | 128 MiB frontend/broker limits | **Oliphaunt safety/API policy.** Rejects oversized retained data on these paths. SQL results and collected tool output have no separate 64 MiB quota. | PostgreSQL has its own message/allocation rules; this cap is ours, not a SQL limit to attribute to PostgreSQL. |
 | Diagnostic tails, startup/error text and archive/metadata ceilings | **Oliphaunt diagnostics/input protection.** | Similar needs exist elsewhere; our exact limits are not PostgreSQL query-performance settings. |
 | Native backend 8 MiB thread stack, guest 8 MiB C stack, initial 128 MiB linear memory, Postmaster profile sizes | **Embedding/platform capacity choices.** Required resources with chosen budgets, not automatic speedups. | Native PostgreSQL also needs stack/heap space, but not these Wasm allocations or SDK thread defaults. |
@@ -62,7 +62,7 @@ limits, some are compatibility requirements, and some are tuning candidates.
 | Hash/copy batches and release/source/package-tool envelopes | **Build/install choices**, outside normal SQL execution. | Not PostgreSQL query settings. |
 
 The transport/storage tuning rows are the optimization-*motivated* choices.
-This inventory does not establish that 64 KiB, 32 spares, or any other exact
+This inventory does not establish that 64 KiB or any other exact
 selection is the optimum. Safety rows must earn their place through correct
 limits and failure handling, not by producing a faster benchmark.
 
@@ -79,7 +79,7 @@ TypeScript paths abbreviated as `wasix-ts/...` are under `src/wasix/sdks/ts/src/
 | `src/wasix/pgwire-server/src/proxy.rs::PROXY_READ_BUFFER_BYTES` | 64 KiB | Local stack scratch space per socket-serving call. A PostgreSQL message can span many reads. |
 | `wasix-rust/client.rs::DIRECT_TOOL_READ_BUFFER_BYTES` | 64 KiB | Separate local stack scratch space for the direct-tool socket. It is not owned by the callback ABI merely because its size matches. |
 | `src/query/rust/src/wire.rs::MAX_FRONTEND_MESSAGE`; TS `protocol/pgwire-connection.ts::MAX_FRONTEND_MESSAGE_BYTES` | 128 MiB | Maximum total length of one frontend frame, including header. Readers validate the declared length; they do not allocate the maximum for every query. Not a total multi-frame COPY limit. |
-| `wasix-ts/protocol/byte-channel.ts::WASIX_CHANNEL_BYTES` | 256 KiB + 1 byte | Fixed shared-memory ring allocation per channel, plus a separate five-word control block. One sentinel byte leaves 256 KiB usable. Full channels apply backpressure. |
+| `wasix-ts/protocol/byte-channel.ts::WASIX_CHANNEL_BYTES` | 256 KiB + 1 byte | Fixed shared-memory ring allocation per channel, plus a separate six-word control block. One sentinel byte leaves 256 KiB usable. Full channels apply backpressure. |
 | Same file, `WASIX_BYTE_CHANNEL_CHUNK_BYTES` | 64 KiB | Default read batch from the ring, independent of its capacity and of callback ownership. |
 | `src/native/runtime/src/liboliphaunt_protocol.c::DEFAULT_STREAM_QUEUE_MAX_BYTES` | 4 MiB | Native stream queue byte cap, not eager allocation. Larger writes are split into queue-sized chunks and wait for the consumer to free space. Allocations follow queued bytes. |
 | Same file, `INITIAL_BUFFERED_OUTPUT_BYTES` | 8 KiB | First native buffered-output allocation, grown geometrically as needed. Native lengths are host-sized, unlike the WASIX signed-i32 bridge. |
@@ -98,7 +98,6 @@ that collects decoded rows can still retain the full application result. An
 error after streaming a prefix cannot retract bytes already delivered.
 
 Other similarly sized values have different owners: TS
-`storage/opfs-provider.ts::DIRECT_BRIDGE_CAPACITY` supplies 1 MiB to the direct
 filesystem bridge, not the PostgreSQL transport. TS
 `direct-client-common.ts::CHROMIUM_SYNC_WASM_LIMIT_BYTES` is an 8 MiB module-size
 admission threshold for synchronous extension loading in a Chromium Window;
@@ -115,7 +114,13 @@ PostgreSQL configuration, not transport tunables.
 | `src/native/sdks/rust/src/pgwire.rs` | 64 KiB read buffer; 8 KiB initial response vector | Socket delivery box and growing result container, respectively. Neither limits the total result to that size. |
 | `src/native/sdks/rust/src/ipc.rs` and `src/native/sdks/ts/src/runtime/broker-frames.ts` | 128 MiB frame limit | Rejects a single oversized broker message; independent of the similarly sized PostgreSQL frontend-frame limit. |
 | `wasix-rust/tools.rs::DIRECT_TOOL_SOCKET_BUFFER` | 256 KiB | Waiting space in the in-process tool socket. Larger capacity can absorb bursts, not speed up SQL itself. |
-| Rust native/WASIX tools and JS tool collectors | Complete output in memory; no application byte quota | Available memory and host Vec/Buffer/string-size limits apply. Fallible capture failures discard partial stdout and stderr. Native pipes continue draining. Rust collectors grow amortized and release buffers on failure. These APIs do not yet offer a streaming sink; use an external tool for file/stream output. |
+| Guest direct tool socket reads (`protocol-contract/contract.json`) | 64 KiB maximum read batch | Keeps libpq's large receive-buffer requests below Wasmer's per-read capability. This is separate from the size of one PostgreSQL value and total tool output. Ordinary tool responses stream from the backend before COPY starts. |
+| Rust native/WASIX tools and JS tool collectors | Complete output in memory; no application byte quota | Available memory and host Vec/Buffer/string-size limits apply. Fallible capture failures discard partial stdout and stderr. Native pipes continue draining. Rust collectors grow amortized and release buffers on failure. |
+| Native/WASIX Rust tool destinations; native npm tool destinations | Up to 64 KiB per stdout write; 8 KiB diagnostic tail | Writes apply destination backpressure and retain no complete stdout. Complete diagnostics can go to a separate writer/stream; summaries mark discarded diagnostics. Buffered script input and PostgreSQL's own per-value memory remain separate costs. |
+| WASIX JavaScript host file destinations | Same Rust writer batches and diagnostic tail | Node-API root/direct/worker paths use the Rust file runner without a complete JavaScript stdout buffer. |
+| WASIX JavaScript async destinations | 64 KiB owned chunks; 8 KiB diagnostic tail; browser channels 256 KiB each | Native actor and Node worker release one pending chunk per stream after awaited acceptance. Browser Worker tools use independent protocol/output rings and mode4 backend streaming; all ring allocations enter admission accounting. Direct/root browser async capability fails before execution. Convenience output and script input still collect. |
+| Desktop broker physical backup (`src/native/broker/src/ipc.rs`; native TS `broker-frames.ts`) | 64 KiB maximum backup chunk | Streams archives through management code7/kind103 frames. A destination write failure drains the terminal response and preserves the session; buffered convenience methods still collect the full archive. The 128 MiB ordinary management-frame cap is separate from archive size. |
+| Native TypeScript `backupToFile()` (direct and broker) | Bounded archive chunks; no JavaScript archive collector | Uses synchronous file writes within the native callback, including Deno's borrowed FFI callback. Slow storage can block the JavaScript thread during a write. Same-directory private staging is published without overwriting the destination after backup and file close; completion does not promise power-loss durability. |
 | `src/native/postgres-tools/crates/tools/src/lib.rs`, captured pipe reader | 32 KiB | Tool-output read batch; total capture is governed by the separate contract above. |
 | Native `liboliphaunt_archive_tar.c::buffer_reserve` | 4 KiB initially, doubles | Backup archive starting container. The full archive still grows in memory; larger initial capacity does not solve large-backup memory use. |
 | `wasix-ts/protocol/pgwire-connection.ts`, chunk-list compaction | 1,024 consumed chunks and at least half the list consumed | Removes old list entries in batches. More frequent removal frees references sooner but spends more time moving list entries. Not a byte limit. |
@@ -126,15 +131,17 @@ PostgreSQL configuration, not transport tunables.
 
 | Owner | Selection | In simple words; effect |
 | --- | --- | --- |
-| `wasix-ts/storage/opfs-provider.ts::DIRECT_BRIDGE_CAPACITY` | 1 MiB | Maximum file-transfer batch offered to the browser filesystem bridge. Larger batches can reduce calls for big files; they do not make tiny reads faster. |
-| Browser patch `0015-wasmer-js-add-sync-filesystem-bridge.patch`, `Backend::new` | Accepts 8 KiB–4 MiB bridge capacity | Allowed range for that batch setting, not a database-size limit. |
-| Same patch, `READ_DIR_PAGE_CAPACITY` | 64 KiB | One page of directory names. Larger pages reduce trips for directories with many files, at a memory/copy cost. |
-| `wasix-ts/storage/opfs-pool.ts::#ensureStagedCapacity` | At least 8 KiB on growth; doubles or meets requested size | Growing in-memory file storage before publication. Spare capacity saves repeated allocations but increases retained memory. No total database cap follows from this number. |
-| Same file, `PREOPENED_FILE_RESERVE` | 32 spare files | Keeps files ready to use so creation can be quicker. Costs file handles/resources even before those spares hold useful data. |
 | Same file, `MAX_PARALLEL_IO` | 16 operations | Limits simultaneous work in the helper's file batches. More may speed setup/publication, or compete for the same storage. Not 16 concurrent SQL queries. |
 | `wasix-ts/hosts/browser/direct-client-common.ts::MAX_PREPARED_RUNTIMES` | 1 cached runtime identity | Avoids repeating preparation for the same assets. More entries help switching between runtime versions but retain more assets; eviction does not close live databases. |
-| `src/wasix/sdks/rust/src/async_api.rs::OWNER_QUEUE_CAPACITY` | 64 ordinary work permits | Bounds ordinary admitted work in the async wrapper. More permits let more callers wait; they do not add backend execution parallelism. |
-| `src/native/sdks/rust/src/executor.rs::ORDINARY_QUEUE_CAPACITY` | 256 ordinary queued commands | A separate SDK waiting room. Cleanup/recovery commands do not consume these slots. A command-count limit is not a byte-memory limit. |
+| `src/wasix/sdks/rust/src/async_api.rs::OWNER_QUEUE_CAPACITY`, `OWNER_QUEUE_BYTES` | 64 ordinary work permits; 128 MiB admitted input | FIFO admission precedes raw/SQL copies; permits cover structured SQL, parameters and tool inputs through owner completion. Already-owned caller inputs and output collectors remain outside a total process-memory bound. One oversized input runs alone. Controls bypass ordinary admission. |
+| `src/native/sdks/rust/src/executor.rs::ORDINARY_QUEUE_CAPACITY`, `ORDINARY_QUEUE_BYTES` | 256 ordinary queued commands; 128 MiB queued input | Raw copies and structured encoding occur after FIFO admission. Admission reserves a conservative encoding allowance; queued bytes track actual request allocation capacity and release when the owner starts the command. Caller-owned inputs remain outside this bound. Cleanup/recovery commands bypass these slots. One oversized input runs alone. |
+| `src/query/ts/src/operation-budget.ts`; native Swift and Kotlin operation gates | 64 ordinary operations; 128 MiB retained input | JS/Swift/Kotlin reject excess ordinary admission before their protected copies. Expired queued work retains ordering until its predecessor settles; controls bypass ordinary limits. This is not a bound on query results, database memory, or caller-owned data. |
+
+Optional WASIX JavaScript tools share the query admission budget through complete
+execution and cleanup. Strings reserve a conservative UTF-8 allowance before
+encoding (three bytes per UTF-16 unit); binary stdin is counted before copying.
+Browser tool protocol channels are counted before allocation. Native tools retain
+script text directly instead of encoding it and decoding it again.
 
 ### PostgreSQL's own memory and disk choices
 
@@ -305,7 +312,7 @@ that limit as a streaming decompression memory guarantee.
 | `src/extensions/contracts/extension-artifact-archive-policy.properties` | 128 MiB compressed; 512 MiB expanded; 256 MiB member; 4,096 members | Separate extension archive policy shared across consumers. Not the general runtime archive policy. |
 | `src/native/sdks/ts/src/native/assets.ts` | 4,096 extension-runtime files; 48 MiB per file; 256 MiB total; 4,096-byte path check | Limits installed extension runtime resources, not query results. |
 | `tools/packaging/portable-archive.mts::DEFAULT_PORTABLE_ARCHIVE_LIMITS` | 512 MiB archive/member; 1 GiB expanded; 32,768 entries | Default package-verifier envelope; callers can use a role-specific envelope. |
-| Rust WASIX `aot.rs`; runtime asset/tools/AOT/ICU crate `build.rs` files | 128 KiB hash-read batches | Scratch used when checking binaries. Can change verification time and scratch use, not execution speed of a verified query. |
+| Runtime asset/tools/AOT/ICU crate `build.rs` files | 128 KiB hash-read batches | Scratch used when checking binaries, separate from the Rust WASIX runtime loader, which reads and verifies owned AOT bytes before deserialization. |
 | `src/native/rust-bindings/src/liboliphaunt/root/fingerprint.rs` | 32 KiB | Root fingerprint read batch, separate from the AOT hash batch. |
 | `src/third-party/tools/source-fetch-core.mts` | 1 GiB download; 8 GiB checkout; 500,000 checkout entries; 64 KiB marker; 16 MiB patch file; 1 MiB hash reads | Source acquisition/build protection, checked against the refreshed owner. Increasing these permits larger inputs; it does not make database queries faster. |
 | `src/third-party/tools/source-archive.mts` | 1 GiB archive; 200,000 members; 2 GiB member; at most 4 GiB expanded, further bounded by 200× compressed size with a 64 MiB minimum allowance | Shared tar/ZIP source extraction envelope in current main. It rejects excessive archives; an accepted archive still consumes build-machine memory and disk. |
@@ -329,7 +336,7 @@ that limit as a streaming decompression memory guarantee.
   rules, not interchangeable transport constants. Read the cluster's actual
   segment size; a 1 MiB regression fixture is not the runtime default.
 - The startup descriptor is 32 bytes; the broker header is 13 bytes; byte-channel
-  control is five 32-bit words. Digest lengths, TAR field widths, null
+  control is six 32-bit words. Digest lengths, TAR field widths, null
   terminators and wire headers follow their formats. Changing them requires
   changing the format/ABI, not performance tuning.
 - Native path scratch includes a 4,096-byte cwd buffer and smaller leaf/name

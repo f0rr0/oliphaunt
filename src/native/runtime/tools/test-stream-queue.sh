@@ -12,6 +12,7 @@ trap 'rm -rf "$scratch"' EXIT
 "${CC:-cc}" -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror \
   -pthread -ffunction-sections -fdata-sections "$strip_unused" \
   "$root/src/native/runtime/src/liboliphaunt_error.c" \
+  "$root/src/native/runtime/src/liboliphaunt_trace.c" \
   "$root/src/native/runtime/smoke/liboliphaunt_stream_queue.c" \
   -o "$scratch/stream-queue"
 "$scratch/stream-queue"

@@ -35,8 +35,29 @@ export function createWorkerSessionDispatcher(
 ) {
   let process: WasixDatabaseSession | undefined;
   let terminal = false;
+  const toolCredits = new Map<
+    number,
+    Map<
+      'stdout' | 'stderr',
+      {
+        sequence: number;
+        resolve(): void;
+        reject(error: Error): void;
+      }
+    >
+  >();
 
   return async (request: WorkerRequest): Promise<void> => {
+    if (request.method === 'toolOutputCredit') {
+      const credits = toolCredits.get(request.id);
+      const pending = credits?.get(request.stream);
+      if (pending?.sequence === request.sequence) {
+        credits!.delete(request.stream);
+        if (request.error === undefined) pending.resolve();
+        else pending.reject(new Error(request.error));
+      }
+      return;
+    }
     let quiescentClose = false;
     try {
       if (terminal) {
@@ -139,7 +160,7 @@ export function createWorkerSessionDispatcher(
               id: request.id,
               ok: true,
               value: {
-                exitCode: result.exitCode,
+                ...result,
                 stdout: stdout.value,
                 stderr: stderr.value,
               },
@@ -148,12 +169,54 @@ export function createWorkerSessionDispatcher(
           );
           return;
         }
-        case 'runTool': {
+        case 'runTool':
+        case 'runToolStream': {
           const session = requireProcess(process);
           if (session.runTool === undefined) {
             throw new Error('this WASIX worker session does not support native tools');
           }
-          const result = await session.runTool(request.options);
+          const credits = new Map<
+            'stdout' | 'stderr',
+            { sequence: number; resolve(): void; reject(error: Error): void }
+          >();
+          const sequences = { stdout: 0, stderr: 0 };
+          const output = (stream: 'stdout' | 'stderr') => (chunk: Uint8Array) =>
+            new Promise<void>((resolve, reject) => {
+              const sequence = ++sequences[stream];
+              credits.set(stream, { sequence, resolve, reject });
+              try {
+                const prepared = prepareTransferableBytes(chunk);
+                respond(
+                  { id: request.id, kind: 'toolChunk', stream, sequence, value: prepared.value },
+                  prepared.transfer,
+                );
+              } catch (error) {
+                credits.delete(stream);
+                reject(error);
+              }
+            });
+          let result;
+          if (request.method === 'runToolStream') toolCredits.set(request.id, credits);
+          try {
+            result = await session.runTool({
+              ...request.options,
+              ...(request.method === 'runToolStream'
+                ? {
+                    output: {
+                      stdout: output('stdout'),
+                      ...(request.nativeOutputRegistration === undefined
+                        ? {}
+                        : { nativeRegistration: request.nativeOutputRegistration }),
+                      ...(request.stderr ? { stderr: output('stderr') } : {}),
+                    },
+                  }
+                : {}),
+            });
+          } finally {
+            toolCredits.delete(request.id);
+            for (const credit of credits.values())
+              credit.reject(new Error('tool output completed before acknowledgement'));
+          }
           const stdout = prepareTransferableBytes(result.stdout);
           const stderr = prepareTransferableBytes(result.stderr);
           respond(
@@ -161,7 +224,7 @@ export function createWorkerSessionDispatcher(
               id: request.id,
               ok: true,
               value: {
-                exitCode: result.exitCode,
+                ...result,
                 stdout: stdout.value,
                 stderr: stderr.value,
               },

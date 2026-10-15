@@ -196,6 +196,26 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         }
     }
 
+    @objc(backupToFile:deadline:completion:)
+    public func backupToFile(
+        _ destination: String,
+        deadline: Double,
+        completion: @escaping (NSError?) -> Void
+    ) {
+        let completionBox = CompletionBox(completion)
+        let destination = URL(fileURLWithPath: destination)
+        Task(priority: .userInitiated) { [database] in
+            do {
+                try await Self.withOperationDeadline(deadline) {
+                    try await database.backup(to: destination)
+                }
+                completionBox.value(nil)
+            } catch {
+                completionBox.value(Self.nsError(error))
+            }
+        }
+    }
+
     @objc(cancelWithCompletion:)
     public func cancel(completion: @escaping (NSError?) -> Void) {
         let completionBox = CompletionBox(completion)

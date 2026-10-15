@@ -533,6 +533,18 @@ impl Oliphaunt {
             .backup()
     }
 
+    /// Stream a physical backup to a borrowed writer without retaining the archive.
+    ///
+    /// The caller owns flushing and publication. A failed destination may contain
+    /// a partial archive and must not be published as a successful backup.
+    pub fn backup_to(&mut self, writer: &mut dyn std::io::Write) -> Result<()> {
+        self.ensure_ready()?;
+        self.session
+            .as_deref_mut()
+            .ok_or(Error::EngineStopped)?
+            .backup_to(writer)
+    }
+
     /// Close the database synchronously.
     ///
     /// The first teardown result is retained. Once teardown starts, the handle

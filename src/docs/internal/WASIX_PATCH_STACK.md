@@ -35,3 +35,11 @@ should be reversed merely to improve a compound benchmark score.
 Guest recovery, startup identity and output contracts must be updated together
 with the Rust and browser hosts. Patch 0044 establishes the host-selected catalog
 principal before startup policy runs; a later `SET ROLE` is not equivalent.
+
+Patch 0045 services the trusted embedded session's PostgreSQL timeout queue
+without a process timer or guest signal. Detection does not throw; ordinary
+handlers run at safe interrupt points, bounded waits, and loop re-entry after
+the live recovery frame. A statistics-only timer does not poll the clock during
+CPU execution. The expiry algorithm is shared with Native patch 0022 through
+`embedded-timeout-queue.patch`. This does not interrupt an inactive guest or an
+arbitrary blocked host call, and does not change the Postmaster signal timer.

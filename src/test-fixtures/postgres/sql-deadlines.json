@@ -1,0 +1,7 @@
+{
+  "timeoutMilliseconds": 50,
+  "expectedSqlstate": "57014",
+  "cpuQuery": "SELECT sum(i)::text AS value FROM generate_series(1, 5000000) AS g(i)",
+  "waitQuery": "SELECT pg_sleep(0.25)",
+  "completedQuery": "SELECT pg_sleep(0.06)"
+}

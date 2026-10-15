@@ -1,3 +1,7 @@
+import {
+  OperationBudget,
+  snapshotProtocolInput,
+} from '@oliphaunt/ts-query/internal/operation-budget';
 import { applicationData } from './storage';
 import { normalizeExtensions, type NativeExtension } from './extensions.js';
 import {
@@ -129,6 +133,7 @@ export type OliphauntDatabase = {
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
   execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   backup(): Promise<Uint8Array>;
+  backupToFile(destination: string): Promise<void>;
   cancel(): Promise<void>;
   /**
    * Own the session for one callback. Use callback return/throw or rollback()
@@ -164,6 +169,8 @@ const forgottenDatabaseRegistry: ForgottenDatabaseRegistry | undefined =
     : undefined;
 
 class NativeOliphauntDatabase implements OliphauntDatabase {
+  readonly #operationBudget = new OperationBudget();
+
   readonly #native: NativeOliphauntModule;
   readonly #handle: number;
   readonly #jsiTransport: JsiRawProtocolTransport;
@@ -212,14 +219,19 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     options: ParameterOptions = {},
   ): Promise<CommandResult> {
     return this.#capturePromiseFailure(() => {
-      this.#assertNoActiveTransaction();
-      const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
-      return this.#serialize(() =>
-        runQueryPlan(
-          (input, parse) => this.#runOrdinaryExchangeUnlocked(input, parse),
-          plan,
-          parseCommandResponse,
-        ),
+      return this.#operationBudget.admit(
+        (retain) => {
+          this.#assertNoActiveTransaction();
+          const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+          return this.#serialize(() =>
+            runQueryPlan(
+              (input, parse) => this.#runOrdinaryExchangeUnlocked(input, parse),
+              plan,
+              parseCommandResponse,
+            ),
+          );
+        },
+        () => this.#operationTail,
       );
     });
   }
@@ -230,17 +242,22 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     options: Options & QueryOptions = {} as Options & QueryOptions,
   ): Promise<QueryResult<InferQueryRow<Options, Row>>> {
     return this.#capturePromiseFailure(() => {
-      this.#assertNoActiveTransaction();
-      const stableOptions = snapshotQueryOptions(options);
-      const plan = planQuery(sql, parameters, stableOptions);
-      return this.#serialize(async () => {
-        const raw = await runQueryPlan(
-          (input, parse) => this.#runOrdinaryExchangeUnlocked(input, parse),
-          plan,
-          parseQueryRawResponse,
-        );
-        return decodeQueryResult<Row, Options>(raw, stableOptions);
-      });
+      return this.#operationBudget.admit(
+        (retain) => {
+          this.#assertNoActiveTransaction();
+          const stableOptions = snapshotQueryOptions(options);
+          const plan = planQuery(sql, parameters, stableOptions, retain);
+          return this.#serialize(async () => {
+            const raw = await runQueryPlan(
+              (input, parse) => this.#runOrdinaryExchangeUnlocked(input, parse),
+              plan,
+              parseQueryRawResponse,
+            );
+            return decodeQueryResult<Row, Options>(raw, stableOptions);
+          });
+        },
+        () => this.#operationTail,
+      );
     });
   }
 
@@ -250,14 +267,19 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     options: ParameterOptions = {},
   ): Promise<RawQueryResult> {
     return this.#capturePromiseFailure(() => {
-      this.#assertNoActiveTransaction();
-      const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
-      return this.#serialize(() =>
-        runQueryPlan(
-          (input, parse) => this.#runOrdinaryExchangeUnlocked(input, parse),
-          plan,
-          parseQueryRawResponse,
-        ),
+      return this.#operationBudget.admit(
+        (retain) => {
+          this.#assertNoActiveTransaction();
+          const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+          return this.#serialize(() =>
+            runQueryPlan(
+              (input, parse) => this.#runOrdinaryExchangeUnlocked(input, parse),
+              plan,
+              parseQueryRawResponse,
+            ),
+          );
+        },
+        () => this.#operationTail,
       );
     });
   }
@@ -267,43 +289,67 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     options: Options & QueryReadOptions = {} as Options & QueryReadOptions,
   ): Promise<ExecResult<InferQueryRow<Options, Row>>> {
     return this.#capturePromiseFailure(() => {
-      this.#assertNoActiveTransaction();
-      const input = structuredSimpleQuery(sql);
-      const stableOptions = snapshotReadOptions(options);
-      return this.#serialize(() =>
-        this.#runOrdinaryExchangeUnlocked(input, (bytes) =>
-          parseExecResponse<Row, Options>(bytes, stableOptions),
-        ),
+      return this.#operationBudget.admit(
+        (retain) => {
+          this.#assertNoActiveTransaction();
+          const input = structuredSimpleQuery(sql);
+          retain(input.byteLength);
+          const stableOptions = snapshotReadOptions(options);
+          return this.#serialize(() =>
+            this.#runOrdinaryExchangeUnlocked(input, (bytes) =>
+              parseExecResponse<Row, Options>(bytes, stableOptions),
+            ),
+          );
+        },
+        () => this.#operationTail,
       );
     });
   }
 
   describe(sql: string, parameterTypeOids: ReadonlyArray<number> = []): Promise<DescribeResult> {
     return this.#capturePromiseFailure(() => {
-      this.#assertNoActiveTransaction();
-      const input = describeQuery(sql, [...parameterTypeOids]);
-      return this.#serialize(() => this.#runOrdinaryExchangeUnlocked(input, parseDescribeResponse));
+      return this.#operationBudget.admit(
+        (retain) => {
+          this.#assertNoActiveTransaction();
+          const input = describeQuery(sql, [...parameterTypeOids]);
+          retain(input.byteLength);
+          return this.#serialize(() =>
+            this.#runOrdinaryExchangeUnlocked(input, parseDescribeResponse),
+          );
+        },
+        () => this.#operationTail,
+      );
     });
   }
 
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
     return this.#capturePromiseFailure(() => {
-      this.#assertNoActiveTransaction();
-      const bytes = toUint8Array(input).slice();
-      return this.#serialize(() => this.#runRawProtocolUnlocked(bytes));
+      return this.#operationBudget.admit(
+        (retain) => {
+          this.#assertNoActiveTransaction();
+          const bytes = snapshotProtocolInput(input, retain);
+          return this.#serialize(() => this.#runRawProtocolUnlocked(bytes));
+        },
+        () => this.#operationTail,
+      );
     });
   }
 
   execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
     return this.#capturePromiseFailure(() => {
-      this.#assertNoActiveTransaction();
-      if (typeof onChunk !== 'function') {
-        throw new TypeError('protocol stream callback must be a function');
-      }
-      const bytes = toUint8Array(input).slice();
-      return this.#serialize(() => {
-        return this.#execProtocolStreamUnlocked(bytes, onChunk);
-      });
+      return this.#operationBudget.admit(
+        (retain) => {
+          this.#assertNoActiveTransaction();
+          if (typeof onChunk !== 'function') {
+            throw new TypeError('protocol stream callback must be a function');
+          }
+          const bytes = snapshotProtocolInput(input, retain);
+          return this.#serialize(() => {
+            return this.#execProtocolStreamUnlocked(bytes, onChunk);
+          });
+        },
+        () => this.#operationTail,
+      );
     });
   }
 
@@ -365,13 +411,48 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
 
   backup(): Promise<Uint8Array> {
     return this.#capturePromiseFailure(() => {
-      this.#assertNoActiveTransaction();
-      return this.#serialize(() => {
-        return this.#runNativeOperation(() =>
-          backupJsi(this.#jsiTransport, this.#handle, this.#deadline),
-        );
-      });
+      return this.#operationBudget.admit(
+        () => {
+          this.#assertNoActiveTransaction();
+          return this.#serialize(() => {
+            return this.#runNativeOperation(() =>
+              backupJsi(this.#jsiTransport, this.#handle, this.#deadline),
+            );
+          });
+        },
+        () => this.#operationTail,
+      );
     });
+  }
+
+  backupToFile(destination: string): Promise<void> {
+    return this.#capturePromiseFailure(() =>
+      this.#operationBudget.admit(
+        (retain) => {
+          this.#assertNoActiveTransaction();
+          if (
+            typeof destination !== 'string' ||
+            destination.length === 0 ||
+            destination.includes('\0')
+          ) {
+            throw new TypeError(
+              'backup destination must be a nonempty host path without NUL bytes',
+            );
+          }
+          retain(destination.length * 3);
+          const backup = this.#jsiTransport.backupToFile;
+          if (typeof backup !== 'function') {
+            throw new Error(
+              'file backup requires rebuilding the app with the current Oliphaunt bindings',
+            );
+          }
+          return this.#serialize(() =>
+            this.#runNativeOperation(() => backup(this.#handle, destination, this.#deadline)),
+          );
+        },
+        () => this.#operationTail,
+      ),
+    );
   }
 
   async cancel(): Promise<void> {
@@ -823,6 +904,8 @@ type TransactionSettlement =
   | Readonly<{ kind: 'failed'; error: Error; needsRollback: boolean }>;
 
 class OliphauntTransactionHandle implements OliphauntTransaction {
+  readonly #operationBudget = new OperationBudget();
+
   readonly #exchange: StructuredExchange;
   readonly #rollbackControl: () => Promise<void>;
   readonly #poison: (cause: Error) => void;
@@ -858,14 +941,19 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     options: ParameterOptions = {},
   ): Promise<CommandResult> {
     return promiseFromSynchronousCall(() => {
-      assertNoTransactionChain(sql);
-      const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
-      return this.#enqueue(() =>
-        runQueryPlan(
-          (input, parse) => this.#runTransactionExchange(input, parse),
-          plan,
-          parseCommandResponse,
-        ),
+      return this.#operationBudget.admit(
+        (retain) => {
+          assertNoTransactionChain(sql);
+          const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+          return this.#enqueue(() =>
+            runQueryPlan(
+              (input, parse) => this.#runTransactionExchange(input, parse),
+              plan,
+              parseCommandResponse,
+            ),
+          );
+        },
+        () => this.#tail,
       );
     });
   }
@@ -876,17 +964,22 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     options: Options & QueryOptions = {} as Options & QueryOptions,
   ): Promise<QueryResult<InferQueryRow<Options, Row>>> {
     return promiseFromSynchronousCall(() => {
-      assertNoTransactionChain(sql);
-      const stableOptions = snapshotQueryOptions(options);
-      const plan = planQuery(sql, parameters, stableOptions);
-      return this.#enqueue(async () => {
-        const raw = await runQueryPlan(
-          (input, parse) => this.#runTransactionExchange(input, parse),
-          plan,
-          parseQueryRawResponse,
-        );
-        return decodeQueryResult<Row, Options>(raw, stableOptions);
-      });
+      return this.#operationBudget.admit(
+        (retain) => {
+          assertNoTransactionChain(sql);
+          const stableOptions = snapshotQueryOptions(options);
+          const plan = planQuery(sql, parameters, stableOptions, retain);
+          return this.#enqueue(async () => {
+            const raw = await runQueryPlan(
+              (input, parse) => this.#runTransactionExchange(input, parse),
+              plan,
+              parseQueryRawResponse,
+            );
+            return decodeQueryResult<Row, Options>(raw, stableOptions);
+          });
+        },
+        () => this.#tail,
+      );
     });
   }
 
@@ -896,14 +989,19 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     options: ParameterOptions = {},
   ): Promise<RawQueryResult> {
     return promiseFromSynchronousCall(() => {
-      assertNoTransactionChain(sql);
-      const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
-      return this.#enqueue(() =>
-        runQueryPlan(
-          (input, parse) => this.#runTransactionExchange(input, parse),
-          plan,
-          parseQueryRawResponse,
-        ),
+      return this.#operationBudget.admit(
+        (retain) => {
+          assertNoTransactionChain(sql);
+          const plan = planQuery(sql, parameters, snapshotParameterOptions(options), retain);
+          return this.#enqueue(() =>
+            runQueryPlan(
+              (input, parse) => this.#runTransactionExchange(input, parse),
+              plan,
+              parseQueryRawResponse,
+            ),
+          );
+        },
+        () => this.#tail,
       );
     });
   }
@@ -913,21 +1011,33 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     options: Options & QueryReadOptions = {} as Options & QueryReadOptions,
   ): Promise<ExecResult<InferQueryRow<Options, Row>>> {
     return promiseFromSynchronousCall(() => {
-      assertNoTransactionChain(sql);
-      const input = structuredSimpleQuery(sql);
-      const stableOptions = snapshotReadOptions(options);
-      return this.#enqueue(() =>
-        this.#runTransactionExchange(input, (bytes) =>
-          parseExecResponse<Row, Options>(bytes, stableOptions),
-        ),
+      return this.#operationBudget.admit(
+        (retain) => {
+          assertNoTransactionChain(sql);
+          const input = structuredSimpleQuery(sql);
+          retain(input.byteLength);
+          const stableOptions = snapshotReadOptions(options);
+          return this.#enqueue(() =>
+            this.#runTransactionExchange(input, (bytes) =>
+              parseExecResponse<Row, Options>(bytes, stableOptions),
+            ),
+          );
+        },
+        () => this.#tail,
       );
     });
   }
 
   describe(sql: string, parameterTypeOids: ReadonlyArray<number> = []): Promise<DescribeResult> {
     return promiseFromSynchronousCall(() => {
-      const input = describeQuery(sql, [...parameterTypeOids]);
-      return this.#enqueue(() => this.#runTransactionExchange(input, parseDescribeResponse));
+      return this.#operationBudget.admit(
+        (retain) => {
+          const input = describeQuery(sql, [...parameterTypeOids]);
+          retain(input.byteLength);
+          return this.#enqueue(() => this.#runTransactionExchange(input, parseDescribeResponse));
+        },
+        () => this.#tail,
+      );
     });
   }
 

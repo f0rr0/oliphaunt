@@ -441,10 +441,11 @@ export function planQuery(
   sql: string,
   parameters: ReadonlyArray<QueryParam> = [],
   options: ParameterOptions = {},
+  retain?: (bytes: number) => void,
 ): QueryPlan {
   validateStatementInput(sql, parameters);
   assertNoTopLevelCopy(sql);
-  const snapshot = Array.from(parameters, snapshotQueryParam);
+  const snapshot = Array.from(parameters, (parameter) => snapshotQueryParam(parameter, retain));
   const encoders =
     options.encoders === undefined ? undefined : Object.freeze({ ...options.encoders });
   const declaredTypeOids = snapshot.map(parameterDeclaredTypeOid);
@@ -452,14 +453,15 @@ export function planQuery(
     const normalized = snapshot.map((parameter, index) =>
       normalizeQueryParam(parameter, declaredTypeOids[index]!, encoders),
     );
-    return {
-      kind: 'complete',
-      input: encodeParseBindExecute(sql, declaredTypeOids, normalized),
-    };
+    const input = encodeParseBindExecute(sql, declaredTypeOids, normalized);
+    retain?.(input.byteLength);
+    return { kind: 'complete', input };
   }
+  const input = describeQuery(sql, declaredTypeOids);
+  retain?.(input.byteLength);
   return {
     kind: 'describe',
-    input: describeQuery(sql, declaredTypeOids),
+    input,
     bind(parameterTypeOids: ReadonlyArray<number>): Uint8Array {
       if (parameterTypeOids.length !== snapshot.length) {
         throw new Error(
@@ -1412,7 +1414,7 @@ function parameterDeclaredTypeOid(parameter: QueryParam): number {
   return 0;
 }
 
-function snapshotQueryParam(parameter: QueryParam): QueryParam {
+function snapshotQueryParam(parameter: QueryParam, retain?: (bytes: number) => void): QueryParam {
   if (
     parameter === null ||
     typeof parameter === 'string' ||
@@ -1420,6 +1422,7 @@ function snapshotQueryParam(parameter: QueryParam): QueryParam {
     typeof parameter === 'bigint' ||
     typeof parameter === 'boolean'
   ) {
+    if (typeof parameter === 'string') retain?.(parameter.length * 2);
     return parameter;
   }
   if (parameter === undefined) throw new TypeError('query parameters must not be undefined');
@@ -1427,14 +1430,21 @@ function snapshotQueryParam(parameter: QueryParam): QueryParam {
   if (wrapper !== undefined) {
     if (wrapper.format === 'null') return typedNull(wrapper.typeOid);
     if (wrapper.format === 'binary') {
-      return binary(toUint8Array(wrapper.value).slice(), wrapper.typeOid);
+      const bytes = toUint8Array(wrapper.value);
+      retain?.(bytes.byteLength);
+      return binary(bytes.slice(), wrapper.typeOid);
     }
+    retain?.(wrapper.value.length * 2);
     return text(wrapper.value, wrapper.typeOid);
   }
   if (parameter instanceof Date) return new Date(parameter.getTime());
-  if (isQueryBinaryInput(parameter)) return toUint8Array(parameter).slice();
+  if (isQueryBinaryInput(parameter)) {
+    const bytes = toUint8Array(parameter);
+    retain?.(bytes.byteLength);
+    return bytes.slice();
+  }
   if (Array.isArray(parameter))
-    return Array.from(parameter, (value) => snapshotQueryParam(value as QueryParam));
+    return Array.from(parameter, (value) => snapshotQueryParam(value as QueryParam, retain));
   if (isPlainRecord(parameter)) {
     let encoded: string | undefined;
     try {
@@ -1447,6 +1457,7 @@ function snapshotQueryParam(parameter: QueryParam): QueryParam {
     }
     if (encoded === undefined)
       throw new TypeError('plain-object query parameters must be JSON-serializable');
+    retain?.(encoded.length * 2);
     return JSON.parse(encoded) as Readonly<Record<string, unknown>>;
   }
   throw new TypeError('query parameter is unsupported; use an explicit parameter helper');

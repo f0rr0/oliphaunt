@@ -22,6 +22,8 @@ export type RuntimeBinding = {
   ): Promise<void>;
   execSimpleQuery?(handle: RuntimeHandle, sql: string): Promise<Uint8Array>;
   backup?(handle: RuntimeHandle): Promise<Uint8Array>;
+  /** Synchronous chunk acceptance; the native archive callback borrows its input. */
+  backupStream?(handle: RuntimeHandle, onChunk: (chunk: Uint8Array) => void): Promise<void>;
   cancel(handle: RuntimeHandle): Promise<void>;
   /**
    * Release this logical owner. This operation resolves with an explicit

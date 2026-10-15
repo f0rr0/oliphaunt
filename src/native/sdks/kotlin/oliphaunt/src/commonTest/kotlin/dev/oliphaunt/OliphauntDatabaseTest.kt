@@ -1285,6 +1285,36 @@ class OliphauntDatabaseTest {
     }
 
     @Test
+    fun ordinaryCapacityIsReusableAndDoesNotBlockClose() = runTest {
+        for (closeWhileFull in listOf(false, true)) {
+            val session = AdmissionOrderSession()
+            val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+            val first = async(start = CoroutineStart.UNDISPATCHED) {
+                database.execProtocolRaw(byteArrayOf(1))
+            }
+            session.awaitFirstRaw()
+            val pending = List(63) {
+                async(start = CoroutineStart.UNDISPATCHED) {
+                    database.execProtocolRaw(byteArrayOf(2))
+                }
+            }
+            val failure = runCatching { database.execProtocolRaw(byteArrayOf(3)) }.exceptionOrNull()
+            assertTrue(assertNotNull(failure).message.orEmpty().contains("operation queue is full"))
+            val closing = if (closeWhileFull) async(start = CoroutineStart.UNDISPATCHED) { database.close() } else null
+            session.releaseFirstRaw()
+            assertContentEquals(byteArrayOf(1), first.await())
+            pending.forEach { assertContentEquals(byteArrayOf(2), it.await()) }
+            if (closing != null) {
+                closing.await()
+            } else {
+                assertContentEquals(byteArrayOf(3), database.execProtocolRaw(byteArrayOf(3)))
+                database.close()
+            }
+            assertEquals("close", session.events.last())
+        }
+    }
+
+    @Test
     fun queuedBackupSkipsNativeCallAfterPredecessorPoisonsDatabase() = runTest {
         val session = AdmissionOrderSession(failFirstRaw = true)
         val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))

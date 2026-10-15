@@ -17,6 +17,7 @@ src/wasix/runtime/assets/build/postgres/patches/0021-oliphaunt-wasix-declare-was
 src/wasix/runtime/assets/build/postgres/patches/0022-oliphaunt-wasix-use-wasm-ld-for-backend-core.patch
 src/wasix/runtime/assets/build/postgres/patches/0023-oliphaunt-wasix-skip-data-dir-ownership-check-under-embedded-wasix.patch
 src/wasix/runtime/assets/build/postgres/patches/0025-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch
+src/third-party/postgres/patches/common/embedded-wal-pressure-checkpoint.patch
 src/wasix/runtime/assets/build/postgres/patches/0027-oliphaunt-wasix-defer-xlog-size-checkpoint-requests.patch
 src/wasix/runtime/assets/build/postgres/patches/0029-oliphaunt-wasix-model-trusted-embedded-session.patch
 src/wasix/runtime/assets/build/postgres/patches/0032-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch
@@ -31,3 +32,5 @@ src/wasix/runtime/assets/build/postgres/patches/0042-oliphaunt-wasix-use-explici
 src/wasix/runtime/assets/build/postgres/patches/0043-oliphaunt-wasix-cache-jsonb-build-object-metadata.patch
 src/wasix/runtime/assets/build/postgres/patches/0044-oliphaunt-wasix-initialize-trusted-session-identity.patch
 src/third-party/postgres/patches/common/embedded-fsync-default.patch
+src/third-party/postgres/patches/common/embedded-timeout-queue.patch
+src/wasix/runtime/assets/build/postgres/patches/0045-oliphaunt-wasix-service-embedded-timeouts.patch

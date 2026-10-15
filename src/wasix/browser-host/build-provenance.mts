@@ -102,7 +102,7 @@ function validateProtocolTransportContract(contract) {
   if (
     contract?.schema !== 'oliphaunt-wasix-postgres-protocol-transport-contract-v1' ||
     !Array.isArray(modes) ||
-    modes.length !== 4 ||
+    modes.length !== 5 ||
     modes.some(
       (mode) =>
         typeof mode?.name !== 'string' || !Number.isSafeInteger(mode.value) || mode.value < 0,
@@ -113,6 +113,8 @@ function validateProtocolTransportContract(contract) {
     contract.bufferedOutput.limitBytes <= 0 ||
     !Number.isSafeInteger(contract.streamedOutput?.callbackChunkMaxBytes) ||
     contract.streamedOutput.callbackChunkMaxBytes <= 0 ||
+    !Number.isSafeInteger(contract.directToolInput?.readBatchMaxBytes) ||
+    contract.directToolInput.readBatchMaxBytes <= 0 ||
     contract.flush?.wasmResult !== 'i32'
   ) {
     throw new Error(

@@ -560,6 +560,26 @@ class OliphauntModuleJSIBindings
                         });
                     return promiseConstructor.callAsConstructor(runtime, std::move(executor));
                   }));
+          installBackupToFile(runtime, transport, callInvoker, owner,
+              [owner, moduleGlobal](int64_t handle, const std::string &destination,
+                  double deadline, PendingPromise pending) {
+                const int64_t token = gNextToken.fetch_add(1);
+                owner->storePendingPromise(token, std::move(pending));
+                try {
+                  static const auto callbackConstructor = OliphauntJsiPromiseCallback::javaClassStatic()
+                      ->getConstructor<OliphauntJsiPromiseCallback::javaobject(jlong, jlong)>();
+                  auto callback = OliphauntJsiPromiseCallback::javaClassStatic()
+                      ->newObject(callbackConstructor, static_cast<jlong>(owner->id), static_cast<jlong>(token));
+                  auto path = jni::make_jstring(destination);
+                  static const auto backupToFile = OliphauntModuleJSIBindings::javaClassStatic()
+                      ->getMethod<void(jlong, jstring, jlong, OliphauntJsiPromiseCallback::javaobject)>("backupToFile");
+                  backupToFile(moduleGlobal, static_cast<jlong>(handle), path.get(),
+                      static_cast<jlong>(deadline), callback.get());
+                } catch (...) {
+                  owner->takePendingPromise(token);
+                  throw;
+                }
+              });
           transport.setProperty(
               runtime,
               "backup",

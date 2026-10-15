@@ -1,7 +1,9 @@
 import { parentPort } from 'node:worker_threads';
 
 import { hostRuntimeName } from './host-runtime.js';
+import { openNodeActorSession } from './node-actor.js';
 import { openNodeDirectSession } from './node-direct.js';
+import { loadNativeWasixAddon, supportsNativeWorkerOutput } from './native-addon.js';
 import { restoreNativeWasixStorageDirect } from './native-session.js';
 import type { WorkerRequest, WorkerResponse } from '../../workers/rpc.js';
 import { createWorkerSessionDispatcher } from '../../workers/worker-dispatch.js';
@@ -12,8 +14,10 @@ if (parentPort === null) {
 
 const port = parentPort;
 const runtimeName = hostRuntimeName();
+const addon = loadNativeWasixAddon();
+const supportsParentOutput = supportsNativeWorkerOutput(addon);
 const dispatch = createWorkerSessionDispatcher(
-  openNodeDirectSession,
+  supportsParentOutput ? openNodeDirectSession : openNodeActorSession,
   respond,
   restoreNativeWasixStorageDirect,
   {

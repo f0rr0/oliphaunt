@@ -25,7 +25,8 @@ const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
 const STDERR_LIMIT_BYTES: usize = 16 * 1024;
 use super::protocol_contract::PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT;
 use super::protocol_contract::{
-    PROTOCOL_BUFFERED, PROTOCOL_CALLBACK_CHUNK_BYTES as PROTOCOL_CHUNK_BYTES, PROTOCOL_HYBRID,
+    PROTOCOL_BUFFERED, PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY,
+    PROTOCOL_CALLBACK_CHUNK_BYTES as PROTOCOL_CHUNK_BYTES,
 };
 const PROCESS_STARTUP_OK: i32 = 0;
 const PROCESS_STARTUP_ERROR: i32 = -1;
@@ -726,18 +727,18 @@ impl OliphauntDirectInstance {
         on_chunk: Function,
     ) -> anyhow::Result<()> {
         self.protocol_stdin.begin(on_read)?;
-        let result =
-            self.exec_protocol_callback_inner(payload, on_chunk.clone(), PROTOCOL_HYBRID, true);
+        let result = self.exec_protocol_callback_inner(
+            payload,
+            on_chunk,
+            PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT_WITH_COPY,
+            true,
+        );
         self.protocol_stdin.finish();
         let output = result?;
-        let length = output.length() as usize;
-        for start in (0..length).step_by(PROTOCOL_CHUNK_BYTES) {
-            let end = start.saturating_add(PROTOCOL_CHUNK_BYTES).min(length);
-            let chunk = output.slice(start as u32, end as u32);
-            on_chunk
-                .call1(&JsValue::UNDEFINED, &chunk)
-                .map_err(|error| anyhow::anyhow!("protocol stream callback failed: {error:?}"))?;
-        }
+        ensure!(
+            output.length() == 0,
+            "streamed COPY transport left buffered protocol bytes"
+        );
         Ok(())
     }
 

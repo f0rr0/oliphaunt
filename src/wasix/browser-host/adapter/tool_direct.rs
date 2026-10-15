@@ -39,10 +39,18 @@ export type OliphauntToolOutput = {
     code: number;
     stdoutBytes: Uint8Array;
     stderrBytes: Uint8Array;
+    stdoutCount: number;
+    stderrTruncated: boolean;
 }
 "#;
 
-fn tool_output(code: i32, stdout: Vec<u8>, stderr: Vec<u8>) -> JsToolOutput {
+fn tool_output(
+    code: i32,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    stdout_count: u64,
+    stderr_truncated: bool,
+) -> JsToolOutput {
     let output = js_sys::Object::new();
     let _ = js_sys::Reflect::set(&output, &JsValue::from_str("code"), &JsValue::from(code));
     let _ = js_sys::Reflect::set(
@@ -54,6 +62,16 @@ fn tool_output(code: i32, stdout: Vec<u8>, stderr: Vec<u8>) -> JsToolOutput {
         &output,
         &JsValue::from_str("stderrBytes"),
         &Uint8Array::from(stderr.as_slice()),
+    );
+    let _ = js_sys::Reflect::set(
+        &output,
+        &JsValue::from_str("stdoutCount"),
+        &JsValue::from(stdout_count as f64),
+    );
+    let _ = js_sys::Reflect::set(
+        &output,
+        &JsValue::from_str("stderrTruncated"),
+        &JsValue::from(stderr_truncated),
     );
     output.unchecked_into()
 }
@@ -87,6 +105,8 @@ pub fn prepare_oliphaunt_tool(
 struct ProtocolCallbacks {
     read: Function,
     write: Function,
+    stdout: Option<Function>,
+    stderr: Option<Function>,
 }
 
 thread_local! {
@@ -97,14 +117,24 @@ thread_local! {
 struct ActiveProtocolCallbacks;
 
 impl ActiveProtocolCallbacks {
-    fn begin(read: Function, write: Function) -> anyhow::Result<Self> {
+    fn begin(
+        read: Function,
+        write: Function,
+        stdout: Option<Function>,
+        stderr: Option<Function>,
+    ) -> anyhow::Result<Self> {
         PROTOCOL_CALLBACKS.with(|active| {
             let mut active = active.borrow_mut();
             ensure!(
                 active.is_none(),
                 "an Oliphaunt tool protocol session is already active"
             );
-            *active = Some(ProtocolCallbacks { read, write });
+            *active = Some(ProtocolCallbacks {
+                read,
+                write,
+                stdout,
+                stderr,
+            });
             Ok(Self)
         })
     }
@@ -321,6 +351,9 @@ struct CaptureState {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     failure: Option<CaptureFailure>,
+    streaming: bool,
+    stdout_count: u64,
+    stderr_truncated: bool,
 }
 
 impl CaptureState {
@@ -359,6 +392,23 @@ impl CaptureState {
         if let Some(failure) = self.failure {
             return Err(failure.io_error());
         }
+        if matches!(stream, CaptureStream::Stdout) {
+            self.stdout_count += input.len() as u64;
+        }
+        if self.streaming && matches!(stream, CaptureStream::Stdout) {
+            return Ok(input.len());
+        }
+        let input = if self.streaming {
+            const DIAGNOSTIC_TAIL_BYTES: usize = 8192;
+            self.stderr_truncated |= self.stderr.len() + input.len() > DIAGNOSTIC_TAIL_BYTES;
+            let remove = (self.stderr.len() + input.len())
+                .saturating_sub(DIAGNOSTIC_TAIL_BYTES)
+                .min(self.stderr.len());
+            self.stderr.drain(..remove);
+            &input[input.len().saturating_sub(DIAGNOSTIC_TAIL_BYTES)..]
+        } else {
+            input
+        };
         if self.output_mut(stream).try_reserve(input.len()).is_err() {
             return Err(self.fail(CaptureFailure::AllocationFailed(stream)));
         }
@@ -381,8 +431,11 @@ struct CaptureHandle {
 }
 
 impl CaptureFile {
-    fn pair() -> (Self, Self, CaptureHandle) {
-        let state = Arc::new(Mutex::new(CaptureState::default()));
+    fn pair(streaming: bool) -> (Self, Self, CaptureHandle) {
+        let state = Arc::new(Mutex::new(CaptureState {
+            streaming,
+            ..CaptureState::default()
+        }));
         (
             Self {
                 state: state.clone(),
@@ -423,7 +476,7 @@ impl CaptureHandle {
         }
     }
 
-    fn finish(&self) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    fn finish(&self) -> anyhow::Result<(Vec<u8>, Vec<u8>, u64, bool)> {
         let mut state = match self.state.lock() {
             Ok(state) => state,
             Err(error) => {
@@ -439,6 +492,8 @@ impl CaptureHandle {
         Ok((
             std::mem::take(&mut state.stdout),
             std::mem::take(&mut state.stderr),
+            state.stdout_count,
+            state.stderr_truncated,
         ))
     }
 }
@@ -460,7 +515,33 @@ impl AsyncWrite for CaptureFile {
         input: &[u8],
     ) -> Poll<io::Result<usize>> {
         let stream = self.stream;
-        Poll::Ready(self.with_state(|state| state.append(stream, input)))
+        let length = input.len().min(PROTOCOL_CHUNK_BYTES);
+        let result = self
+            .with_state(|state| {
+                state.append(stream, &input[..length])?;
+                Ok(state.streaming)
+            })
+            .and_then(|streaming| {
+                if streaming {
+                    let callbacks = ToolProtocolFile::callbacks()?;
+                    let callback = match stream {
+                        CaptureStream::Stdout => callbacks.stdout,
+                        CaptureStream::Stderr => callbacks.stderr,
+                    };
+                    if let Some(callback) = callback {
+                        callback
+                            .call1(&JsValue::UNDEFINED, &Uint8Array::from(&input[..length]))
+                            .map_err(|error| {
+                                io::Error::other(format!(
+                                    "tool output callback failed: {}",
+                                    js_error(error)
+                                ))
+                            })?;
+                    }
+                }
+                Ok(length)
+            });
+        Poll::Ready(result)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
@@ -533,6 +614,8 @@ pub async fn run_oliphaunt_tool_direct(
     options: RunOptions,
     protocol_read: Function,
     protocol_write: Function,
+    stdout_write: Option<Function>,
+    stderr_write: Option<Function>,
 ) -> Result<JsToolOutput, Error> {
     if let Some(tty) = prepared.runtime.tty() {
         tty.reset();
@@ -541,7 +624,7 @@ pub async fn run_oliphaunt_tool_direct(
         .program()
         .as_string()
         .unwrap_or_else(|| DEFAULT_PROGRAM_NAME.to_owned());
-    let (stdout, stderr, capture) = CaptureFile::pair();
+    let (stdout, stderr, capture) = CaptureFile::pair(stdout_write.is_some());
     let mut builder = WasiEnvBuilder::new(program_name).runtime(prepared.runtime.clone());
     options.configure_tool_direct_builder(
         &mut builder,
@@ -561,7 +644,12 @@ pub async fn run_oliphaunt_tool_direct(
         .context("get Oliphaunt WASIX tool _start export")?;
 
     let code = {
-        let _callbacks = ActiveProtocolCallbacks::begin(protocol_read, protocol_write)?;
+        let _callbacks = ActiveProtocolCallbacks::begin(
+            protocol_read,
+            protocol_write,
+            stdout_write,
+            stderr_write,
+        )?;
         match start.call(&mut store) {
             Ok(()) => 0,
             Err(error) => match runtime_exit_code(&error) {
@@ -578,8 +666,14 @@ pub async fn run_oliphaunt_tool_direct(
         }
     };
 
-    let (stdout, stderr) = capture.finish().map_err(Error::from)?;
-    Ok(tool_output(code, stdout, stderr))
+    let (stdout, stderr, stdout_count, stderr_truncated) = capture.finish().map_err(Error::from)?;
+    Ok(tool_output(
+        code,
+        stdout,
+        stderr,
+        stdout_count,
+        stderr_truncated,
+    ))
 }
 
 fn runtime_exit_code(error: &wasmer::RuntimeError) -> Option<i32> {

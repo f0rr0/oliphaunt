@@ -17,10 +17,15 @@ we do not rewrite CPU masks or fall back to compilation.
 
 The ordered Wasmer patches cover engine delivery, C API ownership, native cache
 profiles, and shared memory/terminal lifetimes. The WASIX patches cover optional
-runner features, cached module loading, and terminal shutdown. The complete
+runner features, cached module loading, terminal shutdown, explicit file
+synchronization, and signal registrations owned by blocking futures. The complete
 ordered series is the build and qualification unit.
 The virtual filesystem patch separates write flushing from explicit data/full
 sync requests, including through file wrappers and memory mounts.
+Signal-wait registrations are removed when their future completes or is
+cancelled; signal delivery wakes live futures after releasing the registry lock.
+The corresponding Postmaster and browser backports preserve each pinned family’s
+syscall behavior. Their patches record the upstream revision and removal condition.
 These are internal compatibility patches, not a promise to support every V8
 backend API exposed upstream.
 
