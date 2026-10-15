@@ -9,6 +9,7 @@ import {
   validateIndexedDbDatabaseName,
   validateOpfsDatabaseName,
   validateOpfsConcurrency,
+  validateOpfsSpareFileCount,
 } from './types.js';
 
 export type StorageDirectoryEntry = Readonly<{
@@ -64,6 +65,7 @@ export async function restoreWasixStorage(
     case 'opfs': {
       validateOpfsDatabaseName(storage.name);
       validateOpfsConcurrency(storage.maxConcurrentIO);
+      validateOpfsSpareFileCount(storage.spareFileCount);
       const { restoreOpfsStorage } = await import('./opfs-provider.js');
       return restoreOpfsStorage(storage.name, snapshot, identity, storage.maxConcurrentIO);
     }
@@ -97,8 +99,15 @@ export async function acquireWasixStorage(
     case 'opfs': {
       validateOpfsDatabaseName(storage.name);
       validateOpfsConcurrency(storage.maxConcurrentIO);
+      validateOpfsSpareFileCount(storage.spareFileCount);
       const { acquireOpfsStorage } = await import('./opfs-provider.js');
-      return acquireOpfsStorage(storage.name, loadClusterSeed, identity, storage.maxConcurrentIO);
+      return acquireOpfsStorage(
+        storage.name,
+        loadClusterSeed,
+        identity,
+        storage.maxConcurrentIO,
+        storage.spareFileCount,
+      );
     }
     case 'directory':
       throw new WasixStorageError(

@@ -94,9 +94,9 @@ crate and pass the result through `Directory(path)`.
 WASIX TypeScript does not expose a browser `temporaryDirectory` case: omitted
 storage already gives the cheapest anonymous lifetime without host I/O. Its
 hosts use the same memory default and selectively expose browser or
-managed-directory providers. IndexedDB and browser OPFS hydrate Wasmer memory
-and publish journaled changes. OPFS publishes new backing files before changing
-the namespace state in both caller-realm and worker execution. On Node, Bun, Deno, and Electron,
+managed-directory providers. IndexedDB and portable OPFS hydrate Wasmer memory
+and publish journaled changes. Worker OPFS uses direct range I/O and a
+synchronous recovery journal for names and staged overflow files. On Node, Bun, Deno, and Electron,
 managed directories delegate directly to the Rust WASIX runtime and its host
 filesystem implementation. Portable `@oliphaunt/wasix-ts` and native
 `@oliphaunt/ts` remain separate products.
@@ -146,10 +146,13 @@ Each logical IndexedDB name owns an independent physical IndexedDB database.
 Compatibility metadata and path rows change in one atomic read-write transaction
 using the browser's default durability policy, so an aborted publication leaves
 the prior generation current. OPFS stores an opaque logical namespace over flat
-backing files. Every placement uses copy-on-write backings, writes changed WAL
-before ordinary files and `global/pg_control`, and atomically replaces namespace
-state last. Failed publication preserves the previous generation, while the live
-handle is poisoned because its guest may have newer state. Node, Bun, and Deno
+backing files. Direct workers journal namespace changes and staged overflow
+contents before dependent published-file mutations or successful guest flushes.
+Written WAL precedes publication of ordinary overflow contents. The portable
+provider uses copy-on-write backings, writes changed WAL before ordinary files
+and `global/pg_control`, and atomically replaces namespace state last. A
+persistence failure poisons the live handle; direct storage relies on PostgreSQL
+WAL recovery rather than byte-identical rollback of every database file. Node, Bun, and Deno
 apply PostgreSQL-safe publication ordering below the managed root's `pgdata` child.
 
 Consequences are part of the public contract:
@@ -173,10 +176,34 @@ Consequences are part of the public contract:
 - host-directory providers reject symlinked or foreign adapter state and never treat unrelated
   files in the application directory as generations.
 
-OPFS uses the portable journal and copy-on-write publication in every placement,
-preserving the public API and durable format. OPFS cannot make a cross-file atomic
-commit claim, so publication failures report `commitState: 'unknown'`. IndexedDB
-can report `not-persisted` when its atomic transaction aborts.
+OPFS selects direct access only during worker acquisition; unavailable primitives
+retain the portable provider. It never switches providers during a query. Both
+providers and restore share state validation and recovery. Direct acquisition
+upgrades the private pool metadata to v2 at the same location; older SDKs reject
+it. PostgreSQL physical compatibility is unchanged. OPFS cannot make a cross-file
+atomic commit claim, so publication failures report `commitState: 'unknown'`.
+IndexedDB can report `not-persisted` when its atomic transaction aborts.
+
+### OPFS decisions retained from earlier work
+
+[#144](https://github.com/f0rr0/oliphaunt/pull/144) introduced same-worker range I/O
+to avoid a storage-worker mailbox and full-PGDATA copies.
+[#272](https://github.com/f0rr0/oliphaunt/pull/272) avoided full namespace publication
+when temporary create/delete cycles leave the final mapping unchanged. Both
+remain design requirements.
+
+[#203 item 05](https://github.com/f0rr0/oliphaunt/issues/203) demonstrated the missing
+intermediate namespace barrier for preopened and overflow WAL files. The repair
+requires both names and overflow bytes, not a larger reserve or end-of-query
+flush sorting. Checksummed committed positions protect interrupted journal
+appends; checkpoints publish a new journal reference before retiring the old
+one. A fully redundant log may be reset only when the owning snapshot already
+describes the complete current namespace and contains no live overflow files.
+Staged files are materialized before the new snapshot becomes authoritative.
+Overflow records store changed ranges and size/truncation changes, avoiding
+whole-file journal copies for preallocated WAL segments. The journal tracks the virtual filesystem namespace; PostgreSQL WAL remains the
+transaction recovery mechanism. Process termination tests do not establish OS
+power-loss durability.
 
 ## Physical compatibility domains
 
@@ -235,7 +262,7 @@ hide real semantics or add indirection to a hot path.
 - React Native keeps `applicationData(name)` because JavaScript cannot resolve
   mobile sandbox paths portably; native Swift and Kotlin callers use URL/File.
 - Native direct storage and Rust WASIX host storage are direct filesystem I/O.
-  WASIX TypeScript uses asynchronous persistent providers, so
+  WASIX TypeScript has direct OPFS and asynchronous persistent providers, so
   publication failure state is a real part of that SDK's error API.
 - Rust errors retain idiomatic error chains. WASIX TypeScript exposes stable
   storage codes and `commitState` because callers must branch on asynchronous

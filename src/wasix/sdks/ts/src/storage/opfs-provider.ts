@@ -1,5 +1,8 @@
+import type { Directory } from '../host/index.mjs';
 import { composeWasixStorageFailure, WasixStorageError } from '../core/errors.js';
 import type {
+  StorageDirectory,
+  WasixStorageSyncBoundary,
   WasixClusterSeedLoader,
   WasixPhysicalIdentity,
   WasixStorageLease,
@@ -8,6 +11,7 @@ import type { StoredSnapshot } from './storage-snapshot.js';
 import { acquireIncrementalStorage, type ExclusiveStorageLock } from './incremental-storage.js';
 import {
   applyPooledOpfsDelta,
+  DirectOpfsPool,
   inspectPooledOpfsDatabase,
   openPooledDatabaseDirectory,
   openPooledOpfsRoot,
@@ -16,17 +20,42 @@ import {
 import { releaseRestoreLock } from './restore-cleanup.js';
 import { acquireExclusiveWebLock } from './web-lock.js';
 
+// Bound individual bridge transfers independently of database size.
+const DIRECT_BRIDGE_CAPACITY = 1024 * 1024;
+
 export async function acquireOpfsStorage(
   name: string,
   loadClusterSeed: WasixClusterSeedLoader,
   physicalIdentity: WasixPhysicalIdentity,
   maxConcurrentIO?: number,
+  spareFileCount?: number,
 ): Promise<WasixStorageLease> {
   const label = `OPFS storage ${JSON.stringify(name)}`;
   let lock: ExclusiveStorageLock | undefined;
   let lockHandedToFallback = false;
   try {
     lock = await acquireExclusiveWebLock(`@oliphaunt/wasix-ts:opfs:${name}`, label);
+    if (typeof document === 'undefined') {
+      try {
+        const pool = await DirectOpfsPool.open(
+          name,
+          loadClusterSeed,
+          physicalIdentity,
+          maxConcurrentIO,
+          spareFileCount,
+        );
+        return new DirectOpfsLease(name, lock, pool);
+      } catch (error) {
+        // Selection is only an acquisition decision. Never switch providers
+        // after PostgreSQL has begun executing against a mounted filesystem.
+        if (
+          !['NotSupportedError', 'NoModificationAllowedError', 'QuotaExceededError'].includes(
+            errorName(error),
+          )
+        )
+          throw error;
+      }
+    }
     const database = await openPooledDatabaseDirectory(name);
     let initializationState: 'new' | 'existing' = 'new';
     lockHandedToFallback = true;
@@ -140,6 +169,132 @@ export async function restoreOpfsStorage(
     failure = await releaseRestoreLock(lock, label, commitState, failure);
   }
   if (failure !== undefined) throw failure;
+}
+
+class DirectOpfsLease implements WasixStorageLease {
+  readonly state: 'new' | 'existing';
+  readonly #name: string;
+  readonly #lock: ExclusiveStorageLock;
+  readonly #pool: DirectOpfsPool;
+  #directory: Directory | undefined;
+  #closed = false;
+
+  constructor(name: string, lock: ExclusiveStorageLock, pool: DirectOpfsPool) {
+    this.#name = name;
+    this.state = pool.state;
+    this.#lock = lock;
+    this.#pool = pool;
+  }
+
+  createPgdataDirectory = async (DirectoryConstructor: typeof Directory): Promise<Directory> => {
+    if (this.#closed) throw this.#unavailable('is closed', 'unchanged');
+    if (this.#directory !== undefined) {
+      throw this.#unavailable('already materialized its direct filesystem', 'unchanged');
+    }
+    if (typeof DirectoryConstructor.createSync !== 'function') {
+      throw this.#unavailable('requires a host with the direct filesystem bridge', 'unchanged');
+    }
+    const directory = DirectoryConstructor.createSync(this.#pool, DIRECT_BRIDGE_CAPACITY);
+    // Take ownership before validating the bridge so the normal close path
+    // releases a failed materialization exactly once.
+    this.#directory = directory;
+    const pgVersion = (await directory.readTextFile('PG_VERSION')).trim();
+    if (pgVersion.length === 0) {
+      throw this.#unavailable('direct filesystem returned an empty PG_VERSION', 'unchanged');
+    }
+    return directory;
+  };
+
+  async sync(_directory: StorageDirectory, boundary: WasixStorageSyncBoundary): Promise<void> {
+    if (this.#closed) throw this.#unavailable('is closed', 'unchanged');
+    try {
+      await this.#pool.sync(boundary);
+    } catch (error) {
+      if (error instanceof WasixStorageError) throw error;
+      throw new WasixStorageError(
+        `could not persist OPFS storage ${JSON.stringify(this.#name)}: ${describeError(error)}`,
+        { code: 'publication-failed', commitState: 'unknown', cause: error },
+      );
+    }
+  }
+
+  async close(
+    _directory: StorageDirectory | undefined,
+    outcome: 'clean' | 'failed',
+  ): Promise<void> {
+    if (this.#closed) return;
+    this.#closed = true;
+    let failure: Error | undefined;
+    let commitState: 'persisted' | 'unknown' = 'unknown';
+    if (outcome === 'clean') {
+      try {
+        await this.#pool.sync('close');
+        commitState = 'persisted';
+      } catch (error) {
+        failure =
+          error instanceof WasixStorageError
+            ? error
+            : new WasixStorageError(
+                `OPFS storage ${JSON.stringify(this.#name)} could not persist on close`,
+                { code: 'publication-failed', commitState: 'unknown', cause: error },
+              );
+      }
+    }
+    try {
+      this.#pool.close();
+    } catch (error) {
+      const cleanup = this.#unavailable(
+        `could not close its pool: ${describeError(error)}`,
+        commitState,
+        error,
+      );
+      failure =
+        failure === undefined
+          ? cleanup
+          : composeWasixStorageFailure(failure, 'pool cleanup also failed', cleanup);
+    }
+    const directory = this.#directory;
+    this.#directory = undefined;
+    try {
+      directory?.free();
+    } catch (error) {
+      const release = this.#unavailable(
+        `could not release its host filesystem: ${describeError(error)}`,
+        commitState,
+        error,
+      );
+      failure =
+        failure === undefined
+          ? release
+          : composeWasixStorageFailure(failure, 'host filesystem release also failed', release);
+    }
+    try {
+      await this.#lock.release();
+    } catch (error) {
+      const release = this.#unavailable(
+        `closed but its ownership lock could not be released: ${describeError(error)}`,
+        commitState,
+        error,
+      );
+      failure =
+        failure === undefined
+          ? release
+          : composeWasixStorageFailure(failure, 'ownership release also failed', release);
+    }
+    if (failure !== undefined) throw failure;
+  }
+
+  #unavailable(
+    detail: string,
+    commitState: 'persisted' | 'unchanged' | 'unknown',
+    cause?: unknown,
+  ): WasixStorageError {
+    return new WasixStorageError(`OPFS storage ${JSON.stringify(this.#name)} ${detail}`, {
+      code: 'unavailable',
+      commitState,
+      ...(cause === undefined ? {} : { cause }),
+    });
+  }
 }
 
 function normalizeOpfsOpenError(name: string, error: unknown): WasixStorageError {

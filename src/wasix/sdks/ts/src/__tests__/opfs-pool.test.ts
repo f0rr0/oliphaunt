@@ -1,20 +1,25 @@
 import { afterEach, describe, expect, it, vi } from 'bun:test';
-import type { WasixDirectoryMount } from '../resources/archive.js';
 import {
   applyPooledOpfsDelta,
   inspectPooledOpfsDatabase,
   OPFS_POOL_ROOT,
 } from '../storage/opfs-pool.js';
 import { acquireOpfsStorage, restoreOpfsStorage } from '../storage/opfs-provider.js';
-import {
-  WASIX_PHYSICAL_IDENTITY,
-  type WasixClusterSeedLoader,
-  type WasixPhysicalIdentity,
-} from '../storage/storage-provider.js';
 import { restoreGlobals, stubGlobal } from './test-globals.js';
 
+import {
+  seedPool,
+  clusterSeed,
+  completeSnapshot,
+  compatible,
+  installOpfs,
+  databaseDirectory,
+  readSnapshot,
+  collectKeys,
+  lastPathSegment,
+  type FakeIo,
+} from './opfs-test-helpers.js';
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 afterEach(() => restoreGlobals());
 
 describe('WASIX pooled OPFS storage', () => {
@@ -127,7 +132,7 @@ describe('WASIX pooled OPFS storage', () => {
     expect(clearChanges).toHaveBeenCalledTimes(1);
   });
 
-  it('uses copy-on-write publication in worker realms with synchronous handles', async () => {
+  it('uses portable publication in the caller realm', async () => {
     installOpfs();
     const lease = await acquireOpfsStorage('worker-publication', clusterSeed(), compatible());
     expect(lease.createPgdataDirectory).toBeUndefined();
@@ -347,217 +352,6 @@ describe('WASIX pooled OPFS storage', () => {
     });
   });
 });
-async function seedPool(root: FakeDirectory, name: string, initializing = false): Promise<void> {
-  const pool = await root.getDirectoryHandle(OPFS_POOL_ROOT, { create: true });
-  const database = await pool.getDirectoryHandle(name, { create: true });
-  const seed = await clusterSeed()();
-  await applyPooledOpfsDelta(database.asHandle(), name, compatible(), {
-    directories: seed.directories,
-    files: Object.entries(seed.files).map(([path, bytes]) => ({ path, bytes })),
-    deleted: [],
-  });
-  if (initializing) {
-    const state = JSON.parse(await database.file('state.json').text()) as { phase: string };
-    state.phase = 'initializing';
-    await database.file('state.json').replaceText(JSON.stringify(state));
-  }
-}
-
-function clusterSeed(): WasixClusterSeedLoader {
-  const mount: WasixDirectoryMount = {
-    directories: ['base', 'global', 'pg_wal'],
-    files: {
-      PG_VERSION: encoder.encode('18\n'),
-      'global/pg_control': Uint8Array.of(1, 2, 3),
-    },
-  };
-  return async () => mount;
-}
-
-function completeSnapshot() {
-  return {
-    schema: 'oliphaunt-wasix-directory-snapshot-v1' as const,
-    directories: ['global', 'pg_wal'],
-    files: [
-      { path: 'PG_VERSION', bytes: encoder.encode('18\n') },
-      { path: 'global/pg_control', bytes: Uint8Array.of(1) },
-    ],
-  };
-}
-
-function compatible(): WasixPhysicalIdentity {
-  return { ...WASIX_PHYSICAL_IDENTITY };
-}
-
-type FakeIo = {
-  failNextStateCommit?: boolean;
-  failNextDataCommit?: boolean;
-  lockReleaseFailure?: Error;
-  syncAccessErrorName?: string;
-  writes?: string[];
-  readBacking?: () => Promise<void>;
-};
-
-function installOpfs(io: FakeIo = {}): FakeDirectory {
-  const root = new FakeDirectory('', io);
-  stubGlobal('navigator', {
-    locks: {
-      request: async (
-        _name: string,
-        _options: unknown,
-        callback: (lock: object) => Promise<unknown>,
-      ) => {
-        const result = await callback({});
-        if (io.lockReleaseFailure !== undefined) throw io.lockReleaseFailure;
-        return result;
-      },
-    },
-    storage: { getDirectory: async () => root.asHandle() },
-  });
-  return root;
-}
-
-async function databaseDirectory(root: FakeDirectory, name: string): Promise<FakeDirectory> {
-  return await (await root.getDirectoryHandle(OPFS_POOL_ROOT)).getDirectoryHandle(name);
-}
-
-async function readSnapshot(
-  database: FakeDirectory,
-  name: string,
-  physicalIdentity: WasixPhysicalIdentity,
-) {
-  return (await inspectPooledOpfsDatabase(database.asHandle(), name, physicalIdentity)).snapshot;
-}
-
-async function collectKeys(directory: FakeDirectory): Promise<string[]> {
-  const keys: string[] = [];
-  for await (const key of directory.keys()) keys.push(key);
-  return keys.sort();
-}
-
-class FakeDirectory {
-  readonly kind = 'directory';
-  readonly #path: string;
-  readonly #io: FakeIo;
-  readonly #entries = new Map<string, FakeDirectory | FakeFile>();
-
-  constructor(path: string, io: FakeIo) {
-    this.#path = path;
-    this.#io = io;
-  }
-
-  asHandle(): FileSystemDirectoryHandle {
-    return this as unknown as FileSystemDirectoryHandle;
-  }
-
-  async getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<FakeDirectory> {
-    const existing = this.#entries.get(name);
-    if (existing instanceof FakeDirectory) return existing;
-    if (existing !== undefined || options?.create !== true) throw notFound();
-    const directory = new FakeDirectory(join(this.#path, name), this.#io);
-    this.#entries.set(name, directory);
-    return directory;
-  }
-
-  async getFileHandle(name: string, options?: { create?: boolean }): Promise<FakeFile> {
-    const existing = this.#entries.get(name);
-    if (existing instanceof FakeFile) return existing;
-    if (existing !== undefined || options?.create !== true) throw notFound();
-    const file = new FakeFile(join(this.#path, name), this.#io);
-    this.#entries.set(name, file);
-    return file;
-  }
-
-  file(name: string): FakeFile {
-    const entry = this.#entries.get(name);
-    if (!(entry instanceof FakeFile)) throw notFound();
-    return entry;
-  }
-
-  async removeEntry(name: string): Promise<void> {
-    if (!this.#entries.delete(name)) throw notFound();
-  }
-
-  async *keys(): AsyncGenerator<string> {
-    yield* this.#entries.keys();
-  }
-}
-
-class FakeFile {
-  readonly kind = 'file';
-  readonly #path: string;
-  readonly #io: FakeIo;
-  #bytes = new Uint8Array();
-
-  constructor(path: string, io: FakeIo) {
-    this.#path = path;
-    this.#io = io;
-  }
-
-  asHandle(): FileSystemFileHandle {
-    return this as unknown as FileSystemFileHandle;
-  }
-
-  async getFile(): Promise<File> {
-    const bytes = this.#bytes.slice();
-    return {
-      size: bytes.byteLength,
-      arrayBuffer: async () => {
-        if (this.#path.includes('/data/')) await this.#io.readBacking?.();
-        return bytes.buffer;
-      },
-      text: async () => decoder.decode(bytes),
-    } as File;
-  }
-
-  async text(): Promise<string> {
-    return decoder.decode(this.#bytes);
-  }
-
-  async createWritable(): Promise<FileSystemWritableFileStream> {
-    let next = this.#bytes.slice();
-    return {
-      write: async (value: FileSystemWriteChunkType) => {
-        if (!(value instanceof Uint8Array)) throw new TypeError('test expects byte writes');
-        next = Uint8Array.from(value as Uint8Array);
-      },
-      close: async () => {
-        if (this.#path.endsWith('/state.json') && this.#io.failNextStateCommit === true) {
-          this.#io.failNextStateCommit = false;
-          throw new Error('injected state commit failure');
-        }
-        if (this.#path.includes('/data/') && this.#io.failNextDataCommit === true) {
-          this.#io.failNextDataCommit = false;
-          throw new Error('injected OPFS write failure');
-        }
-        this.#bytes = next;
-        this.#io.writes?.push(this.#path);
-      },
-      abort: async () => undefined,
-    } as unknown as FileSystemWritableFileStream;
-  }
-
-  async createSyncAccessHandle(): Promise<never> {
-    throw new Error('copy-on-write storage must not open synchronous handles');
-  }
-
-  async replaceText(value: string): Promise<void> {
-    this.#bytes = encoder.encode(value);
-  }
-}
-
-function join(parent: string, name: string): string {
-  return parent === '' ? name : `${parent}/${name}`;
-}
-
-function lastPathSegment(path: string): string {
-  return path.slice(path.lastIndexOf('/') + 1);
-}
-
-function notFound(): DOMException {
-  return new DOMException('missing', 'NotFoundError');
-}
-
 it.each([
   1, 2, 5,
 ])('OPFS snapshots bound slow backing I/O at %s concurrent reads', async (maxConcurrentIO) => {
