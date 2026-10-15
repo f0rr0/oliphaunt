@@ -30,9 +30,9 @@ expected="$(awk -v version="$version" -v asset="$asset" \
 [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || fail "missing or ambiguous checksum for $asset"
 
 if command -v sha256sum >/dev/null 2>&1; then
-  digest() { sha256sum "$1" | awk '{ print $1 }'; }
+  digest() { sha256sum < "$1" | awk '{ print $1 }'; }
 elif command -v shasum >/dev/null 2>&1; then
-  digest() { shasum -a 256 "$1" | awk '{ print $1 }'; }
+  digest() { shasum -a 256 < "$1" | awk '{ print $1 }'; }
 else
   fail "bootstrap requires sha256sum or shasum"
 fi
