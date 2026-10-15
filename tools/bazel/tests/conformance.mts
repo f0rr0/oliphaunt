@@ -1193,9 +1193,12 @@ try {
   const missingDependency = path.join(dependenciesDirectory, 'conformance_missing_pin');
   assert.ok(!existsSync(addedDependency) && !existsSync(missingDependency));
   mkdirSync(addedDependency, { recursive: true });
+  const dependencyPin = Bun.TOML.parse(
+    readFileSync(path.join(workspace, 'src/extensions/external/vector/source.toml'), 'utf8'),
+  );
   writeFileSync(
     path.join(addedDependency, 'source.toml'),
-    'name = "conformance_fixture"\nurl = "https://example.invalid/fixture.git"\ncommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n',
+    `name = "conformance_fixture"\nurl = ${JSON.stringify(dependencyPin.url)}\ncommit = ${JSON.stringify(dependencyPin.commit)}\n\n[archive]\nsha256 = ${JSON.stringify(dependencyPin.archive.sha256)}\n`,
   );
   assert.match(
     domain(),
