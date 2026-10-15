@@ -1,6 +1,8 @@
 """Analysis tests exercise provider rebinding, not native-host qualification."""
 
 load("@bazel_skylib//lib:unittest.bzl", "asserts", "unittest")
+load("@rules_cc//cc/private/toolchain:unix_cc_toolchain_config.bzl", unix_config = "cc_toolchain_config")
+load("@rules_cc//cc/toolchains:cc_toolchain.bzl", "cc_toolchain")
 load("@rules_swift//swift:providers.bzl", "SwiftToolchainInfo")
 load("@rules_swift//swift/toolchains/config:tool_config.bzl", "ToolConfigInfo")
 load("@rules_swift//swift/toolchains/config:action_config.bzl", "ActionConfigInfo", "add_arg")
@@ -11,6 +13,12 @@ load("@rules_swift//swift/internal:developer_dirs.bzl", "swift_developer_lib_dir
 load(":swift-profile.bzl", "declared_swift_path", "declared_xcode_info")
 load(":repositories.bzl", "apple_swift_test_runtime_files")
 load(":app-tool-inputs.bzl", "apple_app_configuration_error")
+load(":cc-profiles.bzl", "host_builtin_include_directories")
+
+_APPLE_SDKS = ["macosx", "iphoneos", "iphonesimulator"]
+
+def _builtin_directories(sdk):
+    return ["toolchain/lib/clang/20/include", "sdk_" + sdk + "/usr/include", "sdk_" + sdk + "/System/Library/Frameworks", "toolchain/include/c++/v1"]
 
 def _plugin_arguments(source, directory, include_developer, action):
     arguments = []
@@ -41,6 +49,10 @@ def _plugin_arguments(source, directory, include_developer, action):
 def _profile_test(ctx):
     env = unittest.begin(ctx)
     prefix = "external/selected_sdk/"
+    # Inspect the actual CcToolchainInfo expansion in a non-root package: bare
+    # execroot paths would be prefixed again by this toolchain's package path.
+    for sdk, compiler in zip(_APPLE_SDKS, ctx.attr.cc_profiles):
+        asserts.equals(env, [prefix + directory for directory in _builtin_directories(sdk)], compiler[cc_common.CcToolchainInfo].built_in_include_directories)
     observed_xcode = "Xcode 26.5\nBuild version 17F42"
     captured_sdks = {"macosx": "26.5", "iphoneos": "26.5", "iphonesimulator": "26.5"}
     configured = struct(xcode_version = lambda: apple_common.dotted_version("26.5.0.17f42"), sdk_version_for_platform = lambda platform: apple_common.dotted_version("26.5"), execution_info = lambda: {"no-remote": "1"})
@@ -148,4 +160,31 @@ def _profile_test(ctx):
     asserts.equals(env, [["-plugin-path", missing], marker], _plugin_arguments(ctx.file.source, missing, True, compiler_plugin_action_names()[0]))
     return unittest.end(env)
 
-profile_test = unittest.make(_profile_test, attrs = {"source": attr.label(default = ":sdk-smoke.c", allow_single_file = True)})
+_profile_rule_test = unittest.make(_profile_test, attrs = {"source": attr.label(default = ":sdk-smoke.c", allow_single_file = True), "cc_profiles": attr.label_list(providers = [cc_common.CcToolchainInfo])})
+
+def profile_test(name, **kwargs):
+    """Exercise builtin path interpretation without acquiring a licensed SDK."""
+    profiles = []
+    for sdk in _APPLE_SDKS:
+        profile = name + "_" + sdk
+        unix_config(
+            name = profile + "_configuration",
+            cpu = "darwin_arm64",
+            compiler = "clang",
+            host_system_name = "fixture",
+            target_system_name = "fixture",
+            target_libc = "fixture",
+            abi_version = "fixture",
+            abi_libc_version = "fixture",
+            toolchain_identifier = profile,
+            cxx_builtin_include_directories = host_builtin_include_directories("external/selected_sdk/", _builtin_directories(sdk)),
+            tool_paths = {tool: "/bin/false" for tool in ["ar", "cpp", "gcc", "gcov", "ld", "nm", "objdump", "strip"]},
+            testonly = True,
+        )
+        native.filegroup(name = profile + "_files", srcs = [], testonly = True)
+        cc_toolchain(name = profile, toolchain_identifier = profile, toolchain_config = ":" + profile + "_configuration",
+                     all_files = ":" + profile + "_files", ar_files = ":" + profile + "_files", as_files = ":" + profile + "_files",
+                     compiler_files = ":" + profile + "_files", dwp_files = ":" + profile + "_files", linker_files = ":" + profile + "_files",
+                     objcopy_files = ":" + profile + "_files", strip_files = ":" + profile + "_files", testonly = True)
+        profiles.append(":" + profile)
+    _profile_rule_test(name = name, cc_profiles = profiles, **kwargs)

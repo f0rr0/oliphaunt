@@ -34,6 +34,10 @@ _configuration = rule(
     },
 )
 
+def host_builtin_include_directories(prefix, directories):
+    """Builtin paths need an explicit execroot base, unlike compiler flags."""
+    return ["%workspace%/" + prefix + directory for directory in directories]
+
 def host_cc_profiles(sdk):
     """Use execroot SDK paths for compiler, include, resource and library lookup."""
     prefix = "external/" + native.repository_name()[1:] + "/"
@@ -58,7 +62,7 @@ def host_cc_profiles(sdk):
             msvc_env_lib = ";".join([prefix + directory for directory in libraries]),
             msvc_env_path = ";".join([prefix + directory for directory in ["compiler_bin", "sdk_bin", "crt"]]),
             msvc_env_tmp = sdk["temporaryDirectory"],
-            cxx_builtin_include_directories = [prefix + directory for directory in includes],
+            cxx_builtin_include_directories = host_builtin_include_directories(prefix, includes),
             tool_paths = {
                 "ar": "compiler_bin/lib.exe",
                 "ml": "compiler_bin/ml64.exe",
@@ -93,7 +97,7 @@ def host_cc_profiles(sdk):
                 abi_libc_version = sdk["observations"]["macosx_version"],
                 toolchain_identifier = "oliphaunt_apple_arm64_" + name,
                 builtin_sysroot = prefix + "sdk_macosx",
-                cxx_builtin_include_directories = [prefix + sdk["resourceDirectory"] + "/include", prefix + "sdk_macosx/usr/include", prefix + "sdk_macosx/System/Library/Frameworks", prefix + "toolchain/include/c++/v1"],
+                cxx_builtin_include_directories = host_builtin_include_directories(prefix, [sdk["resourceDirectory"] + "/include", "sdk_macosx/usr/include", "sdk_macosx/System/Library/Frameworks", "toolchain/include/c++/v1"]),
                 tool_paths = {
                     "gcc": sdk["tools"]["clang"],
                     "cpp": sdk["tools"]["clang"],
@@ -136,7 +140,7 @@ def host_cc_profiles(sdk):
                 module_map = ":modulemap",
                 c_flags = ["-resource-dir", prefix + sdk["resourceDirectory"]],
                 cxx_flags = ["-std=c++20"] if selected_sdk in ["iphoneos", "iphonesimulator"] else [],
-                cxx_builtin_include_directories = [prefix + sdk["resourceDirectory"] + "/include", prefix + "sdk_" + selected_sdk + "/usr/include", prefix + "sdk_" + selected_sdk + "/System/Library/Frameworks", prefix + "toolchain/include/c++/v1"],
+                cxx_builtin_include_directories = host_builtin_include_directories(prefix, [sdk["resourceDirectory"] + "/include", "sdk_" + selected_sdk + "/usr/include", "sdk_" + selected_sdk + "/System/Library/Frameworks", "toolchain/include/c++/v1"]),
                 # Bazel owns the reserved Xcode environment; drivers consume our captured paths.
                 extra_env = {"OLIPHAUNT_APPLE_DEVELOPER_DIRECTORY": prefix.removesuffix("/"), "OLIPHAUNT_APPLE_SDKROOT": prefix + "sdk_" + selected_sdk, "OLIPHAUNT_APPLE_TOOL_DIRECTORY": prefix + "tools"},
                 tool_paths_overrides = {"cpp": prefix + sdk["tools"]["clang"], "ld": prefix + sdk["tools"]["ld"], "nm": prefix + sdk["tools"]["nm"], "strip": prefix + sdk["tools"]["strip"], "gcov": prefix + "unsupported.sh", "objdump": prefix + "unsupported.sh"},
