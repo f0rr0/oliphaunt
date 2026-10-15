@@ -10,9 +10,9 @@ def _preprocess_impl(ctx):
     outputs = []
     for source in ctx.files.srcs:
         output = ctx.actions.declare_file(ctx.label.name + "/" + source.basename[:-3])
-        # This is configure.ac's GPP SQLPP branch, including its SQL string mode.
+        # Keep configure.ac's SQL string mode without duplicate Windows CR insertion.
         args = ctx.actions.args()
-        args.add_all(["-C", "-s", "'", "-o", output.path])
+        args.add_all(["+z", "-C", "-s", "'", "-o", output.path])
         args.add_all(depset(transitive = [context.includes for context in contexts]), format_each = "-I%s")
         args.add(source)
         ctx.actions.run(executable = ctx.attr._gpp[DefaultInfo].files_to_run,
