@@ -55,7 +55,8 @@ Treat a queue capacity, a read batch and an input limit as different settings. M
 | Admitted input | These gates use a 128 MiB byte budget and permit a larger single input under their admission rules | This is a watermark for owned input, not a hard limit on total database or process memory. Explicit Swift settings reserve before structured packet encoding |
 | Browser tool channels | Each channel has 256 KiB of usable capacity; a tool uses separate protocol and optional output channels | Full channels apply backpressure. Multiple channels and databases multiply the allocation |
 | Read and callback batches | WASIX protocol callbacks deliver at most 64 KiB at a time | Large results can span many chunks. Chunk size does not limit total output or remove a single-message acceptance limit |
-| OPFS helper I/O | Initialization, snapshot reads and cleanup default to at most 16 concurrent operations per helper batch; `opfs(name, { maxConcurrentIO })` selects another positive count | Concurrency trades overlapping file work against storage contention. Changed-file publication retains its separate ordering |
+| OPFS helper I/O | Setup, snapshot reads and cleanup default to at most 16 concurrent operations per helper batch; `opfs(name, { maxConcurrentIO })` selects another positive count | Concurrency trades overlapping file work against storage contention. Changed-file publication retains its separate ordering |
+| OPFS spare handles | Worker OPFS maintains 32 unused handles by default; `opfs(name, { spareFileCount })` accepts a non-negative count | More handles reduce overflow staging but increase startup and browser resource use. This reserve does not cap database file count |
 | Guest memory | Embedded WASIX artifacts start with 128 MiB of linear memory, including an 8 MiB guest C stack | These are artifact settings. More guest stack reduces heap headroom within the same memory. The host engine's execution stack is separate |
 
 Admission has the same explicit field meanings across the asynchronous SDKs. Omitting it retains each SDK's existing accounting. Transport, artifact and PostgreSQL settings have their own owners; these budgets do not establish a total process-memory bound.
@@ -125,14 +126,27 @@ For browser OPFS, configure helper I/O on its storage constructor:
 ```ts
 import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
 
-const storage = opfs('main', { maxConcurrentIO: 4 });
+const storage = opfs('main', {
+  maxConcurrentIO: 4,
+  spareFileCount: 32,
+});
 ```
 
-Lower concurrency reduces overlapping storage work. Higher concurrency can
-reduce snapshot time or rebuilding time after interrupted initialization until storage contention dominates. It
-also reaches cleanup and restore through the descriptor; changed-file writes
-still retain their publication order. This controls I/O concurrency, not the
-memory of the complete reopened snapshot. The omitted value remains 16.
+`maxConcurrentIO` defaults to 16. Lower values reduce overlapping asynchronous
+setup, snapshot, restore and cleanup work. Higher values can reduce setup time
+until storage contention dominates. This does not parallelize SQL.
+
+`spareFileCount` defaults to 32 unused synchronous file handles in worker OPFS.
+Higher values cost startup work and browser resources but reduce staging when a
+query creates many files. Zero is allowed. The reserve does not limit the total
+number of database files: overflow files are staged and saved in the recovery
+journal before dependent changes can reach storage, then materialized at the
+provider boundary. Large creation bursts can still use substantial staging
+memory and extra storage I/O.
+
+Worker OPFS reads and writes existing files directly. Placements without
+synchronous access handles retain a complete working database in memory; the
+concurrency setting does not bound that memory.
 
 Use your SDK's PostgreSQL startup settings for database memory and SQL deadlines. Include units explicitly and inspect the effective values in the running database:
 

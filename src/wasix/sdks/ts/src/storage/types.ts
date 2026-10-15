@@ -1,9 +1,17 @@
 declare const storageDescriptorBrand: unique symbol;
 declare const persistentStorageDescriptorBrand: unique symbol;
 
-/** Helper I/O concurrency; changed-file publication remains ordered. */
-export type OpfsOptions = Readonly<{ maxConcurrentIO?: number }>;
+export type OpfsOptions = Readonly<{
+  /** Parallel asynchronous setup, snapshot and cleanup operations. Default: 16. */
+  maxConcurrentIO?: number;
+  /** Target unused synchronous file handles between operations. Default: 32.
+   * More handles reduce overflow staging but increase startup and browser resource use.
+   * This is a reserve, not a database file-count limit; zero uses durable staging.
+   */
+  spareFileCount?: number;
+}>;
 export const DEFAULT_OPFS_MAX_CONCURRENT_IO = 16;
+export const DEFAULT_OPFS_SPARE_FILE_COUNT = 32;
 
 /**
  * An opaque storage selection created by this package's storage factories.
@@ -38,6 +46,7 @@ export type SerializedWasixStorage =
       kind: 'opfs';
       name: string;
       maxConcurrentIO?: number;
+      spareFileCount?: number;
     }>
   | Readonly<{
       schema: 'oliphaunt-wasix-storage-v1';
@@ -78,17 +87,20 @@ export function defineOpfsStorage(
     options === null ||
     typeof options !== 'object' ||
     Array.isArray(options) ||
-    Object.keys(options).some((key) => key !== 'maxConcurrentIO')
+    Object.keys(options).some((key) => key !== 'maxConcurrentIO' && key !== 'spareFileCount')
   ) {
-    throw new TypeError('unknown OPFS option; expected maxConcurrentIO');
+    throw new TypeError('unknown OPFS option; expected maxConcurrentIO or spareFileCount');
   }
   const maxConcurrentIO = options.maxConcurrentIO;
   validateOpfsConcurrency(maxConcurrentIO);
+  const spareFileCount = options.spareFileCount;
+  validateOpfsSpareFileCount(spareFileCount);
   return defineStorage({
     schema: 'oliphaunt-wasix-storage-v1',
     kind: 'opfs',
     name,
     ...(maxConcurrentIO === undefined ? {} : { maxConcurrentIO }),
+    ...(spareFileCount === undefined ? {} : { spareFileCount }),
   }) as PersistentWasixStorage<'opfs'>;
 }
 
@@ -149,6 +161,12 @@ export function validateOpfsDatabaseName(name: unknown): asserts name is string 
 export function validateOpfsConcurrency(value: unknown): void {
   if (value !== undefined && (!Number.isSafeInteger(value) || (value as number) <= 0)) {
     throw new TypeError('OPFS maxConcurrentIO must be a positive safe integer');
+  }
+}
+
+export function validateOpfsSpareFileCount(value: unknown): void {
+  if (value !== undefined && (!Number.isSafeInteger(value) || (value as number) < 0)) {
+    throw new TypeError('OPFS spareFileCount must be a non-negative safe integer');
   }
 }
 

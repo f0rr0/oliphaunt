@@ -42,7 +42,7 @@ The names below identify concepts; their language spelling can differ.
 | Streaming options | `bufferCapacityBytes`, `maxChunkBytes` | Usable buffering per transport direction and maximum delivered chunk; read scratch sizes derive from the selected chunk where applicable |
 | Protocol limits | `maxFrontendMessageBytes`, `maxRequestBytes`, `maxBackendMessageBytes`, `maxBufferedResponseBytes` | Separate message, complete-request and collected-response acceptance; introduce only fields the product actually enforces |
 | Timeout options | `startupTimeoutMs`, `shutdownTimeoutMs` in JS; native duration types where idiomatic | Per physical runtime; retain existing mobile broker startup/operation options |
-| OPFS options | `maxConcurrentIO` | On the OPFS storage descriptor; initialization, snapshot reads and cleanup |
+| OPFS options | `maxConcurrentIO`, `spareFileCount` | On the storage descriptor; concurrent helper I/O and the unused worker-handle reserve |
 | Tool output options | `stderrTailBytes`, `terminateGraceMs` | Diagnostic tail on streaming summaries; termination grace applies to native subprocess tools only |
 | Runtime build profile | Guest stack, initial/maximum guest memory and Postmaster task capacity | Producer-owned and included in artifact identity; native backend stack is a separate physical-runtime setting |
 
@@ -172,7 +172,7 @@ configuration override.
 
 | Product/owner | Proposed supply and field names | Meaning |
 | --- | --- | --- |
-| Browser OPFS | `opfs(name, { maxConcurrentIO })` | Concurrent helper I/O; no corresponding setting on IndexedDB or directory storage |
+| Browser OPFS | `opfs(name, { maxConcurrentIO, spareFileCount })` | Concurrent helper I/O and unused direct-worker handles; no corresponding setting on IndexedDB or directory storage |
 | Native npm tools | Existing `pgDumpToStream`/`psqlToStream` and file-runner options gain `stderrTailBytes`, `maxChunkBytes`, `terminateGraceMs` | Retained diagnostic tail, maximum destination write, native subprocess termination grace |
 | WASIX npm tools | Existing destination options gain `stderrTailBytes`, `maxChunkBytes`; queued transports additionally accept `bufferCapacityBytes` | Forward through the existing database/tool runner; no subprocess kill grace for an in-process guest |
 | Native and WASIX Rust tools | Existing `PgDumpOptions`/`PsqlOptions` gain `.stderr_tail_bytes(...)` and `.max_chunk_bytes(...)` for destination runners; WASIX tool sockets also gain `.buffer_capacity_bytes(...)` | Keep full-capture methods' stderr semantics; reject destination-only settings there rather than silently ignoring them |
@@ -204,6 +204,7 @@ budget; the five fields are not independent promises of safe configurations.
 | `maxChunkBytes` | Maximum bytes delivered in one callback/write | May reduce callback overhead; smaller chunks give finer delivery; neither limits total output |
 | Message/request/collected-response limits | Maximum accepted size of that specific item | Accepts larger items with greater worst-case resource exposure; does not accelerate smaller items |
 | `maxConcurrentIO` | Files OPFS helpers may process at once | May reduce setup time or increase storage contention; publication stays ordered |
+| `spareFileCount` | Unused direct-worker file handles maintained between operations | Higher values reduce durable overflow staging but increase startup and browser resource use. Zero is valid; this is not a database file-count limit |
 | `stderrTailBytes` | Latest diagnostic bytes retained after a streaming tool run | Keeps more error context; complete stderr can still be sent to a separate destination |
 | Lifecycle timeout | How long the owned lifecycle phase may wait before reporting failure/retiring its owner | Accommodates slower startup/cleanup, while delaying failure detection; not an SQL runtime limit |
 | Native/guest/execution stack capacity | Space available for that stack's nested calls | Costs more capacity and may support deeper calls; it does not make ordinary SQL faster |

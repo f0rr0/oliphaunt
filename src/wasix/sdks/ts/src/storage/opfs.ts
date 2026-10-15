@@ -2,8 +2,8 @@ import { defineOpfsStorage, type OpfsOptions, type PersistentWasixStorage } from
 export type { OpfsOptions } from './types.js';
 
 /**
- * Select an origin-private database pool that publishes changed files with
- * copy-on-write backings and commits its namespace last.
+ * Select an origin-private database. Workers use direct file I/O with a
+ * synchronous recovery journal; other placements use portable publication.
  */
 export function opfs(name: string, options: OpfsOptions = {}): PersistentWasixStorage<'opfs'> {
   return defineOpfsStorage(name, options);

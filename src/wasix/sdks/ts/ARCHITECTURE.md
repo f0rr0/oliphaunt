@@ -307,7 +307,7 @@ opaque storage descriptor
           v
  acquire provider lease ---- exact physical compatibility
           |
-          `---- memory /base ------ journaled copy-on-write publication
+          `---- direct OPFS or memory /base -- provider persistence
                            |
                            v
               PostgreSQL boundary + release
@@ -337,11 +337,20 @@ removals in one atomic read-write transaction using the browser's default
 commitState policy; an aborted write leaves the preceding generation intact,
 and distinct logical databases do not share an object-store transaction. OPFS
 stores a strict logical namespace and physical identity over flat backing files.
-All browser placements use copy-on-write backing files and atomically replace
-namespace state last. Changed WAL precedes ordinary files and `global/pg_control`.
-A failed publication leaves the preceding stored generation authoritative and
-poisons the live handle because the guest may already have newer commits.
-Existing ready and unpublished initializing generations retain their pool format.
+Workers use direct range I/O when synchronous OPFS handles are available. A
+preopened journal commits namespace changes and overflow changes before a guest
+flush succeeds or a dependent published backing changes. Written WAL is flushed
+before ordinary overflow contents become recoverable. Journal records and two
+alternating commit slots are checksummed; checkpoint publication rotates the
+journal rather than truncating its only recoverable generation.
+
+The portable provider retains copy-on-write publication. Both providers share
+namespace validation and journal recovery. Direct acquisition upgrades legacy
+metadata in place to v2; older SDKs reject it. The PostgreSQL physical identity
+is unchanged. A direct persistence failure poisons the handle with an unknown
+outcome; PostgreSQL WAL supplies transaction recovery, rather than byte-identical
+rollback of every file. The spare reserve is configurable and overflow is
+durable, so it does not impose a fixed file-count limit.
 
 Compatibility uses the PostgreSQL major and versioned WASIX physical format.
 Runtime hashes and source fingerprints still reject mixed runtime, cluster-seed,
@@ -474,8 +483,8 @@ invariants instead of duplicating that filename inventory. Together, the patches
   amortize bounded pending-work checks, and avoid turning synchronous-file POSIX
   close into an implicit fsync that bypasses PostgreSQL durability policy;
 - expose the current-state mutation journal and the narrow caller-realm
-  synchronous filesystem bridge; public OPFS persistence uses the mutation journal
-  and copy-on-write publication;
+  synchronous filesystem bridge; worker OPFS uses the bridge and recovery journal,
+  while portable OPFS uses the mutation journal and copy-on-write publication;
 - provide the caller-realm PostgreSQL lifecycle and reusable-memory pgwire
   driver, including COPY-aware callback streaming, top-level error recovery,
   and a bounded 16 KiB failure-only stderr tail; and

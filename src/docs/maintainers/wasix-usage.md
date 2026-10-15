@@ -117,9 +117,11 @@ Memory is the default. Persistent providers are selective imports:
 - `storage/node`, `storage/bun`, and `storage/deno` on those runtimes.
 
 IndexedDB hydrates a Wasmer memory directory and publishes journaled changes.
-OPFS publishes changed files through copy-on-write backings in every browser
-placement, then atomically replaces its namespace state. Existing ready pool
-metadata and unpublished initializing generations retain their format.
+Worker OPFS uses direct range I/O with a synchronous recovery journal. The
+portable provider retains memory-backed copy-on-write publication. Both read
+the same private pool format and replay committed recovery records before
+mounting. Direct acquisition upgrades legacy metadata to v2 under the existing
+exclusive lock; older SDKs reject that format.
 Node, Bun, Deno, and Electron directory providers publish below the managed root's
 `pgdata` child. Ordinary operations complete a provider boundary after
 `ReadyForQuery`; callback transactions do so once after confirmed `COMMIT` or
@@ -127,11 +129,14 @@ Node, Bun, Deno, and Electron directory providers publish below the managed root
 Applications that need a PostgreSQL checkpoint issue `execute("CHECKPOINT")`;
 it completes the same ordinary provider boundary as another successful statement.
 
-IndexedDB publication is one transaction. OPFS writes changed WAL before ordinary
-files and `global/pg_control`, and publishes namespace state last. A failure leaves
-the preceding stored generation authoritative and poisons the handle because the
-live guest may be ahead of storage. PostgreSQL statement errors that recover
-through `ReadyForQuery` do not poison storage.
+IndexedDB publication is one transaction. Direct OPFS journals names and staged
+overflow contents before dependent mutations or a successful guest flush; it
+flushes written WAL before publishing ordinary overflow contents. It relies on
+PostgreSQL WAL recovery rather than byte-identical snapshot rollback. Portable
+OPFS writes changed WAL before ordinary files and `global/pg_control`, then
+publishes namespace state last. Persistence failures poison the handle and
+report an unknown outcome. PostgreSQL statement errors that recover through
+`ReadyForQuery` do not poison storage.
 
 `backup()` produces the exact WASIX physical archive. `Oliphaunt.restore()`
 accepts that archive and new or empty persistent storage. Restore rejects

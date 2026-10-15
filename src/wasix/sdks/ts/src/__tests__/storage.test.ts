@@ -197,3 +197,24 @@ it('OPFS concurrency snapshots and serializes without changing omitted descripto
   }
   expect(() => opfs('invalid', { typo: 2 } as never)).toThrow(/unknown OPFS option/);
 });
+
+it('snapshots and validates the OPFS spare reserve without making it a file limit', () => {
+  const options = { spareFileCount: 0 };
+  const storage = opfs('reserve', options);
+  options.spareFileCount = 20;
+  expect(serializeWasixStorage(storage)).toEqual({
+    schema: 'oliphaunt-wasix-storage-v1',
+    kind: 'opfs',
+    name: 'reserve',
+    spareFileCount: 0,
+  });
+  for (const value of [
+    -1,
+    0.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER + 1,
+  ]) {
+    expect(() => opfs('invalid', { spareFileCount: value })).toThrow(/non-negative safe integer/);
+  }
+});
