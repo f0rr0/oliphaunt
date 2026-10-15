@@ -230,7 +230,7 @@ function actualRegistration(row: MobileStaticArchive, stem: string, work: string
   const result = Bun.spawnSync(
     [
       realpathSync(row.nm.path),
-      ...(row.nm.apple ? ['-g', '-U'] : ['-g', '--defined-only']),
+      ...(row.nm.apple ? ['-g', '-U', '-m'] : ['-g', '--defined-only']),
       realpathSync(row.archive),
     ],
     { cwd: work, env: { LC_ALL: 'C', LANG: 'C' }, stdout: 'pipe', stderr: 'pipe' },

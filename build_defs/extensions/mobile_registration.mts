@@ -20,15 +20,27 @@ export interface StaticRegistration {
   symbols: { name: string; address: string }[];
 }
 
-/** LLVM and Apple nm use the same trailing address/type/name columns. */
+/** Decode portable nm columns or Apple's detailed section and binding output. */
 export function globalDefinitions(text: string, apple: boolean) {
   assert(Buffer.byteLength(text) <= 64 * 1024 * 1024, 'nm output exceeds 64 MiB');
   const definitions = new Map<string, string>();
   for (const raw of text.split(/\r?\n/u)) {
     const fields = raw.trim().split(/\s+/u);
     if (fields.length < 2) continue;
-    const type = fields[fields.length - 2];
+    let type = fields[fields.length - 2];
     const external = fields[fields.length - 1];
+    if (apple) {
+      // Mach-O BSD output prints weak text as T; -m preserves its weak binding.
+      const attributes = fields.slice(2, -1);
+      if (
+        !/^[0-9a-f]+$/iu.test(fields[0]) ||
+        !attributes.includes('external') ||
+        attributes.includes('non-external')
+      )
+        continue;
+      const textSection = fields[1] === '(__TEXT,__text)';
+      type = attributes.includes('weak') ? (textSection ? 'W' : 'V') : textSection ? 'T' : 'D';
+    }
     if (!/^[A-Z]$/u.test(type) || type === 'U') continue;
     const name = apple && external.startsWith('_') ? external.slice(1) : external;
     if (!identifier.test(name)) continue;
@@ -191,7 +203,7 @@ if (import.meta.main) {
   }
   if (spec.nm) {
     const result = Bun.spawnSync(
-      [spec.nm, ...(spec.apple ? ['-g', '-U'] : ['-g', '--defined-only']), spec.archive],
+      [spec.nm, ...(spec.apple ? ['-g', '-U', '-m'] : ['-g', '--defined-only']), spec.archive],
       { env: { LC_ALL: 'C', LANG: 'C' }, stdout: 'pipe', stderr: 'pipe' },
     );
     assert.equal(result.exitCode, 0, `declared nm failed: ${result.stderr.toString('utf8')}`);
