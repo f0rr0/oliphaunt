@@ -20,11 +20,13 @@ jobs:
     name: Generate Windows libiconv headers and test pinned templates
     runs-on: windows-2025-vs2026
     timeout-minutes: 25
+    env:
+      XDG_CACHE_HOME: ${{ runner.temp }}/iconv-config-bootstrap
     steps:
       - name: Checkout immutable tested source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: bb841660476a0b7dbddaea7b5d8828d99bc91ea7
+          ref: 0d2199402248c50a8e0f9c07ee4a7631e1600ff1
           fetch-depth: 1
           persist-credentials: false
 
@@ -32,16 +34,33 @@ jobs:
         run: |
           tested_commit="$(git rev-parse HEAD)"
           tested_tree="$(git rev-parse 'HEAD^{tree}')"
-          test "$tested_commit" = bb841660476a0b7dbddaea7b5d8828d99bc91ea7
-          test "$tested_tree" = 5efda73eb5cd9ee45b6eef5f7fd743e0b907fa67
+          test "$tested_commit" = 0d2199402248c50a8e0f9c07ee4a7631e1600ff1
+          test "$tested_tree" = ecf5e3cb397c4e34ea032cc341dc9f6ad284acf4
           printf 'TESTED_SOURCE_COMMIT=%s\nTESTED_SOURCE_TREE=%s\n' "$tested_commit" "$tested_tree"
 
       - name: Select declared MSVC SDK
         uses: ./.github/actions/setup-msvc
 
+      - name: Compare named and stdin hashes of the same pinned Windows binary
+        run: |
+          version="$(tr -d '\r' < .bazelversion)"
+          asset="bazel-$version-windows-x86_64.exe"
+          expected="$(awk -v version="$version" -v asset="$asset" \
+            '$1 == version && $2 == asset { print $3 }' tools/dev/bazel-checksums.tsv)"
+          cache_dir="$XDG_CACHE_HOME/oliphaunt/bazel/$version"
+          mkdir -p "$cache_dir"
+          binary="$cache_dir/$asset"
+          curl --fail --location --silent --show-error --connect-timeout 15 --max-time 300 \
+            --proto '=https' --proto-redir '=https' \
+            --output "$binary" "https://releases.bazel.build/$version/release/$asset"
+          named="$(sha256sum "$binary" | awk '{ print $1 }')"
+          stdin="$(sha256sum < "$binary" | awk '{ print $1 }')"
+          test "$stdin" = "$expected"
+          test "$named" = "\\${expected}"
+          printf 'EXPECTED_SHA256=%s\nNAMED_PARSER=%s\nSTDIN_PARSER=%s\n' "$expected" "$named" "$stdin"
+          chmod +x "$binary"
+
       - name: Generate actual Windows libiconv headers and run template regression
-        env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/iconv-config-bootstrap
         run: |
           bash tools/dev/bazel.sh --nohome_rc --nosystem_rc \
             --output_base="$RUNNER_TEMP/iconv-config" --host_jvm_args=-Xmx3g \
