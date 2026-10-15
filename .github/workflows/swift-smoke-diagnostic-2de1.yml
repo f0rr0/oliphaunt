@@ -1,0 +1,53 @@
+name: Swift compiler smoke diagnostic (2de104aa0)
+
+on:
+  push:
+    branches: [f0rr0/diagnostic-swift-smoke-2de1]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-compiler-smoke-${{ github.run_id }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  smoke:
+    name: Compile, link and execute captured Swift
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - name: Checkout immutable tested source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 2de104aa049d28a1294b5bff7cb397faf8c06ae8
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify tested commit and tree
+        run: |
+          tested_commit="$(git rev-parse HEAD)"
+          tested_tree="$(git rev-parse 'HEAD^{tree}')"
+          test "$tested_commit" = 2de104aa049d28a1294b5bff7cb397faf8c06ae8
+          test "$tested_tree" = 3bc92d8878501b834056d7135747cdfd1017defc
+          printf 'TESTED_SOURCE_COMMIT=%s\nTESTED_SOURCE_TREE=%s\n' "$tested_commit" "$tested_tree"
+
+      - name: Select declared Apple SDK
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
+
+      - name: Run existing Swift SDK smoke test
+        env:
+          XDG_CACHE_HOME: ${{ runner.temp }}/swift-smoke-bootstrap
+        run: |
+          bash tools/dev/bazel.sh --nohome_rc --nosystem_rc \
+            --output_base="$RUNNER_TEMP/swift-smoke" --host_jvm_args=-Xmx3g \
+            test //build_defs/host:host_swift_smoke -c opt --config=macos-sandbox \
+            --platforms=//build_defs/host:apple_package_macos_arm64 \
+            --host_platform=//build_defs/host:native_macos_arm64 --jobs=1 --local_test_jobs=1 \
+            --lockfile_mode=error --repository_cache= --disk_cache= --test_output=all
