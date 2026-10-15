@@ -172,6 +172,7 @@ swift_binary(
     name = "public_api_consumer",
     srcs = ["Tests/PublicApiConsumer/Sources/OliphauntPublicApiConsumer/main.swift"],
     deps = [":Oliphaunt"],
+    copts = ["-parse-as-library"],
     target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
 )
 sh_test(
