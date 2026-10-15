@@ -264,6 +264,7 @@ test_suite(
         "//build_defs/extensions:forced_header_server_inputs_test",
         "//build_defs/extensions:forced_header_embedded_inputs_test",
         "//build_defs/native:postgres_probe_header_test",
+        "//build_defs/extensions/postgis:gpp_test",
         "//build_defs/native:icu_data_object_test",
         "//build_defs/native:ios_device_profile_test",
         "//build_defs/native:ios_simulator_profile_test",

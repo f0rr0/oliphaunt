@@ -430,7 +430,7 @@
     },
     "//build_defs/extensions/postgis:gpp_repositories.bzl%postgis_gpp": {
       "general": {
-        "bzlTransitiveDigest": "5aonezH36lEQ/fF6ijr5BA5Vudp+hruEQlc9o/Ysknw=",
+        "bzlTransitiveDigest": "yKzOBVgsBsr4KxLH1uVLBdhD/P4jqOQ3PCaXHipSNJ4=",
         "usagesDigest": "xj2oIFAnnQQSB0S35e1UzZ4YISjMiDZPc9XlnB4JujU=",
         "recordedInputs": [
           "REPO_MAPPING:,bazel_tools bazel_tools"
@@ -445,7 +445,7 @@
               "sha256": "c172969881f7f76918c18b5406a8bf8ac3aeca6ea859628e4edabe4e8a7fbcd1",
               "type": "tar.gz",
               "strip_prefix": "gpp-fc9cc00078999dabd795b782eebc94780cf39a29",
-              "build_file_content": "\nload(\"@rules_cc//cc:defs.bzl\", \"cc_binary\")\npackage(default_visibility = [\"//visibility:public\"])\nexports_files([\"configure.ac\", \"src/Makefile.am\", \"COPYING\", \"COPYING.LESSER\"])\ncc_binary(\n    name = \"gpp\",\n    srcs = [\"src/gpp.c\"],\n    # gpp.c's upstream WIN_NT branch owns CRT aliases and its fnmatch fallback.\n    defines = select({\n        \"@platforms//os:windows\": [\"WIN_NT\", \"PACKAGE_STRING=\\\"GPP 2.28\\\"\"],\n        \"//conditions:default\": [\"HAVE_FNMATCH_H=1\", \"HAVE_STRDUP=1\", \"HAVE_STRCASECMP=1\", \"'PACKAGE_STRING=\\\"GPP 2.28\\\"'\"],\n    }),\n    target_compatible_with = select({\n        \"@platforms//os:linux\": [], \"@platforms//os:macos\": [], \"@platforms//os:windows\": [],\n        \"//conditions:default\": [\"@platforms//:incompatible\"],\n    }),\n)\n"
+              "build_file_content": "\nload(\"@bazel_skylib//rules:write_file.bzl\", \"write_file\")\nload(\"@rules_cc//cc:defs.bzl\", \"cc_binary\")\npackage(default_visibility = [\"//visibility:public\"])\nexports_files([\"configure.ac\", \"src/Makefile.am\", \"COPYING\", \"COPYING.LESSER\"])\nwrite_file(\n    name = \"config\",\n    out = \"config.h\",\n    content = ['#define PACKAGE_STRING \"GPP 2.28\"', \"\"],\n)\ncc_binary(\n    name = \"gpp\",\n    srcs = [\"src/gpp.c\", \":config\"],\n    includes = [\".\"],\n    # gpp.c's upstream WIN_NT branch owns CRT aliases and its fnmatch fallback.\n    defines = [\"HAVE_CONFIG_H=1\"] + select({\n        \"@platforms//os:windows\": [\"WIN_NT\"],\n        \"//conditions:default\": [\"HAVE_FNMATCH_H=1\", \"HAVE_STRDUP=1\", \"HAVE_STRCASECMP=1\"],\n    }),\n    target_compatible_with = select({\n        \"@platforms//os:linux\": [], \"@platforms//os:macos\": [], \"@platforms//os:windows\": [],\n        \"//conditions:default\": [\"@platforms//:incompatible\"],\n    }),\n)\n"
             }
           }
         }
