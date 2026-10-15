@@ -65,3 +65,38 @@ jobs:
           "$BUN_BINARY" --no-env-file --no-install tools/ci/windows-query-runfiles-diagnostic.mts "${arguments[@]}" || bun_status=$?
           "$NODE_BINARY" tools/ci/windows-query-runfiles-diagnostic.mts "${arguments[@]}"
           exit "$bun_status"
+
+      - name: Populate and rematerialize the query from an owned disk cache
+        if: ${{ !cancelled() && steps.runtimes.outcome == 'success' && steps.consumer.outcome != 'skipped' }}
+        env:
+          NODE_BINARY: ${{ steps.runtimes.outputs.node }}
+          BUN_BINARY: ${{ steps.runtimes.outputs.bun }}
+        run: |
+          set -euo pipefail
+          profile=//build_defs/host:native_windows_x64
+          bazel=(bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/b")
+          configuration=(-c opt --platforms="$profile" --host_platform="$profile" --jobs=2)
+          cache_root="$(cygpath -m "$RUNNER_TEMP/query-runfiles-disk-cache")"
+          mkdir -p "$cache_root"
+          overall=0
+          for phase in populate rematerialize; do
+            printf 'Query disk cache phase=%s\n' "$phase"
+            "${bazel[@]}" clean
+            consumer_status=0
+            "${bazel[@]}" test "${configuration[@]}" --disk_cache="$cache_root" \
+              --nocache_test_results --test_output=errors //src/query/rust:consumer_test || consumer_status=$?
+            printf 'Query disk cache phase=%s consumer_status=%s\n' "$phase" "$consumer_status"
+            if [[ "$consumer_status" != 0 ]]; then overall=1; fi
+            execution_root="$("${bazel[@]}" info execution_root | tr -d '\r')"
+            executable="$("${bazel[@]}" cquery "${configuration[@]}" \
+              //src/query/rust:consumer_test --output=files | tr -d '\r')"
+            archive="$("${bazel[@]}" cquery "${configuration[@]}" \
+              //src/query/rust:crate --output=files | tr -d '\r')"
+            archive_short_path="$("${bazel[@]}" cquery "${configuration[@]}" \
+              //src/query/rust:crate --output=starlark \
+              --starlark:expr='target.files.to_list()[0].short_path' | tr -d '\r')"
+            arguments=("$execution_root" "$executable" "$archive" "$archive_short_path")
+            "$BUN_BINARY" --no-env-file --no-install tools/ci/windows-query-runfiles-diagnostic.mts "${arguments[@]}" || overall=1
+            "$NODE_BINARY" tools/ci/windows-query-runfiles-diagnostic.mts "${arguments[@]}" || overall=1
+          done
+          exit "$overall"
