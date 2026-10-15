@@ -36,6 +36,19 @@ jobs:
           test "$tested_tree" = 0740ad8b3db059a66931af441aab1176252e3084
           printf 'TESTED_SOURCE_COMMIT=%s\nTESTED_SOURCE_TREE=%s\n' "$tested_commit" "$tested_tree"
 
+      - name: Install locked release tooling
+        run: bash tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
+
+      - name: Acquire the source publication context used by CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: | # zizmor: ignore[github-env] only the source-validated snapshot path is exported.
+          snapshot="$(bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+            tools/release/native-release-preparation.mts --publication-inputs \
+            --output-directory "$RUNNER_TEMP/native-public-acquisition")"
+          test -f "$snapshot"
+          printf 'OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=%s\n' "$snapshot" >> "$GITHUB_ENV"
+
       - name: Select declared Apple SDK
         uses: ./.github/actions/setup-apple
         with:
