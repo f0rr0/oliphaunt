@@ -4,7 +4,7 @@ import { arch, platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { positiveIntegerTimeoutMs, type NormalizedOpenConfig } from '../config.js';
+import type { NormalizedOpenConfig } from '../config.js';
 import { simpleQuery } from '../protocol.js';
 import {
   envVar,

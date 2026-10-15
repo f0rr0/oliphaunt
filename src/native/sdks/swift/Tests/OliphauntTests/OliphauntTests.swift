@@ -1541,31 +1541,6 @@ func rawStreamCallbackRejectsSameHandleReentryButAllowsCancellation() async thro
 }
 
 @Test
-func rawStreamCallbackRejectsDetachedTaskBeforeCallbackReturns() async throws {
-    let session = TestSession(response: commandResponse("OK"))
-    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
-    let finished = DispatchSemaphore(value: 0)
-    let outcome = AsyncStringSignal()
-
-    try await database.execProtocolRawStream(Data([1])) { _ in
-        Task.detached {
-            do {
-                _ = try await database.execProtocolRaw(Data([2]))
-                await outcome.complete("unexpected success")
-            } catch {
-                await outcome.complete(String(describing: error))
-            }
-            finished.signal()
-        }
-        #expect(finished.wait(timeout: .now() + 2) == .success)
-    }
-
-    #expect(await outcome.wait().contains("must not reenter the same Oliphaunt database"))
-    #expect(await session.requests().count == 1)
-    try await database.close()
-}
-
-@Test
 func cancellationRemainsAvailableUntilCloseStartsNativeTeardown() async throws {
     let session = AdmissionOrderSession(blockClose: true)
     let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))

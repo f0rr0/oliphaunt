@@ -14,7 +14,6 @@ import { createForgottenRuntimeHandleCleanup } from '../runtime/forgotten-handle
 import {
   cleanupFailedManagedLaunch,
   connectEndpoint,
-  spawnManagedChild,
   parseReadyEndpoint,
   randomHexToken,
   readReadyLine,
@@ -129,7 +128,12 @@ test('broker close expires stalled control I/O and reaches child reaping', async
     },
     15,
   );
-  await assert.rejects(handle.detach(), /native broker close exceeded its deadline/);
+  await assert.rejects(handle.detach(), (error: unknown) => {
+    assert.ok(error instanceof AggregateError);
+    assert.ok(error.errors.some((cause) => String(cause).includes('deadline exceeded')));
+    assert.ok(error.errors.some((cause) => String(cause).includes('owned control stream closed')));
+    return true;
+  });
   assert.ok(closeCount >= 1);
   assert.equal(waited, true);
 });
@@ -154,7 +158,13 @@ test('PostgreSQL startup deadline closes a connected peer that never becomes rea
         'postgres',
         25,
       ),
-      /PostgreSQL startup exceeded its deadline/,
+      (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        assert.ok(
+          error.errors.some((cause) => String(cause).includes('startup deadline exceeded')),
+        );
+        return true;
+      },
     );
     await closed;
   } finally {
@@ -832,7 +842,13 @@ test('server readiness times out and closes a peer that never answers startup', 
         ),
         5_000,
       ),
-      /deadline/i,
+      (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        assert.ok(
+          error.errors.some((cause) => String(cause).includes('startup deadline exceeded')),
+        );
+        return true;
+      },
     );
     await settleWithin(closed, 5_000);
   } finally {

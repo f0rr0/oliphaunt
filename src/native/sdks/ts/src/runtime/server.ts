@@ -5,7 +5,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 
-import { positiveIntegerTimeoutMs, type NormalizedOpenConfig } from '../config.js';
+import type { NormalizedOpenConfig } from '../config.js';
 import {
   materializeExtensionInstall,
   resolveNativeInstall,

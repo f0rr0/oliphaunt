@@ -21,28 +21,6 @@ type AnyOpenConfig = OpenConfig | (ServerOpenConfig & { topology: 'server' });
 
 export const DEFAULT_USERNAME = 'postgres';
 export const DEFAULT_DATABASE = 'postgres';
-// Node timers coerce a larger delay to 1 ms instead of waiting longer.
-const MAX_TIMER_DELAY_MS = 2_147_483_647;
-
-export function positiveIntegerTimeoutMs(
-  value: string | undefined,
-  label: string,
-  fallback: number,
-): number {
-  if (value === undefined || value.length === 0) return fallback;
-  const parsed = Number(value);
-  if (
-    !Number.isSafeInteger(parsed) ||
-    parsed <= 0 ||
-    parsed > MAX_TIMER_DELAY_MS ||
-    String(parsed) !== value.trim()
-  ) {
-    throw new RangeError(
-      `${label} must be a positive integer number of milliseconds at most ${MAX_TIMER_DELAY_MS}`,
-    );
-  }
-  return parsed;
-}
 const SERVER_OWNED_STARTUP_GUCS = new Set(['listen_addresses', 'port', 'unix_socket_directories']);
 const STORAGE_OWNED_STARTUP_GUCS = new Set(['config_file', 'data_directory']);
 

@@ -9,7 +9,6 @@ import { test } from 'bun:test';
 import {
   buildStartupArgs,
   normalizeOpenConfig,
-  positiveIntegerTimeoutMs,
   validateDirectoryPath,
   validateExtensionIds,
   validateOptionalPathOverride,
@@ -197,14 +196,6 @@ test('rejects PostgreSQL startup GUCs owned by Oliphaunt storage', () => {
         /Oliphaunt owns PostgreSQL startup GUC.*configure database storage/,
       );
     }
-  }
-});
-
-test('host lifecycle timeouts reject timer overflow and malformed values', () => {
-  assert.equal(positiveIntegerTimeoutMs('2147483647', 'timeout', 60_000), 2147483647);
-  assert.equal(positiveIntegerTimeoutMs(undefined, 'timeout', 60_000), 60_000);
-  for (const value of ['2147483648', '0', '-1', '1.5', '1suffix', 'Infinity', '9007199254740992']) {
-    assert.throws(() => positiveIntegerTimeoutMs(value, 'timeout', 60_000), /positive integer/);
   }
 });
 

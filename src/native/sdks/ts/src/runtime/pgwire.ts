@@ -27,13 +27,23 @@ export class PostgresWireClient {
     timeoutMs: number,
     password?: string,
   ): Promise<PostgresWireClient> {
+    const deadline = performance.now() + timeoutMs;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     let stream: ByteStream | undefined;
     try {
       stream = await connectEndpoint(endpoint, controller.signal);
-      await stream.writeAll(encodeStartupMessage(username, database));
-      const key = await readUntilReady(stream, password);
+      clearTimeout(timeout);
+      const connected = stream;
+      const key = await withStreamDeadline(
+        connected,
+        deadline,
+        async () => {
+          await connected.writeAll(encodeStartupMessage(username, database));
+          return readUntilReady(connected, password);
+        },
+        'PostgreSQL startup',
+      );
       return new PostgresWireClient(stream, endpoint, key);
     } catch (error) {
       const failures: unknown[] = [error];
