@@ -1,4 +1,4 @@
-name: Swift compiler smoke diagnostic (C++17 default)
+name: Swift compiler smoke diagnostic (entrypoints)
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
       - name: Checkout immutable tested source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 33e0df14be4a89fcb31dee4aa6f2960cb8c9f1b7
+          ref: 536266673030912579500c8687a8a21a023b40b8
           fetch-depth: 1
           persist-credentials: false
 
@@ -32,8 +32,8 @@ jobs:
         run: |
           tested_commit="$(git rev-parse HEAD)"
           tested_tree="$(git rev-parse 'HEAD^{tree}')"
-          test "$tested_commit" = 33e0df14be4a89fcb31dee4aa6f2960cb8c9f1b7
-          test "$tested_tree" = f7ee0b616c2f42199df36b114a40f9d1f2b49856
+          test "$tested_commit" = 536266673030912579500c8687a8a21a023b40b8
+          test "$tested_tree" = 34d71bfa73195e933147768891c7cb75ce338593
           printf 'TESTED_SOURCE_COMMIT=%s\nTESTED_SOURCE_TREE=%s\n' "$tested_commit" "$tested_tree"
 
       - name: Select declared Apple SDK
