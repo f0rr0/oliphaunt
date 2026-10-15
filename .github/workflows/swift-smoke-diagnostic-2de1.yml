@@ -1,4 +1,4 @@
-name: Windows libiconv configuration diagnostic
+name: Windows textsearch string-definition diagnostic
 
 on:
   push:
@@ -17,14 +17,14 @@ defaults:
 
 jobs:
   smoke:
-    name: Generate Windows libiconv headers and test pinned templates
+    name: Compile both actual Windows textsearch object variants
     runs-on: windows-2025-vs2026
     timeout-minutes: 25
     steps:
       - name: Checkout immutable tested source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 0d2199402248c50a8e0f9c07ee4a7631e1600ff1
+          ref: ab981d2ffd5d70663e1fcf4431d68af639fb423e
           fetch-depth: 1
           persist-credentials: false
 
@@ -32,42 +32,28 @@ jobs:
         run: |
           tested_commit="$(git rev-parse HEAD)"
           tested_tree="$(git rev-parse 'HEAD^{tree}')"
-          test "$tested_commit" = 0d2199402248c50a8e0f9c07ee4a7631e1600ff1
-          test "$tested_tree" = ecf5e3cb397c4e34ea032cc341dc9f6ad284acf4
+          test "$tested_commit" = ab981d2ffd5d70663e1fcf4431d68af639fb423e
+          test "$tested_tree" = f8180dcd0334d32941ce997fff49f448a596d25f
           printf 'TESTED_SOURCE_COMMIT=%s\nTESTED_SOURCE_TREE=%s\n' "$tested_commit" "$tested_tree"
 
       - name: Select declared MSVC SDK
         uses: ./.github/actions/setup-msvc
 
-      - name: Compare named and stdin hashes of the same pinned Windows binary
+      - name: Compile real server and embedded units with the shared version definition
         env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/iconv-config-bootstrap
-        run: |
-          version="$(tr -d '\r' < .bazelversion)"
-          asset="bazel-$version-windows-x86_64.exe"
-          expected="$(awk -v version="$version" -v asset="$asset" \
-            '$1 == version && $2 == asset { print $3 }' tools/dev/bazel-checksums.tsv)"
-          cache_dir="$XDG_CACHE_HOME/oliphaunt/bazel/$version"
-          mkdir -p "$cache_dir"
-          binary="$cache_dir/$asset"
-          curl --fail --location --silent --show-error --connect-timeout 15 --max-time 300 \
-            --proto '=https' --proto-redir '=https' \
-            --output "$binary" "https://releases.bazel.build/$version/release/$asset"
-          named="$(sha256sum "$binary" | awk '{ print $1 }')"
-          stdin="$(sha256sum < "$binary" | awk '{ print $1 }')"
-          test "$stdin" = "$expected"
-          test "$named" = "\\${expected}"
-          printf 'EXPECTED_SHA256=%s\nNAMED_PARSER=%s\nSTDIN_PARSER=%s\n' "$expected" "$named" "$stdin"
-          chmod +x "$binary"
-
-      - name: Generate actual Windows libiconv headers and run template regression
-        env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/iconv-config-bootstrap
+          XDG_CACHE_HOME: ${{ runner.temp }}/textsearch-bootstrap
         run: |
           bash tools/dev/bazel.sh --nohome_rc --nosystem_rc \
-            --output_base="$RUNNER_TEMP/iconv-config" --host_jvm_args=-Xmx3g \
-            test //build_defs/extensions/postgis:iconv_config \
-            //build_defs/extensions/postgis:configure_headers_test -c opt \
+            --output_base="$RUNNER_TEMP/textsearch" --host_jvm_args=-Xmx3g \
+            build //src/extensions/external/pg_textsearch:pg_textsearch_server_objects \
+            //src/extensions/external/pg_textsearch:pg_textsearch_embedded_objects -c opt \
             --platforms=//build_defs/host:native_windows_x64 \
-            --host_platform=//build_defs/host:native_windows_x64 --jobs=2 --local_test_jobs=1 \
-            --lockfile_mode=error --repository_cache= --disk_cache= --test_output=all
+            --host_platform=//build_defs/host:native_windows_x64 --jobs=2 \
+            --lockfile_mode=error --repository_cache= --disk_cache= \
+            --materialize_param_files
+          for variant in server embedded; do
+            params="bazel-out/x64_windows-opt/bin/src/extensions/external/pg_textsearch/_objs/pg_textsearch_${variant}_objects/mod.obj.params"
+            test -f "$params"
+            printf 'OBJECT_VARIANT=%s\n' "$variant"
+            awk '/PG_TEXTSEARCH_VERSION/ { print "VERSION_DEFINE=" $0; count++ } END { if (count != 1) exit 1 }' "$params"
+          done
