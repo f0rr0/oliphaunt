@@ -69,7 +69,7 @@ def expo_apple_modules(metadata, react, hermes, dependencies, react_headers, rea
     )
     ios_dynamic_framework(name = "ExpoModulesJSI", bundle_id = "expo.modules.jsi", minimum_os_version = "17.0",
         families = ["iphone"], infoplists = [Label("//build_defs/apple:framework-info.plist")],
-        deps = [":ExpoModulesJSI_sources"], visibility = ["//visibility:public"])
+        deps = [":ExpoModulesJSI_sources"], tags = ["no-remote"], visibility = ["//visibility:public"])
     for row in metadata["frameworks"]:
         apple_dynamic_xcframework_import(
             name = row["module"], xcframework_imports = native.glob(["apple-prebuilt/" + row["module"] + ".xcframework/**"], exclude = ["**/._*"]),

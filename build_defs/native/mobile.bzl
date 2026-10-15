@@ -104,7 +104,7 @@ def _release_assets_impl(ctx):
     } | {name: file.path for name, file in outputs.items()}) + "\n")
     bun_action(ctx, ctx.attr._tool, arguments = [specification.path],
                inputs = inputs + [specification], tools = [ctx.attr._formatter[DefaultInfo].files_to_run],
-               outputs = outputs.values() + receipt_outputs.values(), mnemonic = "NativeAppleRuntimeEnvelope")
+               outputs = outputs.values() + receipt_outputs.values(), execution_requirements = {"no-remote": "1"}, mnemonic = "NativeAppleRuntimeEnvelope")
     groups = {name: depset([file]) for name, file in outputs.items()}
     for name, target in [("macos_abi", "macos-arm64"), ("ios_device_abi", "ios-arm64"), ("ios_simulator_abi", "ios-arm64-simulator")]:
         groups[name] = depset([receipt_outputs[target]])
@@ -151,6 +151,7 @@ def native_apple_runtime_targets(qualification):
         macos = ["arm64"],
         families_required = {"ios": ["iphone"]},
         minimum_os_versions = {"macos": APPLE_DEPLOYMENT_TARGETS["package_macos"], "ios": APPLE_DEPLOYMENT_TARGETS["ios"]},
+        tags = ["no-remote"],
         target_compatible_with = _MAC,
         visibility = ["//visibility:private"],
     )

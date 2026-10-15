@@ -16,8 +16,10 @@ def apple_app_configuration_error(info, observation, sdk_versions):
     for sdk, platform in [("macosx", apple_common.platform.macos), ("iphoneos", apple_common.platform.ios_device), ("iphonesimulator", apple_common.platform.ios_simulator)]:
         if info.sdk_version_for_platform(platform).compare_to(apple_common.dotted_version(sdk_versions[sdk])) != 0:
             return "Stock Apple actions must select the captured " + sdk + " SDK"
-    if "no-remote" not in info.execution_info():
-        return "The licensed application tools require the stock local Xcode execution boundary"
+    # Explicit stock Xcode configurations have UNKNOWN availability. Locality
+    # is enforced by the licensed action owners, not this input filegroup.
+    if "no-local" in info.execution_info():
+        return "The licensed application tools cannot use a remote-only Xcode configuration"
     return None
 
 def _app_tools_impl(ctx):

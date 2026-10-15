@@ -296,6 +296,7 @@ cc_library(name = "ios_selected_extensions", srcs = [":ios_selected_registry"], 
 
 ios_application(
     name = "ios_release", bundle_name = "reactnativeoliphauntexpo",
+    tags = ["no-remote"],
     bundle_id = "dev.oliphaunt.reactnative.example", families = ["iphone"],
     minimum_os_version = "17.0",
     frameworks = ["@expo_android_sources//:ExpoModulesJSI"],

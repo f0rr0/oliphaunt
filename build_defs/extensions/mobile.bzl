@@ -74,7 +74,7 @@ def _member_impl(ctx):
     ctx.actions.write(spec, json.encode({"sqlName": ctx.attr.sql_name, "stem": ctx.attr.stem, "apple": ctx.attr.apple, "aliases": [{"name": name, "address": address} for name, address in ctx.attr.aliases.items()],
                                        "nm": ctx.file.nm.path, "archive": ctx.file.archive.path, "symbols": symbols.path, "registration": registration.path, "source": unit.path}))
     bun_file_action(ctx, ctx.file._registration, source_files = [ctx.file._registration] + ctx.files._helpers,
-                    arguments = [spec.path], inputs = depset([spec, ctx.file.archive, ctx.file.nm] + ctx.files.nm_runtime, transitive = [toolchain.all_files]), outputs = [symbols, registration, unit], mnemonic = "MobileExtensionRegistration")
+                    arguments = [spec.path], inputs = depset([spec, ctx.file.archive, ctx.file.nm] + ctx.files.nm_runtime, transitive = [toolchain.all_files]), outputs = [symbols, registration, unit], execution_requirements = {"no-remote": "1"} if ctx.attr.apple else {}, mnemonic = "MobileExtensionRegistration")
     return [DefaultInfo(files = depset([ctx.file.archive, registration])),
             OutputGroupInfo(archive = depset([ctx.file.archive]), registration = depset([registration]), registry_source = depset([unit])),
             MobileExtensionInfo(sql_name = ctx.attr.sql_name, stem = ctx.attr.stem, owner = identity.id, version = identity.version,

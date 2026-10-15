@@ -165,6 +165,7 @@ def bindings_xcframework(name, library, header):
         ios = {"device": ["arm64"], "simulator": ["arm64"]},
         macos = ["arm64"],
         minimum_os_versions = {"macos": APPLE_DEPLOYMENT_TARGETS["package_macos"], "ios": APPLE_DEPLOYMENT_TARGETS["ios"]},
+        tags = ["no-remote"],
         target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64"],
         visibility = ["//visibility:private"],
     )

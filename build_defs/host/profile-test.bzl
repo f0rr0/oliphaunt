@@ -1,6 +1,8 @@
 """Analysis tests exercise provider rebinding, not native-host qualification."""
 
 load("@bazel_skylib//lib:unittest.bzl", "asserts", "unittest")
+load("@apple_support//xcode:xcode_config.bzl", "xcode_config")
+load("@apple_support//xcode:xcode_version.bzl", "xcode_version")
 load("@rules_cc//cc/private/toolchain:unix_cc_toolchain_config.bzl", unix_config = "cc_toolchain_config")
 load("@rules_cc//cc/toolchains:cc_toolchain.bzl", "cc_toolchain")
 load("@rules_swift//swift:providers.bzl", "SwiftToolchainInfo")
@@ -55,13 +57,16 @@ def _profile_test(ctx):
         asserts.equals(env, [prefix + directory for directory in _builtin_directories(sdk)], compiler[cc_common.CcToolchainInfo].built_in_include_directories)
     observed_xcode = "Xcode 26.5\nBuild version 17F42"
     captured_sdks = {"macosx": "26.5", "iphoneos": "26.5", "iphonesimulator": "26.5"}
-    configured = struct(xcode_version = lambda: apple_common.dotted_version("26.5.0.17f42"), sdk_version_for_platform = lambda platform: apple_common.dotted_version("26.5"), execution_info = lambda: {"no-remote": "1"})
+    # Explicit stock Xcode configurations report UNKNOWN availability even
+    # when the selected version is installed locally.
+    configured = ctx.attr.xcode_configuration[apple_common.XcodeVersionConfig]
+    asserts.equals(env, "unknown", configured.availability())
     asserts.equals(env, None, apple_app_configuration_error(configured, observed_xcode, captured_sdks))
     asserts.equals(env, "Stock Apple actions must select the captured Xcode build", apple_app_configuration_error(configured, "Xcode 26.5\nBuild version 17F43", captured_sdks))
     asserts.equals(env, "Stock Apple actions must select the captured Xcode version", apple_app_configuration_error(configured, "Xcode 26.4\nBuild version 17F42", captured_sdks))
     asserts.equals(env, "Stock Apple actions must select the captured iphoneos SDK", apple_app_configuration_error(configured, observed_xcode, captured_sdks | {"iphoneos": "26.4"}))
-    remote = struct(xcode_version = configured.xcode_version, sdk_version_for_platform = configured.sdk_version_for_platform, execution_info = lambda: {})
-    asserts.equals(env, "The licensed application tools require the stock local Xcode execution boundary", apple_app_configuration_error(remote, observed_xcode, captured_sdks))
+    remote = struct(xcode_version = configured.xcode_version, sdk_version_for_platform = configured.sdk_version_for_platform, execution_info = lambda: {"no-local": ""})
+    asserts.equals(env, "The licensed application tools cannot use a remote-only Xcode configuration", apple_app_configuration_error(remote, observed_xcode, captured_sdks))
     asserts.equals(env, "Captured Xcode version/build observation is malformed", apple_app_configuration_error(configured, "Xcode 26.5", captured_sdks))
     runtime_prefix = "/selected/output-base/external/selected_sdk/"
     implicit_flags = [
@@ -160,10 +165,12 @@ def _profile_test(ctx):
     asserts.equals(env, [["-plugin-path", missing], marker], _plugin_arguments(ctx.file.source, missing, True, compiler_plugin_action_names()[0]))
     return unittest.end(env)
 
-_profile_rule_test = unittest.make(_profile_test, attrs = {"source": attr.label(default = ":sdk-smoke.c", allow_single_file = True), "cc_profiles": attr.label_list(providers = [cc_common.CcToolchainInfo])})
+_profile_rule_test = unittest.make(_profile_test, attrs = {"source": attr.label(default = ":sdk-smoke.c", allow_single_file = True), "cc_profiles": attr.label_list(providers = [cc_common.CcToolchainInfo]), "xcode_configuration": attr.label(providers = [apple_common.XcodeVersionConfig])})
 
 def profile_test(name, **kwargs):
     """Exercise builtin path interpretation without acquiring a licensed SDK."""
+    xcode_version(name = name + "_xcode_version", version = "26.5.0.17f42", default_macos_sdk_version = "26.5", default_ios_sdk_version = "26.5", testonly = True)
+    xcode_config(name = name + "_xcode_configuration", versions = [":" + name + "_xcode_version"], default = ":" + name + "_xcode_version", testonly = True)
     profiles = []
     for sdk in _APPLE_SDKS:
         profile = name + "_" + sdk
@@ -187,4 +194,4 @@ def profile_test(name, **kwargs):
                      compiler_files = ":" + profile + "_files", dwp_files = ":" + profile + "_files", linker_files = ":" + profile + "_files",
                      objcopy_files = ":" + profile + "_files", strip_files = ":" + profile + "_files", testonly = True)
         profiles.append(":" + profile)
-    _profile_rule_test(name = name, cc_profiles = profiles, **kwargs)
+    _profile_rule_test(name = name, cc_profiles = profiles, xcode_configuration = ":" + name + "_xcode_configuration", **kwargs)

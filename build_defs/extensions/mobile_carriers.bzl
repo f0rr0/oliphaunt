@@ -104,7 +104,7 @@ def _carriers_impl(ctx):
     spec.update({"operation": "package", "target": ctx.attr.target, "expectedMembers": expected, "members": members, "outputs": {"github": github.path, "frozen": frozen.path, "manifest": manifest.path}})
     ctx.actions.write(specification, json.encode(spec))
     bun_file_action(ctx, ctx.file._tool, arguments = [specification.path], inputs = depset(inputs + [specification], transitive = tools), source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal,
-                    outputs = [github, frozen, manifest], mnemonic = "MobileExtensionFinalEnvelopes")
+                    outputs = [github, frozen, manifest], execution_requirements = {"no-remote": "1"} if ctx.attr.target == "ios-xcframework" else {}, mnemonic = "MobileExtensionFinalEnvelopes")
     return [DefaultInfo(files = depset([github, frozen, manifest])), ExtensionFinalLeafInfo(product = metadata["product"], owner = metadata["owner"], version = metadata["version"], family = "native", target = ctx.attr.target, metadata = spec,
             github = [github], npm = [], cargo = [], manifest = manifest, frozen = frozen, spec = specification, validation = None, receipt = None, origin = None),
             OutputGroupInfo(github = depset([github]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([specification]))]
@@ -198,12 +198,12 @@ def mobile_final_carrier_targets():
     for identity, objects in MOBILE_MEMBER_ARCHIVE_OBJECTS.items():
         name = "framework_extension_" + identity.replace("-", "_")
         bundle = "liboliphaunt_extension_" + descriptors[identity]["native-module-file"][:-3]
-        apple_static_xcframework(name = name + "_raw", bundle_name = bundle, deps = [objects], ios = {"device": ["arm64"], "simulator": ["arm64"]}, macos = ["arm64"], families_required = {"ios": ["iphone"]}, minimum_os_versions = {"macos": APPLE_DEPLOYMENT_TARGETS["package_macos"], "ios": APPLE_DEPLOYMENT_TARGETS["ios"]}, target_compatible_with = _MAC)
+        apple_static_xcframework(name = name + "_raw", bundle_name = bundle, deps = [objects], ios = {"device": ["arm64"], "simulator": ["arm64"]}, macos = ["arm64"], families_required = {"ios": ["iphone"]}, minimum_os_versions = {"macos": APPLE_DEPLOYMENT_TARGETS["package_macos"], "ios": APPLE_DEPLOYMENT_TARGETS["ios"]}, tags = ["no-remote"], target_compatible_with = _MAC)
         _framework(name = name, archive = ":" + name + "_raw", target_compatible_with = _MAC)
         frameworks[":" + name] = "extension:" + identity
     for identity, objects in MOBILE_COMPONENT_ARCHIVE_OBJECTS.items():
         name = "framework_dependency_" + identity.replace("-", "_")
-        apple_static_xcframework(name = name + "_raw", bundle_name = "liboliphaunt_dependency_" + identity, deps = [objects], ios = {"device": ["arm64"], "simulator": ["arm64"]}, macos = ["arm64"], families_required = {"ios": ["iphone"]}, minimum_os_versions = {"macos": APPLE_DEPLOYMENT_TARGETS["package_macos"], "ios": APPLE_DEPLOYMENT_TARGETS["ios"]}, target_compatible_with = _MAC)
+        apple_static_xcframework(name = name + "_raw", bundle_name = "liboliphaunt_dependency_" + identity, deps = [objects], ios = {"device": ["arm64"], "simulator": ["arm64"]}, macos = ["arm64"], families_required = {"ios": ["iphone"]}, minimum_os_versions = {"macos": APPLE_DEPLOYMENT_TARGETS["package_macos"], "ios": APPLE_DEPLOYMENT_TARGETS["ios"]}, tags = ["no-remote"], target_compatible_with = _MAC)
         _framework(name = name, archive = ":" + name + "_raw", target_compatible_with = _MAC)
         frameworks[":" + name] = "dependency:" + identity
     products = sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA}.keys())
