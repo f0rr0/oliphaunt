@@ -639,11 +639,59 @@ test('reused compiler headers remain complete without multiplying retained descr
     });
     graph.depSetOfFiles[1].directArtifactIds.push(id);
   }
+  const original = JSON.stringify(graph);
+  let directIdReads = 0;
+  const directIdCount = graph.depSetOfFiles.reduce(
+    (count, set) => count + set.directArtifactIds.length,
+    0,
+  );
+  for (const set of graph.depSetOfFiles)
+    set.directArtifactIds.forEach((value, index, ids) => {
+      Object.defineProperty(ids, index, {
+        get() {
+          directIdReads++;
+          return value;
+        },
+      });
+    });
   const view = buildShippingInputView(exported, graph);
+  expect(directIdReads).toBe(directIdCount);
   expect(view.products.alpha.inputs).toHaveLength(2050);
   expect(view.physicalInputs).toHaveLength(2179);
   expect(view.products.alpha.actions).toHaveLength(130);
   expect(JSON.stringify(view).length).toBeLessThan(512_000);
+  expect(JSON.stringify(graph)).toBe(original);
+  directIdReads = 0;
+  expect(buildShippingInputView(exported, graph)).toEqual(view);
+  expect(directIdReads).toBe(directIdCount);
+});
+
+test('direct input validation remains lazy, ordered and isolated to each graph read', () => {
+  const { exported, graph } = fixture();
+  const before = buildShippingInputView(exported, graph);
+  const sets = graph.depSetOfFiles as any[];
+  sets.push({ id: 9, directArtifactIds: [false] });
+  expect(buildShippingInputView(exported, graph)).toEqual(before);
+  sets[0].transitiveDepSetIds = [9];
+  sets[0].directArtifactIds = [null];
+  sets[2].transitiveDepSetIds = [1];
+  expect(() => buildShippingInputView(exported, graph)).toThrow('cycle in aquery input dep sets');
+  sets[2].transitiveDepSetIds = [9999];
+  expect(() => buildShippingInputView(exported, graph)).toThrow('incomplete aquery graph');
+  sets[2].transitiveDepSetIds = [];
+  expect(() => buildShippingInputView(exported, graph)).toThrow('missing aquery id');
+  sets[2].directArtifactIds = [1, '1', 1];
+  sets[0].directArtifactIds = [];
+  expect(buildShippingInputView(exported, graph)).toEqual(before);
+  for (const [members, error] of [
+    [[9999, false], 'incomplete aquery graph'],
+    [[false, 9999], 'missing aquery id'],
+    [Array(1), 'missing aquery id'],
+    ['not an input list', 'expected an array'],
+  ] as const) {
+    sets[2].directArtifactIds = members;
+    expect(() => buildShippingInputView(exported, graph)).toThrow(error);
+  }
 });
 
 test('only consumed typed supplier Files join the required byte frontier', () => {

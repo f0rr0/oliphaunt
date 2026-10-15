@@ -258,6 +258,8 @@ function aqueryFileGraph(raw: unknown) {
   };
   for (const [key, artifact] of artifacts)
     artifactPaths.set(key, fragmentPath(id(artifact.pathFragmentId)));
+  // Reuse each depset's own validated IDs, without retaining expanded input closures.
+  const directInputs = new Map<string, string[]>();
   const inputsOf = (action: Row): Set<string> => {
     const result = new Set<string>();
     const visited = new Set<string>();
@@ -267,11 +269,17 @@ function aqueryFileGraph(raw: unknown) {
       const item = required(depSets, key);
       const next = new Set(stack).add(key);
       for (const child of array(item.transitiveDepSetIds ?? [])) visit(id(child), next);
-      for (const artifact of array(item.directArtifactIds ?? [])) {
-        const artifactId = id(artifact);
-        required(artifactPaths, artifactId);
-        result.add(artifactId);
+      let direct = directInputs.get(key);
+      if (direct === undefined) {
+        direct = [];
+        for (const artifact of array(item.directArtifactIds ?? [])) {
+          const artifactId = id(artifact);
+          required(artifactPaths, artifactId);
+          direct.push(artifactId);
+        }
+        directInputs.set(key, direct);
       }
+      for (const artifact of direct) result.add(artifact);
       visited.add(key);
     };
     for (const key of array(action.inputDepSetIds ?? [])) visit(id(key), new Set());
