@@ -334,6 +334,11 @@
         },
         {
           "type": "toml",
+          "path": "engine/crates/virtual-fs/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
           "path": "engine/crates/v8-windows-x64-msvc/Cargo.toml",
           "jsonpath": "$.package.version"
         }

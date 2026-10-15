@@ -3337,7 +3337,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-virtual-fs"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3482,7 +3482,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasmer"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "bytes",
  "corosensei",
@@ -3522,7 +3522,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasmer-journal"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3548,11 +3548,11 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasmer-v8-windows-x64-msvc"
-version = "0.3.1"
+version = "0.3.2"
 
 [[package]]
 name = "oliphaunt-wasmer-wasix"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3640,7 +3640,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasmer-wasix-types"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "bitflags 2.13.2",

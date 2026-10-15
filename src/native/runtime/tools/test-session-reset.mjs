@@ -75,7 +75,8 @@ int32_t oliphaunt_exec_simple_query(OliphauntHandle *h, const char *sql,
   memcpy(out->data + 5, sql, body);
   if (failure == 3) out->data[5] = '?';
   memcpy(out->data + 5 + body, "Z\\0\\0\\0\\5I", 6);
-  h->transaction_status = failure == 4 ? 'E' : 'I';
+  if (failure == 4) out->data[out->len - 1] = 'E';
+  h->transaction_status = 'I';
   return 0;
 }
 void oliphaunt_free_response(OliphauntResponse *response) {
