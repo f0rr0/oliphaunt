@@ -245,6 +245,59 @@ jobs:
         with:
           install-build-dependencies: "false"
 
+      - name: Qualify complete Apple runtime, resources, SDK and extension packages
+        if: (matrix.platform == 'macos-arm64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))
+        env:
+          CI_REQUEST_IDS: '{"macos-arm64":["portable/macos-arm64/apple-packages"]}'
+          NATIVE_PREPARED_INPUTS: ${{ needs.release-inputs.outputs.native_inputs }}
+          QUALIFICATION_JOB_NAME: Portable packages (${{ matrix.platform }})
+        run: |
+          CI_REQUEST_ID="$(jq -r --arg platform "$CI_PLATFORM" '.[$platform][0]' <<< "$CI_REQUEST_IDS")"
+          case "$NATIVE_PREPARED_INPUTS" in
+            true) apple_export=//:native_apple_shipping_export ;;
+            false) apple_export=//:native_apple_preparation_export ;;
+            *) echo 'Apple qualification requires an authenticated release input context' >&2; exit 1 ;;
+          esac
+          input_root="$RUNNER_TEMP/ios-extension-build-inputs"
+          mkdir -p "$input_root" "$RUNNER_TEMP/native-bazel-diagnostics"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg base "$RUNNER_TEMP/native-bazel" \
+            --arg log "$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" \
+            '["--output_base="+$base,"--host_jvm_args=-Xmx3g","--server_jvm_out="+$log]' \
+            > "$input_root/startup.json"
+          jq -nc '["-c","opt","--config=macos-sandbox",
+            "--platforms=//build_defs/host:apple_package_macos_arm64",
+            "--host_platform=//build_defs/host:native_macos_arm64","--jobs=1","--local_test_jobs=1"]' \
+            > "$input_root/configuration.json"
+          jq -nc '["//build_defs/host:host_swift_smoke", "//src/native/sdks/swift:installed_consumer_test"]' \
+            > "$input_root/targets.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export "$apple_export" \
+            --targets-json "$input_root/targets.json" --output-directory "$RUNNER_TEMP/ios-extension-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/ios-extension-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload iOS extension construction evidence
+        if: (matrix.platform == 'macos-arm64') && (needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('portable/{0}/apple-packages', matrix.platform)))
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-mobile-ios
+          path: ${{ runner.temp }}/ios-extension-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Select declared MSVC SDK
         if: matrix.platform == 'windows-x64'
         uses: ./.github/actions/setup-msvc
@@ -470,59 +523,6 @@ jobs:
               --startup-json "$ci_input_root/startup.json" \
               --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
           done < <(jq -r --arg platform "$CI_PLATFORM" '.[$platform][]' <<< "$CI_REQUEST_IDS")
-
-      - name: Qualify complete Apple runtime, resources, SDK and extension packages
-        if: (matrix.platform == 'macos-arm64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))
-        env:
-          CI_REQUEST_IDS: '{"macos-arm64":["portable/macos-arm64/apple-packages"]}'
-          NATIVE_PREPARED_INPUTS: ${{ needs.release-inputs.outputs.native_inputs }}
-          QUALIFICATION_JOB_NAME: Portable packages (${{ matrix.platform }})
-        run: |
-          CI_REQUEST_ID="$(jq -r --arg platform "$CI_PLATFORM" '.[$platform][0]' <<< "$CI_REQUEST_IDS")"
-          case "$NATIVE_PREPARED_INPUTS" in
-            true) apple_export=//:native_apple_shipping_export ;;
-            false) apple_export=//:native_apple_preparation_export ;;
-            *) echo 'Apple qualification requires an authenticated release input context' >&2; exit 1 ;;
-          esac
-          input_root="$RUNNER_TEMP/ios-extension-build-inputs"
-          mkdir -p "$input_root"
-          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
-            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
-            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
-            > "$input_root/github.json"
-          jq -nc --arg base "$RUNNER_TEMP/native-bazel" \
-            --arg log "$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" \
-            '["--output_base="+$base,"--host_jvm_args=-Xmx3g","--server_jvm_out="+$log]' \
-            > "$input_root/startup.json"
-          jq -nc '["-c","opt","--config=macos-sandbox",
-            "--platforms=//build_defs/host:apple_package_macos_arm64",
-            "--host_platform=//build_defs/host:native_macos_arm64","--jobs=1","--local_test_jobs=1"]' \
-            > "$input_root/configuration.json"
-          jq -nc '["//build_defs/host:host_swift_smoke", "//src/native/sdks/swift:installed_consumer_test"]' \
-            > "$input_root/targets.json"
-          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
-          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
-            --ci-requires-json "$input_root/ci-requires.json")
-          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
-            ci_arguments+=(--ci-handoff)
-          fi
-          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
-            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
-            --configuration-json "$input_root/configuration.json" \
-            --shipping-export "$apple_export" \
-            --targets-json "$input_root/targets.json" --output-directory "$RUNNER_TEMP/ios-extension-build-capture"
-          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
-          cp "$RUNNER_TEMP/ios-extension-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
-
-      - name: Upload iOS extension construction evidence
-        if: (matrix.platform == 'macos-arm64') && (needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('portable/{0}/apple-packages', matrix.platform)))
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: native-build-evidence-mobile-ios
-          path: ${{ runner.temp }}/ios-extension-build-capture/evidence/
-          if-no-files-found: error
-          retention-days: 7
 
       - name: Qualify final native carriers and frozen resources
         if: (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))

@@ -1,4 +1,4 @@
-name: Swift compiler smoke diagnostic (entrypoints)
+name: Apple preparation analysis diagnostic
 
 on:
   push:
@@ -17,14 +17,14 @@ defaults:
 
 jobs:
   smoke:
-    name: Compile, link and execute captured Swift
+    name: Analyze complete Apple preparation
     runs-on: macos-26
     timeout-minutes: 25
     steps:
       - name: Checkout immutable tested source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 536266673030912579500c8687a8a21a023b40b8
+          ref: e127827d606814bde361daefb8be323197778f05
           fetch-depth: 1
           persist-credentials: false
 
@@ -32,8 +32,8 @@ jobs:
         run: |
           tested_commit="$(git rev-parse HEAD)"
           tested_tree="$(git rev-parse 'HEAD^{tree}')"
-          test "$tested_commit" = 536266673030912579500c8687a8a21a023b40b8
-          test "$tested_tree" = 34d71bfa73195e933147768891c7cb75ce338593
+          test "$tested_commit" = e127827d606814bde361daefb8be323197778f05
+          test "$tested_tree" = 0740ad8b3db059a66931af441aab1176252e3084
           printf 'TESTED_SOURCE_COMMIT=%s\nTESTED_SOURCE_TREE=%s\n' "$tested_commit" "$tested_tree"
 
       - name: Select declared Apple SDK
@@ -41,13 +41,14 @@ jobs:
         with:
           install-build-dependencies: "false"
 
-      - name: Run existing Swift SDK smoke test
+      - name: Analyze actual Apple qualification targets
         env:
           XDG_CACHE_HOME: ${{ runner.temp }}/swift-smoke-bootstrap
         run: |
           bash tools/dev/bazel.sh --nohome_rc --nosystem_rc \
             --output_base="$RUNNER_TEMP/swift-smoke" --host_jvm_args=-Xmx3g \
-            test //build_defs/host:host_swift_smoke -c opt --config=macos-sandbox \
+            cquery 'set(//:native_apple_preparation_export //build_defs/host:host_swift_smoke //src/native/sdks/swift:installed_consumer_test)' \
+            --output=label_kind -c opt --config=macos-sandbox \
             --platforms=//build_defs/host:apple_package_macos_arm64 \
             --host_platform=//build_defs/host:native_macos_arm64 --jobs=1 --local_test_jobs=1 \
-            --lockfile_mode=error --repository_cache= --disk_cache= --test_output=all
+            --lockfile_mode=error --repository_cache= --disk_cache=

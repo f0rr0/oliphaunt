@@ -157,7 +157,7 @@ def android_resource_slice(name, qualification):
 def _swift_seed_envelope_impl(ctx):
     output = ctx.actions.declare_file(ctx.attr.out)
     notices = {}
-    inputs = ctx.files.assets
+    inputs = list(ctx.files.assets)
     for target, relative in ctx.attr.notices.items():
         files = target[DefaultInfo].files.to_list()
         if len(files) != 1:
