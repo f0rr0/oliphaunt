@@ -2,7 +2,7 @@
 edition = "2024"
 rust-version = "1.96"
 name = "oliphaunt-virtual-fs"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Wasmer Engineering Team <engineering@wasmer.io>"]
 build = false
 autolib = false
