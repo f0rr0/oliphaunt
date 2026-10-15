@@ -150,7 +150,7 @@ def native_external_extension_modules(name, sql_name = None):
             compatibility_inputs = select({"//build_defs/native:windows_x64": [":" + compatibility], "//conditions:default": []})
             attrs["hdrs"] = attrs["hdrs"] + compatibility_inputs
             attrs["additional_compiler_inputs"] = compatibility_inputs
-            attrs["copts"] = select({"//build_defs/native:windows_x64": ["/FI$(location :%s)" % compatibility, '/DPG_TEXTSEARCH_VERSION="%s"' % extension_default_version(sql_name)], "//conditions:default": attrs["copts"]})
+            attrs["copts"] = select({"//build_defs/native:windows_x64": ["/FI$(location :%s)" % compatibility], "//conditions:default": []}) + attrs["copts"]
     if sql_name == "vector":
         # Clang's EVEX width permission preserves upstream's optional AVX512
         # dispatch without enabling AVX instructions in baseline functions.
