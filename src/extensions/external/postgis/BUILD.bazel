@@ -1,5 +1,5 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
-load("//build_defs/extensions/postgis:modules.bzl", "native_postgis_modules")
+load("//build_defs/extensions/postgis:modules.bzl", "native_postgis_modules", "postgis_dependency_module_labels")
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_RECIPES", "EXTENSION_SOURCES")
 load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "extension_identity", "extension_member_payload", "extension_member_validation_test")
 load("//build_defs/release:shipping.bzl", "shipping_package")
@@ -25,7 +25,7 @@ extension_member_payload(name = "native_payload", sql_name = "postgis", owner = 
                          resources = ["//build_defs/extensions/postgis:extension_sql", "//build_defs/extensions/postgis:control"],
                          data_resources = {"//build_defs/extensions/postgis:data_sql": _CONTRIB_DIRECTORIES[0],
                                            "//build_defs/extensions/postgis:database": [path for path in _DATA if path.endswith("/proj.db")][0]},
-                         dependency_modules = ["//build_defs/extensions/postgis:dependency_module"],
+                         dependency_modules = postgis_dependency_module_labels("//build_defs/extensions/postgis:dependency_module"),
                          server_module = ":postgis_server_module", embedded_module = ":postgis_embedded_module")
 
 shipping_package(name = "native_member", owner = extension_identity("postgis"), artifacts = [":native_payload"],

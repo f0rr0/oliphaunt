@@ -796,7 +796,7 @@ fn built_in_runtime_resource_extension(extension: Extension) -> RuntimeResourceE
             .as_deref()
             .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX)),
         native_dependency_module_files: extension
-            .native_dependency_module_stems()
+            .native_dependency_module_stems_for_host()
             .iter()
             .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX))
             .collect(),
@@ -3219,6 +3219,19 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         assert!(error.to_string().contains("undeclared:"), "{error}");
 
         let built_in = built_in_runtime_resource_extension(canonical);
+        assert_eq!(
+            built_in.native_dependency_module_files,
+            if cfg!(windows) {
+                Vec::<String>::new()
+            } else {
+                canonical
+                    .native_dependency_module_stems()
+                    .iter()
+                    .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX))
+                    .collect()
+            },
+            "current Windows construction incorporates dependencies; historical sidecar fixtures above remain valid",
+        );
         let base = temp.join("built-in-base");
         for module in built_in.native_module_files() {
             write_file(

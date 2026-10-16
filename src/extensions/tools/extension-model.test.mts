@@ -206,6 +206,11 @@ test('extension projections retain dependency and runtime data while deriving mo
   );
   const rustPath = 'src/native/rust-bindings/src/generated/extensions.rs';
   assert.match(outputs.get(rustPath)!, /ExtensionId::Postgis => &\["liboliphaunt_postgis_deps"\]/u);
+  assert.match(
+    outputs.get(rustPath)!,
+    /if cfg!\(all\(target_os = "windows", target_arch = "x86_64"\)\)/u,
+  );
+  assert.match(outputs.get(rustPath)!, /ExtensionId::Postgis => &\[\]/u);
   const postgisRecipe = context.recipes.get('postgis')!;
   const dependencyRecipes = new Map(context.recipes);
   dependencyRecipes.set('postgis', {

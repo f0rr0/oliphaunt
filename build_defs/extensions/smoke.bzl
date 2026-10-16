@@ -38,7 +38,7 @@ def _smoke_plan_impl(ctx):
             "lifecycle": descriptor["lifecycle"],
             "fixture": fixtures[name].path,
             "runtime_environment": EXTENSION_RECIPES.get(name, {}).get("runtime_environment", []),
-            "dependency_modules": ["lib/postgresql/" + basename for basename in extension_native_dependency_modules(EXTENSION_RECIPES.get(name, {}).get("artifacts", {}).get("native_dependency_modules", []), member.configuration)],
+            "dependency_modules": ["lib/postgresql/" + basename for basename in extension_native_dependency_modules(EXTENSION_RECIPES.get(name, {}).get("artifacts", {}).get("native_dependency_modules", []), member.configuration, EXTENSION_RECIPES.get(name, {}).get("artifacts", {}).get("native_dependency_modules_by_target", {}))],
         })
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(spec, json.encode({"schema": "oliphaunt-native-extension-smoke-plan-v1", "members": members}))

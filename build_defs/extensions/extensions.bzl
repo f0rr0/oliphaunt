@@ -7,7 +7,7 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
-load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_LINUX_COMPATIBLE", _native_configuration = "NATIVE_EXTENSION_CONFIGURATION")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_LINUX_COMPATIBLE", "NATIVE_EXTENSION_PROFILES", _native_configuration = "NATIVE_EXTENSION_CONFIGURATION")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
 
@@ -17,10 +17,15 @@ NATIVE_EXTENSION_CONFIGURATION = _native_configuration
 def _module_suffix(configuration):
     return {"macos-arm64": ".dylib", "windows-x64-msvc": ".dll"}.get(configuration, ".so")
 
-def extension_native_dependency_modules(paths, configuration):
+def extension_native_dependency_modules(paths, configuration, by_target = {}):
     """Project the canonical recipe stems into the selected desktop profile."""
+    for target, selected in by_target.items():
+        if target not in NATIVE_EXTENSION_PROFILES.values():
+            fail("native dependency module override requires a desktop native target")
+        if type(selected) != "list" or any([path not in paths for path in selected]):
+            fail("native dependency module override must select declared module paths")
     result = []
-    for path in paths:
+    for path in by_target.get(configuration, paths):
         if not path.startswith("lib/postgresql/") or "/" in path[len("lib/postgresql/"):]:
             fail("native dependency module requires its canonical PostgreSQL destination")
         basename = path.split("/")[-1]
@@ -214,7 +219,7 @@ def _payload_impl(ctx):
     if module_stem and profiles != ["postgresql", "modules"]:
         fail("compiled member payload requires independently built server and embedded modules")
     dependency_paths = recipe_artifacts.get("native_dependency_modules", [])
-    dependency_basenames = extension_native_dependency_modules(dependency_paths, configuration)
+    dependency_basenames = extension_native_dependency_modules(dependency_paths, configuration, recipe_artifacts.get("native_dependency_modules_by_target", {}))
     if sorted([file.basename for file in ctx.files.dependency_modules]) != sorted(dependency_basenames):
         fail("native dependency modules differ from the canonical extension recipe")
     for file in ctx.files.dependency_modules:
