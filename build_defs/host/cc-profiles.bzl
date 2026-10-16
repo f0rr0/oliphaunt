@@ -172,7 +172,7 @@ def _compiler(name, configuration, sdk, exclude, drivers = False):
     for role in ["compile", "link"]:
         native.filegroup(
             name = name + "_" + role + "_files",
-            srcs = [":receipt.json", ":unsupported.bat", ":unsupported.sh"] + ([":exec_wrapped_clang", ":exec_wrapped_clang_pp", ":exec_libtool"] if drivers else []) + [":" + component["name"] + "_files" for component in components if role in component["roles"]],
+            srcs = [":receipt.json", ":unsupported.bat", ":unsupported.sh"] + ([":exec_wrapped_clang", ":exec_wrapped_clang_pp", ":exec_libtool"] if drivers else []) + [":" + component["name"] + ("_compile_files" if sdk["family"] == "apple" and role == "compile" else "_files") for component in components if role in component["roles"]],
         )
     native.filegroup(name = name + "_all_files", srcs = [":" + name + "_compile_files", ":" + name + "_link_files"])
     cc_toolchain(

@@ -15,7 +15,7 @@ load("@rules_swift//swift/internal:actions.bzl", "compiler_plugin_directory_erro
 load("@rules_swift//swift/internal:action_names.bzl", "SWIFT_ACTION_COMPILE", "SWIFT_ACTION_DERIVE_FILES", "SWIFT_ACTION_COMPILE_MODULE_INTERFACE", "SWIFT_ACTION_SYMBOL_GRAPH_EXTRACT", "all_action_names", "all_compile_action_names", "compiler_plugin_action_names")
 load("@rules_swift//swift/internal:developer_dirs.bzl", "swift_developer_lib_dir")
 load(":swift-profile.bzl", "declared_swift_path", "declared_xcode_info")
-load(":repositories.bzl", "apple_swift_test_runtime_files")
+load(":repositories.bzl", "apple_cc_compile_files", "apple_swift_test_runtime_files")
 load(":app-tool-inputs.bzl", "apple_app_configuration_error")
 load(":cc-profiles.bzl", "host_builtin_include_directories")
 
@@ -63,6 +63,18 @@ def _profile_test(ctx):
     # execroot paths would be prefixed again by this toolchain's package path.
     for sdk, compiler in zip(_APPLE_SDKS, ctx.attr.cc_profiles):
         asserts.equals(env, [prefix + directory for directory in _builtin_directories(sdk)], compiler[cc_common.CcToolchainInfo].built_in_include_directories)
+    resource = "toolchain/lib/clang/20"
+    compiler_files = [
+        "toolchain/bin/swiftc", "toolchain/include/swift/bridging", "toolchain/include/c++/v1/vector",
+        resource + "/include/stddef.h", resource + "/lib/darwin/libclang_rt.osx.a", resource + "/retained.swiftmodule",
+        "toolchain/lib/swift/host/libCompilerPlugin.dylib", "tools/clang", "tools/ld",
+        "toolchain/lib/swift/Foo.swiftmodule/Interop.h", "toolchain/lib/swift/Foo.swiftmodule/cache.pcm",
+    ] + ["sdk_" + sdk + "/System/Library/Frameworks/Foo.framework/" + suffix for sdk in _APPLE_SDKS for suffix in ["Headers/Foo.h", "Modules/module.modulemap", "Modules/cache.pcm"]]
+    swift_modules = [
+        "toolchain/lib/swift/macosx/Foo.swiftmodule/arm64-apple-macos.swiftinterface",
+        "toolchain/lib/swift/macosx/Foo.swiftmodule/arm64-apple-macos.swiftdoc",
+    ] + ["sdk_" + sdk + "/System/Library/Frameworks/Foo.framework/Modules/arm64.swiftmodule" for sdk in _APPLE_SDKS]
+    asserts.equals(env, compiler_files, apple_cc_compile_files(compiler_files + swift_modules, resource))
     # Inspect stock archive expansion: native ar metadata and Apple libtool
     # actions have distinct interfaces even when they expose the same AR path.
     for index, compiler in enumerate(ctx.attr.archive_profiles):
