@@ -20,6 +20,9 @@ dependsOn:
     scope: build
   - id: cluster-seed-contract
     scope: development
+  # Local Android tests compile bindings; the published adapter consumes the Kotlin SDK.
+  - id: oliphaunt-mobile-bindings
+    scope: development
   - oliphaunt-swift
   - oliphaunt-kotlin
   - id: extension-runtime-contract
