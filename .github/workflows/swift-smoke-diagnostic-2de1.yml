@@ -24,7 +24,7 @@ jobs:
       - name: Checkout corrected source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 92c963ff1f60311ea7fcf8a02f85fab44754e396
+          ref: 4882b81c2fff0892d08833788c680483c016d789
           fetch-depth: 1
           persist-credentials: false
 
@@ -50,22 +50,22 @@ jobs:
           test -f "$(cygpath -u "$snapshot")"
           printf 'OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=%s\n' "$snapshot" >> "$GITHUB_ENV"
 
-      - name: Run the four unresolved installed consumers
+      - name: Verify SDK flush and static PostGIS consumers
         env:
           XDG_CACHE_HOME: ${{ runner.temp }}/windows-installed-consumer-bootstrap
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 92c963ff1f60311ea7fcf8a02f85fab44754e396
-          test "$(git rev-parse 'HEAD^{tree}')" = 2147af715bbc3bfe9e81767a96cb6fd4ba1af2fd
+          test "$(git rev-parse HEAD)" = 4882b81c2fff0892d08833788c680483c016d789
+          test "$(git rev-parse 'HEAD^{tree}')" = c4021ff064d05b452952d82e133216e0275fa211
           test -n "${OLIPHAUNT_NATIVE_PUBLICATION_INPUTS:-}"
           diag="$RUNNER_TEMP/windows-installed-consumers-diagnostic"
           mkdir -p "$diag"
-          printf 'SOURCE_COMMIT=92c963ff1f60311ea7fcf8a02f85fab44754e396\nSOURCE_TREE=2147af715bbc3bfe9e81767a96cb6fd4ba1af2fd\n' > "$diag/source.txt"
+          printf 'SOURCE_COMMIT=4882b81c2fff0892d08833788c680483c016d789\nSOURCE_TREE=c4021ff064d05b452952d82e133216e0275fa211\n' > "$diag/source.txt"
           targets=(
             //build_defs/languages/carriers:installed_sql_test
             //build_defs/extensions:desktop_all_members_frozen_sql_test
-            //src/native/runtime:host_runtime_sql_test
-            //src/database-resources:native_resource_test
+            //build_defs/extensions:postgis_server_windows_link_test
+            //build_defs/extensions:postgis_embedded_windows_link_test
           )
           printf '%s\n' "${targets[@]}" > "$diag/targets.txt"
           base="$RUNNER_TEMP/b"
@@ -88,7 +88,7 @@ jobs:
             ${{ runner.temp }}/windows-installed-consumers-diagnostic
             ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/languages/carriers/installed_sql_test
             ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/extensions/desktop_all_members_frozen_sql_test
-            ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/src/native/runtime/host_runtime_sql_test
-            ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/src/database-resources/native_resource_test
+            ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/extensions/postgis_server_windows_link_test
+            ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/extensions/postgis_embedded_windows_link_test
           if-no-files-found: warn
           retention-days: 7
