@@ -14,12 +14,14 @@ def _driver_alias_impl(ctx):
 
 _driver_alias = rule(implementation = _driver_alias_impl, executable = True, attrs = {"binary": attr.label(allow_single_file = True, mandatory = True)})
 
+_USE_LIBTOOL_ON_MACOS = str(Label("@rules_cc//cc/toolchains/args/archiver_flags:use_libtool_on_macos"))
+
 def _deployment_impl(settings, attr):
     # The standard Apple configuration reads its triple from these fragments.
     # Bind them to the selected public profile rather than the runner default.
-    return {"//command_line_option:macos_minimum_os": attr.macos_floor, "//command_line_option:ios_minimum_os": attr.ios_floor}
+    return {"//command_line_option:macos_minimum_os": attr.macos_floor, "//command_line_option:ios_minimum_os": attr.ios_floor, _USE_LIBTOOL_ON_MACOS: False if attr.use_ar else settings[_USE_LIBTOOL_ON_MACOS]}
 
-_deployment = transition(implementation = _deployment_impl, inputs = [], outputs = ["//command_line_option:macos_minimum_os", "//command_line_option:ios_minimum_os"])
+_deployment = transition(implementation = _deployment_impl, inputs = [_USE_LIBTOOL_ON_MACOS], outputs = ["//command_line_option:macos_minimum_os", "//command_line_option:ios_minimum_os", _USE_LIBTOOL_ON_MACOS])
 
 def _configuration_impl(ctx):
     return [ctx.attr.configuration[0][CcToolchainConfigInfo]]
@@ -30,6 +32,7 @@ _configuration = rule(
         "configuration": attr.label(mandatory = True, providers = [CcToolchainConfigInfo], cfg = _deployment),
         "macos_floor": attr.string(mandatory = True),
         "ios_floor": attr.string(mandatory = True),
+        "use_ar": attr.bool(default = False),
         "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
     },
 )
@@ -39,7 +42,7 @@ def host_builtin_include_directories(prefix, directories):
     return ["%workspace%/" + prefix + directory for directory in directories]
 
 def host_cc_profiles(sdk):
-    """Use execroot SDK paths for compiler, include, resource and library lookup."""
+    """Bind standard C/C++ configurations to the declared host SDK."""
     prefix = "external/" + native.repository_name()[1:] + "/"
     if sdk["family"] == "msvc":
         includes = ["compiler_include"] + ["sdk_include/" + name for name in ["ucrt", "shared", "um", "winrt", "cppwinrt"]]
@@ -87,7 +90,7 @@ def host_cc_profiles(sdk):
     else:
         for name, minimum in [("native", sdk["deploymentTargets"]["native_macos"])]:
             unix_config(
-                name = "configuration_" + name,
+                name = "unix_configuration_" + name,
                 cpu = "darwin_arm64",
                 compiler = "clang",
                 host_system_name = "aarch64-apple-darwin",
@@ -101,7 +104,7 @@ def host_cc_profiles(sdk):
                 tool_paths = {
                     "gcc": sdk["tools"]["clang"],
                     "cpp": sdk["tools"]["clang"],
-                    "ar": sdk["tools"]["libtool"],
+                    "ar": sdk["tools"]["ar"],
                     "ld": sdk["tools"]["ld"],
                     "nm": sdk["tools"]["nm"],
                     "strip": sdk["tools"]["strip"],
@@ -115,6 +118,13 @@ def host_cc_profiles(sdk):
                 link_libs = ["-lc++"],
                 unfiltered_compile_flags = ["-Wno-overriding-option"],
                 supports_start_end_lib = False,
+            )
+            _configuration(
+                name = "configuration_" + name,
+                configuration = ":unix_configuration_" + name,
+                macos_floor = minimum,
+                ios_floor = sdk["deploymentTargets"]["ios"],
+                use_ar = True,
             )
             _compiler("cc_" + name, ":configuration_" + name, sdk, [component for other in ["iphoneos", "iphonesimulator"] for component in ["sdk_" + other, "platform_" + other + "/Library", "platform_" + other + "/usr/lib"]])
         # Build the pinned standard Apple drivers with the declared native
@@ -146,7 +156,8 @@ def host_cc_profiles(sdk):
                 # Bazel owns the reserved Xcode environment; drivers consume our captured paths.
                 # ${pwd} is expanded before Rust changes cwd, or by our native C++ drivers.
                 extra_env = {"OLIPHAUNT_APPLE_DEVELOPER_DIRECTORY": "${pwd}/" + prefix.removesuffix("/"), "OLIPHAUNT_APPLE_SDKROOT": "${pwd}/" + prefix + "sdk_" + selected_sdk, "OLIPHAUNT_APPLE_TOOL_DIRECTORY": "${pwd}/" + prefix + "tools"},
-                tool_paths_overrides = {"cpp": prefix + sdk["tools"]["clang"], "ld": prefix + sdk["tools"]["ld"], "nm": prefix + sdk["tools"]["nm"], "strip": prefix + sdk["tools"]["strip"], "gcov": prefix + "unsupported.sh", "objdump": prefix + "unsupported.sh"},
+                # Tool metadata is relative to this package, unlike action Files or env/flag paths.
+                tool_paths_overrides = {"ar": sdk["tools"]["ar"], "cpp": sdk["tools"]["clang"], "ld": sdk["tools"]["ld"], "nm": sdk["tools"]["nm"], "strip": sdk["tools"]["strip"], "gcov": "unsupported.sh", "objdump": "unsupported.sh"},
             )
             _configuration(
                 name = "configuration_" + name,

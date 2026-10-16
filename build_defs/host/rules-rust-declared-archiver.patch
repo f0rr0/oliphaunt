@@ -1,0 +1,9 @@
+diff --git a/cargo/private/cargo_build_script.bzl b/cargo/private/cargo_build_script.bzl
+--- a/cargo/private/cargo_build_script.bzl
++++ b/cargo/private/cargo_build_script.bzl
+@@ -551,3 +551,4 @@
+         # one was never included in the unix_cc_toolchain_config.
++        # Apple archive actions use libtool flags; Cargo needs the ar interface.
+-        if not env["AR"]:
++        if not env["AR"] or "libtool" in paths.basename(env["AR"]):
+             env["AR"] = cc_toolchain.ar_executable

@@ -286,6 +286,7 @@ function captureApple(policy: HostPolicy, env: NodeJS.ProcessEnv): HostSdk {
     'clang',
     'clang++',
     'libtool',
+    'ar',
     'ld',
     'nm',
     'strip',
