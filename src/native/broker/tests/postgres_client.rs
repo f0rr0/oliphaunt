@@ -19,7 +19,7 @@ struct Broker {
     control: String,
 }
 impl Broker {
-    fn start() -> Self {
+    fn start(handshake_timeout_ms: Option<u32>) -> Self {
         for key in ["LIBOLIPHAUNT_PATH", "OLIPHAUNT_INSTALL_DIR"] {
             std::env::var_os(key).unwrap_or_else(|| panic!("{key} is required"));
         }
@@ -33,7 +33,8 @@ impl Broker {
         ));
         let executable = std::env::var_os("OLIPHAUNT_BROKER")
             .unwrap_or_else(|| env!("CARGO_BIN_EXE_oliphaunt-broker").into());
-        let mut child = Command::new(executable)
+        let mut command = Command::new(executable);
+        command
             .args([
                 "--root",
                 root.to_str().unwrap(),
@@ -46,9 +47,11 @@ impl Broker {
             ])
             .env("OLIPHAUNT_BROKER_AUTH_TOKEN", "actual-consumer-test-secret")
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
+            .stderr(Stdio::inherit());
+        if let Some(timeout) = handshake_timeout_ms {
+            command.args(["--handshake-timeout-ms", &timeout.to_string()]);
+        }
+        let mut child = command.spawn().unwrap();
         let mut ready = String::new();
         BufReader::new(child.stdout.take().unwrap())
             .read_line(&mut ready)
@@ -142,6 +145,78 @@ fn connect(address: &str) -> TcpStream {
         .unwrap();
     stream
 }
+
+#[test]
+#[ignore = "requires a prepared native runtime; runs the actual broker executable"]
+fn handshake_deadline_expires_idle_logins_but_not_queries_or_slow_backups() {
+    let broker = Broker::start(Some(500));
+    for endpoint in [&broker.control, &broker.sql] {
+        let mut idle = connect(endpoint);
+        idle.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        assert_eq!(idle.read(&mut [0]).unwrap(), 0, "idle login did not expire");
+    }
+    let mut owner = broker.owner();
+    // Keep the backend in a backup write while a new SQL login asks it for startup metadata.
+    ipc::write_request(&mut owner, RequestFrame::BackupStream).unwrap();
+    assert_eq!(owner.peek(&mut [0]).unwrap(), 1);
+    let mut pending_login = connect(&broker.sql);
+    pending_login
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let start = std::time::Instant::now();
+    assert!(
+        pgwire::authenticate(
+            &mut pending_login,
+            "postgres",
+            "postgres",
+            "actual-consumer-test-secret"
+        )
+        .is_err()
+    );
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "login waited beyond its budget for the stalled backend"
+    );
+    let (completion, failure) =
+        ipc::read_backup_response(&mut owner, &mut std::io::sink()).unwrap();
+    assert_eq!(completion, ResponseFrame::Ok(Vec::new()));
+    assert!(failure.is_none());
+    let (mut sql, _) = broker.reconnect();
+    let result = query(&mut sql, "SELECT pg_sleep(1), 42 AS answer");
+    assert!(result.windows(2).any(|bytes| bytes == b"42"));
+
+    struct SlowDestination {
+        bytes: usize,
+        paused: bool,
+    }
+    impl Write for SlowDestination {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if !self.paused {
+                self.paused = true;
+                thread::sleep(Duration::from_secs(1));
+            }
+            self.bytes += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    ipc::write_request(&mut owner, RequestFrame::BackupStream).unwrap();
+    let mut destination = SlowDestination {
+        bytes: 0,
+        paused: false,
+    };
+    let (completion, failure) = ipc::read_backup_response(&mut owner, &mut destination).unwrap();
+    assert_eq!(completion, ResponseFrame::Ok(Vec::new()));
+    assert!(failure.is_none());
+    assert!(destination.bytes > 1024 * 1024);
+    assert!(
+        query(&mut sql, "SELECT 43 AS answer")
+            .windows(2)
+            .any(|bytes| bytes == b"43")
+    );
+}
 fn frame(tag: u8, body: &[u8]) -> Vec<u8> {
     let mut bytes = vec![tag];
     bytes.extend_from_slice(&((body.len() + 4) as u32).to_be_bytes());
@@ -178,7 +253,7 @@ fn query(stream: &mut TcpStream, sql: &str) -> Vec<u8> {
 #[ignore = "requires a prepared native runtime; runs the actual broker executable"]
 fn startup_application_name_distinguishes_omission_from_empty() {
     for application in [None, Some(""), Some("client-application")] {
-        let broker = Broker::start();
+        let broker = Broker::start(None);
         let _owner = broker.owner();
         let mut client = connect(&broker.sql);
         let mut startup = oliphaunt_query::wire::PROTOCOL_3.to_be_bytes().to_vec();
@@ -217,7 +292,7 @@ fn startup_application_name_distinguishes_omission_from_empty() {
 #[test]
 #[ignore = "requires a prepared native runtime; runs the actual broker executable"]
 fn postgres_protocol_and_management_are_independent() {
-    let mut broker = Broker::start();
+    let mut broker = Broker::start(None);
     let mut owner = broker.owner();
     let (mut client, first_key) = broker.client();
     assert!(String::from_utf8_lossy(&query(&mut client, "SELECT 42")).contains("42"));
@@ -341,7 +416,7 @@ fn postgres_protocol_and_management_are_independent() {
 #[test]
 #[ignore = "requires a prepared native runtime; runs the actual broker executable"]
 fn disconnect_and_parent_death_drain_active_native_work() {
-    let mut broker = Broker::start();
+    let mut broker = Broker::start(None);
     let owner = broker.owner();
     let (mut client, _) = broker.client();
     client
@@ -374,7 +449,7 @@ fn disconnect_and_parent_death_drain_active_native_work() {
         thread::sleep(Duration::from_millis(5));
     }
 
-    let mut incomplete = Broker::start();
+    let mut incomplete = Broker::start(None);
     let _owner = incomplete.owner();
     let (mut client, _) = incomplete.client();
     let mut partial = frame(b'P', b"\0SELECT 42\0\0\0");

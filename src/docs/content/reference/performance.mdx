@@ -57,6 +57,7 @@ Treat a queue capacity, a read batch and an input limit as different settings. M
 | Read and callback batches | WASIX protocol callbacks deliver at most 64 KiB at a time | Large results can span many chunks. Chunk size does not limit total output or remove a single-message acceptance limit |
 | OPFS helper I/O | Setup, snapshot reads and cleanup default to at most 16 concurrent operations per helper batch; `opfs(name, { maxConcurrentIO })` selects another positive count | Concurrency trades overlapping file work against storage contention. Changed-file publication retains its separate ordering |
 | OPFS spare handles | Worker OPFS maintains 32 unused handles by default; `opfs(name, { spareFileCount })` accepts a non-negative count | More handles reduce overflow staging but increase startup and browser resource use. This reserve does not cap database file count |
+| Desktop broker login | Each accepted SQL or management connection has five seconds to complete its handshake by default | A larger deadline allows slower login but retains unauthenticated connections longer. It ends after login and does not limit queries or backups |
 | Guest memory | Embedded WASIX artifacts start with 128 MiB of linear memory, including an 8 MiB guest C stack | These are artifact settings. More guest stack reduces heap headroom within the same memory. The host engine's execution stack is separate |
 
 Admission has the same explicit field meanings across the asynchronous SDKs. Omitting it retains each SDK's existing accounting. Transport, artifact and PostgreSQL settings have their own owners; these budgets do not establish a total process-memory bound.
@@ -169,6 +170,38 @@ See PostgreSQL's [resource settings](https://www.postgresql.org/docs/18/runtime-
 The native C runtime also has process environment overrides: `OLIPHAUNT_STREAM_QUEUE_MAX_BYTES` selects the streaming queue capacity, normally 4 MiB, and is read when streaming starts; `OLIPHAUNT_STACK_BYTES` selects the backend thread stack, normally 8 MiB, before thread creation. Values must be complete positive decimal integers that fit the native size; invalid legacy overrides use the default. These are byte counts for native embedding hosts that can set the process environment. They are not per-database SDK options or WASIX settings. Raising PostgreSQL `max_stack_depth` does not allocate a larger thread or guest stack.
 
 Compare one change at a time. Measure queue delay, query latency, bulk throughput, first-byte latency, and peak and retained memory. Include a slow destination and verify error recovery and close; throughput alone can hide excess buffering or slower cancellation.
+
+## Configure broker login
+
+Native TypeScript accepts the deadline on its broker configuration:
+
+```ts
+const db = await Oliphaunt.open({
+  topology: 'broker',
+  broker: { handshakeTimeoutMs: 10_000 },
+});
+```
+
+Native Rust uses the same option on synchronous and asynchronous builders:
+
+```rust
+let mut db = Oliphaunt::builder()
+    .broker()
+    .broker_handshake_timeout(std::time::Duration::from_secs(10))
+    .open()?;
+```
+
+The default is five seconds per accepted connection. The deadline covers the
+complete login, including partial reads and writes, rather than restarting when
+another byte arrives. Valid values are 1 through 2147483647 whole milliseconds;
+Rust durations round up to the next millisecond. Larger values allow slower
+handshakes but keep unauthenticated connections longer.
+
+This option requires desktop broker mode. It is separate from the SDK's wait
+for the helper to start and PostgreSQL's `startupGUCs`. After login, it does not
+apply to queries or backups, including slow backup destinations. Mobile brokers
+use a different transport and do not expose this setting. Custom helper
+executables must support `--handshake-timeout-ms` to accept an explicit override.
 
 ## Compare runtime modes
 

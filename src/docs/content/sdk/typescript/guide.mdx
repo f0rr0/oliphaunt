@@ -105,6 +105,10 @@ const db = await Oliphaunt.open({
 });
 ```
 
+Use `broker.handshakeTimeoutMs` to change the helper's five-second login
+deadline. It does not limit queries or backups. See [broker login settings](/docs/reference/performance#configure-broker-login)
+for the range and tradeoff.
+
 Use a server when a driver or ORM needs independent PostgreSQL sessions:
 
 ```ts

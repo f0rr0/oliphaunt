@@ -632,7 +632,10 @@ async function allocateBrokerEndpoint(config: NormalizedOpenConfig): Promise<Bro
   return { kind: 'tcp', listen: '127.0.0.1:0', controlListen: '127.0.0.1:0' };
 }
 
-function brokerSpawnArgs(config: NormalizedOpenConfig, endpoint: BrokerEndpointPlan): string[] {
+export function brokerSpawnArgs(
+  config: NormalizedOpenConfig,
+  endpoint: BrokerEndpointPlan,
+): string[] {
   const args = [
     '--root',
     config.instanceDirectory,
@@ -645,6 +648,9 @@ function brokerSpawnArgs(config: NormalizedOpenConfig, endpoint: BrokerEndpointP
     args.push('--socket', endpoint.socket, '--control-socket', endpoint.controlSocket);
   } else {
     args.push('--listen', endpoint.listen, '--control-listen', endpoint.controlListen);
+  }
+  if (config.brokerHandshakeTimeoutMs !== undefined) {
+    args.push('--handshake-timeout-ms', String(config.brokerHandshakeTimeoutMs));
   }
   if (config.seed !== undefined)
     args.push(

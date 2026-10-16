@@ -56,6 +56,7 @@ test('normalizes only the public database and server configuration', () => {
       topology: 'broker',
       storage: { kind: 'directory', path: '/app/root' },
       brokerExecutable: '/opt/oliphaunt-broker',
+      broker: { handshakeTimeoutMs: 750 },
       startupGUCs: { work_mem: '16MB' },
       username: 'app_user',
       database: 'app_db',
@@ -66,6 +67,7 @@ test('normalizes only the public database and server configuration', () => {
   assert.equal(broker.topology, 'broker');
   assert.equal(broker.pgdata, '/app/root/pgdata');
   assert.equal(broker.brokerExecutable, '/opt/oliphaunt-broker');
+  assert.equal(broker.brokerHandshakeTimeoutMs, 750);
   assert.deepEqual(broker.extensions, ['cube', 'hstore']);
   assert.deepEqual(broker.startupArgs.slice(0, 2), ['-c', 'work_mem=16MB']);
 
@@ -92,6 +94,40 @@ test('normalizes only the public database and server configuration', () => {
     transport: 'unix',
     directory: '/tmp/oliphaunt sockets',
   });
+});
+
+test('broker handshake options are validated and copied before launch', () => {
+  const root = { instanceDirectory: '/app/root', temporaryDirectory: false };
+  const options = { handshakeTimeoutMs: 125 };
+  const normalized = normalizeOpenConfig({ topology: 'broker', broker: options }, root);
+  options.handshakeTimeoutMs = 500;
+  assert.equal(normalized.brokerHandshakeTimeoutMs, 125);
+  assert.equal(
+    normalizeOpenConfig({ topology: 'broker' }, root).brokerHandshakeTimeoutMs,
+    undefined,
+  );
+  for (const value of [0, -1, 1.5, NaN, Infinity, 2_147_483_648, '5000', null]) {
+    assert.throws(() =>
+      normalizeOpenConfig(
+        { topology: 'broker', broker: { handshakeTimeoutMs: value } } as never,
+        root,
+      ),
+    );
+  }
+  for (const broker of [null, [], '5000', { handshakeTimeout: 5000 }]) {
+    assert.throws(() => normalizeOpenConfig({ topology: 'broker', broker } as never, root));
+  }
+  for (const topology of ['direct', 'server', undefined]) {
+    assert.throws(
+      () => normalizeOpenConfig({ topology, broker: options } as never, root),
+      /require topology/,
+    );
+  }
+  assert.equal(
+    normalizeOpenConfig({ topology: 'broker', broker: { handshakeTimeoutMs: 2_147_483_647 } }, root)
+      .brokerHandshakeTimeoutMs,
+    2_147_483_647,
+  );
 });
 
 test('validates the small public configuration vocabulary', () => {

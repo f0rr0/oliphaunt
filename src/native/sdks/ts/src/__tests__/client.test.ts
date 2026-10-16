@@ -148,6 +148,7 @@ test('snapshots open configuration before asynchronous storage work', async () =
     return { state: 'closed' };
   };
   const startupGUCs: Record<string, string> = { work_mem: '8MB' };
+  const brokerOptions = { handshakeTimeoutMs: 125 };
   const extensions: NativeExtension[] = [];
   const storagePath = pathToFileURL(root);
   const config: OpenConfig = {
@@ -157,6 +158,7 @@ test('snapshots open configuration before asynchronous storage work', async () =
     username: 'before',
     database: 'before',
     extensions,
+    broker: brokerOptions,
   };
   const client = createOliphauntClient(() => direct, { broker: brokerRuntime });
 
@@ -168,6 +170,7 @@ test('snapshots open configuration before asynchronous storage work', async () =
     config.database = 'after';
     startupGUCs.work_mem = '64MB';
     extensions.push(contrib.hstore);
+    brokerOptions.handshakeTimeoutMs = 500;
 
     const database = await opening;
     assert.equal(direct.openCalls.length, 0);
@@ -184,6 +187,7 @@ test('snapshots open configuration before asynchronous storage work', async () =
       libraryPath: undefined,
       runtimeDirectory: undefined,
       brokerExecutable: undefined,
+      brokerHandshakeTimeoutMs: 125,
       serverExecutable: undefined,
       serverListen: undefined,
     });
