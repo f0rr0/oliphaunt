@@ -1,4 +1,4 @@
-name: Declared Apple compiler and archiver diagnostic
+name: Declared Apple C++ header admission diagnostic
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: apple-archive-control-${{ github.run_id }}
+  group: apple-cpp-header-control-${{ github.run_id }}
   cancel-in-progress: false
 
 defaults:
@@ -16,15 +16,15 @@ defaults:
     shell: bash
 
 jobs:
-  archives:
-    name: Reproduce the Cargo path failure and execute declared Apple archives
+  cpp_headers:
+    name: Reproduce SDK header rejection and admit the corrected C++ archive
     runs-on: macos-26
     timeout-minutes: 30
     steps:
       - name: Checkout original source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 98590ee7baf01b6aa7fd766933393369c042b6b9
+          ref: 50fcea8b7e2682eec4786f1a0ba422a41c1f85c1
           fetch-depth: 1
           persist-credentials: false
 
@@ -33,132 +33,82 @@ jobs:
         with:
           install-build-dependencies: "false"
 
-      - name: Reproduce the original Cargo compiler path failure
+      - name: Reproduce the original C++ SDK header rejection
         env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/apple-archive-bootstrap
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = 98590ee7baf01b6aa7fd766933393369c042b6b9
-          test "$(git rev-parse 'HEAD^{tree}')" = adf289054e0f18009a248c3cdf8c7a06f3bfe707
-          diag="$RUNNER_TEMP/apple-archive-diagnostic"
-          mkdir -p "$diag"
-          printf 'RED_SOURCE_COMMIT=98590ee7baf01b6aa7fd766933393369c042b6b9\nRED_SOURCE_TREE=adf289054e0f18009a248c3cdf8c7a06f3bfe707\n' | tee "$diag/red-source.txt"
-          bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc
-            --output_base="$RUNNER_TEMP/apple-archive-check" --host_jvm_args=-Xmx3g)
-          config=(-c opt --config=macos-sandbox
-            --platforms=//build_defs/host:apple_package_macos_arm64
-            --host_platform=//build_defs/host:native_macos_arm64 --jobs=1
-            --lockfile_mode=error --repository_cache= --disk_cache=
-            --@rules_rust//cargo/settings:debug_std_streams_output_group=true)
-          set +e
-          "${bazel[@]}" build '@@rules_rust++crate+n__zstd-sys-2.0.16-zstd.1.5.7//:_bs' \
-            "${config[@]}" --output_groups=out_dir,streams > "$diag/red.log" 2>&1
-          red_status=$?
-          set -e
-          printf 'RED_EXIT=%s\n' "$red_status"
-          test "$red_status" -ne 0
-          grep -F 'Running Cargo build script zstd-sys failed:' "$diag/red.log"
-          grep -F "Error forking process 'external/+native_host_toolchains+native_apple_sdk/tools/clang'. No such file or directory" "$diag/red.log"
-
-      - name: Checkout corrected source
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          ref: 50fcea8b7e2682eec4786f1a0ba422a41c1f85c1
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Execute the corrected Cargo build script with declared ar
-        env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/apple-archive-bootstrap
+          XDG_CACHE_HOME: ${{ runner.temp }}/apple-cpp-header-bootstrap
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = 50fcea8b7e2682eec4786f1a0ba422a41c1f85c1
           test "$(git rev-parse 'HEAD^{tree}')" = f6eae7a4b32e5d9b717aa34a96f0d3da919075f5
-          diag="$RUNNER_TEMP/apple-archive-diagnostic"
-          printf 'GREEN_SOURCE_COMMIT=50fcea8b7e2682eec4786f1a0ba422a41c1f85c1\nGREEN_SOURCE_TREE=f6eae7a4b32e5d9b717aa34a96f0d3da919075f5\n' | tee "$diag/green-source.txt"
+          diag="$RUNNER_TEMP/apple-cpp-header-diagnostic"
+          mkdir -p "$diag"
+          printf 'RED_SOURCE_COMMIT=50fcea8b7e2682eec4786f1a0ba422a41c1f85c1\nRED_SOURCE_TREE=f6eae7a4b32e5d9b717aa34a96f0d3da919075f5\n' | tee "$diag/red-source.txt"
           bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc
-            --output_base="$RUNNER_TEMP/apple-archive-check" --host_jvm_args=-Xmx3g)
+            --output_base="$RUNNER_TEMP/apple-cpp-header-check" --host_jvm_args=-Xmx3g)
           config=(-c opt --config=macos-sandbox
             --platforms=//build_defs/host:apple_package_macos_arm64
             --host_platform=//build_defs/host:native_macos_arm64 --jobs=1
-            --lockfile_mode=error --repository_cache= --disk_cache=
-            --@rules_rust//cargo/settings:debug_std_streams_output_group=true)
-          target='@@rules_rust++crate+n__zstd-sys-2.0.16-zstd.1.5.7//:_bs'
-          "${bazel[@]}" build "$target" "${config[@]}" --output_groups=out_dir,streams \
-            > "$diag/green.log" 2>&1
-          "${bazel[@]}" cquery "$target" "${config[@]}" --output=files \
-            --output_groups=out_dir,streams > "$diag/green-files.txt" 2> "$diag/green-query.log"
-          "${bazel[@]}" info execution_root "${config[@]}" \
-            > "$diag/execution-root.txt" 2> "$diag/info.log"
-          "${bazel[@]}" cquery '@native_apple_sdk//:tools/ar_files' "${config[@]}" \
-            --output=files > "$diag/ar-file.txt" 2> "$diag/ar-query.log"
-          execution_root="$(cat "$diag/execution-root.txt")"
-          test "$(wc -l < "$diag/green-files.txt")" -eq 3
-          out_dir='' stdout='' stderr=''
-          while IFS= read -r relative; do
-            case "$relative" in
-              *.out_dir) out_dir="$execution_root/$relative" ;;
-              *.stdout.log) stdout="$execution_root/$relative" ;;
-              *.stderr.log) stderr="$execution_root/$relative" ;;
-              *) exit 1 ;;
-            esac
-          done < "$diag/green-files.txt"
-          test -n "$out_dir" && test -n "$stdout" && test -n "$stderr"
-          test -d "$out_dir" && test -f "$stdout" && test -f "$stderr"
-          cp "$stdout" "$diag/green.stdout.log"
-          cp "$stderr" "$diag/green.stderr.log"
-          test -f "$out_dir/libzstd.a" && test -s "$out_dir/libzstd.a"
-          test "$(head -c 8 "$out_dir/libzstd.a")" = '!<arch>'
-          test "$(wc -l < "$diag/ar-file.txt")" -eq 1
-          declared_ar="$(cat "$diag/ar-file.txt")"
-          test -f "$execution_root/$declared_ar"
-          observed_ar="$(sed -n 's/^AR = Some(\(.*\))$/\1/p' "$stdout" | sort -u)"
-          [[ "$observed_ar" = /* && "$observed_ar" != *$'\n'* ]]
-          case "$observed_ar" in
-            */"$declared_ar") ;;
-            *) exit 1 ;;
-          esac
-          grep -Fx 'ARFLAGS = Some()' "$stdout"
-          printf 'GREEN_DECLARED_AR=%s\nGREEN_ZSTD_ARCHIVE=present\n' "$observed_ar"
-          shasum -a 256 "$out_dir/libzstd.a" | tee "$diag/zstd-archive.txt"
-          tail -n 8 "$diag/green.log"
+            --lockfile_mode=error --repository_cache= --disk_cache=)
+          target='@@abseil-cpp+//absl/base:log_severity'
+          set +e
+          "${bazel[@]}" build "$target" "${config[@]}" --output_groups=archive \
+            --subcommands > "$diag/red.log" 2>&1
+          red_status=$?
+          set -e
+          printf 'RED_EXIT=%s\n' "$red_status"
+          test "$red_status" -ne 0
+          grep -F -m 1 "absolute path inclusion(s) found in rule '@@abseil-cpp+//absl/base:log_severity'" "$diag/red.log"
+          grep -E -m 1 '/sandbox/darwin-sandbox/[0-9]+/execroot/_main/external/\+native_host_toolchains\+native_apple_sdk/sdk_macosx/usr/include/c\+\+/v1/' "$diag/red.log"
+          printf 'RED_EXPECTED_ABSOLUTE_SDK_INCLUSION=observed\n'
 
-      - name: Execute the existing native Abseil archive action
+      - name: Checkout corrected source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: bb70fa0e3c387b560c197a487191cc8f19a25ac6
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Admit corrected C++ headers and execute the package archive
         env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/apple-archive-bootstrap
+          XDG_CACHE_HOME: ${{ runner.temp }}/apple-cpp-header-bootstrap
         run: |
           set -euo pipefail
-          diag="$RUNNER_TEMP/apple-archive-diagnostic"
+          test "$(git rev-parse HEAD)" = bb70fa0e3c387b560c197a487191cc8f19a25ac6
+          test "$(git rev-parse 'HEAD^{tree}')" = 4ab049963f081a4e84f8f29ae824cf512c80a41b
+          diag="$RUNNER_TEMP/apple-cpp-header-diagnostic"
+          printf 'GREEN_SOURCE_COMMIT=bb70fa0e3c387b560c197a487191cc8f19a25ac6\nGREEN_SOURCE_TREE=4ab049963f081a4e84f8f29ae824cf512c80a41b\n' | tee "$diag/green-source.txt"
           bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc
-            --output_base="$RUNNER_TEMP/apple-archive-check" --host_jvm_args=-Xmx3g)
+            --output_base="$RUNNER_TEMP/apple-cpp-header-check" --host_jvm_args=-Xmx3g)
           config=(-c opt --config=macos-sandbox
-            --platforms=//build_defs/host:native_macos_arm64
+            --platforms=//build_defs/host:apple_package_macos_arm64
             --host_platform=//build_defs/host:native_macos_arm64 --jobs=1
             --lockfile_mode=error --repository_cache= --disk_cache=)
           target='@@abseil-cpp+//absl/base:log_severity'
           "${bazel[@]}" build "$target" "${config[@]}" --output_groups=archive \
-            --subcommands > "$diag/native.log" 2>&1
+            --subcommands > "$diag/green.log" 2>&1
+          grep -F -m 1 'Compiling absl/base/log_severity.cc' "$diag/green.log"
+          grep -E -m 1 '/external/\+native_host_toolchains\+native_apple_sdk/wrapped_clang(_pp)?([[:space:]]|$)' "$diag/green.log"
+          grep -E -m 1 '/external/\+native_host_toolchains\+native_apple_sdk/libtool([[:space:]]|$)' "$diag/green.log"
           "${bazel[@]}" cquery "$target" "${config[@]}" --output=files \
-            --output_groups=archive > "$diag/native-files.txt" 2> "$diag/native-query.log"
+            --output_groups=archive > "$diag/green-files.txt" 2> "$diag/green-query.log"
+          "${bazel[@]}" info execution_root "${config[@]}" \
+            > "$diag/execution-root.txt" 2> "$diag/info.log"
           execution_root="$(cat "$diag/execution-root.txt")"
-          declared_ar="$(cat "$diag/ar-file.txt")"
-          grep -F "$declared_ar" "$diag/native.log"
-          grep -E '(^|[[:space:]])rcs([[:space:]]|$)' "$diag/native.log"
-          test -s "$diag/native-files.txt"
+          test -s "$diag/green-files.txt"
           while IFS= read -r relative; do
             case "$relative" in *.a) ;; *) exit 1 ;; esac
             archive="$execution_root/$relative"
             test -f "$archive" && test -s "$archive"
             test "$(head -c 8 "$archive")" = '!<arch>'
-            shasum -a 256 "$archive" | tee -a "$diag/native-archives.txt"
-          done < "$diag/native-files.txt"
-          printf 'GREEN_NATIVE_ARCHIVE=present\n'
-          tail -n 8 "$diag/native.log"
+            shasum -a 256 "$archive" | tee -a "$diag/green-archives.txt"
+          done < "$diag/green-files.txt"
+          printf 'GREEN_CPP_HEADER_ADMISSION=passed\nGREEN_PACKAGE_ARCHIVE=present\n'
+          tail -n 8 "$diag/green.log"
 
       - name: Preserve diagnostic logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: apple-archive-diagnostic
-          path: ${{ runner.temp }}/apple-archive-diagnostic
+          name: apple-cpp-header-diagnostic
+          path: ${{ runner.temp }}/apple-cpp-header-diagnostic
           if-no-files-found: warn
