@@ -96,10 +96,14 @@ def _host_sdk_impl(ctx):
         runtime_prefix = str(ctx.path(".")) + "/"
         tools = {":" + sdk["tools"][mode]: mode for mode in ["swiftc", "swift-symbolgraph-extract", "swift-synthesize-interface"]}
         lines.append('filegroup(name = "swift_test_runtime", srcs = %s)' % repr(["receipt.json"] + apple_swift_test_runtime_files(component_files)))
-        lines.append('declared_xcode_swift_toolchain(name = "swift", sdk = [":receipt.json", ":toolchain_files", ":sdk_macosx_files", ":platform_macosx/Library_files", ":platform_macosx/usr/lib_files", ":tools/xcrun_files"], tools = %s, sdkroot = %s, resource_directory = %s, prefix = %s, runtime_prefix = %s, target_triple = %s)' % (repr(tools), repr(prefix + "sdk_macosx"), repr(prefix + "toolchain/lib/swift"), repr(prefix), repr(runtime_prefix), repr("arm64-apple-macosx" + sdk["deploymentTargets"]["package_macos"])))
-        for name, selected_sdk, suffix in [("swift_ios", "iphoneos", ""), ("swift_ios_simulator", "iphonesimulator", "-simulator")]:
+        for name, selected_sdk, target_triple in [
+            ("swift", "macosx", "arm64-apple-macosx" + sdk["deploymentTargets"]["package_macos"]),
+            ("swift_native", "macosx", "arm64-apple-macosx" + sdk["deploymentTargets"]["native_macos"]),
+            ("swift_ios", "iphoneos", "arm64-apple-ios" + sdk["deploymentTargets"]["ios"]),
+            ("swift_ios_simulator", "iphonesimulator", "arm64-apple-ios" + sdk["deploymentTargets"]["ios"] + "-simulator"),
+        ]:
             inputs = [":receipt.json", ":toolchain_files", ":sdk_" + selected_sdk + "_files", ":platform_" + selected_sdk + "/Library_files", ":platform_" + selected_sdk + "/usr/lib_files", ":tools/xcrun_files"]
-            lines.append('declared_xcode_swift_toolchain(name = %s, sdk = %s, tools = %s, sdkroot = %s, sdk_name = %s, resource_directory = %s, prefix = %s, runtime_prefix = %s, target_triple = %s)' % (repr(name), repr(inputs), repr(tools), repr(prefix + "sdk_" + selected_sdk), repr(selected_sdk), repr(prefix + "toolchain/lib/swift"), repr(prefix), repr(runtime_prefix), repr("arm64-apple-ios" + sdk["deploymentTargets"]["ios"] + suffix)))
+            lines.append('declared_xcode_swift_toolchain(name = %s, sdk = %s, tools = %s, sdkroot = %s, sdk_name = %s, resource_directory = %s, prefix = %s, runtime_prefix = %s, target_triple = %s)' % (repr(name), repr(inputs), repr(tools), repr(prefix + "sdk_" + selected_sdk), repr(selected_sdk), repr(prefix + "toolchain/lib/swift"), repr(prefix), repr(runtime_prefix), repr(target_triple)))
     ctx.file("BUILD.bazel", "\n".join(lines) + "\n")
     return ctx.repo_metadata(reproducible = False)
 
@@ -133,6 +137,7 @@ def _host_toolchains_impl(ctx):
         ("apple_macos_package", "native_apple_sdk", "cc_package", "macos", "aarch64", [str(ctx.attr.apple_package)], "@bazel_tools//tools/cpp:toolchain_type"),
         ("apple_macos_runtime", "native_apple_sdk", "cc_native", "macos", "aarch64", [], "@bazel_tools//tools/cpp:toolchain_type"),
         ("apple_swift_package", "native_apple_sdk", "swift", "macos", "aarch64", [str(ctx.attr.apple_package)], str(ctx.attr.swift_type)),
+        ("apple_swift_runtime", "native_apple_sdk", "swift_native", "macos", "aarch64", [], str(ctx.attr.swift_type)),
         ("apple_swift_ios", "native_apple_sdk", "swift_ios", "ios", "aarch64", [str(ctx.attr.apple_device)], str(ctx.attr.swift_type)),
         ("apple_swift_ios_simulator", "native_apple_sdk", "swift_ios_simulator", "ios", "aarch64", [str(ctx.attr.apple_simulator)], str(ctx.attr.swift_type)),
         ("apple_ios", "native_apple_sdk", "cc_ios", "ios", "aarch64", [str(ctx.attr.apple_device)], "@bazel_tools//tools/cpp:toolchain_type"),

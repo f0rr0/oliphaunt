@@ -1,4 +1,4 @@
-name: Windows textsearch string-definition diagnostic
+name: Native macOS Swift discoverer diagnostic
 
 on:
   push:
@@ -17,14 +17,14 @@ defaults:
 
 jobs:
   smoke:
-    name: Compile both actual Windows textsearch object variants
-    runs-on: windows-2025-vs2026
+    name: Link the real Swift discoverer with the declared native toolchain
+    runs-on: macos-26
     timeout-minutes: 25
     steps:
       - name: Checkout immutable tested source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ab981d2ffd5d70663e1fcf4431d68af639fb423e
+          ref: 98590ee7baf01b6aa7fd766933393369c042b6b9
           fetch-depth: 1
           persist-credentials: false
 
@@ -32,28 +32,24 @@ jobs:
         run: |
           tested_commit="$(git rev-parse HEAD)"
           tested_tree="$(git rev-parse 'HEAD^{tree}')"
-          test "$tested_commit" = ab981d2ffd5d70663e1fcf4431d68af639fb423e
-          test "$tested_tree" = f8180dcd0334d32941ce997fff49f448a596d25f
+          test "$tested_commit" = 98590ee7baf01b6aa7fd766933393369c042b6b9
+          test "$tested_tree" = adf289054e0f18009a248c3cdf8c7a06f3bfe707
           printf 'TESTED_SOURCE_COMMIT=%s\nTESTED_SOURCE_TREE=%s\n' "$tested_commit" "$tested_tree"
 
-      - name: Select declared MSVC SDK
-        uses: ./.github/actions/setup-msvc
+      - name: Select declared Apple SDK
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
 
-      - name: Compile real server and embedded units with the shared version definition
+      - name: Build the upstream discoverer under the native macOS profile
         env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/textsearch-bootstrap
+          XDG_CACHE_HOME: ${{ runner.temp }}/swift-native-bootstrap
         run: |
           bash tools/dev/bazel.sh --nohome_rc --nosystem_rc \
-            --output_base="$RUNNER_TEMP/textsearch" --host_jvm_args=-Xmx3g \
-            build //src/extensions/external/pg_textsearch:pg_textsearch_server_objects \
-            //src/extensions/external/pg_textsearch:pg_textsearch_embedded_objects -c opt \
-            --platforms=//build_defs/host:native_windows_x64 \
-            --host_platform=//build_defs/host:native_windows_x64 --jobs=2 \
+            --output_base="$RUNNER_TEMP/swift-native" --host_jvm_args=-Xmx3g \
+            build @rules_swift//tools/test_discoverer:test_discoverer -c opt \
+            --config=macos-sandbox \
+            --platforms=//build_defs/host:native_macos_arm64 \
+            --host_platform=//build_defs/host:native_macos_arm64 --jobs=1 \
             --lockfile_mode=error --repository_cache= --disk_cache= \
-            --materialize_param_files
-          for variant in server embedded; do
-            params="bazel-out/x64_windows-opt/bin/src/extensions/external/pg_textsearch/_objs/pg_textsearch_${variant}_objects/mod.obj.params"
-            test -f "$params"
-            printf 'OBJECT_VARIANT=%s\n' "$variant"
-            awk '/PG_TEXTSEARCH_VERSION/ { print "VERSION_DEFINE=" $0; count++ } END { if (count != 1) exit 1 }' "$params"
-          done
+            --toolchain_resolution_debug='.*rules_swift.*toolchain_type'
