@@ -17,15 +17,33 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import {
+  requiredCoreRuntimePaths,
+  requiredRuntimeTools,
+  requiredToolsPackageTools,
+} from '../../../src/native/runtime/tools/native-runtime-payload.mts';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
 import {
   releaseNoticeRows,
   stageReleaseNotices,
 } from '../../../tools/packaging/release-notices.mts';
+import {
+  windowsImportLibraryFixture,
+  windowsPeFixture,
+} from '../../../tools/packaging/testdata/release-fixture-utils.mts';
+import {
+  WINDOWS_VC_RUNTIME_DLLS,
+  WINDOWS_VC_RUNTIME_RECEIPT,
+} from '../../../tools/packaging/windows-vc-runtime-closure.mts';
 import { writeNativeChecksums } from './checksums.mts';
 import { type EnvelopeSpec, packageEnvelope, validateNpmIdentity } from './envelopes.mts';
 import { type FacadeSpec, packageToolsFacade, toolsFacadeTargets } from './facades.mts';
-import { copyDeclaredTree, materializeMappings, stageLegalSources } from './payload.mts';
+import {
+  copyDeclaredTree,
+  materializeMappings,
+  packageNativePayload,
+  stageLegalSources,
+} from './payload.mts';
 
 const [inputs] = process.argv.slice(2);
 assert(inputs, 'expected canonical carrier test inputs');
@@ -346,6 +364,80 @@ try {
   };
   compareNotices();
   scenarios++;
+
+  const windowsTarget = 'windows-x64-msvc';
+  const windowsSource = path.join(root, 'windows-inputs');
+  mkdirSync(windowsSource);
+  const windowsRuntime = Object.fromEntries(
+    WINDOWS_VC_RUNTIME_DLLS.map((name) => {
+      const file = path.join(windowsSource, name);
+      writeFileSync(file, windowsPeFixture());
+      return [name, file];
+    }),
+  );
+  const cProgram = path.join(windowsSource, 'c-program.exe');
+  writeFileSync(cProgram, windowsPeFixture({ imports: ['vcruntime140.dll'] }));
+  const data = path.join(windowsSource, 'data');
+  writeFileSync(data, 'runtime data fixture');
+  const importLibrary = path.join(windowsSource, 'oliphaunt.lib');
+  writeFileSync(importLibrary, windowsImportLibraryFixture());
+  for (const kind of ['native-tools', 'native-runtime']) {
+    const runtime = kind === 'native-runtime';
+    const programs = runtime
+      ? requiredRuntimeTools(windowsTarget)
+      : requiredToolsPackageTools(windowsTarget);
+    const mappings = programs.map((name) => ({
+      source: cProgram,
+      destination: 'runtime/bin/' + name,
+      tree: false,
+      mode: '0755',
+    }));
+    if (runtime) {
+      for (const destination of requiredCoreRuntimePaths(windowsTarget))
+        mappings.push({
+          source: destination.endsWith('.dll') ? cProgram : data,
+          destination: 'runtime/' + destination,
+          tree: false,
+          mode: '0644',
+        });
+      mappings.push(
+        { source: cProgram, destination: 'bin/oliphaunt.dll', tree: false, mode: '0644' },
+        { source: importLibrary, destination: 'lib/oliphaunt.lib', tree: false, mode: '0644' },
+      );
+    }
+    const output = path.join(root, kind);
+    await packageNativePayload({
+      artifact: { kind, target: windowsTarget },
+      mappings,
+      legal: Object.fromEntries(
+        specification.payloadLegalInputs[kind].map((name) => [name, specification.legal[name]]),
+      ),
+      windowsRuntime,
+      output,
+    });
+    const expected = runtime ? WINDOWS_VC_RUNTIME_DLLS : ['vcruntime140.dll'];
+    for (const directory of runtime ? ['runtime/bin', 'bin'] : ['runtime/bin']) {
+      const bin = path.join(output, directory);
+      assert.deepEqual(
+        readdirSync(bin)
+          .filter((name) => WINDOWS_VC_RUNTIME_DLLS.includes(name))
+          .sort(),
+        [...expected].sort(),
+        kind + ' ' + directory + ' exact VC closure',
+      );
+      assert.deepEqual(
+        readFileSync(path.join(bin, WINDOWS_VC_RUNTIME_RECEIPT), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => line.split('  ')[1]),
+        [...expected].sort(),
+        kind + ' ' + directory + ' exact VC receipt',
+      );
+      for (const name of expected)
+        assert.deepEqual(readFileSync(path.join(bin, name)), readFileSync(windowsRuntime[name]));
+    }
+    scenarios++;
+  }
   const cargoOutput = path.join(root, 'cargo-packages');
   await packageEnvelope({
     ...envelope,
