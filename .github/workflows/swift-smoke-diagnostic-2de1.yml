@@ -1,4 +1,4 @@
-name: Native macOS Swift discoverer diagnostic
+name: Windows socket capability diagnostic
 
 on:
   push:
@@ -17,39 +17,75 @@ defaults:
 
 jobs:
   smoke:
-    name: Link the real Swift discoverer with the declared native toolchain
-    runs-on: macos-26
-    timeout-minutes: 25
+    name: Compile the strict seed consumer before and after the socket probe fix
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 30
     steps:
-      - name: Checkout immutable tested source
+      - name: Checkout original source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: 98590ee7baf01b6aa7fd766933393369c042b6b9
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Verify tested commit and tree
-        run: |
-          tested_commit="$(git rev-parse HEAD)"
-          tested_tree="$(git rev-parse 'HEAD^{tree}')"
-          test "$tested_commit" = 98590ee7baf01b6aa7fd766933393369c042b6b9
-          test "$tested_tree" = adf289054e0f18009a248c3cdf8c7a06f3bfe707
-          printf 'TESTED_SOURCE_COMMIT=%s\nTESTED_SOURCE_TREE=%s\n' "$tested_commit" "$tested_tree"
+      - name: Select declared MSVC SDK
+        uses: ./.github/actions/setup-msvc
 
-      - name: Select declared Apple SDK
-        uses: ./.github/actions/setup-apple
-        with:
-          install-build-dependencies: "false"
-
-      - name: Build the upstream discoverer under the native macOS profile
+      - name: Reproduce the original strict compilation failure
         env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/swift-native-bootstrap
+          XDG_CACHE_HOME: ${{ runner.temp }}/socket-bootstrap
         run: |
+          test "$(git rev-parse HEAD)" = 98590ee7baf01b6aa7fd766933393369c042b6b9
+          test "$(git rev-parse 'HEAD^{tree}')" = adf289054e0f18009a248c3cdf8c7a06f3bfe707
+          printf 'RED_SOURCE_COMMIT=98590ee7baf01b6aa7fd766933393369c042b6b9\nRED_SOURCE_TREE=adf289054e0f18009a248c3cdf8c7a06f3bfe707\n'
+          set +e
           bash tools/dev/bazel.sh --nohome_rc --nosystem_rc \
-            --output_base="$RUNNER_TEMP/swift-native" --host_jvm_args=-Xmx3g \
-            build @rules_swift//tools/test_discoverer:test_discoverer -c opt \
-            --config=macos-sandbox \
-            --platforms=//build_defs/host:native_macos_arm64 \
-            --host_platform=//build_defs/host:native_macos_arm64 --jobs=1 \
+            --output_base="$RUNNER_TEMP/socket-check" --host_jvm_args=-Xmx3g \
+            build //build_defs/resources:seed_consumer -c opt \
+            --output_groups=compilation_outputs \
+            --platforms=//build_defs/host:native_windows_x64 \
+            --host_platform=//build_defs/host:native_windows_x64 --jobs=2 \
             --lockfile_mode=error --repository_cache= --disk_cache= \
-            --toolchain_resolution_debug='.*rules_swift.*toolchain_type'
+            > "$RUNNER_TEMP/socket-before.log" 2>&1
+          red_status=$?
+          set -e
+          printf 'RED_EXIT=%s\n' "$red_status"
+          test "$red_status" -ne 0
+          grep -q 'warning C4142:.*socklen_t' "$RUNNER_TEMP/socket-before.log"
+          awk '/error C2220|warning C4142/ { print }' "$RUNNER_TEMP/socket-before.log"
+          header='bazel-out/x64_windows-opt/bin/external/+_repo_rules10+postgres/host_windows/src/include/pg_config.h'
+          test -f "$header"
+          if grep -q '^#define HAVE_SOCKLEN_T' "$header"; then exit 1; fi
+          printf 'RED_SOCKLEN_T_DEFINED=false\n'
+
+      - name: Checkout corrected source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 61210bafdc978c9a42fdda81539f281fa9528bb5
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Compile the same strict consumer with detected SDK socket types
+        env:
+          XDG_CACHE_HOME: ${{ runner.temp }}/socket-bootstrap
+        run: |
+          test "$(git rev-parse HEAD)" = 61210bafdc978c9a42fdda81539f281fa9528bb5
+          test "$(git rev-parse 'HEAD^{tree}')" = 8e534710c5e3eed05bacb1e08c95876a218145d0
+          printf 'GREEN_SOURCE_COMMIT=61210bafdc978c9a42fdda81539f281fa9528bb5\nGREEN_SOURCE_TREE=8e534710c5e3eed05bacb1e08c95876a218145d0\n'
+          bash tools/dev/bazel.sh --nohome_rc --nosystem_rc \
+            --output_base="$RUNNER_TEMP/socket-check" --host_jvm_args=-Xmx3g \
+            build //build_defs/resources:seed_consumer -c opt \
+            --output_groups=compilation_outputs \
+            --platforms=//build_defs/host:native_windows_x64 \
+            --host_platform=//build_defs/host:native_windows_x64 --jobs=2 \
+            --lockfile_mode=error --repository_cache= --disk_cache= \
+            --materialize_param_files
+          header='bazel-out/x64_windows-opt/bin/external/+_repo_rules10+postgres/host_windows/src/include/pg_config.h'
+          grep -Eq '^#define HAVE_SOCKLEN_T[[:space:]]+1[[:space:]]*$' "$header"
+          printf 'GREEN_SOCKLEN_T_DEFINED=1\n'
+          params='bazel-out/x64_windows-opt/bin/build_defs/resources/_objs/seed_consumer/seed_consumer.obj.params'
+          test -f "$params"
+          grep -Fx '/W4' "$params"
+          grep -Fx '/WX' "$params"
+          test -f 'bazel-out/x64_windows-opt/bin/build_defs/resources/_objs/seed_consumer/seed_consumer.obj'
+          printf 'GREEN_STRICT_SEED_CONSUMER_OBJECT=present\n'
