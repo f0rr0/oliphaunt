@@ -2,9 +2,8 @@
 
 load("//build_defs/native:platform_config.bzl", "NATIVE_EMBEDDED_MODULE_LINKOPTS", "NATIVE_MACOS_COMPATIBLE", "NATIVE_MODULE_LINKOPTS", "NATIVE_RELEASE_LINKOPTS", "NATIVE_WINDOWS_COMPATIBLE")
 load("//build_defs/native:windows_config.bzl", "WINDOWS_COPTS")
-load("//build_defs/native:windows_link.bzl", "postgres_windows_exports")
 load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "CONTRIB_OWNERS", "EXTENSIONS", "EXTENSION_PROFILES", "EXTENSION_RECIPES", "EXTENSION_SOURCES", "POSTGRES_SOURCE")
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
@@ -355,17 +354,21 @@ def native_extension_modules(name, srcs, hdrs = [], copts = [], deps = [], inclu
                 linkopts = linkopts + module_linkopts,
                 target_compatible_with = NATIVE_MACOS_COMPATIBLE,
             )
-            exports = name + "_" + variant + "_windows_exports"
-            postgres_windows_exports(name = exports, roots = [":" + name + "_" + variant + "_objects"], target_compatible_with = NATIVE_WINDOWS_COMPATIBLE)
-            cc_binary(
-                name = name + "_" + variant + ".dll",
+            # Imported runtimes stay transitive; the stock shared-library rule
+            # derives exports from the objects retained after dynamic_deps pruning.
+            windows_link = name + "_" + variant + "_windows_link"
+            cc_library(
+                name = windows_link,
                 deps = [":" + name + "_" + variant + "_objects"] + runtime_deps,
-                linkshared = True,
-                linkstatic = True,
+                target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
+            )
+            cc_shared_library(
+                name = name + "_" + variant + ".dll",
+                shared_lib_name = name + "_" + variant + ".dll",
+                deps = [":" + windows_link],
                 dynamic_deps = dynamic_deps,
-                win_def_file = ":" + exports,
-                features = ["no_windows_export_all_symbols"],
-                linkopts = linkopts,
+                features = ["windows_export_all_symbols"],
+                user_link_flags = linkopts,
                 target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
             )
             native.alias(name = name + "_" + variant + "_module", actual = select({
