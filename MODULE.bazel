@@ -217,7 +217,8 @@ javascript_metadata(
     ],
     dependency_manifests = ["//src/wasix/postgres-tools:npm/package.json", "//src/docs:package.json", "//tools/release:package.json"],
     consumer_tools = {"@oliphaunt/wasix-ts": ["vite"], "@oliphaunt/release-tools": ["protobufjs"]},
-    consumer_workspaces = ["@oliphaunt/docs"],
+    consumer_workspaces = ["@oliphaunt/docs", "@oliphaunt/ts"],
+    consumer_graph_workspaces = ["@oliphaunt/ts"],
     compiler_inputs = "//build_defs/languages/ts:compiler-inputs.json",
 )
 javascript_metadata(

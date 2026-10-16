@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -26,6 +36,7 @@ const [
   contractAssertions,
   deno,
   contractHostsJson,
+  serverSpecification,
   runfiles,
 ] = process.argv.slice(2);
 assert(
@@ -44,6 +55,7 @@ assert(
     contractEntry &&
     contractAssertions &&
     contractHostsJson &&
+    serverSpecification &&
     runfiles,
   'expected actual npm carriers and pinned Node consumer tools',
 );
@@ -210,6 +222,111 @@ try {
       );
     }
   }
+  const server = JSON.parse(readFileSync(serverSpecification, 'utf8')) as {
+    contract: string;
+    packages: Record<
+      string,
+      { package: string; version: string; dependencies: Record<string, string>; archive: string }
+    >;
+    roots: Record<string, string>;
+    restrictedLauncher: string | null;
+    restrictedLauncherRuntime: string | null;
+  };
+  const stores: Record<string, string> = {};
+  for (const [identity, row] of Object.entries(server.packages)) {
+    const directory = path.join(root, '.server-packages', identity, 'node_modules', row.package);
+    extractPortableArchiveTree(path.join(runfiles, row.archive), directory, 'package');
+    const manifest = JSON.parse(readFileSync(path.join(directory, 'package.json'), 'utf8'));
+    assert.equal(manifest.name, row.package);
+    assert.equal(manifest.version, row.version);
+    stores[identity] = directory;
+  }
+  for (const [identity, row] of Object.entries(server.packages))
+    for (const [name, dependency] of Object.entries(row.dependencies)) {
+      assert(stores[dependency], 'missing installed server driver dependency ' + name);
+      const destination = path.join(stores[identity], 'node_modules', name);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      symlinkSync(
+        stores[dependency],
+        destination,
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
+    }
+  assert.deepEqual(Object.keys(server.roots), ['pg']);
+  for (const [name, identity] of Object.entries(server.roots)) {
+    assert(stores[identity], 'missing installed server driver ' + name);
+    symlinkSync(
+      stores[identity],
+      path.join(root, 'node_modules', name),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+  }
+  const serverContract = path.join(contracts, 'native-server-smoke.mjs');
+  writeFileSync(
+    serverContract,
+    new Bun.Transpiler({ loader: 'ts', target: 'node' }).transformSync(
+      readFileSync(path.join(runfiles, server.contract), 'utf8'),
+    ),
+  );
+  const serverEntry = path.join(root, 'server-consumer.mjs');
+  writeFileSync(
+    serverEntry,
+    "import { assertNativeServerContract } from './contracts/native-server-smoke.mjs';\nawait assertNativeServerContract(process.argv[2]);\n",
+  );
+  const serverCommand = [
+    node,
+    serverEntry,
+    path.join(runtimeDirectory, 'bin', process.platform === 'win32' ? 'postgres.exe' : 'postgres'),
+  ];
+  if (process.platform === 'win32') {
+    assert(
+      server.restrictedLauncher && server.restrictedLauncherRuntime,
+      'Windows SDK server smoke requires the declared restricted-token fixture',
+    );
+    const carrier = path.join(root, 'server-launcher-carrier');
+    extractPortableArchiveTree(path.join(runfiles, server.restrictedLauncherRuntime), carrier);
+    const launcherDirectory = path.join(root, 'server-launcher');
+    mkdirSync(launcherDirectory);
+    for (const directory of ['bin', 'runtime/bin'])
+      for (const entry of readdirSync(path.join(carrier, directory), { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.dll')) continue;
+        const source = path.join(carrier, directory, entry.name);
+        const destination = path.join(launcherDirectory, entry.name);
+        if (existsSync(destination))
+          assert(
+            readFileSync(destination).equals(readFileSync(source)),
+            'frozen launcher DLL aliases differ',
+          );
+        else copyFileSync(source, destination);
+      }
+    const launcher = path.join(launcherDirectory, 'restricted server smoke.exe');
+    copyFileSync(path.join(runfiles, server.restrictedLauncher), launcher);
+    serverCommand.unshift(launcher, '--restricted-postgres');
+  }
+  const serverResult = Bun.spawnSync(serverCommand, {
+    cwd: root,
+    env: {
+      ...env,
+      OLIPHAUNT_SMOKE_SDK: path.join(sdkPackage.directory, 'lib/index.js'),
+      OLIPHAUNT_POSTGRES_TOOL_DIR: path.join(runtimeDirectory, 'bin'),
+    },
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    timeout: 90_000,
+    killSignal: 'SIGKILL',
+  });
+  assert.equal(
+    serverResult.exitCode,
+    0,
+    'original installed SDK server contract: ' +
+      serverResult.stderr.toString() +
+      '\n' +
+      serverResult.stdout.toString(),
+  );
+  console.log(
+    'Original installed native SDK server: parameterized SQL, two fresh roots, distinct system identifiers, close: PASS',
+  );
   console.log(
     `Original installed native SDK contracts: ${contractHosts.join(', ')} source/restored: PASS`,
   );
