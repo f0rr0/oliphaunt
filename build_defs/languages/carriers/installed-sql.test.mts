@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -235,7 +236,11 @@ try {
   const stores: Record<string, string> = {};
   for (const [identity, row] of Object.entries(server.packages)) {
     const directory = path.join(root, '.server-packages', identity, 'node_modules', row.package);
-    extractPortableArchiveTree(path.join(runfiles, row.archive), directory, 'package');
+    extractPortableArchiveTree(
+      realpathSync(path.join(runfiles, row.archive)),
+      directory,
+      'package',
+    );
     const manifest = JSON.parse(readFileSync(path.join(directory, 'package.json'), 'utf8'));
     assert.equal(manifest.name, row.package);
     assert.equal(manifest.version, row.version);
@@ -261,20 +266,16 @@ try {
       process.platform === 'win32' ? 'junction' : 'dir',
     );
   }
-  const serverContract = path.join(contracts, 'native-server-smoke.mjs');
-  writeFileSync(
-    serverContract,
-    new Bun.Transpiler({ loader: 'ts', target: 'node' }).transformSync(
-      readFileSync(path.join(runfiles, server.contract), 'utf8'),
-    ),
-  );
+  const serverContract = path.join(contracts, 'native-server-smoke.mts');
+  copyFileSync(path.join(runfiles, server.contract), serverContract);
   const serverEntry = path.join(root, 'server-consumer.mjs');
   writeFileSync(
     serverEntry,
-    "import { assertNativeServerContract } from './contracts/native-server-smoke.mjs';\nawait assertNativeServerContract(process.argv[2]);\n",
+    "import { assertNativeServerContract } from './contracts/native-server-smoke.mts';\nawait assertNativeServerContract(process.argv[2]);\n",
   );
   const serverCommand = [
     node,
+    '--experimental-strip-types',
     serverEntry,
     path.join(runtimeDirectory, 'bin', process.platform === 'win32' ? 'postgres.exe' : 'postgres'),
   ];
@@ -284,7 +285,10 @@ try {
       'Windows SDK server smoke requires the declared restricted-token fixture',
     );
     const carrier = path.join(root, 'server-launcher-carrier');
-    extractPortableArchiveTree(path.join(runfiles, server.restrictedLauncherRuntime), carrier);
+    extractPortableArchiveTree(
+      realpathSync(path.join(runfiles, server.restrictedLauncherRuntime)),
+      carrier,
+    );
     const launcherDirectory = path.join(root, 'server-launcher');
     mkdirSync(launcherDirectory);
     for (const directory of ['bin', 'runtime/bin'])
