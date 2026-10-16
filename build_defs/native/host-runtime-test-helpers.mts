@@ -101,8 +101,8 @@ export function assertMissingHostRuntime(
 ): void {
   const diagnostic = Buffer.from(result.stderr).toString();
   if (platform === 'win32') {
-    // The Windows loader terminates before main with STATUS_DLL_NOT_FOUND.
-    assert.equal(result.exitCode >>> 0, 0xc0000135, 'consumer resolved the removed candidate DLL');
+    // Bun exposes the low byte of Windows STATUS_DLL_NOT_FOUND (0xc0000135).
+    assert.equal(result.exitCode, 0x35, 'consumer resolved the removed candidate DLL');
   } else if (platform === 'darwin') {
     assert.notEqual(result.exitCode, 0, 'consumer resolved the removed candidate dylib');
     assert(
