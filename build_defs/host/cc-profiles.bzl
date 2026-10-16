@@ -154,7 +154,7 @@ def host_cc_profiles(sdk):
                 cxx_flags = ["-std=c++20"] if selected_sdk in ["iphoneos", "iphonesimulator"] else [],
                 cxx_builtin_include_directories = host_builtin_include_directories(prefix, [sdk["resourceDirectory"] + "/include", "sdk_" + selected_sdk + "/usr/include", "sdk_" + selected_sdk + "/System/Library/Frameworks", "toolchain/include/c++/v1"]),
                 # Bazel owns the reserved Xcode environment; drivers consume our captured paths.
-                # ${pwd} is expanded before Rust changes cwd, or by our native C++ drivers.
+                # Rust expands ${pwd} before changing cwd; native drivers keep paths relative.
                 extra_env = {"OLIPHAUNT_APPLE_DEVELOPER_DIRECTORY": "${pwd}/" + prefix.removesuffix("/"), "OLIPHAUNT_APPLE_SDKROOT": "${pwd}/" + prefix + "sdk_" + selected_sdk, "OLIPHAUNT_APPLE_TOOL_DIRECTORY": "${pwd}/" + prefix + "tools"},
                 # Tool metadata is relative to this package, unlike action Files or env/flag paths.
                 tool_paths_overrides = {"ar": sdk["tools"]["ar"], "cpp": sdk["tools"]["clang"], "ld": sdk["tools"]["ld"], "nm": sdk["tools"]["nm"], "strip": sdk["tools"]["strip"], "gcov": "unsupported.sh", "objdump": "unsupported.sh"},
