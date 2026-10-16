@@ -170,7 +170,7 @@ export function verifyInstalledBrokerCargo(inputs: {
   );
   for (const file of artifact.files) {
     const physical = path.join(payload, file.relative);
-    assert.equal(file.source, physical);
+    assert.equal(path.normalize(file.source), physical);
     assert.equal(file.executable, file.relative === constants.EXECUTABLE_RELATIVE_PATH);
     assert.equal(file.sha256, createHash('sha256').update(readFileSync(physical)).digest('hex'));
   }

@@ -87,8 +87,9 @@ assertMissingHostRuntime(
   'liboliphaunt.dylib',
   'darwin',
 );
-for (const status of [0xc0000135, -1073741515])
-  assertMissingHostRuntime(result(status), 'oliphaunt.dll', 'win32');
+assertMissingHostRuntime(result(0x35), 'oliphaunt.dll', 'win32');
+for (const status of [0x34, 0x36])
+  assert.throws(() => assertMissingHostRuntime(result(status), 'oliphaunt.dll', 'win32'));
 for (const platform of ['linux', 'darwin', 'win32'] as const) {
   assert.throws(() => assertMissingHostRuntime(result(0), 'liboliphaunt', platform));
   assert.throws(() =>
