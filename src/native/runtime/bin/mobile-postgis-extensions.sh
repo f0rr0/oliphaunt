@@ -455,7 +455,7 @@ case "\${1:-}" in
     echo "$work_root/postgis-fake-postgres-share"
     ;;
   --version)
-    echo "PostgreSQL 18.4"
+    echo "PostgreSQL 18.6"
     ;;
   --cc)
     echo "$cc_string"

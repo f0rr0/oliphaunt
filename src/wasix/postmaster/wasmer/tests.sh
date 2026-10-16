@@ -62,6 +62,8 @@ run_tests \
 	syscalls::wasix::fd_sync_range::tests \
 	required_import_tests \
 	os::task::control_plane::tests \
+	os::task::thread::tests \
+	syscalls::wasix::thread_sleep::tests \
 	state::env::tests \
 	runtime::task_manager::lifecycle_tests \
 	runtime::task_manager::tokio::tests \
@@ -223,3 +225,11 @@ run_tests \
 	--features "$FRESH_MEMORY_PROFILE_FEATURES" \
 	-- \
 	memory_profile::wasm_tool::tests
+
+# The product compiler must preserve main's policy and distinguish strict AOT.
+run_tests --locked --target-dir "$POSTMASTER_COMPILER_TARGET_DIR" \
+	--manifest-path "$FRESH_ROOT/executor/Cargo.toml" \
+	--package "$FRESH_POSTMASTER_EXECUTOR_PACKAGE" \
+	--bin "$FRESH_POSTMASTER_COMPILER_BINARY" \
+	--no-default-features --features "$FRESH_POSTMASTER_COMPILER_FEATURES" \
+	-- --exact product_compiler_uses_main_memory_identity

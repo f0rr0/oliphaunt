@@ -2,13 +2,17 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
 if [ "$#" != 2 ] || [ "$1" != --runtime ]; then
-  echo 'usage: smoke-host.sh --runtime node|bun|deno' >&2
+  echo 'usage: smoke-host.sh --runtime node|bun|deno|electron' >&2
   exit 1
 fi
 case "$2" in
   node) host=(node) ;;
   bun) host=(bash "$root/tools/dev/bun.sh") ;;
   deno) host=(bash "$root/tools/dev/deno.sh" run --allow-all) ;;
+  electron)
+    host=(env ELECTRON_RUN_AS_NODE=1 NPM_CONFIG_IGNORE_SCRIPTS=false
+      npm exec --yes --package=electron@39.2.5 -- electron)
+    ;;
   *) echo "unsupported tools smoke runtime: $2" >&2; exit 1 ;;
 esac
 deadline="$(command -v gtimeout || command -v timeout)"

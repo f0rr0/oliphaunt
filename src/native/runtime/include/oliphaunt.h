@@ -51,6 +51,12 @@ typedef struct OliphauntStaticExtension {
  * releases a logical direct-mode lease but keeps the resident backend alive;
  * oliphaunt_close is terminal for the process lifetime and restores the caller's
  * previous PGDATA value, or unsets it if it was unset.
+ * Startup temporarily changes process cwd; POSIX restores its directory
+ * identity using a retained descriptor. Host signal handlers/masks and process
+ * timers are not backend-owned. Cancellation is consumed on the backend
+ * thread; deadlines cannot preempt a blocking host streaming callback.
+ * The configured identity is trusted by the host, but PostgreSQL login and
+ * connection eligibility, role/database settings, and login triggers apply.
  *
  * Every successful oliphaunt_init establishes a current
  * logical lease generation. Hosts with independent cleanup owners must capture
@@ -77,7 +83,10 @@ typedef struct OliphauntConfig {
     const char *database;
     /* OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK or zero. */
     uint64_t flags;
-    /* Zero or more `-c`, `name=value` pairs. Storage-routing GUCs are rejected. */
+    /*
+     * Zero or more `-c`, `name=value` pairs. Storage-routing GUCs are rejected.
+     * Embedded startup defaults fsync to off; use fsync=on for crash safety.
+     */
     const char *const *startup_args;
     size_t startup_arg_count;
     /* Optional existing ICU data directory. NULL preserves runtime/env discovery. */
@@ -128,17 +137,26 @@ typedef struct OliphauntRestoreOptions {
  * handle. Those calls fail with a busy error while streaming is active,
  * including from another thread, so the callback cannot corrupt protocol
  * ordering or free its own handle. A non-zero callback result stops later
- * callback delivery and drains the backend to ReadyForQuery. The stream then
+ * callback delivery and drains every admitted ReadyForQuery boundary. The stream then
  * returns OLIPHAUNT_STREAM_CALLBACK_ABORTED; negative results identify
  * validation, transport, backend, or recovery failures for which reuse may be
  * unsafe.
+ *
+ * Buffered raw requests must end at a Query, FunctionCall, Sync, or complete
+ * COPY boundary. A batch may contain multiple complete exchanges. Query and
+ * FunctionCall require Sync after any extended-protocol messages, since an
+ * extended-query error otherwise makes PostgreSQL ignore them. Raw streams
+ * also allow incomplete extended input completed through their stream token.
  */
 typedef int32_t (*OliphauntStreamCallback)(void *context, const uint8_t *data, size_t len);
 
 /* Returns zero and sets read_len (zero at EOF), or nonzero on failure.
  * Read/write callbacks run synchronously and must not reenter this database.
  * A failed backup sink still runs backup-mode cleanup before returning.
- * Restore writes only to private staging until the entire archive validates. */
+ * Restore writes only to private staging until the entire archive validates.
+ * If final durability fails after publication, restore returns an error but
+ * retains the populated destination; retry must not overwrite it. This applies
+ * to both buffered and streamed restore. */
 typedef int32_t (*OliphauntArchiveReadCallback)(
     void *context, uint8_t *data, size_t capacity, size_t *read_len);
 typedef struct OliphauntRestoreStreamOptions {

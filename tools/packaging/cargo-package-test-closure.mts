@@ -13,6 +13,7 @@ import {
 import path from 'node:path';
 
 import { extractPortableArchiveTree, readPortableArchiveEntries } from './portable-archive.mts';
+import { packagedCargoManifestText } from './cargo-source-package.mts';
 
 const TOOL = 'cargo-package-test-closure.mts';
 const CARGO_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
@@ -172,6 +173,44 @@ function pathDependencyPatches(manifests, scratch, packagedManifests, packagedNa
   const patches = new Map();
   const sourceDirectories = new Map();
   const packagedDependencies = packagedManifests.flatMap(dependencyRows);
+  function stageSource(directory, name) {
+    if (packagedNames.has(name)) return;
+    const realSource = realpathSync(directory);
+    const previousSource = sourceDirectories.get(name);
+    if (previousSource !== undefined) {
+      if (previousSource !== realSource) {
+        throw error(
+          `${name} has conflicting path-dependency sources: ${previousSource} and ${realSource}`,
+        );
+      }
+      return;
+    }
+    const file = path.join(realSource, 'Cargo.toml');
+    const manifest = parseManifest(file, `local patch for ${name}`);
+    const identity = packageIdentity(manifest, file);
+    if (identity.name !== name) {
+      throw error(`local patch ${file} does not declare ${name}`);
+    }
+    if (
+      packagedDependencies.some(
+        (row) => row.name === name && exactVersion(row.version, name) !== identity.version,
+      )
+    )
+      return;
+    sourceDirectories.set(name, realSource);
+    const staged = path.join(scratch, 'path-dependency-sources', name);
+    copyCleanDependencySource(realSource, staged);
+    writeFileSync(
+      path.join(staged, 'Cargo.toml'),
+      packagedCargoManifestText(readFileSync(file, 'utf8')),
+    );
+    addPatch(patches, name, staged, file);
+    // Cargo resolves the entire manifest closure, including inactive target and
+    // optional build dependencies. Preserve that closure without sibling paths.
+    for (const dependency of dependencyRows(manifest).filter((row) => row.path !== null)) {
+      stageSource(path.resolve(realSource, dependency.path), dependency.name);
+    }
+  }
   for (const manifestFile of manifests) {
     const resolvedManifest = path.resolve(manifestFile);
     const manifest = parseManifest(resolvedManifest, 'path-dependency source manifest');
@@ -200,17 +239,7 @@ function pathDependencyPatches(manifests, scratch, packagedManifests, packagedNa
       // source hint is usable only for that version; otherwise Cargo fetches
       // the declared published dependency instead of substituting workspace code.
       if (!packagedVersions.has(local.version)) continue;
-      const realSource = realpathSync(directory);
-      const previousSource = sourceDirectories.get(dependency.name);
-      if (previousSource !== undefined && previousSource !== realSource) {
-        throw error(
-          `${dependency.name} has conflicting path-dependency sources: ${previousSource} and ${realSource}`,
-        );
-      }
-      sourceDirectories.set(dependency.name, realSource);
-      const staged = path.join(scratch, 'path-dependency-sources', dependency.name);
-      if (!patches.has(dependency.name)) copyCleanDependencySource(directory, staged);
-      addPatch(patches, dependency.name, staged, resolvedManifest);
+      stageSource(directory, dependency.name);
     }
   }
   return patches;

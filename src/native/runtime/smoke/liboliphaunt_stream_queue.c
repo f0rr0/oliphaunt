@@ -6,6 +6,11 @@ enum { QUEUE_LIMIT = 65536, INPUT_SIZE = QUEUE_LIMIT * 9 + 17 };
 
 static unsigned char input[INPUT_SIZE];
 
+/* This queue-only fixture has no PostgreSQL backend or armed deadline. */
+void RequestTrustedEmbeddedTimeoutCheck(void) {
+    assert(!"an unarmed queue fixture must not notify PostgreSQL of a timeout");
+}
+
 static void *produce(void *context) {
     OliphauntHandle *handle = context;
     pthread_mutex_lock(&handle->mutex);
@@ -15,6 +20,14 @@ static void *produce(void *context) {
 }
 
 int main(void) {
+    assert(oliphaunt_resource_size("17", 1, SIZE_MAX, 8) == 17);
+    assert(oliphaunt_resource_size("0", 1, SIZE_MAX, 8) == 8);
+    assert(oliphaunt_resource_size("17suffix", 1, SIZE_MAX, 8) == 8);
+    assert(oliphaunt_resource_size("-1", 1, SIZE_MAX, 8) == 8);
+    assert(oliphaunt_resource_size("+17", 1, SIZE_MAX, 8) == 8);
+    assert(oliphaunt_resource_size("9999999999999999999999999999999999999999", 1, SIZE_MAX, 8) == 8);
+    assert(oliphaunt_resource_size("2147483648", 1, INT_MAX, 8) == 8);
+
     OliphauntHandle handle = {0};
     assert(pthread_mutex_init(&handle.mutex, NULL) == 0);
     assert(pthread_cond_init(&handle.output_cond, NULL) == 0);
@@ -49,6 +62,41 @@ int main(void) {
     assert(pthread_join(producer, NULL) == 0);
     assert(handle.stream_head == NULL && handle.stream_bytes_queued == 0);
     assert(!stream_queue_has_room_locked(&handle, QUEUE_LIMIT + 1, QUEUE_LIMIT));
+    const unsigned char queries[] = {'Q',0,0,0,6,'a',0,'Q',0,0,0,6,'b',0};
+    const unsigned char ready[] = {'Z',0,0,0,5,'I','Z',0,0,0,5,'T'};
+    bool extended_pending = false;
+    assert(validate_frontend_protocol_frames(&handle, queries, sizeof(queries),
+                                            true, &extended_pending, &handle.ready_remaining) == 0);
+    assert(handle.ready_remaining == 2);
+    assert(!scan_stream_ready_locked(&handle, ready, 6));
+    assert(handle.ready_remaining == 1);
+    assert(scan_stream_ready_locked(&handle, ready + 6, 6));
+    assert(handle.transaction_status == 'T');
+    handle.ready_remaining = 2;
+    assert(scan_stream_ready_locked(&handle, ready, sizeof(ready)));
+    assert(handle.transaction_status == 'T');
+    handle.output = (unsigned char *)ready;
+    handle.output_len = sizeof(ready);
+    handle.output_scan_off = 0;
+    handle.output_ready = false;
+    handle.ready_remaining = 2;
+    assert(scan_ready_for_query_locked(&handle));
+    assert(handle.output_scan_off == sizeof(ready));
+    assert(handle.transaction_status == 'T');
+    const unsigned char parse_flush[] = {'P',0,0,0,4,'H',0,0,0,4};
+    const unsigned char sync[] = {'S',0,0,0,4};
+    size_t boundaries = 0;
+    assert(validate_frontend_protocol_frames(&handle, parse_flush, sizeof(parse_flush),
+                                            true, &extended_pending, &boundaries) == -1);
+    assert(validate_frontend_protocol_frames(&handle, parse_flush, sizeof(parse_flush),
+                                            false, &extended_pending, &boundaries) == 0);
+    assert(extended_pending && boundaries == 0);
+    assert(validate_frontend_protocol_frames(&handle, queries, sizeof(queries),
+                                            false, &extended_pending, &boundaries) == -1);
+    assert(extended_pending);
+    assert(validate_frontend_protocol_frames(&handle, sync, sizeof(sync),
+                                            false, &extended_pending, &boundaries) == 0);
+    assert(!extended_pending && boundaries == 1);
     pthread_cond_destroy(&handle.output_cond);
     pthread_mutex_destroy(&handle.mutex);
     return 0;

@@ -5,7 +5,12 @@ import { WasixStorageError } from '../core/errors.js';
 import type { Directory } from '../host/index.mjs';
 import type { SerializedWasixStorage } from './types.js';
 import type { StoredSnapshot } from './storage-snapshot.js';
-import { validateIndexedDbDatabaseName, validateOpfsDatabaseName } from './types.js';
+import {
+  validateIndexedDbDatabaseName,
+  validateOpfsDatabaseName,
+  validateOpfsConcurrency,
+  validateOpfsSpareFileCount,
+} from './types.js';
 
 export type StorageDirectoryEntry = Readonly<{
   type: 'dir' | 'file' | 'unknown';
@@ -59,8 +64,10 @@ export async function restoreWasixStorage(
     }
     case 'opfs': {
       validateOpfsDatabaseName(storage.name);
+      validateOpfsConcurrency(storage.maxConcurrentIO);
+      validateOpfsSpareFileCount(storage.spareFileCount);
       const { restoreOpfsStorage } = await import('./opfs-provider.js');
-      return restoreOpfsStorage(storage.name, snapshot, identity);
+      return restoreOpfsStorage(storage.name, snapshot, identity, storage.maxConcurrentIO);
     }
     case 'directory':
       throw new WasixStorageError(
@@ -91,8 +98,16 @@ export async function acquireWasixStorage(
     }
     case 'opfs': {
       validateOpfsDatabaseName(storage.name);
+      validateOpfsConcurrency(storage.maxConcurrentIO);
+      validateOpfsSpareFileCount(storage.spareFileCount);
       const { acquireOpfsStorage } = await import('./opfs-provider.js');
-      return acquireOpfsStorage(storage.name, loadClusterSeed, identity);
+      return acquireOpfsStorage(
+        storage.name,
+        loadClusterSeed,
+        identity,
+        storage.maxConcurrentIO,
+        storage.spareFileCount,
+      );
     }
     case 'directory':
       throw new WasixStorageError(

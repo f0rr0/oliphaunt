@@ -10,7 +10,7 @@ script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
 
 oliphaunt_mobile_target="macos-arm64"
-pg_version="18.4"
+pg_version="18.6"
 runtime_root="${OLIPHAUNT_MACOS_RUNTIME_ROOT:-${OLIPHAUNT_WORK_ROOT:-$repo_root/target/liboliphaunt-pg18}}"
 work_root="${OLIPHAUNT_MACOS_EXTENSION_ARCHIVE_ROOT:-$runtime_root/macos-extension-archives}"
 build_dir="$runtime_root/postgresql-$pg_version"

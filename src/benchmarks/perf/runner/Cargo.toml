@@ -2,7 +2,7 @@
 name = "oliphaunt-perf"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version.workspace = true
 license.workspace = true
 publish = false
 default-run = "oliphaunt-perf"
@@ -24,4 +24,3 @@ sqlx = { version = "0.8", default-features = false, features = [
 tar = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 tokio-postgres = "0.7"
-

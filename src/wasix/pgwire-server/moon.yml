@@ -39,6 +39,8 @@ tasks:
     tags: ["build", "requires-rust"]
     inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock"]
     outputs: ["/target/debug/oliphaunt-pgwire-server*", "/target/debug/liboliphaunt_pgwire_server.rlib"]
+    options:
+      mutex: "oliphaunt-pgwire-server"
   test:
     deps:
       - target: cargo-sources
@@ -46,6 +48,8 @@ tasks:
     command: "cargo test --locked"
     tags: ["quality", "unit", "requires-rust"]
     inputs: ["@group(sources)", "README.md", "/Cargo.toml", "/Cargo.lock"]
+    options:
+      mutex: "oliphaunt-pgwire-server"
   test-integration:
     command: "cargo test --locked -- --ignored --test-threads=1"
     tags: ["runtime", "integration", "requires-rust", "ci-liboliphaunt-wasix-aot"]
@@ -53,6 +57,8 @@ tasks:
     inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock", "/src/extensions/catalog/extensions.source.json", "/src/test-fixtures/extensions/**/*"]
     options:
       cache: false
+      # Cargo releases its build lock while the CLI smoke test runs the executable.
+      mutex: "oliphaunt-pgwire-server"
   test-aot:
     command: "bash src/wasix/pgwire-server/tools/test-aot.sh"
     tags: ["runtime", "integration", "requires-rust", "ci-liboliphaunt-wasix-aot"]
@@ -60,6 +66,7 @@ tasks:
     inputs: ["@group(sources)", "tools/test-aot.sh", "/Cargo.toml", "/Cargo.lock"]
     options:
       cache: false
+      mutex: "oliphaunt-pgwire-server"
       runFromWorkspaceRoot: true
   package:
     command: "bash src/wasix/pgwire-server/tools/package.sh"

@@ -1,0 +1,293 @@
+Subject: [PATCH] wasix: service trusted-session deadlines at backend boundaries
+
+Use the existing PostgreSQL timeout queue without a host process timer.
+Detect CPU expiry without throwing; dispatch ordinary handlers only at safe
+interrupt points, bounded waits and re-entry after the live recovery frame.
+This does not interrupt an inactive guest or an arbitrary host-blocked read.
+
+diff --git a/src/backend/storage/ipc/waiteventset.c b/src/backend/storage/ipc/waiteventset.c
+index b074652..11aaf34 100644
+--- a/src/backend/storage/ipc/waiteventset.c
++++ b/src/backend/storage/ipc/waiteventset.c
+@@ -77,6 +77,9 @@
+ #include "storage/waiteventset.h"
+ #include "utils/memutils.h"
+ #include "utils/resowner.h"
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#include "utils/timeout.h"
++#endif
+ 
+ /*
+  * Select the fd readiness primitive to use. Normally the "most modern"
+@@ -1070,6 +1073,12 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
+ 	while (returned_events == 0)
+ 	{
+ 		int			rc;
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++		bool		embedded_timeout_selected = false;
++		long		block_timeout = cur_timeout;
++
++		ProcessEmbeddedTimeouts();
++#endif
+ 
+ 		/*
+ 		 * Check if the latch is set already first.  If so, we either exit
+@@ -1136,7 +1145,23 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
+ 		 * this file. If -1 is returned, a timeout has occurred, if 0 we have
+ 		 * to retry, everything >= 1 is the number of returned events.
+ 		 */
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++		block_timeout = cur_timeout;
++		if (EmbeddedTimeoutsActive)
++		{
++			long		embedded_timeout = GetEmbeddedTimeoutDelayMilliseconds();
++
++			if (embedded_timeout >= 0 &&
++				(block_timeout < 0 || embedded_timeout <= block_timeout))
++			{
++				block_timeout = embedded_timeout;
++				embedded_timeout_selected = true;
++			}
++		}
++		rc = WaitEventSetWaitBlock(set, block_timeout,
++#else
+ 		rc = WaitEventSetWaitBlock(set, cur_timeout,
++#endif
+ 								   occurred_events, nevents - returned_events);
+ 
+ 		if (set->latch &&
+@@ -1144,7 +1169,17 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
+ 			set->latch->maybe_sleeping = false;
+ 
+ 		if (rc == -1)
+-			break;				/* timeout occurred */
++		{
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++			if (embedded_timeout_selected)
++			{
++				/* The backend deadline wins ties with the caller timeout. */
++				ProcessEmbeddedTimeouts();
++			}
++			else
++#endif
++				break;			/* caller timeout occurred */
++		}
+ 		else
+ 			returned_events += rc;
+ 
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index d959892..5c49aba 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -4723,6 +4723,12 @@ PostgresMainLoopOnce(void)
+ 	 */
+ 	DoingCommandRead = true;
+ 
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	/* The live recovery frame must precede expiry of dormant idle timers. */
++	ProcessEmbeddedTimeouts();
++	CHECK_FOR_INTERRUPTS();
++#endif
++
+ 	/*
+ 	 * (3) read a command (loop blocks here)
+ 	 */
+diff --git a/src/backend/utils/misc/timeout.c b/src/backend/utils/misc/timeout.c
+index b3fe2cd..3d823fa 100644
+--- a/src/backend/utils/misc/timeout.c
++++ b/src/backend/utils/misc/timeout.c
+@@ -66,8 +66,26 @@ static timeout_params *volatile active_timeouts[MAX_TIMEOUTS];
+  */
+ static volatile sig_atomic_t alarm_enabled = false;
+ 
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++/* Only the trusted loop-pumped session uses cooperative guest deadlines. */
++bool		EmbeddedTimeoutsActive = false;
++static bool embedded_timeout_pending = false;
++static unsigned int embedded_timeout_polls = 0;
++
++static bool
++is_embedded_timeout_session(void)
++{
++	return IsPreparedTrustedEmbeddedSession() || IsTrustedEmbeddedSession();
++}
++
++#define disable_alarm() \
++	(alarm_enabled = false, EmbeddedTimeoutsActive = false)
++#define enable_alarm() \
++	(alarm_enabled = true, EmbeddedTimeoutsActive = is_embedded_timeout_session())
++#else
+ #define disable_alarm() (alarm_enabled = false)
+ #define enable_alarm()	(alarm_enabled = true)
++#endif
+ 
+ /*
+  * State recording if and when we next expect the interrupt to fire.
+@@ -209,6 +227,20 @@ enable_timeout(TimeoutId id, TimestampTz now, TimestampTz fin_time,
+ static void
+ schedule_alarm(TimestampTz now)
+ {
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	if (is_embedded_timeout_session())
++	{
++		/* Keep PostgreSQL's queue; no host process timer or guest signal. */
++		embedded_timeout_pending = false;
++		embedded_timeout_polls = 0;
++		signal_pending = false;
++		if (num_active_timeouts > 0)
++			enable_alarm();
++		else
++			disable_alarm();
++		return;
++	}
++#endif
+ 	if (num_active_timeouts > 0)
+ 	{
+ 		struct itimerval timeval;
+@@ -474,9 +506,84 @@ InitializeTimeouts(void)
+ 
+ 	all_timeouts_initialized = true;
+ 
+-	/* Now establish the signal handler */
+-	pqsignal(SIGALRM, handle_sig_alarm);
++	/* Bootstrap and ordinary server backends retain their signal timer. */
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	embedded_timeout_pending = false;
++	embedded_timeout_polls = 0;
++	if (!is_embedded_timeout_session())
++#endif
++		pqsignal(SIGALRM, handle_sig_alarm);
++}
++
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++/*
++ * Detection must not run handlers or throw: SP-GiST calls the interrupt
++ * predicate while holding buffer locks. The idle-statistics handler is useful
++ * only at command boundaries, so do not poll the clock for it during queries.
++ * Sample other deadlines every 32 checks to bound host calls. Blocking
++ * boundaries and loop re-entry always check the deadline directly.
++ */
++bool
++EmbeddedTimeoutPending(void)
++{
++	int			save_errno;
++
++	if (!EmbeddedTimeoutsActive ||
++		(num_active_timeouts == 1 &&
++		 active_timeouts[0] == &all_timeouts[IDLE_STATS_UPDATE_TIMEOUT]))
++		return false;
++	if (embedded_timeout_pending)
++		return true;
++	if ((embedded_timeout_polls++ & 31) != 0)
++		return false;
++	save_errno = errno;
++	embedded_timeout_pending =
++		GetCurrentTimestamp() >= active_timeouts[0]->fin_time;
++	errno = save_errno;
++	return embedded_timeout_pending;
++}
++
++long
++GetEmbeddedTimeoutDelayMilliseconds(void)
++{
++	long		delay;
++	int			save_errno;
++
++	if (!EmbeddedTimeoutsActive || InterruptHoldoffCount != 0 || CritSectionCount != 0)
++		return -1;
++	save_errno = errno;
++	delay = TimestampDifferenceMilliseconds(GetCurrentTimestamp(),
++									   active_timeouts[0]->fin_time);
++	errno = save_errno;
++	return delay;
++}
++
++/* Fire the normal timeout handlers only on the backend's owning thread. */
++void
++ProcessEmbeddedTimeouts(void)
++{
++	TimestampTz now;
++	int			save_errno;
++
++	if (!EmbeddedTimeoutsActive || InterruptHoldoffCount != 0 || CritSectionCount != 0)
++		return;
++	save_errno = errno;
++	now = GetCurrentTimestamp();
++	if (now < active_timeouts[0]->fin_time)
++	{
++		errno = save_errno;
++		return;
++	}
++
++	HOLD_INTERRUPTS();
++	if (MyLatch != NULL)
++		SetLatch(MyLatch);
++	disable_alarm();
++	process_expired_timeouts(now);
++	RESUME_INTERRUPTS();
++	errno = save_errno;
+ }
++#endif
+ 
+ /*
+  * Register a timeout reason
+diff --git a/src/include/miscadmin.h b/src/include/miscadmin.h
+index 2b00a43..43f0606 100644
+--- a/src/include/miscadmin.h
++++ b/src/include/miscadmin.h
+@@ -109,7 +109,14 @@ extern PGDLLIMPORT volatile uint32 CritSectionCount;
+ extern void ProcessInterrupts(void);
+ 
+ /* Test whether an interrupt is pending */
+-#ifndef WIN32
++#if defined(OLIPHAUNT_WASM_SINGLE_USER) && !defined(FRONTEND)
++extern PGDLLIMPORT bool EmbeddedTimeoutsActive;
++extern bool EmbeddedTimeoutPending(void);
++extern void ProcessEmbeddedTimeouts(void);
++#define INTERRUPTS_PENDING_CONDITION() \
++	(unlikely(InterruptPending) || \
++	 (unlikely(EmbeddedTimeoutsActive) && EmbeddedTimeoutPending()))
++#elif !defined(WIN32)
+ #define INTERRUPTS_PENDING_CONDITION() \
+ 	(unlikely(InterruptPending))
+ #else
+@@ -120,11 +127,23 @@ extern void ProcessInterrupts(void);
+ #endif
+ 
+ /* Service interrupt, if one is pending and it's safe to service it now */
++#if defined(OLIPHAUNT_WASM_SINGLE_USER) && !defined(FRONTEND)
++#define CHECK_FOR_INTERRUPTS() \
++do { \
++	if (INTERRUPTS_PENDING_CONDITION()) \
++	{ \
++		ProcessEmbeddedTimeouts(); \
++		if (unlikely(InterruptPending)) \
++			ProcessInterrupts(); \
++	} \
++} while(0)
++#else
+ #define CHECK_FOR_INTERRUPTS() \
+ do { \
+ 	if (INTERRUPTS_PENDING_CONDITION()) \
+ 		ProcessInterrupts(); \
+ } while(0)
++#endif
+ 
+ /* Is ProcessInterrupts() guaranteed to clear InterruptPending? */
+ #define INTERRUPTS_CAN_BE_PROCESSED() \
+diff --git a/src/include/utils/timeout.h b/src/include/utils/timeout.h
+index 7b19bea..b11ba09 100644
+--- a/src/include/utils/timeout.h
++++ b/src/include/utils/timeout.h
+@@ -87,6 +87,11 @@ extern void disable_timeout(TimeoutId id, bool keep_indicator);
+ extern void disable_timeouts(const DisableTimeoutParams *timeouts, int count);
+ extern void disable_all_timeouts(bool keep_indicators);
+ 
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++extern long GetEmbeddedTimeoutDelayMilliseconds(void);
++extern void ProcessEmbeddedTimeouts(void);
++#endif
++
+ /* accessors */
+ extern bool get_timeout_active(TimeoutId id);
+ extern bool get_timeout_indicator(TimeoutId id, bool reset_indicator);

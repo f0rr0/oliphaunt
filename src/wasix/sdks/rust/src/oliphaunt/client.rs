@@ -41,15 +41,24 @@ use crate::oliphaunt::storage::PgDataStorage;
 use crate::oliphaunt::storage::StorageRoot;
 #[cfg(feature = "tools-execution")]
 use crate::oliphaunt::tools::{
-    DirectToolSocket, PgDumpOptions, PostgresToolOutput, PsqlOptions, decode_tool_output,
-    is_direct_tool_outcome_unknown, run_direct_pg_dump_output, run_direct_psql_output,
+    DirectToolSocket, PgDumpOptions, PostgresToolOutput, PostgresToolSummary, PsqlOptions,
+    ToolWriters, decode_tool_output, is_direct_tool_outcome_unknown, run_direct_pg_dump_output,
+    run_direct_psql_output, write_tool_file,
 };
 #[cfg(feature = "tools-execution")]
 use oliphaunt_query::wire::{FrontendFrameKind, FrontendFrameReader, classify_frontend_message};
 
-const PROTOCOL_CALLBACK_CHUNK_BYTES: usize = 64 * 1024;
+// Host callback maximum from runtime/protocol-contract/contract.json.
+// A callback borrows its slice synchronously; this is not a response-size limit.
+use super::protocol_limits_generated::PROTOCOL_CALLBACK_CHUNK_BYTES;
+// Tool socket read batching, independent of the callback ABI above. A large
+// frontend frame spans reads; increasing this also increases local stack use.
 #[cfg(feature = "tools-execution")]
 const DIRECT_TOOL_READ_BUFFER_BYTES: usize = 64 * 1024;
+
+fn protocol_callback_chunks(bytes: &[u8]) -> std::slice::Chunks<'_, u8> {
+    bytes.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES)
+}
 
 /// Direct, single-session Oliphaunt WASIX database.
 pub struct Oliphaunt {
@@ -423,7 +432,7 @@ impl Write for CallbackProtocolStream {
         if state.error.is_some() || state.panic.is_some() {
             return Ok(buffer.len());
         }
-        for chunk in buffer.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES) {
+        for chunk in protocol_callback_chunks(buffer) {
             let result = {
                 let callback = state.callback.as_mut().ok_or_else(|| {
                     io::Error::new(
@@ -508,16 +517,16 @@ impl Oliphaunt {
         extensions: &[Extension],
     ) -> Result<Self> {
         let backend = if extensions.is_empty() {
-            BackendSession::open(outcome, postgres_config, startup_config.clone())?
+            BackendSession::open(outcome, postgres_config, startup_config)?
         } else {
             BackendSession::open_with_extension_preload(
                 outcome,
                 postgres_config,
-                startup_config.clone(),
+                startup_config,
                 extensions,
             )?
         };
-        Self::finish_open(backend, startup_config)
+        Ok(Self::finish_open(backend))
     }
 
     #[cfg(not(feature = "extensions"))]
@@ -526,12 +535,12 @@ impl Oliphaunt {
         postgres_config: PostgresConfig,
         startup_config: StartupConfig,
     ) -> Result<Self> {
-        let backend = BackendSession::open(outcome, postgres_config, startup_config.clone())?;
-        Self::finish_open(backend, startup_config)
+        let backend = BackendSession::open(outcome, postgres_config, startup_config)?;
+        Ok(Self::finish_open(backend))
     }
 
-    fn finish_open(backend: BackendSession, startup_config: StartupConfig) -> Result<Self> {
-        let mut instance = Self {
+    fn finish_open(backend: BackendSession) -> Self {
+        Self {
             backend: TeardownOwnership::new(backend),
             _workspace: TeardownOwnership::new(None),
             _directory_lock: TeardownOwnership::new(None),
@@ -543,15 +552,7 @@ impl Oliphaunt {
             close_result: None,
             protocol_stream: Arc::new(Mutex::new(CallbackProtocolState::default())),
             protocol_stream_attached: false,
-        };
-        if startup_config.username != "postgres" {
-            let sql = format!(
-                "SET ROLE {}",
-                crate::oliphaunt::sql::quote_identifier(&startup_config.username)
-            );
-            instance.execute_inner(&sql)?;
         }
-        Ok(instance)
     }
 
     /// Restore a validated physical backup into an absent or empty managed directory root.
@@ -566,12 +567,12 @@ impl Oliphaunt {
         Sql::database(self, sql)
     }
 
-    /// Whether this database is permanently retired after a close attempt.
+    /// Whether this database can no longer accept work.
     ///
-    /// This becomes `true` when shutdown begins, even when cleanup reports an
-    /// error.
+    /// This becomes `true` after a close attempt or a terminal runtime failure.
+    /// After a failure, still call [`Self::close`] to release storage ownership.
     pub fn is_closed(&self) -> bool {
-        self.closed
+        self.closed || self.transaction_outcome_unknown || self.backup_mode_exit_unconfirmed
     }
 
     /// Execute a PostgreSQL command. Row-producing SQL must use [`Self::query`].
@@ -964,7 +965,7 @@ impl Oliphaunt {
             state.error = None;
             state.panic = None;
         }
-        let outcome = self.backend.send_with_protocol_pump(request);
+        let outcome = self.backend.send_with_output_stream(request);
         let (callback_error, callback_panic, callback, outcome) =
             match (self.protocol_stream.lock(), outcome) {
                 (Ok(mut state), outcome) => (
@@ -994,7 +995,7 @@ impl Oliphaunt {
         })?;
         match outcome {
             ProtocolPumpOutcome::Buffered(response) => {
-                for chunk in response.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES) {
+                for chunk in protocol_callback_chunks(&response) {
                     match invoke_protocol_callback(&mut callback, chunk) {
                         Ok(()) => {}
                         Err(ProtocolCallbackFailure::Error(error)) => {
@@ -1033,13 +1034,25 @@ impl Oliphaunt {
         &mut self,
         options: PgDumpOptions,
     ) -> Result<PostgresToolOutput> {
+        self.run_pg_dump_tool_with_writers(options, None)
+    }
+
+    #[cfg(feature = "tools-execution")]
+    fn run_pg_dump_tool_with_writers(
+        &mut self,
+        options: PgDumpOptions,
+        writers: Option<ToolWriters>,
+    ) -> Result<PostgresToolOutput> {
         options.validate()?;
         self.prepare_tool_session()?;
         let startup = self.backend.startup_config().clone();
-        let result =
-            run_direct_pg_dump_output(&startup.username, &startup.database, &options, |socket| {
-                self.serve_direct_tool_protocol(socket)
-            });
+        let result = run_direct_pg_dump_output(
+            &startup.username,
+            &startup.database,
+            &options,
+            writers,
+            |socket| self.serve_direct_tool_protocol(socket),
+        );
         self.finish_tool_session(result)
     }
 
@@ -1054,13 +1067,25 @@ impl Oliphaunt {
         &mut self,
         options: PsqlOptions,
     ) -> Result<PostgresToolOutput> {
+        self.run_psql_tool_with_writers(options, None)
+    }
+
+    #[cfg(feature = "tools-execution")]
+    fn run_psql_tool_with_writers(
+        &mut self,
+        options: PsqlOptions,
+        writers: Option<ToolWriters>,
+    ) -> Result<PostgresToolOutput> {
         options.validate()?;
         self.prepare_tool_session()?;
         let startup = self.backend.startup_config().clone();
-        let result =
-            run_direct_psql_output(&startup.username, &startup.database, &options, |socket| {
-                self.serve_direct_tool_protocol(socket)
-            });
+        let result = run_direct_psql_output(
+            &startup.username,
+            &startup.database,
+            &options,
+            writers,
+            |socket| self.serve_direct_tool_protocol(socket),
+        );
         self.finish_tool_session(result)
     }
 
@@ -1108,14 +1133,6 @@ impl Oliphaunt {
             .context("roll back embedded session")?;
         self.execute_inner("DISCARD ALL")
             .context("discard embedded session state")?;
-        let username = self.backend.startup_config().username.clone();
-        if username != "postgres" {
-            self.execute_inner(&format!(
-                "SET ROLE {}",
-                crate::oliphaunt::sql::quote_identifier(&username)
-            ))
-            .context("restore embedded session role")?;
-        }
         Ok(())
     }
 
@@ -1229,6 +1246,52 @@ impl Oliphaunt {
         crate::error::public_result(self.run_pg_dump_tool_output(options))
     }
 
+    /// Write exact tool stdout without retaining the result. The tool owns the
+    /// writer until execution and database session cleanup finish. Writers may
+    /// contain partial output on failure. Owned destinations are flushed before
+    /// completion; the caller owns publication and durability.
+    /// Optional diagnostics receive complete stderr alongside the 8 KiB tail.
+    #[cfg(feature = "tools-execution")]
+    pub fn pg_dump_to_writer(
+        &mut self,
+        options: PgDumpOptions,
+        writer: impl Write + Send + 'static,
+        diagnostics: Option<Box<dyn Write + Send>>,
+    ) -> crate::Result<PostgresToolSummary> {
+        crate::error::public_result(
+            self.run_pg_dump_tool_with_writers(
+                options,
+                Some(ToolWriters {
+                    stdout: Box::new(writer),
+                    stderr: diagnostics,
+                }),
+            )
+            .map(PostgresToolOutput::summary),
+        )
+    }
+
+    /// Stage a private host file and publish it create-only after the tool and
+    /// database session cleanup succeed. This does not promise power-loss durability.
+    #[cfg(feature = "tools-execution")]
+    pub fn pg_dump_to_file(
+        &mut self,
+        options: PgDumpOptions,
+        destination: impl AsRef<std::path::Path>,
+        diagnostics: Option<Box<dyn Write + Send>>,
+    ) -> crate::Result<PostgresToolSummary> {
+        crate::error::public_result(options.validate())?;
+        crate::error::public_result(write_tool_file("pg_dump", destination.as_ref(), |writer| {
+            self.run_pg_dump_tool_with_writers(
+                options,
+                Some(ToolWriters {
+                    stdout: Box::new(writer),
+                    stderr: diagnostics,
+                }),
+            )
+            .map(PostgresToolOutput::summary)
+        }))
+    }
+
     /// Run packaged non-interactive `psql` directly against this database.
     #[cfg(feature = "tools-execution")]
     pub fn psql(&mut self, options: PsqlOptions) -> crate::Result<String> {
@@ -1239,6 +1302,52 @@ impl Oliphaunt {
     #[cfg(feature = "tools-execution")]
     pub fn psql_output(&mut self, options: PsqlOptions) -> crate::Result<PostgresToolOutput> {
         crate::error::public_result(self.run_psql_tool_output(options))
+    }
+
+    /// Write exact tool stdout without retaining the result. The tool owns the
+    /// writer until execution and database session cleanup finish. Writers may
+    /// contain partial output on failure. Owned destinations are flushed before
+    /// completion; the caller owns publication and durability.
+    /// Optional diagnostics receive complete stderr alongside the 8 KiB tail.
+    #[cfg(feature = "tools-execution")]
+    pub fn psql_to_writer(
+        &mut self,
+        options: PsqlOptions,
+        writer: impl Write + Send + 'static,
+        diagnostics: Option<Box<dyn Write + Send>>,
+    ) -> crate::Result<PostgresToolSummary> {
+        crate::error::public_result(
+            self.run_psql_tool_with_writers(
+                options,
+                Some(ToolWriters {
+                    stdout: Box::new(writer),
+                    stderr: diagnostics,
+                }),
+            )
+            .map(PostgresToolOutput::summary),
+        )
+    }
+
+    /// Stage a private host file and publish it create-only after the tool and
+    /// database session cleanup succeed. This does not promise power-loss durability.
+    #[cfg(feature = "tools-execution")]
+    pub fn psql_to_file(
+        &mut self,
+        options: PsqlOptions,
+        destination: impl AsRef<std::path::Path>,
+        diagnostics: Option<Box<dyn Write + Send>>,
+    ) -> crate::Result<PostgresToolSummary> {
+        crate::error::public_result(options.validate())?;
+        crate::error::public_result(write_tool_file("psql", destination.as_ref(), |writer| {
+            self.run_psql_tool_with_writers(
+                options,
+                Some(ToolWriters {
+                    stdout: Box::new(writer),
+                    stderr: diagnostics,
+                }),
+            )
+            .map(PostgresToolOutput::summary)
+        }))
     }
 
     fn backup_inner(&mut self) -> Result<Vec<u8>> {
@@ -1498,9 +1607,10 @@ impl Oliphaunt {
     /// Validation before shutdown, such as an active callback transaction,
     /// leaves the database open and may be retried. Once shutdown begins, the
     /// database is permanently retired; repeated calls replay the same success
-    /// or failure. Successful teardown releases the backend and storage root;
-    /// failed teardown retains that ownership until process exit rather than
-    /// attempting an unproven second destructive cleanup.
+    /// or failure. A previously failed guest is discarded without running more
+    /// guest code, releasing the storage root for recovery on reopen. This does
+    /// not establish whether an interrupted write committed. A failure during
+    /// teardown itself retains ownership instead of retrying destructive cleanup.
     pub fn close(&mut self) -> crate::Result<()> {
         self.close_inner()
     }
@@ -1553,10 +1663,14 @@ impl Oliphaunt {
             return Err(crate::error::lifecycle("Oliphaunt is closed"));
         }
         if self.transaction_outcome_unknown {
-            bail!("Oliphaunt PostgreSQL session state is unknown; close and reopen it");
+            return Err(crate::error::lifecycle(
+                "Oliphaunt PostgreSQL session state is unknown; close and reopen it",
+            ));
         }
         if self.backup_mode_exit_unconfirmed {
-            bail!("Oliphaunt backup-mode exit is unconfirmed; close and reopen it");
+            return Err(crate::error::lifecycle(
+                "Oliphaunt backup-mode exit is unconfirmed; close and reopen it",
+            ));
         }
         Ok(())
     }
@@ -2122,7 +2236,7 @@ mod transaction_state_tests {
 }
 
 #[cfg(test)]
-mod protocol_callback_tests {
+mod protocol_callback_outcome_tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
@@ -2237,6 +2351,40 @@ fn materialize_storage(storage: &PgDataStorage) -> Result<tempfile::TempDir> {
     match storage {
         PgDataStorage::HostDirectory(pgdata) => materialize_pgdata(pgdata),
         PgDataStorage::Memory(filesystem) => materialize_virtual_pgdata_view(filesystem.as_ref()),
+    }
+}
+
+#[cfg(test)]
+mod protocol_callback_tests {
+    use super::*;
+
+    #[test]
+    fn callback_chunks_are_bounded_and_preserve_exact_bytes() {
+        for (length, expected_lengths) in [
+            (0, vec![]),
+            (PROTOCOL_CALLBACK_CHUNK_BYTES, vec![65_536]),
+            (PROTOCOL_CALLBACK_CHUNK_BYTES + 1, vec![65_536, 1]),
+            (PROTOCOL_CALLBACK_CHUNK_BYTES * 2, vec![65_536, 65_536]),
+            (
+                PROTOCOL_CALLBACK_CHUNK_BYTES * 2 + 1,
+                vec![65_536, 65_536, 1],
+            ),
+        ] {
+            let input = (0..length)
+                .map(|offset| (offset % 251) as u8)
+                .collect::<Vec<_>>();
+            let chunks = protocol_callback_chunks(&input).collect::<Vec<_>>();
+            assert_eq!(
+                chunks.iter().map(|chunk| chunk.len()).collect::<Vec<_>>(),
+                expected_lengths
+            );
+            assert!(
+                chunks
+                    .iter()
+                    .all(|chunk| chunk.len() <= PROTOCOL_CALLBACK_CHUNK_BYTES)
+            );
+            assert_eq!(chunks.concat(), input);
+        }
     }
 }
 

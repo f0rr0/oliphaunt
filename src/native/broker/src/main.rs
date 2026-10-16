@@ -79,6 +79,7 @@ struct BrokerArgs {
     database: String,
     extensions: Vec<Extension>,
     auth_token: String,
+    handshake_timeout: std::time::Duration,
     seed: Option<liboliphaunt_native_bindings::NativeResourceDirectory>,
     icu_data: Option<liboliphaunt_native_bindings::NativeResourceDirectory>,
 }
@@ -99,6 +100,7 @@ impl BrokerArgs {
         let mut username = DEFAULT_USERNAME.to_owned();
         let mut database = DEFAULT_DATABASE.to_owned();
         let mut extensions = Vec::new();
+        let mut handshake_timeout = oliphaunt_broker::config::DEFAULT_HANDSHAKE_TIMEOUT;
         let mut seed_directory = None;
         let mut seed_manifest = None;
         let mut icu_directory = None;
@@ -109,6 +111,17 @@ impl BrokerArgs {
                 BrokerError::configuration("broker argument names must be valid UTF-8")
             })?;
             match arg.as_str() {
+                "--handshake-timeout-ms" => {
+                    let value = next_utf8_broker_arg(&mut iter, &arg, "positive milliseconds")?;
+                    let millis = value.parse::<u32>().map_err(|_| {
+                        BrokerError::configuration(
+                            "--handshake-timeout-ms requires an integer between 1 and 2147483647",
+                        )
+                    })?;
+                    handshake_timeout = std::time::Duration::from_millis(u64::from(millis));
+                    oliphaunt_broker::config::handshake_timeout_millis(handshake_timeout)
+                        .map_err(BrokerError::configuration)?;
+                }
                 "--seed-directory" => {
                     seed_directory =
                         Some(next_broker_arg(&mut iter, &arg, "a filesystem path")?.into())
@@ -187,6 +200,7 @@ impl BrokerArgs {
             root: root.ok_or_else(|| BrokerError::configuration("--root is required"))?,
             endpoint,
             control_endpoint,
+            handshake_timeout,
             startup_gucs,
             username,
             database,
@@ -320,13 +334,13 @@ impl BrokerListener {
             Self::Tcp(listener) => {
                 let (stream, _) = listener.accept()?;
                 stream.set_nonblocking(false)?;
-                Ok(server::Socket::Tcp(stream))
+                Ok(server::Socket::tcp(stream))
             }
             #[cfg(unix)]
             Self::Unix { listener, .. } => {
                 let (stream, _) = listener.accept()?;
                 stream.set_nonblocking(false)?;
-                Ok(server::Socket::Unix(stream))
+                Ok(server::Socket::unix(stream))
             }
         }
     }
@@ -336,6 +350,35 @@ impl BrokerListener {
             Self::Tcp(listener) => listener.set_nonblocking(true),
             #[cfg(unix)]
             Self::Unix { listener, .. } => listener.set_nonblocking(true),
+        }
+    }
+}
+
+#[cfg(test)]
+mod argument_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn broker_handshake_timeout_is_explicit_and_bounded() {
+        let parse = |value: Option<&str>| {
+            let mut args = vec!["--root".into(), "/tmp/broker-timeout".into()];
+            if let Some(value) = value {
+                args.extend(["--handshake-timeout-ms".into(), value.into()]);
+            }
+            BrokerArgs::parse_with_auth_token(args, "test-token".to_owned())
+        };
+        assert_eq!(
+            parse(None).unwrap().handshake_timeout,
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            parse(Some("125")).unwrap().handshake_timeout,
+            Duration::from_millis(125)
+        );
+        assert!(parse(Some("2147483647")).is_ok());
+        for value in ["0", "-1", "1.5", "2147483648", "4294967296", "bad"] {
+            assert!(parse(Some(value)).is_err(), "accepted {value}");
         }
     }
 }
@@ -377,10 +420,7 @@ mod tests {
                 Err(error) => panic!("failed to accept test connection: {error}"),
             }
         };
-        let fd = match &socket {
-            server::Socket::Tcp(stream) => stream.as_raw_fd(),
-            server::Socket::Unix(stream) => stream.as_raw_fd(),
-        };
+        let fd = socket.as_raw_fd();
         // SAFETY: socket owns the live descriptor; F_GETFL takes no extra argument.
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
         assert_ne!(

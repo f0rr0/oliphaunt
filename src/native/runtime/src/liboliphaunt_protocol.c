@@ -13,16 +13,37 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #define DEFAULT_STARTUP_TIMEOUT_MS 60000
+/* Hard queue bound, not preallocation or a total-response limit. Producers
+ * split larger writes and wait for space as the consumer drains the queue. */
 #define DEFAULT_STREAM_QUEUE_MAX_BYTES (4 * 1024 * 1024)
+/* First buffered response allocation; grows on demand, unlike the queue bound. */
+#define INITIAL_BUFFERED_OUTPUT_BYTES (8 * 1024)
 
-static int validate_frontend_protocol_frames(OliphauntHandle *handle, const uint8_t *request, size_t request_len) {
+extern void RequestTrustedEmbeddedTimeoutCheck(void);
+extern bool TrustedEmbeddedInterruptPending(void);
+
+static uint32_t read_be32(const unsigned char *ptr);
+
+static int wait_for_output_locked(
+    OliphauntHandle *handle,
+    const struct timespec *caller_deadline);
+
+static int validate_frontend_protocol_frames(
+    OliphauntHandle *handle, const uint8_t *request, size_t request_len,
+    bool complete, bool *extended_pending, size_t *boundaries) {
     if (request_len == 0) {
         set_error(handle, "malformed frontend protocol request: empty request");
         return -1;
     }
     size_t off = 0;
+    size_t count = 0;
+    bool extended = *extended_pending;
+    uint8_t last = 0;
     while (off < request_len) {
         if (request_len - off < 5) {
             set_error(handle, "malformed frontend protocol request: truncated message header");
@@ -41,9 +62,38 @@ static int validate_frontend_protocol_frames(OliphauntHandle *handle, const uint
             set_error(handle, "malformed frontend protocol request: truncated message body");
             return -1;
         }
+        last = request[off];
+        if (last == 'Q' || last == 'F') {
+            /* An extended-protocol error ignores subsequent messages until
+             * Sync, including Query. Such a batch has no fixed ready count. */
+            if (extended) {
+                set_error(handle, "Query or FunctionCall must follow Sync after extended protocol messages");
+                return -1;
+            }
+            count++;
+        } else if (last == 'S') {
+            extended = false;
+            count++;
+        } else if (last == 'P' || last == 'B' || last == 'C' ||
+                   last == 'D' || last == 'E' || last == 'H') {
+            extended = true;
+        }
         off += total;
     }
+    if ((complete || count > 0) &&
+        (count == 0 || (last != 'Q' && last != 'F' && last != 'S' && last != 'c' && last != 'f'))) {
+        set_error(handle, "frontend protocol request must end at a complete Query, FunctionCall, Sync, or COPY boundary");
+        return -1;
+    }
+    *extended_pending = extended;
+    *boundaries = count;
     return 0;
+}
+
+static bool record_ready_locked(OliphauntHandle *handle, unsigned char status) {
+    handle->transaction_status = status;
+    if (handle->ready_remaining > 0) handle->ready_remaining--;
+    return handle->ready_remaining == 0;
 }
 
 static int append_output_locked(OliphauntHandle *handle, const void *buf, size_t len) {
@@ -52,7 +102,7 @@ static int append_output_locked(OliphauntHandle *handle, const void *buf, size_t
     }
     size_t required = handle->output_len + len;
     if (required > handle->output_cap) {
-        size_t next = handle->output_cap ? handle->output_cap : 8192;
+        size_t next = handle->output_cap ? handle->output_cap : INITIAL_BUFFERED_OUTPUT_BYTES;
         while (next < required) {
             next *= 2;
         }
@@ -110,7 +160,7 @@ static bool scan_stream_ready_locked(OliphauntHandle *handle, const unsigned cha
                 if (scanner->tag == 'G') handle->stream_copy_input = true;
                 if (scanner->tag == 'E' || ready) handle->stream_copy_input = false;
                 if (ready) {
-                    handle->transaction_status = 'I';
+                    ready = record_ready_locked(handle, 'I');
                 }
                 reset_protocol_scanner(scanner);
                 if (ready) {
@@ -133,7 +183,7 @@ static bool scan_stream_ready_locked(OliphauntHandle *handle, const unsigned cha
                 if (scanner->tag == 'G') handle->stream_copy_input = true;
                 if (scanner->tag == 'E' || ready) handle->stream_copy_input = false;
                 if (ready) {
-                    handle->transaction_status = scanner->ready_status_set ? scanner->ready_status : 'I';
+                    ready = record_ready_locked(handle, scanner->ready_status_set ? scanner->ready_status : 'I');
                 }
                 reset_protocol_scanner(scanner);
                 if (ready) {
@@ -146,20 +196,8 @@ static bool scan_stream_ready_locked(OliphauntHandle *handle, const unsigned cha
 }
 
 static size_t stream_queue_max_bytes(void) {
-    const char *value = getenv("OLIPHAUNT_STREAM_QUEUE_MAX_BYTES");
-    if (value == NULL || value[0] == '\0') {
-        return DEFAULT_STREAM_QUEUE_MAX_BYTES;
-    }
-
-    char *end = NULL;
-    unsigned long long parsed = strtoull(value, &end, 10);
-    if (end == value || parsed == 0) {
-        return DEFAULT_STREAM_QUEUE_MAX_BYTES;
-    }
-    if (parsed > (unsigned long long)SIZE_MAX) {
-        return SIZE_MAX;
-    }
-    return (size_t)parsed;
+    return oliphaunt_resource_size(getenv("OLIPHAUNT_STREAM_QUEUE_MAX_BYTES"),
+                                  1, SIZE_MAX, DEFAULT_STREAM_QUEUE_MAX_BYTES);
 }
 
 static bool stream_queue_has_room_locked(OliphauntHandle *handle, size_t len, size_t max_bytes) {
@@ -179,12 +217,8 @@ static int wait_for_stream_queue_room_locked(OliphauntHandle *handle, size_t len
             errno = EPIPE;
             return -1;
         }
-        int rc = pthread_cond_wait(&handle->output_cond, &handle->mutex);
-        if (rc != 0) {
-            char message[OLIPHAUNT_ERROR_CAPACITY];
-            snprintf(message, sizeof(message), "stream queue wait failed: %d", rc);
-            set_error(handle, message);
-            errno = rc;
+        int rc = wait_for_output_locked(handle, NULL);
+        if (rc < 0) {
             return -1;
         }
     }
@@ -304,15 +338,17 @@ static bool scan_ready_for_query_locked(OliphauntHandle *handle) {
             return false;
         }
         if (tag == 'Z') {
-            handle->transaction_status = msg_len >= 5 ? handle->output[off + 5] : 'I';
-            handle->output_ready = true;
-            off += frame_len;
-            handle->output_scan_off = off;
-            if (trace) {
-                handle->trace_ready_scan_calls++;
-                handle->trace_ready_scan_ns += oliphaunt_elapsed_ns(scan_started);
+            handle->output_ready = record_ready_locked(
+                handle, msg_len >= 5 ? handle->output[off + 5] : 'I');
+            if (handle->output_ready) {
+                off += frame_len;
+                handle->output_scan_off = off;
+                if (trace) {
+                    handle->trace_ready_scan_calls++;
+                    handle->trace_ready_scan_ns += oliphaunt_elapsed_ns(scan_started);
+                }
+                return true;
             }
-            return true;
         }
         off += frame_len;
     }
@@ -329,11 +365,10 @@ int oliphaunt_startup_timeout_ms(void) {
     if (value == NULL || value[0] == '\0') {
         return DEFAULT_STARTUP_TIMEOUT_MS;
     }
-    int parsed = atoi(value);
-    return parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
+    return (int)oliphaunt_resource_size(value, 1, INT_MAX, DEFAULT_STARTUP_TIMEOUT_MS);
 }
 
-static void add_ms_to_timespec(struct timespec *ts, int ms) {
+static void add_ms_to_timespec(struct timespec *ts, long ms) {
     ts->tv_sec += ms / 1000;
     ts->tv_nsec += (long)(ms % 1000) * 1000000L;
     if (ts->tv_nsec >= 1000000000L) {
@@ -342,11 +377,141 @@ static void add_ms_to_timespec(struct timespec *ts, int ms) {
     }
 }
 
+static int compare_timespec(const struct timespec *left, const struct timespec *right) {
+    if (left->tv_sec < right->tv_sec) {
+        return -1;
+    }
+    if (left->tv_sec > right->tv_sec) {
+        return 1;
+    }
+    if (left->tv_nsec < right->tv_nsec) {
+        return -1;
+    }
+    if (left->tv_nsec > right->tv_nsec) {
+        return 1;
+    }
+    return 0;
+}
+
+static int realtime_now_locked(OliphauntHandle *handle, struct timespec *now) {
+    if (clock_gettime(CLOCK_REALTIME, now) == 0) {
+        return 0;
+    }
+    int saved_errno = errno;
+    char message[OLIPHAUNT_ERROR_CAPACITY];
+    snprintf(message, sizeof(message), "clock_gettime(CLOCK_REALTIME) failed: %d", saved_errno);
+    set_error(handle, message);
+    errno = saved_errno;
+    return -1;
+}
+
+static int notify_embedded_timeout_locked(OliphauntHandle *handle) {
+    if (!handle->embedded_timeout_armed ||
+        handle->embedded_timeout_notified_generation == handle->embedded_timeout_generation) {
+        return 0;
+    }
+
+    /* Publish the notification before waking the owning backend thread. */
+    handle->embedded_timeout_notified_generation = handle->embedded_timeout_generation;
+    RequestTrustedEmbeddedTimeoutCheck();
+    return oliphaunt_wake_backend_locked(handle) == 0 ? 1 : -1;
+}
+
+static int notify_due_embedded_timeout_locked(
+    OliphauntHandle *handle,
+    const struct timespec *now) {
+    if (!handle->embedded_timeout_armed ||
+        compare_timespec(now, &handle->embedded_timeout_deadline) < 0) {
+        return 0;
+    }
+    return notify_embedded_timeout_locked(handle);
+}
+
+static int check_embedded_timeout_deadline_locked(OliphauntHandle *handle) {
+    if (!handle->embedded_timeout_armed ||
+        handle->embedded_timeout_notified_generation == handle->embedded_timeout_generation) {
+        return 0;
+    }
+
+    struct timespec now;
+    if (realtime_now_locked(handle, &now) != 0) {
+        return -1;
+    }
+    return notify_due_embedded_timeout_locked(handle, &now) < 0 ? -1 : 0;
+}
+
+/*
+ * Wait for backend output while also relaying PostgreSQL's nearest cooperative
+ * timeout. caller_deadline is an independent API-level deadline (currently
+ * startup only); returning 1 means that deadline expired, not a PG timeout.
+ */
+static int wait_for_output_locked(
+    OliphauntHandle *handle,
+    const struct timespec *caller_deadline) {
+    bool pg_deadline_pending =
+        handle->embedded_timeout_armed &&
+        handle->embedded_timeout_notified_generation != handle->embedded_timeout_generation;
+    struct timespec now;
+
+    if (caller_deadline != NULL || pg_deadline_pending) {
+        if (realtime_now_locked(handle, &now) != 0) {
+            return -1;
+        }
+        int pg_timeout_notification =
+            pg_deadline_pending ? notify_due_embedded_timeout_locked(handle, &now) : 0;
+        if (pg_timeout_notification < 0) {
+            return -1;
+        }
+        if (caller_deadline != NULL && compare_timespec(&now, caller_deadline) >= 0) {
+            return 1;
+        }
+        if (pg_timeout_notification > 0) {
+            return 0;
+        }
+    }
+
+    struct timespec wait_deadline_storage;
+    const struct timespec *wait_deadline = caller_deadline;
+    if (pg_deadline_pending &&
+        (wait_deadline == NULL ||
+         compare_timespec(&handle->embedded_timeout_deadline, wait_deadline) < 0)) {
+        wait_deadline_storage = handle->embedded_timeout_deadline;
+        wait_deadline = &wait_deadline_storage;
+    }
+
+    int rc = wait_deadline != NULL
+                 ? pthread_cond_timedwait(&handle->output_cond, &handle->mutex, wait_deadline)
+                 : pthread_cond_wait(&handle->output_cond, &handle->mutex);
+    if (rc == 0) {
+        return 0;
+    }
+    if (rc != ETIMEDOUT) {
+        char message[OLIPHAUNT_ERROR_CAPACITY];
+        snprintf(message, sizeof(message), "pthread wait failed: %d", rc);
+        set_error(handle, message);
+        errno = rc;
+        return -1;
+    }
+
+    if (realtime_now_locked(handle, &now) != 0) {
+        return -1;
+    }
+    if (notify_due_embedded_timeout_locked(handle, &now) < 0) {
+        return -1;
+    }
+    if (caller_deadline != NULL && compare_timespec(&now, caller_deadline) >= 0) {
+        return 1;
+    }
+    return 0;
+}
+
 int oliphaunt_wait_for_ready_locked(OliphauntHandle *handle, int timeout_ms) {
     bool has_timeout = timeout_ms > 0;
     struct timespec deadline;
     if (has_timeout) {
-        clock_gettime(CLOCK_REALTIME, &deadline);
+        if (realtime_now_locked(handle, &deadline) != 0) {
+            return -1;
+        }
         add_ms_to_timespec(&deadline, timeout_ms);
     }
 
@@ -369,10 +534,8 @@ int oliphaunt_wait_for_ready_locked(OliphauntHandle *handle, int timeout_ms) {
             set_error(handle, "native backend is closing before ReadyForQuery");
             return -1;
         }
-        int rc = has_timeout
-                     ? pthread_cond_timedwait(&handle->output_cond, &handle->mutex, &deadline)
-                     : pthread_cond_wait(&handle->output_cond, &handle->mutex);
-        if (has_timeout && rc == ETIMEDOUT) {
+        int rc = wait_for_output_locked(handle, has_timeout ? &deadline : NULL);
+        if (rc > 0) {
             char message[OLIPHAUNT_ERROR_CAPACITY];
             snprintf(
                 message,
@@ -382,21 +545,175 @@ int oliphaunt_wait_for_ready_locked(OliphauntHandle *handle, int timeout_ms) {
             set_error(handle, message);
             return -1;
         }
-        if (rc != 0) {
-            char message[OLIPHAUNT_ERROR_CAPACITY];
-            snprintf(message, sizeof(message), "pthread wait failed: %d", rc);
-            set_error(handle, message);
+        if (rc < 0) {
             return -1;
         }
     }
     return 0;
 }
 
-ssize_t oliphaunt_embedded_read(void *context, void *ptr, size_t len) {
+int oliphaunt_embedded_set_timeout(void *context, long timeout_ms) {
+    OliphauntHandle *handle = (OliphauntHandle *)context;
+    struct timespec deadline = {0, 0};
+
+    if (timeout_ms >= 0) {
+        if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
+            return -1;
+        }
+        add_ms_to_timespec(&deadline, timeout_ms);
+    }
+
+    pthread_mutex_lock(&handle->mutex);
+    if (handle->interrupt_wakeup_kind == OLIPHAUNT_EMBEDDED_WAKE_NONE) {
+        pthread_mutex_unlock(&handle->mutex);
+        errno = ENODEV;
+        return -1;
+    }
+    handle->embedded_timeout_generation++;
+    if (handle->embedded_timeout_generation == 0) {
+        handle->embedded_timeout_generation = 1;
+    }
+    handle->embedded_timeout_armed = timeout_ms >= 0;
+    if (handle->embedded_timeout_armed) {
+        handle->embedded_timeout_deadline = deadline;
+    }
+    pthread_cond_broadcast(&handle->output_cond);
+    pthread_mutex_unlock(&handle->mutex);
+    return 0;
+}
+
+int oliphaunt_embedded_set_interrupt_wakeup(void *context, uint32_t kind, uintptr_t token) {
+    OliphauntHandle *handle = (OliphauntHandle *)context;
+
+    if ((kind == OLIPHAUNT_EMBEDDED_WAKE_NONE && token != 0) ||
+#ifdef _WIN32
+        (kind != OLIPHAUNT_EMBEDDED_WAKE_NONE &&
+         (kind != OLIPHAUNT_EMBEDDED_WAKE_WIN32_EVENT || token == 0))
+#else
+        (kind != OLIPHAUNT_EMBEDDED_WAKE_NONE &&
+         (kind != OLIPHAUNT_EMBEDDED_WAKE_POSIX_FD || token > INT_MAX))
+#endif
+    ) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    pthread_mutex_lock(&handle->mutex);
+    if (kind != OLIPHAUNT_EMBEDDED_WAKE_NONE &&
+        handle->interrupt_wakeup_kind != OLIPHAUNT_EMBEDDED_WAKE_NONE &&
+        (handle->interrupt_wakeup_kind != kind ||
+         handle->interrupt_wakeup_token != token)) {
+        pthread_mutex_unlock(&handle->mutex);
+        errno = EBUSY;
+        return -1;
+    }
+    handle->interrupt_wakeup_kind = kind;
+    handle->interrupt_wakeup_token = token;
+    pthread_mutex_unlock(&handle->mutex);
+    return 0;
+}
+
+int oliphaunt_wake_backend_locked(OliphauntHandle *handle) {
+    int saved_errno = errno;
+
+    if (handle->interrupt_wakeup_kind == OLIPHAUNT_EMBEDDED_WAKE_NONE) {
+        set_error(handle, "trusted embedded wakeup endpoint is not published");
+        errno = ENODEV;
+        return -1;
+    }
+#ifdef _WIN32
+    if (handle->interrupt_wakeup_kind != OLIPHAUNT_EMBEDDED_WAKE_WIN32_EVENT ||
+        !SetEvent((HANDLE)handle->interrupt_wakeup_token)) {
+        set_error(handle, "failed to signal trusted embedded Windows wakeup event");
+        errno = EIO;
+        return -1;
+    }
+#else
+    if (handle->interrupt_wakeup_kind != OLIPHAUNT_EMBEDDED_WAKE_POSIX_FD) {
+        set_error(handle, "trusted embedded wakeup endpoint has the wrong platform kind");
+        errno = EINVAL;
+        return -1;
+    }
+    char byte = 0;
+    for (;;) {
+        ssize_t rc = write((int)handle->interrupt_wakeup_token, &byte, 1);
+        if (rc == 1) {
+            break;
+        }
+        if (rc < 0 && errno == EINTR) {
+            continue;
+        }
+        if (rc < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            break;
+        }
+        char message[OLIPHAUNT_ERROR_CAPACITY];
+        snprintf(message, sizeof(message), "failed to signal trusted embedded wakeup pipe: %d", errno);
+        set_error(handle, message);
+        return -1;
+    }
+#endif
+    errno = saved_errno;
+    return 0;
+}
+
+ssize_t oliphaunt_embedded_read(void *context, void *ptr, size_t len, long timeout_ms) {
     OliphauntHandle *handle = (OliphauntHandle *)context;
     pthread_mutex_lock(&handle->mutex);
-    while (handle->input_off >= handle->input_len && !handle->closing) {
-        pthread_cond_wait(&handle->input_cond, &handle->mutex);
+    if (handle->input_off >= handle->input_len && !handle->closing) {
+        if (TrustedEmbeddedInterruptPending()) {
+            pthread_mutex_unlock(&handle->mutex);
+            errno = EINTR;
+            return -1;
+        }
+
+        const bool has_timeout = timeout_ms >= 0;
+        struct timespec deadline;
+
+        if (has_timeout) {
+            /* A spurious wake must not extend PostgreSQL's published delay. */
+            if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
+                pthread_mutex_unlock(&handle->mutex);
+                errno = EINTR;
+                return -1;
+            }
+            add_ms_to_timespec(&deadline, timeout_ms);
+        }
+
+        while (handle->input_off >= handle->input_len &&
+               !handle->closing &&
+               !TrustedEmbeddedInterruptPending()) {
+            int wait_rc = has_timeout
+                ? pthread_cond_timedwait(
+                    &handle->input_cond,
+                    &handle->mutex,
+                    &deadline)
+                : pthread_cond_wait(&handle->input_cond, &handle->mutex);
+
+            if (wait_rc == 0) {
+                /* Recheck every predicate after a real or spurious wake. */
+                continue;
+            }
+            if (wait_rc == ETIMEDOUT) {
+                if (handle->embedded_timeout_armed) {
+                    handle->embedded_timeout_notified_generation =
+                        handle->embedded_timeout_generation;
+                }
+                /* The timed-read value itself is authoritative. */
+                RequestTrustedEmbeddedTimeoutCheck();
+                (void)oliphaunt_wake_backend_locked(handle);
+            }
+            pthread_mutex_unlock(&handle->mutex);
+            errno = wait_rc == ETIMEDOUT ? EINTR : wait_rc;
+            return -1;
+        }
+
+        if (handle->input_off >= handle->input_len &&
+            !handle->closing &&
+            TrustedEmbeddedInterruptPending()) {
+            pthread_mutex_unlock(&handle->mutex);
+            errno = EINTR;
+            return -1;
+        }
     }
 
     if (handle->input_off >= handle->input_len && handle->closing) {
@@ -571,7 +888,10 @@ static int32_t oliphaunt_exec_protocol_impl(
     }
     out->data = NULL;
     out->len = 0;
-    if (validate_frontend_protocol_frames(handle, request, request_len) != 0) {
+    bool extended_pending = false;
+    size_t boundaries = 0;
+    if (validate_frontend_protocol_frames(handle, request, request_len,
+                                         true, &extended_pending, &boundaries) != 0) {
         return -1;
     }
 
@@ -605,6 +925,7 @@ static int32_t oliphaunt_exec_protocol_impl(
     handle->output_len = 0;
     handle->output_scan_off = 0;
     handle->output_ready = false;
+    handle->ready_remaining = boundaries;
     if (oliphaunt_set_input_locked(handle, request, request_len) != 0) {
         pthread_mutex_unlock(&handle->mutex);
         return -1;
@@ -718,6 +1039,7 @@ static int32_t oliphaunt_exec_simple_query_impl(
     handle->output_len = 0;
     handle->output_scan_off = 0;
     handle->output_ready = false;
+    handle->ready_remaining = 1;
     if (oliphaunt_set_simple_query_input_locked(handle, sql, sql_len) != 0) {
         pthread_mutex_unlock(&handle->mutex);
         return -1;
@@ -783,7 +1105,7 @@ int32_t oliphaunt_exec_simple_query_with_error(
 /* The caller has already validated complete frame lengths. */
 static bool request_closes_stream_input(const uint8_t *request, size_t len) {
     for (size_t off = 0; off < len; off += (size_t)read_be32(request + off + 1) + 1) {
-        if (request[off] == 'Q' || request[off] == 'S' || request[off] == 'X') {
+        if (request[off] == 'Q' || request[off] == 'F' || request[off] == 'S' || request[off] == 'X') {
             return true;
         }
     }
@@ -820,18 +1142,6 @@ int32_t oliphaunt_feed_protocol_stream(
         set_error(handle, "invalid or oversized protocol stream input");
         goto done;
     }
-    if (validate_frontend_protocol_frames(handle, request, request_len) != 0) {
-        goto done;
-    }
-    for (size_t off = 0; off < request_len;) {
-        size_t end = off + (size_t)read_be32(request + off + 1) + 1;
-        if ((request[off] == 'Q' || request[off] == 'S' || request[off] == 'X') &&
-            end != request_len) {
-            set_error(handle, "protocol stream input continues beyond its completion frame");
-            goto done;
-        }
-        off = end;
-    }
     pthread_mutex_lock(&handle->mutex);
     if (!handle->streaming || handle->stream_token != token || !handle->logical_active ||
         handle->closing || handle->backend_exited || handle->stream_failed ||
@@ -840,6 +1150,23 @@ int32_t oliphaunt_feed_protocol_stream(
     } else if (handle->input_len != 0) {
         rc = OLIPHAUNT_STREAM_INPUT_BUSY;
     } else {
+        bool extended_pending = handle->stream_extended_pending;
+        size_t boundaries = 0;
+        if (validate_frontend_protocol_frames(handle, request, request_len,
+                                             false, &extended_pending, &boundaries) != 0) {
+            pthread_mutex_unlock(&handle->mutex);
+            goto done;
+        }
+        for (size_t off = 0; off < request_len;) {
+            size_t end = off + (size_t)read_be32(request + off + 1) + 1;
+            if ((request[off] == 'Q' || request[off] == 'F' || request[off] == 'S' || request[off] == 'X') &&
+                end != request_len) {
+                set_error(handle, "protocol stream input continues beyond its completion frame");
+                pthread_mutex_unlock(&handle->mutex);
+                goto done;
+            }
+            off = end;
+        }
         bool copy_finished = false;
         if (handle->stream_copy_input) {
             for (size_t off = 0; off < request_len;) {
@@ -857,6 +1184,7 @@ int32_t oliphaunt_feed_protocol_stream(
         }
         rc = oliphaunt_set_input_locked(handle, request, request_len);
         if (rc == 0) {
+            handle->stream_extended_pending = extended_pending;
             if (handle->stream_copy_input) {
                 if (copy_finished) handle->stream_copy_input = false;
             } else {
@@ -884,7 +1212,10 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
         set_error(handle, "invalid oliphaunt_exec_protocol_raw_stream arguments");
         return -1;
     }
-    if (validate_frontend_protocol_frames(handle, request, request_len) != 0) {
+    bool extended_pending = false;
+    size_t boundaries = 0;
+    if (validate_frontend_protocol_frames(handle, request, request_len,
+                                         false, &extended_pending, &boundaries) != 0) {
         return -1;
     }
 
@@ -917,11 +1248,14 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
     }
     handle->stream_token++;
     handle->stream_input_closed = request_closes_stream_input(request, request_len);
+    handle->stream_extended_pending = extended_pending;
     handle->stream_copy_input = false;
 
     handle->output_len = 0;
     handle->output_scan_off = 0;
     handle->output_ready = false;
+    /* Incremental input promises one boundary until its final Sync is fed. */
+    handle->ready_remaining = boundaries > 0 ? boundaries : 1;
     handle->streaming = true;
     handle->stream_failed = false;
     handle->stream_queue_max_bytes = stream_queue_max_bytes();
@@ -942,6 +1276,16 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
     while (status == 0) {
         OliphauntOutputChunk *chunk = NULL;
         while ((chunk = pop_stream_chunk_locked(handle)) != NULL) {
+            if (check_embedded_timeout_deadline_locked(handle) != 0) {
+                free_stream_chunk(chunk);
+                status = -1;
+                break;
+            }
+            /*
+             * A user callback runs without the handle mutex and may block.
+             * There is deliberately no watchdog thread, so check the PG
+             * deadline immediately before and after this unbounded region.
+             */
             pthread_mutex_unlock(&handle->mutex);
             if (!callback_failed) {
                 int32_t callback_rc = callback(callback_context, chunk->data, chunk->len);
@@ -958,16 +1302,35 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
                  * COPY consumes the original Sync, so supply its recovery Sync. */
                 static const uint8_t copy_fail[] = {'f', 0, 0, 0, 5, 0,
                                                    'S', 0, 0, 0, 4};
-                size_t length = request[0] == 'Q' ? 6 : sizeof(copy_fail);
+                bool extended_copy = true;
+                size_t completed = boundaries > handle->ready_remaining
+                    ? boundaries - handle->ready_remaining : 0;
+                for (size_t off = 0; off < request_len;
+                     off += (size_t)read_be32(request + off + 1) + 1) {
+                    uint8_t tag = request[off];
+                    if (tag != 'Q' && tag != 'F' && tag != 'S') continue;
+                    if (completed == 0) {
+                        extended_copy = tag == 'S';
+                        break;
+                    }
+                    completed--;
+                }
+                size_t length = extended_copy ? sizeof(copy_fail) : 6;
                 if (oliphaunt_set_input_locked(handle, copy_fail, length) != 0) {
                     status = -1;
                     break;
                 }
                 handle->stream_copy_input = false;
             }
+            if (check_embedded_timeout_deadline_locked(handle) != 0) {
+                status = -1;
+                break;
+            }
+        }
+        if (status != 0) {
+            break;
         }
 
-        if (status != 0) break;
         if (handle->stream_failed) {
             /* Embedded writes report queue/scanner failures from PostgreSQL's
              * backend thread. Snapshot that shared error before releasing the
@@ -997,11 +1360,8 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
             break;
         }
 
-        int rc = pthread_cond_wait(&handle->output_cond, &handle->mutex);
-        if (rc != 0) {
-            char message[OLIPHAUNT_ERROR_CAPACITY];
-            snprintf(message, sizeof(message), "pthread wait failed: %d", rc);
-            set_error(handle, message);
+        int rc = wait_for_output_locked(handle, NULL);
+        if (rc < 0) {
             status = -1;
             break;
         }
@@ -1009,6 +1369,11 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
 
     OliphauntOutputChunk *chunk = NULL;
     while ((chunk = pop_stream_chunk_locked(handle)) != NULL) {
+        if (check_embedded_timeout_deadline_locked(handle) != 0) {
+            free_stream_chunk(chunk);
+            status = -1;
+            break;
+        }
         pthread_mutex_unlock(&handle->mutex);
         if (!callback_failed) {
             int32_t callback_rc = callback(callback_context, chunk->data, chunk->len);
@@ -1018,6 +1383,10 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
         }
         free_stream_chunk(chunk);
         pthread_mutex_lock(&handle->mutex);
+        if (check_embedded_timeout_deadline_locked(handle) != 0) {
+            status = -1;
+            break;
+        }
     }
 
     handle->streaming = false;

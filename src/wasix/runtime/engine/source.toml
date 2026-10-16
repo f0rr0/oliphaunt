@@ -1,0 +1,54 @@
+[wasmer]
+version = "7.5.0"
+url = "https://static.crates.io/crates/wasmer/wasmer-7.5.0.crate"
+sha256 = "ddfde3972691f1082774c71c42e21add1d1838cb6482a6921a0ba8a993e0046a"
+bytes = 235496
+
+[wasmer-wasix]
+version = "0.705.0"
+url = "https://static.crates.io/crates/wasmer-wasix/wasmer-wasix-0.705.0.crate"
+sha256 = "1d5bbce1be073ab1e40f5ed2468653832c22aecfd73e2ba763c41a5d831a4475"
+bytes = 510422
+
+[wasmer-wasix-types]
+version = "0.705.0"
+url = "https://static.crates.io/crates/wasmer-wasix-types/wasmer-wasix-types-0.705.0.crate"
+sha256 = "910259427f2e3af0f2238cf4d2d3dbf284ca471cf02965f4635de7f4b2eee66e"
+bytes = 47482
+
+[wasmer-journal]
+version = "0.705.0"
+url = "https://static.crates.io/crates/wasmer-journal/wasmer-journal-0.705.0.crate"
+sha256 = "d1ba6aab53ebc49f540787f2daf9a8865b0933de8a8d081b22a78b19259d279c"
+bytes = 73753
+
+[virtual-fs]
+version = "0.705.0"
+url = "https://static.crates.io/crates/virtual-fs/virtual-fs-0.705.0.crate"
+sha256 = "412131c1369d812684470f44c4803d7447f36676bce6c265b5d0af2f9b1e7d9a"
+bytes = 105056
+
+[wee8-windows]
+version = "11.9.7"
+v8-version = "13.6.233.17"
+url = "https://github.com/wasmerio/wee8-custom-builds/releases/download/11.9.7/v8-windows-amd64.tar.xz"
+sha256 = "2aee8b6c3e8cecae2ce0325ac01b9bcaea4bef49e8f2aac599e1729d60c17285"
+bytes = 151695100
+member = "lib/v8.lib"
+member-sha256 = "04061d2035659457dcedb2e695ab3ef50de97d3ab71579b4fe824523c47f582a"
+member-bytes = 1871746786
+
+[v8-header]
+url = "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/wasm-api/wasm.hh"
+sha256 = "18f49f653f79a9485d6bda1d650a9c29f538987b7092457e2bb95e8fa68aae76"
+bytes = 18392
+
+[v8-license]
+url = "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/LICENSE"
+sha256 = "6ab33af8774a0f396ee3aeeb761e3229057682d6f9fa7f572e390c2cb3a6e509"
+bytes = 3093
+
+[wasmer-license]
+url = "https://raw.githubusercontent.com/wasmerio/wasmer/82ff099e082da586b38af79986abbb8b677f8baf/LICENSE"
+sha256 = "76dc7d305458d07478bc62669fe53dbfd3b94b95c5e00fbb45af1f492cbd7284"
+bytes = 1097

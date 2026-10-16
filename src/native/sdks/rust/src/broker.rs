@@ -185,13 +185,30 @@ impl EngineSession for NativeBrokerSession {
     }
 
     fn backup(&mut self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        self.backup_to(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    fn backup_to(&mut self, writer: &mut dyn Write) -> Result<()> {
         self.ensure_transport()?;
         let control = self.control.as_mut().ok_or(Error::EngineStopped)?;
-        let response =
-            write_request(control, RequestFrame::Backup).and_then(|()| read_response(control));
-        match self.read_response_or_mark_failed(response)? {
-            ResponseFrame::Ok(bytes) => Ok(bytes),
-            ResponseFrame::Error(message) => Err(Error::Engine(message)),
+        let response = write_request(control, RequestFrame::BackupStream).and_then(|()| {
+            oliphaunt_broker::ipc::read_backup_response(control, writer).map_err(Into::into)
+        });
+        let (response, destination_failure) = match response {
+            Ok(response) => response,
+            Err(error) => return Err(self.mark_broker_failed(error)),
+        };
+        match (response, destination_failure) {
+            (ResponseFrame::Ok(_), None) => Ok(()),
+            (ResponseFrame::Ok(_), Some(error)) => {
+                Err(Error::Engine(format!("write backup destination: {error}")))
+            }
+            (ResponseFrame::Error(message), None) => Err(Error::Engine(message)),
+            (ResponseFrame::Error(message), Some(error)) => Err(Error::Engine(format!(
+                "{message}; write backup destination: {error}"
+            ))),
         }
     }
 
@@ -337,19 +354,6 @@ impl NativeBrokerSession {
             .transport
             .as_mut()
             .expect("native broker transport was checked above"))
-    }
-
-    fn read_response_or_mark_failed(
-        &mut self,
-        response: Result<ResponseFrame>,
-    ) -> Result<ResponseFrame> {
-        match response {
-            Ok(frame) => Ok(frame),
-            Err(error) => {
-                self.mark_broker_failed(error.clone());
-                Err(error)
-            }
-        }
     }
 
     fn mark_broker_failed(&mut self, error: Error) -> Error {
@@ -565,7 +569,7 @@ fn spawn_broker(
         command.env("OLIPHAUNT_RESOURCES_DIR", resources);
     }
     command
-        .args(broker_spawn_args(config, root, extensions, endpoint))
+        .args(broker_spawn_args(config, root, extensions, endpoint)?)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -583,13 +587,19 @@ fn broker_spawn_args(
     root: &Path,
     extensions: &[Extension],
     endpoint: &BrokerEndpoint,
-) -> Vec<OsString> {
+) -> Result<Vec<OsString>> {
     let mut args = vec![OsString::from("--root"), root.as_os_str().to_os_string()];
     args.push(OsString::from("--username"));
     args.push(OsString::from(&config.username));
     args.push(OsString::from("--database"));
     args.push(OsString::from(&config.database));
     endpoint.add_args_to(&mut args);
+    if let Some(timeout) = config.broker.handshake_timeout {
+        let millis = oliphaunt_broker::config::handshake_timeout_millis(timeout)
+            .map_err(|message| Error::InvalidConfig(message.to_owned()))?;
+        args.push(OsString::from("--handshake-timeout-ms"));
+        args.push(OsString::from(millis.to_string()));
+    }
     if let Some(data) = &config.icu_data {
         args.push(OsString::from("--icu-data-directory"));
         args.push(data.directory.as_os_str().to_os_string());
@@ -604,7 +614,7 @@ fn broker_spawn_args(
         args.push(OsString::from("--startup-guc"));
         args.push(OsString::from(format!("{}={}", guc.name, guc.value)));
     }
-    args
+    Ok(args)
 }
 
 fn authenticate_broker(transport: &mut LocalSocket, auth_token: &BrokerAuthToken) -> Result<()> {
@@ -1168,6 +1178,7 @@ mod tests {
         config.mode = EngineMode::Broker;
         config.username = "app_user".to_owned();
         config.database = "app_db".to_owned();
+        config.broker.handshake_timeout = Some(Duration::from_micros(12_001));
         config.extensions = vec![Extension::PG_TEXTSEARCH, Extension::PG_TEXTSEARCH];
         let extensions = config.resolved_extensions().unwrap();
         let endpoint = BrokerEndpoint::Tcp {
@@ -1179,7 +1190,8 @@ mod tests {
             &PathBuf::from("/tmp/oliphaunt-broker-preload-root"),
             &extensions,
             &endpoint,
-        );
+        )
+        .unwrap();
         let args = args
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -1187,6 +1199,7 @@ mod tests {
 
         assert_arg_pair(&args, "--username", "app_user");
         assert_arg_pair(&args, "--database", "app_db");
+        assert_arg_pair(&args, "--handshake-timeout-ms", "13");
         assert_arg_pair(&args, "--extension", "pg_textsearch");
         assert_eq!(
             args.windows(2)

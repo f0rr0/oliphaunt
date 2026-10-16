@@ -1,0 +1,3 @@
+# Repository-relative text inputs, in hash order; then each patch from series.
+src/wasix/runtime/postgres/series
+src/wasix/runtime/assets/build/wasix_shim/oliphaunt_wasix_protocol_contract.generated.h

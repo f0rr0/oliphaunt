@@ -51,11 +51,23 @@ export type PsqlOptions = Readonly<{
   script?: string;
 }>;
 
+export type ToolStreamOptions = Readonly<{
+  stderr?: WritableStream<Uint8Array>;
+  signal?: AbortSignal;
+}>;
+
+export type PostgresToolSummary = Readonly<{
+  stdoutBytes: number;
+  stderr: string;
+  stderrTruncated: boolean;
+}>;
+
 export class PostgresToolError extends Error {
   readonly tool: 'pg_dump' | 'psql';
   readonly exitCode: number | null;
   readonly stdout: string;
   readonly stderr: string;
+  readonly stderrTruncated: boolean;
 
   constructor(
     tool: 'pg_dump' | 'psql',
@@ -64,6 +76,7 @@ export class PostgresToolError extends Error {
       exitCode?: number | null;
       stdout?: string;
       stderr?: string;
+      stderrTruncated?: boolean;
       cause?: unknown;
     } = {},
   ) {
@@ -73,6 +86,7 @@ export class PostgresToolError extends Error {
     this.exitCode = options.exitCode ?? null;
     this.stdout = options.stdout ?? '';
     this.stderr = options.stderr ?? '';
+    this.stderrTruncated = options.stderrTruncated ?? false;
   }
 }
 
@@ -81,14 +95,19 @@ export async function pgDump(
   database: OliphauntDatabase,
   options: PgDumpOptions = {},
 ): Promise<string> {
-  const args = validatedArguments(
-    'pg_dump',
-    options.args,
-    pgDumpManagedArgument,
-    PG_DUMP_SHORT_OPTIONS,
-    PG_DUMP_VALUE_OPTIONS,
-  );
-  return runTool('pg_dump', database, args);
+  return runTool('pg_dump', database, () => pgDumpInvocation(options));
+}
+
+function pgDumpInvocation(options: PgDumpOptions) {
+  return {
+    args: validatedArguments(
+      'pg_dump',
+      options.args,
+      pgDumpManagedArgument,
+      PG_DUMP_SHORT_OPTIONS,
+      PG_DUMP_VALUE_OPTIONS,
+    ),
+  };
 }
 
 /**
@@ -99,6 +118,10 @@ export async function psql(
   database: OliphauntDatabase,
   options: PsqlOptions = {},
 ): Promise<string> {
+  return runTool('psql', database, () => psqlInvocation(options));
+}
+
+function psqlInvocation(options: PsqlOptions) {
   const args = validatedArguments(
     'psql',
     options.args,
@@ -114,47 +137,181 @@ export async function psql(
   if (command === undefined && script === undefined && args.length === 0) {
     throw new TypeError('psql requires non-interactive input through command, script, or args');
   }
-  return runTool(
-    'psql',
-    database,
-    args,
-    script === undefined ? undefined : new TextEncoder().encode(script),
-    command,
+  return { args, script, command };
+}
+
+/** Publish stdout create-only to a host path, including synchronous `/direct` databases. */
+export async function pgDumpToFile(
+  database: OliphauntDatabase,
+  destination: string,
+  options: PgDumpOptions = {},
+): Promise<PostgresToolSummary> {
+  return runToolToFile('pg_dump', database, destination, () => pgDumpInvocation(options));
+}
+
+/** Publish stdout only after psql and database-side cleanup succeed. */
+export async function psqlToFile(
+  database: OliphauntDatabase,
+  destination: string,
+  options: PsqlOptions = {},
+): Promise<PostgresToolSummary> {
+  return runToolToFile('psql', database, destination, () => psqlInvocation(options));
+}
+
+/** Await exact owned chunks without closing caller-owned destination streams. */
+export async function pgDumpToStream(
+  database: OliphauntDatabase,
+  destination: WritableStream<Uint8Array>,
+  options: PgDumpOptions & ToolStreamOptions = {},
+): Promise<PostgresToolSummary> {
+  return runToolToStream('pg_dump', database, destination, options, () =>
+    pgDumpInvocation(options),
   );
+}
+
+/** Keep database ownership until output drains and tool/session cleanup completes. */
+export async function psqlToStream(
+  database: OliphauntDatabase,
+  destination: WritableStream<Uint8Array>,
+  options: PsqlOptions & ToolStreamOptions = {},
+): Promise<PostgresToolSummary> {
+  return runToolToStream('psql', database, destination, options, () => psqlInvocation(options));
+}
+
+type ToolInvocation = {
+  args: string[];
+  script?: string;
+  command?: string;
+  outputFile?: string;
+  output?: { stdout(chunk: Uint8Array): Promise<void>; stderr?(chunk: Uint8Array): Promise<void> };
+};
+
+async function runToolToStream(
+  name: 'pg_dump' | 'psql',
+  database: OliphauntDatabase,
+  destination: WritableStream<Uint8Array>,
+  options: ToolStreamOptions,
+  prepare: () => ToolInvocation,
+): Promise<PostgresToolSummary> {
+  let stdout: WritableStreamDefaultWriter<Uint8Array> | undefined;
+  let stderr: WritableStreamDefaultWriter<Uint8Array> | undefined;
+  let failure: { cause: unknown } | undefined;
+  const outputFailure = new AbortController();
+  const cancel = () => {
+    failure ??= { cause: options.signal!.reason };
+    outputFailure.abort(failure.cause);
+  };
+  const write = (writer: WritableStreamDefaultWriter<Uint8Array>) => async (chunk: Uint8Array) => {
+    if (failure !== undefined) throw failure.cause;
+    try {
+      await abortableWrite(writer.write(chunk), outputFailure.signal);
+    } catch (cause) {
+      failure ??= { cause };
+      outputFailure.abort(failure.cause);
+      throw failure.cause;
+    }
+  };
+  try {
+    const result = await runToolProcess(name, database, () => {
+      const invocation = prepare();
+      if (options.signal?.aborted) throw options.signal.reason;
+      stdout = destination.getWriter();
+      stderr = options.stderr?.getWriter();
+      options.signal?.addEventListener('abort', cancel, { once: true });
+      return {
+        ...invocation,
+        output: {
+          stdout: write(stdout),
+          ...(stderr === undefined ? {} : { stderr: write(stderr) }),
+        },
+      };
+    });
+    if (failure !== undefined) {
+      throw new PostgresToolError(name, `${name} output destination failed`, {
+        exitCode: result.exitCode,
+        stderr: decodeDiagnostics(result.stderr),
+        stderrTruncated: result.stderrTruncated,
+        cause: failure.cause,
+      });
+    }
+    return outputSummary(name, result);
+  } catch (error) {
+    if (failure !== undefined && error instanceof PostgresToolError) {
+      throw new PostgresToolError(name, error.message, {
+        exitCode: error.exitCode,
+        stdout: error.stdout,
+        stderr: error.stderr,
+        stderrTruncated: error.stderrTruncated,
+        cause: failure.cause,
+      });
+    }
+    throw error;
+  } finally {
+    options.signal?.removeEventListener('abort', cancel);
+    stderr?.releaseLock();
+    stdout?.releaseLock();
+  }
+}
+
+function abortableWrite(write: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    void write.then(
+      () => {
+        signal.removeEventListener('abort', abort);
+        resolve();
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', abort);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function runToolToFile(
+  name: 'pg_dump' | 'psql',
+  database: OliphauntDatabase,
+  destination: string,
+  prepare: () => ToolInvocation,
+): Promise<PostgresToolSummary> {
+  const result = await runToolProcess(name, database, () => {
+    if (typeof destination !== 'string' || destination.length === 0 || destination.includes('\0')) {
+      throw new TypeError('tool file destination must be a nonempty host path without NUL bytes');
+    }
+    return { ...prepare(), outputFile: destination };
+  });
+  return outputSummary(name, result);
+}
+
+function outputSummary(
+  name: 'pg_dump' | 'psql',
+  result: Awaited<ReturnType<typeof runWasixToolProcess>>,
+): PostgresToolSummary {
+  if (
+    !Number.isSafeInteger(result.stdoutBytes) ||
+    result.stdoutBytes! < 0 ||
+    typeof result.stderrTruncated !== 'boolean'
+  ) {
+    throw new PostgresToolError(name, `${name} returned an invalid destination output summary`, {
+      exitCode: result.exitCode,
+    });
+  }
+  return {
+    stdoutBytes: result.stdoutBytes!,
+    stderr: decodeDiagnostics(result.stderr),
+    stderrTruncated: result.stderrTruncated,
+  };
 }
 
 async function runTool(
   name: 'pg_dump' | 'psql',
   database: OliphauntDatabase,
-  args: string[],
-  stdin?: Uint8Array,
-  command?: string,
+  prepare: () => { args: string[]; script?: string; command?: string },
 ): Promise<string> {
-  const descriptor = name === 'pg_dump' ? tools.pgDump : tools.psql;
-  let result: Awaited<ReturnType<typeof runWasixToolProcess>>;
-  try {
-    result = await runWasixToolProcess(database, {
-      runtimeVersion: tools.runtimeVersion,
-      tool: descriptor,
-      args,
-      stdin,
-      command,
-    });
-  } catch (cause) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
-    throw new PostgresToolError(name, `could not run ${name}: ${detail}`, { cause });
-  }
-  if (result.exitCode !== 0) {
-    // Diagnostics are best-effort text just like native process output. Keep
-    // the structured failure even if either stream contains invalid UTF-8.
-    const stdout = decodeDiagnostics(result.stdout);
-    const stderr = decodeDiagnostics(result.stderr);
-    throw new PostgresToolError(
-      name,
-      `${name} exited with status ${result.exitCode}${stderr.trim() === '' ? '' : `: ${stderr.trim()}`}`,
-      { exitCode: result.exitCode, stdout, stderr },
-    );
-  }
+  const result = await runToolProcess(name, database, prepare);
   try {
     return decode(result.stdout, `${name} output`);
   } catch (cause) {
@@ -165,6 +322,62 @@ async function runTool(
       cause,
     });
   }
+}
+
+async function runToolProcess(
+  name: 'pg_dump' | 'psql',
+  database: OliphauntDatabase,
+  prepare: () => ToolInvocation,
+) {
+  const descriptor = name === 'pg_dump' ? tools.pgDump : tools.psql;
+  let result: Awaited<ReturnType<typeof runWasixToolProcess>>;
+  let preparationFailure: { error: unknown } | undefined;
+  try {
+    result = await runWasixToolProcess(database, () => {
+      try {
+        return { runtimeVersion: tools.runtimeVersion, tool: descriptor, ...prepare() };
+      } catch (error) {
+        preparationFailure = { error };
+        throw error;
+      }
+    });
+  } catch (cause) {
+    if (preparationFailure?.error === cause && preparationFailure !== undefined) throw cause;
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    if (
+      typeof cause === 'object' &&
+      cause !== null &&
+      'oliphauntWasixError' in cause &&
+      cause.oliphauntWasixError === 'tool' &&
+      'exitCode' in cause &&
+      (cause.exitCode === null || Number.isSafeInteger(cause.exitCode)) &&
+      'stdout' in cause &&
+      cause.stdout instanceof Uint8Array &&
+      'stderr' in cause &&
+      cause.stderr instanceof Uint8Array
+    ) {
+      throw new PostgresToolError(name, detail, {
+        exitCode: cause.exitCode as number | null,
+        stdout: decodeDiagnostics(cause.stdout),
+        stderr: decodeDiagnostics(cause.stderr),
+        stderrTruncated: 'stderrTruncated' in cause && cause.stderrTruncated === true,
+        cause,
+      });
+    }
+    throw new PostgresToolError(name, `could not run ${name}: ${detail}`, { cause });
+  }
+  if (result.exitCode !== 0) {
+    // Diagnostics are best-effort text just like native process output. Keep
+    // the structured failure even if either stream contains invalid UTF-8.
+    const stdout = decodeDiagnostics(result.stdout);
+    const stderr = decodeDiagnostics(result.stderr);
+    throw new PostgresToolError(
+      name,
+      `${name} exited with status ${result.exitCode}${stderr.trim() === '' ? '' : `: ${stderr.trim()}`}`,
+      { exitCode: result.exitCode, stdout, stderr, stderrTruncated: result.stderrTruncated },
+    );
+  }
+  return result;
 }
 
 function validatedInput(value: string | undefined, label: string): string | undefined {

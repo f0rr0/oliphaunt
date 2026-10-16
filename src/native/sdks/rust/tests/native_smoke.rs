@@ -404,6 +404,7 @@ fn direct_query_transaction_backup_restore_and_process_ownership_when_available(
                 ),
             ),
             Some("verify") => verify_direct_database(&root),
+            Some("checkpoint") => verify_direct_checkpoint_pressure(&root),
             _ => panic!("direct smoke child action is invalid"),
         }
         .unwrap();
@@ -413,14 +414,17 @@ fn direct_query_transaction_backup_restore_and_process_ownership_when_available(
     let root = unique_root("native-smoke");
     let restored = unique_root("native-smoke-restored");
     let backup = unique_root("native-smoke-backup.tar");
+    let checkpoint_root = unique_root("native-smoke-checkpoint");
     let result = std::panic::catch_unwind(|| {
         run_direct_child("seed", &root, Some(&backup));
         DirectOliphaunt::restore(&restored, std::fs::read(&backup).unwrap()).unwrap();
         run_direct_child("verify", &restored, None);
+        run_direct_child("checkpoint", &checkpoint_root, None);
     });
     let _ = std::fs::remove_dir_all(root);
     let _ = std::fs::remove_dir_all(restored);
     let _ = std::fs::remove_file(backup);
+    let _ = std::fs::remove_dir_all(checkpoint_root);
     if let Err(payload) = result {
         std::panic::resume_unwind(payload);
     }
@@ -443,16 +447,42 @@ fn run_direct_child(action: &str, root: &Path, backup: Option<&Path>) {
         .expect("failed to spawn direct smoke child");
     assert!(
         output.status.success(),
-        "direct smoke child {action} failed\nstdout:\n{}\nstderr:\n{}",
+        "direct smoke child {action} failed with {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn verify_direct_checkpoint_pressure(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut database = DirectOliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.to_path_buf()))
+        .startup_guc("max_wal_size", "64MB")
+        .startup_guc("min_wal_size", "32MB")
+        .open()?;
+    for _ in 0..2 {
+        let before =
+            database.query("SELECT checkpoint_lsn::text AS lsn FROM pg_control_checkpoint()")?;
+        database.execute(&support::fixture_text("postgres/checkpoint-pressure.sql"))?;
+        let after =
+            database.query("SELECT checkpoint_lsn::text AS lsn FROM pg_control_checkpoint()")?;
+        assert_ne!(before.get_text(0, "lsn")?, after.get_text(0, "lsn")?);
+        database.execute("DELETE FROM checkpoint_pressure")?;
+        database.execute("VACUUM (FREEZE, ANALYZE) checkpoint_pressure")?;
+    }
+    let wal = database.query(
+        "SELECT count(*)::text AS segments FROM pg_ls_waldir() WHERE name ~ '^[0-9A-F]{24}$'",
+    )?;
+    assert!(wal.get_text(0, "segments")?.unwrap().parse::<usize>()? <= 12);
+    database.close()?;
+    Ok(())
 }
 
 fn seed_direct_database(root: &Path, backup: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut database = DirectOliphaunt::builder()
         .storage(DatabaseStorage::Directory(root.to_path_buf()))
         .open()?;
+    verify_protocol_batches(&mut database)?;
     database.execute("CREATE TABLE items(id integer PRIMARY KEY, value text)")?;
     let multiple = database
         .execute("CREATE TABLE must_not_exist(id integer); INSERT INTO must_not_exist VALUES (1)")
@@ -500,6 +530,7 @@ fn seed_direct_database(root: &Path, backup: &Path) -> Result<(), Box<dyn std::e
         "{duplicate}"
     );
 
+    verify_backup_streaming(&mut database, root)?;
     std::fs::write(backup, database.backup()?)?;
     Ok(database.close()?)
 }
@@ -513,6 +544,118 @@ fn verify_direct_database(root: &Path) -> Result<(), Box<dyn std::error::Error>>
     assert_eq!(result.get_text(0, "value")?, Some("one"));
     assert_eq!(result.get_text(1, "value")?, Some("two"));
     Ok(database.close()?)
+}
+
+#[test]
+fn broker_preserves_configured_identity_and_session_policy_when_available() {
+    if std::env::var_os("LIBOLIPHAUNT_PATH").is_none()
+        || std::env::var_os("OLIPHAUNT_BROKER").is_none()
+    {
+        eprintln!("skipping installed broker identity smoke: native library/broker is unset");
+        return;
+    }
+    let root = unique_root("native-broker-identity");
+    let result = std::panic::catch_unwind(|| {
+        let mut bootstrap = DirectOliphaunt::builder()
+            .broker()
+            .storage(DatabaseStorage::Directory(root.clone()))
+            .open()
+            .unwrap();
+        bootstrap
+            .execute("CREATE DATABASE broker_identity")
+            .unwrap();
+        bootstrap.close().unwrap();
+        let open = |username: &str| {
+            DirectOliphaunt::builder()
+                .broker()
+                .storage(DatabaseStorage::Directory(root.clone()))
+                .username(username)
+                .database("broker_identity")
+                .open()
+        };
+        let mut admin = open("postgres").unwrap();
+        verify_protocol_batches(&mut admin).unwrap();
+        verify_backup_streaming(&mut admin, &root).unwrap();
+        for sql in [
+            "CREATE ROLE broker_reader LOGIN",
+            "CREATE ROLE broker_no_login NOLOGIN",
+            "ALTER ROLE broker_reader SET application_name = 'configured-broker-role'",
+            "ALTER DATABASE broker_identity SET default_statistics_target = 137",
+            "CREATE TABLE broker_login_events(who name)",
+            "CREATE FUNCTION broker_login_event() RETURNS event_trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$ BEGIN INSERT INTO public.broker_login_events VALUES (session_user); END $$",
+            "CREATE EVENT TRIGGER broker_login ON login EXECUTE FUNCTION broker_login_event()",
+            "GRANT SELECT ON broker_login_events TO broker_reader",
+        ] {
+            admin.execute(sql).unwrap();
+        }
+        admin.close().unwrap();
+
+        for expected_logins in ["1", "2"] {
+            let mut database = open("broker_reader").unwrap();
+            let row = database.query("SELECT current_user::text AS current_role, session_user::text AS session_role, current_database() AS database, (system_user IS NULL)::text AS no_auth_identity, current_setting('application_name') AS application_name, current_setting('default_statistics_target') AS statistics_target, (SELECT count(*)::text FROM broker_login_events WHERE who = session_user) AS logins").unwrap();
+            assert_eq!(
+                row.get_text(0, "current_role").unwrap(),
+                Some("broker_reader")
+            );
+            assert_eq!(
+                row.get_text(0, "session_role").unwrap(),
+                Some("broker_reader")
+            );
+            assert_eq!(row.get_text(0, "no_auth_identity").unwrap(), Some("true"));
+            assert_eq!(
+                row.get_text(0, "database").unwrap(),
+                Some("broker_identity")
+            );
+            assert_eq!(row.get_text(0, "statistics_target").unwrap(), Some("137"));
+            assert_eq!(
+                row.get_text(0, "application_name").unwrap(),
+                Some("configured-broker-role")
+            );
+            assert_eq!(row.get_text(0, "logins").unwrap(), Some(expected_logins));
+            database
+                .execute("SET ROLE postgres")
+                .expect_err("configured role must not acquire superuser rights");
+            database
+                .execute("SET application_name = 'session-local-change'")
+                .unwrap();
+            database.execute("DISCARD ALL").unwrap();
+            assert_eq!(
+                database
+                    .query("SELECT current_setting('application_name') AS value")
+                    .unwrap()
+                    .get_text(0, "value")
+                    .unwrap(),
+                Some("configured-broker-role")
+            );
+            database.close().unwrap();
+        }
+
+        for username in ["broker_no_login", "broker_missing_role"] {
+            assert!(
+                open(username).is_err(),
+                "broker accepted invalid startup role {username}"
+            );
+        }
+        let mut opted_out = DirectOliphaunt::builder()
+            .broker()
+            .storage(DatabaseStorage::Directory(root.clone()))
+            .startup_guc("fsync", "off")
+            .open()
+            .unwrap();
+        assert_eq!(
+            opted_out
+                .query("SELECT current_setting('fsync') AS value")
+                .unwrap()
+                .get_text(0, "value")
+                .unwrap(),
+            Some("off")
+        );
+        opted_out.close().unwrap();
+    });
+    let _ = std::fs::remove_dir_all(root);
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
 }
 
 #[test]
@@ -541,6 +684,105 @@ fn descriptorless_nonempty_root_is_rejected_without_mutation_when_available() {
     assert!(!root.join("pgdata").exists());
     assert!(!root.join(".oliphaunt.json").exists());
     let _ = std::fs::remove_dir_all(root);
+}
+
+fn verify_backup_streaming(
+    database: &mut DirectOliphaunt,
+    root: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    struct Counter {
+        bytes: usize,
+        largest: usize,
+    }
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.bytes += bytes.len();
+            self.largest = self.largest.max(bytes.len());
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let payload = root.join("pgdata/archive-stream-probe");
+    std::fs::File::create(&payload)?.set_len(129 * 1024 * 1024)?;
+    let mut counter = Counter {
+        bytes: 0,
+        largest: 0,
+    };
+    database.backup_to(&mut counter)?;
+    assert!(counter.bytes > 128 * 1024 * 1024);
+    assert!(counter.largest <= 64 * 1024);
+    std::fs::remove_file(payload)?;
+    let mut full = [];
+    database
+        .backup_to(&mut std::io::Cursor::new(full.as_mut_slice()))
+        .expect_err("destination failure must not report a successful archive");
+    assert_eq!(
+        database
+            .query("SELECT 45 AS after_backup")?
+            .get_text(0, "after_backup")?,
+        Some("45")
+    );
+    Ok(())
+}
+
+fn verify_protocol_batches(
+    database: &mut DirectOliphaunt,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for extended in [false, true] {
+        let encode = |sql: &str| {
+            if extended {
+                oliphaunt_query::extended_statement(sql, &[], 0)
+            } else {
+                oliphaunt_query::simple_query(sql)
+            }
+        };
+        let mut request = encode("SELECT 1 / 0")?;
+        request.extend(encode("SELECT 42 AS pipeline_value")?);
+        for streaming in [false, true] {
+            let response = if streaming {
+                let mut bytes = Vec::new();
+                database.exec_protocol_raw_stream(&request, |chunk: &[u8]| {
+                    bytes.extend_from_slice(chunk);
+                })?;
+                bytes
+            } else {
+                database.exec_protocol_raw(&request)?
+            };
+            let mut remaining = response.as_slice();
+            let mut ready = 0;
+            let mut errors = 0;
+            while !remaining.is_empty() {
+                let (tag, body, rest) = oliphaunt_query::read_backend_message(remaining)?;
+                if tag == b'Z' {
+                    assert_eq!(body, b"I");
+                    ready += 1;
+                } else if tag == b'E' {
+                    errors += 1;
+                }
+                remaining = rest;
+            }
+            assert_eq!(ready, 2);
+            assert_eq!(errors, 1);
+            assert_eq!(
+                database.query("SELECT 43 AS value")?.get_text(0, "value")?,
+                Some("43")
+            );
+        }
+        let error = database
+            .exec_protocol_raw_stream(&request, |_| Err::<(), _>("sink failed"))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            oliphaunt::RawStreamError::Callback("sink failed")
+        ));
+        assert_eq!(
+            database.query("SELECT 44 AS value")?.get_text(0, "value")?,
+            Some("44")
+        );
+    }
+    Ok(())
 }
 
 fn simple_query_request(sql: &str) -> Vec<u8> {

@@ -46,6 +46,7 @@ try {
           types: ['node', 'bun'],
           paths: {
             [packageName]: [path.join(sdkRoot, 'src/index.ts')],
+            '@oliphaunt/ts-query/internal/*': [path.join(repoRoot, 'src/query/ts/src/*.ts')],
             '@oliphaunt/ts-query/*': [path.join(repoRoot, 'src/query/ts/src/*.ts')],
             '@oliphaunt/liboliphaunt-wasix': [
               path.join(repoRoot, 'src/wasix/sdks/ts/src/runtime-carrier-shim.d.ts'),

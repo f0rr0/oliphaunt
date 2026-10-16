@@ -19,6 +19,7 @@ use crate::storage::DatabaseStorage;
 /// Builder for opening native Oliphaunt databases on a dedicated SDK owner thread.
 #[derive(Debug, Clone)]
 pub struct AsyncOliphauntBuilder {
+    admission: Option<crate::AdmissionLimits>,
     mode: EngineMode,
     broker: NativeBrokerConfig,
     common: CommonOpenOptions,
@@ -95,6 +96,7 @@ impl CommonOpenOptions {
 impl Default for AsyncOliphauntBuilder {
     fn default() -> Self {
         Self {
+            admission: None,
             mode: EngineMode::Direct,
             broker: NativeBrokerConfig::default(),
             common: CommonOpenOptions::default(),
@@ -103,6 +105,13 @@ impl Default for AsyncOliphauntBuilder {
 }
 
 impl AsyncOliphauntBuilder {
+    /// Bound pending preparation, queued and executing work; clones and transactions share it.
+    /// Omitting this preserves the legacy queued-only admission policy.
+    pub fn admission(mut self, limits: crate::AdmissionLimits) -> Self {
+        self.admission = Some(limits);
+        self
+    }
+
     /// Select an explicit cluster seed for a new database.
     pub fn seed(mut self, seed: liboliphaunt_native_bindings::NativeClusterSeed) -> Self {
         self.common.seed = Some(seed);
@@ -139,6 +148,15 @@ impl AsyncOliphauntBuilder {
     /// Use an explicit broker helper executable with `broker().open()`.
     pub fn broker_executable(mut self, path: impl Into<PathBuf>) -> Self {
         self.broker.executable = Some(path.into());
+        self
+    }
+
+    /// Set the helper's deadline for each login handshake. Defaults to five seconds.
+    /// Rounded up to whole milliseconds; valid range is 1..=2147483647 milliseconds.
+    /// This requires broker mode and does not limit queries or backups.
+    #[cfg(feature = "desktop")]
+    pub fn broker_handshake_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.broker.handshake_timeout = Some(timeout);
         self
     }
 
@@ -190,6 +208,11 @@ impl AsyncOliphauntBuilder {
     }
 
     pub(crate) fn build_config(&self) -> Result<OpenConfig> {
+        if let Some(limits) = self.admission {
+            limits
+                .validate()
+                .map_err(|message| Error::InvalidConfig(message.to_owned()))?;
+        }
         if self.mode == EngineMode::Direct && self.broker.executable.is_some() {
             return Err(Error::InvalidConfig(
                 "broker_executable(...) requires broker().open()".to_owned(),
@@ -205,10 +228,11 @@ impl AsyncOliphauntBuilder {
     /// Open a direct or broker database on a dedicated owner thread.
     pub async fn open(self) -> Result<AsyncOliphaunt> {
         let config = self.build_config()?;
-        let (executor, ()) = EngineExecutor::open("oliphaunt-owner", move || {
-            open_embedded_session(config).map(|session| (session, ()))
-        })
-        .await?;
+        let (executor, ()) =
+            EngineExecutor::open_with_admission("oliphaunt-owner", self.admission, move || {
+                open_embedded_session(config).map(|session| (session, ()))
+            })
+            .await?;
         Ok(AsyncOliphaunt::from_executor(executor))
     }
 }
@@ -347,7 +371,52 @@ pub(crate) fn start_server_session(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rejects_invalid_admission_before_owner_construction() {
+        for limits in [
+            crate::AdmissionLimits::new(0, 1),
+            crate::AdmissionLimits::new(1, 0),
+        ] {
+            assert!(
+                super::AsyncOliphauntBuilder::new()
+                    .admission(limits)
+                    .build_config()
+                    .is_err()
+            );
+        }
+    }
+
     use super::*;
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn handshake_timeout_is_validated_before_owner_construction() {
+        use std::time::Duration;
+        for timeout in [Duration::ZERO, Duration::from_millis(i32::MAX as u64 + 1)] {
+            assert!(
+                AsyncOliphauntBuilder::new()
+                    .broker()
+                    .broker_handshake_timeout(timeout)
+                    .build_config()
+                    .is_err()
+            );
+        }
+        assert!(
+            AsyncOliphauntBuilder::new()
+                .broker_handshake_timeout(Duration::from_secs(1))
+                .build_config()
+                .is_err()
+        );
+        let config = AsyncOliphauntBuilder::new()
+            .broker()
+            .broker_handshake_timeout(Duration::from_secs(2))
+            .build_config()
+            .unwrap();
+        assert_eq!(
+            config.broker.handshake_timeout,
+            Some(Duration::from_secs(2))
+        );
+    }
 
     #[test]
     fn direct_open_rejects_a_broker_executable_instead_of_ignoring_it() {

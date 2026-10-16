@@ -12,7 +12,7 @@ use cap_std::fs::{Dir as CapDir, File as CapFile, OpenOptions as CapOpenOptions}
 use tar::{Archive, Builder, EntryType, Header};
 use wasmer_wasix::virtual_fs::FileSystem as VirtualFileSystem;
 
-use super::base::DirectoryLock;
+use super::base::{DirectoryLock, sync_publication_tree};
 use super::database_root_descriptor::{
     PGDATA_DIRECTORY, PHYSICAL_FORMAT, POSTGRES_MAJOR, write_database_root_descriptor,
 };
@@ -557,6 +557,14 @@ pub(crate) fn restore_physical_archive(destination: &Path, bytes: &[u8]) -> Resu
             } else {
                 StorageErrorPhase::RestoreStaging
             },
+        )
+    })?;
+    sync_publication_tree(&pgdata).map_err(|error| {
+        restore_error(
+            error,
+            StorageErrorCode::Unavailable,
+            StorageCommitState::Unchanged,
+            StorageErrorPhase::RestoreStaging,
         )
     })?;
     write_database_root_descriptor(staging.path()).map_err(|error| {

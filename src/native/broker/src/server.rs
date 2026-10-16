@@ -8,7 +8,7 @@ use std::sync::{
     mpsc,
 };
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use liboliphaunt_native_bindings::{
     DatabaseStorage, NativeConfig, NativeProtocolInput, NativeSession, PostgresStartupGuc,
@@ -19,7 +19,12 @@ use oliphaunt_query::{ExpectedProtocol, parse_query_response, wire};
 
 use crate::{BrokerArgs, BrokerListener};
 
-pub(super) enum Socket {
+pub(super) struct Socket {
+    inner: SocketStream,
+    deadline: Option<Instant>,
+}
+
+enum SocketStream {
     Tcp(TcpStream),
     #[cfg(unix)]
     Unix(UnixStream),
@@ -27,21 +32,40 @@ pub(super) enum Socket {
 
 macro_rules! socket_call {
     ($self:expr, $method:ident $(, $arg:expr)*) => {
-        match $self {
-            Socket::Tcp(stream) => stream.$method($($arg),*),
+        match &$self.inner {
+            SocketStream::Tcp(stream) => stream.$method($($arg),*),
             #[cfg(unix)]
-            Socket::Unix(stream) => stream.$method($($arg),*),
+            SocketStream::Unix(stream) => stream.$method($($arg),*),
         }
     };
 }
 
 impl Socket {
-    fn clone_socket(&self) -> io::Result<Self> {
-        match self {
-            Self::Tcp(stream) => stream.try_clone().map(Self::Tcp),
-            #[cfg(unix)]
-            Self::Unix(stream) => stream.try_clone().map(Self::Unix),
+    pub(super) fn tcp(stream: TcpStream) -> Self {
+        Self {
+            inner: SocketStream::Tcp(stream),
+            deadline: None,
         }
+    }
+
+    #[cfg(unix)]
+    pub(super) fn unix(stream: UnixStream) -> Self {
+        Self {
+            inner: SocketStream::Unix(stream),
+            deadline: None,
+        }
+    }
+
+    fn clone_socket(&self) -> io::Result<Self> {
+        let inner = match &self.inner {
+            SocketStream::Tcp(stream) => SocketStream::Tcp(stream.try_clone()?),
+            #[cfg(unix)]
+            SocketStream::Unix(stream) => SocketStream::Unix(stream.try_clone()?),
+        };
+        Ok(Self {
+            inner,
+            deadline: self.deadline,
+        })
     }
     fn shutdown(&self) {
         let _ = socket_call!(self, shutdown, Shutdown::Both);
@@ -52,27 +76,70 @@ impl Socket {
     fn write_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
         socket_call!(self, set_write_timeout, timeout)
     }
+
+    fn set_deadline(&mut self, deadline: Option<Instant>) -> io::Result<()> {
+        if deadline.is_none() {
+            self.read_timeout(None)?;
+            self.write_timeout(None)?;
+        }
+        self.deadline = deadline;
+        Ok(())
+    }
+
+    fn remaining(deadline: Instant) -> io::Result<Duration> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "broker handshake deadline exceeded",
+            ))
+        } else {
+            Ok(remaining)
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+impl std::os::fd::AsRawFd for Socket {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        socket_call!(self, as_raw_fd)
+    }
 }
 impl Read for Socket {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        socket_call!(self, read, bytes)
+        if let Some(deadline) = self.deadline {
+            self.read_timeout(Some(Self::remaining(deadline)?))?;
+        }
+        match &mut self.inner {
+            SocketStream::Tcp(stream) => stream.read(bytes),
+            #[cfg(unix)]
+            SocketStream::Unix(stream) => stream.read(bytes),
+        }
     }
 }
 impl Write for Socket {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        socket_call!(self, write, bytes)
+        if let Some(deadline) = self.deadline {
+            self.write_timeout(Some(Self::remaining(deadline)?))?;
+        }
+        match &mut self.inner {
+            SocketStream::Tcp(stream) => stream.write(bytes),
+            #[cfg(unix)]
+            SocketStream::Unix(stream) => stream.write(bytes),
+        }
     }
     fn flush(&mut self) -> io::Result<()> {
-        socket_call!(self, flush)
+        Ok(())
     }
 }
 
 type Reply<T> = mpsc::Sender<io::Result<T>>;
 enum Command {
-    Startup(String, Reply<Vec<u8>>),
+    Startup(Option<String>, Reply<Vec<u8>>),
     Execute(Vec<u8>, Socket, Reply<()>),
     Reset(Reply<()>),
     Backup(Reply<Vec<u8>>),
+    BackupStream(Socket, Reply<()>),
     Shutdown(Reply<()>),
 }
 
@@ -150,7 +217,8 @@ pub(super) fn serve(args: BrokerArgs) -> io::Result<()> {
     while !shared.stopping.load(Ordering::Acquire) {
         for (listener, management) in [(&control, true), (&sql, false)] {
             match listener.accept() {
-                Ok(socket) => {
+                Ok(mut socket) => {
+                    socket.set_deadline(Some(Instant::now() + args.handshake_timeout))?;
                     if shared.connection_count.fetch_add(1, Ordering::AcqRel) >= 16 {
                         shared.connection_count.fetch_sub(1, Ordering::AcqRel);
                         socket.shutdown();
@@ -222,7 +290,7 @@ fn run_backend(
     for command in receiver {
         match command {
             Command::Startup(application, reply) => {
-                let _ = reply.send(startup_parameters(&mut session, &application));
+                let _ = reply.send(startup_parameters(&mut session, application.as_deref()));
             }
             Command::Execute(request, mut socket, reply) => {
                 if shared.closing.load(Ordering::Acquire) {
@@ -266,6 +334,13 @@ fn run_backend(
             Command::Backup(reply) => {
                 let _ = reply.send(session.backup().map_err(other));
             }
+            Command::BackupStream(mut socket, reply) => {
+                let _ = reply.send(
+                    session
+                        .backup_to(&mut BackupWriter(&mut socket))
+                        .map_err(other),
+                );
+            }
             Command::Shutdown(reply) => {
                 let result = session.close_terminal().map_err(other);
                 let failed = result.is_err();
@@ -281,18 +356,25 @@ fn run_backend(
     session.close_terminal().map_err(other)
 }
 
-fn startup_parameters(session: &mut NativeSession, application: &str) -> io::Result<Vec<u8>> {
-    let request = oliphaunt_query::extended_statement(
-        "SELECT set_config('application_name', $1, false)",
-        &[oliphaunt_query::Parameter::text(application)],
-        0,
-    )
-    .map_err(other)?;
-    parse_query_response(
-        &session.exec_protocol_raw(&request).map_err(other)?,
-        ExpectedProtocol::Extended,
-    )
-    .map_err(other)?;
+fn startup_parameters(
+    session: &mut NativeSession,
+    application: Option<&str>,
+) -> io::Result<Vec<u8>> {
+    // Omission preserves PostgreSQL's configured default; an explicit empty
+    // string is still a client override, just like any other supplied value.
+    if let Some(application) = application {
+        let request = oliphaunt_query::extended_statement(
+            "SELECT set_config('application_name', $1, false)",
+            &[oliphaunt_query::Parameter::text(application)],
+            0,
+        )
+        .map_err(other)?;
+        parse_query_response(
+            &session.exec_protocol_raw(&request).map_err(other)?,
+            ExpectedProtocol::Extended,
+        )
+        .map_err(other)?;
+    }
     let bytes = session.exec_simple_query("SELECT name, setting FROM pg_settings WHERE name IN ('server_version','server_encoding','client_encoding','application_name','DateStyle','IntervalStyle','TimeZone','integer_datetimes','standard_conforming_strings')").map_err(other)?;
     let result = parse_query_response(&bytes, ExpectedProtocol::Simple).map_err(other)?;
     let mut response = backend_frame(b'R', &0_i32.to_be_bytes());
@@ -310,9 +392,24 @@ fn startup_parameters(session: &mut NativeSession, application: &str) -> io::Res
     Ok(response)
 }
 
+struct BackupWriter<'a>(&'a mut Socket);
+
+impl Write for BackupWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        ipc::write_backup_chunk(self.0, bytes).map_err(|error| {
+            // A partial frame cannot be followed by a terminal response frame.
+            self.0.shutdown();
+            other(error)
+        })?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
 fn management_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
-    socket.read_timeout(Some(Duration::from_secs(5)))?;
-    socket.write_timeout(Some(Duration::from_secs(5)))?;
     match ipc::read_request(&mut socket).map_err(other)? {
         RequestFrame::Authenticate(token) if token == shared.password => {}
         _ => {
@@ -334,7 +431,7 @@ fn management_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
     }
     let result = (|| {
         ipc::write_response(&mut socket, ResponseFrame::Ok(Vec::new())).map_err(other)?;
-        socket.read_timeout(None)?;
+        socket.set_deadline(None)?;
         loop {
             let command = ipc::read_request(&mut socket).map_err(other)?;
             match command {
@@ -346,6 +443,18 @@ fn management_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
                         .map_err(other)?;
                     let response = match done.recv().map_err(other)? {
                         Ok(bytes) => ResponseFrame::Ok(bytes),
+                        Err(error) => ResponseFrame::Error(error.to_string()),
+                    };
+                    ipc::write_response(&mut socket, response).map_err(other)?;
+                }
+                RequestFrame::BackupStream => {
+                    let (reply, done) = mpsc::channel();
+                    shared
+                        .commands
+                        .send(Command::BackupStream(socket.clone_socket()?, reply))
+                        .map_err(other)?;
+                    let response = match done.recv().map_err(other)? {
+                        Ok(()) => ResponseFrame::Ok(Vec::new()),
                         Err(error) => ResponseFrame::Error(error.to_string()),
                     };
                     ipc::write_response(&mut socket, response).map_err(other)?;
@@ -377,8 +486,6 @@ fn management_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
 }
 
 fn sql_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
-    socket.read_timeout(Some(Duration::from_secs(5)))?;
-    socket.write_timeout(Some(Duration::from_secs(5)))?;
     let mut startup = read_startup(&mut socket)?;
     while matches!(
         wire::classify_frontend_message(&startup)?,
@@ -459,8 +566,11 @@ fn sql_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
     let result = connected_sql(
         &mut socket,
         shared,
-        parameters.get("application_name").copied().unwrap_or(""),
+        parameters.get("application_name").copied(),
     );
+    if result.is_err() {
+        socket.shutdown();
+    }
     shared.active.lock().unwrap().take();
     let (reply, done) = mpsc::channel();
     if shared.commands.send(Command::Reset(reply)).is_ok() {
@@ -470,13 +580,37 @@ fn sql_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
     result
 }
 
-fn connected_sql(socket: &mut Socket, shared: &Shared, application: &str) -> io::Result<()> {
+fn connected_sql(
+    socket: &mut Socket,
+    shared: &Shared,
+    application: Option<&str>,
+) -> io::Result<()> {
     let (reply, done) = mpsc::channel();
-    shared
-        .commands
-        .send(Command::Startup(application.to_owned(), reply))
-        .map_err(other)?;
-    let mut response = done.recv().map_err(other)??;
+    let deadline = socket
+        .deadline
+        .ok_or_else(|| other("missing broker handshake deadline"))?;
+    let mut command = Command::Startup(application.map(str::to_owned), reply);
+    loop {
+        let remaining = Socket::remaining(deadline)?;
+        match shared.commands.try_send(command) {
+            Ok(()) => break,
+            Err(mpsc::TrySendError::Full(pending)) => {
+                command = pending;
+                // Only a contended login polls; ordinary SQL retains its blocking handoff.
+                thread::sleep(remaining.min(Duration::from_millis(1)));
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => return Err(other("native worker stopped")),
+        }
+    }
+    let mut response =
+        done.recv_timeout(Socket::remaining(deadline)?)
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout => io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "broker handshake deadline exceeded",
+                ),
+                mpsc::RecvTimeoutError::Disconnected => other("native worker stopped"),
+            })??;
     let mut key = [0; 8];
     key[..4].copy_from_slice(&std::process::id().to_be_bytes());
     getrandom::fill(&mut key[4..]).map_err(other)?;
@@ -484,11 +618,10 @@ fn connected_sql(socket: &mut Socket, shared: &Shared, application: &str) -> io:
     response.extend(backend_frame(b'Z', b"I"));
     *shared.active.lock().unwrap() = Some((socket.clone_socket()?, key));
     socket.write_all(&response)?;
-    socket.read_timeout(None)?;
+    socket.set_deadline(None)?;
     let result = exchange(socket, shared);
     if result.is_err() {
         cancel_execution(shared);
-        socket.shutdown();
     }
     result
 }
@@ -614,4 +747,103 @@ fn backend_frame(tag: u8, body: &[u8]) -> Vec<u8> {
     frame.extend_from_slice(&((body.len() + 4) as u32).to_be_bytes());
     frame.extend_from_slice(body);
     frame
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    fn pair() -> (Socket, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        (Socket::tcp(stream), peer)
+    }
+
+    #[test]
+    fn handshake_reads_share_one_deadline_despite_peer_progress() {
+        let (mut socket, mut peer) = pair();
+        socket
+            .set_deadline(Some(Instant::now() + Duration::from_millis(60)))
+            .unwrap();
+        let writer = thread::spawn(move || {
+            for _ in 0..30 {
+                if peer.write_all(&[1]).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let error = socket.read_exact(&mut [0; 30]).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+        ));
+        socket.shutdown();
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn completing_handshake_clears_read_and_write_timeouts_on_clones() {
+        let (mut socket, mut peer) = pair();
+        socket
+            .set_deadline(Some(Instant::now() + Duration::from_millis(100)))
+            .unwrap();
+        peer.write_all(&[1]).unwrap();
+        socket.read_exact(&mut [0]).unwrap();
+        socket.write_all(&[2]).unwrap();
+        socket.set_deadline(None).unwrap();
+        assert!(socket_call!(socket, read_timeout).unwrap().is_none());
+        assert!(socket_call!(socket, write_timeout).unwrap().is_none());
+        let mut cloned = socket.clone_socket().unwrap();
+        assert!(cloned.deadline.is_none());
+        thread::sleep(Duration::from_millis(120));
+        cloned.write_all(&[3]).unwrap();
+        peer.write_all(&[4]).unwrap();
+        cloned.read_exact(&mut [0]).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_backup_frame_closes_the_transport_before_a_terminal_response() {
+        use std::os::fd::AsRawFd;
+        let (mut socket, mut peer) = pair();
+        let capacity: libc::c_int = 4096;
+        // Bound the kernel buffers so a stalled reader interrupts a chunk payload.
+        for (fd, option) in [
+            (socket.as_raw_fd(), libc::SO_SNDBUF),
+            (peer.as_raw_fd(), libc::SO_RCVBUF),
+        ] {
+            // SAFETY: both descriptors and the integer option remain valid for setsockopt.
+            assert_eq!(
+                unsafe {
+                    libc::setsockopt(
+                        fd,
+                        libc::SOL_SOCKET,
+                        option,
+                        (&capacity as *const libc::c_int).cast(),
+                        size_of::<libc::c_int>() as libc::socklen_t,
+                    )
+                },
+                0
+            );
+        }
+        socket
+            .write_timeout(Some(Duration::from_millis(30)))
+            .unwrap();
+        assert!(
+            BackupWriter(&mut socket)
+                .write_all(&vec![7; 1024 * 1024])
+                .is_err()
+        );
+        assert!(
+            ipc::write_response(&mut socket, ResponseFrame::Error("write failed".into())).is_err()
+        );
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut received = Vec::new();
+        peer.read_to_end(&mut received).unwrap();
+        assert!(!received.is_empty());
+        assert!(ipc::read_backup_response(&mut received.as_slice(), &mut Vec::new()).is_err());
+    }
 }

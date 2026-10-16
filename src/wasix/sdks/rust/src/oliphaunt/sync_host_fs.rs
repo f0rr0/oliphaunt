@@ -237,6 +237,14 @@ impl SyncHostFile {
 }
 
 impl VirtualFile for SyncHostFile {
+    fn poll_sync_data(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(self.file.sync_data())
+    }
+
+    fn poll_sync_all(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(self.file.sync_all())
+    }
+
     fn last_accessed(&self) -> u64 {
         self.metadata()
             .ok()
@@ -323,7 +331,9 @@ impl AsyncWrite for SyncHostFile {
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(self.get_mut().file.sync_all())
+        // Positional writes finish synchronously. Only explicit guest sync
+        // requests need a durability barrier, not flush/close of every file.
+        Poll::Ready(self.get_mut().file.flush())
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -374,7 +384,7 @@ fn sync_directory(path: &Path) -> io::Result<()> {
 fn sync_directory(_path: &Path) -> io::Result<()> {
     // Windows does not provide a portable directory fsync operation:
     // FlushFileBuffers on a directory handle fails with ERROR_ACCESS_DENIED.
-    // File contents are still flushed by SyncHostFile::poll_flush.
+    // Explicit guest sync requests still synchronize file contents.
     Ok(())
 }
 
@@ -595,6 +605,61 @@ mod tests {
         ));
         assert_eq!(read_buf.filled().len(), 1);
         byte[0]
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_sync_errors_survive_shared_files_and_memory_mounts() {
+        use virtual_fs::FileSystem;
+
+        // /dev/null accepts writes/flush but rejects durable synchronization.
+        let file = open_host(Path::new("/dev/null"));
+        let shared = virtual_fs::ArcBoxFile::new(Box::new(file));
+        let mounted = virtual_fs::mem_fs::FileSystem::default();
+        mounted
+            .insert_device_file("/probe".into(), Box::new(shared))
+            .unwrap();
+        let mut file = mounted
+            .new_open_options()
+            .write(true)
+            .open("/probe")
+            .unwrap();
+        let mut cx = Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            Pin::new(file.as_mut()).poll_flush(&mut cx),
+            Poll::Ready(Ok(()))
+        ));
+        assert!(matches!(
+            Pin::new(file.as_mut()).poll_sync_data(&mut cx),
+            Poll::Ready(Err(_))
+        ));
+        assert!(matches!(
+            Pin::new(file.as_mut()).poll_sync_all(&mut cx),
+            Poll::Ready(Err(_))
+        ));
+    }
+
+    #[test]
+    fn explicit_sync_keeps_written_data_and_file_position() {
+        let root = TestDir::new();
+        let path = root.path().join("data");
+        fs::write(&path, b"abc").unwrap();
+        let mut file = open_host(&path);
+        let mut cx = Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            Pin::new(&mut file).poll_write(&mut cx, b"x"),
+            Poll::Ready(Ok(1))
+        ));
+        assert!(matches!(
+            Pin::new(&mut file).poll_sync_data(&mut cx),
+            Poll::Ready(Ok(()))
+        ));
+        assert!(matches!(
+            Pin::new(&mut file).poll_sync_all(&mut cx),
+            Poll::Ready(Ok(()))
+        ));
+        assert_eq!(file.position, 1);
+        assert_eq!(fs::read(path).unwrap(), b"xbc");
     }
 
     #[test]

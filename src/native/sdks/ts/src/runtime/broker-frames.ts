@@ -3,11 +3,13 @@ import type { ByteStream } from './byte-stream.js';
 const MAGIC = new Uint8Array([0x50, 0x47, 0x4f, 0x42]);
 const HEADER_LEN = 13;
 const MAX_FRAME_LEN = 128 * 1024 * 1024;
+const BACKUP_CHUNK_LEN = 64 * 1024;
 
 export type BrokerRequestFrame =
   | { kind: 'authenticate'; token: string }
   | { kind: 'close' }
-  | { kind: 'backup' };
+  | { kind: 'backup' }
+  | { kind: 'backup-stream' };
 
 export type BrokerResponseFrame =
   | { kind: 'ok'; bytes: Uint8Array }
@@ -37,6 +39,29 @@ export async function readBrokerResponse(stream: ByteStream): Promise<BrokerResp
   return decodeBrokerResponse(kind, payload);
 }
 
+export async function readBrokerBackup(
+  stream: ByteStream,
+  onChunk: (chunk: Uint8Array) => void | Promise<void>,
+): Promise<{ response: BrokerResponseFrame; destinationFailure?: { error: unknown } }> {
+  let destinationFailure: { error: unknown } | undefined;
+  for (;;) {
+    const { kind, payload } = await readFrame(stream);
+    if (kind === 103 && payload.length > 0) {
+      if (destinationFailure === undefined) {
+        try {
+          await onChunk(payload);
+        } catch (error) {
+          destinationFailure = { error };
+        }
+      }
+    } else if (kind === 102 || (kind === 101 && payload.length === 0)) {
+      return { response: decodeBrokerResponse(kind, payload), destinationFailure };
+    } else {
+      throw new Error(`unexpected broker backup frame ${kind}`);
+    }
+  }
+}
+
 export function encodeBrokerRequest(frame: BrokerRequestFrame): Uint8Array {
   switch (frame.kind) {
     case 'authenticate':
@@ -45,6 +70,8 @@ export function encodeBrokerRequest(frame: BrokerRequestFrame): Uint8Array {
       return encodeFrame(3, emptyPayload);
     case 'backup':
       return encodeFrame(5, emptyPayload);
+    case 'backup-stream':
+      return encodeFrame(7, emptyPayload);
   }
 }
 
@@ -70,6 +97,9 @@ export function decodeBrokerRequest(kind: number, payload: Uint8Array): BrokerRe
     case 5:
       assertEmptyPayload(payload);
       return { kind: 'backup' };
+    case 7:
+      assertEmptyPayload(payload);
+      return { kind: 'backup-stream' };
     default:
       throw new Error(`unknown broker request frame ${kind}`);
   }
@@ -101,8 +131,9 @@ async function readFrame(stream: ByteStream): Promise<{ kind: number; payload: U
     throw new Error('broker frame header is missing a kind byte');
   }
   const length = Number(new DataView(header.buffer, header.byteOffset + 5, 8).getBigUint64(0));
-  if (length > MAX_FRAME_LEN) {
-    throw new Error(`broker frame payload length ${length} exceeds limit ${MAX_FRAME_LEN}`);
+  const limit = kind === 103 ? BACKUP_CHUNK_LEN : MAX_FRAME_LEN;
+  if (length > limit) {
+    throw new Error(`broker frame payload length ${length} exceeds limit ${limit}`);
   }
   return { kind, payload: await stream.readExactly(length) };
 }

@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { validateNativeOwnerAdmission } from '../../core/open-config.js';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -21,6 +22,9 @@ import {
   type NativeWasixOpenOptions,
   type NativeWasixToolResult,
   type NativeWasixToolAssets,
+  type NativeWasixToolSummary,
+  type NativeWasixFileTool,
+  type NativeWasixToolChunk,
 } from './native-addon.js';
 import {
   normalizeWasixDatabaseIdentity,
@@ -146,19 +150,46 @@ export class NativeWasixSession implements WasixDatabaseSession {
 
   async runTool(options: WasixToolProcessOptions): Promise<WasixToolProcessResult> {
     this.#assertOpen();
-    const assets = await loadNativeToolAssets(this.#runtimeVersion, options);
-    if (options.tool.name === 'pg_dump') {
-      try {
-        return toolProcessResult(this.#handle.pgDump(options.args, assets));
-      } catch (error) {
-        throw this.#mapFailure(error);
-      }
+    if (options.output !== undefined && options.output.nativeRegistration === undefined) {
+      throw new Error(
+        'async WASIX tool destinations require a root or /worker database; /direct supports host files',
+      );
     }
-    const script =
-      options.stdin === undefined
-        ? undefined
-        : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin);
+    const assets = await loadNativeToolAssets(this.#runtimeVersion, options);
     try {
+      if (options.output?.nativeRegistration !== undefined) {
+        const run =
+          options.tool.name === 'pg_dump'
+            ? this.#handle.pgDumpToRegisteredOutput
+            : this.#handle.psqlToRegisteredOutput;
+        if (run === undefined) throw new Error('this WASIX addon lacks native Worker output');
+        const script =
+          options.script ??
+          (options.stdin === undefined
+            ? undefined
+            : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin));
+        return toolSummaryResult(
+          run.call(
+            this.#handle,
+            options.args,
+            assets,
+            options.output.nativeRegistration,
+            options.command,
+            script,
+          ),
+        );
+      }
+      if (options.outputFile !== undefined) {
+        return await runNativeToolFile(this.#handle, options, assets);
+      }
+      if (options.tool.name === 'pg_dump') {
+        return toolProcessResult(this.#handle.pgDump(options.args, assets));
+      }
+      const script =
+        options.script ??
+        (options.stdin === undefined
+          ? undefined
+          : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin));
       return toolProcessResult(this.#handle.psql(options.args, assets, options.command, script));
     } catch (error) {
       throw this.#mapFailure(error);
@@ -219,10 +250,12 @@ export class NativeWasixActorSession implements WasixDatabaseSession {
   }
 
   static async open(options: SerializedOpenOptions): Promise<NativeWasixActorSession> {
+    validateNativeOwnerAdmission(options);
     const addon = requireCompatibleNativeWasixAddon(options);
     try {
       const handle = await addon.NativeWasixActorDatabase.open({
         ...nativeWasixOpenOptions(options, nativeStorage(options)),
+        ...(options.admission === undefined ? {} : { admission: options.admission }),
         ...(await loadNativeResources(options)),
       });
       validateActorDatabaseHandle(handle);
@@ -285,13 +318,20 @@ export class NativeWasixActorSession implements WasixDatabaseSession {
     this.#assertOpen();
     const assets = await loadNativeToolAssets(this.#runtimeVersion, options);
     try {
+      if (options.outputFile !== undefined) {
+        return await runNativeToolFile(this.#handle, options, assets);
+      }
+      if (options.output !== undefined) {
+        return await runNativeToolStream(this.#handle, options, assets);
+      }
       if (options.tool.name === 'pg_dump') {
         return toolProcessResult(await this.#handle.pgDump(options.args, assets));
       }
       const script =
-        options.stdin === undefined
+        options.script ??
+        (options.stdin === undefined
           ? undefined
-          : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin);
+          : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin));
       return toolProcessResult(
         await this.#handle.psql(options.args, assets, options.command, script),
       );
@@ -589,6 +629,95 @@ function validateActorDatabaseHandle(handle: NativeWasixActorDatabaseHandle): vo
 function binaryView(value: Uint8Array): Uint8Array {
   if (value instanceof Uint8Array) return value;
   throw new TypeError('Oliphaunt WASIX native addon returned a non-binary value');
+}
+
+async function runNativeToolFile(
+  handle: NativeWasixDatabaseHandle | NativeWasixActorDatabaseHandle,
+  options: WasixToolProcessOptions,
+  assets: NativeWasixToolAssets,
+): Promise<WasixToolProcessResult> {
+  const run:
+    | NativeWasixFileTool<NativeWasixToolSummary | Promise<NativeWasixToolSummary>>
+    | undefined = options.tool.name === 'pg_dump' ? handle.pgDumpToFile : handle.psqlToFile;
+  if (run === undefined) {
+    throw new Error(
+      'this WASIX addon does not support tool file destinations; update the native carrier',
+    );
+  }
+  const script =
+    options.script ??
+    (options.stdin === undefined
+      ? undefined
+      : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin));
+  const result = await run.call(
+    handle,
+    options.args,
+    assets,
+    options.outputFile!,
+    options.command,
+    script,
+  );
+  return toolSummaryResult(result);
+}
+
+async function runNativeToolStream(
+  handle: NativeWasixActorDatabaseHandle,
+  options: WasixToolProcessOptions,
+  assets: NativeWasixToolAssets,
+): Promise<WasixToolProcessResult> {
+  const run = options.tool.name === 'pg_dump' ? handle.pgDumpToStream : handle.psqlToStream;
+  if (run === undefined) {
+    throw new Error(
+      'this WASIX addon does not support async tool destinations; update the native carrier',
+    );
+  }
+  const acknowledgeAfterWrite =
+    (write: (chunk: Uint8Array) => Promise<void>) =>
+    (packet: NativeWasixToolChunk): void => {
+      void Promise.resolve()
+        .then(() => write(binaryView(packet.chunk)))
+        .then(
+          () => packet.acknowledge(),
+          () => packet.acknowledge('Oliphaunt WASIX tool destination failed'),
+        );
+    };
+  const output = options.output!;
+  const script =
+    options.script ??
+    (options.stdin === undefined
+      ? undefined
+      : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin));
+  return toolSummaryResult(
+    await run.call(
+      handle,
+      options.args,
+      assets,
+      {
+        stdout: acknowledgeAfterWrite(output.stdout),
+        ...(output.stderr === undefined ? {} : { stderr: acknowledgeAfterWrite(output.stderr) }),
+      },
+      options.command,
+      script,
+    ),
+  );
+}
+
+function toolSummaryResult(result: NativeWasixToolSummary): WasixToolProcessResult {
+  if (
+    !Number.isSafeInteger(result.stdoutBytes) ||
+    result.stdoutBytes < 0 ||
+    typeof result.stderr !== 'string' ||
+    typeof result.stderrTruncated !== 'boolean'
+  ) {
+    throw new TypeError('Oliphaunt WASIX native tool returned an invalid output summary');
+  }
+  return {
+    exitCode: 0,
+    stdout: new Uint8Array(),
+    stderr: new TextEncoder().encode(result.stderr),
+    stdoutBytes: result.stdoutBytes,
+    stderrTruncated: result.stderrTruncated,
+  };
 }
 
 function toolProcessResult(result: NativeWasixToolResult): WasixToolProcessResult {

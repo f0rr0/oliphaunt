@@ -6,8 +6,8 @@ export type NativeBindingOptions = {
 export type NativeOpenConfig = {
   pgdata: string;
   runtimeDirectory?: string;
-  seed?: import('../types.js').NativeResourceDirectory;
-  icuData?: import('../types.js').NativeResourceDirectory;
+  seed?: import('../config.js').NormalizedResourceDirectory;
+  icuData?: import('../config.js').NormalizedResourceDirectory;
   username: string;
   database: string;
   extensions: string[];
@@ -40,6 +40,8 @@ export type NativeBinding = {
   ): Promise<void>;
   execSimpleQuery?(handle: NativeHandle, sql: string): Promise<Uint8Array>;
   backup(handle: NativeHandle): Promise<Uint8Array>;
+  /** Synchronous chunk acceptance; the native archive callback borrows its input. */
+  backupStream?(handle: NativeHandle, onChunk: (chunk: Uint8Array) => void): Promise<void>;
   restore(options: NativeRestoreOptions): Promise<void>;
   cancel(handle: NativeHandle): Promise<void>;
   /**

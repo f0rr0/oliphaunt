@@ -28,6 +28,7 @@ typedef void (^OliphauntVoidCompletion)(NSError *_Nullable error);
                        onChunk:(OliphauntStreamChunk)onChunk
                     completion:(OliphauntVoidCompletion)completion;
 - (void)backupDataWithDeadline:(double)deadline completion:(OliphauntDataCompletion)completion;
+- (void)backupToFile:(NSString *)destination deadline:(double)deadline completion:(OliphauntVoidCompletion)completion;
 - (void)cancelWithCompletion:(OliphauntVoidCompletion)completion;
 - (void)closeWithCompletion:(OliphauntVoidCompletion)completion;
 

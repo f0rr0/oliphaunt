@@ -129,6 +129,7 @@ fn native_postgres_types_errors_and_transaction_recovery_when_available() {
 
 fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
     let db = block_on(builder.open())?;
+    block_on(db.execute(&support::fixture_text("postgres/jsonb-build-object.sql")))?;
     let source = support::fixture_text("postgres/behavior-contract.json");
     let contract: BehaviorContract =
         serde_json::from_str(&source).expect("shared PostgreSQL behavior contract is valid JSON");

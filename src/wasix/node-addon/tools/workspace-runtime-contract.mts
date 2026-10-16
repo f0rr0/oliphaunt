@@ -1,9 +1,14 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { releaseProfilePackageLicense } from '../../../../tools/packaging/release-notices.mts';
 import { readCargoPackageNameVersion } from '../../../../tools/packaging/cargo-source-package.mts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+
+export function wasixNapiNoticeProfile(target) {
+  return target === 'windows-x64-msvc' ? 'wasix-napi-addon-windows' : 'wasix-napi-addon';
+}
 
 export function workspaceRuntimeVersion(root = ROOT) {
   const version = readFileSync(path.join(root, 'src/wasix/runtime/VERSION'), 'utf8').trim();
@@ -23,6 +28,7 @@ export function workspaceCarrierManifest(manifest, declaredContract, root = ROOT
   ).version;
   return {
     ...manifest,
+    license: releaseProfilePackageLicense(wasixNapiNoticeProfile(manifest.oliphaunt.target)).spdx,
     oliphaunt: {
       ...manifest.oliphaunt,
       runtimeVersion,

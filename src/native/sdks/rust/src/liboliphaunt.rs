@@ -53,7 +53,6 @@ impl EngineSession for NativeSession {
     fn backup(&mut self) -> Result<Vec<u8>> {
         NativeSession::backup(self).map_err(Into::into)
     }
-    #[cfg(feature = "mobile-bindings")]
     fn backup_to(&mut self, writer: &mut dyn std::io::Write) -> Result<()> {
         NativeSession::backup_to(self, writer).map_err(Into::into)
     }

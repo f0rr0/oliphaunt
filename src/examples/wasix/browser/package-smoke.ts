@@ -6,6 +6,7 @@ import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 
 import { expectStructuredApi } from './structured-api-smoke.js';
+import { expectSqlDeadlines } from '../../../test-fixtures/postgres/sql-deadlines.mjs';
 
 const status = requireElement<HTMLParagraphElement>('status');
 const output = requireElement<HTMLPreElement>('output');
@@ -14,6 +15,7 @@ try {
   const freshWorker = await WorkerOliphaunt.open();
   try {
     await expectAnswer(freshWorker);
+    await expectSqlDeadlines(freshWorker);
   } finally {
     await freshWorker.close();
   }
@@ -28,6 +30,7 @@ try {
     await database.execute('CREATE EXTENSION pgtap');
     await expectAnswer(database);
     await expectStructuredApi(database, 'packed browser direct');
+    await expectSqlDeadlines(database);
     pgtapVersion = await readPgtapVersion(database);
     await database.transaction(async (transaction) => {
       await transaction.execute('CREATE TABLE packed_reopen_probe (answer integer NOT NULL)');
@@ -45,6 +48,7 @@ try {
   try {
     await expectAnswer(database);
     await expectStructuredApi(database, 'packed browser Worker');
+    await expectSqlDeadlines(database);
     const reopened = await database.queryRaw('SELECT answer FROM packed_reopen_probe');
     const answer = reopened.getText(0, 'answer');
     if (answer !== '42') {

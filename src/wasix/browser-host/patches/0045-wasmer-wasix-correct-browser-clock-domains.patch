@@ -1,0 +1,88 @@
+From: Sid Jain <sid_26@outlook.com>
+Date: Sun, 4 Oct 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-wasix: preserve browser clock domains across workers
+
+Realtime is wall time; monotonic time must not follow wall-clock adjustments.
+Use the shared browser monotonic timeline so WASIX workers can compare their
+clock readings despite different creation times. Report unsupported CPU clocks
+rather than returning wall time. Keep these corrections in the platform
+provider so canonical syscalls, clock setters and embedder fast paths agree.
+
+diff --git a/lib/wasix/src/syscalls/wasm.rs b/lib/wasix/src/syscalls/wasm.rs
+index dd731f0..e970d08 100644
+--- a/lib/wasix/src/syscalls/wasm.rs
++++ b/lib/wasix/src/syscalls/wasm.rs
+@@ -1,6 +1,4 @@
+-use std::mem;
+-
+-use chrono::prelude::*;
++use wasm_bindgen::prelude::wasm_bindgen;
+ use wasmer::WasmRef;
+ 
+ use crate::syscalls::types::{
+@@ -8,15 +6,33 @@ use crate::syscalls::types::{
+     *,
+ };
+ 
++// WASIX processes share Rust memory across workers, but performance.now() is
++// relative to each worker's creation. Include timeOrigin so every process uses
++// the same monotonic timeline (https://www.w3.org/TR/hr-time-2/).
++#[wasm_bindgen(inline_js = r#"
++export function oliphaunt_monotonic_time_ms() {
++    return performance.timeOrigin + performance.now();
++}
++"#)]
++extern "C" {
++    fn oliphaunt_monotonic_time_ms() -> f64;
++}
++
++fn monotonic_time_ns() -> Result<i64, Errno> {
++    let time = std::time::Duration::try_from_secs_f64(oliphaunt_monotonic_time_ms() / 1000.0)
++        .map_err(|_| Errno::Overflow)?;
++    i64::try_from(time.as_nanos()).map_err(|_| Errno::Overflow)
++}
++
+ pub fn platform_clock_res_get(
+     clock_id: Snapshot0Clockid,
+     resolution: WasmRef<Timestamp>,
+ ) -> Result<i64, Errno> {
+     let t_out = match clock_id {
+-        Snapshot0Clockid::Monotonic => 10_000_000,
+-        Snapshot0Clockid::Realtime => 1,
+-        Snapshot0Clockid::ProcessCputimeId => 1,
+-        Snapshot0Clockid::ThreadCputimeId => 1,
++        Snapshot0Clockid::Monotonic | Snapshot0Clockid::Realtime => 1_000_000,
++        Snapshot0Clockid::ProcessCputimeId | Snapshot0Clockid::ThreadCputimeId => {
++            return Err(Errno::Notsup);
++        }
+         _ => return Err(Errno::Inval),
+     };
+     Ok(t_out)
+@@ -24,10 +40,22 @@ pub fn platform_clock_res_get(
+ 
+ pub fn platform_clock_time_get(
+     clock_id: Snapshot0Clockid,
+-    precision: Timestamp,
++    _precision: Timestamp,
+ ) -> Result<i64, Errno> {
+-    Local::now()
+-        .timestamp_nanos_opt()
+-        .map(|ts| ts as i64)
+-        .ok_or(Errno::Overflow)
++    match clock_id {
++        Snapshot0Clockid::Realtime => {
++            let millis = js_sys::Date::now();
++            if !millis.is_finite() || millis < 0.0 || millis > i64::MAX as f64 {
++                return Err(Errno::Overflow);
++            }
++            (millis as i64)
++                .checked_mul(1_000_000)
++                .ok_or(Errno::Overflow)
++        }
++        Snapshot0Clockid::Monotonic => monotonic_time_ns(),
++        Snapshot0Clockid::ProcessCputimeId | Snapshot0Clockid::ThreadCputimeId => {
++            Err(Errno::Notsup)
++        }
++        _ => Err(Errno::Inval),
++    }
+ }

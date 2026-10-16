@@ -31,6 +31,10 @@ impl ProtocolRequest {
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
+
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.bytes.capacity()
+    }
 }
 
 impl From<Vec<u8>> for ProtocolRequest {
@@ -42,6 +46,12 @@ impl From<Vec<u8>> for ProtocolRequest {
 impl From<&[u8]> for ProtocolRequest {
     fn from(bytes: &[u8]) -> Self {
         Self::new(bytes)
+    }
+}
+
+impl AsRef<[u8]> for ProtocolRequest {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
     }
 }
 

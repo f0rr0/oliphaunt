@@ -136,7 +136,7 @@ index 74ae54f..8e3ab1e 100644
 +typedef struct OliphauntEmbeddedIO OliphauntEmbeddedIO;
 +extern int	oliphaunt_embedded_main(int argc, char *argv[],
 +							 const char *dbname, const char *username,
-+							 OliphauntEmbeddedIO *io);
++							 OliphauntEmbeddedIO *io, int *cwd_capture_errno);
  extern void PostgresSingleUserMain(int argc, char *argv[],
  								   const char *username);
  extern void PostgresMain(const char *dbname,

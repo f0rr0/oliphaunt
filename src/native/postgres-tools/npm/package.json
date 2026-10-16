@@ -32,6 +32,8 @@
   "files": [
     "index.d.ts",
     "index.js",
+    "output-capture.mjs",
+    "output-file.mjs",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md"

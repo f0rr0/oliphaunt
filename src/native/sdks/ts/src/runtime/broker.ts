@@ -17,6 +17,7 @@ import {
 import { resolveExactNativeRuntimeProfile } from '../native/runtime-profile.js';
 import {
   type BrokerResponseFrame,
+  readBrokerBackup,
   readBrokerResponse,
   writeBrokerRequest,
 } from './broker-frames.js';
@@ -82,7 +83,10 @@ export function createBrokerRuntimeBinding(
       return asBrokerHandle(handle).execProtocolRaw(simpleQuery(sql));
     },
     backup(handle: RuntimeHandle): Promise<Uint8Array> {
-      return asBrokerHandle(handle).requestOk({ kind: 'backup' });
+      return asBrokerHandle(handle).backup();
+    },
+    backupStream(handle: RuntimeHandle, onChunk: (chunk: Uint8Array) => void): Promise<void> {
+      return asBrokerHandle(handle).backupTo(onChunk);
     },
     cancel(handle: RuntimeHandle): Promise<void> {
       return asBrokerHandle(handle).cancel();
@@ -144,6 +148,44 @@ export class BrokerHandle {
       case 'error':
         throw new Error(response.message);
     }
+  }
+
+  async backup(): Promise<Uint8Array> {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    await this.backupTo((chunk) => {
+      chunks.push(chunk);
+      size += chunk.length;
+    });
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return bytes;
+  }
+
+  async backupTo(onChunk: (chunk: Uint8Array) => void | Promise<void>): Promise<void> {
+    const stream = await this.ensureStream();
+    let result: Awaited<ReturnType<typeof readBrokerBackup>>;
+    try {
+      await writeBrokerRequest(stream, { kind: 'backup-stream' });
+      result = await readBrokerBackup(stream, onChunk);
+    } catch (error) {
+      await this.markFailed(error);
+      throw error;
+    }
+    if (result.response.kind === 'error') {
+      const error = new Error(result.response.message);
+      if (result.destinationFailure !== undefined)
+        throw new AggregateError(
+          [error, result.destinationFailure.error],
+          'backup and destination both failed',
+        );
+      throw error;
+    }
+    if (result.destinationFailure !== undefined) throw result.destinationFailure.error;
   }
 
   async execProtocolRaw(request: Uint8Array): Promise<Uint8Array> {
@@ -247,7 +289,7 @@ export class BrokerHandle {
     const child = this.#child;
     if (child !== undefined) {
       try {
-        let exited = await waitForManagedChild(child, this.shutdownTimeoutMs);
+        let exited = await waitForManagedChild(child, Math.max(0, deadline - performance.now()));
         if (!exited) {
           failures.push(new Error(`native broker did not stop within ${this.shutdownTimeoutMs}ms`));
           child.kill('SIGKILL');
@@ -487,8 +529,8 @@ async function resolveBrokerNativeInstall(config: {
   runtimeDirectory?: string;
   extensions?: readonly string[];
   extensionDescriptors?: readonly import('../extensions.js').NativeExtension[];
-  seed?: import('../types.js').NativeResourceDirectory;
-  icuData?: import('../types.js').NativeResourceDirectory;
+  seed?: import('../config.js').NormalizedResourceDirectory;
+  icuData?: import('../config.js').NormalizedResourceDirectory;
 }): Promise<BrokerNativeInstall> {
   const extensions = config.extensions ?? [];
   const assets = await import('../native/assets.js');
@@ -590,7 +632,10 @@ async function allocateBrokerEndpoint(config: NormalizedOpenConfig): Promise<Bro
   return { kind: 'tcp', listen: '127.0.0.1:0', controlListen: '127.0.0.1:0' };
 }
 
-function brokerSpawnArgs(config: NormalizedOpenConfig, endpoint: BrokerEndpointPlan): string[] {
+export function brokerSpawnArgs(
+  config: NormalizedOpenConfig,
+  endpoint: BrokerEndpointPlan,
+): string[] {
   const args = [
     '--root',
     config.instanceDirectory,
@@ -603,6 +648,9 @@ function brokerSpawnArgs(config: NormalizedOpenConfig, endpoint: BrokerEndpointP
     args.push('--socket', endpoint.socket, '--control-socket', endpoint.controlSocket);
   } else {
     args.push('--listen', endpoint.listen, '--control-listen', endpoint.controlListen);
+  }
+  if (config.brokerHandshakeTimeoutMs !== undefined) {
+    args.push('--handshake-timeout-ms', String(config.brokerHandshakeTimeoutMs));
   }
   if (config.seed !== undefined)
     args.push(

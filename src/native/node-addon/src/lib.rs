@@ -202,10 +202,23 @@ impl StreamError {
     }
 }
 type Callback = Box<dyn FnMut(&[u8]) -> std::result::Result<(), StreamError> + Send>;
+struct ArchiveWriter<'a>(&'a mut dyn FnMut(&[u8]) -> std::result::Result<(), StreamError>);
+impl std::io::Write for ArchiveWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        (self.0)(bytes)
+            .map(|()| bytes.len())
+            .map_err(|error| std::io::Error::other(error.into_napi().to_string()))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 enum Operation {
     Query(Vec<u8>),
     SimpleQuery(String),
     Backup,
+    BackupStream(Callback),
     Close,
     Stream(Vec<u8>, Callback),
 }
@@ -229,6 +242,10 @@ impl Task for OperationTask {
                 .map(Some)
                 .map_err(native_error),
             Operation::Backup => session.backup().map(Some).map_err(native_error),
+            Operation::BackupStream(callback) => session
+                .backup_to(&mut ArchiveWriter(callback.as_mut()))
+                .map(|_| None)
+                .map_err(native_error),
             Operation::Close => {
                 let result = session.close().map(|_| None).map_err(native_error);
                 if result.is_err() {
@@ -339,67 +356,19 @@ impl NativeDatabase {
         bytes: Uint8Array,
         on_chunk: Function<'_, Uint8Array, Unknown<'static>>,
     ) -> Result<Object<'e>> {
-        let threadsafe = on_chunk
-            .build_threadsafe_function::<Vec<u8>>()
-            .max_queue_size::<1>()
-            .build_callback(|context: ThreadsafeCallContext<Vec<u8>>| {
-                js_bytes(&context.env, &context.value)
-            })?;
-        let environment = self.environment.clone();
-        let callback: Callback = Box::new(move |bytes| {
-            let ack = Arc::new(Ack::default());
-            {
-                let mut active = lock(&environment.active);
-                if environment.closed.load(Ordering::Acquire) {
-                    return Err(StreamError::Js(Error::new(
-                        Status::Closing,
-                        "JS environment closed",
-                    )));
-                }
-                *active = Some(ack.clone());
-            }
-            let callback_ack = ack.clone();
-            let status = threadsafe.call_with_return_value(
-                bytes.to_vec(), ThreadsafeFunctionCallMode::Blocking,
-                move |result, env| {
-                    let result=result.and_then(|value| {
-                        if matches!(value.get_type()?, napi::ValueType::Object | napi::ValueType::Function) {
-                            let object: Object = unsafe {value.cast()?};
-                            let then: Unknown=object.get_named_property("then")?;
-                            if then.get_type()? == napi::ValueType::Function {
-                                return Err(Error::from_reason("raw protocol stream callback must complete synchronously and must not return a Promise or thenable"));
-                            }
-                        }
-                        Ok(())
-                    });
-                    let result=result.map_err(|error| {
-                        if error.status == Status::PendingException {
-                            // The callback bridge may already have captured and
-                            // cleared its exception; preserve that retained value.
-                            let mut pending=false;
-                            unsafe {napi::sys::napi_is_exception_pending(env.raw(),&mut pending);}
-                            if !pending {return error;}
-                            let mut thrown=std::ptr::null_mut();
-                            let status=unsafe {napi::sys::napi_get_and_clear_last_exception(env.raw(), &mut thrown)};
-                            if status == napi::sys::Status::napi_ok && !thrown.is_null()
-                                && let Ok(value) = unsafe { Unknown::from_napi_value(env.raw(), thrown) } {
-                                return Error::from_unknown_without_coercion(value);
-                            }
-                        }
-                        error
-                    });
-                    callback_ack.complete(result);
-                    Ok(())
-                }
-            );
-            if status != Status::Ok {
-                ack.complete(Err(Error::new(status, "stream callback failed")));
-            }
-            let result = ack.wait();
-            lock(&environment.active).take();
-            result.map_err(StreamError::Js)
-        });
+        let callback = self.stream_callback(on_chunk)?;
         self.task(env, Operation::Stream(bytes.to_vec(), callback))
+    }
+    #[napi]
+    pub fn backup_stream<'e>(
+        &self,
+        env: &'e Env,
+        on_chunk: Function<'_, Uint8Array, Unknown<'static>>,
+    ) -> Result<Object<'e>> {
+        self.task(
+            env,
+            Operation::BackupStream(self.stream_callback(on_chunk)?),
+        )
     }
 }
 
@@ -439,7 +408,7 @@ pub fn restore(env: &Env, options: RestoreOptions) -> Result<Object<'_>> {
 }
 
 fn js_bytes(env: &Env, bytes: &[u8]) -> Result<Uint8Array> {
-    // Reuse the current WASIX addon buffer contract, including napi 3.12.2 copy initialization.
+    // As in the WASIX addon, initialize the allocation returned by napi-rs.
     let mut output = Uint8ArraySlice::copy_from(env, bytes)?;
     unsafe { output.as_mut() }.copy_from_slice(bytes);
     output.into_typed_array(env)
@@ -599,6 +568,82 @@ pub fn exec_protocol_raw_stream<'e>(
 ) -> Result<Object<'e>> {
     handle.stream(env, request, callback)
 }
+impl NativeDatabase {
+    fn stream_callback(
+        &self,
+        on_chunk: Function<'_, Uint8Array, Unknown<'static>>,
+    ) -> Result<Callback> {
+        let threadsafe = on_chunk
+            .build_threadsafe_function::<Vec<u8>>()
+            .max_queue_size::<1>()
+            .build_callback(|context: ThreadsafeCallContext<Vec<u8>>| {
+                js_bytes(&context.env, &context.value)
+            })?;
+        let environment = self.environment.clone();
+        Ok(Box::new(move |bytes| {
+            let ack = Arc::new(Ack::default());
+            {
+                let mut active = lock(&environment.active);
+                if environment.closed.load(Ordering::Acquire) {
+                    return Err(StreamError::Js(Error::new(
+                        Status::Closing,
+                        "JS environment closed",
+                    )));
+                }
+                *active = Some(ack.clone());
+            }
+            let callback_ack = ack.clone();
+            let status = threadsafe.call_with_return_value(
+                bytes.to_vec(), ThreadsafeFunctionCallMode::Blocking,
+                move |result, env| {
+                    let result=result.and_then(|value| {
+                        if matches!(value.get_type()?, napi::ValueType::Object | napi::ValueType::Function) {
+                            let object: Object = unsafe {value.cast()?};
+                            let then: Unknown=object.get_named_property("then")?;
+                            if then.get_type()? == napi::ValueType::Function {
+                                return Err(Error::from_reason("raw protocol stream callback must complete synchronously and must not return a Promise or thenable"));
+                            }
+                        }
+                        Ok(())
+                    });
+                    let result=result.map_err(|error| {
+                        if error.status == Status::PendingException {
+                            // The callback bridge may already have captured and
+                            // cleared its exception; preserve that retained value.
+                            let mut pending=false;
+                            unsafe {napi::sys::napi_is_exception_pending(env.raw(),&mut pending);}
+                            if !pending {return error;}
+                            let mut thrown=std::ptr::null_mut();
+                            let status=unsafe {napi::sys::napi_get_and_clear_last_exception(env.raw(), &mut thrown)};
+                            if status == napi::sys::Status::napi_ok && !thrown.is_null()
+                                && let Ok(value) = unsafe { Unknown::from_napi_value(env.raw(), thrown) } {
+                                return Error::from_unknown_without_coercion(value);
+                            }
+                        }
+                        error
+                    });
+                    callback_ack.complete(result);
+                    Ok(())
+                }
+            );
+            if status != Status::Ok {
+                ack.complete(Err(Error::new(status, "stream callback failed")));
+            }
+            let result = ack.wait();
+            lock(&environment.active).take();
+            result.map_err(StreamError::Js)
+        }))
+    }
+}
+#[napi]
+pub fn backup_stream<'e>(
+    env: &'e Env,
+    handle: &NativeDatabase,
+    callback: Function<'_, Uint8Array, Unknown<'static>>,
+) -> Result<Object<'e>> {
+    handle.backup_stream(env, callback)
+}
+
 #[napi]
 pub fn backup<'e>(env: &'e Env, handle: &NativeDatabase) -> Result<Object<'e>> {
     handle.backup(env)

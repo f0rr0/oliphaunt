@@ -1,4 +1,7 @@
-export type DirectoryStorage = { readonly kind: 'directory'; readonly path: string };
+/** A host filesystem path or a file URL, normalized before native execution. */
+export type FilePathInput = string | URL;
+
+export type DirectoryStorage = { readonly kind: 'directory'; readonly path: FilePathInput };
 
 export type DatabaseStorage = { readonly kind: 'temporaryDirectory' } | DirectoryStorage;
 
@@ -6,15 +9,28 @@ export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyA
 
 /** An explicitly selected, immutable resource directory and its producer receipt. */
 export type NativeResourceDirectory = {
-  readonly directory: string;
-  readonly manifestPath: string;
+  readonly directory: FilePathInput;
+  readonly manifestPath: FilePathInput;
 };
 
 type QueryReadOptions = Omit<import('./query.js').QueryOptions, 'encoders'>;
 /** A synchronous, serial raw-protocol consumer used as the backpressure acknowledgement. */
 export type ProtocolChunkCallback = (chunk: Uint8Array) => undefined;
 
+export type AdmissionLimits =
+  import('@oliphaunt/ts-query/internal/operation-budget').AdmissionLimits;
+
+export type BrokerOptions = Readonly<{
+  /** Per-connection login deadline in whole milliseconds, 1..2147483647.
+   * Defaults to 5000. Larger values allow slower handshakes but retain unauthenticated
+   * connections longer. This does not limit broker startup, queries or backups.
+   */
+  handshakeTimeoutMs?: number;
+}>;
+
 export type OpenConfig = {
+  /** Pending work shared by the database and its transaction handles. */
+  admission?: AdmissionLimits;
   /**
    * Runtime placement topology. `direct` is in-process; it does not mean that
    * PostgreSQL work runs synchronously on the JavaScript caller thread.
@@ -26,20 +42,22 @@ export type OpenConfig = {
   username?: string;
   database?: string;
   extensions?: ReadonlyArray<import('./extensions.js').NativeExtension>;
-  libraryPath?: string;
-  runtimeDirectory?: string;
+  libraryPath?: FilePathInput;
+  runtimeDirectory?: FilePathInput;
   /** Optional preinitialized cluster. Without one, desktop initialization uses initdb. */
   seed?: NativeResourceDirectory;
   /** Canonical ICU data, selected independently of the runtime and seed. */
   icuData?: NativeResourceDirectory;
-  brokerExecutable?: string;
+  brokerExecutable?: FilePathInput;
+  /** Desktop broker transport options; requires topology: 'broker'. */
+  broker?: BrokerOptions;
 };
 
 export type ServerOpenConfig = Omit<
   OpenConfig,
-  'topology' | 'brokerExecutable' | 'libraryPath' | 'seed'
+  'topology' | 'brokerExecutable' | 'broker' | 'libraryPath' | 'seed' | 'admission'
 > & {
-  serverExecutable?: string;
+  serverExecutable?: FilePathInput;
   listen?: ServerListen;
 };
 
@@ -47,7 +65,7 @@ export type ServerListen =
   | { readonly transport: 'tcp'; readonly port?: number }
   | {
       readonly transport: 'unix';
-      readonly directory: string;
+      readonly directory: FilePathInput;
       readonly port?: number;
     };
 
@@ -107,6 +125,8 @@ export type OliphauntDatabase = {
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
   execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   backup(): Promise<Uint8Array>;
+  /** Publish a streamed physical archive to a new host file after backup cleanup succeeds. */
+  backupToFile(destination: FilePathInput): Promise<void>;
   cancel(): Promise<void>;
   /**
    * Own the session for one callback. Use callback return/throw or rollback()
@@ -127,7 +147,7 @@ export type OliphauntServer = {
 };
 
 export type RestoreOptions = {
-  libraryPath?: string;
+  libraryPath?: FilePathInput;
 };
 
 export type OliphauntClient = {

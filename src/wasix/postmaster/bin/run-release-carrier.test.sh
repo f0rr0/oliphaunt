@@ -65,4 +65,18 @@ if bash "$launcher" init --data-dir "$incomplete" \
 fi
 grep -Fq 'refusing to initialize a non-empty data directory' "$test_root/incomplete.err"
 
+ipv6="$(bash "$launcher" uri --data-dir "$data_dir" --host ::1 --port 55432)"
+[ "$ipv6" = 'postgresql://postgres@[::1]:55432/postgres' ]
+bash "$launcher" start --data-dir "$data_dir" 2>"$test_root/default.stderr"
+for setting in PORT=1234 listen-addresses=0.0.0.0 data_directory=/tmp/other unix_socket_directories=/tmp; do
+  rejected_root="$test_root/rejected-${setting%%=*}"
+  if bash "$launcher" start --data-dir "$rejected_root" --guc "$setting" \
+    >"$test_root/guc.out" 2>"$test_root/guc.err"; then
+    echo "launcher accepted controlled setting: $setting" >&2
+    exit 1
+  fi
+  [ ! -e "$rejected_root" ]
+  grep -Fq 'controlled by launcher options' "$test_root/guc.err"
+done
+
 echo 'release carrier launcher tests passed'

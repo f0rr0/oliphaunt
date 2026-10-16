@@ -26,8 +26,12 @@ pub use oliphaunt::{
 #[cfg(feature = "tools-execution")]
 pub mod tools {
     pub use crate::oliphaunt::tools::{
-        PgDumpOptions, PostgresToolError, PostgresToolOutput, PsqlOptions, ToolAssets,
+        PgDumpOptions, PostgresToolError, PostgresToolOutput, PostgresToolSummary, PsqlOptions,
+        ToolAssets,
     };
 }
 
 pub mod session;
+
+/// Admission policy shared by asynchronous database owners.
+pub use oliphaunt_query::AdmissionLimits;

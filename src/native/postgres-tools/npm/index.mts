@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { createCapturedOutput, captureOutput, finishCapture } from './output-capture.mjs';
+import { writeNewFile } from './output-file.mjs';
 
 const require = createRequire(import.meta.url);
 // PostgreSQL 18 getopt_long optstrings. A value-taking option owns the rest
@@ -49,7 +51,14 @@ export class PostgresToolError extends Error {
   constructor(
     tool,
     message,
-    { exitCode = null, signal = null, stdout = '', stderr = '', cause } = {},
+    {
+      exitCode = null,
+      signal = null,
+      stdout = '',
+      stderr = '',
+      stderrTruncated = false,
+      cause,
+    } = {},
   ) {
     super(message, { cause });
     this.name = 'PostgresToolError';
@@ -58,10 +67,32 @@ export class PostgresToolError extends Error {
     this.signal = signal;
     this.stdout = stdout;
     this.stderr = stderr;
+    this.stderrTruncated = stderrTruncated;
   }
 }
 
 export async function pgDump(connectionString, options = {}) {
+  return runTool('pg_dump', pgDumpInvocation(connectionString, options));
+}
+
+export async function pgDumpToStream(connectionString, destination, options = {}) {
+  validateDestination(destination);
+  return runTool(
+    'pg_dump',
+    pgDumpInvocation(connectionString, options),
+    undefined,
+    destination,
+    options.stderr,
+    options.signal,
+  );
+}
+
+export async function pgDumpToFile(connectionString, destination, options = {}) {
+  const args = pgDumpInvocation(connectionString, options);
+  return runToolToFile('pg_dump', args, undefined, destination, options);
+}
+
+function pgDumpInvocation(connectionString, options) {
   validateConnectionString(connectionString);
   const args = validatedArguments(
     'pg_dump',
@@ -70,16 +101,26 @@ export async function pgDump(connectionString, options = {}) {
     PG_DUMP_SHORT_OPTIONS,
     PG_DUMP_VALUE_OPTIONS,
   );
-  return runTool('pg_dump', [
-    ...args,
-    '--encoding=UTF8',
-    '--no-password',
-    '--dbname',
-    connectionString,
-  ]);
+  return [...args, '--encoding=UTF8', '--no-password', '--dbname', connectionString];
 }
 
 export async function psql(connectionString, options = {}) {
+  const { args, stdin } = psqlInvocation(connectionString, options);
+  return runTool('psql', args, stdin);
+}
+
+export async function psqlToStream(connectionString, destination, options = {}) {
+  validateDestination(destination);
+  const { args, stdin } = psqlInvocation(connectionString, options);
+  return runTool('psql', args, stdin, destination, options.stderr, options.signal);
+}
+
+export async function psqlToFile(connectionString, destination, options = {}) {
+  const { args, stdin } = psqlInvocation(connectionString, options);
+  return runToolToFile('psql', args, stdin, destination, options);
+}
+
+function psqlInvocation(connectionString, options) {
   validateConnectionString(connectionString);
   const args = validatedArguments(
     'psql',
@@ -98,9 +139,8 @@ export async function psql(connectionString, options = {}) {
   }
   const inputArgs =
     command !== undefined ? ['--command', command] : script !== undefined ? ['--file=-'] : [];
-  return runTool(
-    'psql',
-    [
+  return {
+    args: [
       ...args,
       '--no-psqlrc',
       '--no-password',
@@ -109,8 +149,8 @@ export async function psql(connectionString, options = {}) {
       connectionString,
       ...inputArgs,
     ],
-    script,
-  );
+    stdin: script,
+  };
 }
 
 function validateConnectionString(value) {
@@ -238,7 +278,51 @@ function managedArgument(argument, flags, shortOptions) {
   return undefined;
 }
 
-async function runTool(tool, args, stdin) {
+function validateDestination(destination) {
+  if (destination === null || typeof destination?.getWriter !== 'function') {
+    throw new TypeError('output destination must be a WritableStream<Uint8Array>');
+  }
+}
+
+async function runToolToFile(tool, args, stdin, destination, options) {
+  let completed;
+  try {
+    return await writeNewFile(destination, async (stream) => {
+      completed = await runTool(tool, args, stdin, stream, options.stderr, options.signal);
+      return completed;
+    });
+  } catch (cause) {
+    if (cause instanceof PostgresToolError || cause instanceof TypeError) throw cause;
+    throw new PostgresToolError(
+      tool,
+      `could not publish ${tool} output: ${cause?.message ?? cause}`,
+      {
+        exitCode: completed === undefined ? null : 0,
+        stderr: completed?.stderr,
+        stderrTruncated: completed?.stderrTruncated,
+        cause,
+      },
+    );
+  }
+}
+
+async function runTool(tool, args, stdin, destination, diagnostics, signal) {
+  signal?.throwIfAborted();
+  const stdoutWriter = destination?.getWriter();
+  let stderrWriter;
+  try {
+    if (diagnostics !== undefined) {
+      validateDestination(diagnostics);
+      stderrWriter = diagnostics.getWriter();
+    }
+    return await runToolOwned(tool, args, stdin, stdoutWriter, stderrWriter, signal);
+  } finally {
+    stderrWriter?.releaseLock();
+    stdoutWriter?.releaseLock();
+  }
+}
+
+async function runToolOwned(tool, args, stdin, stdoutWriter, stderrWriter, abortSignal) {
   let executable;
   let environment;
   try {
@@ -251,6 +335,9 @@ async function runTool(tool, args, stdin) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let stdinFailure;
+    let processFailure;
+    let killTimer;
+    const outputFailure = new AbortController();
     const rejectOnce = (error) => {
       if (settled) return;
       settled = true;
@@ -267,53 +354,127 @@ async function runTool(tool, args, stdin) {
       rejectOnce(new PostgresToolError(tool, `could not start ${tool}`, { cause }));
       return;
     }
-    const stdout = [];
-    const stderr = [];
-    child.stdout.on('data', (chunk) => stdout.push(chunk));
-    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    const cancel = () => {
+      processFailure = { cause: abortSignal.reason };
+      outputFailure.abort(abortSignal.reason);
+      child.kill();
+      killTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+      killTimer.unref?.();
+    };
+    abortSignal?.addEventListener('abort', cancel, { once: true });
+    if (abortSignal?.aborted) cancel();
+    const captured = createCapturedOutput(stdoutWriter !== undefined);
+    let drains;
+    if (stdoutWriter === undefined) {
+      child.stdout.on('data', (chunk) => captureOutput(captured, 'stdout', chunk));
+      child.stderr.on('data', (chunk) => captureOutput(captured, 'stderr', chunk));
+      drains = Promise.resolve([]);
+    } else {
+      // Each write's Promise owns producer credit. Readable buffering and OS
+      // pipes provide bounded backpressure while the destination is stalled.
+      drains = Promise.all(
+        [
+          drainDestination(child.stdout, stdoutWriter, undefined, outputFailure),
+          drainDestination(
+            child.stderr,
+            stderrWriter,
+            (chunk) => captureOutput(captured, 'stderr', chunk),
+            outputFailure,
+          ),
+        ].map((drain) => drain.catch((cause) => ({ failure: { cause } }))),
+      );
+    }
     child.once('error', (cause) => {
-      rejectOnce(new PostgresToolError(tool, `could not run ${tool}`, { cause }));
+      if (stdoutWriter === undefined)
+        rejectOnce(new PostgresToolError(tool, `could not run ${tool}`, { cause }));
+      else processFailure = { cause };
     });
-    child.once('close', (exitCode, signal) => {
+    child.once('close', async (exitCode, signal) => {
+      clearTimeout(killTimer);
+      abortSignal?.removeEventListener('abort', cancel);
       if (settled) return;
       settled = true;
-      const stdoutBytes = Buffer.concat(stdout);
-      const stderrBytes = Buffer.concat(stderr);
-      if (exitCode !== 0 || signal !== null) {
-        const stdoutText = decodeDiagnostics(stdoutBytes);
-        const stderrText = decodeDiagnostics(stderrBytes);
-        reject(
-          new PostgresToolError(
-            tool,
-            `${tool} ${signal === null ? `exited with status ${exitCode}` : `was terminated by ${signal}`}${stderrText.trim().length === 0 ? '' : `: ${stderrText.trim()}`}`,
-            { exitCode, signal, stdout: stdoutText, stderr: stderrText },
-          ),
-        );
-        return;
-      }
-      if (stdinFailure !== undefined) {
-        reject(
-          new PostgresToolError(tool, `could not write to ${tool}`, {
-            exitCode,
-            signal,
-            stdout: decodeDiagnostics(stdoutBytes),
-            stderr: decodeDiagnostics(stderrBytes),
-            cause: stdinFailure,
-          }),
-        );
-        return;
-      }
       try {
-        resolve(new TextDecoder('utf-8', { fatal: true }).decode(stdoutBytes));
+        const drained = await drains;
+        const { stdout: stdoutBytes, stderr: stderrBytes } = finishCapture(captured);
+        if (stdoutWriter !== undefined) {
+          const failures = [processFailure, ...drained.map((result) => result.failure)].filter(
+            (failure) => failure !== undefined,
+          );
+          if (stdinFailure !== undefined) failures.push({ cause: stdinFailure });
+          const stderr = decodeDiagnostics(stderrBytes);
+          const stderrTruncated = captured.stderrTruncated;
+          if (failures.length !== 0 || exitCode !== 0 || signal !== null) {
+            reject(
+              new PostgresToolError(
+                tool,
+                `${tool} destination invocation failed${exitCode === null ? '' : ` with status ${exitCode}`}`,
+                {
+                  exitCode,
+                  signal,
+                  stderr,
+                  stderrTruncated,
+                  cause:
+                    failures.length > 1
+                      ? new AggregateError(
+                          failures.map((failure) => failure.cause),
+                          'tool output failures',
+                        )
+                      : failures[0]?.cause,
+                },
+              ),
+            );
+            return;
+          }
+          resolve({ stdoutBytes: drained[0].bytes, stderr, stderrTruncated });
+          return;
+        }
+        if (exitCode !== 0 || signal !== null) {
+          const stdoutText = decodeDiagnostics(stdoutBytes);
+          const stderrText = decodeDiagnostics(stderrBytes);
+          reject(
+            new PostgresToolError(
+              tool,
+              `${tool} ${signal === null ? `exited with status ${exitCode}` : `was terminated by ${signal}`}${stderrText.trim().length === 0 ? '' : `: ${stderrText.trim()}`}`,
+              { exitCode, signal, stdout: stdoutText, stderr: stderrText },
+            ),
+          );
+          return;
+        }
+        if (stdinFailure !== undefined) {
+          reject(
+            new PostgresToolError(tool, `could not write to ${tool}`, {
+              exitCode,
+              signal,
+              stdout: decodeDiagnostics(stdoutBytes),
+              stderr: decodeDiagnostics(stderrBytes),
+              cause: stdinFailure,
+            }),
+          );
+          return;
+        }
+        try {
+          resolve(new TextDecoder('utf-8', { fatal: true }).decode(stdoutBytes));
+        } catch (cause) {
+          const stdoutText = decodeDiagnostics(stdoutBytes);
+          const stderrText = decodeDiagnostics(stderrBytes);
+          reject(
+            new PostgresToolError(tool, `${tool} produced non-UTF-8 output`, {
+              exitCode,
+              signal,
+              stdout: stdoutText,
+              stderr: stderrText,
+              cause,
+            }),
+          );
+        }
       } catch (cause) {
-        const stdoutText = decodeDiagnostics(stdoutBytes);
-        const stderrText = decodeDiagnostics(stderrBytes);
+        // Buffer concatenation and JS string conversion have their own host
+        // size limits. Reject the invocation, not the event-loop callback.
         reject(
-          new PostgresToolError(tool, `${tool} produced non-UTF-8 output`, {
+          new PostgresToolError(tool, `${tool} output capture failed`, {
             exitCode,
             signal,
-            stdout: stdoutText,
-            stderr: stderrText,
             cause,
           }),
         );
@@ -324,6 +485,47 @@ async function runTool(tool, args, stdin) {
     });
     if (stdin === undefined) child.stdin.end();
     else child.stdin.end(stdin, 'utf8');
+  });
+}
+
+async function drainDestination(readable, writer, capture, outputFailure) {
+  let bytes = 0;
+  let failure;
+  for await (const chunk of readable) {
+    for (let offset = 0; offset < chunk.length; offset += 64 * 1024) {
+      const part = chunk.subarray(offset, offset + 64 * 1024);
+      capture?.(part);
+      if (failure !== undefined || writer === undefined) continue;
+      try {
+        // Give the sink an owned chunk; it may retain or mutate it after write.
+        await writeWithSignal(writer, Uint8Array.from(part), outputFailure.signal);
+        bytes += part.length;
+      } catch (cause) {
+        failure = { cause };
+        outputFailure.abort(cause);
+      }
+    }
+  }
+  return { bytes, failure };
+}
+
+function writeWithSignal(writer, chunk, signal) {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve()
+      .then(() => writer.write(chunk))
+      .then(
+        () => {
+          signal.removeEventListener('abort', abort);
+          resolve();
+        },
+        (cause) => {
+          signal.removeEventListener('abort', abort);
+          reject(cause);
+        },
+      );
   });
 }
 

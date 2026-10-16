@@ -11,9 +11,9 @@ pub(crate) mod database_root_descriptor;
 pub(crate) mod extensions;
 pub(crate) mod lifecycle;
 pub(crate) mod postgres_mod;
+pub(crate) mod protocol_limits_generated;
 pub(crate) mod query;
 pub(crate) use oliphaunt_query as query_core;
-pub(crate) mod sql;
 pub(crate) mod storage;
 pub(crate) mod sync_host_fs;
 #[cfg(test)]

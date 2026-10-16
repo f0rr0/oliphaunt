@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { cp, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -56,6 +56,9 @@ await writeFile(
     await readFile(new URL('./verify-host.mts', import.meta.url), 'utf8'),
   ),
 );
+const deadlineFixtureRoot = resolve(repositoryRoot, 'src/test-fixtures/postgres');
+for (const file of ['sql-deadlines.json', 'sql-deadlines.mjs'])
+  await cp(resolve(deadlineFixtureRoot, file), resolve(fixture.consumer, file));
 function readOptions(args) {
   let packageOnly = false;
   let runtime = 'node';

@@ -11,6 +11,8 @@ export type OliphauntToolOutput = Readonly<{
   code: number;
   stdoutBytes: Uint8Array;
   stderrBytes: Uint8Array;
+  stdoutCount?: number;
+  stderrTruncated?: boolean;
 }>;
 
 export type DirectoryEntry = Readonly<{
@@ -25,7 +27,9 @@ export class Directory {
   /** Create a filesystem served synchronously by a caller-realm backend. */
   static createSync(backend: object, capacity: number): Directory;
   free(): void;
+  [Symbol.dispose](): void;
   __getClassname(): string;
+  __cloneForMount(): Directory;
   createDir(path: string): Promise<void>;
   readDir(path: string): Promise<DirectoryEntry[]>;
   readFile(path: string): Promise<Uint8Array>;
@@ -70,6 +74,7 @@ export class OliphauntDirectInstance {
 export class OliphauntPreparedTool {
   private constructor();
   free(): void;
+  [Symbol.dispose](): void;
 }
 
 export type RunWasixOptions = Readonly<{
@@ -113,8 +118,10 @@ export function runOliphauntToolDirect(
   prepared: OliphauntPreparedTool,
   options: RunWasixOptions,
   protocolRead: (maximumBytes: number) => Uint8Array,
-  /** Borrowed bytes: synchronously copy; never mutate or retain this view. */
+  /** Owned bytes: the receiver may retain or mutate this callback-local copy. */
   protocolWrite: (chunk: Uint8Array) => void,
+  stdoutWrite?: (chunk: Uint8Array) => void,
+  stderrWrite?: (chunk: Uint8Array) => void,
 ): Promise<OliphauntToolOutput>;
 export function instantiateOliphauntDirect(
   module: WebAssembly.Module,

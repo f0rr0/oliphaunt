@@ -227,11 +227,23 @@ async function stagePackedBrowserConsumer(scratch, includeTools) {
       ? [['src/wasix/postgres-tools/ts/tests/direct-pg-dump-smoke.ts', 'direct-pg-dump-smoke.ts']]
       : []),
     ['src/examples/wasix/browser/structured-api-smoke.ts', 'structured-api-smoke.ts'],
+    ['src/test-fixtures/postgres/sql-deadlines.json', 'sql-deadlines.json'],
+    ['src/test-fixtures/postgres/sql-deadlines.mjs', 'sql-deadlines.mjs'],
     ['src/test-fixtures/postgres/logical-tools.json', 'logical-tools.json'],
     ['src/test-fixtures/postgres/logical-tools-seed.sql', 'logical-tools-seed.sql'],
     ['src/test-fixtures/postgres/logical-tools-verify.sql', 'logical-tools-verify.sql'],
   ]) {
     await cp(resolve(repositoryRoot, source), resolve(fixture.consumer, destination));
+  }
+  if (!includeTools) {
+    const entry = resolve(fixture.consumer, 'main.ts');
+    await writeFile(
+      entry,
+      (await readFile(entry, 'utf8')).replace(
+        '../../../test-fixtures/postgres/sql-deadlines.mjs',
+        './sql-deadlines.mjs',
+      ),
+    );
   }
   return realpath(fixture.consumer);
 }

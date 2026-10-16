@@ -7,6 +7,7 @@ import {
   encodeBrokerResponse,
   readBrokerRequest,
   readBrokerResponse,
+  readBrokerBackup,
 } from '../runtime/broker-frames.js';
 import { MemoryDuplexStream } from '../runtime/byte-stream.js';
 
@@ -14,6 +15,7 @@ test('broker management carries authentication, backup and close; SQL uses Postg
   for (const request of [
     { kind: 'authenticate', token: 'secret' },
     { kind: 'backup' },
+    { kind: 'backup-stream' },
     { kind: 'close' },
   ] as const) {
     assert.deepEqual(
@@ -39,4 +41,45 @@ test('broker management carries authentication, backup and close; SQL uses Postg
   await assert.rejects(readBrokerRequest(new MemoryDuplexStream([header])), /exceeds limit/);
   header[0] = 0;
   await assert.rejects(readBrokerRequest(new MemoryDuplexStream([header])), /magic mismatch/);
+});
+
+test('backup streams await the destination and drain its failure through completion', async () => {
+  const frame = (bytes: Uint8Array) => {
+    const encoded = encodeBrokerResponse({ kind: 'ok', bytes });
+    encoded[4] = 103;
+    return encoded;
+  };
+  const chunks = [Uint8Array.of(1, 2), Uint8Array.of(3)];
+  const stream = new MemoryDuplexStream([
+    ...chunks.map(frame),
+    encodeBrokerResponse({ kind: 'ok', bytes: new Uint8Array() }),
+    encodeBrokerResponse({ kind: 'ok', bytes: Uint8Array.of(4) }),
+  ]);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const failure = new Error('destination failed');
+  let calls = 0;
+  const transfer = readBrokerBackup(stream, async (chunk) => {
+    calls++;
+    assert.deepEqual(chunk, chunks[0]);
+    await gate;
+    throw failure;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 1);
+  release();
+  assert.deepEqual(await transfer, {
+    response: { kind: 'ok', bytes: new Uint8Array() },
+    destinationFailure: { error: failure },
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(await readBrokerResponse(stream), { kind: 'ok', bytes: Uint8Array.of(4) });
+  const oversized = frame(new Uint8Array());
+  new DataView(oversized.buffer).setBigUint64(5, 65537n);
+  await assert.rejects(
+    readBrokerBackup(new MemoryDuplexStream([oversized]), () => {}),
+    /exceeds limit 65536/,
+  );
 });

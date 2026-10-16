@@ -94,6 +94,15 @@ impl OliphauntBuilder {
         self
     }
 
+    /// Set the helper's deadline for each login handshake. Defaults to five seconds.
+    /// Rounded up to whole milliseconds; valid range is 1..=2147483647 milliseconds.
+    /// This requires broker mode and does not limit queries or backups.
+    #[cfg(feature = "desktop")]
+    pub fn broker_handshake_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.broker_handshake_timeout(timeout);
+        self
+    }
+
     /// Add an explicit PostgreSQL startup GUC.
     pub fn startup_guc(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.inner = self.inner.startup_guc(name, value);
@@ -531,6 +540,18 @@ impl Oliphaunt {
             .as_deref_mut()
             .ok_or(Error::EngineStopped)?
             .backup()
+    }
+
+    /// Stream a physical backup to a borrowed writer without retaining the archive.
+    ///
+    /// The caller owns flushing and publication. A failed destination may contain
+    /// a partial archive and must not be published as a successful backup.
+    pub fn backup_to(&mut self, writer: &mut dyn std::io::Write) -> Result<()> {
+        self.ensure_ready()?;
+        self.session
+            .as_deref_mut()
+            .ok_or(Error::EngineStopped)?
+            .backup_to(writer)
     }
 
     /// Close the database synchronously.

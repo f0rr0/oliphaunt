@@ -1,3 +1,6 @@
+import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { extensions, normalizeExtensions } from '../extensions.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -53,6 +56,7 @@ test('normalizes only the public database and server configuration', () => {
       topology: 'broker',
       storage: { kind: 'directory', path: '/app/root' },
       brokerExecutable: '/opt/oliphaunt-broker',
+      broker: { handshakeTimeoutMs: 750 },
       startupGUCs: { work_mem: '16MB' },
       username: 'app_user',
       database: 'app_db',
@@ -63,6 +67,7 @@ test('normalizes only the public database and server configuration', () => {
   assert.equal(broker.topology, 'broker');
   assert.equal(broker.pgdata, '/app/root/pgdata');
   assert.equal(broker.brokerExecutable, '/opt/oliphaunt-broker');
+  assert.equal(broker.brokerHandshakeTimeoutMs, 750);
   assert.deepEqual(broker.extensions, ['cube', 'hstore']);
   assert.deepEqual(broker.startupArgs.slice(0, 2), ['-c', 'work_mem=16MB']);
 
@@ -89,6 +94,40 @@ test('normalizes only the public database and server configuration', () => {
     transport: 'unix',
     directory: '/tmp/oliphaunt sockets',
   });
+});
+
+test('broker handshake options are validated and copied before launch', () => {
+  const root = { instanceDirectory: '/app/root', temporaryDirectory: false };
+  const options = { handshakeTimeoutMs: 125 };
+  const normalized = normalizeOpenConfig({ topology: 'broker', broker: options }, root);
+  options.handshakeTimeoutMs = 500;
+  assert.equal(normalized.brokerHandshakeTimeoutMs, 125);
+  assert.equal(
+    normalizeOpenConfig({ topology: 'broker' }, root).brokerHandshakeTimeoutMs,
+    undefined,
+  );
+  for (const value of [0, -1, 1.5, NaN, Infinity, 2_147_483_648, '5000', null]) {
+    assert.throws(() =>
+      normalizeOpenConfig(
+        { topology: 'broker', broker: { handshakeTimeoutMs: value } } as never,
+        root,
+      ),
+    );
+  }
+  for (const broker of [null, [], '5000', { handshakeTimeout: 5000 }]) {
+    assert.throws(() => normalizeOpenConfig({ topology: 'broker', broker } as never, root));
+  }
+  for (const topology of ['direct', 'server', undefined]) {
+    assert.throws(
+      () => normalizeOpenConfig({ topology, broker: options } as never, root),
+      /require topology/,
+    );
+  }
+  assert.equal(
+    normalizeOpenConfig({ topology: 'broker', broker: { handshakeTimeoutMs: 2_147_483_647 } }, root)
+      .brokerHandshakeTimeoutMs,
+    2_147_483_647,
+  );
 });
 
 test('validates the small public configuration vocabulary', () => {
@@ -194,4 +233,42 @@ test('rejects PostgreSQL startup GUCs owned by Oliphaunt storage', () => {
       );
     }
   }
+});
+
+test('normalizes file URL inputs consistently before native serialization', () => {
+  const runtimeDirectory = join(tmpdir(), 'runtime dir');
+  const serverExecutable = join(runtimeDirectory, 'bin', 'postgres');
+  const icuDirectory = join(tmpdir(), 'icu data');
+  const manifestPath = join(icuDirectory, 'manifest.json');
+  const socketDirectory = join(tmpdir(), 'socket dir');
+  const config = normalizeOpenConfig(
+    {
+      topology: 'server',
+      runtimeDirectory: pathToFileURL(runtimeDirectory),
+      serverExecutable: pathToFileURL(serverExecutable),
+      icuData: {
+        directory: pathToFileURL(icuDirectory),
+        manifestPath: pathToFileURL(manifestPath),
+      },
+      listen: { transport: 'unix', directory: pathToFileURL(socketDirectory) },
+    },
+    { instanceDirectory: '/database', temporaryDirectory: false },
+  );
+  assert.equal(config.runtimeDirectory, runtimeDirectory);
+  assert.equal(config.serverExecutable, serverExecutable);
+  assert.deepEqual(config.icuData, {
+    directory: icuDirectory,
+    manifestPath,
+  });
+  assert.deepEqual(config.serverListen, { transport: 'unix', directory: socketDirectory });
+  assert.throws(
+    () =>
+      normalizeOpenConfig(
+        {
+          seed: { directory: new URL('https://example.com/seed'), manifestPath: '/manifest.json' },
+        },
+        { instanceDirectory: '/database', temporaryDirectory: false },
+      ),
+    /file/,
+  );
 });

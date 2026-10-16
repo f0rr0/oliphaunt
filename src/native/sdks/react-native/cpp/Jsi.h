@@ -235,6 +235,43 @@ inline std::string copyStringArgument(jsi::Runtime &runtime, const jsi::Value &v
   return value.asString(runtime).utf8(runtime);
 }
 
+template <typename Start>
+inline void installBackupToFile(jsi::Runtime &runtime, jsi::Object &transport,
+    const std::shared_ptr<facebook::react::CallInvoker> &invoker,
+    const std::shared_ptr<RuntimeLifetime> &lifetime, Start start)
+{
+  transport.setProperty(runtime, "backupToFile", jsi::Function::createFromHostFunction(
+      runtime, jsi::PropNameID::forAscii(runtime, "liboliphauntBackupToFile"), 3,
+      [invoker, lifetime, start](jsi::Runtime &runtime, const jsi::Value &,
+          const jsi::Value *args, size_t count) -> jsi::Value {
+        if (count < 2 || count > 3)
+          throw jsi::JSError(runtime, "liboliphaunt JSI backupToFile expects a handle and destination");
+        const auto handle = copyHandleArgument(runtime, args[0]);
+        auto destination = copyStringArgument(runtime, args[1], "backup destination");
+        if (destination.empty() || destination.find('\0') != std::string::npos)
+          throw jsi::JSError(runtime, "backup destination must be a nonempty host path without NUL bytes");
+        const auto deadline = count > 2 ? copyOptionalMilliseconds(runtime, args[2]) : 0;
+        auto executor = jsi::Function::createFromHostFunction(
+            runtime, jsi::PropNameID::forAscii(runtime, "liboliphauntBackupToFileExecutor"), 2,
+            [invoker, lifetime, start, handle, destination = std::move(destination), deadline](
+                jsi::Runtime &runtime, const jsi::Value &, const jsi::Value *args, size_t count) -> jsi::Value {
+              auto pending = promiseCallbacks(runtime, args, count, invoker, lifetime);
+              auto reject = pending.reject;
+              try {
+                start(handle, destination, deadline, std::move(pending));
+              } catch (const std::exception &error) {
+                std::string message = error.what();
+                reject->call([message](jsi::Runtime &runtime, jsi::Function &callback) {
+                  callback.call(runtime, createError(runtime, message));
+                });
+              }
+              return jsi::Value::undefined();
+            });
+        return runtime.global().getPropertyAsFunction(runtime, "Promise")
+            .callAsConstructor(runtime, std::move(executor));
+      }));
+}
+
 inline std::optional<std::string> copyOptionalStringArgument(
     jsi::Runtime &runtime,
     const jsi::Value &value,

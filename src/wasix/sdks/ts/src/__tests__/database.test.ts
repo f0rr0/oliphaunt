@@ -10,8 +10,173 @@ import {
 import { WasixStorageError } from '../core/errors.js';
 import { PostgresError } from '../protocol/query.js';
 import type { OliphauntTransaction } from '../core/types.js';
+import { runWasixToolProcess } from '../internal.node.js';
 
 describe('WASIX database recovery state', () => {
+  it.each([
+    undefined,
+    1,
+    2,
+    65,
+  ])('shares query and tool admission before preparation and snapshots accepted inputs (capacity %s)', async (capacity) => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const seen: string[] = [];
+    const database = new WasixDatabaseImpl(
+      {
+        async exec() {
+          seen.push('query');
+          await blocked;
+          return ready();
+        },
+        async runTool(options) {
+          seen.push(`${options.args[0]}:${options.stdin?.[0]}`);
+          return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() };
+        },
+        async sync() {},
+        async close() {},
+      },
+      undefined,
+      capacity === undefined
+        ? undefined
+        : { maxPendingOperations: capacity, highWaterMarkBytes: 4096 },
+    );
+    const options = {
+      runtimeVersion: '0.1.1',
+      tool: { name: 'psql' as const, sha256: 'a'.repeat(64), size: 1, source: Uint8Array.of(1) },
+      args: [] as string[],
+    };
+    // Failed preparation must not consume a slot.
+    expect(() =>
+      runWasixToolProcess(database, () => {
+        throw new TypeError('bad input');
+      }),
+    ).toThrow('bad input');
+    const pending: Promise<unknown>[] = [database.execProtocolRaw(Uint8Array.of(1))];
+    for (let index = 0; index < (capacity ?? 64) - 1; index++) {
+      const args = [`tool${index}`];
+      const stdin = Uint8Array.of(index);
+      pending.push(runWasixToolProcess(database, { ...options, args, stdin }));
+      args[0] = 'changed';
+      stdin[0] = 255;
+    }
+    let prepared = false;
+    expect(() =>
+      runWasixToolProcess(database, () => {
+        prepared = true;
+        return options;
+      }),
+    ).toThrow(/operation queue is full/);
+    await expect(database.execProtocolRaw(Uint8Array.of(2))).rejects.toThrow(
+      /operation queue is full/,
+    );
+    expect(prepared).toBe(false);
+    release();
+    await Promise.all(pending);
+    expect(seen).toEqual([
+      'query',
+      ...Array.from({ length: (capacity ?? 64) - 1 }, (_, index) => `tool${index}:${index}`),
+    ]);
+    await database.execProtocolRaw(Uint8Array.of(3));
+    await database.close();
+  });
+
+  it.each([
+    { maxPendingOperations: 1, highWaterMarkBytes: 1024 },
+    { maxPendingOperations: 2, highWaterMarkBytes: 1 },
+    { maxPendingOperations: 2, highWaterMarkBytes: 32 },
+  ])('BEGIN rejects saturated admission without pinning the database (%j)', async (admission) => {
+    let release!: () => void;
+    let started!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const statements: string[] = [];
+    const database = new WasixDatabaseImpl(
+      {
+        async exec(input) {
+          if (input[0] !== 0x51 && input[0] !== 0x50) {
+            started();
+            await blocked;
+            return ready();
+          }
+          const sql = querySql(input);
+          statements.push(sql);
+          if (sql === 'BEGIN') return completed('BEGIN', 'T');
+          if (sql === 'COMMIT' || sql === 'ROLLBACK') return completed(sql, 'I');
+          return completed('UPDATE 1', 'T');
+        },
+        async sync() {},
+        async close() {},
+      },
+      undefined,
+      admission,
+    );
+    const first = database.execProtocolRaw(Uint8Array.of(1));
+    await running;
+    let called = false;
+    await expect(
+      database.transaction(() => {
+        called = true;
+      }),
+    ).rejects.toThrow(/queue is full/);
+    expect(called).toBe(false);
+    expect(statements).toEqual([]);
+    release();
+    await first;
+    await database.transaction(async (transaction) => {
+      await transaction.execute('UPDATE things SET value = 1');
+      await transaction.execute('UPDATE things SET value = 2');
+      await transaction.rollback();
+    });
+    await database.transaction(() => 7);
+    expect(statements).toEqual([
+      'BEGIN',
+      'UPDATE things SET value = 1',
+      'UPDATE things SET value = 2',
+      'ROLLBACK',
+      'BEGIN',
+      'COMMIT',
+    ]);
+    await database.close();
+  });
+
+  it('keeps a large buffered tool input alone until its owner completes', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const database = new WasixDatabaseImpl({
+      async exec() {
+        return ready();
+      },
+      async runTool(options) {
+        expect(options.script?.length).toBe(45 * 1024 * 1024);
+        await blocked;
+        return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() };
+      },
+      async sync() {},
+      async close() {},
+    });
+    const running = runWasixToolProcess(database, {
+      runtimeVersion: '0.1.1',
+      tool: { name: 'psql', sha256: 'a'.repeat(64), size: 1, source: Uint8Array.of(1) },
+      args: [],
+      script: 'x'.repeat(45 * 1024 * 1024),
+    });
+    await expect(database.execProtocolRaw(Uint8Array.of(2))).rejects.toThrow(
+      /operation queue is full/,
+    );
+    release();
+    await running;
+    await database.execProtocolRaw(Uint8Array.of(3));
+    await database.close();
+  });
   it('validates explicit startup identities like Rust WASIX', () => {
     expect(normalizeWasixDatabaseIdentity('application', 'products')).toEqual({
       username: 'application',
@@ -144,7 +309,11 @@ describe('WASIX database recovery state', () => {
     expect(() => assertWasixProtocolConnectionTarget(database)).not.toThrow();
   });
 
-  it('pins callback transactions, commits results, and expires the transaction handle', async () => {
+  it.each([
+    undefined,
+    1,
+    2,
+  ])('pins callback transactions, commits results, and expires the transaction handle (capacity %s)', async (capacity) => {
     const statements: string[] = [];
     const persistenceModes: Array<string | undefined> = [];
     const syncBoundaries: string[] = [];
@@ -162,7 +331,13 @@ describe('WASIX database recovery state', () => {
       },
       async close() {},
     };
-    const database = new WasixDatabaseImpl(session);
+    const database = new WasixDatabaseImpl(
+      session,
+      undefined,
+      capacity === undefined
+        ? undefined
+        : { maxPendingOperations: capacity, highWaterMarkBytes: 1024 },
+    );
     let expired: OliphauntTransaction | undefined;
 
     const value = await database.transaction(async (transaction) => {
@@ -254,7 +429,9 @@ describe('WASIX database recovery state', () => {
       await expect(
         caught,
         `${name} did not reject for a closed transaction`,
-      ).resolves.toMatchObject({ message: expect.stringContaining('no longer active') });
+      ).resolves.toMatchObject({
+        message: expect.stringContaining('no longer active'),
+      });
     }
     expect(statements).toEqual(['BEGIN', 'COMMIT']);
     await database.close();
@@ -744,6 +921,51 @@ describe('WASIX database recovery state', () => {
     expect(executions[1]?.buffer).not.toBe(raw.buffer);
     expect(raw).toEqual(Uint8Array.of('Q'.charCodeAt(0), 0, 0, 0, 5, 0));
     await database.close();
+  });
+
+  it('bounds public bursts before planning while preserving FIFO snapshots and close', async () => {
+    const executions: Uint8Array[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let closed = false;
+    const database = new WasixDatabaseImpl({
+      async exec(input) {
+        executions.push(input);
+        await gate;
+        return ready();
+      },
+      async sync() {},
+      async close() {
+        closed = true;
+      },
+    });
+    const requests = Array.from({ length: 64 }, (_, index) => Uint8Array.of(0xaa, index));
+    const accepted = requests.map((request) => database.execProtocolRaw(request));
+    for (const request of requests) request.fill(0xff);
+    let inspected = false;
+    await expect(
+      database.query('SELECT $1::jsonb', [
+        {
+          get value() {
+            inspected = true;
+            return 1;
+          },
+        },
+      ]),
+    ).rejects.toThrow(/operation queue is full/);
+    expect(inspected).toBe(false);
+    expect(executions).toHaveLength(1);
+    const closing = database.close();
+    expect(closed).toBe(false);
+    release();
+    await Promise.all(accepted);
+    await closing;
+    expect(executions).toEqual(
+      Array.from({ length: 64 }, (_, index) => Uint8Array.of(0xaa, index)),
+    );
+    expect(closed).toBe(true);
   });
 
   it('streams protocol responses in order without retaining caller-owned input', async () => {

@@ -35,6 +35,8 @@ import {
   validateExtensionInstallSqlReachability,
 } from '../../../artifacts/packages/tools/extension-artifact-inventory.mts';
 
+import { NATIVE_EXTENSION_LIFECYCLE_BY_MODE } from './verify-native-extension-lifecycle-receipts.mts';
+
 const PREFIX = 'stage-native-extension-lifecycle.mts';
 const TARGET = 'linux-x64-gnu';
 function fail(message) {
@@ -590,14 +592,14 @@ export function stageNativeExtensionLifecycle(args) {
     artifactRecord('native-extension-proof-runner', args['proof-runner']),
   ].sort((left, right) => compareText(left.identity, right.identity));
   const evidenceCore = {
-    schema: 'oliphaunt-native-extension-lifecycle-inputs-v1',
+    schema: 'oliphaunt-native-extension-lifecycle-inputs-v2',
     candidateSha: args['candidate-sha'],
     candidateTree: args['candidate-tree'],
     target: TARGET,
     extensionCount: extensionRows.length,
     extensions: extensionRows.map((row) => row['sql-name']).sort(compareText),
     modes: ['direct', 'broker', 'server'],
-    lifecycle: ['install', 'load', 'restart', 'backup', 'restore'],
+    lifecycleByMode: NATIVE_EXTENSION_LIFECYCLE_BY_MODE,
     consumedArtifacts,
   };
   const evidence = {

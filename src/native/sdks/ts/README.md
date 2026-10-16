@@ -26,7 +26,15 @@ try {
 
 Default storage is a disposable temporary directory. Direct mode stays bound to its first root and configuration for the lifetime of the process, even after closing a handle. Use the quickstart's persistent-storage example for application data; run it as an alternative to this disposable example. Always close database handles explicitly.
 
+Embedded execution defaults to `fsync=off`; saved PostgreSQL configuration and `startupGUCs` can override it. A persistent directory alone does not provide crash safety. Use `startupGUCs: { fsync: 'on' }` when disk synchronization is required.
+
 ## Build your integration
+
+Use `await db.backupToFile('./backup.tar')` to save a physical backup without
+collecting the archive in JavaScript memory. The destination must be new; its
+parent directory must exist. The file is published after backup and close
+succeed, with private permissions on Unix. Completion does not promise power-loss
+durability. `backup()` remains available when you need the archive bytes.
 
 - [Guide](https://oliphaunt.dev/docs/sdk/typescript/guide): parameters, transactions, extensions, backups, and shutdown.
 - [API reference](https://oliphaunt.dev/docs/sdk/typescript/api-reference): methods, configuration, results, and errors.

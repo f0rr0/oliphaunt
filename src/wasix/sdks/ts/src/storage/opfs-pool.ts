@@ -1,3 +1,14 @@
+import { DEFAULT_OPFS_MAX_CONCURRENT_IO, DEFAULT_OPFS_SPARE_FILE_COUNT } from './types.js';
+import {
+  emptyOpfsJournal,
+  OpfsJournal,
+  openOpfsAccess,
+  readOpfsJournal,
+  readOpfsBytes,
+  writeOpfsBytes,
+  validateOpfsProgress,
+  type OpfsSyncAccess,
+} from './opfs-journal.js';
 import type { WasixDirectoryMount } from '../resources/archive.js';
 import { parseJsonWithUniqueObjectKeys } from './database-root.js';
 import { composeWasixStorageFailure, WasixStorageError } from '../core/errors.js';
@@ -21,9 +32,11 @@ export const OPFS_POOL_ROOT = '.oliphaunt-wasix-pool-v1';
 
 const STATE_FILE = 'state.json';
 const DATA_DIRECTORY = 'data';
-const STATE_SCHEMA = 'oliphaunt-wasix-opfs-pool-v1';
-const PREOPENED_FILE_RESERVE = 32;
-const MAX_PARALLEL_IO = 16;
+const LEGACY_STATE_SCHEMA = 'oliphaunt-wasix-opfs-pool-v1';
+const STATE_SCHEMA = 'oliphaunt-wasix-opfs-pool-v2';
+const UTF8_ENCODER = new TextEncoder();
+
+// Tags and opcodes mirror the owned browser host's adapter/fs/sync_bridge.rs ABI.
 const TYPE_FILE = 1;
 const TYPE_DIRECTORY = 2;
 
@@ -65,27 +78,14 @@ const FLAG_CREATE = 1 << 3;
 const FLAG_APPEND = 1 << 4;
 const FLAG_TRUNCATE = 1 << 5;
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
-const UTF8_ENCODER = new TextEncoder();
-
-type SyncAccessHandle = {
-  close(): void;
-  flush(): void;
-  getSize(): number;
-  read(buffer: Uint8Array, options: { at: number }): number;
-  truncate(size: number): void;
-  write(buffer: Uint8Array, options: { at: number }): number;
-};
-
-type SyncFileHandle = FileSystemFileHandle & {
-  createSyncAccessHandle?: () => Promise<SyncAccessHandle>;
-};
 
 type StoredDirectory = Readonly<{ path: string; type: 'directory' }>;
 type StoredFile = Readonly<{ path: string; type: 'file'; backing: string }>;
 type StoredEntry = StoredDirectory | StoredFile;
 
 type PoolState = Readonly<{
-  schema: typeof STATE_SCHEMA;
+  schema: typeof STATE_SCHEMA | typeof LEGACY_STATE_SCHEMA;
+  journal?: string;
   name: string;
   phase: 'initializing' | 'ready';
   physicalIdentity: WasixPhysicalIdentity;
@@ -100,9 +100,12 @@ export type PooledOpfsDatabase = Readonly<{
 type FileRecord = {
   path?: string;
   backing?: string;
-  access?: SyncAccessHandle;
+  access?: OpfsSyncAccess;
   staged?: Uint8Array;
   stagedSize?: number;
+  stagedRanges?: { offset: number; length: number }[];
+  // Lowest size since the last barrier; shrink-then-grow must retain zeroed bytes.
+  stagedTruncate?: number;
   references: number;
   dirty: boolean;
 };
@@ -116,9 +119,9 @@ type BridgeResult = [result: number, responseLength: number, value0: number, val
 /**
  * A same-realm synchronous OPFS filesystem for the WASIX host.
  *
- * Logical PostgreSQL paths live in one atomic state file while relation bytes
- * live in flat, pre-opened backing files. That deliberate opacity removes all
- * asynchronous OPFS namespace calls from PostgreSQL's hot syscall path.
+ * Logical paths are checkpointed in an atomic state file, with intermediate
+ * changes protected by the synchronous recovery journal. Flat, preopened
+ * backings keep asynchronous namespace operations out of the hot syscall path.
  */
 export class DirectOpfsPool {
   readonly state: 'new' | 'existing';
@@ -142,6 +145,16 @@ export class DirectOpfsPool {
   readonly #dirty = new Set<FileRecord>();
   readonly #spares: FileRecord[] = [];
   readonly #pendingReclaims = new Set<FileRecord>();
+  readonly #stagedDirty = new Set<FileRecord>();
+  readonly #maxConcurrentIO: number;
+  readonly #spareFileCount: number;
+  #journal: OpfsJournal | undefined;
+  #journalName = '';
+  #journalEntries = new Map<string, StoredEntry>();
+  #checkpointEntries = new Map<string, StoredEntry>();
+  #journalBackings = new Set<string>();
+  #failure: unknown;
+  readonly #retiredJournals = new Set<OpfsJournal>();
   #initializationComplete: boolean;
   #nextDescriptor = 1;
   #namespaceDirty = false;
@@ -153,20 +166,26 @@ export class DirectOpfsPool {
     data: FileSystemDirectoryHandle,
     physicalIdentity: WasixPhysicalIdentity,
     state: 'new' | 'existing',
+    maxConcurrentIO: number,
+    spareFileCount: number,
   ) {
     this.#name = name;
     this.#database = database;
     this.#data = data;
     this.#physicalIdentity = physicalIdentity;
     this.state = state;
+    this.#maxConcurrentIO = maxConcurrentIO;
+    this.#spareFileCount = spareFileCount;
     this.#initializationComplete = state === 'existing';
     this.#entries.set('', { type: 'directory' });
     this.request = (opcode, path, buffer, arg0, arg1, flags) => {
-      if (this.#closed) return [RESULT.io, 0, 0, 0];
+      if (this.#closed || this.#failure !== undefined) return [RESULT.io, 0, 0, 0];
       try {
         return this.#dispatch(opcode, path, buffer, arg0, arg1, flags);
       } catch (error) {
-        return [classifyError(error), 0, 0, 0];
+        const result = classifyError(error);
+        if (result === RESULT.io || result === RESULT.storageFull) this.#failure ??= error;
+        return [result, 0, 0, 0];
       }
     };
   }
@@ -175,6 +194,8 @@ export class DirectOpfsPool {
     name: string,
     loadClusterSeed: WasixClusterSeedLoader,
     physicalIdentity: WasixPhysicalIdentity,
+    maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
+    spareFileCount = DEFAULT_OPFS_SPARE_FILE_COUNT,
   ): Promise<DirectOpfsPool> {
     const selectedIdentity = assertWasixPhysicalIdentity(physicalIdentity);
     const database = await openPooledDatabaseDirectory(name);
@@ -186,6 +207,7 @@ export class DirectOpfsPool {
         name,
         await loadClusterSeed(),
         selectedIdentity,
+        maxConcurrentIO,
       ));
     } else if (stored === undefined) {
       stored = await initializePoolState(
@@ -194,19 +216,44 @@ export class DirectOpfsPool {
         name,
         await loadClusterSeed(),
         selectedIdentity,
+        maxConcurrentIO,
       );
     }
     const state = stored.phase === 'ready' ? 'existing' : 'new';
-    const pool = new DirectOpfsPool(name, database, data, selectedIdentity, state);
+    const pool = new DirectOpfsPool(
+      name,
+      database,
+      data,
+      selectedIdentity,
+      state,
+      maxConcurrentIO,
+      spareFileCount,
+    );
     try {
       await pool.#hydrate(stored);
       await pool.#restoreSpares();
-      await pool.#removeVolatileEntries();
       await pool.#maintainSpares();
+      if (stored.journal === undefined) {
+        const created = await createPoolJournal(database);
+        stored = { ...stored, schema: STATE_SCHEMA, journal: created.name };
+        pool.#journal = created.journal;
+        await writePoolState(database, stored);
+      } else {
+        pool.#journal = new OpfsJournal(
+          await openOpfsAccess(await database.getFileHandle(stored.journal)),
+        );
+      }
+      pool.#journalName = stored.journal as string;
+      pool.#journalEntries = new Map(stored.entries.map((entry) => [entry.path, entry]));
+      pool.#checkpointEntries = pool.#journalEntries;
+      pool.#journalBackings = new Set(
+        stored.entries.flatMap((entry) => (entry.type === 'file' ? [entry.backing] : [])),
+      );
+      await pool.#removeVolatileEntries();
       return pool;
     } catch (error) {
       try {
-        pool.#closeHandles(false);
+        pool.#closeHandles();
       } catch (closeError) {
         const primary = error instanceof Error ? error : new Error(describeError(error));
         throw composeWasixStorageFailure(primary, 'OPFS handle cleanup also failed', closeError);
@@ -217,53 +264,143 @@ export class DirectOpfsPool {
 
   async sync(boundary: WasixStorageSyncBoundary): Promise<void> {
     this.#assertOpen();
-    if (boundary === 'full' || boundary === 'close') this.#flushAll();
-    else this.#flushWal();
-
-    await this.#materializeStagedFiles();
-    const completesInitialization = !this.#initializationComplete && boundary === 'full';
-    if (this.#namespaceDirty || completesInitialization) {
-      // A namespace publication makes newly mapped bytes reachable. Reuse the
-      // complete PostgreSQL order instead of depending on map insertion order.
-      this.#flushAll();
-      await writePoolState(
-        this.#database,
-        serializePoolState(
-          this.#name,
-          this.#physicalIdentity,
-          this.#entries,
-          this.#initializationComplete || completesInitialization ? 'ready' : 'initializing',
-        ),
-      );
-      this.#namespaceDirty = false;
-      if (completesInitialization) this.#initializationComplete = true;
-    }
-    this.#publishReclaims();
-    if (boundary !== 'close') {
-      // The boundary is already durable. Spare replenishment is only an
-      // optimization for the next synchronous file-creation burst and must
-      // never turn a successful publication into an ambiguous failure.
-      await this.#maintainSpares().catch(() => undefined);
+    try {
+      this.#namespaceBarrier();
+      if (boundary === 'full' || boundary === 'close') this.#flushAll();
+      else this.#flushWal();
+      const completesInitialization = !this.#initializationComplete && boundary === 'full';
+      if (
+        !completesInitialization &&
+        this.#journal?.changed &&
+        this.#checkpointEntries.size === this.#journalEntries.size &&
+        [...this.#journalEntries].every(([path, entry]) =>
+          sameStoredEntry(entry, this.#checkpointEntries.get(path)),
+        )
+      ) {
+        // Temporary names may have required an intermediate guest barrier. Once
+        // they cancel, the snapshot is again sufficient; avoid a full publication.
+        this.#journal.resetRedundant();
+      }
+      if (this.#journal?.changed || completesInitialization) {
+        this.#flushAll();
+        await this.#materializeStagedFiles();
+        const next = await createPoolJournal(this.#database);
+        this.#retiredJournals.add(next.journal);
+        const state = {
+          ...serializePoolState(
+            this.#name,
+            this.#physicalIdentity,
+            this.#entries,
+            this.#initializationComplete || completesInitialization ? 'ready' : 'initializing',
+          ),
+          journal: next.name,
+        };
+        await writePoolState(this.#database, state);
+        const previous = this.#journal;
+        const previousName = this.#journalName;
+        this.#journal = next.journal;
+        this.#journalName = next.name;
+        this.#retiredJournals.delete(next.journal);
+        this.#journalEntries = new Map(state.entries.map((entry) => [entry.path, entry]));
+        this.#checkpointEntries = this.#journalEntries;
+        this.#initializationComplete ||= completesInitialization;
+        if (previous !== undefined) {
+          this.#retiredJournals.add(previous);
+          previous.close();
+          this.#retiredJournals.delete(previous);
+        }
+        await this.#database.removeEntry(previousName).catch(() => undefined);
+      }
+      this.#publishReclaims();
+      if (boundary !== 'close') await this.#maintainSpares().catch(() => undefined);
+    } catch (error) {
+      this.#failure ??= error;
+      throw error;
     }
   }
 
-  async close(clean: boolean): Promise<void> {
-    if (this.#closed) return;
-    let failure: unknown;
-    if (clean) {
-      try {
-        await this.sync('close');
-      } catch (error) {
-        failure = error;
+  #beforeWrite(record: FileRecord): void {
+    if (record.backing !== undefined && this.#journalBackings.has(record.backing))
+      this.#namespaceBarrier();
+  }
+
+  #namespaceBarrier(): void {
+    if (!this.#namespaceDirty && this.#stagedDirty.size === 0) return;
+    const state = serializePoolState(
+      this.#name,
+      this.#physicalIdentity,
+      this.#entries,
+      this.#initializationComplete ? 'ready' : 'initializing',
+    );
+    const current = new Map(state.entries.map((entry) => [entry.path, entry]));
+    const upsert = state.entries.filter(
+      (entry) => !sameStoredEntry(entry, this.#journalEntries.get(entry.path)),
+    );
+    const deleted = [...this.#journalEntries.keys()].filter((path) => !current.has(path));
+    const staged = [...this.#stagedDirty].filter((record) => record.path !== undefined);
+    const parts: Uint8Array[] = [];
+    // Preallocated WAL segments can be large. Persist changed ranges and size
+    // operations, rather than copying the complete staged file at every barrier.
+    const images = staged.map((record) => {
+      const size = this.#recordSize(record);
+      const ranges: { offset: number; length: number }[] = [];
+      for (const range of (record.stagedRanges ?? []).sort(
+        (left, right) => left.offset - right.offset,
+      )) {
+        const end = Math.min(size, range.offset + range.length);
+        if (end <= range.offset) continue;
+        const previous = ranges[ranges.length - 1];
+        if (previous !== undefined && range.offset <= previous.offset + previous.length) {
+          previous.length = Math.max(previous.offset + previous.length, end) - previous.offset;
+        } else ranges.push({ offset: range.offset, length: end - range.offset });
       }
+      for (const range of ranges)
+        parts.push(
+          (record.staged as Uint8Array).subarray(range.offset, range.offset + range.length),
+        );
+      return {
+        backing: record.backing,
+        size,
+        ranges,
+        ...(record.stagedTruncate === undefined ? {} : { truncateTo: record.stagedTruncate }),
+      };
+    });
+    if (upsert.length || deleted.length || images.length) {
+      if (this.#journal === undefined) throw new Error('OPFS journal is unavailable');
+      for (const record of this.#dirty) {
+        if (record.staged === undefined && isWalRecord(record)) {
+          requireAccess(record).flush();
+          record.dirty = false;
+          this.#dirty.delete(record);
+        }
+      }
+      this.#journal.append({ upsert, deleted, images }, parts);
+      this.#journalEntries = current;
+      this.#journalBackings = new Set(
+        state.entries.flatMap((entry) => (entry.type === 'file' ? [entry.backing] : [])),
+      );
     }
+    for (const record of this.#stagedDirty) {
+      record.stagedRanges = undefined;
+      record.stagedTruncate = undefined;
+      record.dirty = false;
+      this.#dirty.delete(record);
+    }
+    this.#stagedDirty.clear();
+    this.#namespaceDirty = false;
+  }
+
+  #parallelMap<Input, Output>(
+    values: readonly Input[],
+    operation: (value: Input) => Promise<Output>,
+  ): Promise<Output[]> {
+    return parallelMap(values, operation, this.#maxConcurrentIO);
+  }
+
+  close(): void {
+    if (this.#closed) return;
     this.#closed = true;
-    try {
-      this.#closeHandles(clean);
-    } catch (error) {
-      failure = failure === undefined ? error : new AggregateError([failure, error]);
-    }
-    if (failure !== undefined) throw failure;
+    this.#closeHandles();
   }
 
   #dispatch(
@@ -449,7 +586,7 @@ export class DirectOpfsPool {
       output.set(record.staged.subarray(offset, offset + available));
     } else {
       const read = requireAccess(record).read(output.subarray(0, available), { at: offset });
-      validateProgress(read, available, 'read');
+      validateOpfsProgress(read, available, 'read');
       if (read !== available) return [RESULT.ok, read, 0, 0];
     }
     return [RESULT.ok, available, 0, 0];
@@ -460,6 +597,7 @@ export class DirectOpfsPool {
     const state = this.#descriptor(descriptor);
     const record = state.record;
     const writeOffset = state.append ? this.#recordSize(record) : offset;
+    if (record.staged === undefined) this.#beforeWrite(record);
     this.#markDirty(record);
     if (record.staged !== undefined) {
       const previousSize = this.#recordSize(record);
@@ -469,9 +607,11 @@ export class DirectOpfsPool {
       if (writeOffset > previousSize) record.staged.fill(0, previousSize, writeOffset);
       record.staged.set(bytes, writeOffset);
       record.stagedSize = Math.max(previousSize, needed);
+      record.stagedRanges ??= [];
+      record.stagedRanges.push({ offset: writeOffset, length: bytes.byteLength });
     } else {
       const written = requireAccess(record).write(bytes, { at: writeOffset });
-      validateProgress(written, bytes.byteLength, 'write');
+      validateOpfsProgress(written, bytes.byteLength, 'write');
       if (written !== bytes.byteLength) return [RESULT.ok, 0, written, writeOffset + written];
     }
     return [RESULT.ok, 0, bytes.byteLength, writeOffset + bytes.byteLength];
@@ -498,6 +638,7 @@ export class DirectOpfsPool {
 
   #setRecordSize(record: FileRecord, size: number): void {
     if (!Number.isSafeInteger(size) || size < 0) throw invalid();
+    if (record.staged === undefined) this.#beforeWrite(record);
     this.#markDirty(record);
     if (record.staged !== undefined) {
       const previousSize = this.#recordSize(record);
@@ -506,6 +647,8 @@ export class DirectOpfsPool {
         record.staged.fill(0, Math.min(size, previousSize), Math.max(size, previousSize));
       }
       record.stagedSize = size;
+      if (size < previousSize)
+        record.stagedTruncate = Math.min(record.stagedTruncate ?? previousSize, size);
     } else {
       requireAccess(record).truncate(size);
     }
@@ -515,7 +658,7 @@ export class DirectOpfsPool {
     const staged = record.staged;
     if (staged === undefined || size <= staged.byteLength) return;
     try {
-      const grown = new Uint8Array(Math.max(size, staged.byteLength * 2, 8 * 1024));
+      const grown = new Uint8Array(Math.max(size, staged.byteLength * 2));
       grown.set(staged.subarray(0, previousSize));
       record.staged = grown;
     } catch (error) {
@@ -529,12 +672,13 @@ export class DirectOpfsPool {
   #markDirty(record: FileRecord): void {
     record.dirty = true;
     this.#dirty.add(record);
+    if (record.staged !== undefined) this.#stagedDirty.add(record);
   }
 
   #flushRecord(record: FileRecord): void {
-    // A staged file cannot be flushed synchronously because allocating its
-    // OPFS backing is asynchronous. It remains dirty until the mandatory host
-    // boundary materializes and flushes it before publishing the namespace.
+    // The preopened journal can persist both names and overflow contents
+    // synchronously, before PostgreSQL is allowed to advance a dependent file.
+    this.#namespaceBarrier();
     if (!record.dirty || record.staged !== undefined) return;
     requireAccess(record).flush();
     record.dirty = false;
@@ -577,6 +721,7 @@ export class DirectOpfsPool {
   #takeSpare(path: string): FileRecord {
     const record = this.#spares.pop();
     if (record !== undefined) {
+      this.#beforeWrite(record);
       requireAccess(record).truncate(0);
       record.path = path;
       record.references = 0;
@@ -585,12 +730,15 @@ export class DirectOpfsPool {
     }
     const staged: FileRecord = {
       path,
+      backing: newBackingName(),
       staged: new Uint8Array(),
       stagedSize: 0,
+      stagedTruncate: 0,
       references: 0,
       dirty: false,
     };
     this.#records.add(staged);
+    this.#markDirty(staged);
     return staged;
   }
 
@@ -602,6 +750,7 @@ export class DirectOpfsPool {
   #queueReclaim(record: FileRecord): void {
     if (record.staged !== undefined) {
       this.#dirty.delete(record);
+      this.#stagedDirty.delete(record);
       this.#records.delete(record);
       return;
     }
@@ -622,10 +771,10 @@ export class DirectOpfsPool {
       if (entry.type === 'directory') this.#entries.set(entry.path, { type: 'directory' });
     }
     const files = state.entries.filter((entry): entry is StoredFile => entry.type === 'file');
-    await parallelMap(files, async (entry) => {
-      let file: SyncFileHandle;
+    await this.#parallelMap(files, async (entry) => {
+      let file: FileSystemFileHandle;
       try {
-        file = (await this.#data.getFileHandle(entry.backing)) as SyncFileHandle;
+        file = await this.#data.getFileHandle(entry.backing);
       } catch (error) {
         if (errorName(error) === 'NotFoundError') {
           throw corrupt(
@@ -636,7 +785,7 @@ export class DirectOpfsPool {
         }
         throw error;
       }
-      const access = await createAccess(file);
+      const access = await openOpfsAccess(file);
       const record: FileRecord = {
         path: entry.path,
         backing: entry.backing,
@@ -666,23 +815,33 @@ export class DirectOpfsPool {
       }
       if (!referenced.has(name)) unused.push(name);
     }
-    const keep = unused.sort().slice(0, PREOPENED_FILE_RESERVE);
-    await parallelMap(keep, async (backing) => {
-      const file = (await this.#data.getFileHandle(backing)) as SyncFileHandle;
-      const access = await createAccess(file);
+    const keep = unused.sort().slice(0, this.#spareFileCount);
+    await this.#parallelMap(keep, async (backing) => {
+      const file = await this.#data.getFileHandle(backing);
+      const access = await openOpfsAccess(file);
       const record: FileRecord = { backing, access, references: 0, dirty: false };
       this.#records.add(record);
       this.#spares.push(record);
     });
-    await parallelMap(unused.slice(PREOPENED_FILE_RESERVE), (backing) =>
+    await this.#parallelMap(unused.slice(this.#spareFileCount), (backing) =>
       this.#data.removeEntry(backing),
     );
   }
 
   async #maintainSpares(): Promise<void> {
-    const missing = PREOPENED_FILE_RESERVE - this.#spares.length;
+    const removed: string[] = [];
+    while (this.#spares.length > this.#spareFileCount) {
+      const record = this.#spares[this.#spares.length - 1] as FileRecord;
+      requireAccess(record).close();
+      record.access = undefined;
+      this.#spares.pop();
+      this.#records.delete(record);
+      if (record.backing !== undefined) removed.push(record.backing);
+    }
+    await this.#parallelMap(removed, (backing) => this.#data.removeEntry(backing));
+    const missing = this.#spareFileCount - this.#spares.length;
     if (missing <= 0) return;
-    await parallelCreate(missing, async () => {
+    await this.#parallelMap(Array.from({ length: missing }), async () => {
       const { backing, access } = await this.#createBacking();
       const record = { backing, access, references: 0, dirty: false } satisfies FileRecord;
       this.#records.add(record);
@@ -694,10 +853,10 @@ export class DirectOpfsPool {
     const staged = [...this.#records]
       .filter((record) => record.staged !== undefined && record.path !== undefined)
       .sort(compareFlushOrder);
-    await parallelMap(staged, async (record) => {
+    await this.#parallelMap(staged, async (record) => {
       const bytes = record.staged;
       if (bytes === undefined) throw new Error('staged OPFS record lost its bytes');
-      const allocation = await this.#createBacking();
+      const allocation = await this.#createBacking(record.backing);
       try {
         writeComplete(allocation.access, bytes.subarray(0, this.#recordSize(record)), 0);
         allocation.access.flush();
@@ -713,12 +872,13 @@ export class DirectOpfsPool {
     });
   }
 
-  async #createBacking(): Promise<{ backing: string; access: SyncAccessHandle }> {
-    const backing = newBackingName();
-    let access: SyncAccessHandle | undefined;
+  async #createBacking(
+    backing = newBackingName(),
+  ): Promise<{ backing: string; access: OpfsSyncAccess }> {
+    let access: OpfsSyncAccess | undefined;
     try {
-      const file = (await this.#data.getFileHandle(backing, { create: true })) as SyncFileHandle;
-      access = await createAccess(file);
+      const file = await this.#data.getFileHandle(backing, { create: true });
+      access = await openOpfsAccess(file);
       return { backing, access };
     } catch (error) {
       throw await this.#discardBacking(backing, access, error);
@@ -727,7 +887,7 @@ export class DirectOpfsPool {
 
   async #discardBacking(
     backing: string,
-    access: SyncAccessHandle | undefined,
+    access: OpfsSyncAccess | undefined,
     error: unknown,
   ): Promise<Error> {
     let failure = error instanceof Error ? error : new Error(describeError(error));
@@ -796,7 +956,7 @@ export class DirectOpfsPool {
     const size = this.#recordSize(version);
     if (size === 0 || size > 32) throw corrupt(this.#name, 'contains an invalid PG_VERSION');
     const bytes = new Uint8Array(size);
-    readComplete(version, bytes, 0);
+    readOpfsBytes(requireAccess(version), bytes, 0);
     let actual: string;
     try {
       actual = UTF8_DECODER.decode(bytes).trim();
@@ -819,24 +979,34 @@ export class DirectOpfsPool {
     }
   }
 
-  #closeHandles(flush: boolean): void {
+  #closeHandles(): void {
     let failure: unknown;
     for (const record of [...this.#records].sort(compareFlushOrder)) {
       const access = record.access;
       if (access === undefined) continue;
       try {
-        if (flush && record.dirty) access.flush();
         access.close();
       } catch (error) {
         failure = failure === undefined ? error : new AggregateError([failure, error]);
       }
       record.access = undefined;
     }
+    for (const journal of [
+      ...this.#retiredJournals,
+      ...(this.#journal === undefined ? [] : [this.#journal]),
+    ]) {
+      try {
+        journal.close();
+      } catch (error) {
+        failure = failure === undefined ? error : new AggregateError([failure, error]);
+      }
+    }
     if (failure !== undefined) throw failure;
   }
 
   #assertOpen(): void {
     if (this.#closed) throw new Error(`OPFS pool ${JSON.stringify(this.#name)} is closed`);
+    if (this.#failure !== undefined) throw this.#failure;
   }
 }
 
@@ -844,9 +1014,10 @@ export async function inspectPooledOpfsDatabase(
   database: FileSystemDirectoryHandle,
   name: string,
   physicalIdentity: WasixPhysicalIdentity,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<PooledOpfsDatabase> {
   const state = await readPoolState(database, name, physicalIdentity);
-  return inspectPoolState(database, name, physicalIdentity, state);
+  return inspectPoolState(database, name, physicalIdentity, state, maxConcurrentIO);
 }
 
 /** Reset only an unpublished first-open generation before portable hydration. */
@@ -855,6 +1026,7 @@ export async function preparePooledOpfsDatabase(
   name: string,
   loadClusterSeed: WasixClusterSeedLoader,
   physicalIdentity: WasixPhysicalIdentity,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<PooledOpfsDatabase> {
   let state = await readPoolState(database, name, physicalIdentity);
   if (state?.phase === 'initializing') {
@@ -863,9 +1035,10 @@ export async function preparePooledOpfsDatabase(
       name,
       await loadClusterSeed(),
       assertWasixPhysicalIdentity(physicalIdentity),
+      maxConcurrentIO,
     ));
   }
-  return inspectPoolState(database, name, physicalIdentity, state);
+  return inspectPoolState(database, name, physicalIdentity, state, maxConcurrentIO);
 }
 
 async function inspectPoolState(
@@ -873,6 +1046,7 @@ async function inspectPoolState(
   name: string,
   physicalIdentity: WasixPhysicalIdentity,
   state: PoolState | undefined,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<PooledOpfsDatabase> {
   if (state === undefined) return { snapshot: undefined, state: 'new' };
   let data: FileSystemDirectoryHandle;
@@ -887,31 +1061,35 @@ async function inspectPoolState(
   const entries = state.entries.filter((entry) => !VOLATILE_DATABASE_FILES.has(entry.path));
   if (entries.length !== state.entries.length) {
     await writePoolState(database, { ...state, entries });
-    await pruneUnreferencedData(data, entries).catch(() => undefined);
+    await pruneUnreferencedData(data, entries, maxConcurrentIO).catch(() => undefined);
   }
   const directories = entries
     .filter((entry): entry is StoredDirectory => entry.type === 'directory')
     .map(({ path }) => path);
   const storedFiles = entries.filter((entry): entry is StoredFile => entry.type === 'file');
-  const files = await parallelMap(storedFiles, async ({ path, backing }) => {
-    try {
-      return {
-        path,
-        bytes: new Uint8Array(
-          await (await (await data.getFileHandle(backing)).getFile()).arrayBuffer(),
-        ),
-      };
-    } catch (error) {
-      if (errorName(error) === 'NotFoundError') {
-        throw corrupt(
-          name,
-          `is missing backing ${JSON.stringify(backing)} for ${JSON.stringify(path)}`,
-          error,
-        );
+  const files = await parallelMap(
+    storedFiles,
+    async ({ path, backing }) => {
+      try {
+        return {
+          path,
+          bytes: new Uint8Array(
+            await (await (await data.getFileHandle(backing)).getFile()).arrayBuffer(),
+          ),
+        };
+      } catch (error) {
+        if (errorName(error) === 'NotFoundError') {
+          throw corrupt(
+            name,
+            `is missing backing ${JSON.stringify(backing)} for ${JSON.stringify(path)}`,
+            error,
+          );
+        }
+        throw error;
       }
-      throw error;
-    }
-  });
+    },
+    maxConcurrentIO,
+  );
   return {
     snapshot: validateStoredSnapshot(
       { schema: 'oliphaunt-wasix-directory-snapshot-v1', directories, files },
@@ -930,6 +1108,7 @@ export async function applyPooledOpfsDelta(
   name: string,
   physicalIdentity: WasixPhysicalIdentity,
   delta: StorageDelta,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<void> {
   validateDeltaPaths(delta, name);
   const data = await database.getDirectoryHandle(DATA_DIRECTORY, { create: true });
@@ -937,7 +1116,7 @@ export async function applyPooledOpfsDelta(
   const entries = new Map<string, StoredEntry>(
     existing?.entries.map((entry) => [entry.path, entry]),
   );
-  await pruneUnreferencedData(data, entries.values()).catch(() => undefined);
+  await pruneUnreferencedData(data, entries.values(), maxConcurrentIO).catch(() => undefined);
   const deletes = splitStorageDeltaDeletes(delta);
   for (const path of deletes.replacements) removeStoredPath(entries, path);
   for (const path of delta.directories) entries.set(path, { path, type: 'directory' });
@@ -950,13 +1129,14 @@ export async function applyPooledOpfsDelta(
   for (const path of deletes.removals) removeStoredPath(entries, path);
   validateEntryRelationships([...entries.values()], name);
   await writePoolState(database, {
-    schema: STATE_SCHEMA,
+    schema: existing?.schema ?? LEGACY_STATE_SCHEMA,
+    ...(existing?.journal === undefined ? {} : { journal: existing.journal }),
     name,
     phase: 'ready',
     physicalIdentity: assertWasixPhysicalIdentity(physicalIdentity),
     entries: [...entries.values()].sort(compareStoredEntries),
   });
-  await pruneUnreferencedData(data, entries.values()).catch(() => undefined);
+  await pruneUnreferencedData(data, entries.values(), maxConcurrentIO).catch(() => undefined);
 }
 
 export async function openPooledDatabaseDirectory(
@@ -977,25 +1157,31 @@ async function initializePoolState(
   name: string,
   clusterSeed: WasixDirectoryMount,
   physicalIdentity: WasixPhysicalIdentity,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<PoolState> {
   const entries: StoredEntry[] = [...new Set(clusterSeed.directories)].map((path) => ({
     path,
     type: 'directory',
   }));
-  const files = await parallelMap(Object.entries(clusterSeed.files), async ([path, bytes]) => {
-    const backing = newBackingName();
-    await writeAtomicDataFile(data, backing, bytes);
-    return { path, type: 'file', backing } satisfies StoredFile;
-  });
+  const files = await parallelMap(
+    Object.entries(clusterSeed.files),
+    async ([path, bytes]) => {
+      const backing = newBackingName();
+      await writeAtomicDataFile(data, backing, bytes);
+      return { path, type: 'file', backing } satisfies StoredFile;
+    },
+    maxConcurrentIO,
+  );
   entries.push(...files);
   const state: PoolState = {
-    schema: STATE_SCHEMA,
+    schema: LEGACY_STATE_SCHEMA,
     name,
     phase: 'initializing',
     physicalIdentity,
     entries: entries.sort(compareStoredEntries),
   };
   await writePoolState(database, state);
+  await prunePoolJournals(database).catch(() => undefined);
   return state;
 }
 
@@ -1004,6 +1190,7 @@ async function resetPoolClusterSeed(
   name: string,
   clusterSeed: WasixDirectoryMount,
   physicalIdentity: WasixPhysicalIdentity,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<{ data: FileSystemDirectoryHandle; state: PoolState }> {
   try {
     await database.removeEntry(DATA_DIRECTORY, { recursive: true });
@@ -1011,7 +1198,14 @@ async function resetPoolClusterSeed(
     if (errorName(error) !== 'NotFoundError') throw error;
   }
   const data = await database.getDirectoryHandle(DATA_DIRECTORY, { create: true });
-  const state = await initializePoolState(database, data, name, clusterSeed, physicalIdentity);
+  const state = await initializePoolState(
+    database,
+    data,
+    name,
+    clusterSeed,
+    physicalIdentity,
+    maxConcurrentIO,
+  );
   return { data, state };
 }
 
@@ -1039,15 +1233,41 @@ async function readPoolState(
   } catch (error) {
     throw corrupt(name, `has malformed state metadata: ${describeError(error)}`, error);
   }
+  const state = validatePoolState(parsed, name, physicalIdentity);
+  if (state.journal === undefined || state.phase === 'initializing') {
+    await prunePoolJournals(database, state.journal).catch(() => undefined);
+    return state;
+  }
+  return recoverPoolJournal(database, state, physicalIdentity);
+}
+
+function validatePoolState(
+  parsed: unknown,
+  name: string,
+  physicalIdentity: WasixPhysicalIdentity,
+): PoolState {
   if (
     !isObject(parsed) ||
-    parsed.schema !== STATE_SCHEMA ||
+    (parsed.schema !== STATE_SCHEMA && parsed.schema !== LEGACY_STATE_SCHEMA) ||
     parsed.name !== name ||
     (parsed.phase !== 'initializing' && parsed.phase !== 'ready') ||
     !Array.isArray(parsed.entries) ||
-    !hasExactKeys(parsed, ['entries', 'name', 'phase', 'physicalIdentity', 'schema'])
+    !hasExactKeys(
+      parsed,
+      parsed.schema === STATE_SCHEMA
+        ? ['entries', 'journal', 'name', 'phase', 'physicalIdentity', 'schema']
+        : ['entries', 'name', 'phase', 'physicalIdentity', 'schema'],
+    )
   ) {
     throw corrupt(name, 'has unsupported or mismatched state metadata');
+  }
+  if (parsed.schema === STATE_SCHEMA) {
+    try {
+      if (typeof parsed.journal !== 'string' || !parsed.journal.startsWith('j-')) throw invalid();
+      validateBackingName(`f-${parsed.journal.slice(2)}`);
+    } catch (error) {
+      throw corrupt(name, 'contains invalid journal identity', error);
+    }
   }
   let compatible: boolean;
   try {
@@ -1063,48 +1283,228 @@ async function readPoolState(
   }
   const paths = new Set<string>();
   const backings = new Set<string>();
-  const entries: StoredEntry[] = parsed.entries.map((entry: unknown) => {
-    if (!isObject(entry) || typeof entry.path !== 'string') {
-      throw corrupt(name, 'contains a malformed state entry');
-    }
-    try {
-      validateStoredPath(entry.path);
-    } catch (error) {
-      throw corrupt(name, `contains invalid path ${JSON.stringify(entry.path)}`, error);
-    }
+  const entries = parsed.entries.map((value: unknown) => {
+    const entry = validateStoredEntry(value, name);
     if (paths.has(entry.path)) throw corrupt(name, `repeats path ${JSON.stringify(entry.path)}`);
     paths.add(entry.path);
-    if (entry.type === 'directory') {
-      if (!hasExactKeys(entry, ['path', 'type'])) {
-        throw corrupt(name, `contains a malformed entry for ${JSON.stringify(entry.path)}`);
-      }
-      return { path: entry.path, type: 'directory' };
+    if (entry.type === 'file') {
+      if (backings.has(entry.backing))
+        throw corrupt(name, `aliases backing file ${JSON.stringify(entry.backing)}`);
+      backings.add(entry.backing);
     }
-    if (entry.type !== 'file' || typeof entry.backing !== 'string') {
-      throw corrupt(name, `contains a malformed entry for ${JSON.stringify(entry.path)}`);
-    }
-    if (!hasExactKeys(entry, ['backing', 'path', 'type'])) {
-      throw corrupt(name, `contains a malformed entry for ${JSON.stringify(entry.path)}`);
-    }
-    try {
-      validateBackingName(entry.backing);
-    } catch (error) {
-      throw corrupt(name, `contains invalid backing for ${JSON.stringify(entry.path)}`, error);
-    }
-    if (backings.has(entry.backing)) {
-      throw corrupt(name, `aliases backing file ${JSON.stringify(entry.backing)}`);
-    }
-    backings.add(entry.backing);
-    return { path: entry.path, type: 'file', backing: entry.backing };
+    return entry;
   });
   validateEntryRelationships(entries, name);
   return {
-    schema: STATE_SCHEMA,
+    schema: parsed.schema,
+    ...(parsed.schema === STATE_SCHEMA ? { journal: parsed.journal as string } : {}),
     name,
     phase: parsed.phase,
     physicalIdentity: parsed.physicalIdentity as WasixPhysicalIdentity,
     entries,
   };
+}
+
+function validateStoredEntry(value: unknown, name: string): StoredEntry {
+  if (!isObject(value) || typeof value.path !== 'string')
+    throw corrupt(name, 'contains a malformed state entry');
+  try {
+    validateStoredPath(value.path);
+  } catch (error) {
+    throw corrupt(name, `contains invalid path ${JSON.stringify(value.path)}`, error);
+  }
+  if (value.type === 'directory' && hasExactKeys(value, ['path', 'type']))
+    return { path: value.path, type: 'directory' };
+  if (
+    value.type !== 'file' ||
+    typeof value.backing !== 'string' ||
+    !hasExactKeys(value, ['backing', 'path', 'type'])
+  ) {
+    throw corrupt(name, `contains a malformed entry for ${JSON.stringify(value.path)}`);
+  }
+  try {
+    validateBackingName(value.backing);
+  } catch (error) {
+    throw corrupt(name, `contains invalid backing for ${JSON.stringify(value.path)}`, error);
+  }
+  return { path: value.path, type: 'file', backing: value.backing };
+}
+
+async function prunePoolJournals(
+  database: FileSystemDirectoryHandle,
+  current?: string,
+): Promise<void> {
+  for await (const name of database.keys()) {
+    if (name === current || !name.startsWith('j-')) continue;
+    try {
+      validateBackingName(`f-${name.slice(2)}`);
+    } catch {
+      continue;
+    }
+    await database.removeEntry(name);
+  }
+}
+
+async function createPoolJournal(
+  database: FileSystemDirectoryHandle,
+): Promise<{ name: string; journal: OpfsJournal }> {
+  const name = await writeEmptyPoolJournal(database);
+  const journal = new OpfsJournal(await openOpfsAccess(await database.getFileHandle(name)));
+  return { name, journal };
+}
+
+async function writeEmptyPoolJournal(database: FileSystemDirectoryHandle): Promise<string> {
+  const name = `j-${crypto.randomUUID()}`;
+  await writeAtomicDataFile(database, name, emptyOpfsJournal());
+  return name;
+}
+
+async function recoverPoolJournal(
+  database: FileSystemDirectoryHandle,
+  state: PoolState,
+  physicalIdentity: WasixPhysicalIdentity,
+): Promise<PoolState> {
+  const name = state.name;
+  let validated = false;
+  try {
+    const frames = readOpfsJournal(await database.getFileHandle(state.journal as string));
+    let hasFrames = false;
+    const entries = new Map(state.entries.map((entry) => [entry.path, entry]));
+    const originalBackings = new Set(
+      state.entries.flatMap((entry) => (entry.type === 'file' ? [entry.backing] : [])),
+    );
+    const images = new Map<string, Uint8Array>();
+    const backingReferences = new Map<string, number>();
+    const reference = (entry: StoredEntry | undefined, change: number): void => {
+      if (entry?.type !== 'file') return;
+      const count = (backingReferences.get(entry.backing) ?? 0) + change;
+      if (count === 0) backingReferences.delete(entry.backing);
+      else backingReferences.set(entry.backing, count);
+    };
+    for (const entry of entries.values()) reference(entry, 1);
+    for await (const frame of frames) {
+      hasFrames = true;
+      const metadata = frame.metadata;
+      if (
+        !isObject(metadata) ||
+        !hasExactKeys(metadata, ['deleted', 'images', 'upsert']) ||
+        !Array.isArray(metadata.deleted) ||
+        !Array.isArray(metadata.upsert) ||
+        !Array.isArray(metadata.images)
+      ) {
+        throw corrupt(name, 'contains malformed journal changes');
+      }
+      for (const path of metadata.deleted) {
+        if (typeof path !== 'string') throw corrupt(name, 'contains invalid journal deletion');
+        validateStoredPath(path);
+        reference(entries.get(path), -1);
+        if (!entries.delete(path)) throw corrupt(name, 'deletes an unknown journal path');
+      }
+      const changed = new Set<string>();
+      for (const value of metadata.upsert) {
+        const entry = validateStoredEntry(value, name);
+        if (changed.has(entry.path)) throw corrupt(name, 'contains invalid journal entry');
+        changed.add(entry.path);
+        reference(entries.get(entry.path), -1);
+        reference(entry, 1);
+        entries.set(entry.path, entry);
+      }
+      let offset = 0;
+      for (const image of metadata.images) {
+        if (
+          !isObject(image) ||
+          !hasExactKeys(
+            image,
+            image.truncateTo === undefined
+              ? ['backing', 'ranges', 'size']
+              : ['backing', 'ranges', 'size', 'truncateTo'],
+          ) ||
+          typeof image.backing !== 'string' ||
+          !Number.isSafeInteger(image.size) ||
+          (image.size as number) < 0 ||
+          !Array.isArray(image.ranges) ||
+          originalBackings.has(image.backing) ||
+          !backingReferences.has(image.backing)
+        ) {
+          throw corrupt(name, 'contains invalid overflow changes');
+        }
+        const size = image.size as number;
+        let bytes = images.get(image.backing);
+        if (bytes === undefined) {
+          if (image.truncateTo !== 0)
+            throw corrupt(name, 'contains overflow changes without initial contents');
+          bytes = new Uint8Array(size);
+        } else {
+          if (image.truncateTo !== undefined) {
+            if (!Number.isSafeInteger(image.truncateTo) || (image.truncateTo as number) < 0)
+              throw corrupt(name, 'contains invalid overflow truncation');
+            bytes.fill(0, image.truncateTo as number);
+          }
+          if (bytes.byteLength !== size) {
+            const resized = new Uint8Array(size);
+            resized.set(bytes.subarray(0, size));
+            bytes = resized;
+          }
+        }
+        let previousEnd = 0;
+        for (const range of image.ranges) {
+          if (
+            !isObject(range) ||
+            !hasExactKeys(range, ['length', 'offset']) ||
+            !Number.isSafeInteger(range.offset) ||
+            !Number.isSafeInteger(range.length) ||
+            (range.offset as number) < previousEnd ||
+            (range.length as number) <= 0
+          )
+            throw corrupt(name, 'contains invalid overflow range');
+          const end = (range.offset as number) + (range.length as number);
+          const dataEnd = offset + (range.length as number);
+          if (!Number.isSafeInteger(end) || end > size || dataEnd > frame.data.byteLength)
+            throw corrupt(name, 'contains truncated overflow range');
+          bytes.set(frame.data.subarray(offset, dataEnd), range.offset as number);
+          offset = dataEnd;
+          previousEnd = end;
+        }
+        images.set(image.backing, bytes);
+      }
+      if (offset !== frame.data.byteLength)
+        throw corrupt(name, 'contains unexpected overflow bytes');
+    }
+    // Validate the complete recovered tree once, before any materialisation.
+    // Rechecking every prior path after every record would make replay quadratic.
+    validatePoolState({ ...state, entries: [...entries.values()] }, name, physicalIdentity);
+    if (!hasFrames) {
+      await prunePoolJournals(database, state.journal).catch(() => undefined);
+      return state;
+    }
+    validated = true;
+    const data = await database.getDirectoryHandle(DATA_DIRECTORY);
+    for (const entry of [...entries.values()].sort(compareStoredEntries)) {
+      if (entry.type !== 'file') continue;
+      const image = images.get(entry.backing);
+      if (image !== undefined) await writeAtomicDataFile(data, entry.backing, image);
+      else await data.getFileHandle(entry.backing);
+    }
+    const journal = await writeEmptyPoolJournal(database);
+    const recovered = {
+      ...state,
+      journal,
+      entries: [...entries.values()].sort(compareStoredEntries),
+    };
+    await writePoolState(database, recovered);
+    await prunePoolJournals(database, journal).catch(() => undefined);
+    return recovered;
+  } catch (error) {
+    if (error instanceof WasixStorageError) throw error;
+    if (validated) {
+      throw new WasixStorageError(`${poolLabel(name)} could not publish journal recovery`, {
+        code: 'publication-failed',
+        commitState: 'unknown',
+        cause: error,
+      });
+    }
+    throw corrupt(name, `could not recover its journal: ${describeError(error)}`, error);
+  }
 }
 
 async function writePoolState(
@@ -1138,30 +1538,6 @@ async function writeAtomicDataFile(
   }
 }
 
-function serializePoolState(
-  name: string,
-  physicalIdentity: WasixPhysicalIdentity,
-  live: ReadonlyMap<string, LiveEntry>,
-  phase: PoolState['phase'],
-): PoolState {
-  const entries: StoredEntry[] = [];
-  for (const [path, entry] of live) {
-    if (path === '') continue;
-    if (entry.type === 'directory') entries.push({ path, type: 'directory' });
-    else {
-      if (entry.record.backing === undefined) throw new Error(`file ${path} is not materialized`);
-      entries.push({ path, type: 'file', backing: entry.record.backing });
-    }
-  }
-  return {
-    schema: STATE_SCHEMA,
-    name,
-    phase,
-    physicalIdentity,
-    entries: entries.sort(compareStoredEntries),
-  };
-}
-
 function removeStoredPath(entries: Map<string, StoredEntry>, path: string): void {
   for (const candidate of [...entries.keys()]) {
     if (candidate === path || candidate.startsWith(`${path}/`)) entries.delete(candidate);
@@ -1171,6 +1547,7 @@ function removeStoredPath(entries: Map<string, StoredEntry>, path: string): void
 async function pruneUnreferencedData(
   data: FileSystemDirectoryHandle,
   entries: Iterable<StoredEntry>,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
 ): Promise<void> {
   const referenced = new Set(
     [...entries].flatMap((entry) => (entry.type === 'file' ? [entry.backing] : [])),
@@ -1179,7 +1556,7 @@ async function pruneUnreferencedData(
   for await (const backing of data.keys()) {
     if (!referenced.has(backing)) removals.push(backing);
   }
-  await parallelMap(removals, (backing) => data.removeEntry(backing));
+  await parallelMap(removals, (backing) => data.removeEntry(backing), maxConcurrentIO);
 }
 
 function validateDeltaPaths(delta: StorageDelta, name: string): void {
@@ -1206,12 +1583,6 @@ function validateEntryRelationships(entries: readonly StoredEntry[], name: strin
   }
 }
 
-function validatePath(path: string, allowRoot = false): void {
-  const parts = segments(path);
-  if (!allowRoot && parts.length === 0) throw invalid();
-  for (const part of parts) validateDirectoryEntryName(part);
-}
-
 function validateStoredPath(path: string): void {
   const parts = segments(path);
   if (parts.length === 0) throw new Error('empty stored path');
@@ -1234,11 +1605,6 @@ function parentPath(path: string): string {
   return index < 0 ? '' : path.slice(0, index);
 }
 
-function baseName(path: string): string {
-  const index = path.lastIndexOf('/');
-  return index < 0 ? path : path.slice(index + 1);
-}
-
 function newBackingName(): string {
   return `f-${crypto.randomUUID()}`;
 }
@@ -1247,53 +1613,6 @@ function validateBackingName(name: string): void {
   if (!/^f-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(name)) {
     throw new Error(`invalid OPFS pool backing name ${JSON.stringify(name)}`);
   }
-}
-
-async function createAccess(file: SyncFileHandle): Promise<SyncAccessHandle> {
-  if (file.createSyncAccessHandle === undefined) {
-    throw new DOMException('OPFS synchronous access is unavailable', 'NotSupportedError');
-  }
-  return file.createSyncAccessHandle();
-}
-
-function requireAccess(record: FileRecord): SyncAccessHandle {
-  if (record.access === undefined) throw new Error('OPFS pool record has no access handle');
-  return record.access;
-}
-
-function readComplete(record: FileRecord, bytes: Uint8Array, offset: number): void {
-  if (record.staged !== undefined) {
-    bytes.set(record.staged.subarray(offset, offset + bytes.byteLength));
-    return;
-  }
-  const access = requireAccess(record);
-  let read = 0;
-  while (read < bytes.byteLength) {
-    const count = access.read(bytes.subarray(read), { at: offset + read });
-    validateProgress(count, bytes.byteLength - read, 'read');
-    read += count;
-  }
-}
-
-function writeComplete(access: SyncAccessHandle, bytes: Uint8Array, offset: number): void {
-  let written = 0;
-  while (written < bytes.byteLength) {
-    const count = access.write(bytes.subarray(written), { at: offset + written });
-    validateProgress(count, bytes.byteLength - written, 'write');
-    written += count;
-  }
-  access.truncate(offset + bytes.byteLength);
-}
-
-function isWalRecord(record: FileRecord): boolean {
-  return record.path?.startsWith('pg_wal/') === true;
-}
-
-function compareFlushOrder(left: FileRecord, right: FileRecord): number {
-  return (
-    postgresRank(left.path ?? '') - postgresRank(right.path ?? '') ||
-    (left.path ?? '').localeCompare(right.path ?? '')
-  );
 }
 
 function comparePostgresPaths(left: { path: string }, right: { path: string }): number {
@@ -1306,8 +1625,133 @@ function postgresRank(path: string): number {
   return 1;
 }
 
+function sameStoredEntry(left: StoredEntry, right: StoredEntry | undefined): boolean {
+  return (
+    left.type === right?.type &&
+    (left.type !== 'file' || (right.type === 'file' && left.backing === right.backing))
+  );
+}
+
 function compareStoredEntries(left: StoredEntry, right: StoredEntry): number {
   return left.path.localeCompare(right.path);
+}
+
+async function requireOpfsRoot(): Promise<FileSystemDirectoryHandle> {
+  const storage = globalThis.navigator?.storage;
+  if (storage?.getDirectory === undefined) {
+    throw new WasixStorageError('OPFS is unavailable in this @oliphaunt/wasix-ts host', {
+      code: 'unavailable',
+      commitState: 'unchanged',
+    });
+  }
+  return storage.getDirectory();
+}
+
+async function parallelMap<Input, Output>(
+  values: readonly Input[],
+  operation: (value: Input) => Promise<Output>,
+  maxConcurrentIO = DEFAULT_OPFS_MAX_CONCURRENT_IO,
+): Promise<Output[]> {
+  const output = new Array<Output>(values.length);
+  let cursor = 0;
+  let failed = false;
+  let failure: unknown;
+  const worker = async (): Promise<void> => {
+    while (!failed && cursor < values.length) {
+      const index = cursor++;
+      try {
+        output[index] = await operation(values[index] as Input);
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          failure = error;
+        }
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(maxConcurrentIO, values.length) }, worker));
+  if (failed) throw failure;
+  return output;
+}
+
+function poolLabel(name: string): string {
+  return `OPFS storage ${JSON.stringify(name)}`;
+}
+function corrupt(name: string, detail: string, cause?: unknown): WasixStorageError {
+  return new WasixStorageError(`${poolLabel(name)} ${detail}`, {
+    code: 'corrupt',
+    commitState: 'unchanged',
+    ...(cause === undefined ? {} : { cause }),
+  });
+}
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value).sort();
+  return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
+}
+function errorName(error: unknown): string {
+  return typeof error === 'object' && error !== null && 'name' in error ? String(error.name) : '';
+}
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function serializePoolState(
+  name: string,
+  physicalIdentity: WasixPhysicalIdentity,
+  live: ReadonlyMap<string, LiveEntry>,
+  phase: PoolState['phase'],
+): PoolState {
+  const entries: StoredEntry[] = [];
+  for (const [path, entry] of live) {
+    if (path === '') continue;
+    if (entry.type === 'directory') entries.push({ path, type: 'directory' });
+    else {
+      if (entry.record.backing === undefined) throw new Error(`file ${path} is not materialized`);
+      entries.push({ path, type: 'file', backing: entry.record.backing });
+    }
+  }
+  return {
+    schema: STATE_SCHEMA,
+    name,
+    phase,
+    physicalIdentity,
+    entries: entries.sort(compareStoredEntries),
+  };
+}
+
+function validatePath(path: string, allowRoot = false): void {
+  const parts = segments(path);
+  if (!allowRoot && parts.length === 0) throw invalid();
+  for (const part of parts) validateDirectoryEntryName(part);
+}
+
+function baseName(path: string): string {
+  const index = path.lastIndexOf('/');
+  return index < 0 ? path : path.slice(index + 1);
+}
+
+function requireAccess(record: FileRecord): OpfsSyncAccess {
+  if (record.access === undefined) throw new Error('OPFS pool record has no access handle');
+  return record.access;
+}
+
+function writeComplete(access: OpfsSyncAccess, bytes: Uint8Array, offset: number): void {
+  writeOpfsBytes(access, bytes, offset);
+  access.truncate(offset + bytes.byteLength);
+}
+
+function isWalRecord(record: FileRecord): boolean {
+  return record.path?.startsWith('pg_wal/') === true;
+}
+
+function compareFlushOrder(left: FileRecord, right: FileRecord): number {
+  return (
+    postgresRank(left.path ?? '') - postgresRank(right.path ?? '') ||
+    (left.path ?? '').localeCompare(right.path ?? '')
+  );
 }
 
 function encodeDirectoryPage(
@@ -1389,88 +1833,6 @@ function invalid(): DOMException {
   return new DOMException('invalid OPFS bridge input', 'DataError');
 }
 
-function validateProgress(transferred: number, available: number, operation: string): void {
-  if (
-    !Number.isSafeInteger(transferred) ||
-    transferred < 0 ||
-    transferred > available ||
-    (available > 0 && transferred === 0)
-  ) {
-    throw new Error(`OPFS synchronous ${operation} made invalid progress`);
-  }
-}
-
 function validateOffset(value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) throw invalid();
-}
-
-async function requireOpfsRoot(): Promise<FileSystemDirectoryHandle> {
-  const storage = globalThis.navigator?.storage;
-  if (storage?.getDirectory === undefined) {
-    throw new WasixStorageError('OPFS is unavailable in this @oliphaunt/wasix-ts host', {
-      code: 'unavailable',
-      commitState: 'unchanged',
-    });
-  }
-  return storage.getDirectory();
-}
-
-async function parallelMap<Input, Output>(
-  values: readonly Input[],
-  operation: (value: Input) => Promise<Output>,
-): Promise<Output[]> {
-  const output = new Array<Output>(values.length);
-  let cursor = 0;
-  let failed = false;
-  let failure: unknown;
-  const worker = async (): Promise<void> => {
-    while (!failed && cursor < values.length) {
-      const index = cursor++;
-      try {
-        output[index] = await operation(values[index] as Input);
-      } catch (error) {
-        if (!failed) {
-          failed = true;
-          failure = error;
-        }
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(MAX_PARALLEL_IO, values.length) }, worker));
-  if (failed) throw failure;
-  return output;
-}
-
-async function parallelCreate<Output>(
-  count: number,
-  operation: () => Promise<Output>,
-): Promise<Output[]> {
-  return parallelMap(
-    Array.from({ length: count }, (_, index) => index),
-    operation,
-  );
-}
-
-function poolLabel(name: string): string {
-  return `OPFS storage ${JSON.stringify(name)}`;
-}
-function corrupt(name: string, detail: string, cause?: unknown): WasixStorageError {
-  return new WasixStorageError(`${poolLabel(name)} ${detail}`, {
-    code: 'corrupt',
-    commitState: 'unchanged',
-    ...(cause === undefined ? {} : { cause }),
-  });
-}
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const keys = Object.keys(value).sort();
-  return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
-}
-function errorName(error: unknown): string {
-  return typeof error === 'object' && error !== null && 'name' in error ? String(error.name) : '';
-}
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

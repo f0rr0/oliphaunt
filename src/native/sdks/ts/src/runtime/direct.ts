@@ -67,6 +67,9 @@ export function directRuntimeBinding(binding: NativeBinding): RuntimeBinding {
     runtimeBinding.unregisterForgottenHandleCleanup = (owner: object) =>
       binding.unregisterForgottenHandleCleanup?.(owner);
   }
+  if (binding.backupStream !== undefined) {
+    runtimeBinding.backupStream = (handle, onChunk) => binding.backupStream!(handle, onChunk);
+  }
   if (binding.execSimpleQuery !== undefined) {
     runtimeBinding.execSimpleQuery = (handle: RuntimeHandle, sql: string) =>
       binding.execSimpleQuery?.(handle, sql).then(assertDefined) ??
