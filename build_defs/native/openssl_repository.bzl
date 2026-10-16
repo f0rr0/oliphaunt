@@ -83,6 +83,13 @@ def _openssl_repository_impl(ctx):
         build = build.replace('"@openssl_pregen//:asm_' + flavor + '"', '":perlasm_genfiles"')
     if "@openssl_pregen" in build:
         fail("unhandled pregenerated OpenSSL dependency in the pinned recipe")
+    # Canonical VC-noCE-common EX_LIBS belong to libcrypto's consumers,
+    # including shared libraries which retain its complete static archive.
+    build = _replace_once(
+        build,
+        '        "@platforms//os:windows": [],\n        "//conditions:default": [\n            "-lc",\n            "-pthread",',
+        '        "@platforms//os:windows": ["ws2_32.lib", "gdi32.lib", "advapi32.lib", "crypt32.lib", "user32.lib"],\n        "//conditions:default": [\n            "-lc",\n            "-pthread",',
+    )
     # This runtime carries its legacy provider in libcrypto, matching the
     # existing mobile no-module construction instead of finding a host module.
     crypto_sources = '[source for source in COMMON_CRYPTO_SRCS if not source.startswith("crypto/engine/") and not source.startswith("engines/")]'
