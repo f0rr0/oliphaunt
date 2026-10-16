@@ -1,0 +1,69 @@
+"""Actual Windows module actions must agree on their static/shared boundary."""
+
+load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
+load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+load("@rules_cc//cc/common:cc_shared_library_info.bzl", "CcSharedLibraryInfo")
+load("//build_defs/native:platform_config.bzl", "NATIVE_WINDOWS_COMPATIBLE")
+
+def _objects(linker_input):
+    result = []
+    for library in linker_input.libraries:
+        result.extend((library.pic_objects if library.pic_static_library else library.objects) or [])
+    return result
+
+def _impl(ctx):
+    env = analysistest.begin(ctx)
+    target = analysistest.target_under_test(env)
+    asserts.equals(env, [ctx.attr.dll_name], [file.basename for file in target[DefaultInfo].files.to_list()])
+    asserts.true(env, CcSharedLibraryInfo in target, "Windows modules must use the stock shared-library ownership rule")
+    if CcSharedLibraryInfo not in target:
+        return analysistest.end(env)
+    actions = analysistest.target_actions(env)
+    parsers = [action for action in actions if action.mnemonic == "DefParser"]
+    links = [action for action in actions if action.mnemonic == "CppLink"]
+    asserts.equals(env, 1, len(parsers))
+    asserts.equals(env, 1, len(links))
+    if len(parsers) != 1 or len(links) != 1:
+        return analysistest.end(env)
+    definition_inputs = {file.path: True for file in parsers[0].inputs.to_list()}
+    for library in ctx.attr.static_libraries:
+        own_objects = [file for entry in library[CcInfo].linking_context.linker_inputs.to_list() if entry.owner == library.label for file in _objects(entry)]
+        asserts.true(env, len(own_objects) > 0, "static module fixture must contribute actual compiled objects: " + str(library.label))
+        for file in own_objects:
+            asserts.true(env, file.path in definition_inputs, "static module object missing from DEF: " + file.path)
+    provider = ctx.attr.provider[CcSharedLibraryInfo]
+    provided = {owner: True for owner in provider.exports}
+    for owner in provider.link_once_static_libs:
+        provided[owner] = True
+    excluded = [file for entry in ctx.attr.module_objects[CcInfo].linking_context.linker_inputs.to_list() if str(entry.owner) in provided for file in _objects(entry)]
+    asserts.true(env, len(excluded) > 0, "shared provider must replace actual transitive object files")
+    for file in excluded:
+        asserts.false(env, file.path in definition_inputs, "shared-provider object leaked into module DEF: " + file.path)
+    link_inputs = {file.path: True for file in links[0].inputs.to_list()}
+    for file in parsers[0].outputs.to_list():
+        asserts.true(env, file.path in link_inputs, "link must consume the actual stock-generated DEF")
+    interfaces = [file for library in provider.linker_input.libraries for file in [library.interface_library, library.resolved_symlink_interface_library] if file]
+    asserts.true(env, len(interfaces) > 0, "Windows provider must expose its actual import library")
+    asserts.true(env, any([file.path in link_inputs for file in interfaces]), "link must use the shared provider's import library")
+    return analysistest.end(env)
+
+_test = analysistest.make(_impl, attrs = {
+    "dll_name": attr.string(mandatory = True),
+    "module_objects": attr.label(mandatory = True, providers = [CcInfo]),
+    "static_libraries": attr.label_list(mandatory = True, providers = [CcInfo]),
+    "provider": attr.label(mandatory = True, providers = [CcSharedLibraryInfo]),
+})
+
+def native_windows_module_tests():
+    for variant in ["server", "embedded"]:
+        objects = "//src/extensions/external/postgis:postgis_" + variant + "_objects"
+        _test(
+            name = "postgis_" + variant + "_windows_link_test",
+            target_under_test = "//src/extensions/external/postgis:postgis_" + variant + ".dll",
+            dll_name = "postgis_" + variant + ".dll",
+            module_objects = objects,
+            static_libraries = [objects, "//build_defs/extensions/postgis:postgis_lwgeom", "//build_defs/extensions/postgis:postgis_flatgeobuf"],
+            provider = "//build_defs/extensions/postgis:dependency_module",
+            target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
+            size = "small",
+        )

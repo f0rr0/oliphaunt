@@ -179,6 +179,7 @@ export async function packageNativePayload(spec: PayloadSpec): Promise<void> {
     'unsupported native payload kind',
   );
   const output = path.resolve(spec.output);
+  const windowsVcRuntimeProfile = spec.artifact.kind === 'native-runtime' ? 'provider' : undefined;
   const temporary = mkdtempSync(path.join(tmpdir(), 'native-public-payload-'));
   try {
     const mappings = spec.mappings.map((mapping, index) => {
@@ -207,7 +208,7 @@ export async function packageNativePayload(spec: PayloadSpec): Promise<void> {
         root: output,
         sourceDirectory: source,
         destinations,
-        profile: 'provider',
+        profile: windowsVcRuntimeProfile,
       });
     } else
       assert.equal(Object.keys(spec.windowsRuntime).length, 0, 'foreign Windows runtime inputs');
@@ -217,6 +218,7 @@ export async function packageNativePayload(spec: PayloadSpec): Promise<void> {
     assertReleaseNoticesInDirectory(output, notices);
     await inspectPlatformBinaryTree(output, {
       target: spec.artifact.target,
+      windowsVcRuntimeProfile: windowsVcRuntimeProfile ?? 'direct',
       requireWindowsRuntimeImportLibrary:
         spec.artifact.kind === 'native-runtime' && spec.artifact.target === 'windows-x64-msvc',
     });

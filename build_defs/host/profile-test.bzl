@@ -1,9 +1,11 @@
 """Analysis tests exercise provider rebinding, not native-host qualification."""
 
-load("@bazel_skylib//lib:unittest.bzl", "asserts", "unittest")
+load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
 load("@apple_support//xcode:xcode_config.bzl", "xcode_config")
 load("@apple_support//xcode:xcode_version.bzl", "xcode_version")
 load("@rules_cc//cc/private/toolchain:unix_cc_toolchain_config.bzl", unix_config = "cc_toolchain_config")
+load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES")
+load("@apple_support//crosstool:cc_toolchain_config.bzl", apple_config = "cc_toolchain_config")
 load("@rules_cc//cc/toolchains:cc_toolchain.bzl", "cc_toolchain")
 load("@rules_swift//swift:providers.bzl", "SwiftToolchainInfo")
 load("@rules_swift//swift/toolchains/config:tool_config.bzl", "ToolConfigInfo")
@@ -18,6 +20,12 @@ load(":app-tool-inputs.bzl", "apple_app_configuration_error")
 load(":cc-profiles.bzl", "host_builtin_include_directories")
 
 _APPLE_SDKS = ["macosx", "iphoneos", "iphonesimulator"]
+_USE_LIBTOOL_ON_MACOS = str(Label("@rules_cc//cc/toolchains/args/archiver_flags:use_libtool_on_macos"))
+
+def _archive_fixture_impl(_settings, attr):
+    return {_USE_LIBTOOL_ON_MACOS: False, "//command_line_option:xcode_version_config": str(attr.xcode_configuration)}
+
+_archive_fixture = transition(implementation = _archive_fixture_impl, inputs = [], outputs = [_USE_LIBTOOL_ON_MACOS, "//command_line_option:xcode_version_config"])
 
 def _builtin_directories(sdk):
     return ["toolchain/lib/clang/20/include", "sdk_" + sdk + "/usr/include", "sdk_" + sdk + "/System/Library/Frameworks", "toolchain/include/c++/v1"]
@@ -49,12 +57,34 @@ def _plugin_arguments(source, directory, include_developer, action):
     return arguments
 
 def _profile_test(ctx):
-    env = unittest.begin(ctx)
+    env = analysistest.begin(ctx)
     prefix = "external/selected_sdk/"
     # Inspect the actual CcToolchainInfo expansion in a non-root package: bare
     # execroot paths would be prefixed again by this toolchain's package path.
     for sdk, compiler in zip(_APPLE_SDKS, ctx.attr.cc_profiles):
         asserts.equals(env, [prefix + directory for directory in _builtin_directories(sdk)], compiler[cc_common.CcToolchainInfo].built_in_include_directories)
+    # Inspect stock archive expansion: native ar metadata and Apple libtool
+    # actions have distinct interfaces even when they expose the same AR path.
+    for index, compiler in enumerate(ctx.attr.archive_profiles):
+        toolchain = compiler[cc_common.CcToolchainInfo]
+        features = cc_common.configure_features(ctx = ctx, cc_toolchain = toolchain)
+        variables = cc_common.create_link_variables(cc_toolchain = toolchain, feature_configuration = features, output_file = "fixture.a", is_using_linker = False)
+        tool = cc_common.get_tool_for_action(feature_configuration = features, action_name = ACTION_NAMES.cpp_link_static_library)
+        flags = cc_common.get_memory_inefficient_command_line(feature_configuration = features, action_name = ACTION_NAMES.cpp_link_static_library, variables = variables)
+        expected_ar = "/".join([part for part in [compiler.label.workspace_root, compiler.label.package, "tools/ar"] if part])
+        asserts.equals(env, expected_ar, toolchain.ar_executable)
+        asserts.equals(env, expected_ar if index == 0 else ctx.file.libtool.path, tool)
+        asserts.true(env, "fixture.a" in flags)
+        if index == 0:
+            asserts.true(env, "rcs" in flags)
+            asserts.false(env, "-static" in flags)
+            asserts.false(env, "-o" in flags)
+        else:
+            asserts.true(env, "-D" in flags)
+            asserts.true(env, "-static" in flags)
+            asserts.true(env, "-o" in flags)
+            if "-o" in flags:
+                asserts.equals(env, ["fixture.a"], flags[flags.index("-o") + 1:flags.index("-o") + 2])
     observed_xcode = "Xcode 26.5\nBuild version 17F42"
     captured_sdks = {"macosx": "26.5", "iphoneos": "26.5", "iphonesimulator": "26.5"}
     # Explicit stock Xcode configurations report UNKNOWN availability even
@@ -163,35 +193,50 @@ def _profile_test(ctx):
         asserts.equals(env, "compiler_plugin_directory must be a non-empty directory path", compiler_plugin_directory_error(invalid))
     missing = prefix + "missing-plugins"
     asserts.equals(env, [["-plugin-path", missing], marker], _plugin_arguments(ctx.file.source, missing, True, compiler_plugin_action_names()[0]))
-    return unittest.end(env)
+    return analysistest.end(env)
 
-_profile_rule_test = unittest.make(_profile_test, attrs = {"source": attr.label(default = ":sdk-smoke.c", allow_single_file = True), "cc_profiles": attr.label_list(providers = [cc_common.CcToolchainInfo]), "xcode_configuration": attr.label(providers = [apple_common.XcodeVersionConfig])})
+_profile_rule_test = analysistest.make(_profile_test, fragments = ["cpp"], attrs = {"source": attr.label(default = ":sdk-smoke.c", allow_single_file = True), "libtool": attr.label(default = "@apple_support//crosstool:libtool.cc", allow_single_file = True), "cc_profiles": attr.label_list(providers = [cc_common.CcToolchainInfo]), "archive_profiles": attr.label_list(providers = [cc_common.CcToolchainInfo], cfg = _archive_fixture), "xcode_configuration": attr.label(providers = [apple_common.XcodeVersionConfig]), "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist")})
 
 def profile_test(name, **kwargs):
     """Exercise builtin path interpretation without acquiring a licensed SDK."""
-    xcode_version(name = name + "_xcode_version", version = "26.5.0.17f42", default_macos_sdk_version = "26.5", default_ios_sdk_version = "26.5", testonly = True)
-    xcode_config(name = name + "_xcode_configuration", versions = [":" + name + "_xcode_version"], default = ":" + name + "_xcode_version", testonly = True)
+    xcode_version(name = name + "_xcode_version", version = "26.5.0.17f42", default_macos_sdk_version = "26.5", default_ios_sdk_version = "26.5")
+    xcode_config(name = name + "_xcode_configuration", versions = [":" + name + "_xcode_version"], default = ":" + name + "_xcode_version")
     profiles = []
-    for sdk in _APPLE_SDKS:
+    for sdk in _APPLE_SDKS + ["native_archive", "package_archive"]:
         profile = name + "_" + sdk
-        unix_config(
-            name = profile + "_configuration",
-            cpu = "darwin_arm64",
-            compiler = "clang",
-            host_system_name = "fixture",
-            target_system_name = "fixture",
-            target_libc = "fixture",
-            abi_version = "fixture",
-            abi_libc_version = "fixture",
-            toolchain_identifier = profile,
-            cxx_builtin_include_directories = host_builtin_include_directories("external/selected_sdk/", _builtin_directories(sdk)),
-            tool_paths = {tool: "/bin/false" for tool in ["ar", "cpp", "gcc", "gcov", "ld", "nm", "objdump", "strip"]},
-            testonly = True,
-        )
+        selected_sdk = "macosx" if sdk in ["native_archive", "package_archive"] else sdk
+        includes = host_builtin_include_directories("external/selected_sdk/", _builtin_directories(selected_sdk))
+        if sdk == "package_archive":
+            apple_config(
+                name = profile + "_configuration",
+                cpu = "darwin_arm64",
+                wrapped_clang = ":sdk-smoke.c",
+                wrapped_clang_pp = ":sdk-smoke.c",
+                libtool = "@apple_support//crosstool:libtool.cc",
+                module_map = ":" + profile + "_files",
+                cxx_builtin_include_directories = includes,
+                tool_paths_overrides = {"ar": "tools/ar"},
+                testonly = True,
+            )
+        else:
+            unix_config(
+                name = profile + "_configuration",
+                cpu = "darwin_arm64",
+                compiler = "clang",
+                host_system_name = "fixture",
+                target_system_name = "fixture",
+                target_libc = "macosx" if sdk == "native_archive" else "fixture",
+                abi_version = "fixture",
+                abi_libc_version = "fixture",
+                toolchain_identifier = profile,
+                cxx_builtin_include_directories = includes,
+                tool_paths = {tool: "/bin/false" for tool in ["ar", "cpp", "gcc", "gcov", "ld", "nm", "objdump", "strip"]} | ({"ar": "tools/ar"} if sdk == "native_archive" else {}),
+                testonly = True,
+            )
         native.filegroup(name = profile + "_files", srcs = [], testonly = True)
         cc_toolchain(name = profile, toolchain_identifier = profile, toolchain_config = ":" + profile + "_configuration",
                      all_files = ":" + profile + "_files", ar_files = ":" + profile + "_files", as_files = ":" + profile + "_files",
                      compiler_files = ":" + profile + "_files", dwp_files = ":" + profile + "_files", linker_files = ":" + profile + "_files",
                      objcopy_files = ":" + profile + "_files", strip_files = ":" + profile + "_files", testonly = True)
         profiles.append(":" + profile)
-    _profile_rule_test(name = name, cc_profiles = profiles, xcode_configuration = ":" + name + "_xcode_configuration", **kwargs)
+    _profile_rule_test(name = name, target_under_test = profiles[0], cc_profiles = profiles[:3], archive_profiles = profiles[3:], xcode_configuration = ":" + name + "_xcode_configuration", **kwargs)

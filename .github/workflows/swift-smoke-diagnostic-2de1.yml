@@ -1,4 +1,4 @@
-name: Declared Apple C++ header admission diagnostic
+name: Declared Windows PostGIS DLL link diagnostic
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: apple-cpp-header-control-${{ github.run_id }}
+  group: windows-postgis-link-control-${{ github.run_id }}
   cancel-in-progress: false
 
 defaults:
@@ -16,99 +16,106 @@ defaults:
     shell: bash
 
 jobs:
-  cpp_headers:
-    name: Reproduce SDK header rejection and admit the corrected C++ archive
-    runs-on: macos-26
-    timeout-minutes: 30
+  postgis_links:
+    name: Reproduce stale exports and link both stock PostGIS modules
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 90
     steps:
       - name: Checkout original source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 50fcea8b7e2682eec4786f1a0ba422a41c1f85c1
+          ref: b71776795fb8291906e6a22f47b2d29f4c2a476b
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Select declared Apple SDK
-        uses: ./.github/actions/setup-apple
-        with:
-          install-build-dependencies: "false"
+      - name: Set up pinned Bun
+        uses: ./.github/actions/setup-bun
 
-      - name: Reproduce the original C++ SDK header rejection
+      - name: Select declared MSVC SDK
+        uses: ./.github/actions/setup-msvc
+
+      - name: Reproduce the original PostGIS export failure
         env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/apple-cpp-header-bootstrap
+          XDG_CACHE_HOME: ${{ runner.temp }}/windows-postgis-link-bootstrap
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 50fcea8b7e2682eec4786f1a0ba422a41c1f85c1
-          test "$(git rev-parse 'HEAD^{tree}')" = f6eae7a4b32e5d9b717aa34a96f0d3da919075f5
-          diag="$RUNNER_TEMP/apple-cpp-header-diagnostic"
+          test "$(git rev-parse HEAD)" = b71776795fb8291906e6a22f47b2d29f4c2a476b
+          test "$(git rev-parse 'HEAD^{tree}')" = 277e27e5d411641580c398ea12d40ee61c1612ae
+          diag="$RUNNER_TEMP/windows-postgis-link-diagnostic"
           mkdir -p "$diag"
-          printf 'RED_SOURCE_COMMIT=50fcea8b7e2682eec4786f1a0ba422a41c1f85c1\nRED_SOURCE_TREE=f6eae7a4b32e5d9b717aa34a96f0d3da919075f5\n' | tee "$diag/red-source.txt"
+          printf 'RED_SOURCE_COMMIT=b71776795fb8291906e6a22f47b2d29f4c2a476b\nRED_SOURCE_TREE=277e27e5d411641580c398ea12d40ee61c1612ae\n' | tee "$diag/red-source.txt"
           bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc
-            --output_base="$RUNNER_TEMP/apple-cpp-header-check" --host_jvm_args=-Xmx3g)
-          config=(-c opt --config=macos-sandbox
-            --platforms=//build_defs/host:apple_package_macos_arm64
-            --host_platform=//build_defs/host:native_macos_arm64 --jobs=1
+            --output_base="$RUNNER_TEMP/windows-postgis-link-check" --host_jvm_args=-Xmx3g)
+          config=(-c opt --platforms=//build_defs/host:native_windows_x64
+            --host_platform=//build_defs/host:native_windows_x64 --jobs=2
             --lockfile_mode=error --repository_cache= --disk_cache=)
-          target='@icu//:data_stub'
+          targets=(//src/extensions/external/postgis:postgis_server.dll
+            //src/extensions/external/postgis:postgis_embedded.dll)
           set +e
-          "${bazel[@]}" build "$target" "${config[@]}" --output_groups=archive \
-            --subcommands > "$diag/red.log" 2>&1
+          "${bazel[@]}" build "${targets[@]}" "${config[@]}" --keep_going \
+            > "$diag/red.log" 2>&1
           red_status=$?
           set -e
           printf 'RED_EXIT=%s\n' "$red_status"
           test "$red_status" -ne 0
-          grep -F -m 1 "absolute path inclusion(s) found in rule '@@+_repo_rules12+icu//:data_stub'" "$diag/red.log"
-          grep -E -m 1 '/sandbox/darwin-sandbox/[0-9]+/execroot/_main/external/\+native_host_toolchains\+native_apple_sdk/sdk_macosx/usr/include/' "$diag/red.log"
-          printf 'RED_EXPECTED_ABSOLUTE_SDK_INCLUSION=observed\n'
+          grep -E -m 1 'postgis_(server|embedded)_windows_exports\.def : error LNK2001: unresolved external symbol _libiconv_version' "$diag/red.log"
+          printf 'RED_EXPECTED_PROVIDER_EXPORT_FAILURE=observed\n'
 
       - name: Checkout corrected source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: bb70fa0e3c387b560c197a487191cc8f19a25ac6
+          ref: 41e7f8f02ed9f76147051a83de45038877742b18
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Admit corrected C++ headers and execute the package archive
+      - name: Link both corrected PostGIS modules and verify their action contracts
         env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/apple-cpp-header-bootstrap
+          XDG_CACHE_HOME: ${{ runner.temp }}/windows-postgis-link-bootstrap
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = bb70fa0e3c387b560c197a487191cc8f19a25ac6
-          test "$(git rev-parse 'HEAD^{tree}')" = 4ab049963f081a4e84f8f29ae824cf512c80a41b
-          diag="$RUNNER_TEMP/apple-cpp-header-diagnostic"
-          printf 'GREEN_SOURCE_COMMIT=bb70fa0e3c387b560c197a487191cc8f19a25ac6\nGREEN_SOURCE_TREE=4ab049963f081a4e84f8f29ae824cf512c80a41b\n' | tee "$diag/green-source.txt"
+          test "$(git rev-parse HEAD)" = 41e7f8f02ed9f76147051a83de45038877742b18
+          test "$(git rev-parse 'HEAD^{tree}')" = 354d8addaebdb99d69b151a8ad69ebec8cf55339
+          diag="$RUNNER_TEMP/windows-postgis-link-diagnostic"
+          printf 'GREEN_SOURCE_COMMIT=41e7f8f02ed9f76147051a83de45038877742b18\nGREEN_SOURCE_TREE=354d8addaebdb99d69b151a8ad69ebec8cf55339\n' | tee "$diag/green-source.txt"
           bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc
-            --output_base="$RUNNER_TEMP/apple-cpp-header-check" --host_jvm_args=-Xmx3g)
-          config=(-c opt --config=macos-sandbox
-            --platforms=//build_defs/host:apple_package_macos_arm64
-            --host_platform=//build_defs/host:native_macos_arm64 --jobs=1
+            --output_base="$RUNNER_TEMP/windows-postgis-link-check" --host_jvm_args=-Xmx3g)
+          config=(-c opt --platforms=//build_defs/host:native_windows_x64
+            --host_platform=//build_defs/host:native_windows_x64 --jobs=2
             --lockfile_mode=error --repository_cache= --disk_cache=)
-          target='@icu//:data_stub'
-          "${bazel[@]}" build "$target" "${config[@]}" --output_groups=archive \
-            --subcommands > "$diag/green.log" 2>&1
-          grep -F -m 1 'Compiling stubdata/stubdata.cpp' "$diag/green.log"
-          grep -E -m 1 '/external/\+native_host_toolchains\+native_apple_sdk/wrapped_clang(_pp)?([[:space:]]|$)' "$diag/green.log"
-          grep -E -m 1 '/external/\+native_host_toolchains\+native_apple_sdk/libtool([[:space:]]|$)' "$diag/green.log"
-          "${bazel[@]}" cquery "$target" "${config[@]}" --output=files \
-            --output_groups=archive > "$diag/green-files.txt" 2> "$diag/green-query.log"
+          targets=(//src/extensions/external/postgis:postgis_server.dll
+            //src/extensions/external/postgis:postgis_embedded.dll)
+          "${bazel[@]}" test "${targets[@]}" \
+            //build_defs/extensions:postgis_server_windows_link_test \
+            //build_defs/extensions:postgis_embedded_windows_link_test \
+            "${config[@]}" --keep_going --nocache_test_results --test_output=errors \
+            > "$diag/green.log" 2>&1
+          "${bazel[@]}" cquery "set(${targets[*]})" "${config[@]}" --output=files \
+            > "$diag/green-files.txt" 2> "$diag/green-query.log"
           "${bazel[@]}" info execution_root "${config[@]}" \
             > "$diag/execution-root.txt" 2> "$diag/info.log"
-          execution_root="$(cat "$diag/execution-root.txt")"
-          test -s "$diag/green-files.txt"
+          execution_root="$(tr -d '\r' < "$diag/execution-root.txt")"
+          count=0
           while IFS= read -r relative; do
-            case "$relative" in *.a) ;; *) exit 1 ;; esac
-            archive="$execution_root/$relative"
-            test -f "$archive" && test -s "$archive"
-            test "$(head -c 8 "$archive")" = '!<arch>'
-            shasum -a 256 "$archive" | tee -a "$diag/green-archives.txt"
+            relative="${relative%$'\r'}"
+            case "$relative" in
+              */postgis_server.dll|*/postgis_embedded.dll) ;;
+              *) exit 1 ;;
+            esac
+            dll="$execution_root/$relative"
+            test -f "$dll" && test -s "$dll"
+            test "$(head -c 2 "$dll")" = MZ
+            printf '%s  %s\n' "$(sha256sum < "$dll" | cut -d ' ' -f 1)" "$relative" | tee -a "$diag/green-dlls.txt"
+            count=$((count + 1))
           done < "$diag/green-files.txt"
-          printf 'GREEN_CPP_HEADER_ADMISSION=passed\nGREEN_PACKAGE_ARCHIVE=present\n'
-          tail -n 8 "$diag/green.log"
+          test "$count" -eq 2
+          printf 'GREEN_POSTGIS_DLLS=2\nGREEN_ACTION_CONTRACT_TESTS=passed\n'
+          tail -n 12 "$diag/green.log"
 
       - name: Preserve diagnostic logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: apple-cpp-header-diagnostic
-          path: ${{ runner.temp }}/apple-cpp-header-diagnostic
+          name: windows-postgis-link-diagnostic
+          path: ${{ runner.temp }}/windows-postgis-link-diagnostic
           if-no-files-found: warn
+          retention-days: 7

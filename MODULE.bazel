@@ -52,6 +52,7 @@ single_version_override(
     patches = [
         "//build_defs/wasix/browser:crate-source-metadata.patch",
         "//build_defs/wasix/postmaster:crate-monorepo-source.patch",
+        "//build_defs/host:rules-rust-declared-archiver.patch",
     ],
     patch_strip = 1,
 )

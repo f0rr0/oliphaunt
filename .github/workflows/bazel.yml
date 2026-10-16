@@ -330,7 +330,11 @@ jobs:
               ;;
           esac
           if [[ "$TARGET_PLATFORM" == windows-x64 ]]; then
-            host_tests+=(@icu//:windows_icu_smoke_test)
+            host_tests+=(
+              @icu//:windows_icu_smoke_test
+              //build_defs/extensions:postgis_server_windows_link_test
+              //build_defs/extensions:postgis_embedded_windows_link_test
+            )
           fi
           if [[ "$TARGET_PLATFORM" == linux-x64 ]]; then
             host_tests+=(

@@ -15,6 +15,6 @@ bun_binary(name = "checksum_tool", entry_point = "checksums.mts")
 bun_test(name = "release_family_test", entry_point = "release-family.unit.test.mts", data = ["release-family.test.mts", "checksums.mts", "//tools/release:checksum-manifest.mts"], size = "small")
 
 native_carrier_unit_inputs(name = "unit_inputs")
-bun_script_test(name = "package_test", entry_point = "package.test.mts", args = ["$(location :unit_inputs)"], data = [":unit_inputs", "payload.mts", "envelopes.mts", "facades.mts", "checksums.mts", "//src/native/postgres-tools:tools/package-cargo-artifacts.mts", "//:tools/packaging/emit-javascript.mts"] + _HELPERS + _LEGAL, size = "small")
+bun_script_test(name = "package_test", entry_point = "package.test.mts", args = ["$(location :unit_inputs)"], data = [":unit_inputs", "//:tools/packaging/testdata/release-fixture-utils.mts", "payload.mts", "envelopes.mts", "facades.mts", "checksums.mts", "//src/native/postgres-tools:tools/package-cargo-artifacts.mts", "//:tools/packaging/emit-javascript.mts"] + _HELPERS + _LEGAL, size = "small")
 
 source_quality_files()
