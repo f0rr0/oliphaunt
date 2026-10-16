@@ -31,6 +31,15 @@ protocol batch that cannot drain within three seconds, the helper exits and the
 application must explicitly reopen its database. No request is replayed and no
 missing Sync is manufactured.
 
+`--handshake-timeout-ms` sets the deadline for each accepted SQL or management
+connection to complete login, including fragmented reads and writes. It defaults
+to 5000 and accepts whole milliseconds from 1 through 2147483647. A larger value
+allows slower handshakes but holds unauthenticated connections longer. Successful
+login clears both socket timeouts before ordinary operations and backup streams.
+This is separate from PostgreSQL startup GUCs and the SDK's process startup wait.
+An incomplete backup transport write closes the connection; its error cannot be
+encoded inside the unfinished archive frame.
+
 ## Release licensing
 
 The source-only `oliphaunt-broker` crate is Oliphaunt code under MIT. The four

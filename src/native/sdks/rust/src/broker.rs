@@ -569,7 +569,7 @@ fn spawn_broker(
         command.env("OLIPHAUNT_RESOURCES_DIR", resources);
     }
     command
-        .args(broker_spawn_args(config, root, extensions, endpoint))
+        .args(broker_spawn_args(config, root, extensions, endpoint)?)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -587,13 +587,19 @@ fn broker_spawn_args(
     root: &Path,
     extensions: &[Extension],
     endpoint: &BrokerEndpoint,
-) -> Vec<OsString> {
+) -> Result<Vec<OsString>> {
     let mut args = vec![OsString::from("--root"), root.as_os_str().to_os_string()];
     args.push(OsString::from("--username"));
     args.push(OsString::from(&config.username));
     args.push(OsString::from("--database"));
     args.push(OsString::from(&config.database));
     endpoint.add_args_to(&mut args);
+    if let Some(timeout) = config.broker.handshake_timeout {
+        let millis = oliphaunt_broker::config::handshake_timeout_millis(timeout)
+            .map_err(|message| Error::InvalidConfig(message.to_owned()))?;
+        args.push(OsString::from("--handshake-timeout-ms"));
+        args.push(OsString::from(millis.to_string()));
+    }
     if let Some(data) = &config.icu_data {
         args.push(OsString::from("--icu-data-directory"));
         args.push(data.directory.as_os_str().to_os_string());
@@ -608,7 +614,7 @@ fn broker_spawn_args(
         args.push(OsString::from("--startup-guc"));
         args.push(OsString::from(format!("{}={}", guc.name, guc.value)));
     }
-    args
+    Ok(args)
 }
 
 fn authenticate_broker(transport: &mut LocalSocket, auth_token: &BrokerAuthToken) -> Result<()> {
@@ -1172,6 +1178,7 @@ mod tests {
         config.mode = EngineMode::Broker;
         config.username = "app_user".to_owned();
         config.database = "app_db".to_owned();
+        config.broker.handshake_timeout = Some(Duration::from_micros(12_001));
         config.extensions = vec![Extension::PG_TEXTSEARCH, Extension::PG_TEXTSEARCH];
         let extensions = config.resolved_extensions().unwrap();
         let endpoint = BrokerEndpoint::Tcp {
@@ -1183,7 +1190,8 @@ mod tests {
             &PathBuf::from("/tmp/oliphaunt-broker-preload-root"),
             &extensions,
             &endpoint,
-        );
+        )
+        .unwrap();
         let args = args
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -1191,6 +1199,7 @@ mod tests {
 
         assert_arg_pair(&args, "--username", "app_user");
         assert_arg_pair(&args, "--database", "app_db");
+        assert_arg_pair(&args, "--handshake-timeout-ms", "13");
         assert_arg_pair(&args, "--extension", "pg_textsearch");
         assert_eq!(
             args.windows(2)

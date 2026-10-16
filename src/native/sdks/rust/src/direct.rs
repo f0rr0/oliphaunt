@@ -94,6 +94,15 @@ impl OliphauntBuilder {
         self
     }
 
+    /// Set the helper's deadline for each login handshake. Defaults to five seconds.
+    /// Rounded up to whole milliseconds; valid range is 1..=2147483647 milliseconds.
+    /// This requires broker mode and does not limit queries or backups.
+    #[cfg(feature = "desktop")]
+    pub fn broker_handshake_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.broker_handshake_timeout(timeout);
+        self
+    }
+
     /// Add an explicit PostgreSQL startup GUC.
     pub fn startup_guc(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.inner = self.inner.startup_guc(name, value);

@@ -8,7 +8,7 @@ import { test } from 'bun:test';
 
 import { normalizeOpenConfig } from '../config.js';
 import { MemoryDuplexStream, withStreamDeadline } from '../runtime/byte-stream.js';
-import { BrokerHandle, createBrokerRuntimeBinding } from '../runtime/broker.js';
+import { BrokerHandle, brokerSpawnArgs, createBrokerRuntimeBinding } from '../runtime/broker.js';
 import { encodeBrokerResponse } from '../runtime/broker-frames.js';
 import { createForgottenRuntimeHandleCleanup } from '../runtime/forgotten-handle.js';
 import {
@@ -85,6 +85,23 @@ test('runtime adapters implement the shared internal operation boundary', async 
   assert.equal(brokerFailure.state, 'terminal');
   const serverFailure = await server.close({});
   assert.equal(serverFailure.state, 'terminal');
+});
+
+test('broker launch forwards only an explicitly selected handshake timeout', () => {
+  const storage = { instanceDirectory: '/broker/root', temporaryDirectory: false };
+  const endpoint = { kind: 'tcp', listen: '127.0.0.1:0', controlListen: '127.0.0.1:0' } as const;
+  const args = brokerSpawnArgs(
+    normalizeOpenConfig({ topology: 'broker', broker: { handshakeTimeoutMs: 125 } }, storage),
+    endpoint,
+  );
+  const index = args.indexOf('--handshake-timeout-ms');
+  assert.ok(index >= 0);
+  assert.equal(args[index + 1], '125');
+  assert.ok(
+    !brokerSpawnArgs(normalizeOpenConfig({ topology: 'broker' }, storage), endpoint).includes(
+      '--handshake-timeout-ms',
+    ),
+  );
 });
 
 test('broker close expires stalled control I/O and reaches child reaping', async () => {

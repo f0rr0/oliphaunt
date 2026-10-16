@@ -24,6 +24,12 @@ Async clones share one PostgreSQL session. They are not a connection pool.
 
 Server builders terminate with `start()`. Listener and server executable options belong to server builders; the broker executable option belongs to broker mode.
 
+Desktop broker builders accept `.broker_handshake_timeout(Duration)`, defaulting
+to five seconds per accepted SQL or management connection. The deadline ends
+after login and does not limit queries or backups. Both database builders expose
+it; direct and server modes do not accept it. See [broker login settings](/docs/reference/performance#configure-broker-login)
+for duration rounding, the accepted range and tradeoff.
+
 ## Queries and results
 
 | Operation | Purpose |

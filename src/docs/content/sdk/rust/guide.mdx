@@ -56,6 +56,11 @@ let mut db = Oliphaunt::builder()
     .open()?;
 ```
 
+Use `.broker_handshake_timeout(Duration)` on either builder to change the
+helper's five-second login deadline. It does not limit queries or backups.
+See [broker login settings](/docs/reference/performance#configure-broker-login)
+for the range and tradeoff.
+
 For an ORM or connection pool, start a server and keep the returned handle alive:
 
 ```rust

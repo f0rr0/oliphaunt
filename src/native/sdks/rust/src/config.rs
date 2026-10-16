@@ -72,6 +72,8 @@ pub(crate) use liboliphaunt_native_bindings::PostgresStartupGuc;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct NativeBrokerConfig {
     pub(crate) executable: Option<PathBuf>,
+    #[cfg(feature = "desktop")]
+    pub(crate) handshake_timeout: Option<std::time::Duration>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -172,6 +174,16 @@ impl OpenConfig {
 
     pub(crate) fn validate(&self) -> Result<()> {
         self.native_config().validate()?;
+        #[cfg(feature = "desktop")]
+        if let Some(timeout) = self.broker.handshake_timeout {
+            if self.mode != EngineMode::Broker {
+                return Err(Error::InvalidConfig(
+                    "broker_handshake_timeout(...) requires broker().open()".to_owned(),
+                ));
+            }
+            oliphaunt_broker::config::handshake_timeout_millis(timeout)
+                .map_err(|message| Error::InvalidConfig(message.to_owned()))?;
+        }
         match self.mode {
             EngineMode::Broker => {
                 if let Some(executable) = &self.broker.executable {

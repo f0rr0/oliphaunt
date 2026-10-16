@@ -11,6 +11,7 @@ import { join } from 'node:path';
 
 import {
   normalizeDatabaseTopology,
+  normalizeBrokerOptions,
   normalizeOpenConfig,
   normalizeFilePath,
   filePathString,
@@ -1330,6 +1331,7 @@ function snapshotOpenConfig(config: OpenConfig) {
     topology,
     libraryPath: validateOptionalPathOverride(config.libraryPath, 'libraryPath'),
     brokerExecutable: validateOptionalPathOverride(config.brokerExecutable, 'brokerExecutable'),
+    broker: normalizeBrokerOptions(config.broker, topology),
   };
 }
 
@@ -1361,6 +1363,7 @@ async function closeRuntimeHandleFailure(
 }
 
 function snapshotServerOpenConfig(config: ServerOpenConfig) {
+  normalizeBrokerOptions('broker' in config ? config.broker : undefined, 'server');
   if ('admission' in config && config.admission !== undefined)
     throw new TypeError('server handles do not have a database admission queue');
   validateNativeStartupGUCs('server', config.startupGUCs ?? {});

@@ -8,6 +8,7 @@ import {
 } from './generated/extensions.js';
 import type {
   NativeResourceDirectory,
+  BrokerOptions,
   FilePathInput,
   OpenConfig,
   ServerListen,
@@ -44,6 +45,7 @@ export type NormalizedOpenConfig = {
   seed?: NormalizedResourceDirectory;
   icuData?: NormalizedResourceDirectory;
   brokerExecutable?: string;
+  brokerHandshakeTimeoutMs?: number;
   serverExecutable?: string;
   serverListen?: NormalizedServerListen;
 };
@@ -62,6 +64,7 @@ export function normalizeOpenConfig(
   const extensions = extensionDescriptors.map((extension) => extension.sqlName);
   const topology =
     config.topology === 'server' ? 'server' : normalizeDatabaseTopology(config.topology);
+  const broker = normalizeBrokerOptions('broker' in config ? config.broker : undefined, topology);
   validateNativeStartupGUCs(topology, config.startupGUCs ?? {});
   const startupArgs = buildStartupArgs({
     startupGUCs: config.startupGUCs ?? {},
@@ -104,9 +107,37 @@ export function normalizeOpenConfig(
       ? { icuData: validateResourceDirectory(config.icuData, 'icuData') }
       : {}),
     brokerExecutable,
+    ...(broker?.handshakeTimeoutMs === undefined
+      ? {}
+      : { brokerHandshakeTimeoutMs: broker.handshakeTimeoutMs }),
     serverExecutable,
     serverListen,
   };
+}
+
+export function normalizeBrokerOptions(
+  value: unknown,
+  topology: RuntimeTopology,
+): BrokerOptions | undefined {
+  if (value === undefined) return undefined;
+  if (topology !== 'broker') throw new TypeError('broker options require topology: "broker"');
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.keys(value).some((key) => key !== 'handshakeTimeoutMs')
+  )
+    throw new TypeError('broker options accept only handshakeTimeoutMs');
+  const timeout = (value as { handshakeTimeoutMs?: unknown }).handshakeTimeoutMs;
+  if (timeout === undefined) return {};
+  if (
+    typeof timeout !== 'number' ||
+    !Number.isInteger(timeout) ||
+    timeout < 1 ||
+    timeout > 2_147_483_647
+  )
+    throw new TypeError('broker handshakeTimeoutMs must be an integer between 1 and 2147483647');
+  return { handshakeTimeoutMs: timeout };
 }
 
 export function validateResourceDirectory(

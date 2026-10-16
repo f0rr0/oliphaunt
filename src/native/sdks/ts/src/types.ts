@@ -20,6 +20,14 @@ export type ProtocolChunkCallback = (chunk: Uint8Array) => undefined;
 export type AdmissionLimits =
   import('@oliphaunt/ts-query/internal/operation-budget').AdmissionLimits;
 
+export type BrokerOptions = Readonly<{
+  /** Per-connection login deadline in whole milliseconds, 1..2147483647.
+   * Defaults to 5000. Larger values allow slower handshakes but retain unauthenticated
+   * connections longer. This does not limit broker startup, queries or backups.
+   */
+  handshakeTimeoutMs?: number;
+}>;
+
 export type OpenConfig = {
   /** Pending work shared by the database and its transaction handles. */
   admission?: AdmissionLimits;
@@ -41,11 +49,13 @@ export type OpenConfig = {
   /** Canonical ICU data, selected independently of the runtime and seed. */
   icuData?: NativeResourceDirectory;
   brokerExecutable?: FilePathInput;
+  /** Desktop broker transport options; requires topology: 'broker'. */
+  broker?: BrokerOptions;
 };
 
 export type ServerOpenConfig = Omit<
   OpenConfig,
-  'topology' | 'brokerExecutable' | 'libraryPath' | 'seed' | 'admission'
+  'topology' | 'brokerExecutable' | 'broker' | 'libraryPath' | 'seed' | 'admission'
 > & {
   serverExecutable?: FilePathInput;
   listen?: ServerListen;

@@ -1,7 +1,7 @@
 # Resource configuration contract
 
-Status: admission, OPFS concurrency, native TypeScript filesystem inputs and
-legacy override validation are implemented in this checkout. Transport/protocol,
+Status: admission, OPFS options, native TypeScript filesystem inputs, desktop
+broker handshake deadlines and legacy override validation are implemented in this checkout. Transport/protocol,
 additional tool controls, typed runtime/lifecycle settings and producer policies
 below remain design proposals, not public APIs. Defaults and current owners are
 recorded in the [runtime resource inventory](../maintainers/runtime-resource-budgets.md).
@@ -42,6 +42,7 @@ The names below identify concepts; their language spelling can differ.
 | Streaming options | `bufferCapacityBytes`, `maxChunkBytes` | Usable buffering per transport direction and maximum delivered chunk; read scratch sizes derive from the selected chunk where applicable |
 | Protocol limits | `maxFrontendMessageBytes`, `maxRequestBytes`, `maxBackendMessageBytes`, `maxBufferedResponseBytes` | Separate message, complete-request and collected-response acceptance; introduce only fields the product actually enforces |
 | Timeout options | `startupTimeoutMs`, `shutdownTimeoutMs` in JS; native duration types where idiomatic | Per physical runtime; retain existing mobile broker startup/operation options |
+| Desktop broker handshake | Implemented: `broker.handshakeTimeoutMs` in native TS; `.broker_handshake_timeout(Duration)` on both native Rust builders | Per accepted SQL/management connection, ending after login. CLI `--handshake-timeout-ms`; default 5000. Separate from startup wait, SQL and backup lifetimes |
 | OPFS options | `maxConcurrentIO`, `spareFileCount` | On the storage descriptor; concurrent helper I/O and the unused worker-handle reserve |
 | Tool output options | `stderrTailBytes`, `terminateGraceMs` | Diagnostic tail on streaming summaries; termination grace applies to native subprocess tools only |
 | Runtime build profile | Guest stack, initial/maximum guest memory and Postmaster task capacity | Producer-owned and included in artifact identity; native backend stack is a separate physical-runtime setting |

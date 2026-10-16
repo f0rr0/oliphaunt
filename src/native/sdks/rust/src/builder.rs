@@ -151,6 +151,15 @@ impl AsyncOliphauntBuilder {
         self
     }
 
+    /// Set the helper's deadline for each login handshake. Defaults to five seconds.
+    /// Rounded up to whole milliseconds; valid range is 1..=2147483647 milliseconds.
+    /// This requires broker mode and does not limit queries or backups.
+    #[cfg(feature = "desktop")]
+    pub fn broker_handshake_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.broker.handshake_timeout = Some(timeout);
+        self
+    }
+
     /// Add an explicit PostgreSQL startup GUC.
     pub fn startup_guc(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.common
@@ -378,6 +387,36 @@ mod tests {
     }
 
     use super::*;
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn handshake_timeout_is_validated_before_owner_construction() {
+        use std::time::Duration;
+        for timeout in [Duration::ZERO, Duration::from_millis(i32::MAX as u64 + 1)] {
+            assert!(
+                AsyncOliphauntBuilder::new()
+                    .broker()
+                    .broker_handshake_timeout(timeout)
+                    .build_config()
+                    .is_err()
+            );
+        }
+        assert!(
+            AsyncOliphauntBuilder::new()
+                .broker_handshake_timeout(Duration::from_secs(1))
+                .build_config()
+                .is_err()
+        );
+        let config = AsyncOliphauntBuilder::new()
+            .broker()
+            .broker_handshake_timeout(Duration::from_secs(2))
+            .build_config()
+            .unwrap();
+        assert_eq!(
+            config.broker.handshake_timeout,
+            Some(Duration::from_secs(2))
+        );
+    }
 
     #[test]
     fn direct_open_rejects_a_broker_executable_instead_of_ignoring_it() {
