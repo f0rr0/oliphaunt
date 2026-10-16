@@ -151,6 +151,28 @@ test('only textsearch declares the exact legacy compatibility companions', () =>
   assert.notEqual(windowsExtensionHeaders('pg_textsearch')['src/unistd.h'], 'changed');
 });
 
+test('PostGIS external C inline definitions retain bodies, static linkage and non-code bytes', () => {
+  const unchanged = [
+    '/* inline int one(void) { return 1; } */',
+    '/* comment\ninline int two(void) { return 2; }\n*/',
+    '// comment \\\r\ninline int three(void) { return 3; }',
+    'const char *text = "inline int four(void) { return 4; }";',
+    'const char *continued = "line \\\r\ninline text";',
+    "int quote = '\\'';",
+    'static inline int local(void) { return 5; }',
+    'inline static int reverse(void) { return 6; }',
+    'inline\t  static int spaced(void) { return 7; }',
+  ].join('\r\n');
+  const before = `${unchanged}\r\ninline bool external(const BOX2DF *a)\r\n{ return a->xmin != 0; }\r\nextern inline\tvoid other(BOX2DF *a) { a->xmin = 1; }\r\n`;
+  const after = `${unchanged}\r\nbool external(const BOX2DF *a)\r\n{ return a->xmin != 0; }\r\nextern void other(BOX2DF *a) { a->xmin = 1; }\r\n`;
+  for (const directory of ['postgis', 'libpgcommon', 'liblwgeom']) {
+    assert.equal(windowsExtensionSource('postgis', `${directory}/unit.c`, before), after);
+    assert.equal(windowsExtensionSource('postgis', `${directory}/unit.h`, before), before);
+  }
+  assert.equal(windowsExtensionSource('postgis', 'deps/unit.c', before), before);
+  assert.equal(windowsExtensionSource('vector', 'postgis/unit.c', before), before);
+});
+
 test('PostGIS preserves the existing DLL export and POINT4D source adaptations', () => {
   const declaration =
     '/* π */\r\n  Datum one(PG_FUNCTION_ARGS);\r\nextern PGDLLEXPORT Datum done(PG_FUNCTION_ARGS);\r\nextern Datum unrelated(void);\r\n';

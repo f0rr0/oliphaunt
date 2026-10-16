@@ -334,12 +334,15 @@ jobs:
               @icu//:windows_icu_smoke_test
               //build_defs/extensions:postgis_server_windows_link_test
               //build_defs/extensions:postgis_embedded_windows_link_test
+              //build_defs/extensions/postgis:postgis_windows_sources_test
             )
           fi
           if [[ "$TARGET_PLATFORM" == linux-x64 ]]; then
             host_tests+=(
               //tools/ci:source_checks
               //tools/dev:source_checks
+              //build_defs/extensions:windows_source_portability_test
+              //build_defs/extensions:windows_source_inputs_test
               //:biome_format_test
               //:biome_lint_test
               //:rustfmt_test

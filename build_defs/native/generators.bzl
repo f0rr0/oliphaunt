@@ -1,5 +1,7 @@
 """Bounded PostgreSQL source generators using declared execution toolchains."""
 
+PERL_CAPTURE_STDOUT = "open(STDOUT, q(>), shift @ARGV) or die $!; system {$ARGV[0]} @ARGV; die qq(Perl generator failed: status $?) if $? != 0;"
+
 _PERL = "@rules_perl//perl:exec_toolchain_type"
 _BISON = "@rules_bison//bison:toolchain_type"
 _FLEX = "@rules_flex//flex:toolchain_type"
@@ -26,7 +28,7 @@ def _perl_generator_impl(ctx):
         # child completes, so Bazel would terminate the child and capture no output.
         arguments = perl.perlopt + [
             "-e",
-            "open(STDOUT, q(>), shift @ARGV) or die $!; system {$ARGV[0]} @ARGV; die qq(Perl generator failed: status $?) if $? != 0;",
+            PERL_CAPTURE_STDOUT,
             ctx.outputs.outs[0].path,
             perl.interpreter.path,
         ] + arguments

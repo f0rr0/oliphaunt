@@ -1,5 +1,7 @@
 """Upstream PostGIS scanner execution with its fixed outfile option preserved."""
 
+load("//build_defs/native:generators.bzl", "PERL_CAPTURE_STDOUT")
+
 def _flex_stdout_impl(ctx):
     flex = ctx.toolchains["@rules_flex//flex:toolchain_type"].flex_toolchain
     m4 = ctx.toolchains["@rules_m4//m4:toolchain_type"].m4_toolchain
@@ -20,7 +22,7 @@ def _flex_stdout_impl(ctx):
         executable = perl.interpreter,
         arguments = perl.perlopt + [
             "-e",
-            "open(STDOUT, q(>), shift @ARGV) or die $!; exec {$ARGV[0]} @ARGV; die $!;",
+            PERL_CAPTURE_STDOUT,
             ctx.outputs.outs[0].path,
             flex.flex_tool.executable.path,
         ] + ctx.attr.options + ["-t", ctx.file.src.path],

@@ -1,4 +1,4 @@
-name: Declared Windows PostGIS DLL link diagnostic
+name: Corrected Windows PostGIS DLL link diagnostic
 
 on:
   push:
@@ -17,14 +17,14 @@ defaults:
 
 jobs:
   postgis_links:
-    name: Reproduce stale exports and link both stock PostGIS modules
+    name: Link both corrected PostGIS modules and check prepared sources
     runs-on: windows-2025-vs2026
     timeout-minutes: 90
     steps:
-      - name: Checkout original source
+      - name: Checkout corrected source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: b71776795fb8291906e6a22f47b2d29f4c2a476b
+          ref: 1dd502586c9612e89df672ae6710f021d8a3a9a4
           fetch-depth: 1
           persist-credentials: false
 
@@ -34,49 +34,16 @@ jobs:
       - name: Select declared MSVC SDK
         uses: ./.github/actions/setup-msvc
 
-      - name: Reproduce the original PostGIS export failure
+      - name: Link both corrected PostGIS modules and verify their source and action contracts
         env:
           XDG_CACHE_HOME: ${{ runner.temp }}/windows-postgis-link-bootstrap
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = b71776795fb8291906e6a22f47b2d29f4c2a476b
-          test "$(git rev-parse 'HEAD^{tree}')" = 277e27e5d411641580c398ea12d40ee61c1612ae
-          diag="$RUNNER_TEMP/windows-postgis-link-diagnostic"
+          test "$(git rev-parse HEAD)" = 1dd502586c9612e89df672ae6710f021d8a3a9a4
+          test "$(git rev-parse 'HEAD^{tree}')" = a174b240be2c7245e1871a5b8cef2de1d3bffdcc
+          diag="$RUNNER_TEMP/windows-postgis-corrected-link-diagnostic"
           mkdir -p "$diag"
-          printf 'RED_SOURCE_COMMIT=b71776795fb8291906e6a22f47b2d29f4c2a476b\nRED_SOURCE_TREE=277e27e5d411641580c398ea12d40ee61c1612ae\n' | tee "$diag/red-source.txt"
-          bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc
-            --output_base="$RUNNER_TEMP/windows-postgis-link-check" --host_jvm_args=-Xmx3g)
-          config=(-c opt --platforms=//build_defs/host:native_windows_x64
-            --host_platform=//build_defs/host:native_windows_x64 --jobs=2
-            --lockfile_mode=error --repository_cache= --disk_cache=)
-          targets=(//src/extensions/external/postgis:postgis_server.dll
-            //src/extensions/external/postgis:postgis_embedded.dll)
-          set +e
-          "${bazel[@]}" build "${targets[@]}" "${config[@]}" --keep_going \
-            > "$diag/red.log" 2>&1
-          red_status=$?
-          set -e
-          printf 'RED_EXIT=%s\n' "$red_status"
-          test "$red_status" -ne 0
-          grep -E -m 1 'postgis_(server|embedded)_windows_exports\.def : error LNK2001: unresolved external symbol _libiconv_version' "$diag/red.log"
-          printf 'RED_EXPECTED_PROVIDER_EXPORT_FAILURE=observed\n'
-
-      - name: Checkout corrected source
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          ref: 41e7f8f02ed9f76147051a83de45038877742b18
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Link both corrected PostGIS modules and verify their action contracts
-        env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/windows-postgis-link-bootstrap
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = 41e7f8f02ed9f76147051a83de45038877742b18
-          test "$(git rev-parse 'HEAD^{tree}')" = 354d8addaebdb99d69b151a8ad69ebec8cf55339
-          diag="$RUNNER_TEMP/windows-postgis-link-diagnostic"
-          printf 'GREEN_SOURCE_COMMIT=41e7f8f02ed9f76147051a83de45038877742b18\nGREEN_SOURCE_TREE=354d8addaebdb99d69b151a8ad69ebec8cf55339\n' | tee "$diag/green-source.txt"
+          printf 'GREEN_SOURCE_COMMIT=1dd502586c9612e89df672ae6710f021d8a3a9a4\nGREEN_SOURCE_TREE=a174b240be2c7245e1871a5b8cef2de1d3bffdcc\n' | tee "$diag/green-source.txt"
           bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc
             --output_base="$RUNNER_TEMP/windows-postgis-link-check" --host_jvm_args=-Xmx3g)
           config=(-c opt --platforms=//build_defs/host:native_windows_x64
@@ -87,6 +54,7 @@ jobs:
           "${bazel[@]}" test "${targets[@]}" \
             //build_defs/extensions:postgis_server_windows_link_test \
             //build_defs/extensions:postgis_embedded_windows_link_test \
+            //build_defs/extensions/postgis:postgis_windows_sources_test \
             "${config[@]}" --keep_going --nocache_test_results --test_output=errors \
             > "$diag/green.log" 2>&1
           "${bazel[@]}" cquery "set(${targets[*]})" "${config[@]}" --output=files \
@@ -108,14 +76,14 @@ jobs:
             count=$((count + 1))
           done < "$diag/green-files.txt"
           test "$count" -eq 2
-          printf 'GREEN_POSTGIS_DLLS=2\nGREEN_ACTION_CONTRACT_TESTS=passed\n'
+          printf 'GREEN_POSTGIS_DLLS=2\nGREEN_ACTION_CONTRACT_TESTS=passed\nGREEN_PREPARED_SOURCE_TEST=passed\n'
           tail -n 12 "$diag/green.log"
 
       - name: Preserve diagnostic logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: windows-postgis-link-diagnostic
-          path: ${{ runner.temp }}/windows-postgis-link-diagnostic
+          name: windows-postgis-corrected-link-diagnostic
+          path: ${{ runner.temp }}/windows-postgis-corrected-link-diagnostic
           if-no-files-found: warn
           retention-days: 7
