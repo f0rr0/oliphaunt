@@ -1,4 +1,4 @@
-name: Windows consumers and Apple compile input diagnostic
+name: Windows standalone launcher and installed consumer diagnostic
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
       - name: Checkout corrected source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 8be842dee32c6ceb164a84368e955ba14a4783f7
+          ref: 2ac4e6232e4e6ce565213c6b29ab880a99c2b6aa
           fetch-depth: 1
           persist-credentials: false
 
@@ -33,6 +33,32 @@ jobs:
 
       - name: Select declared MSVC SDK
         uses: ./.github/actions/setup-msvc
+
+      - name: Verify launcher process behavior and frozen C API link
+        env:
+          XDG_CACHE_HOME: ${{ runner.temp }}/windows-installed-consumer-bootstrap
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 2ac4e6232e4e6ce565213c6b29ab880a99c2b6aa
+          test "$(git rev-parse 'HEAD^{tree}')" = ed30774950ee449247bc21d86976db3d7ee34e8a
+          diag="$RUNNER_TEMP/windows-installed-consumers-diagnostic"
+          mkdir -p "$diag"
+          printf 'SOURCE_COMMIT=2ac4e6232e4e6ce565213c6b29ab880a99c2b6aa\nSOURCE_TREE=ed30774950ee449247bc21d86976db3d7ee34e8a\n' > "$diag/source.txt"
+          targets=(
+            //build_defs/native:windows_restricted_process_test
+            //build_defs/extensions:native_frozen_extension_smoke
+          )
+          printf '%s\n' "${targets[@]}" > "$diag/preflight-targets.txt"
+          base="$RUNNER_TEMP/b"
+          test ! -e "$base"
+          bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc --output_base="$base")
+          "${bazel[@]}" test "${targets[@]}" -c opt \
+            --platforms=//build_defs/host:native_windows_x64 \
+            --host_platform=//build_defs/host:native_windows_x64 \
+            --jobs=2 --lockfile_mode=error --disk_cache= \
+            --nocache_test_results --test_output=errors --test_summary=detailed \
+            > "$diag/preflight.log" 2>&1
+          tail -n 20 "$diag/preflight.log"
 
       - name: Install locked release tooling
         run: bash tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
@@ -55,19 +81,18 @@ jobs:
           XDG_CACHE_HOME: ${{ runner.temp }}/windows-installed-consumer-bootstrap
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 8be842dee32c6ceb164a84368e955ba14a4783f7
-          test "$(git rev-parse 'HEAD^{tree}')" = 9f558cd3bb2188d57fdfe3098448efd99609cec7
+          test "$(git rev-parse HEAD)" = 2ac4e6232e4e6ce565213c6b29ab880a99c2b6aa
+          test "$(git rev-parse 'HEAD^{tree}')" = ed30774950ee449247bc21d86976db3d7ee34e8a
           test -n "${OLIPHAUNT_NATIVE_PUBLICATION_INPUTS:-}"
           diag="$RUNNER_TEMP/windows-installed-consumers-diagnostic"
-          mkdir -p "$diag"
-          printf 'SOURCE_COMMIT=8be842dee32c6ceb164a84368e955ba14a4783f7\nSOURCE_TREE=9f558cd3bb2188d57fdfe3098448efd99609cec7\n' > "$diag/source.txt"
+          test -d "$diag"
           targets=(
             //build_defs/languages/carriers:installed_sql_test
             //build_defs/extensions:desktop_all_members_frozen_sql_test
           )
           printf '%s\n' "${targets[@]}" > "$diag/targets.txt"
           base="$RUNNER_TEMP/b"
-          test ! -e "$base"
+          test -d "$base"
           bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc --output_base="$base")
           "${bazel[@]}" test "${targets[@]}" -c opt \
             --platforms=//build_defs/host:native_windows_x64 \
@@ -84,330 +109,8 @@ jobs:
           name: windows-installed-consumers-diagnostic
           path: |
             ${{ runner.temp }}/windows-installed-consumers-diagnostic
+            ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/native/windows_restricted_process_test
             ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/languages/carriers/installed_sql_test
             ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/extensions/desktop_all_members_frozen_sql_test
-          if-no-files-found: warn
-          retention-days: 7
-
-  apple_projection:
-    name: Compare Apple compile input projection
-    runs-on: macos-26
-    timeout-minutes: 45
-    steps:
-      - name: Checkout exact candidate and its direct parent
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          ref: 8be842dee32c6ceb164a84368e955ba14a4783f7
-          fetch-depth: 2
-          persist-credentials: false
-
-      - name: Set up pinned Bun
-        uses: ./.github/actions/setup-bun
-
-      - name: Select declared Apple SDK
-        uses: ./.github/actions/setup-apple
-        with:
-          install-build-dependencies: "false"
-
-      - name: Compare exact-source C C++ and Swift controls
-        timeout-minutes: 40
-        env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/apple-projection-bootstrap
-        run: |
-          set -euo pipefail
-          diag="$RUNNER_TEMP/apple-projection-control"
-          raw="$RUNNER_TEMP/apple-projection-control-private"
-          mkdir -p "$diag" "$raw"
-          baseline=315e52a1e4a843f15d37268cf91670e7c6010437
-          candidate=8be842dee32c6ceb164a84368e955ba14a4783f7
-          test "$(git rev-parse HEAD)" = "$candidate"
-          test "$(git rev-parse 'HEAD^')" = "$baseline"
-          test "$(git rev-parse 'HEAD^{tree}')" = 9f558cd3bb2188d57fdfe3098448efd99609cec7
-          test "$(git rev-parse 'HEAD^^{tree}')" = 1d304f5d4900a8cd0acf1c9b66e9042e1861d980
-          cat > "$raw/control.mts" <<'CONTROL_TS'
-          import assert from 'node:assert/strict';
-          import { createHash } from 'node:crypto';
-          import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-          import { join } from 'node:path';
-          import { gunzipSync, gzipSync } from 'node:zlib';
-
-          const identities = {
-            baseline: ['315e52a1e4a843f15d37268cf91670e7c6010437', '1d304f5d4900a8cd0acf1c9b66e9042e1861d980'],
-            candidate: ['8be842dee32c6ceb164a84368e955ba14a4783f7', '9f558cd3bb2188d57fdfe3098448efd99609cec7'],
-          } as const;
-          const profiles = ['native_macos_arm64', 'apple_package_macos_arm64', 'ios_device_arm64', 'ios_simulator_arm64'];
-          const hash = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
-          const json = (file: string) => JSON.parse(readFileSync(file, 'utf8'));
-          const save = (file: string, value: unknown) => writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
-
-          interface Graph {
-            artifacts: { id: number; pathFragmentId: number; isTreeArtifact?: boolean }[];
-            pathFragments: { id: number; parentId?: number; label: string }[];
-            depSetOfFiles: { id: number; transitiveDepSetIds?: number[]; directArtifactIds?: number[] }[];
-            targets: { id: number; label: string }[];
-            configuration: { id: number; checksum: string }[];
-            actions: { mnemonic: string; targetId: number; configurationId: number; inputDepSetIds?: number[]; primaryOutputId?: number; outputIds?: number[] }[];
-          }
-          interface Row {
-            owner: string;
-            mnemonic: string;
-            configuration: string;
-            outputPathHash: string;
-            inputArtifacts: number;
-            sdkFiles: number;
-            swiftModuleFiles: number;
-            sdkPathSetHash: string;
-            nonModuleSdkPathSetHash: string;
-          }
-          const mnemonics = new Set(['CppCompile', 'CppLink', 'CppArchive', 'SwiftCompile', 'SwiftDeriveFiles']);
-          function actionInputs(graph: Graph, executionRoot: string) {
-            const fragments = new Map(graph.pathFragments.map((row) => [row.id, row]));
-            const artifacts = new Map(graph.artifacts.map((row) => [row.id, row]));
-            const targets = new Map(graph.targets.map((row) => [row.id, row.label]));
-            const configurations = new Map(graph.configuration.map((row) => [row.id, row.checksum]));
-            const sets = new Map(graph.depSetOfFiles.map((row) => [row.id, row]));
-            const pathMemo = new Map<number, string>();
-            function path(id: number): string {
-              if (pathMemo.has(id)) return pathMemo.get(id)!;
-              const part = fragments.get(id);
-              assert(part, 'aquery path reference is missing');
-              const value = part.parentId ? path(part.parentId) + '/' + part.label : part.label;
-              pathMemo.set(id, value);
-              return value;
-            }
-            const sdkPath = (artifact: Graph['artifacts'][number]) => /^external\/[^/]*native_apple_sdk\/(.+)$/u.exec(path(artifact.pathFragmentId))?.[1];
-            const receipt = graph.artifacts.find((artifact) => sdkPath(artifact) === 'receipt.json');
-            assert(receipt, 'aquery omitted the captured SDK receipt');
-            const receiptBytes = readFileSync(join(executionRoot, path(receipt.pathFragmentId)));
-            const resource = JSON.parse(receiptBytes.toString('utf8')).resourceDirectory;
-            assert(typeof resource === 'string' && /^toolchain\/lib\/clang\/[^/]+$/u.test(resource), 'unexpected captured Clang resource directory');
-            const swiftModule = (file: string) => !file.startsWith(resource + '/') && /\.(?:swiftmodule|swiftinterface|swiftdoc)$/u.test(file);
-            const setMemo = new Map<number, Set<number>>();
-            function inputs(id: number): Set<number> {
-              if (setMemo.has(id)) return setMemo.get(id)!;
-              const set = sets.get(id);
-              assert(set, 'aquery input-set reference is missing');
-              const result = new Set(set.directArtifactIds ?? []);
-              for (const child of set.transitiveDepSetIds ?? []) for (const artifact of inputs(child)) result.add(artifact);
-              setMemo.set(id, result);
-              return result;
-            }
-            const roots: [string, string][] = [
-              ['//build_defs/native:compiler_probe_sanity', 'c_sanity'],
-              ['//build_defs/host:host_c_smoke', 'c_smoke'],
-              ['//build_defs/native:probe_process_test', 'cpp_process'],
-              ['//build_defs/host:swift_sdk_smoke_binary', 'swift_smoke'],
-              ['//:data_stub', 'icu_cpp'],
-            ];
-            const rows = graph.actions.filter((action) => mnemonics.has(action.mnemonic)).map((action) => {
-              const target = targets.get(action.targetId);
-              const configuration = configurations.get(action.configurationId);
-              assert(target && configuration && /^[0-9a-f]{64}$/u.test(configuration), 'aquery action identity is missing');
-              const ids = new Set<number>();
-              for (const id of action.inputDepSetIds ?? []) for (const artifact of inputs(id)) ids.add(artifact);
-              const sdk: string[] = [];
-              for (const id of ids) {
-                const artifact = artifacts.get(id);
-                assert(artifact, 'aquery input artifact reference is missing');
-                const logical = sdkPath(artifact);
-                if (logical) {
-                  assert(!artifact.isTreeArtifact, 'SDK action input count must not hide an unexpanded tree');
-                  sdk.push(logical);
-                }
-              }
-              sdk.sort();
-              const output = artifacts.get(action.primaryOutputId ?? action.outputIds?.[0] ?? 0);
-              assert(output, 'aquery action output identity is missing');
-              return {
-                owner: roots.find(([suffix]) => target.endsWith(suffix))?.[1] ?? 'support',
-                mnemonic: action.mnemonic,
-                configuration,
-                outputPathHash: hash(path(output.pathFragmentId)),
-                inputArtifacts: ids.size,
-                sdkFiles: sdk.length,
-                swiftModuleFiles: sdk.filter(swiftModule).length,
-                sdkPathSetHash: hash(JSON.stringify(sdk)),
-                nonModuleSdkPathSetHash: hash(JSON.stringify(sdk.filter((file) => !swiftModule(file)))),
-              };
-            }).sort((a, b) => JSON.stringify([a.owner, a.mnemonic, a.configuration, a.outputPathHash]).localeCompare(JSON.stringify([b.owner, b.mnemonic, b.configuration, b.outputPathHash])));
-            return { rows, sdkReceiptSha256: hash(receiptBytes) };
-          }
-
-          function sanitizeProfile(input: string, output: string) {
-            const checked = Bun.spawnSync(['/usr/bin/gzip', '-t', input], { stdout: 'pipe', stderr: 'pipe' });
-            assert.equal(checked.exitCode, 0, 'original profile gzip/CRC is incomplete or invalid');
-            const original = readFileSync(input);
-            const profile = JSON.parse(gunzipSync(original).toString('utf8'));
-            assert(Array.isArray(profile.traceEvents), 'original complete profile has no trace event array');
-            const names = new Set(['Action.execute', 'subprocess.run', 'sandbox.createFileSystem', 'sandbox.populateInputsAndDirsToCreate', 'sandbox.filterInputsAndDirsToCreate', 'sandbox.createDirectories', 'sandbox.createInputs', 'Launch Blaze', 'checkForConcurrentModifications']);
-            const categories = new Set(['action processing', 'gc notification', 'action dependency checking', 'local action execution']);
-            const events = profile.traceEvents.map((event: Record<string, unknown>) => {
-              const args = event.args as Record<string, unknown> | undefined;
-              const first = typeof event.name === 'string' ? event.name.split(' ')[0] : '';
-              const mnemonic = mnemonics.has(first) ? first : typeof args?.mnemonic === 'string' && mnemonics.has(args.mnemonic) ? args.mnemonic : undefined;
-              const result: Record<string, string | number> = {
-                name: names.has(String(event.name)) ? String(event.name) : mnemonic ?? 'other',
-                cat: categories.has(String(event.cat)) ? String(event.cat) : 'other',
-                ph: typeof event.ph === 'string' && /^[A-Za-z]$/u.test(event.ph) ? event.ph : 'i',
-              };
-              for (const key of ['ts', 'dur', 'pid', 'tid', 'tts', 'tdur', 'id', 'bind_id']) if (typeof event[key] === 'number' && Number.isFinite(event[key])) result[key] = event[key];
-              return result;
-            });
-            const sanitized = gzipSync(JSON.stringify({ displayTimeUnit: 'ms', traceEvents: events }));
-            writeFileSync(output, sanitized);
-            return { originalSha256: hash(original), originalGzipCrcValidated: true, originalJsonComplete: true, originalEventCount: events.length, sanitizedSha256: hash(sanitized), sanitizedEventCount: events.length, removed: ['args', 'otherData', 'arbitrary names/categories', 'nonnumeric event identifiers'] };
-          }
-
-          function failureDiagnostic(log: string) {
-            const records: { kind: string; token?: string; line?: number; column?: number; lineSha256: string }[] = [];
-            const token = (value: string) => /^[A-Za-z0-9_][A-Za-z0-9_+./:$-]{0,159}$/u.test(value) && !value.startsWith('/') && !/^[A-Za-z]:/u.test(value) && !value.includes('..') ? value : undefined;
-            for (const line of readFileSync(log, 'utf8').split('\n')) {
-              let kind: string | undefined;
-              let detail: string | undefined;
-              const header = /fatal error: ['<]([^'>]+)['>] file not found/u.exec(line);
-              const module = /(?:no such module|could not build (?:C |Objective-C )?module|module) ['"]([^'"]+)['"](?: not found)?/u.exec(line);
-              const library = /(?:library|framework) ['"]([^'"]+)['"] not found/u.exec(line);
-              const symbol = /^\s*"([A-Za-z0-9_.$]+)", referenced from:/u.exec(line);
-              if (header) { kind = 'missing-header'; detail = header[1]; }
-              else if (library) { kind = 'missing-link-library'; detail = library[1]; }
-              else if (module && /error:|not found/u.test(line)) { kind = 'module-error'; detail = module[1]; }
-              else if (symbol) { kind = 'undefined-symbol'; detail = symbol[1]; }
-              else if (/undeclared inclusion|missing dependency declarations/u.test(line)) kind = 'undeclared-input';
-              else if (/module compiled with|incompatible Swift version/u.test(line)) kind = 'swift-version-mismatch';
-              else if (/Undefined symbols for architecture|undefined reference|symbol\(s\) not found/u.test(line)) kind = 'undefined-symbols';
-              else if (/ld: |linker command failed/u.test(line)) kind = 'linker-error';
-              else if (/fatal error:| error:|^error:/u.test(line)) kind = 'compiler-error';
-              else if (/^FAIL: |FAILED|Test .* failed/u.test(line)) kind = 'test-failure';
-              else if (/^ERROR:/u.test(line)) kind = 'bazel-error';
-              if (kind) {
-                const location = /:(\d+):(\d+):/u.exec(line);
-                records.push({ kind, token: detail ? token(detail) : undefined, line: location ? Number(location[1]) : undefined, column: location ? Number(location[2]) : undefined, lineSha256: hash(line) });
-              }
-              if (records.length === 40) break;
-            }
-            return { logSha256: hash(readFileSync(log)), records, limit: 40, projection: 'Fixed error categories, constrained relative header/module/symbol tokens and hashes only; no raw lines, absolute paths, command lines or environment.' };
-          }
-
-          const [mode, directory, arm, profile, graphFile, profileFile, executionRoot] = process.argv.slice(2);
-          assert(directory);
-          if (mode === 'failure') {
-            assert(arm === 'baseline' || arm === 'candidate');
-            assert(profiles.includes(profile));
-            const [phase, status, log, trace] = process.argv.slice(6);
-            assert(['build', 'test', 'aquery'].includes(phase));
-            assert(/^\d+$/u.test(status));
-            let profileEvidence: unknown = { present: false };
-            if (existsSync(trace)) {
-              try { profileEvidence = sanitizeProfile(trace, join(directory, arm + '-' + profile + '.failed.profile.json.gz')); }
-              catch { profileEvidence = { present: true, originalSha256: hash(readFileSync(trace)), originalComplete: false, sanitizedUploaded: false }; }
-            }
-            save(join(directory, arm + '-' + profile + '.failure.json'), { phase, exitCode: Number(status), ...failureDiagnostic(log), profileEvidence });
-          } else if (mode === 'collect') {
-            assert(arm === 'baseline' || arm === 'candidate');
-            assert(profiles.includes(profile));
-            const source = json(join(directory, arm + '.source.json'));
-            assert.deepEqual([source.commit, source.tree], identities[arm], 'control source identity mismatch');
-            assert(executionRoot);
-            const { rows, sdkReceiptSha256 } = actionInputs(json(graphFile), executionRoot);
-            for (const owner of ['c_sanity', 'icu_cpp']) assert(rows.some((row) => row.owner === owner && row.mnemonic === 'CppCompile' && row.sdkFiles > 0), 'control missed a requested C/C++ compile');
-            assert(rows.some((row) => row.owner === 'c_sanity' && row.mnemonic === 'CppLink'), 'control missed the requested C link');
-            if (profile === 'apple_package_macos_arm64') assert(rows.some((row) => row.owner === 'swift_smoke' && row.mnemonic === 'SwiftCompile'), 'control missed the requested Swift compile');
-            const stem = arm + '-' + profile;
-            save(join(directory, stem + '.summary.json'), { source, profile, sdkReceiptSha256, actionInputsIncludePruned: true, rows, profileEvidence: sanitizeProfile(profileFile, join(directory, stem + '.profile.json.gz')) });
-          } else {
-            assert.equal(mode, 'compare');
-            const comparisons = profiles.map((profile) => {
-              const baseline = json(join(directory, 'baseline-' + profile + '.summary.json'));
-              const candidate = json(join(directory, 'candidate-' + profile + '.summary.json'));
-              const identity = (row: Row) => JSON.stringify([row.owner, row.mnemonic, row.configuration, row.outputPathHash]);
-              const previous = new Map<string, Row>(baseline.rows.map((row: Row) => [identity(row), row]));
-              assert.equal(candidate.sdkReceiptSha256, baseline.sdkReceiptSha256, 'captured SDK identity changed between control arms');
-              assert.deepEqual(candidate.rows.map(identity), baseline.rows.map(identity), 'control action set changed');
-              for (const row of candidate.rows as Row[]) {
-                const before = previous.get(identity(row));
-                assert(before, 'control action identity changed');
-                assert.equal(row.nonModuleSdkPathSetHash, before.nonModuleSdkPathSetHash, 'nonmodule SDK action inputs changed');
-                if (row.mnemonic === 'CppCompile' && row.sdkFiles > 0) {
-                  assert(before.swiftModuleFiles > 0, 'baseline compile has no measurable Swift module payload');
-                  assert.equal(row.swiftModuleFiles, 0, 'candidate compiler still carries Swift module payload');
-                  assert.equal(row.sdkFiles, before.sdkFiles - before.swiftModuleFiles, 'compile SDK reduction differs from the intended projection');
-                } else assert.equal(row.sdkPathSetHash, before.sdkPathSetHash, 'link/Swift SDK input set changed');
-              }
-              return { profile, matchedActions: candidate.rows.length, baselineSdkInputs: baseline.rows.reduce((sum: number, row: Row) => sum + row.sdkFiles, 0), candidateSdkInputs: candidate.rows.reduce((sum: number, row: Row) => sum + row.sdkFiles, 0) };
-            });
-            save(join(directory, 'comparison.json'), { baseline: identities.baseline, candidate: identities.candidate, comparisons, limitations: 'One baseline-then-candidate pair on one runner; separate fresh action caches, shared physical SDK/page cache. Counts are configured action inputs including pruned inputs. Timings are observations, not an estimated full-build speedup. iOS is construction only.' });
-          }
-          CONTROL_TS
-          for arm in baseline candidate; do
-            case "$arm" in
-              baseline) revision="$baseline"; expected_tree=1d304f5d4900a8cd0acf1c9b66e9042e1861d980 ;;
-              candidate) revision="$candidate"; expected_tree=9f558cd3bb2188d57fdfe3098448efd99609cec7 ;;
-            esac
-            source_root="$raw/source-$arm"
-            git worktree add --detach "$source_root" "$revision" > "$raw/$arm.checkout.log" 2>&1
-            test "$(git -C "$source_root" rev-parse HEAD)" = "$revision"
-            test "$(git -C "$source_root" rev-parse 'HEAD^{tree}')" = "$expected_tree"
-            git -C "$source_root" diff --quiet
-            printf '{"commit":"%s","tree":"%s"}\n' "$revision" "$expected_tree" > "$diag/$arm.source.json"
-            base="$RUNNER_TEMP/apple-projection-base-$arm"
-            test ! -e "$base"
-            bazel=(bash "$source_root/tools/dev/bazel.sh" --nohome_rc --nosystem_rc
-              --output_base="$base" --host_jvm_args=-Xmx3g
-              --server_jvm_out="$raw/$arm.server-jvm.out")
-            for profile in native_macos_arm64 apple_package_macos_arm64 ios_device_arm64 ios_simulator_arm64; do
-              targets=(@icu//:data_stub //build_defs/native:compiler_probe_sanity)
-              command='build'
-              case "$profile" in
-                native_macos_arm64|apple_package_macos_arm64)
-                  command='test'
-                  targets+=(//build_defs/host:host_c_smoke //build_defs/native:probe_process_test)
-                  ;;
-              esac
-              if [[ "$profile" == apple_package_macos_arm64 ]]; then
-                targets+=(//build_defs/host:host_swift_smoke)
-              fi
-              configuration=(-c opt --config=macos-sandbox "--platforms=//build_defs/host:$profile"
-                --host_platform=//build_defs/host:native_macos_arm64 --jobs=2 --local_test_jobs=1
-                --lockfile_mode=error --disk_cache= --reuse_sandbox_directories=true
-                --experimental_inmemory_sandbox_stashes=true --sandbox_debug=false)
-              stem="$arm-$profile"
-              printf '%s\n' "${targets[@]}" > "$diag/$stem.targets.txt"
-              if "${bazel[@]}" "$command" "${targets[@]}" "${configuration[@]}" \
-                "--profile=$raw/$stem.profile.json.gz" > "$raw/$stem.build.log" 2>&1; then
-                printf '{"command":"%s","exitCode":0}\n' "$command" > "$diag/$stem.result.json"
-              else
-                result=$?
-                printf '{"command":"%s","exitCode":%s}\n' "$command" "$result" > "$diag/$stem.result.json"
-                bun --no-install --no-env-file "$raw/control.mts" failure "$diag" "$arm" "$profile" \
-                  "$command" "$result" "$raw/$stem.build.log" "$raw/$stem.profile.json.gz"
-                exit "$result"
-              fi
-              query="mnemonic('CppCompile|CppLink|CppArchive|SwiftCompile|SwiftDeriveFiles', deps(set(${targets[*]})))"
-              if "${bazel[@]}" aquery "$query" "${configuration[@]}" --output=jsonproto \
-                --include_commandline=false --include_param_files=false --include_file_write_contents=false \
-                --include_artifacts=true --include_pruned_inputs=true \
-                > "$raw/$stem.aquery.json" 2> "$raw/$stem.aquery.log"; then
-                :
-              else
-                result=$?
-                bun --no-install --no-env-file "$raw/control.mts" failure "$diag" "$arm" "$profile" \
-                  aquery "$result" "$raw/$stem.aquery.log" "$raw/$stem.profile.json.gz"
-                exit "$result"
-              fi
-              bun --no-install --no-env-file "$raw/control.mts" collect "$diag" "$arm" "$profile" \
-                "$raw/$stem.aquery.json" "$raw/$stem.profile.json.gz" "$base/execroot/_main"
-              printf 'Completed %s %s\n' "$arm" "$profile"
-            done
-            "${bazel[@]}" shutdown > "$raw/$arm.shutdown.log" 2>&1
-            git -C "$source_root" diff --quiet
-          done
-          bun --no-install --no-env-file "$raw/control.mts" compare "$diag"
-
-      - name: Preserve sanitized complete profiles and action-input counts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: apple-projection-control
-          path: ${{ runner.temp }}/apple-projection-control
           if-no-files-found: warn
           retention-days: 7
