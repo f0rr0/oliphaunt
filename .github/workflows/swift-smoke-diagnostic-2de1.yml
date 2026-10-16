@@ -1,4 +1,4 @@
-name: Windows extension DLL link diagnostic
+name: Apple sandbox input control
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-extension-link-control-${{ github.run_id }}
+  group: apple-sandbox-input-control-${{ github.run_id }}
   cancel-in-progress: false
 
 defaults:
@@ -16,12 +16,12 @@ defaults:
     shell: bash
 
 jobs:
-  extension_links:
-    name: Link all declared Windows extension modules
-    runs-on: windows-2025-vs2026
-    timeout-minutes: 90
+  sandbox_inputs:
+    name: Compare declared Apple SDK sandbox setup
+    runs-on: macos-26
+    timeout-minutes: 45
     steps:
-      - name: Checkout corrected source
+      - name: Checkout fixed source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: 2291012139d6d71544cf75875282fed1399ecd9c
@@ -31,72 +31,72 @@ jobs:
       - name: Set up pinned Bun
         uses: ./.github/actions/setup-bun
 
-      - name: Select declared MSVC SDK
-        uses: ./.github/actions/setup-msvc
+      - name: Select declared Apple SDK
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
 
-      - name: Link all Windows extension modules and verify source and action contracts
+      - name: Compare in-memory and stock disk sandbox stashes
         env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/windows-postgis-link-bootstrap
+          XDG_CACHE_HOME: ${{ runner.temp }}/apple-sandbox-bootstrap
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = 2291012139d6d71544cf75875282fed1399ecd9c
           test "$(git rev-parse 'HEAD^{tree}')" = 51cbd2b54fceaf615a47d7db05c782ece60bd925
-          diag="$RUNNER_TEMP/windows-extension-links-diagnostic"
-          mkdir -p "$diag"
-          printf 'GREEN_SOURCE_COMMIT=2291012139d6d71544cf75875282fed1399ecd9c\nGREEN_SOURCE_TREE=51cbd2b54fceaf615a47d7db05c782ece60bd925\n' | tee "$diag/green-source.txt"
-          bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc
-            --output_base="$RUNNER_TEMP/windows-postgis-link-check" --host_jvm_args=-Xmx3g)
-          config=(-c opt --platforms=//build_defs/host:native_windows_x64
-            --host_platform=//build_defs/host:native_windows_x64 --jobs=2
-            --lockfile_mode=error --repository_cache= --disk_cache=)
-          "${bazel[@]}" query 'kind("^cc_shared_library rule$", //src/extensions/...)' \
-            --output=label --lockfile_mode=error --repository_cache= \
-            > "$diag/module-targets.txt" 2> "$diag/module-query.log"
-          targets=()
-          while IFS= read -r target; do
-            target="${target%$'\r'}"
-            case "$target" in
-              //src/extensions/*_server.dll|//src/extensions/*_embedded.dll) targets+=("$target") ;;
-              *) exit 1 ;;
-            esac
-          done < "$diag/module-targets.txt"
-          test "${#targets[@]}" -gt 0
-          printf 'GREEN_MODULE_TARGETS=%s\n' "${#targets[@]}"
-          "${bazel[@]}" test "${targets[@]}" \
-            //build_defs/extensions:postgis_server_windows_link_test \
-            //build_defs/extensions:postgis_embedded_windows_link_test \
-            //build_defs/extensions:pgcrypto_server_windows_link_test \
-            //build_defs/extensions:pgcrypto_embedded_windows_link_test \
-            //build_defs/extensions/postgis:postgis_windows_sources_test \
-            "${config[@]}" --keep_going --nocache_test_results --test_output=errors \
-            > "$diag/green.log" 2>&1
-          "${bazel[@]}" cquery "set(${targets[*]})" "${config[@]}" --output=files \
-            > "$diag/green-files.txt" 2> "$diag/green-query.log"
-          "${bazel[@]}" info execution_root "${config[@]}" \
-            > "$diag/execution-root.txt" 2> "$diag/info.log"
-          execution_root="$(tr -d '\r' < "$diag/execution-root.txt")"
-          count=0
-          while IFS= read -r relative; do
-            relative="${relative%$'\r'}"
-            case "$relative" in
-              */*_server.dll|*/*_embedded.dll) ;;
-              *) exit 1 ;;
-            esac
-            dll="$execution_root/$relative"
-            test -f "$dll" && test -s "$dll"
-            test "$(head -c 2 "$dll")" = MZ
-            printf '%s  %s\n' "$(sha256sum < "$dll" | cut -d ' ' -f 1)" "$relative" | tee -a "$diag/green-dlls.txt"
-            count=$((count + 1))
-          done < "$diag/green-files.txt"
-          test "$count" -eq "${#targets[@]}"
-          printf 'GREEN_EXTENSION_DLLS=%s\nGREEN_ACTION_CONTRACT_TESTS=passed\nGREEN_PREPARED_SOURCE_TEST=passed\n' "$count"
-          tail -n 12 "$diag/green.log"
+          diag="$RUNNER_TEMP/apple-sandbox-input-control"
+          raw="$RUNNER_TEMP/apple-sandbox-input-control-private"
+          mkdir -p "$diag" "$raw"
+          printf 'SOURCE_COMMIT=2291012139d6d71544cf75875282fed1399ecd9c\nSOURCE_TREE=51cbd2b54fceaf615a47d7db05c782ece60bd925\n' > "$diag/source.txt"
+          targets=(@icu//:data_stub //build_defs/host:host_c_smoke //build_defs/native:probe_process_test)
+          for memory in true false; do
+            base="$RUNNER_TEMP/apple-sandbox-base-$memory"
+            test ! -e "$base"
+            bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc
+              --output_base="$base" --host_jvm_args=-Xmx3g
+              --server_jvm_out="$raw/server-$memory.out")
+            for profile in native_macos_arm64 apple_package_macos_arm64; do
+              stem="$memory-$profile"
+              "${bazel[@]}" build "${targets[@]}" -c opt --config=macos-sandbox \
+                "--platforms=//build_defs/host:$profile" \
+                --host_platform=//build_defs/host:native_macos_arm64 \
+                --jobs=1 --local_test_jobs=1 --lockfile_mode=error --disk_cache= \
+                --reuse_sandbox_directories=true --sandbox_debug=false \
+                "--experimental_inmemory_sandbox_stashes=$memory" \
+                "--profile=$diag/$stem.profile.json.gz" \
+                "--build_event_json_file=$raw/$stem.events.jsonl" \
+                --build_event_publish_all_actions=true \
+                > "$diag/$stem.build.log" 2>&1
+              gzip -t "$diag/$stem.profile.json.gz"
+              gzip -dc "$diag/$stem.profile.json.gz" | \
+                jq -e 'type == "object" and (.traceEvents | type == "array")' > /dev/null
+              jq -s '{
+                options: [.[] | .structuredCommandLine? | select(.commandLineLabel == "canonical") |
+                  .sections[]?.optionList.option[]? |
+                  select(.optionName == "reuse_sandbox_directories" or .optionName == "sandbox_debug" or
+                    .optionName == "experimental_inmemory_sandbox_stashes" or .optionName == "jobs" or
+                    .optionName == "platforms" or .optionName == "host_platform" or .optionName == "compilation_mode") |
+                  {name: .optionName, value: .optionValue}],
+                compileActions: [.[] | .action? | select(.type == "CppCompile") |
+                  {success, type, label, configuration}]
+              }' "$raw/$stem.events.jsonl" > "$diag/$stem.bep-projection.json"
+              jq -e --arg memory "$memory" --arg profile "//build_defs/host:$profile" '
+                (.options | map({key: .name, value: .value}) | from_entries) as $options |
+                $options.reuse_sandbox_directories == "true" and $options.sandbox_debug == "false" and
+                $options.experimental_inmemory_sandbox_stashes == $memory and $options.jobs == "1" and
+                $options.platforms == $profile and $options.host_platform == "//build_defs/host:native_macos_arm64" and
+                $options.compilation_mode == "opt" and (.compileActions | length >= 3) and
+                (all(.compileActions[]; .success == true))
+              ' "$diag/$stem.bep-projection.json" > /dev/null
+              tail -n 8 "$diag/$stem.build.log"
+            done
+            "${bazel[@]}" shutdown > "$raw/shutdown-$memory.log" 2>&1
+          done
 
-      - name: Preserve diagnostic logs
+      - name: Preserve complete profiles and bounded build evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: windows-extension-links-diagnostic
-          path: ${{ runner.temp }}/windows-extension-links-diagnostic
+          name: apple-sandbox-input-control
+          path: ${{ runner.temp }}/apple-sandbox-input-control
           if-no-files-found: warn
           retention-days: 7
