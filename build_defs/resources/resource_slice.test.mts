@@ -67,7 +67,7 @@ function member(entries: ReturnType<typeof readPortableArchiveEntries>, name: st
 }
 const runtime = path.join(root, 'runtime');
 await extractNativePayload(runtimeArchive, runtime);
-// This consumer must use the separate ICU carrier selected below.
+// POSIX uses the separate ICU data carrier; Windows loads its canonical data DLL.
 rmSync(path.join(runtime, 'share/icu'), { recursive: true, force: true });
 const consumer = path.join(root, `consumer/bin/seed-consumer${host.executableSuffix}`);
 mkdirSync(path.dirname(consumer), { recursive: true });
@@ -297,7 +297,10 @@ for (const [index, profile] of seedProfiles.entries()) {
   }
   run(consumer, [pgdata, runtime, probe.sql, probe.expected], env, root);
   if (profile === 'icu') {
-    const data = path.join(icuData, 'icudt76l.dat');
+    const data =
+      process.platform === 'win32'
+        ? path.join(runtime, 'bin', 'icudt76.dll')
+        : path.join(icuData, 'icudt76l.dat');
     renameSync(data, `${data}.removed`);
     try {
       const missingData = Bun.spawnSync([consumer, pgdata, runtime, probe.sql, probe.expected], {
@@ -306,7 +309,9 @@ for (const [index, profile] of seedProfiles.entries()) {
         stdout: 'pipe',
         stderr: 'pipe',
       });
-      assert.notEqual(missingData.exitCode, 0, 'consumer resolved the removed ICU carrier data');
+      if (process.platform === 'win32') assertMissingHostRuntime(missingData, path.basename(data));
+      else
+        assert.notEqual(missingData.exitCode, 0, 'consumer resolved the removed ICU carrier data');
     } finally {
       renameSync(`${data}.removed`, data);
     }

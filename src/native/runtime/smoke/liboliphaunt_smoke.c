@@ -1405,6 +1405,12 @@ static int parent_path(const char *path, char *out, size_t out_len) {
         return -1;
     }
     char *slash = strrchr(out, '/');
+#ifdef _WIN32
+    char *backslash = strrchr(out, '\\');
+    if (backslash != NULL && (slash == NULL || backslash > slash)) {
+        slash = backslash;
+    }
+#endif
     if (slash == NULL) {
         return snprintf(out, out_len, ".") >= (int)out_len ? -1 : 0;
     }
@@ -1412,6 +1418,12 @@ static int parent_path(const char *path, char *out, size_t out_len) {
         slash[1] = '\0';
         return 0;
     }
+#ifdef _WIN32
+    if (slash == out + 2 && out[1] == ':') {
+        slash[1] = '\0';
+        return 0;
+    }
+#endif
     *slash = '\0';
     return 0;
 }
