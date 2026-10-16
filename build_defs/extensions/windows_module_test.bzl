@@ -54,6 +54,27 @@ _test = analysistest.make(_impl, attrs = {
     "provider": attr.label(mandatory = True, providers = [CcSharedLibraryInfo]),
 })
 
+def _crypto_impl(ctx):
+    env = analysistest.begin(ctx)
+    target = analysistest.target_under_test(env)
+    crypto = ctx.attr.crypto
+    expected = ["ws2_32.lib", "gdi32.lib", "advapi32.lib", "crypt32.lib", "user32.lib"]
+    owner_flags = [flag for entry in crypto[CcInfo].linking_context.linker_inputs.to_list() if entry.owner == crypto.label for flag in entry.user_link_flags]
+    asserts.equals(env, sorted(expected), sorted(owner_flags), "libcrypto must own its canonical Windows system requirements")
+    asserts.equals(env, [ctx.attr.dll_name], [file.basename for file in target[DefaultInfo].files.to_list()])
+    asserts.true(env, CcSharedLibraryInfo in target, "pgcrypto must retain the stock module rule")
+    links = [action for action in analysistest.target_actions(env) if action.mnemonic == "CppLink"]
+    asserts.equals(env, 1, len(links))
+    if len(links) == 1:
+        for flag in expected:
+            asserts.true(env, flag in links[0].argv, "libcrypto system requirement missing from actual pgcrypto link: " + flag)
+    return analysistest.end(env)
+
+_crypto_test = analysistest.make(_crypto_impl, attrs = {
+    "crypto": attr.label(mandatory = True, providers = [CcInfo]),
+    "dll_name": attr.string(mandatory = True),
+})
+
 def native_windows_module_tests():
     for variant in ["server", "embedded"]:
         objects = "//src/extensions/external/postgis:postgis_" + variant + "_objects"
@@ -64,6 +85,14 @@ def native_windows_module_tests():
             module_objects = objects,
             static_libraries = [objects, "//build_defs/extensions/postgis:postgis_lwgeom", "//build_defs/extensions/postgis:postgis_flatgeobuf"],
             provider = "//build_defs/extensions/postgis:dependency_module",
+            target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
+            size = "small",
+        )
+        _crypto_test(
+            name = "pgcrypto_" + variant + "_windows_link_test",
+            target_under_test = "//src/extensions/contrib:pgcrypto_" + variant + ".dll",
+            dll_name = "pgcrypto_" + variant + ".dll",
+            crypto = "@openssl//:crypto",
             target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
             size = "small",
         )

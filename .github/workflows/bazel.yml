@@ -334,6 +334,8 @@ jobs:
               @icu//:windows_icu_smoke_test
               //build_defs/extensions:postgis_server_windows_link_test
               //build_defs/extensions:postgis_embedded_windows_link_test
+              //build_defs/extensions:pgcrypto_server_windows_link_test
+              //build_defs/extensions:pgcrypto_embedded_windows_link_test
               //build_defs/extensions/postgis:postgis_windows_sources_test
             )
           fi

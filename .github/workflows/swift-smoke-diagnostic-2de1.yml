@@ -1,4 +1,4 @@
-name: Corrected Windows PostGIS DLL link diagnostic
+name: Windows extension DLL link diagnostic
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-postgis-link-control-${{ github.run_id }}
+  group: windows-extension-link-control-${{ github.run_id }}
   cancel-in-progress: false
 
 defaults:
@@ -16,15 +16,15 @@ defaults:
     shell: bash
 
 jobs:
-  postgis_links:
-    name: Link both corrected PostGIS modules and check prepared sources
+  extension_links:
+    name: Link all declared Windows extension modules
     runs-on: windows-2025-vs2026
     timeout-minutes: 90
     steps:
       - name: Checkout corrected source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 1dd502586c9612e89df672ae6710f021d8a3a9a4
+          ref: 2291012139d6d71544cf75875282fed1399ecd9c
           fetch-depth: 1
           persist-credentials: false
 
@@ -34,26 +34,39 @@ jobs:
       - name: Select declared MSVC SDK
         uses: ./.github/actions/setup-msvc
 
-      - name: Link both corrected PostGIS modules and verify their source and action contracts
+      - name: Link all Windows extension modules and verify source and action contracts
         env:
           XDG_CACHE_HOME: ${{ runner.temp }}/windows-postgis-link-bootstrap
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 1dd502586c9612e89df672ae6710f021d8a3a9a4
-          test "$(git rev-parse 'HEAD^{tree}')" = a174b240be2c7245e1871a5b8cef2de1d3bffdcc
-          diag="$RUNNER_TEMP/windows-postgis-corrected-link-diagnostic"
+          test "$(git rev-parse HEAD)" = 2291012139d6d71544cf75875282fed1399ecd9c
+          test "$(git rev-parse 'HEAD^{tree}')" = 51cbd2b54fceaf615a47d7db05c782ece60bd925
+          diag="$RUNNER_TEMP/windows-extension-links-diagnostic"
           mkdir -p "$diag"
-          printf 'GREEN_SOURCE_COMMIT=1dd502586c9612e89df672ae6710f021d8a3a9a4\nGREEN_SOURCE_TREE=a174b240be2c7245e1871a5b8cef2de1d3bffdcc\n' | tee "$diag/green-source.txt"
+          printf 'GREEN_SOURCE_COMMIT=2291012139d6d71544cf75875282fed1399ecd9c\nGREEN_SOURCE_TREE=51cbd2b54fceaf615a47d7db05c782ece60bd925\n' | tee "$diag/green-source.txt"
           bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc
             --output_base="$RUNNER_TEMP/windows-postgis-link-check" --host_jvm_args=-Xmx3g)
           config=(-c opt --platforms=//build_defs/host:native_windows_x64
             --host_platform=//build_defs/host:native_windows_x64 --jobs=2
             --lockfile_mode=error --repository_cache= --disk_cache=)
-          targets=(//src/extensions/external/postgis:postgis_server.dll
-            //src/extensions/external/postgis:postgis_embedded.dll)
+          "${bazel[@]}" query 'kind("^cc_shared_library rule$", //src/extensions/...)' \
+            --output=label --lockfile_mode=error --repository_cache= \
+            > "$diag/module-targets.txt" 2> "$diag/module-query.log"
+          targets=()
+          while IFS= read -r target; do
+            target="${target%$'\r'}"
+            case "$target" in
+              //src/extensions/*_server.dll|//src/extensions/*_embedded.dll) targets+=("$target") ;;
+              *) exit 1 ;;
+            esac
+          done < "$diag/module-targets.txt"
+          test "${#targets[@]}" -gt 0
+          printf 'GREEN_MODULE_TARGETS=%s\n' "${#targets[@]}"
           "${bazel[@]}" test "${targets[@]}" \
             //build_defs/extensions:postgis_server_windows_link_test \
             //build_defs/extensions:postgis_embedded_windows_link_test \
+            //build_defs/extensions:pgcrypto_server_windows_link_test \
+            //build_defs/extensions:pgcrypto_embedded_windows_link_test \
             //build_defs/extensions/postgis:postgis_windows_sources_test \
             "${config[@]}" --keep_going --nocache_test_results --test_output=errors \
             > "$diag/green.log" 2>&1
@@ -66,7 +79,7 @@ jobs:
           while IFS= read -r relative; do
             relative="${relative%$'\r'}"
             case "$relative" in
-              */postgis_server.dll|*/postgis_embedded.dll) ;;
+              */*_server.dll|*/*_embedded.dll) ;;
               *) exit 1 ;;
             esac
             dll="$execution_root/$relative"
@@ -75,15 +88,15 @@ jobs:
             printf '%s  %s\n' "$(sha256sum < "$dll" | cut -d ' ' -f 1)" "$relative" | tee -a "$diag/green-dlls.txt"
             count=$((count + 1))
           done < "$diag/green-files.txt"
-          test "$count" -eq 2
-          printf 'GREEN_POSTGIS_DLLS=2\nGREEN_ACTION_CONTRACT_TESTS=passed\nGREEN_PREPARED_SOURCE_TEST=passed\n'
+          test "$count" -eq "${#targets[@]}"
+          printf 'GREEN_EXTENSION_DLLS=%s\nGREEN_ACTION_CONTRACT_TESTS=passed\nGREEN_PREPARED_SOURCE_TEST=passed\n' "$count"
           tail -n 12 "$diag/green.log"
 
       - name: Preserve diagnostic logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: windows-postgis-corrected-link-diagnostic
-          path: ${{ runner.temp }}/windows-postgis-corrected-link-diagnostic
+          name: windows-extension-links-diagnostic
+          path: ${{ runner.temp }}/windows-extension-links-diagnostic
           if-no-files-found: warn
           retention-days: 7
