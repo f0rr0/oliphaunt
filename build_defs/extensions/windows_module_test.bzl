@@ -27,6 +27,8 @@ def _impl(ctx):
         return analysistest.end(env)
     definition_inputs = {file.path: True for file in parsers[0].inputs.to_list()}
     for library in ctx.attr.static_libraries:
+        if library.label.name in ["libxml2", ctx.attr.dll_name[:-4] + "_objects"]:
+            asserts.true(env, "LIBXML_STATIC" in library[CcInfo].compilation_context.defines.to_list(), "libxml2 static mode must reach its owner and real module consumer: " + str(library.label))
         own_objects = [file for entry in library[CcInfo].linking_context.linker_inputs.to_list() if entry.owner == library.label for file in _objects(entry)]
         asserts.true(env, len(own_objects) > 0, "static module fixture must contribute actual compiled objects: " + str(library.label))
         for file in own_objects:
