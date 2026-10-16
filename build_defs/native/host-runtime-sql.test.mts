@@ -116,8 +116,11 @@ try {
     },
   );
   descriptor(database);
-  for (let attempt = 0; attempt < 2; attempt++)
-    run(smoke, [join(database, 'pgdata'), runtime, fixture]);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    // Windows reopens the same database with mixed separators on the second pass.
+    const pgdata = attempt === 0 ? join(database, 'pgdata') : `${database}/pgdata`;
+    run(smoke, [pgdata, runtime, fixture]);
+  }
 
   assert(
     readdirSync(join(runtime, 'share', 'icu')).some((name) => /^icudt\d+l\.dat$/u.test(name)),

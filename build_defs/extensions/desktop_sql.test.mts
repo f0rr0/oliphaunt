@@ -221,6 +221,19 @@ try {
     renameSync(`${library}.disabled`, library);
   }
 
+  const pgdata = initialize('embedded');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = embedded(pgdata);
+    assert.equal(result.exitCode, 0, result.stderr.toString() + result.stdout.toString());
+  }
+  const result = server(initialize('server'));
+  const response = result.stderr.toString() + result.stdout.toString();
+  assert.equal(result.exitCode, 0, response);
+  assert(
+    response.includes('candidate-extension-smoke-ok') && !/ERROR:|FATAL:|not ok/u.test(response),
+    response,
+  );
+
   for (const name of dependencyNames) {
     const owner = memberDependencies.get(name);
     assert(owner);
@@ -236,7 +249,7 @@ try {
         // POSIX loaders also identify the missing dependency itself.
         assert(
           response.includes(name) || (windows && response.includes(owner)),
-          'missing candidate dependency must fail by its dependency or Windows owner identity',
+          `${profile} ${name} (exit ${result.exitCode}): expected missing dependency or Windows owner identity\n${response}`,
         );
         if (profile === 'modules')
           assert.notEqual(result.exitCode, 0, 'embedded consumer accepted a missing dependency');
@@ -264,7 +277,7 @@ try {
       const response = result.stderr.toString() + result.stdout.toString();
       assert(
         response.includes(missingMember.sql_name),
-        'missing candidate module must fail by its own identity',
+        `${profile} ${missingMember.sql_name} (exit ${result.exitCode}): expected missing module identity\n${response}`,
       );
       if (profile === 'modules')
         assert.notEqual(
@@ -282,18 +295,6 @@ try {
     }
   }
 
-  const pgdata = initialize('embedded');
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const result = embedded(pgdata);
-    assert.equal(result.exitCode, 0, result.stderr.toString() + result.stdout.toString());
-  }
-  const result = server(initialize('server'));
-  const response = result.stderr.toString() + result.stdout.toString();
-  assert.equal(result.exitCode, 0, response);
-  assert(
-    response.includes('candidate-extension-smoke-ok') && !/ERROR:|FATAL:|not ok/u.test(response),
-    response,
-  );
   console.log(
     `${construction.members.length} candidate desktop members: embedded reopen, server SQL and missing candidate loader/module/dependency probes PASS`,
   );
