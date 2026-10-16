@@ -85,7 +85,7 @@ const libraryName = windows
     ? 'liboliphaunt.dylib'
     : 'liboliphaunt.so';
 const library = join(libraryDirectory, libraryName);
-const consumer = join(root, 'consumer', 'bin', `extension-smoke${suffix}`);
+const consumer = join(root, 'consumer', 'bin', windows ? 'extension smoke.exe' : 'extension-smoke');
 const env = hostRuntimeEnvironment(runtime, root);
 if (windows) {
   env.PATH = `${join(carrier, 'bin')};${env.PATH}`;
@@ -149,6 +149,7 @@ const embedded = (pgdata: string) =>
 const server = (pgdata: string) =>
   Bun.spawnSync(
     [
+      ...(windows ? [consumer, '--restricted-postgres'] : []),
       join(runtime, 'bin', `postgres${suffix}`),
       '--single',
       '-j',
@@ -226,13 +227,28 @@ try {
     const result = embedded(pgdata);
     assert.equal(result.exitCode, 0, result.stderr.toString() + result.stdout.toString());
   }
-  const result = server(initialize('server'));
+  const result = server(initialize(windows ? 'server with spaces' : 'server'));
   const response = result.stderr.toString() + result.stdout.toString();
   assert.equal(result.exitCode, 0, response);
   assert(
     response.includes('candidate-extension-smoke-ok') && !/ERROR:|FATAL:|not ok/u.test(response),
     response,
   );
+
+  if (windows) {
+    assert(
+      result.stdout.toString().includes('candidate-extension-smoke-ok'),
+      'restricted server must preserve SQL stdin/stdout',
+    );
+    const missing = 'missing server database';
+    const rejected = server(join(root, missing));
+    const diagnostic = rejected.stderr.toString() + rejected.stdout.toString();
+    assert.equal(rejected.exitCode, 1, diagnostic);
+    assert(
+      rejected.stderr.toString().includes(missing),
+      'restricted server must preserve its error stream',
+    );
+  }
 
   for (const name of dependencyNames) {
     const owner = memberDependencies.get(name);
