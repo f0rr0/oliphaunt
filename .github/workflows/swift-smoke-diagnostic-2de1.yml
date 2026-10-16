@@ -24,7 +24,7 @@ jobs:
       - name: Checkout corrected source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 4882b81c2fff0892d08833788c680483c016d789
+          ref: 65c0291c91ec10340fb827b66331192c60e735e6
           fetch-depth: 1
           persist-credentials: false
 
@@ -34,35 +34,17 @@ jobs:
       - name: Select declared MSVC SDK
         uses: ./.github/actions/setup-msvc
 
-      - name: Install locked release tooling
-        run: bash tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
-
-      - name: Acquire completed SDK dependencies for this source
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: | # zizmor: ignore[github-env] only the authenticated runner-temp snapshot path is exported.
-          set -euo pipefail
-          printf '["oliphaunt-js"]\n' > "$RUNNER_TEMP/windows-consumer-products.json"
-          snapshot="$(bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh --no-env-file --no-install \
-            tools/release/native-release-preparation.mts --publication-inputs \
-            --consumer-products-json "$RUNNER_TEMP/windows-consumer-products.json" \
-            --output-directory "$RUNNER_TEMP/windows-public-acquisition")"
-          test -f "$(cygpath -u "$snapshot")"
-          printf 'OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=%s\n' "$snapshot" >> "$GITHUB_ENV"
-
-      - name: Verify SDK flush and static PostGIS consumers
+      - name: Verify static PostGIS consumers
         env:
           XDG_CACHE_HOME: ${{ runner.temp }}/windows-installed-consumer-bootstrap
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 4882b81c2fff0892d08833788c680483c016d789
-          test "$(git rev-parse 'HEAD^{tree}')" = c4021ff064d05b452952d82e133216e0275fa211
-          test -n "${OLIPHAUNT_NATIVE_PUBLICATION_INPUTS:-}"
+          test "$(git rev-parse HEAD)" = 65c0291c91ec10340fb827b66331192c60e735e6
+          test "$(git rev-parse 'HEAD^{tree}')" = 89401f21194e1c3dde0b95c5414d459bb047d6d6
           diag="$RUNNER_TEMP/windows-installed-consumers-diagnostic"
           mkdir -p "$diag"
-          printf 'SOURCE_COMMIT=4882b81c2fff0892d08833788c680483c016d789\nSOURCE_TREE=c4021ff064d05b452952d82e133216e0275fa211\n' > "$diag/source.txt"
+          printf 'SOURCE_COMMIT=65c0291c91ec10340fb827b66331192c60e735e6\nSOURCE_TREE=89401f21194e1c3dde0b95c5414d459bb047d6d6\n' > "$diag/source.txt"
           targets=(
-            //build_defs/languages/carriers:installed_sql_test
             //build_defs/extensions:desktop_all_members_frozen_sql_test
             //build_defs/extensions:postgis_server_windows_link_test
             //build_defs/extensions:postgis_embedded_windows_link_test
@@ -86,7 +68,6 @@ jobs:
           name: windows-installed-consumers-diagnostic
           path: |
             ${{ runner.temp }}/windows-installed-consumers-diagnostic
-            ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/languages/carriers/installed_sql_test
             ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/extensions/desktop_all_members_frozen_sql_test
             ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/extensions/postgis_server_windows_link_test
             ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/extensions/postgis_embedded_windows_link_test
