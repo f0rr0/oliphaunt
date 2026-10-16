@@ -35,6 +35,40 @@ function oldPostgisSource(file: string, text: string): string {
   return text;
 }
 
+// Independent literal oracle for every external-inline definition in the pin.
+// Keep the historical source rewrites above intact; production has no name list.
+const externalInlineSignatures: Record<string, string[]> = {
+  'postgis/gserialized_gist_2d.c': [
+    'bool box2df_is_empty(',
+    'void box2df_set_empty(',
+    'void box2df_set_finite(',
+    'void box2df_validate(',
+  ],
+  'postgis/gserialized_gist_nd.c': ['bool\ngidx_is_unknown('],
+  'liblwgeom/lwgeom_api.c': ['float\nnext_float_down(', 'float\nnext_float_up('],
+  'liblwgeom/lwlinearreferencing.c': [
+    'double\nlwpoint_get_ordinate(',
+    'void\nlwpoint_set_ordinate(',
+    'int\npoint_interpolate(',
+  ],
+  'liblwgeom/measures.c': ['double\ndistance2d_pt_pt('],
+  'postgis/unit.c': ['int external_body(', 'int extern_body('],
+};
+
+function expectedPostgisSource(file: string, original: string): string {
+  let text = oldPostgisSource(file, original);
+  for (const signature of externalInlineSignatures[file] ?? []) {
+    const before = `inline ${signature}`;
+    assert.equal(
+      text.split(before).length - 1,
+      1,
+      `pinned external inline anchor: ${file} ${signature}`,
+    );
+    text = text.replace(before, signature);
+  }
+  return text;
+}
+
 function verifySources(
   spec: WindowsSourceInputs,
   expected: { name: string; source: string }[],
@@ -71,7 +105,7 @@ function verifySources(
     assert(row.output.endsWith('/' + row.name), `prepared filename for ${row.name}`);
     roots.add(row.output.slice(0, -row.name.length));
     const original = read(declared(row.source));
-    const after = oldPostgisSource(row.name, original);
+    const after = expectedPostgisSource(row.name, original);
     assert.deepEqual(
       readFileSync(declared(row.output)),
       Buffer.from(after),
@@ -143,7 +177,7 @@ function fixtureTests(): void {
   try {
     const fixture: Record<string, string> = {
       'postgis/unit.c':
-        '/* π */\r\n  Datum one(PG_FUNCTION_ARGS);\r\nextern PGDLLEXPORT Datum done(PG_FUNCTION_ARGS);\r\nextern Datum unrelated(void);\r\n',
+        '/* π */\r\n  Datum one(PG_FUNCTION_ARGS);\r\nextern PGDLLEXPORT Datum done(PG_FUNCTION_ARGS);\r\nextern Datum unrelated(void);\r\ninline int external_body(void) { return 1; }\r\nextern inline int extern_body(void) { return 2; }\r\nstatic inline int local_body(void) { return 3; }\r\ninline static int reverse_body(void) { return 4; }\r\n',
       'libpgcommon/unit.h': 'extern Datum two(PG_FUNCTION_ARGS);\n',
       'liblwgeom/nested/unit.h': 'Datum three(PG_FUNCTION_ARGS);\n',
       'postgis/postgis_legacy.c': '\tDatum funcname(PG_FUNCTION_ARGS); \\\r\n',
@@ -269,7 +303,7 @@ assert(
 if (inventory) {
   const changed = verifyInventory(JSON.parse(read(inventory)), runfiles);
   console.log(
-    `Declared PostGIS Windows source bytes preserve the original rewrites (${changed} changed files).`,
+    `Declared PostGIS Windows source bytes match the reviewed adaptations (${changed} changed files).`,
   );
 } else {
   console.log('PostGIS Windows source oracle fixtures and rejection checks passed.');

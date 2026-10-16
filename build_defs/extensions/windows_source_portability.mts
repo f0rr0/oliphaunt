@@ -40,6 +40,13 @@ export function windowsExtensionHeaders(extension: string): Record<string, strin
 export function windowsExtensionSource(extension: string, file: string, text: string): string {
   if (extension === 'postgis') {
     if (/^(?:postgis|libpgcommon|liblwgeom)\/.*\.[ch]$/u.test(file)) {
+      if (file.endsWith('.c')) {
+        // These cross-unit definitions need an out-of-line body under MSVC.
+        text = text.replace(
+          /\/\*[\s\S]*?\*\/|\/\/(?:\\\r?\n|[^\r\n])*|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|^([ \t]*(?:extern[ \t]+)?)inline[ \t]+(?![ \t]*static\b)/gm,
+          (match, prefix: string | undefined) => (prefix === undefined ? match : prefix),
+        );
+      }
       text = text.replace(
         /^[ \t]*(?!(?:extern\s+)?PGDLLEXPORT\s+)(?:extern\s+)?Datum\s+(\w+)\s*\(PG_FUNCTION_ARGS\);\r?$/gm,
         'extern PGDLLEXPORT Datum $1(PG_FUNCTION_ARGS);',
