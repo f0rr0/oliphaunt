@@ -24,7 +24,7 @@ jobs:
       - name: Checkout corrected source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 43764f9876041314ee8c451444004c80d899c056
+          ref: 92c963ff1f60311ea7fcf8a02f85fab44754e396
           fetch-depth: 1
           persist-credentials: false
 
@@ -55,12 +55,12 @@ jobs:
           XDG_CACHE_HOME: ${{ runner.temp }}/windows-installed-consumer-bootstrap
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 43764f9876041314ee8c451444004c80d899c056
-          test "$(git rev-parse 'HEAD^{tree}')" = 8e67f263ad2c05ab00fe951a5dedf0b31e643a63
+          test "$(git rev-parse HEAD)" = 92c963ff1f60311ea7fcf8a02f85fab44754e396
+          test "$(git rev-parse 'HEAD^{tree}')" = 2147af715bbc3bfe9e81767a96cb6fd4ba1af2fd
           test -n "${OLIPHAUNT_NATIVE_PUBLICATION_INPUTS:-}"
           diag="$RUNNER_TEMP/windows-installed-consumers-diagnostic"
           mkdir -p "$diag"
-          printf 'SOURCE_COMMIT=43764f9876041314ee8c451444004c80d899c056\nSOURCE_TREE=8e67f263ad2c05ab00fe951a5dedf0b31e643a63\n' > "$diag/source.txt"
+          printf 'SOURCE_COMMIT=92c963ff1f60311ea7fcf8a02f85fab44754e396\nSOURCE_TREE=2147af715bbc3bfe9e81767a96cb6fd4ba1af2fd\n' > "$diag/source.txt"
           targets=(
             //build_defs/languages/carriers:installed_sql_test
             //build_defs/extensions:desktop_all_members_frozen_sql_test
