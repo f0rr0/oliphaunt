@@ -231,7 +231,7 @@ native_desktop_carriers(
     binary_mappings = [":runtime_library", ":runtime_embedded_modules", ":runtime_binaries", ":runtime_libpq", ":runtime_server_modules", ":runtime_icu_libraries"],
     qualification = [":installed_cargo_test"] + select({
         "//build_defs/native:macos_arm64": [":host_runtime_sql_test"],
-        "//build_defs/native:windows_x64": [":host_runtime_sql_test"],
+        "//build_defs/native:windows_x64": [":host_runtime_sql_test", "//build_defs/native:windows_restricted_process_test"],
         "//conditions:default": [":unix_runtime_sql_test"],
     }),
 )

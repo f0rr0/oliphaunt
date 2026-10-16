@@ -273,16 +273,10 @@ native_extension_sql_test(
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 )
 
-_SMOKE_WINDOWS_FRONTEND = select({
-    "//build_defs/native:windows_x64": ["@postgres//:server_headers", "@postgres//:common_frontend", "@postgres//:port_frontend"],
-    "//conditions:default": [],
-})
-
 cc_binary(
     name = "native_extension_smoke",
     srcs = ["native_extension_smoke.c"],
-    deps = ["//src/native/runtime:liboliphaunt"] + _SMOKE_WINDOWS_FRONTEND,
-    defines = select({"//build_defs/native:windows_x64": ["FRONTEND"], "//conditions:default": []}),
+    deps = ["//src/native/runtime:liboliphaunt"],
     copts = select({"//build_defs/native:windows_x64": ["/std:c11"], "//conditions:default": ["-std=c11", "-Wall", "-Wextra", "-Werror"]}),
     target_compatible_with = NATIVE_EXTENSION_DESKTOP_COMPATIBLE,
 )
@@ -294,8 +288,7 @@ cc_binary(
         "//build_defs/native:macos_arm64": ["@extension_frozen_native_macos//:cc_macos_arm64"],
         "//build_defs/native:windows_x64": ["@extension_frozen_native_windows//:cc_windows_x64_msvc"],
         "//conditions:default": ["@extension_frozen_native//:cc_linux_x64_gnu"],
-    }) + _SMOKE_WINDOWS_FRONTEND,
-    defines = select({"//build_defs/native:windows_x64": ["FRONTEND"], "//conditions:default": []}),
+    }),
     copts = select({"//build_defs/native:windows_x64": ["/std:c11"], "//conditions:default": ["-std=c11", "-Wall", "-Wextra", "-Werror"]}),
     target_compatible_with = FROZEN_DESKTOP_HOST_COMPATIBLE,
 )

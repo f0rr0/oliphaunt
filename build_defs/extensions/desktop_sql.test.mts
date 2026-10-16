@@ -33,6 +33,7 @@ const { values, positionals } = parseArgs({
     'runtime-prefix': { type: 'string', default: '.' },
     'library-prefix': { type: 'string', default: process.platform === 'win32' ? 'bin' : 'lib' },
     'published-runtime': { type: 'boolean', default: false },
+    'restricted-launcher': { type: 'string' },
   },
 });
 for (const prefix of [values['runtime-prefix'], values['library-prefix']])
@@ -79,6 +80,7 @@ const runtime = join(carrier, values['runtime-prefix']);
 const libraryDirectory = join(carrier, values['library-prefix']);
 const windows = process.platform === 'win32';
 const suffix = windows ? '.exe' : '';
+const launcher = join(root, 'launcher', 'restricted process.exe');
 const libraryName = windows
   ? 'oliphaunt.dll'
   : process.platform === 'darwin'
@@ -149,7 +151,7 @@ const embedded = (pgdata: string) =>
 const server = (pgdata: string) =>
   Bun.spawnSync(
     [
-      ...(windows ? [consumer, '--restricted-postgres'] : []),
+      ...(windows ? [launcher] : []),
       join(runtime, 'bin', `postgres${suffix}`),
       '--single',
       '-j',
@@ -194,6 +196,12 @@ try {
   mkdirSync(dirname(consumer), { recursive: true });
   copyFileSync(sourceConsumer, consumer);
   if (!windows) chmodSync(consumer, 0o755);
+  else {
+    const sourceLauncher = values['restricted-launcher'];
+    assert(sourceLauncher, 'Windows server SQL requires its restricted launcher');
+    mkdirSync(dirname(launcher), { recursive: true });
+    copyFileSync(resolve(sourceLauncher), launcher);
+  }
   for (const setting of text(environment).split('\n').filter(Boolean)) {
     const [name, path, required] = setting.split('\t');
     assert(name && path && required && statSync(join(runtime, path, required)).isFile());

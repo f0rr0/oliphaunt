@@ -1,8 +1,8 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
-load("@rules_cc//cc:defs.bzl", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_test")
 load("//build_defs/android:toolchain.bzl", "android_artifact")
 load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
-load(":platform_config.bzl", "NATIVE_COMPATIBLE")
+load(":platform_config.bzl", "NATIVE_COMPATIBLE", "NATIVE_WINDOWS_COMPATIBLE")
 load(":compiler_probes.bzl", "native_compiler_probe_targets")
 load(":mobile-profile-test.bzl", "native_mobile_profile_tests")
 load(":probe-tools-test.bzl", "compiler_probe_tool_inputs_test")
@@ -31,6 +31,26 @@ platform(name = "linux_aarch64_glibc_2_28", constraint_values = ["@platforms//os
 native_compiler_probe_targets(name = "compiler_probe")
 native_mobile_profile_tests()
 compiler_probe_tool_inputs_test()
+
+# A frontend utility must not share a link with the embedded C API runtime.
+cc_binary(
+    name = "windows_restricted_process",
+    srcs = ["windows-restricted-process.c"],
+    deps = ["@postgres//:server_headers", "@postgres//:common_frontend", "@postgres//:port_frontend"],
+    defines = ["FRONTEND"],
+    copts = ["/std:c11"],
+    testonly = True,
+    target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
+)
+
+bun_script_test(
+    name = "windows_restricted_process_test",
+    entry_point = "windows-restricted-process.test.mts",
+    args = ["$(location :windows_restricted_process)"],
+    data = [":windows_restricted_process"],
+    target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
+    size = "small",
+)
 
 cc_test(
     name = "probe_process_test",
