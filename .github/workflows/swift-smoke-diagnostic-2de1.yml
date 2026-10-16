@@ -34,14 +34,30 @@ jobs:
       - name: Select declared MSVC SDK
         uses: ./.github/actions/setup-msvc
 
-      - name: Run the five failed installed consumers and helper regression
+      - name: Install locked release tooling
+        run: bash tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
+
+      - name: Acquire completed SDK dependencies for this source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: | # zizmor: ignore[github-env] only the authenticated runner-temp snapshot path is exported.
+          set -euo pipefail
+          printf '["oliphaunt-js"]\n' > "$RUNNER_TEMP/windows-consumer-products.json"
+          snapshot="$(bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh --no-env-file --no-install \
+            tools/release/native-release-preparation.mts --publication-inputs \
+            --consumer-products-json "$RUNNER_TEMP/windows-consumer-products.json" \
+            --output-directory "$RUNNER_TEMP/windows-public-acquisition")"
+          test -f "$(cygpath -u "$snapshot")"
+          printf 'OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=%s\n' "$snapshot" >> "$GITHUB_ENV"
+
+      - name: Run the four unresolved installed consumers
         env:
           XDG_CACHE_HOME: ${{ runner.temp }}/windows-installed-consumer-bootstrap
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = 43764f9876041314ee8c451444004c80d899c056
           test "$(git rev-parse 'HEAD^{tree}')" = 8e67f263ad2c05ab00fe951a5dedf0b31e643a63
-          test -z "${OLIPHAUNT_NATIVE_PUBLICATION_INPUTS:-}"
+          test -n "${OLIPHAUNT_NATIVE_PUBLICATION_INPUTS:-}"
           diag="$RUNNER_TEMP/windows-installed-consumers-diagnostic"
           mkdir -p "$diag"
           printf 'SOURCE_COMMIT=43764f9876041314ee8c451444004c80d899c056\nSOURCE_TREE=8e67f263ad2c05ab00fe951a5dedf0b31e643a63\n' > "$diag/source.txt"
@@ -50,8 +66,6 @@ jobs:
             //build_defs/extensions:desktop_all_members_frozen_sql_test
             //src/native/runtime:host_runtime_sql_test
             //src/database-resources:native_resource_test
-            //src/native/postgres-tools:installed_carrier_test
-            //build_defs/native:host_runtime_test_helpers_test
           )
           printf '%s\n' "${targets[@]}" > "$diag/targets.txt"
           base="$RUNNER_TEMP/b"
@@ -76,7 +90,5 @@ jobs:
             ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/extensions/desktop_all_members_frozen_sql_test
             ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/src/native/runtime/host_runtime_sql_test
             ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/src/database-resources/native_resource_test
-            ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/src/native/postgres-tools/installed_carrier_test
-            ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/native/host_runtime_test_helpers_test
           if-no-files-found: warn
           retention-days: 7
