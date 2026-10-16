@@ -159,7 +159,7 @@ def postgis_libxml2(name, iconv = None, profile = "desktop"):
                hdrs = [prefix + "headers"],
                deps = [":" + name + "_config", ":" + name + "_headers"] + ([iconv] if profile == "desktop" else []),
                copts = settings.c,
-               defines = select({"//build_defs/native:windows_x64": [], "//conditions:default": ["HAVE_PTHREAD_H", "HAVE_STRINGS_H", "HAVE_UNISTD_H"]}) if profile == "desktop" else ["HAVE_STRINGS_H", "HAVE_UNISTD_H"],
+               defines = select({"//build_defs/native:windows_x64": ["LIBXML_STATIC"], "//conditions:default": ["HAVE_PTHREAD_H", "HAVE_STRINGS_H", "HAVE_UNISTD_H"]}) if profile == "desktop" else ["HAVE_STRINGS_H", "HAVE_UNISTD_H"],
                linkopts = POSTGIS_DL_LINKOPTS + select({"//build_defs/native:windows_x64": ["bcrypt.lib"], "//conditions:default": []}) if profile == "desktop" else POSTGIS_MATH_LINKOPTS,
                target_compatible_with = settings.compatible)
 
