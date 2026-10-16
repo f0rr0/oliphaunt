@@ -31,27 +31,17 @@ def _impl(ctx):
         asserts.true(env, len(own_objects) > 0, "static module fixture must contribute actual compiled objects: " + str(library.label))
         for file in own_objects:
             asserts.true(env, file.path in definition_inputs, "static module object missing from DEF: " + file.path)
-    provider = ctx.attr.provider[CcSharedLibraryInfo]
-    provided = {owner: True for owner in provider.exports}
-    for owner in provider.link_once_static_libs:
-        provided[owner] = True
-    excluded = [file for entry in ctx.attr.module_objects[CcInfo].linking_context.linker_inputs.to_list() if str(entry.owner) in provided for file in _objects(entry)]
-    asserts.true(env, len(excluded) > 0, "shared provider must replace actual transitive object files")
-    for file in excluded:
-        asserts.false(env, file.path in definition_inputs, "shared-provider object leaked into module DEF: " + file.path)
     link_inputs = {file.path: True for file in links[0].inputs.to_list()}
     for file in parsers[0].outputs.to_list():
         asserts.true(env, file.path in link_inputs, "link must consume the actual stock-generated DEF")
-    interfaces = [file for library in provider.linker_input.libraries for file in [library.interface_library, library.resolved_symlink_interface_library] if file]
-    asserts.true(env, len(interfaces) > 0, "Windows provider must expose its actual import library")
-    asserts.true(env, any([file.path in link_inputs for file in interfaces]), "link must use the shared provider's import library")
+    asserts.true(env, ctx.file.runtime_interface.path in link_inputs, "link must retain its actual PostgreSQL ABI import library")
+    asserts.false(env, any(["liboliphaunt_postgis_deps" in file.basename for file in links[0].inputs.to_list()]), "Windows PostGIS must incorporate its dependency objects without a private DLL import")
     return analysistest.end(env)
 
 _test = analysistest.make(_impl, attrs = {
     "dll_name": attr.string(mandatory = True),
-    "module_objects": attr.label(mandatory = True, providers = [CcInfo]),
     "static_libraries": attr.label_list(mandatory = True, providers = [CcInfo]),
-    "provider": attr.label(mandatory = True, providers = [CcSharedLibraryInfo]),
+    "runtime_interface": attr.label(mandatory = True, allow_single_file = True),
 })
 
 def _crypto_impl(ctx):
@@ -82,9 +72,8 @@ def native_windows_module_tests():
             name = "postgis_" + variant + "_windows_link_test",
             target_under_test = "//src/extensions/external/postgis:postgis_" + variant + ".dll",
             dll_name = "postgis_" + variant + ".dll",
-            module_objects = objects,
-            static_libraries = [objects, "//build_defs/extensions/postgis:postgis_lwgeom", "//build_defs/extensions/postgis:postgis_flatgeobuf"],
-            provider = "//build_defs/extensions/postgis:dependency_module",
+            static_libraries = [objects, "//build_defs/extensions/postgis:postgis_lwgeom", "//build_defs/extensions/postgis:postgis_flatgeobuf"] + ["//build_defs/extensions/postgis:" + name for name in ["geos", "proj", "json_c", "libxml2", "iconv", "sqlite"]],
+            runtime_interface = "@postgres//:server_windows_interface" if variant == "server" else "//src/native/runtime:runtime_windows_interface",
             target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
             size = "small",
         )

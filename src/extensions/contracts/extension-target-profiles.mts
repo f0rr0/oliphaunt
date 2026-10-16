@@ -13,6 +13,19 @@ export function nativeExtensionModuleHostTarget(target) {
   return target;
 }
 
+/** Select a target's carried subset; the default remains the legacy module universe. */
+export function nativeExtensionDependencyModulePaths(files = [], target, byTarget = {}) {
+  table(byTarget, 'native dependency module overrides');
+  const desktopTargets = ['linux-x64-gnu', 'linux-arm64-gnu', 'macos-arm64', 'windows-x64-msvc'];
+  for (const [overrideTarget, selected] of Object.entries(byTarget)) {
+    if (!desktopTargets.includes(overrideTarget))
+      fail('native dependency module override requires a desktop native target');
+    if (!Array.isArray(selected) || selected.some((file) => !files.includes(file)))
+      fail('native dependency module override must select declared module paths');
+  }
+  return byTarget[nativeExtensionModuleHostTarget(target)] ?? files;
+}
+
 function fail(message) {
   throw new Error(`extension target profiles: ${message}`);
 }

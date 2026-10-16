@@ -301,7 +301,11 @@ function expectedMember(spec: NativeCarrierSpec, target: string, selected?: any)
       .sort(),
     nativeDependencyModules:
       isDesktopNativeTarget(target) || selected?.nativeDependencyModules?.length > 0
-        ? nativeDependencyModuleBasenames(artifact.native_dependency_modules, target)
+        ? nativeDependencyModuleBasenames(
+            artifact.native_dependency_modules,
+            target,
+            artifact.native_dependency_modules_by_target,
+          )
         : [],
     nativeConstructionLicenseFiles:
       (spec.sqlName === 'vector' &&

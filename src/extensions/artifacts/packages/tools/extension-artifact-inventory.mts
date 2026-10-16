@@ -14,7 +14,10 @@ import { TextDecoder } from 'node:util';
 import { strictGunzip } from '../../../../../tools/packaging/portable-archive.mts';
 import { releaseNoticeRows } from '../../../../../tools/packaging/release-notices.mts';
 import { extensionProductForSqlName } from '../../../../../tools/release/release-artifact-targets.mts';
-import { nativeExtensionModuleHostTarget } from '../../../contracts/extension-target-profiles.mts';
+import {
+  nativeExtensionDependencyModulePaths,
+  nativeExtensionModuleHostTarget,
+} from '../../../contracts/extension-target-profiles.mts';
 import { EXTENSION_ARTIFACT_ARCHIVE_POLICY } from '../../../tools/extension-artifact-archive-policy.mts';
 import {
   extensionCarrierLegalContract,
@@ -509,7 +512,7 @@ export function isDesktopNativeTarget(target) {
 /** Project the canonical recipe's module stems into an existing desktop profile. */
 export const nativeModuleHostTarget = nativeExtensionModuleHostTarget;
 
-export function nativeDependencyModuleBasenames(files = [], target) {
+export function nativeDependencyModuleBasenames(files = [], target, byTarget = {}) {
   const hostTarget = nativeModuleHostTarget(target);
   if (!isDesktopNativeTarget(hostTarget)) {
     if (files.length === 0) return [];
@@ -518,7 +521,7 @@ export function nativeDependencyModuleBasenames(files = [], target) {
       `target ${target} has no desktop module contract`,
     );
   }
-  return files
+  return nativeExtensionDependencyModulePaths(files, target, byTarget)
     .map((file) => {
       const match = /^lib\/postgresql\/([A-Za-z0-9_-]+)\.(?:so|dylib|dll)$/u.exec(file);
       if (!match)
@@ -813,6 +816,7 @@ export function validateExtensionArtifactEntries({
     const declared = nativeDependencyModuleBasenames(
       recipe.artifacts?.native_dependency_modules,
       target,
+      recipe.artifacts?.native_dependency_modules_by_target,
     );
     if (JSON.stringify(declared) !== JSON.stringify(metadata.nativeDependencyModules)) {
       throw inventoryError(label, 'native dependency modules differ from the canonical recipe');

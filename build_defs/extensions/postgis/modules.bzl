@@ -2,9 +2,10 @@
 
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//build_defs/extensions:contrib.bzl", "contrib_generated_sources")
-load("//build_defs/extensions:extensions.bzl", "native_extension_modules")
+load("//build_defs/extensions:extensions.bzl", "extension_native_dependency_modules", "native_extension_modules")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_RECIPES")
 load("//build_defs/extensions:external.bzl", "windows_extension_sources")
-load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_PROFILES")
 load("//build_defs/extensions:mobile.bzl", "MOBILE_EXTENSION_COMPATIBLE")
 load("//build_defs/native:platform_config.bzl", "NATIVE_RELEASE_LINKOPTS", "NATIVE_WINDOWS_COMPATIBLE")
 load(":libraries.bzl", "POSTGIS_MATH_LINKOPTS", "POSTGIS_NATIVE_COPTS", "POSTGIS_NATIVE_CXX_COPTS", "postgis_configuration", "postgis_profile", "postgis_source_headers")
@@ -69,13 +70,20 @@ def postgis_standalone(name, profile = "desktop"):
                defines = ["flatbuffers=postgis_flatbuffers"],
                target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
 
+_DEPENDENCY_ARTIFACTS = EXTENSION_RECIPES["postgis"]["artifacts"]
+_DEPENDENCY_MODULES = {condition: extension_native_dependency_modules(_DEPENDENCY_ARTIFACTS.get("native_dependency_modules", []), configuration, _DEPENDENCY_ARTIFACTS.get("native_dependency_modules_by_target", {})) for condition, configuration in NATIVE_EXTENSION_PROFILES.items()}
+
+def postgis_dependency_module_labels(label):
+    """Use the dependency DLL only in profiles whose recipe carries one."""
+    return select({condition: [label] if modules else [] for condition, modules in _DEPENDENCY_MODULES.items()} | {"//conditions:default": []})
+
 def postgis_dependency_module(name):
     # A maintained direct shared-library rule whole-archives the six real roots;
     # module consumers use dynamic_deps to prevent a second static dependency copy.
     cc_shared_library(name = name, shared_lib_name = select({"//build_defs/native:windows_x64": "liboliphaunt_postgis_deps.dll", "//build_defs/native:macos_arm64": "liboliphaunt_postgis_deps.dylib", "//conditions:default": "liboliphaunt_postgis_deps.so"}),
                       deps = ["//build_defs/extensions/postgis:" + library for library in ["geos", "proj", "json_c", "libxml2", "iconv", "sqlite"]],
                       features = select({"//build_defs/native:windows_x64": ["windows_export_all_symbols"], "//conditions:default": []}),
-                      user_link_flags = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": ["-Wl,-install_name,@rpath/liboliphaunt_postgis_deps.dylib"], "//conditions:default": ["-Wl,-z,defs"]}) + NATIVE_RELEASE_LINKOPTS, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+                      user_link_flags = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": ["-Wl,-install_name,@rpath/liboliphaunt_postgis_deps.dylib"], "//conditions:default": ["-Wl,-z,defs"]}) + NATIVE_RELEASE_LINKOPTS, target_compatible_with = select({condition: [] if modules else ["@platforms//:incompatible"] for condition, modules in _DEPENDENCY_MODULES.items()} | {"//conditions:default": ["@platforms//:incompatible"]}))
 
 def native_postgis_modules(name, standalone, dependency_module):
     prefix = "@postgis//:"
@@ -86,7 +94,7 @@ def native_postgis_modules(name, standalone, dependency_module):
                              copts = select({"//build_defs/native:windows_x64": ["/D_USE_MATH_DEFINES", "/FI$(location //src/extensions/external/postgis:tools/windows/postgis-compat.h)"], "//conditions:default": []}),
                              hdrs = compatibility_inputs,
                              additional_compiler_inputs = compatibility_inputs,
-                             dynamic_deps = [dependency_module], linkopts = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": ["-Wl,-rpath,@loader_path"], "//conditions:default": ["-Wl,-rpath,$$ORIGIN"]}))
+                             dynamic_deps = postgis_dependency_module_labels(dependency_module), linkopts = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": ["-Wl,-rpath,@loader_path"], "//conditions:default": ["-Wl,-rpath,$$ORIGIN"]}))
 
 def _mobile_standalone(name, profile):
     settings = postgis_profile(profile)

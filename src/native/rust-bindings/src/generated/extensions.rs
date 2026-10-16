@@ -515,6 +515,20 @@ pub(super) const fn native_dependency_module_stems(
     }
 }
 
+/// Current host dependency modules; frozen inputs retain their own inventory.
+#[cfg(feature = "internal-native-packaging")]
+pub(super) const fn native_dependency_module_stems_for_host(
+    extension: Extension,
+) -> &'static [&'static str] {
+    if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        return match extension.id {
+            ExtensionId::Postgis => &[],
+            _ => native_dependency_module_stems(extension),
+        };
+    }
+    native_dependency_module_stems(extension)
+}
+
 /// Generated extension metadata accessor.
 pub(super) const fn creates_extension(extension: Extension) -> bool {
     match extension.id {

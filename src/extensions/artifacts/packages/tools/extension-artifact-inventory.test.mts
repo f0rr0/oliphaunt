@@ -59,6 +59,39 @@ test('canonical native dependency stems project into desktop and mobile host mod
       () => nativeDependencyModuleBasenames(invalid, 'windows-x64-msvc'),
       /canonical recipe/u,
     );
+  assert.deepEqual(
+    nativeDependencyModuleBasenames(
+      paths,
+      'windows-x64-msvc',
+      recipe.artifacts.native_dependency_modules_by_target,
+    ),
+    [],
+  );
+  for (const target of [
+    'linux-x64-gnu',
+    'linux-arm64-gnu',
+    'macos-arm64',
+    'ios-xcframework',
+    'android-arm64-v8a',
+    'android-x86_64',
+  ])
+    assert.deepEqual(
+      nativeDependencyModuleBasenames(
+        paths,
+        target,
+        recipe.artifacts.native_dependency_modules_by_target,
+      ),
+      nativeDependencyModuleBasenames(paths, target),
+    );
+  assert.throws(
+    () =>
+      nativeDependencyModuleBasenames(
+        paths,
+        'wasix-portable',
+        recipe.artifacts.native_dependency_modules_by_target,
+      ),
+    /no desktop/u,
+  );
   assert.throws(() => nativeDependencyModuleBasenames(paths, 'wasix-portable'), /no desktop/u);
   assert.deepEqual(nativeDependencyModuleBasenames([], 'ios-xcframework'), []);
 });

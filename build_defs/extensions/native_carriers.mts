@@ -120,6 +120,7 @@ export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<strin
   const nativeDependencyModules = nativeDependencyModuleBasenames(
     artifact.native_dependency_modules,
     spec.target,
+    artifact.native_dependency_modules_by_target,
   );
   assert.deepEqual(
     actual.dependency_modules,
