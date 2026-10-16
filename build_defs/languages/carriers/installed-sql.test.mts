@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
 import {
   copyFileSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -231,7 +229,6 @@ try {
     >;
     roots: Record<string, string>;
     restrictedLauncher: string | null;
-    restrictedLauncherRuntime: string | null;
   };
   const stores: Record<string, string> = {};
   for (const [identity, row] of Object.entries(server.packages)) {
@@ -280,32 +277,12 @@ try {
     path.join(runtimeDirectory, 'bin', process.platform === 'win32' ? 'postgres.exe' : 'postgres'),
   ];
   if (process.platform === 'win32') {
-    assert(
-      server.restrictedLauncher && server.restrictedLauncherRuntime,
-      'Windows SDK server smoke requires the declared restricted-token fixture',
-    );
-    const carrier = path.join(root, 'server-launcher-carrier');
-    extractPortableArchiveTree(
-      realpathSync(path.join(runfiles, server.restrictedLauncherRuntime)),
-      carrier,
-    );
+    assert(server.restrictedLauncher, 'Windows SDK server smoke requires its restricted launcher');
     const launcherDirectory = path.join(root, 'server-launcher');
     mkdirSync(launcherDirectory);
-    for (const directory of ['bin', 'runtime/bin'])
-      for (const entry of readdirSync(path.join(carrier, directory), { withFileTypes: true })) {
-        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.dll')) continue;
-        const source = path.join(carrier, directory, entry.name);
-        const destination = path.join(launcherDirectory, entry.name);
-        if (existsSync(destination))
-          assert(
-            readFileSync(destination).equals(readFileSync(source)),
-            'frozen launcher DLL aliases differ',
-          );
-        else copyFileSync(source, destination);
-      }
     const launcher = path.join(launcherDirectory, 'restricted server smoke.exe');
     copyFileSync(path.join(runfiles, server.restrictedLauncher), launcher);
-    serverCommand.unshift(launcher, '--restricted-postgres');
+    serverCommand.unshift(launcher);
   }
   const serverResult = Bun.spawnSync(serverCommand, {
     cwd: root,

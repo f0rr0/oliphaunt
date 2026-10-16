@@ -131,12 +131,15 @@ def desktop_members_sql_test(name, runtime = "//src/native/runtime:runtime_paylo
         archives.append(":" + label)
     inventory = "//build_defs/extensions:desktop_all_members_construction_inventory" if include_postgis else "//build_defs/extensions:desktop_members_construction_inventory"
     inputs = [runtime, consumer] + plans + [inventory] + archives
+    launcher = "//build_defs/native:windows_restricted_process"
+    launcher_args = select({"//build_defs/native:windows_x64": ["--restricted-launcher=$(location %s)" % launcher], "//conditions:default": []})
+    launcher_data = select({"//build_defs/native:windows_x64": [launcher], "//conditions:default": []})
     bun_script_test(
         name = name,
         entry_point = "//build_defs/extensions:desktop_sql.test.mts",
-        args = ["--runtime-prefix=" + runtime_prefix] + library_args +
+        args = ["--runtime-prefix=" + runtime_prefix] + library_args + launcher_args +
                (["--published-runtime"] if published_runtime else []) + ["$(location %s)" % label for label in inputs],
-        data = inputs + [
+        data = inputs + launcher_data + [
             "//build_defs/extensions:construction.mts", "//build_defs/extensions:validate_member_payload.mts",
             "//build_defs/native:host-runtime-test-helpers.mts", "//:tools/packaging/portable-archive.mts",
             "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts",

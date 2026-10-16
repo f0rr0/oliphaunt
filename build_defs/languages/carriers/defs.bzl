@@ -267,9 +267,8 @@ def _installed_sql_impl(ctx):
         "packages": server_packages,
         "roots": ctx.attr.server_roots,
         "restrictedLauncher": _runfile(ctx, ctx.executable.restricted_launcher) if ctx.executable.restricted_launcher else None,
-        "restrictedLauncherRuntime": _runfile(ctx, ctx.file.restricted_launcher_runtime) if ctx.file.restricted_launcher_runtime else None,
     }))
-    server_files += ([ctx.executable.restricted_launcher] if ctx.executable.restricted_launcher else []) + ([ctx.file.restricted_launcher_runtime] if ctx.file.restricted_launcher_runtime else [])
+    server_files += [ctx.executable.restricted_launcher] if ctx.executable.restricted_launcher else []
     arguments = [ctx.file.sdk, ctx.file.query, ctx.file.addon, ctx.file.broker, ctx.file.runtime, node, ctx.file._consumer, ctx.file.artifact_crate, rust.cargo, rust.rustc, rust.rust_doc, cc.configuration,
                  ctx.file._contract_entry, ctx.file._contract_assertions, ctx.executable.deno or "", json.encode(ctx.attr.contract_hosts), server]
     files = arguments[:14] + [server] + server_files + ([ctx.executable.deno] if ctx.executable.deno else []) + ctx.files._helpers + rust.all_files.to_list() + cc.files
@@ -294,7 +293,6 @@ _native_installed_sql_test = rule(
         "server_metadata": attr.string_dict(mandatory = True),
         "server_roots": attr.string_dict(mandatory = True),
         "restricted_launcher": attr.label(executable = True, cfg = "target", allow_files = True),
-        "restricted_launcher_runtime": attr.label(allow_single_file = True),
         "_server_contract": attr.label(default = Label("//src/native/sdks/ts:src/__tests__/native-server-smoke.ts"), allow_single_file = True),
         "_contract_entry": attr.label(default = Label("//src/native/sdks/ts:src/__tests__/native-smoke.mts"), allow_single_file = True),
         "_contract_assertions": attr.label(default = Label("//src/native/sdks/ts:src/__tests__/native-direct-contract.mts"), allow_single_file = True),
