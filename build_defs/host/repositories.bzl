@@ -2,6 +2,10 @@
 
 load(":sdk-tree.bzl", "apple_sdk_documentation_directories", "watch_sdk_directory")
 
+def apple_cc_compile_files(files, resource_directory):
+    """C-family actions keep compiler resources, excluding Swift module formats."""
+    return [source for source in files if source.startswith(resource_directory + "/") or not (source.endswith(".swiftmodule") or source.endswith(".swiftinterface") or source.endswith(".swiftdoc"))]
+
 def apple_swift_test_runtime_files(component_files):
     """Keep runtime dylibs and framework resources, excluding compile inputs."""
     runtime = []
@@ -79,6 +83,9 @@ def _host_sdk_impl(ctx):
         # glob exclusions are applied after traversal and cannot stop SDK cycles.
         sources = repr(component_files[component["name"]])
         lines.append("filegroup(name = %s, srcs = %s)" % (repr(component["name"] + "_files"), sources))
+        if ctx.attr.family == "apple" and "compile" in component["roles"]:
+            compile_sources = apple_cc_compile_files(component_files[component["name"]], sdk["resourceDirectory"])
+            lines.append("filegroup(name = %s, srcs = %s)" % (repr(component["name"] + "_compile_files"), repr(compile_sources)))
     if ctx.attr.family == "msvc":
         lines.append("exports_files(%s)" % repr([sdk["tools"]["dumpbin"], sdk["tools"]["rc"]]))
         lines.append('filegroup(name = "runtime_dlls", srcs = %s)' % repr(sdk["runtimeDlls"]))

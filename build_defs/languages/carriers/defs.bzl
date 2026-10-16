@@ -2,6 +2,7 @@
 
 load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_PUBLICATIONS", "NATIVE_HELPER_ARTIFACTS", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("@native_cargo_metadata//:cargo.bzl", "CARGO")
+load("@aspect_rules_js//npm:providers.bzl", "NpmPackageInfo")
 load("@cargo_crates//:defs.bzl", "crate_deps")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "use_cc_toolchain")
 load("@bazel_skylib//lib:paths.bzl", "paths")
@@ -236,6 +237,9 @@ def native_helper_unit_inputs(name):
 def native_helper_test_data():
     return _HELPERS + ["package.mts"]
 
+def _runfile(ctx, file):
+    return file.short_path[3:] if file.short_path.startswith("../") else ctx.workspace_name + "/" + file.short_path
+
 def _installed_sql_impl(ctx):
     node = ctx.toolchains["@rules_nodejs//nodejs:toolchain_type"].nodeinfo.node
     if not node:
@@ -246,9 +250,29 @@ def _installed_sql_impl(ctx):
     if "deno" in ctx.attr.contract_hosts and not ctx.executable.deno:
         fail("Installed native SDK contracts require the declared pinned Deno executable")
     cc = cargo_test_toolchain(ctx)
+    server_packages = {}
+    server_files = [ctx.file._server_contract]
+    for target, identity in ctx.attr.server_packages.items():
+        package = target[NpmPackageInfo]
+        row = json.decode(ctx.attr.server_metadata[identity])
+        if package.package != row["package"] or package.version != row["version"] or package.src.is_directory:
+            fail("Installed server driver differs from its declared npm archive identity")
+        server_packages[identity] = dict(row, archive = _runfile(ctx, package.src))
+        server_files.append(package.src)
+    if sorted(server_packages.keys()) != sorted(ctx.attr.server_metadata.keys()):
+        fail("Installed server driver archive closure differs from its metadata")
+    server = ctx.actions.declare_file(ctx.label.name + ".server.json")
+    ctx.actions.write(server, json.encode({
+        "contract": _runfile(ctx, ctx.file._server_contract),
+        "packages": server_packages,
+        "roots": ctx.attr.server_roots,
+        "restrictedLauncher": _runfile(ctx, ctx.executable.restricted_launcher) if ctx.executable.restricted_launcher else None,
+        "restrictedLauncherRuntime": _runfile(ctx, ctx.file.restricted_launcher_runtime) if ctx.file.restricted_launcher_runtime else None,
+    }))
+    server_files += ([ctx.executable.restricted_launcher] if ctx.executable.restricted_launcher else []) + ([ctx.file.restricted_launcher_runtime] if ctx.file.restricted_launcher_runtime else [])
     arguments = [ctx.file.sdk, ctx.file.query, ctx.file.addon, ctx.file.broker, ctx.file.runtime, node, ctx.file._consumer, ctx.file.artifact_crate, rust.cargo, rust.rustc, rust.rust_doc, cc.configuration,
-                 ctx.file._contract_entry, ctx.file._contract_assertions, ctx.executable.deno or "", json.encode(ctx.attr.contract_hosts)]
-    files = arguments[:14] + ([ctx.executable.deno] if ctx.executable.deno else []) + ctx.files._helpers + rust.all_files.to_list() + cc.files
+                 ctx.file._contract_entry, ctx.file._contract_assertions, ctx.executable.deno or "", json.encode(ctx.attr.contract_hosts), server]
+    files = arguments[:14] + [server] + server_files + ([ctx.executable.deno] if ctx.executable.deno else []) + ctx.files._helpers + rust.all_files.to_list() + cc.files
     return bun_test_entrypoint(ctx, runner = ctx.file._runner, arguments = arguments, files = files, runfiles_argument = True, source_files = [ctx.file._runner] + ctx.files._helpers,
                                additional_runfiles = ctx.attr.deno[DefaultInfo].default_runfiles if ctx.attr.deno else None)
 
@@ -266,6 +290,12 @@ _native_installed_sql_test = rule(
         "artifact_crate": attr.label(mandatory = True, allow_single_file = [".crate"]),
         "deno": attr.label(executable = True, cfg = "exec", allow_files = True),
         "contract_hosts": attr.string_list(default = ["node"]),
+        "server_packages": attr.label_keyed_string_dict(providers = [NpmPackageInfo], mandatory = True),
+        "server_metadata": attr.string_dict(mandatory = True),
+        "server_roots": attr.string_dict(mandatory = True),
+        "restricted_launcher": attr.label(executable = True, cfg = "target", allow_files = True),
+        "restricted_launcher_runtime": attr.label(allow_single_file = True),
+        "_server_contract": attr.label(default = Label("//src/native/sdks/ts:src/__tests__/native-server-smoke.ts"), allow_single_file = True),
         "_contract_entry": attr.label(default = Label("//src/native/sdks/ts:src/__tests__/native-smoke.mts"), allow_single_file = True),
         "_contract_assertions": attr.label(default = Label("//src/native/sdks/ts:src/__tests__/native-direct-contract.mts"), allow_single_file = True),
         "_runner": attr.label(default = Label("//build_defs/languages/carriers:installed-sql.test.mts"), allow_single_file = True),

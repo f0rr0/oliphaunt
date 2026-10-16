@@ -1,4 +1,6 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@javascript_consumer_packages//:roots.bzl", "CONSUMER_PACKAGES", "CONSUMER_TOOLS")
+load("//build_defs/languages/ts:defs.bzl", "npm_dependency_closure")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//build_defs/foundation:bun.bzl", "bun_script_test")
 load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE")
@@ -23,6 +25,9 @@ bun_script_test(
     size = "small",
 )
 
+_PG_ROOT = CONSUMER_TOOLS["@oliphaunt/ts"]["pg"]
+_PG_PACKAGES = npm_dependency_closure(CONSUMER_PACKAGES, [_PG_ROOT])
+
 native_installed_sql_test(
     name = "installed_sql_test",
     sdk = "//src/native/sdks/ts:npm",
@@ -36,6 +41,11 @@ native_installed_sql_test(
         "//build_defs/native:windows_x64": "@node_frozen_native_windows_x64_msvc//:archive",
     }),
     artifact_crate = "//src/native/broker:artifact_crate",
+    server_packages = {"@javascript_consumer_packages//:" + key: key for key in _PG_PACKAGES},
+    server_metadata = {key: json.encode(CONSUMER_PACKAGES[key]) for key in _PG_PACKAGES},
+    server_roots = {"pg": _PG_ROOT},
+    restricted_launcher = select({"//build_defs/native:windows_x64": "//build_defs/extensions:native_frozen_extension_smoke", "//conditions:default": None}),
+    restricted_launcher_runtime = select({"//build_defs/native:windows_x64": "@extension_frozen_native_windows//:archive_windows_x64_msvc", "//conditions:default": None}),
     deno = select({"//build_defs/native:linux_x86_64": "@deno_linux_x64//:deno", "//conditions:default": None}),
     contract_hosts = select({"//build_defs/native:linux_x86_64": ["node", "bun", "deno"], "//conditions:default": ["node"]}),
     target_compatible_with = NATIVE_COMPATIBLE,
