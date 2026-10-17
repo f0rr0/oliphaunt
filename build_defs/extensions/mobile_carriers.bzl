@@ -25,10 +25,11 @@ def _slices_impl(settings, attr):
 _slices = transition(implementation = _slices_impl, inputs = [], outputs = ["//command_line_option:platforms"])
 
 def _host_impl(settings, attr):
-    target = "//build_defs/host:apple_package_macos_arm64" if attr.target == "ios-xcframework" else "//build_defs/native:linux_x86_64_glibc_2_28"
+    # Reused desktop dylibs retain the direct carrier contract, unlike XCFramework slices.
+    target = "//build_defs/host:native_macos_arm64" if attr.target == "ios-xcframework" else "//build_defs/native:linux_x86_64_glibc_2_28"
     return {"//command_line_option:platforms": [str(Label(target))]}
 
-_host = transition(implementation = _host_impl, inputs = [], outputs = ["//command_line_option:platforms"])
+mobile_host_transition = transition(implementation = _host_impl, inputs = [], outputs = ["//command_line_option:platforms"])
 
 _MACOS_PROFILE = "@apple_support//platforms:macos_arm64_platform"
 def _apple_package_impl(settings, attr):
@@ -123,7 +124,7 @@ def _carriers_impl(ctx):
             OutputGroupInfo(github = depset([github]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([specification]), **slice_groups)]
 
 _mobile_carriers = rule(implementation = _carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS, attrs = {
-    "product": attr.string(mandatory = True), "target": attr.string(mandatory = True, values = _TARGETS), "host": attr.label_list(mandatory = True, providers = [ExtensionMemberInfo], cfg = _host),
+    "product": attr.string(mandatory = True), "target": attr.string(mandatory = True, values = _TARGETS), "host": attr.label_list(mandatory = True, providers = [ExtensionMemberInfo], cfg = mobile_host_transition),
     "members": attr.label_list(providers = [MobileExtensionInfo], cfg = _slices), "dependencies": attr.label_list(providers = [MobileComponentInfo], cfg = _slices), "frameworks": attr.label_keyed_string_dict(allow_files = True), "legal": attr.label_list(allow_files = True),
     "_tool": attr.label(default = "//build_defs/extensions:mobile_carriers.mts", allow_single_file = True), "_helpers": attr.label_list(default = mobile_carrier_helpers(), allow_files = True), "_components": attr.label(default = "//src/extensions/catalog:native-components.toml", allow_single_file = True), "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
 })
