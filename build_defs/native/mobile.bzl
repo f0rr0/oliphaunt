@@ -7,7 +7,7 @@ load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
 load("//build_defs/apple:slices.bzl", "apple_slice_filegroup", "apple_slice_groups")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
-load("//build_defs/native:platform_config.bzl", "NATIVE_BUILTIN_PLPGSQL_DEPS", "NATIVE_BUILTIN_SNOWBALL_DEPS", "NATIVE_LINKOPTS")
+load("//build_defs/native:platform_config.bzl", "NATIVE_LINKOPTS")
 load("//build_defs/native/carriers:defs.bzl", "native_carrier_legal_inputs")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/release:supplier.bzl", "shipping_suppliers")
@@ -144,7 +144,7 @@ def native_apple_runtime_targets(qualification):
         name = "apple_xcframework_raw",
         bundle_name = "liboliphaunt",
         bundle_id = "dev.oliphaunt.liboliphaunt",
-        deps = [":wrapper", "@postgres//:backend_embedded", "@postgres//:main_embedded"] + NATIVE_BUILTIN_PLPGSQL_DEPS + NATIVE_BUILTIN_SNOWBALL_DEPS,
+        deps = [":wrapper", "@postgres//:backend_embedded", "@postgres//:main_embedded"],
         linkopts = NATIVE_LINKOPTS,
         public_hdrs = native.glob(["include/*.h"]),
         umbrella_header = "include/oliphaunt.h",
@@ -211,8 +211,6 @@ def native_ios_runtime_targets():
             ":wrapper",
             "@postgres//:backend_embedded",
             "@postgres//:main_embedded",
-            "@postgres//:plpgsql_embedded",
-            "@postgres//:snowball_builtin",
         ],
         target_compatible_with = compatible,
     )

@@ -271,6 +271,7 @@ test_suite(
         "//build_defs/native:icu_data_object_test",
         "//build_defs/native:ios_device_profile_test",
         "//build_defs/native:ios_simulator_profile_test",
+        "//build_defs/native:runtime_builtin_link_test",
         "//build_defs/wasix:package_test",
         "//build_defs/wasix:runtime_npm_test",
         "//build_defs/wasix:runtime_cargo_test",

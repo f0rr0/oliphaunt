@@ -48,13 +48,15 @@ cc_library(
     local_defines = NATIVE_WRAPPER_DEFINES,
     copts = NATIVE_WRAPPER_COPTS,
     includes = ["include", "src"],
+    # Resolve builtin libraries in the same slice as their wrapper defines.
+    implementation_deps = NATIVE_BUILTIN_PLPGSQL_DEPS + NATIVE_BUILTIN_SNOWBALL_DEPS,
     alwayslink = True,
     target_compatible_with = NATIVE_C_COMPATIBLE,
 )
 
 cc_binary(
     name = "liboliphaunt.so",
-    deps = [":wrapper", "@postgres//:backend_embedded", "@postgres//:main_embedded"] + NATIVE_BUILTIN_PLPGSQL_DEPS + NATIVE_BUILTIN_SNOWBALL_DEPS,
+    deps = [":wrapper", "@postgres//:backend_embedded", "@postgres//:main_embedded"],
     linkshared = True,
     linkopts = NATIVE_RUNTIME_LINKOPTS + NATIVE_LINKOPTS + NATIVE_RELEASE_LINKOPTS + select({
         "//build_defs/native:android": ["-Wl,--exclude-libs,libc++_static.a:libc++abi.a:libunwind.a", "-Wl,--version-script,$(location :bin/android-cxx-runtime.map)"],
@@ -67,7 +69,7 @@ cc_binary(
 
 cc_binary(
     name = "liboliphaunt.dylib",
-    deps = [":wrapper", "@postgres//:backend_embedded", "@postgres//:main_embedded"] + NATIVE_BUILTIN_PLPGSQL_DEPS,
+    deps = [":wrapper", "@postgres//:backend_embedded", "@postgres//:main_embedded"],
     linkshared = True,
     linkopts = NATIVE_RUNTIME_LINKOPTS + NATIVE_LINKOPTS,
     target_compatible_with = NATIVE_MACOS_COMPATIBLE,
@@ -82,7 +84,7 @@ postgres_windows_exports(
 
 cc_binary(
     name = "oliphaunt.dll",
-    deps = [":wrapper", "@postgres//:backend_embedded", "@postgres//:main_embedded"] + NATIVE_BUILTIN_PLPGSQL_DEPS,
+    deps = [":wrapper", "@postgres//:backend_embedded", "@postgres//:main_embedded"],
     linkshared = True,
     win_def_file = ":runtime_windows_exports",
     features = ["no_windows_export_all_symbols"],
@@ -95,6 +97,8 @@ alias(name = "runtime_shared", actual = select({"//build_defs/native:macos_arm64
 native_android_runtime_targets()
 native_ios_runtime_targets()
 native_apple_runtime_targets(qualification = [
+    "//build_defs/native:ios_device_builtin_link_test",
+    "//build_defs/native:ios_simulator_builtin_link_test",
     ":apple_final_contract_test",
     "//build_defs/native/apple:framework_contract_test",
     ":apple_static_carrier_consumer_test",
