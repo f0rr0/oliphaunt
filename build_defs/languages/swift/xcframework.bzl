@@ -5,6 +5,7 @@ load("@rules_apple//apple:apple.bzl", "apple_static_xcframework")
 load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_PUBLICATIONS", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("@native_cargo_metadata//:cargo.bzl", "CARGO")
 load("@rules_rust//rust:defs.bzl", "rust_common")
+load("//build_defs/apple:slices.bzl", "apple_slice_groups")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "current_rust_shipping_supplier", "held_rust_shipping_supplier", "merge_shipping_suppliers")
@@ -144,7 +145,7 @@ def _archive_impl(ctx):
     expected = [swift_bindings_compile_group(owner, slot) for owner in SWIFT_BINDINGS_COMPILE_OWNERS for slot in SWIFT_BINDINGS_COMPILE_SLOTS]
     if sorted(compiled.files) != sorted(expected) or sorted(compiled.upstream) != sorted(expected):
         fail("Swift XCFramework must retain its complete original Rust compiler File inventory")
-    return [archive[DefaultInfo], compiled, merge_shipping_suppliers([compiled.current, compiled.registry]), OutputGroupInfo(**{name: depset([file]) for name, file in compiled.files.items()})]
+    return [archive[DefaultInfo], compiled, merge_shipping_suppliers([compiled.current, compiled.registry]), OutputGroupInfo(**(apple_slice_groups([archive]) | {name: depset([file]) for name, file in compiled.files.items()}))]
 
 _product_archive = rule(
     implementation = _archive_impl,
@@ -192,7 +193,7 @@ def _bindings_envelope_impl(ctx):
         mnemonic = "OliphauntSwiftBindingsEnvelope",
         use_default_shell_env = False,
     )
-    groups = {"archive": depset([archive]), "checksums": depset([checksums])}
+    groups = apple_slice_groups([ctx.attr.intermediate]) | {"archive": depset([archive]), "checksums": depset([checksums])}
     for owner in SWIFT_BINDINGS_COMPILE_OWNERS:
         for slot in SWIFT_BINDINGS_COMPILE_SLOTS:
             group = swift_bindings_compile_group(owner, slot)

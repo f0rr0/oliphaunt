@@ -5,6 +5,7 @@ load("@oliphaunt_toolchain_metadata//:apple-platforms.bzl", "APPLE_DEPLOYMENT_TA
 load("@rules_apple//apple:apple.bzl", "apple_xcframework")
 load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
+load("//build_defs/apple:slices.bzl", "apple_slice_filegroup", "apple_slice_groups")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
 load("//build_defs/native:platform_config.bzl", "NATIVE_BUILTIN_PLPGSQL_DEPS", "NATIVE_BUILTIN_SNOWBALL_DEPS", "NATIVE_LINKOPTS")
 load("//build_defs/native/carriers:defs.bzl", "native_carrier_legal_inputs")
@@ -46,7 +47,8 @@ def _infoplist_impl(ctx):
 _infoplist = rule(implementation = _infoplist_impl)
 
 def _archive_impl(ctx):
-    return [ctx.attr.archive[0][DefaultInfo]]
+    archive = ctx.attr.archive[0]
+    return [archive[DefaultInfo], OutputGroupInfo(**apple_slice_groups([archive]))]
 
 _framework_archive = rule(implementation = _archive_impl, attrs = {
     "archive": attr.label(mandatory = True, cfg = _package_platform),
@@ -105,7 +107,7 @@ def _release_assets_impl(ctx):
     bun_action(ctx, ctx.attr._tool, arguments = [specification.path],
                inputs = inputs + [specification], tools = [ctx.attr._formatter[DefaultInfo].files_to_run],
                outputs = outputs.values() + receipt_outputs.values(), execution_requirements = {"no-remote": "1"}, mnemonic = "NativeAppleRuntimeEnvelope")
-    groups = {name: depset([file]) for name, file in outputs.items()}
+    groups = apple_slice_groups([ctx.attr.intermediate]) | {name: depset([file]) for name, file in outputs.items()}
     for name, target in [("macos_abi", "macos-arm64"), ("ios_device_abi", "ios-arm64"), ("ios_simulator_abi", "ios-arm64-simulator")]:
         groups[name] = depset([receipt_outputs[target]])
     return [DefaultInfo(files = depset(outputs.values())), OutputGroupInfo(**groups)]
@@ -176,12 +178,12 @@ def native_apple_runtime_targets(qualification):
     shipping_suppliers(name = "apple_suppliers", inputs = [])
     packages = []
     for name, row in selected.items():
-        native.filegroup(name = "apple_" + name, srcs = [":apple_release_assets"], output_group = name, target_compatible_with = _MAC)
+        apple_slice_filegroup(name = "apple_" + name, src = ":apple_release_assets", output_group = name, target_compatible_with = _MAC)
         shipping_package(name = "apple_" + name + "_shipping", owner = "@oliphaunt_metadata//:product_liboliphaunt-native", artifacts = [":apple_" + name],
                          ecosystem = "github", package_name = row["asset"].replace("{version}", version), configuration = row["target"], role = "github-release-asset", suppliers = ":apple_suppliers")
         packages.append(":apple_" + name + "_shipping")
     for name in ["ios_device_abi", "ios_simulator_abi", "macos_abi", "macos_resources", "checksums", "ios_manifest"]:
-        native.filegroup(name = "apple_" + name, srcs = [":apple_release_assets"], output_group = name, target_compatible_with = _MAC)
+        apple_slice_filegroup(name = "apple_" + name, src = ":apple_release_assets", output_group = name, target_compatible_with = _MAC)
     shipping_package(name = "apple_ios_manifest_shipping", owner = "@oliphaunt_metadata//:product_liboliphaunt-native", artifacts = [":apple_ios_manifest"],
                      ecosystem = "internal", package_name = "ios.json", configuration = "ios-xcframework", role = "apple-base-ios-manifest-input", suppliers = ":apple_suppliers")
     packages.append(":apple_ios_manifest_shipping")

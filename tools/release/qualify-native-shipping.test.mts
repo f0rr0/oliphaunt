@@ -442,6 +442,11 @@ if(args[0]==='test') {
   writeFileSync(args.find((arg:string)=>arg.startsWith('--build_event_json_file=')).slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
   if(state.mode!=='dump-missing') writeFileSync(args.find((arg:string)=>arg.startsWith('--output_file=')).slice(14),JSON.stringify(state.aquery)+'\\n');
 } else if(args[0]==='build') {
+  if(args.some((arg:string)=>arg.startsWith('--output_groups=apple_slice_'))) {
+    if(state.mode==='slice-failure') process.exit(1);
+    if(state.mode==='slice-race') writeFileSync('src/input.mts','changed during slice build');
+    process.exit(0);
+  }
   if(args.at(-1)!=='--nobuild') throw new Error('failure diagnosis must not construct targets');
   if(state.mode==='incompatible-owner') {
     console.error('Target //fixture:shipping_export is incompatible because dependency //fixture:host_library is incompatible');
@@ -467,7 +472,7 @@ else {
   } else if(expression.startsWith('set(')) {
     if(state.mode==='incompatible-policy') process.exit(1);
     console.log(JSON.stringify(state.qualification));
-  } else console.log(JSON.stringify({roots:['@@//fixture:shipping'],qualification:(state.qualification.results??[]).map((result:any)=>result.target.rule.name)}));
+  } else console.log(JSON.stringify({roots:['@@//fixture:shipping'],qualification:(state.qualification.results??[]).map((result:any)=>result.target.rule.name),sliceGroups:state.sliceGroups??[]}));
 }
 `,
   );
@@ -972,6 +977,63 @@ test('scoped action capture binds full requested scope, output, source and confi
     f.cleanup();
   }
 });
+
+test('SDK batching preserves one final qualification and uses the same roots, base and configuration', async () => {
+  for (const sourceOnly of [false, true]) {
+    const f = fixture();
+    try {
+      f.request.shipping = { export: '//fixture:shipping_export' };
+      f.request.startup = ['--output_base=/same-bazel-server'];
+      if (sourceOnly)
+        f.request.ci = {
+          id: 'portable/macos/apple',
+          job: 'portable/macos',
+          mode: 'source',
+          requires: [],
+        };
+      f.update((state) => {
+        state.sliceGroups = ['apple_slice_macos-arm64', 'apple_slice_ios-arm64'];
+      });
+      const output = await qualifyNativeShipping(f.request, f.workspace);
+      expect(existsSync(output)).toBe(true);
+      const calls = f.calls().map((call) => call.slice(1));
+      const batches = calls.filter((call) => call[0] === 'build');
+      expect(batches).toHaveLength(2);
+      expect(batches.map((call) => call.find((arg) => arg.startsWith('--output_groups=')))).toEqual(
+        ['--output_groups=apple_slice_ios-arm64', '--output_groups=apple_slice_macos-arm64'],
+      );
+      for (const call of batches) {
+        expect(call).toContain('--run_validations=false');
+        expect(call.filter((arg) => arg.startsWith('//'))).toEqual(['//fixture:shipping']);
+        for (const flag of f.request.configuration) expect(call).toContain(flag);
+      }
+      expect(f.calls().every((call) => call[0] === '--output_base=/same-bazel-server')).toBe(true);
+      expect(calls.filter((call) => call[0] === 'test')).toHaveLength(1);
+      expect(calls.find((call) => call[0] === 'test')).not.toContain('--run_validations=false');
+      expect(calls.findIndex((call) => call[0] === 'test')).toBeGreaterThan(
+        calls.lastIndexOf(batches[1]),
+      );
+      expect(calls.filter((call) => call[0] === 'aquery')).toHaveLength(sourceOnly ? 0 : 1);
+    } finally {
+      f.cleanup();
+    }
+  }
+});
+
+for (const failure of ['slice-failure', 'slice-race'])
+  test(`SDK batching never qualifies after ${failure}`, async () => {
+    const f = fixture(failure);
+    try {
+      f.request.shipping = { export: '//fixture:shipping_export' };
+      f.update((state) => {
+        state.sliceGroups = ['apple_slice_macos-arm64'];
+      });
+      await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow();
+      expect(f.calls().some((call) => ['test', 'aquery'].includes(call[0]))).toBe(false);
+    } finally {
+      f.cleanup();
+    }
+  });
 
 test('ordinary shipping checks run once and keep existing policy discovery without publication export', async () => {
   for (const owner of [false, true]) {

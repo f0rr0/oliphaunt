@@ -1,6 +1,7 @@
 """The final SwiftPM source carrier, using its declared frozen native pin."""
 
 load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS")
+load("//build_defs/apple:slices.bzl", "apple_slice_filegroup", "apple_slice_groups")
 load("//build_defs/extensions:declared_final_inputs.bzl", "native_declared_apple_base")
 load("//build_defs/extensions:final_leaf.bzl", "NativeAppleBaseInfo")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
@@ -65,6 +66,7 @@ def _swift_source_impl(ctx):
         extension_generator = depset([generator_files[1]]),
         carrier_resolver = depset([generator_files[2]]),
         owner_catalog = depset([generator_files[3]]),
+        **apple_slice_groups([ctx.attr.bindings_archive, ctx.attr.native_base])
     )]
 
 _swift_source = rule(
@@ -126,7 +128,7 @@ def swift_source_package(name, sources, bindings_archive, bindings_release_asset
         ("owner_catalog", "extension-owner-catalog.json"),
     ]:
         suffix = artifact_name.replace(".", "_")
-        native.filegroup(name = "release_input_" + suffix, srcs = [":" + name], output_group = group)
+        apple_slice_filegroup(name = "release_input_" + suffix, src = ":" + name, output_group = group)
         package = "shipping_" + suffix
         shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_input_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = "portable", role = "release-input", suppliers = ":" + source_suppliers)
         packages.append(":" + package)
@@ -134,7 +136,7 @@ def swift_source_package(name, sources, bindings_archive, bindings_release_asset
         ("archive", "bindings", "oliphaunt-swift-" + descriptor["version"] + "-bindings.xcframework.zip", "apple-xcframework"),
         ("checksums", "checksums", "oliphaunt-swift-" + descriptor["version"] + "-release-assets.sha256", "portable"),
     ]:
-        native.filegroup(name = "release_asset_" + suffix, srcs = [bindings_release_assets], output_group = group)
+        apple_slice_filegroup(name = "release_asset_" + suffix, src = bindings_release_assets, output_group = group)
         package = "shipping_" + suffix
         shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":release_asset_" + suffix], ecosystem = "github", package_name = artifact_name, configuration = configuration, role = "github-release-asset", suppliers = bindings_release_assets)
         packages.append(":" + package)

@@ -1,5 +1,6 @@
 """Construction outputs and declared ownership, not publication admission evidence."""
 
+load("//build_defs/apple:slices.bzl", "apple_slice_groups")
 load(":identity.bzl", "ReleaseIdentityInfo")
 load(":supplier.bzl", "ShippingSupplierInfo")
 
@@ -48,7 +49,7 @@ def _shipping_package_impl(ctx):
     return [
         DefaultInfo(files = files),
         info,
-        OutputGroupInfo(shipping_manifest = depset([manifest]), observation_inputs = observation_inputs),
+        OutputGroupInfo(shipping_manifest = depset([manifest]), observation_inputs = observation_inputs, **apple_slice_groups(ctx.attr.artifacts)),
     ]
 
 shipping_package = rule(
@@ -116,7 +117,7 @@ def _shipping_export_impl(ctx):
     }) + "\n")
     return [
         DefaultInfo(files = depset([output])),
-        OutputGroupInfo(shipping_policy = depset([output])),
+        OutputGroupInfo(shipping_policy = depset([output]), **apple_slice_groups(targets)),
         ShippingExportInfo(packages = targets, qualification = tests.values(), policies = policies),
     ]
 

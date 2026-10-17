@@ -1,4 +1,5 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/apple:slices.bzl", "apple_slice_filegroup")
 load("//build_defs/languages/swift:bindings.bzl", "uniffi_swift", "uniffi_output")
 load("//build_defs/languages/swift:xcframework.bzl", "bindings_xcframework", "bindings_envelope")
 load("//build_defs/languages/swift:source.bzl", "swift_source_package")
@@ -60,7 +61,7 @@ bindings_xcframework(
     header = ":generated_ffi_header",
 )
 bindings_envelope(name = "bindings_release_assets", intermediate = ":bindings_xcframework_intermediate")
-filegroup(name = "bindings_archive", srcs = [":bindings_release_assets"], output_group = "archive")
+apple_slice_filegroup(name = "bindings_archive", src = ":bindings_release_assets", output_group = "archive")
 
 swift_source_package(
     name = "source_package",

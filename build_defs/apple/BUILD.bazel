@@ -1,5 +1,6 @@
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":requirement-selection-test.bzl", "requirement_selection_test")
+load(":slices-test.bzl", "apple_slices_test")
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 
 package(default_visibility = ["//visibility:public"])
@@ -40,4 +41,5 @@ filegroup(
 source_quality_files()
 
 requirement_selection_test(name = "requirement_selection_test")
+apple_slices_test(name = "slices_test")
 bun_test(name = "final_libraries_test", entry_point = "final-libraries.test.mts", data = ["final-libraries.mts", "//build_defs/native/apple:static-carrier-consumer.mts", "//build_defs/native/apple:framework_helpers", "//src/native/sdks/swift:generator_sources", "//:tools/packaging/testdata/zip-fixture.mts"], size = "small")

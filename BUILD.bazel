@@ -251,6 +251,7 @@ filegroup(
 test_suite(
     name = "portable_tests",
     tests = [
+        "//build_defs/apple:slices_test",
         "//build_defs/resources:seed_construction_test",
         "//build_defs/foundation:bun_toolchain_test",
         "//build_defs/foundation:native_entry_test",

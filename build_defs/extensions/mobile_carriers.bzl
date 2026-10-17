@@ -3,6 +3,7 @@
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_GITHUB_ARTIFACTS", "EXTENSION_RELEASE_METADATA", "NATIVE_COMPONENT_SOURCES", "NATIVE_MOBILE_COMPONENT_CLOSURES", "PUBLICATION_CARRIERS")
 load("@oliphaunt_toolchain_metadata//:apple-platforms.bzl", "APPLE_DEPLOYMENT_TARGETS")
 load("@rules_apple//apple:apple.bzl", "apple_static_xcframework")
+load("//build_defs/apple:slices.bzl", "apple_slice_filegroup", "apple_slice_groups")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load(":construction.bzl", "desktop_member_inventory")
@@ -36,7 +37,8 @@ def _apple_package_impl(settings, attr):
 _apple_package = transition(implementation = _apple_package_impl, inputs = [], outputs = [_MACOS_PROFILE])
 
 def _framework_impl(ctx):
-    return [ctx.attr.archive[0][DefaultInfo]]
+    archive = ctx.attr.archive[0]
+    return [archive[DefaultInfo], OutputGroupInfo(**apple_slice_groups([archive]))]
 
 _framework = rule(implementation = _framework_impl, attrs = {"archive": attr.label(mandatory = True, cfg = _apple_package), "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist")})
 
@@ -58,12 +60,15 @@ def _carriers_impl(ctx):
     statics = {target: {member[MobileExtensionInfo].sql_name: member[MobileExtensionInfo] for member in members} for target, members in ctx.split_attr.members.items()}
     dependencies = {target: {item[MobileComponentInfo].identity: item[MobileComponentInfo] for item in rows} for target, rows in ctx.split_attr.dependencies.items()}
     inputs = [ctx.file._components] + ctx.files.legal
+    slice_files = {target: [] for target in (statics | dependencies)} if ctx.attr.target == "ios-xcframework" else {}
     tools = []
     for target, rows in statics.items():
         if sorted(rows.keys()) != compiled or len(rows) != len(ctx.split_attr.members[target]):
             fail("mobile static slice differs from canonical compiled member cohort")
         for member in rows.values():
             inputs += [member.archive, member.registration]
+            if target in slice_files:
+                slice_files[target].append(member.archive)
             tools.append(member.tools)
     dependency_ids = sorted({identity: True for name in expected for identity in NATIVE_MOBILE_COMPONENT_CLOSURES[name][ctx.attr.target]["linkUnits"]}.keys())
     for target, rows in dependencies.items():
@@ -71,6 +76,8 @@ def _carriers_impl(ctx):
             fail("mobile component slice differs from canonical member closure")
         for component in rows.values():
             inputs.append(component.archive)
+            if target in slice_files:
+                slice_files[target].append(component.archive)
     frameworks = {}
     for target, identity in ctx.attr.frameworks.items():
         files = target[DefaultInfo].files.to_list()
@@ -87,6 +94,8 @@ def _carriers_impl(ctx):
         if producer.owner != metadata["owner"] or producer.configuration != host_target:
             fail("mobile host member differs from its actual owner/configuration")
         inputs += [producer.archive, producer.inventory]
+        if ctx.attr.target == "ios-xcframework":
+            slice_files.setdefault("macos-arm64", []).append(producer.archive)
         member.update({"target": ctx.attr.target, "hostArchive": producer.archive.path, "components": ctx.file._components.path,
                        "catalogSqlNames": metadata["catalogSqlNames"], "allProfiles": metadata["allProfiles"], "dependencySources": NATIVE_COMPONENT_SOURCES,
                        "staticArchives": [_static_row(rows[name]) for rows in statics.values()] if name in compiled else [],
@@ -105,9 +114,13 @@ def _carriers_impl(ctx):
     ctx.actions.write(specification, json.encode(spec))
     bun_file_action(ctx, ctx.file._tool, arguments = [specification.path], inputs = depset(inputs + [specification], transitive = tools), source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal,
                     outputs = [github, frozen, manifest], execution_requirements = {"no-remote": "1"} if ctx.attr.target == "ios-xcframework" else {}, mnemonic = "MobileExtensionFinalEnvelopes")
+    slice_groups = apple_slice_groups(ctx.attr.frameworks.keys())
+    for target, files in slice_files.items():
+        name = "apple_slice_" + {"macos-arm64": "macos-arm64", "ios-device": "ios-arm64", "ios-simulator": "ios-arm64-simulator"}[target]
+        slice_groups[name] = depset(files, transitive = [slice_groups[name]] if name in slice_groups else [])
     return [DefaultInfo(files = depset([github, frozen, manifest])), ExtensionFinalLeafInfo(product = metadata["product"], owner = metadata["owner"], version = metadata["version"], family = "native", target = ctx.attr.target, metadata = spec,
             github = [github], npm = [], cargo = [], manifest = manifest, frozen = frozen, spec = specification, validation = None, receipt = None, origin = None),
-            OutputGroupInfo(github = depset([github]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([specification]))]
+            OutputGroupInfo(github = depset([github]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([specification]), **slice_groups)]
 
 _mobile_carriers = rule(implementation = _carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS, attrs = {
     "product": attr.string(mandatory = True), "target": attr.string(mandatory = True, values = _TARGETS), "host": attr.label_list(mandatory = True, providers = [ExtensionMemberInfo], cfg = _host),
@@ -126,7 +139,7 @@ def mobile_native_carriers(name, product, target, frameworks = {}):
     owner = extension_identity(names[0])
     packages = []
     github_files = name + "_github_files"
-    native.filegroup(name = github_files, srcs = [":" + name], output_group = "github", target_compatible_with = compatible)
+    apple_slice_filegroup(name = github_files, src = ":" + name, output_group = "github", target_compatible_with = compatible)
     github_rows = [row for row in EXTENSION_GITHUB_ARTIFACTS if row["artifactProduct"] == product and row["product"] == metadata["owner"] and row["version"] == metadata["version"] and row["target"] == target and row["role"] == "github-release-asset"]
     if not github_rows or len({row["name"]: True for row in github_rows}) != len(github_rows):
         fail("mobile shipping requires exact unique canonical GitHub asset identities")
@@ -137,7 +150,7 @@ def mobile_native_carriers(name, product, target, frameworks = {}):
         packages.append(":" + package)
     for group in ["manifest", "frozen"]:
         files = name + "_" + group + "_files"
-        native.filegroup(name = files, srcs = [":" + name], output_group = group, target_compatible_with = compatible)
+        apple_slice_filegroup(name = files, src = ":" + name, output_group = group, target_compatible_with = compatible)
         package = name + "_" + group + "_shipping"
         shipping_package(name = package, owner = owner, artifacts = [":" + files], ecosystem = "internal", package_name = product + "-" + target + "-" + group,
                          configuration = target, role = "extension-release-" + group + "-input", target_compatible_with = compatible)

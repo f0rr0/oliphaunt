@@ -2,6 +2,7 @@
 
 load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_OWNERS", "EXTENSION_FINAL_INPUTS", "COMPLETED_SUPPLIER_ARTIFACTS", "NATIVE_APPLE_BASE_INPUT", "NATIVE_RUNTIME_ARTIFACTS", "NATIVE_SWIFT_SOURCE_INPUT", "PREPARED_NATIVE_SELECTED_PRODUCTS", "PRODUCTS")
 load("//build_defs/apple:requirement-selection.bzl", "native_apple_requirement_inputs")
+load("//build_defs/apple:slices.bzl", "apple_slice_groups")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
 load(":final_leaf.bzl", "ExtensionFinalLeafInfo", "NativeAppleBaseInfo")
@@ -122,7 +123,7 @@ def _apple_base_impl(ctx):
     return [DefaultInfo(files = depset([output])),
             NativeAppleBaseInfo(version = ctx.attr.version, file = output, archives = archive_inputs, archive_files = [file for file in files if file != ctx.file.input]),
             ShippingSupplierInfo(suppliers = supplier_rows, files = depset(files)),
-            OutputGroupInfo(framework = depset([file for file in files if file.path == archive_inputs.get("base-xcframework", {}).get("path")]), resources = depset([file for file in files if file.path == archive_inputs.get("runtime-resources", {}).get("path")]))]
+            OutputGroupInfo(framework = depset([file for file in files if file.path == archive_inputs.get("base-xcframework", {}).get("path")]), resources = depset([file for file in files if file.path == archive_inputs.get("runtime-resources", {}).get("path")]), **apple_slice_groups(ctx.attr.archives.keys()))]
 
 _apple_base_import = rule(implementation = _apple_base_impl, toolchains = BUN_SOURCE_TOOLCHAINS, attrs = {
     "record": attr.string(mandatory = True), "version": attr.string(mandatory = True), "input": attr.label(allow_single_file = True), "archives": attr.label_keyed_string_dict(allow_files = True), "archive_records": attr.string(mandatory = True), "local_current": attr.bool(), "error": attr.string(),

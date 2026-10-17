@@ -16,7 +16,7 @@ bazel_dep(name = "tar.bzl", version = "0.10.4")
 bazel_dep(name = "hermetic_cc_toolchain", version = "4.3.0")
 bazel_dep(name = "rules_apple", version = "5.2.0")
 # Keep maintained resource/framework/signing implementations; declare licensed
-# app-tool bytes in their ordinary tool runfiles.
+# app-tool bytes in their ordinary tool runfiles and expose selected slice Files.
 single_version_override(
     module_name = "rules_apple",
     version = "5.2.0",
