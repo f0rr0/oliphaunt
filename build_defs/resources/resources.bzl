@@ -335,13 +335,13 @@ def _rows(names):
         fail("resource carriers must exactly match the canonical publication catalog")
     return rows
 
-def _shipping(name, rows, suppliers = None, observation_inputs = []):
+def _shipping(name, rows, suppliers = None, observation_inputs = [], **kwargs):
     packages = []
     for row in rows:
         label = name + "_" + row["ecosystem"]
-        native.filegroup(name = label + "_files", srcs = [":" + name], output_group = row["ecosystem"])
+        native.filegroup(name = label + "_files", srcs = [":" + name], output_group = row["ecosystem"], **kwargs)
         shipping_package(name = label, owner = "@oliphaunt_metadata//:product_database-resources", artifacts = [":" + label + "_files"],
-                         ecosystem = row["ecosystem"], package_name = row["name"], configuration = row["target"] or "portable", role = row["role"], suppliers = suppliers, observation_inputs = observation_inputs)
+                         ecosystem = row["ecosystem"], package_name = row["name"], configuration = row["target"] or "portable", role = row["role"], suppliers = suppliers, observation_inputs = observation_inputs, **kwargs)
         packages.append(":" + label)
     return packages
 
@@ -364,16 +364,16 @@ def wasix_current_seed_assets(name, profile = "standard"):
     for group in ["archive", "manifest"]:
         native.filegroup(name = name + "_" + group, srcs = [":" + name], output_group = group, testonly = True)
 
-def seed_envelopes(prefix, family, target, profile, seed, icu = None, compatible = [], consumer_runtime = None, suppliers = None):
+def seed_envelopes(prefix, family, target, profile, seed, icu = None, compatible = [], consumer_runtime = None, suppliers = None, **kwargs):
     """Use the one canonical row expansion and existing writers for one seed."""
     archive, manifest = _seed_artifact_rows(family, target, profile)
     seed_assets(name = prefix + "_assets", seed = seed, icu = icu, consumer_runtime = consumer_runtime,
-                archive = archive["asset"].replace("{version}", _VERSION), manifest = manifest["asset"].replace("{version}", _VERSION), target_compatible_with = compatible)
+                archive = archive["asset"].replace("{version}", _VERSION), manifest = manifest["asset"].replace("{version}", _VERSION), target_compatible_with = compatible, **kwargs)
     packages = []
     for group, row in [("archive", archive), ("manifest", manifest)]:
-        native.filegroup(name = prefix + "_" + group, srcs = [":" + prefix + "_assets"], output_group = group)
+        native.filegroup(name = prefix + "_" + group, srcs = [":" + prefix + "_assets"], output_group = group, **kwargs)
         shipping_package(name = prefix + "_github_" + group, owner = "@oliphaunt_metadata//:product_database-resources", artifacts = [":" + prefix + "_" + group],
-                         ecosystem = "github", package_name = row["asset"].replace("{version}", _VERSION), configuration = row["target"], role = "github-release-asset", suppliers = suppliers, observation_inputs = [seed])
+                         ecosystem = "github", package_name = row["asset"].replace("{version}", _VERSION), configuration = row["target"], role = "github-release-asset", suppliers = suppliers, observation_inputs = [seed], **kwargs)
         packages.append(":" + prefix + "_github_" + group)
     identities = [row for row in DATABASE_SEED_CARRIERS if row["family"] == family and row["target"] == target and row["profile"] == profile]
     if len(identities) != 1:
@@ -386,8 +386,8 @@ def seed_envelopes(prefix, family, target, profile, seed, icu = None, compatible
             fail("Android seed requires exactly its declared canonical Maven carrier")
         names.append(maven[0]["name"])
     carriers = _rows(names)
-    resource_carriers(name = prefix + "_carriers", kind = "seed", family = family, target = target, profile = profile, assets = [":" + prefix + "_assets"] + ([icu] if target == "android-datum64" and profile == "icu" else []), carriers = json.encode(carriers), target_compatible_with = compatible)
-    packages.extend(_shipping(prefix + "_carriers", carriers, suppliers = suppliers, observation_inputs = [seed]))
+    resource_carriers(name = prefix + "_carriers", kind = "seed", family = family, target = target, profile = profile, assets = [":" + prefix + "_assets"] + ([icu] if target in ["android-datum64", "ios-datum64"] and profile == "icu" else []), carriers = json.encode(carriers), target_compatible_with = compatible, **kwargs)
+    packages.extend(_shipping(prefix + "_carriers", carriers, suppliers = suppliers, observation_inputs = [seed], **kwargs))
     return packages
 
 def native_seed_envelopes(prefix, target, profile, seed, icu = None, compatible = []):

@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -17,7 +18,6 @@ import {
 } from '../../src/database-resources/contracts/icu-data.mts';
 import { NATIVE_PGDATA_DIRECTORIES } from '../../src/database-resources/contracts/native-manifest.mts';
 import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
-import { packageSeedCarriers } from '../../src/database-resources/seeds/package-carriers.mts';
 import {
   packageMobileSeedCarriers,
   stageMobileSeed,
@@ -30,6 +30,7 @@ import {
   releaseZstdCompressSync,
 } from '../../tools/packaging/portable-archive.mts';
 import { tarArchive } from '../../tools/packaging/testdata/tar-fixture.mts';
+import { releaseNoticeRows } from '../../tools/packaging/release-notices.mts';
 import {
   assertMatchingArchiveTrees,
   verifyMobileResourceFiles,
@@ -130,6 +131,14 @@ test('the final mobile verifier consumes conventional Android and iOS package wr
       catalogVersion: '202506291',
       pgControlVersion: '1800',
     };
+    const sourceRoot = path.resolve(import.meta.dir, '../..');
+    const notices = Object.fromEntries(
+      releaseNoticeRows({ profile: 'native-runtime-resources' }).flatMap((row) =>
+        [row.source, row.sourceManifest]
+          .filter((file): file is string => typeof file === 'string')
+          .map((file) => [path.relative(sourceRoot, file), file]),
+      ),
+    );
     for (const target of ['android-datum64', 'ios-datum64'] as const) {
       const seeds = [];
       const producer = { postgresSha256: 'a'.repeat(64), initdbSha256: 'b'.repeat(64) };
@@ -189,25 +198,64 @@ test('the final mobile verifier consumes conventional Android and iOS package wr
         );
         writeSeedConstructionReceipt(construction, intent, frozen, path.join(frozenRoot, 'files'));
         constructions.push({ construction, intent, frozen, frozenRoot, archive, manifest });
-        const [carrier] = packageSeedCarriers(
-          ['--family', 'native', '--target', target, '--profile', profile],
-          {
-            version,
-            contract,
-            assetDir: assets,
-            outputDir: path.join(root, `${target}-${profile}-packages`),
-            sourceDir: path.join(root, `${target}-${profile}-sources`),
-          },
+        const carrierIdentity = seedCarrierIdentities().find(
+          (row) => row.family === 'native' && row.target === target && row.profile === profile,
         );
-        for (const [name, entry] of readPortableArchiveEntries(carrier.crate))
+        if (!carrierIdentity) throw new Error('missing canonical seed carrier');
+        const npmOutput = path.join(root, `${target}-${profile}.tgz`);
+        const cargoOutput = path.join(root, `${target}-${profile}.crate`);
+        const specification = path.join(root, `${target}-${profile}-inputs.json`);
+        const invoke = (inputs: string[]) => {
+          writeFileSync(
+            specification,
+            JSON.stringify({
+              kind: 'seed',
+              family: 'native',
+              target,
+              profile,
+              version,
+              contract,
+              notices,
+              assets: inputs,
+              npmOutput,
+              cargoOutput,
+              carriers: [
+                { ecosystem: 'npm', name: carrierIdentity.npm },
+                { ecosystem: 'cargo', name: carrierIdentity.cargo },
+              ],
+            }),
+          );
+          return Bun.spawnSync(
+            [
+              process.execPath,
+              '--no-install',
+              '--no-env-file',
+              path.join(import.meta.dir, 'carriers.mts'),
+              specification,
+            ],
+            { stdout: 'pipe', stderr: 'pipe' },
+          );
+        };
+        if (target === 'ios-datum64' && profile === 'icu') {
+          const missing = invoke([archive, manifest]);
+          expect(missing.exitCode).not.toBe(0);
+          expect(missing.stderr.toString()).toContain(
+            `database-resources-${version}-icu-data.tar.gz cannot be inspected`,
+          );
+          expect(existsSync(npmOutput)).toBe(false);
+          expect(existsSync(cargoOutput)).toBe(false);
+        }
+        const complete = invoke([archive, manifest, ...(profile === 'icu' ? [icu] : [])]);
+        expect(complete.exitCode, complete.stderr.toString()).toBe(0);
+        for (const [name, entry] of readPortableArchiveEntries(cargoOutput))
           expect(entry.mode, name).toBe(entry.isDirectory ? 0o755 : 0o644);
         seeds.push({
           profile,
           frozen,
           archive,
           manifest,
-          npm: carrier.npmArchive,
-          cargo: carrier.crate,
+          npm: npmOutput,
+          cargo: cargoOutput,
           construction,
           maven: target === 'android-datum64' ? path.join(root, 'maven') : undefined,
         });

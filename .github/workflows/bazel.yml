@@ -353,6 +353,12 @@ jobs:
               //build_defs/resources:desktop_payload_windows_profile_test
               //build_defs/resources:desktop_payload_ios_profile_test
               //build_defs/resources:desktop_payload_android_profile_test
+              //build_defs/resources:seed_carrier_ios_datum64_standard_inputs_test
+              //build_defs/resources:seed_carrier_ios_datum64_icu_inputs_test
+              //build_defs/resources:seed_carrier_android_datum64_standard_inputs_test
+              //build_defs/resources:seed_carrier_android_datum64_icu_inputs_test
+              //build_defs/resources:seed_carrier_linux_x64_gnu_icu_inputs_test
+              //build_defs/resources:seed_carrier_portable_icu_inputs_test
               //build_defs/extensions:windows_source_portability_test
               //build_defs/extensions:windows_source_inputs_test
               //:biome_format_test
