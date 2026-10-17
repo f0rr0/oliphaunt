@@ -1,3 +1,4 @@
+load("//build_defs/foundation:bun.bzl", "bun_test")
 load("//build_defs/quality:biome.bzl", "biome_test")
 load("//build_defs/quality:rust.bzl", "root_cargo_quality")
 load("//build_defs/quality:rustfmt.bzl", "rustfmt_test")
@@ -222,6 +223,51 @@ filegroup(
         "//src/wasix/postmaster:rustfmt_sources",
         "//src/wasix/postmaster/tools/sealed-export-closure:rustfmt_sources",
     ],
+)
+
+bun_test(
+    name = "packaging_contract_test",
+    entry_point = "tools/packaging/platform-binary-contract.test.mts",
+    args = [
+        "./tools/packaging/archive-directory.test.mts",
+        "./tools/packaging/atomic-directory.test.mts",
+        "./tools/packaging/cargo-dependencies.test.mts",
+        "./tools/packaging/cargo-source-package.test.mts",
+        "./tools/packaging/maven-artifact-staging.test.mts",
+        "./tools/packaging/maven-central-contract.test.mts",
+        "./tools/packaging/portable-archive.test.mts",
+        "./tools/packaging/portable-archive-extraction.test.mts",
+        "./tools/packaging/release-directory-safety.test.mts",
+        "./tools/packaging/release-notices.test.mts",
+        "./tools/packaging/source-only-sdk-package.test.mts",
+        "./tools/packaging/strict-json.test.mts",
+        "./tools/packaging/windows-vc-runtime-closure.test.mts",
+    ],
+    data = [
+        ":root_quality_sources",
+        "//src/database-resources:seeds/carrier-identities.mts",
+        "//src/extensions/contracts:extension-target-profiles.mts",
+        "//src/native/mobile-bindings:tools/dependency-license-contract.mts",
+        "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
+        "//tools/release:compatibility-version-parser.mts",
+        "//tools/release:extension-release-metadata.mts",
+        "//tools/release:platform-compatibility-policy.mts",
+        "//tools/release:release-artifact-targets.mts",
+        "//tools/release:release-graph.mts",
+        "//tools/release:release-history.mts",
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "//src/native/runtime:THIRD_PARTY_NOTICES.md",
+        "//src/wasix/sdks/rust:THIRD_PARTY_NOTICES.md",
+        "//src/third-party/postgres:COPYRIGHT",
+        "//src/third-party/postgres:source.toml",
+        "//src/third-party/icu:LICENSE",
+        "//src/third-party/icu:source.toml",
+        "//src/third-party/openssl:LICENSE.txt",
+        "//src/third-party/openssl:source.toml",
+    ],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "small",
 )
 
 biome_test(

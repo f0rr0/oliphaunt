@@ -3,8 +3,11 @@ load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE")
 load("//build_defs/native/carriers:defs.bzl", "native_carrier_legal_inputs")
+load(":desktop-profile-test.bzl", "desktop_profile_tests")
 
 package(default_visibility = ["//visibility:public"])
+
+desktop_profile_tests()
 
 exports_files(glob(["*.bzl", "*.mts"]))
 

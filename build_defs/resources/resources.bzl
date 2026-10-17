@@ -1,6 +1,7 @@
 """Declared resource construction; PostgreSQL seed bytes are intentionally unique."""
 
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "BunScriptInfo", "bun_action", "bun_script_test", "bun_test_entrypoint", "bun_test_entrypoint_args")
+load("//build_defs/host:desktop-profile.bzl", "desktop_profile")
 load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS", "DATABASE_RESOURCE_CONTRACT", "DATABASE_WASIX_SEED_CONSUMER", "DATABASE_SEED_CARRIERS", "NATIVE_RUNTIME_ARTIFACTS", "PRODUCTS", "PUBLICATION_CARRIERS", "SEED_REUSE_CONTROLS", "COMPLETED_SUPPLIER_ARTIFACTS", "WASIX_ARTIFACTS")
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@aspect_rules_js//npm:providers.bzl", "NpmPackageInfo")
@@ -199,7 +200,7 @@ def _native_seed_impl(ctx):
             NativeSeedInfo(frozen = frozen, abi = abi, runtime = ctx.file.runtime, profile = ctx.attr.profile, target = ctx.attr.target, construction = construction),
             OutputGroupInfo(frozen = depset([frozen]), abi = depset([abi]), specification = depset([specification]), construction = depset([construction]), observation_inputs = depset([frozen, construction]))]
 
-native_seed = rule(implementation = _native_seed_impl, attrs = dict(SEED_REUSE_ATTRS, **{
+native_seed = rule(implementation = _native_seed_impl, cfg = desktop_profile, attrs = dict(SEED_REUSE_ATTRS, **{
     "runtime": attr.label(default = "//src/native/runtime:runtime_payload", allow_single_file = True),
     "configuration": attr.label(default = "@postgres//:configuration", allow_files = True),
     "headers": attr.label_keyed_string_dict(default = {
@@ -211,6 +212,7 @@ native_seed = rule(implementation = _native_seed_impl, attrs = dict(SEED_REUSE_A
     "target": attr.string(default = "linux-x64-gnu"),
     "icu": attr.label(allow_single_file = True),
     "_tool": _tool("//build_defs/resources:native_seed"),
+    "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
 }))
 
 def _wasix_resources(_os, _input_count):
@@ -519,6 +521,30 @@ def linux_resource_slice(name, templates, qualification):
     native_resource_slice(name = "native_shipping_export", templates = templates, qualification = qualification)
     native.alias(name = name, actual = ":native_shipping_export", testonly = True, target_compatible_with = ["@platforms//os:linux"])
 
+def _native_seed_consumer_test_impl(ctx):
+    arguments = [ctx.file.runtime, ctx.file.consumer, PRODUCTS["liboliphaunt-native"]["version"], _VERSION, ctx.file.specification] + ctx.files.icu_files + ctx.files.seed_files
+    files = [ctx.file.runtime, ctx.file.consumer, ctx.file.specification] + ctx.files.icu_files + ctx.files.seed_files
+    return bun_test_entrypoint(ctx, ctx.file._script, arguments, files + ctx.files._helpers,
+                              source_files = [ctx.file._script] + ctx.files._helpers,
+                              additional_runfiles = ctx.attr.consumer[DefaultInfo].default_runfiles)
+
+native_seed_consumer_test = rule(implementation = _native_seed_consumer_test_impl, cfg = desktop_profile, test = True, toolchains = BUN_SOURCE_TOOLCHAINS,
+                               attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
+    "runtime": attr.label(default = "//src/native/runtime:runtime_payload", allow_single_file = True),
+    "consumer": attr.label(default = "//build_defs/resources:seed_consumer", allow_single_file = True),
+    "specification": attr.label(mandatory = True, allow_single_file = True),
+    "icu_files": attr.label_list(allow_files = True),
+    "seed_files": attr.label_list(allow_files = True),
+    "_script": attr.label(default = "//build_defs/resources:resource_slice.test.mts", allow_single_file = True),
+    "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
+    "_helpers": attr.label_list(default = [
+        "//build_defs/resources:helpers", "//build_defs/resources:shared.mts",
+        "//src/native/sdks/ts:src/root-descriptor.ts", "//src/native/sdks/ts:src/native/filesystem-durability.ts",
+        "//src/native/sdks/ts:src/native/cluster-seed.ts",
+        "//src/database-resources:contracts/profile-probe.json",
+    ], allow_files = True),
+}))
+
 def native_resource_test(name, compatible = NATIVE_COMPATIBLE):
     """Qualify the selected host using actual frozen seeds and final carriers."""
     seed_files = {}
@@ -527,23 +553,14 @@ def native_resource_test(name, compatible = NATIVE_COMPATIBLE):
         seed_files[condition] = [":" + architecture + "_" + profile + "_" + group
                                  for profile in sorted(DATABASE_RESOURCE_CONTRACT["profiles"])
                                  for group in ["archive", "manifest", "frozen", "abi", "carriers_npm_files", "carriers_cargo_files", "construction"]]
-        targets[condition] = [":" + architecture + "_standard_specification"]
-    common = ["//src/native/runtime:runtime_payload", "//build_defs/resources:seed_consumer"]
+        targets[condition] = ":" + architecture + "_standard_specification"
     icu = [":icu_payload", ":icu_carriers_npm_files", ":icu_carriers_cargo_files", ":icu_carriers_maven_files"]
-    bun_script_test(
+    native_seed_consumer_test(
         name = name,
-        entry_point = "//build_defs/resources:resource_slice.test.mts",
-        args = ["$(location " + label + ")" for label in common] +
-               [PRODUCTS["liboliphaunt-native"]["version"], _VERSION] +
-               select({condition: ["$(location " + labels[0] + ")"] for condition, labels in targets.items()}) +
-               ["$(location " + label + ")" for label in icu] +
-               select({condition: ["$(location " + label + ")" for label in files] for condition, files in seed_files.items()}),
-        data = common + icu + select(seed_files) + select(targets) + [
-            "//build_defs/resources:helpers", "//build_defs/resources:shared.mts",
-            "//src/native/sdks/ts:src/root-descriptor.ts", "//src/native/sdks/ts:src/native/filesystem-durability.ts",
-            "//src/native/sdks/ts:src/native/cluster-seed.ts",
-            "//src/database-resources:contracts/profile-probe.json",
-        ],
+        args = bun_test_entrypoint_args(name),
+        specification = select(targets),
+        icu_files = icu,
+        seed_files = select(seed_files),
         target_compatible_with = compatible,
         size = "medium",
     )

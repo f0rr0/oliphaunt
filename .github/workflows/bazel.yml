@@ -343,6 +343,16 @@ jobs:
             host_tests+=(
               //tools/ci:source_checks
               //tools/dev:source_checks
+              //:packaging_contract_test
+              //build_defs/extensions:member_payload_test
+              //build_defs/extensions:mobile_carriers_test
+              //build_defs/resources:desktop_seed_profile_test
+              //build_defs/resources:desktop_seed_consumer_profile_test
+              //build_defs/resources:desktop_payload_macos_profile_test
+              //build_defs/resources:desktop_payload_linux_profile_test
+              //build_defs/resources:desktop_payload_windows_profile_test
+              //build_defs/resources:desktop_payload_ios_profile_test
+              //build_defs/resources:desktop_payload_android_profile_test
               //build_defs/extensions:windows_source_portability_test
               //build_defs/extensions:windows_source_inputs_test
               //:biome_format_test

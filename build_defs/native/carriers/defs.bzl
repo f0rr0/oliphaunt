@@ -6,6 +6,7 @@ load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_pkg//pkg:providers.bzl", "PackageFilesInfo", "PackageFilegroupInfo")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
+load("//build_defs/host:desktop-profile.bzl", "desktop_profile")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 
 _CONFIGURATIONS = {
@@ -145,13 +146,15 @@ def _payload_impl(ctx):
     bun_action(ctx, ctx.attr.tool, arguments = [manifest.path], inputs = inputs + [manifest], outputs = [output], mnemonic = "NativePublicPayload")
     return [DefaultInfo(files = depset([output]))]
 
-_native_payload = rule(
+native_public_payload = rule(
     implementation = _payload_impl,
+    cfg = desktop_profile,
     attrs = {
         "root_mappings": attr.label_list(mandatory = True), "runtime_mappings": attr.label_list(mandatory = True),
         "metadata": attr.string(mandatory = True), "legal": attr.label_keyed_string_dict(allow_files = True),
         "windows_runtime": attr.label_list(allow_files = True),
         "tool": attr.label(default = Label("//build_defs/native/carriers:payload_tool"), providers = [BunScriptInfo], cfg = "exec"),
+        "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
     },
 )
 
@@ -206,7 +209,7 @@ def native_desktop_carriers(product, root_mappings, runtime_mappings, binary_map
         name = "public_binary_mapping_" + str(index)
         _stripped_mapping(name = name, mapping = mapping, enabled = select({"//build_defs/native:macos_arm64": True, "//conditions:default": False}), strip_flags = ["-S"], target_compatible_with = compatibility)
         replacements[mapping] = ":" + name
-    _native_payload(name = "public_payload", root_mappings = [replacements.get(label, label) for label in root_mappings], runtime_mappings = [replacements.get(label, label) for label in runtime_mappings], metadata = select(payload_metadata), legal = select(payload_legal), windows_runtime = select({"//build_defs/native:windows_x64": ["@native_msvc_sdk//:runtime_dlls"], "//conditions:default": []}), target_compatible_with = compatibility)
+    native_public_payload(name = "public_payload", root_mappings = [replacements.get(label, label) for label in root_mappings], runtime_mappings = [replacements.get(label, label) for label in runtime_mappings], metadata = select(payload_metadata), legal = select(payload_legal), windows_runtime = select({"//build_defs/native:windows_x64": ["@native_msvc_sdk//:runtime_dlls"], "//conditions:default": []}), target_compatible_with = compatibility)
     for phase, out in [("github", select(github)), ("npm", select(npm)), ("cargo", "cargo-packages")]:
         _native_envelope(name = "github_archive" if phase == "github" else "cargo_packages" if phase == "cargo" else "npm", phase = phase, payload = ":public_payload", metadata = select(metadata), sources = select(sources) if phase == "npm" else {}, legal = native_carrier_legal_inputs() if phase != "github" else {}, out = out, target_compatible_with = compatibility)
     shipping_package(name = "native_github_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":github_archive"], ecosystem = "github", package_name = select({key: value[len("release-assets/"):] for key, value in github.items()}), configuration = select(physical), role = "github-release-asset")

@@ -10,6 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -27,8 +28,6 @@ const COMPATIBILITY_VERSIONS = {
 };
 
 import { assertReleaseNoticesInDirectory } from './release-notices.mts';
-
-const ROOT = path.resolve(import.meta.dir, '../..');
 
 function writeJson(file, value) {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -112,8 +111,9 @@ if (['prepare', 'verify'].includes(process.argv[2])) {
 test('rejects a symlinked package directory before rewriting its manifest', {
   skip: process.platform === 'win32',
 }, () => {
-  mkdirSync(path.join(ROOT, 'target'), { recursive: true });
-  const scratch = mkdtempSync(path.join(ROOT, 'target', 'source-only-symlink-'));
+  const scratch = mkdtempSync(
+    path.join(process.env.TEST_TMPDIR ?? tmpdir(), 'source-only-symlink-'),
+  );
   try {
     const packageDir = path.join(scratch, 'real-package');
     const alias = path.join(scratch, 'package-alias');
