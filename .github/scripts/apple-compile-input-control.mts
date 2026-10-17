@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
-import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 
@@ -414,16 +414,45 @@ function sanitizeProfile(sample: Case, rows: any[] = []) {
   if (!existsSync(input)) return { present: false };
   const bytes = readFileSync(input);
   let original: any;
+  let readerStage = 'gzip-test';
+  let gzipCheck: { status: number | null; signal: string | null; errorCode?: string } | undefined;
   try {
     const checked = spawnSync('/usr/bin/gzip', ['-t', input], { stdio: 'ignore' });
+    gzipCheck = {
+      status: checked.status,
+      signal: checked.signal,
+      errorCode: (checked.error as NodeJS.ErrnoException | undefined)?.code,
+    };
     assert.equal(checked.status, 0);
-    original = JSON.parse(gunzipSync(bytes).toString('utf8'));
+    readerStage = 'decompress';
+    const decoded = gunzipSync(bytes).toString('utf8');
+    readerStage = 'json';
+    original = JSON.parse(decoded);
+    readerStage = 'shape';
     assert(Array.isArray(original.traceEvents));
-  } catch {
+  } catch (error) {
+    const value = error as { name?: string; code?: string };
     return {
       present: true,
       strictComplete: false,
       originalSha256: hash(bytes),
+      compressedBytes: bytes.length,
+      readerStage,
+      gzipCheck,
+      errorName: ['AssertionError', 'SyntaxError', 'RangeError', 'TypeError', 'Error'].includes(
+        value.name ?? '',
+      )
+        ? value.name
+        : undefined,
+      errorCode: [
+        'ERR_ASSERTION',
+        'Z_DATA_ERROR',
+        'Z_BUF_ERROR',
+        'ERR_BUFFER_TOO_LARGE',
+        'ERR_STRING_TOO_LONG',
+      ].includes(value.code ?? '')
+        ? value.code
+        : undefined,
       sanitizedUploaded: false,
     };
   }
