@@ -209,7 +209,6 @@ const profileFlags = [
   '--experimental_profile_include_target_label=true',
   '--experimental_profile_include_target_configuration=true',
   '--slim_profile=false',
-  '--record_full_profiler_data=true',
 ];
 type Case = {
   stem: string;
