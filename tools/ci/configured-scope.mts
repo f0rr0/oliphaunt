@@ -1,12 +1,14 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -209,13 +211,25 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
   const output = path.resolve(request.outputDirectory);
   mkdirSync(output, { recursive: true });
   const sourceLock = readFileSync(path.join(root, 'MODULE.bazel.lock'));
-  const run = (args: string[]) =>
-    execFileSync('bash', ['tools/dev/bazel.sh', ...request.startup, ...args], {
-      cwd: root,
-      encoding: 'utf8',
-      maxBuffer: 128 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'inherit'],
-    });
+  const run = (args: string[]) => {
+    const temporary = mkdtempSync(path.join(output, '.query-'));
+    const stdout = path.join(temporary, 'stdout');
+    let descriptor: number | undefined;
+    try {
+      descriptor = openSync(stdout, 'wx', 0o600);
+      const result = spawnSync('bash', ['tools/dev/bazel.sh', ...request.startup, ...args], {
+        cwd: root,
+        stdio: ['ignore', descriptor, 'inherit'],
+      });
+      if (result.error) throw result.error;
+      if (result.status !== 0)
+        throw new Error(`CI ${args[0]} failed (${result.signal ?? result.status})`);
+      return readFileSync(stdout, 'utf8');
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
+      rmSync(temporary, { recursive: true, force: true });
+    }
+  };
   const expression = (names: string[]) =>
     `set(${ordered(names)
       .map((name) => JSON.stringify(name))

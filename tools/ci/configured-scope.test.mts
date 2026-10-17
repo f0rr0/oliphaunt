@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -396,7 +396,7 @@ test('shared capture uses existing configured/recipe views without query, binds 
   });
 });
 
-test('capture keeps large exact queries outside subprocess argv', async () => {
+test('capture preserves large exact query arguments and complete output without truncation', async () => {
   await gitFixture(async (root, outputBase) => {
     const labels = Array.from({ length: 640 }, (_, i) => `//package_${'x'.repeat(64)}_${i}:root`);
     const buildLabels = labels.map((label) => `${label.slice(0, label.indexOf(':'))}:BUILD`);
@@ -423,12 +423,14 @@ test('capture keeps large exact queries outside subprocess argv', async () => {
     };
     const graphFile = path.join(outputBase, 'graph.json');
     const callsFile = path.join(outputBase, 'calls.json');
+    const modeFile = path.join(outputBase, 'mode.txt');
     const driver = path.join(outputBase, 'query-driver.mts');
     writeFileSync(graphFile, JSON.stringify(actualGraph));
+    writeFileSync(modeFile, 'large');
     writeFileSync(
       driver,
       `
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, writeSync, existsSync } from 'node:fs';
 const args = process.argv.slice(2);
 if (args.join(' ').length >= 32767) throw new Error('Windows command-line limit');
 if (!args[1]?.startsWith('--query_file=')) throw new Error('missing query file transport');
@@ -437,7 +439,16 @@ const file = ${JSON.stringify(callsFile)};
 const calls = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
 calls.push({ args, expression });
 writeFileSync(file, JSON.stringify(calls));
-if (args[0] === 'cquery') console.log(readFileSync(${JSON.stringify(graphFile)}, 'utf8'));
+if (args[0] === 'cquery') {
+  const mode = readFileSync(${JSON.stringify(modeFile)}, 'utf8');
+  if (mode === 'large') {
+    const chunk = Buffer.alloc(1024 * 1024, 32);
+    for (let remaining = 129 * chunk.length; remaining > 0;)
+      remaining -= writeSync(1, chunk, 0, Math.min(remaining, chunk.length));
+  }
+  writeSync(1, mode === 'malformed' ? '{' : readFileSync(${JSON.stringify(graphFile)}));
+  if (mode === 'nonzero') process.exit(7);
+}
 else if (args[0] === 'query') console.log(${JSON.stringify([...buildLabels, '//shared:BUILD'].join('\n'))});
 else throw new Error('unexpected additional Bazel command');
 `,
@@ -477,7 +488,7 @@ else throw new Error('unexpected additional Bazel command');
       '--host_platform=//native:windows',
       '--lockfile_mode=error',
     ];
-    const file = await captureConfiguredCiRequest({
+    const captureRequest = {
       id: 'portable/windows-x64/packages',
       job: 'portable/windows-x64',
       source: actualSource,
@@ -489,7 +500,8 @@ else throw new Error('unexpected additional Bazel command');
       requestedTargets: labels.toReversed(),
       completedRoots: labels.map((label) => ({ label, configuration })),
       executionRoot: path.join(outputBase, 'execroot/_main'),
-    });
+    };
+    const file = await captureConfiguredCiRequest(captureRequest);
     const expression = (values: string[]) =>
       `set(${[...new Set(values)]
         .sort()
@@ -537,6 +549,24 @@ else throw new Error('unexpected additional Bazel command');
       labels.map((label) => ({ label, configuration })),
     );
     assert.deepEqual(captured.source, actualSource);
+    assert.deepEqual(readdirSync(outputDirectory).sort(), [
+      'analysis-buildfiles.query',
+      'analysis-deps.query',
+      'ci-request.json',
+    ]);
+    for (const mode of ['nonzero', 'malformed']) {
+      writeFileSync(modeFile, mode);
+      const failed = path.join(outputBase, 'receipts', mode);
+      await assert.rejects(
+        captureConfiguredCiRequest({ ...captureRequest, outputDirectory: failed }),
+        mode === 'nonzero' ? /CI cquery failed \(7\)/u : SyntaxError,
+      );
+      assert.deepEqual(
+        readdirSync(failed),
+        ['analysis-deps.query'],
+        'failed query must retain neither a temporary output nor a success receipt',
+      );
+    }
   });
 });
 

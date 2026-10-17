@@ -1,4 +1,4 @@
-name: Windows standalone launcher and installed consumer diagnostic
+name: Apple compile SDK union diagnostic
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: native-consumer-control-${{ github.run_id }}
+  group: apple-compile-union-${{ github.run_id }}
   cancel-in-progress: false
 
 defaults:
@@ -16,101 +16,48 @@ defaults:
     shell: bash
 
 jobs:
-  installed_consumers:
-    name: Verify corrected Windows installed consumers
-    runs-on: windows-2025-vs2026
-    timeout-minutes: 90
+  apple_compile_union:
+    name: Compare stable and mixed Apple compile SDK inputs
+    runs-on: macos-26
+    timeout-minutes: 45
     steps:
-      - name: Checkout corrected source
+      - name: Checkout diagnostic transport and exact source ancestry
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 2ac4e6232e4e6ce565213c6b29ab880a99c2b6aa
-          fetch-depth: 1
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up pinned Bun
         uses: ./.github/actions/setup-bun
 
-      - name: Select declared MSVC SDK
-        uses: ./.github/actions/setup-msvc
+      - name: Select declared Apple SDK
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
 
-      - name: Verify launcher process behavior and frozen C API link
+      - name: Build four cold compile controls
+        timeout-minutes: 35
         env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/windows-installed-consumer-bootstrap
+          XDG_CACHE_HOME: ${{ runner.temp }}/apple-compile-union-bootstrap
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 2ac4e6232e4e6ce565213c6b29ab880a99c2b6aa
-          test "$(git rev-parse 'HEAD^{tree}')" = ed30774950ee449247bc21d86976db3d7ee34e8a
-          diag="$RUNNER_TEMP/windows-installed-consumers-diagnostic"
-          mkdir -p "$diag"
-          printf 'SOURCE_COMMIT=2ac4e6232e4e6ce565213c6b29ab880a99c2b6aa\nSOURCE_TREE=ed30774950ee449247bc21d86976db3d7ee34e8a\n' > "$diag/source.txt"
-          targets=(
-            //build_defs/native:windows_restricted_process_test
-            //build_defs/extensions:native_frozen_extension_smoke
-          )
-          printf '%s\n' "${targets[@]}" > "$diag/preflight-targets.txt"
-          base="$RUNNER_TEMP/b"
-          test ! -e "$base"
-          bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc --output_base="$base")
-          "${bazel[@]}" test "${targets[@]}" -c opt \
-            --platforms=//build_defs/host:native_windows_x64 \
-            --host_platform=//build_defs/host:native_windows_x64 \
-            --jobs=2 --lockfile_mode=error --disk_cache= \
-            --nocache_test_results --test_output=errors --test_summary=detailed \
-            > "$diag/preflight.log" 2>&1
-          tail -n 20 "$diag/preflight.log"
+          bash tools/dev/bun.sh --no-install --no-env-file .github/scripts/apple-compile-input-control.mts run "$RUNNER_TEMP/apple-compile-union"
 
-      - name: Install locked release tooling
-        run: bash tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
-
-      - name: Acquire completed SDK dependencies for this source
+      - name: Stop exact control servers and finalize safe evidence
+        if: always()
+        timeout-minutes: 4
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: | # zizmor: ignore[github-env] only the authenticated runner-temp snapshot path is exported.
-          set -euo pipefail
-          printf '["oliphaunt-js"]\n' > "$RUNNER_TEMP/windows-consumer-products.json"
-          snapshot="$(bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh --no-env-file --no-install \
-            tools/release/native-release-preparation.mts --publication-inputs \
-            --consumer-products-json "$RUNNER_TEMP/windows-consumer-products.json" \
-            --output-directory "$RUNNER_TEMP/windows-public-acquisition")"
-          test -f "$(cygpath -u "$snapshot")"
-          printf 'OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=%s\n' "$snapshot" >> "$GITHUB_ENV"
-
-      - name: Verify installed SDK and extension SQL consumers
-        env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/windows-installed-consumer-bootstrap
+          XDG_CACHE_HOME: ${{ runner.temp }}/apple-compile-union-bootstrap
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 2ac4e6232e4e6ce565213c6b29ab880a99c2b6aa
-          test "$(git rev-parse 'HEAD^{tree}')" = ed30774950ee449247bc21d86976db3d7ee34e8a
-          test -n "${OLIPHAUNT_NATIVE_PUBLICATION_INPUTS:-}"
-          diag="$RUNNER_TEMP/windows-installed-consumers-diagnostic"
-          test -d "$diag"
-          targets=(
-            //build_defs/languages/carriers:installed_sql_test
-            //build_defs/extensions:desktop_all_members_frozen_sql_test
-          )
-          printf '%s\n' "${targets[@]}" > "$diag/targets.txt"
-          base="$RUNNER_TEMP/b"
-          test -d "$base"
-          bazel=(bash tools/dev/bazel.sh --nohome_rc --nosystem_rc --output_base="$base")
-          "${bazel[@]}" test "${targets[@]}" -c opt \
-            --platforms=//build_defs/host:native_windows_x64 \
-            --host_platform=//build_defs/host:native_windows_x64 \
-            --jobs=2 --lockfile_mode=error --disk_cache= \
-            --keep_going --nocache_test_results --test_output=errors --test_summary=detailed \
-            > "$diag/tests.log" 2>&1
-          tail -n 20 "$diag/tests.log"
+          bash tools/dev/bun.sh --no-install --no-env-file .github/scripts/apple-compile-input-control.mts finalize "$RUNNER_TEMP/apple-compile-union"
 
-      - name: Preserve installed consumer diagnostic logs
+      - name: Preserve sanitized complete profiles and control identities
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: windows-installed-consumers-diagnostic
-          path: |
-            ${{ runner.temp }}/windows-installed-consumers-diagnostic
-            ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/native/windows_restricted_process_test
-            ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/languages/carriers/installed_sql_test
-            ${{ runner.temp }}/b/execroot/_main/bazel-out/x64_windows-opt/testlogs/build_defs/extensions/desktop_all_members_frozen_sql_test
+          name: apple-compile-union-control
+          path: ${{ runner.temp }}/apple-compile-union/evidence
           if-no-files-found: warn
           retention-days: 7

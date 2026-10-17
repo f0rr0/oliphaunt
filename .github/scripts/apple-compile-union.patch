@@ -1,0 +1,73 @@
+diff --git a/build_defs/host/cc-profiles.bzl b/build_defs/host/cc-profiles.bzl
+index 9a5732937..02f5053ca 100644
+--- a/build_defs/host/cc-profiles.bzl
++++ b/build_defs/host/cc-profiles.bzl
+@@ -40,6 +40,10 @@
+ def host_builtin_include_directories(prefix, directories):
+     """Builtin paths need an explicit execroot base, unlike compiler flags."""
+     return ["%workspace%/" + prefix + directory for directory in directories]
++
++def host_cc_role_components(sdk, role, exclude):
++    """Select captured components without changing target SDK or compiler flags."""
++    return [component for component in sdk["components"] if role in component["roles"] and ((sdk["family"] == "apple" and role == "compile") or component["name"] not in exclude)]
+ 
+ def host_cc_profiles(sdk):
+     """Bind standard C/C++ configurations to the declared host SDK."""
+@@ -168,11 +172,11 @@
+             _compiler("cc_" + name, ":configuration_" + name, sdk, [component for other in ["macosx", "iphoneos", "iphonesimulator"] if other != selected_sdk for component in ["sdk_" + other, "platform_" + other + "/Library", "platform_" + other + "/usr/lib"]], drivers = True)
+ 
+ def _compiler(name, configuration, sdk, exclude, drivers = False):
+-    components = [component for component in sdk["components"] if component["name"] not in exclude]
+     for role in ["compile", "link"]:
++        components = host_cc_role_components(sdk, role, exclude)
+         native.filegroup(
+             name = name + "_" + role + "_files",
+-            srcs = [":receipt.json", ":unsupported.bat", ":unsupported.sh"] + ([":exec_wrapped_clang", ":exec_wrapped_clang_pp", ":exec_libtool"] if drivers else []) + [":" + component["name"] + ("_compile_files" if sdk["family"] == "apple" and role == "compile" else "_files") for component in components if role in component["roles"]],
++            srcs = [":receipt.json", ":unsupported.bat", ":unsupported.sh"] + ([":exec_wrapped_clang", ":exec_wrapped_clang_pp", ":exec_libtool"] if drivers else []) + [":" + component["name"] + ("_compile_files" if sdk["family"] == "apple" and role == "compile" else "_files") for component in components],
+         )
+     native.filegroup(name = name + "_all_files", srcs = [":" + name + "_compile_files", ":" + name + "_link_files"])
+     cc_toolchain(
+diff --git a/build_defs/host/profile-test.bzl b/build_defs/host/profile-test.bzl
+index 82f5b02ee..438a492c0 100644
+--- a/build_defs/host/profile-test.bzl
++++ b/build_defs/host/profile-test.bzl
+@@ -17,7 +17,7 @@
+ load(":swift-profile.bzl", "declared_swift_path", "declared_xcode_info")
+ load(":repositories.bzl", "apple_cc_compile_files", "apple_swift_test_runtime_files")
+ load(":app-tool-inputs.bzl", "apple_app_configuration_error")
+-load(":cc-profiles.bzl", "host_builtin_include_directories")
++load(":cc-profiles.bzl", "host_builtin_include_directories", "host_cc_role_components")
+ 
+ _APPLE_SDKS = ["macosx", "iphoneos", "iphonesimulator"]
+ _USE_LIBTOOL_ON_MACOS = str(Label("@rules_cc//cc/toolchains/args/archiver_flags:use_libtool_on_macos"))
+@@ -75,6 +75,30 @@
+         "toolchain/lib/swift/macosx/Foo.swiftmodule/arm64-apple-macos.swiftdoc",
+     ] + ["sdk_" + sdk + "/System/Library/Frameworks/Foo.framework/Modules/arm64.swiftmodule" for sdk in _APPLE_SDKS]
+     asserts.equals(env, compiler_files, apple_cc_compile_files(compiler_files + swift_modules, resource))
++    # Compile component membership is common across Apple target SDKs; linking
++    # still sees only its selected SDK and components keep their declared roles.
++    components = [{"name": "toolchain", "roles": ["compile", "link"]}] + [
++        {"name": component, "roles": ["compile", "link"]}
++        for sdk in _APPLE_SDKS
++        for component in ["sdk_" + sdk, "platform_" + sdk + "/Library", "platform_" + sdk + "/usr/lib"]
++    ] + [
++        {"name": "compile_only", "roles": ["compile"]},
++        {"name": "link_only", "roles": ["link"]},
++        {"name": "app_tools", "roles": []},
++    ]
++    compile_union = [
++        "toolchain", "sdk_macosx", "platform_macosx/Library", "platform_macosx/usr/lib",
++        "sdk_iphoneos", "platform_iphoneos/Library", "platform_iphoneos/usr/lib",
++        "sdk_iphonesimulator", "platform_iphonesimulator/Library", "platform_iphonesimulator/usr/lib",
++        "compile_only",
++    ]
++    for sdk in _APPLE_SDKS:
++        exclude = [component["name"] for component in components if (component["name"].startswith("sdk_") or component["name"].startswith("platform_")) and component["name"] not in ["sdk_" + sdk, "platform_" + sdk + "/Library", "platform_" + sdk + "/usr/lib"]]
++        selected = ["toolchain", "sdk_" + sdk, "platform_" + sdk + "/Library", "platform_" + sdk + "/usr/lib"]
++        for family in ["apple", "msvc"]:
++            captured = {"family": family, "components": components}
++            asserts.equals(env, compile_union if family == "apple" else selected + ["compile_only"], [component["name"] for component in host_cc_role_components(captured, "compile", exclude)])
++            asserts.equals(env, selected + ["link_only"], [component["name"] for component in host_cc_role_components(captured, "link", exclude)])
+     # Inspect stock archive expansion: native ar metadata and Apple libtool
+     # actions have distinct interfaces even when they expose the same AR path.
+     for index, compiler in enumerate(ctx.attr.archive_profiles):
