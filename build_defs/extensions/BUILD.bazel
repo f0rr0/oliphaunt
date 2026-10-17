@@ -313,7 +313,7 @@ sh_test(
 bun_test(
     name = "member_payload_test",
     entry_point = "member_payload.test.mts",
-    data = ["member_payload.mts", "validate_member_payload.mts"] + ARCHIVE_HELPERS + BINARY_HELPERS,
+    data = ["member_payload.mts", "validate_member_payload.mts", "//:tools/packaging/testdata/release-fixture-utils.mts"] + ARCHIVE_HELPERS + BINARY_HELPERS,
     size = "small",
 )
 

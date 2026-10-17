@@ -10,6 +10,7 @@ import {
 } from './platform-binary-contract.mts';
 import {
   OLIPHAUNT_WINDOWS_IMPORT_SYMBOLS,
+  arFixture as ar,
   windowsImportLibraryFixture,
 } from './testdata/release-fixture-utils.mts';
 
@@ -77,20 +78,6 @@ function fatMacho(slices) {
     slices[index].copy(buffer, offsets[index]);
   }
   return buffer;
-}
-
-function ar(members) {
-  const chunks = [Buffer.from('!<arch>\n', 'ascii')];
-  for (const [name, data] of members) {
-    const encodedName = `${name}/`.padEnd(16, ' ');
-    const header = Buffer.from(
-      `${encodedName}${'0'.padEnd(12, ' ')}${'0'.padEnd(6, ' ')}${'0'.padEnd(6, ' ')}${'100644'.padEnd(8, ' ')}${String(data.length).padEnd(10, ' ')}\`\n`,
-      'ascii',
-    );
-    chunks.push(header, data);
-    if (data.length % 2 !== 0) chunks.push(Buffer.from('\n', 'ascii'));
-  }
-  return Buffer.concat(chunks);
 }
 
 function elf({
@@ -362,7 +349,6 @@ describe('Mach-O platform compatibility', () => {
     expect(
       inspectPlatformBinaryEntries(entries, {
         target: 'ios-xcframework',
-        requiredApplePlatforms: [1, 2, 7],
       }).slices,
     ).toBe(3);
     const malformed = Buffer.from(entries[1].data);
@@ -389,9 +375,20 @@ describe('Mach-O platform compatibility', () => {
     expect(() =>
       inspectPlatformBinaryEntries(entries.slice(1), {
         target: 'ios-xcframework',
-        requiredApplePlatforms: [1, 2, 7],
       }),
     ).toThrow(/missing macOS/u);
+  });
+
+  test('rejects invalid programmatic Apple platform overrides with a contract error', () => {
+    for (const requiredApplePlatforms of [[], [99], ['macos'], 'macos']) {
+      expect(() =>
+        inspectPlatformBinaryEntries([entry('macos/lib.a', ar([['macos.o', macho()]]))], {
+          target: 'ios-xcframework',
+          // @ts-expect-error Exercise malformed callers at the runtime boundary.
+          requiredApplePlatforms,
+        }),
+      ).toThrow(/required Apple platforms must be a nonempty array of Mach-O platform IDs/u);
+    }
   });
 });
 

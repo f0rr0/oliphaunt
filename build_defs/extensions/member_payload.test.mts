@@ -7,8 +7,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync, gzipSync } from 'node:zlib';
+import {
+  arFixture,
+  elfFixture,
+  machoFixture,
+} from '../../tools/packaging/testdata/release-fixture-utils.mts';
 import { assemble, type MemberSpec, safePath } from './member_payload.mts';
-import { inspect } from './validate_member_payload.mts';
+import { inspect, inspectStaticArchiveBytes } from './validate_member_payload.mts';
 
 const directories = new Set<string>();
 function temporary(): string {
@@ -445,6 +450,52 @@ function desktopImage(configuration: string, provider = 'KERNEL32.dll'): Buffer 
   data.write(`${provider}\0`, 640);
   return data;
 }
+
+test('Apple static members inspect their actual cohort and deployment floor before packaging', () => {
+  const cohorts = [
+    ['macos-arm64', 1, [14, 0, 0]],
+    ['ios-device', 2, [17, 0, 0]],
+    ['ios-simulator', 7, [17, 0, 0]],
+  ] as const;
+  for (const [target, platform, minos] of cohorts) {
+    const image = machoFixture({ platform, minos: [...minos] });
+    image.writeUInt32LE(1, 12);
+    const archive = arFixture([['fixture.o', image]]);
+    expect(inspectStaticArchiveBytes(archive, target, target).platforms).toEqual([platform]);
+    for (const [other] of cohorts) {
+      if (other !== target)
+        expect(() => inspectStaticArchiveBytes(archive, other, target)).toThrow('is missing');
+    }
+    expect(() => inspectStaticArchiveBytes(image, target, target)).toThrow(
+      'ordinary object archive',
+    );
+    const highFloor = Buffer.from(image);
+    highFloor.writeUInt32LE((minos[0] + 1) << 16, 44);
+    expect(() =>
+      inspectStaticArchiveBytes(arFixture([['high.o', highFloor]]), target, target),
+    ).toThrow('minimum OS');
+    const wrongCpu = Buffer.from(image);
+    wrongCpu.writeUInt32LE(0x01000007, 4);
+    expect(() =>
+      inspectStaticArchiveBytes(arFixture([['wrong.o', wrongCpu]]), target, target),
+    ).toThrow('not arm64');
+  }
+});
+
+test('mobile static archive inspection preserves both Android architecture contracts', () => {
+  for (const [target, machine, other] of [
+    ['android-arm64-v8a', 183, 'android-x86_64'],
+    ['android-x86_64', 62, 'android-arm64-v8a'],
+  ] as const) {
+    const image = elfFixture({ machine, type: 1 });
+    const archive = arFixture([['fixture.o', image]]);
+    expect(inspectStaticArchiveBytes(archive, target, target).binaries).toBe(1);
+    expect(() => inspectStaticArchiveBytes(archive, other, target)).toThrow('ELF machine');
+    expect(() => inspectStaticArchiveBytes(image, target, target)).toThrow(
+      'ordinary object archive',
+    );
+  }
+});
 
 test('desktop member archives validate actual Mach-O and PE profiles with the shared binary policy', async () => {
   const archive = join(temporary(), 'desktop.tar.gz');

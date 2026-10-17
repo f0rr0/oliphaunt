@@ -6,12 +6,16 @@ import {
   validateWindowsEmbeddedModuleImports,
   validateWindowsServerModuleImports,
 } from '../../src/extensions/artifacts/native/tools/stage-windows-binary-contract.mts';
-import { inspectPlatformBinaryBuffer } from '../../tools/packaging/platform-binary-contract.mts';
+import {
+  inspectPlatformBinaryBuffer,
+  inspectPlatformBinaryEntries,
+} from '../../tools/packaging/platform-binary-contract.mts';
 import {
   DEFAULT_PORTABLE_ARCHIVE_LIMITS,
   readPortableArchiveEntries,
   strictGunzip,
 } from '../../tools/packaging/portable-archive.mts';
+import { APPLE_PLATFORM_COMPATIBILITY } from '../../tools/release/platform-compatibility-policy.mts';
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -29,6 +33,29 @@ function strings(value: unknown): string[] {
 
 function fullMatch(pattern: RegExp, value: unknown): value is string {
   return typeof value === 'string' && pattern.exec(value)?.[0] === value;
+}
+
+/** Shared static-member policy for construction and final carrier inspection. */
+export function inspectStaticArchiveBytes(bytes: Buffer, target: string, label: string) {
+  if (!bytes.subarray(0, 8).equals(Buffer.from('!<arch>\n')))
+    throw new Error('static producer must emit an ordinary object archive');
+  const apple =
+    target === 'macos-arm64'
+      ? APPLE_PLATFORM_COMPATIBILITY.macos
+      : target === 'ios-device'
+        ? APPLE_PLATFORM_COMPATIBILITY.ios
+        : target === 'ios-simulator'
+          ? APPLE_PLATFORM_COMPATIBILITY.iosSimulator
+          : undefined;
+  return inspectPlatformBinaryEntries([{ name: 'member.a', data: bytes, isFile: true }], {
+    target: apple ? 'ios-xcframework' : target,
+    rootLabel: label,
+    ...(apple
+      ? {
+          requiredApplePlatforms: [apple.id],
+        }
+      : {}),
+  });
 }
 
 /** Shared dynamic-member policy for internal archives and imported final leaves. */

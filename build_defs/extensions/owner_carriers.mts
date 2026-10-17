@@ -65,7 +65,10 @@ import {
   stageNativeRegistryCarriers,
   writeJson,
 } from './native_carriers.mts';
-import { validateNativeMemberModule } from './validate_member_payload.mts';
+import {
+  inspectStaticArchiveBytes,
+  validateNativeMemberModule,
+} from './validate_member_payload.mts';
 
 export interface FinalLeaf {
   product: string;
@@ -672,14 +675,7 @@ export function validateNativeFinalLeaf(spec: NativeOwnerSpec, leaf: FinalLeaf, 
           const cohort = row.slice(0, row.indexOf(':'));
           const name = row.slice(row.lastIndexOf(':') + 1);
           const entry = runtime.entries.get(name)!;
-          const apple = cohort === 'ios-device' || cohort === 'ios-simulator';
-          inspectPlatformBinaryEntries([{ name, data: entry.data, isFile: true }], {
-            target: apple ? 'ios-xcframework' : cohort,
-            rootLabel: asset.name,
-            ...(apple
-              ? { requiredApplePlatforms: [cohort === 'ios-device' ? 'ios' : 'ios-simulator'] }
-              : {}),
-          });
+          inspectStaticArchiveBytes(entry.data, cohort, asset.name);
         }
       } else {
         inspectPlatformBinaryEntries(
@@ -687,7 +683,6 @@ export function validateNativeFinalLeaf(spec: NativeOwnerSpec, leaf: FinalLeaf, 
           {
             target: 'ios-xcframework',
             rootLabel: asset.name,
-            requiredApplePlatforms: ['macos', 'ios', 'ios-simulator'],
           },
         );
       }

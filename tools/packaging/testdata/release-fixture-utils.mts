@@ -69,6 +69,20 @@ export async function writeChecksumManifest(assetDir, name) {
   await fs.writeFile(checksumAsset, `${lines.join('\n')}\n`, 'utf8');
 }
 
+export function arFixture(members: Iterable<readonly [string, Buffer]>): Buffer {
+  const chunks = [Buffer.from('!<arch>\n', 'ascii')];
+  for (const [name, data] of members) {
+    const encodedName = `${name}/`.padEnd(16, ' ');
+    const header = Buffer.from(
+      `${encodedName}${'0'.padEnd(12, ' ')}${'0'.padEnd(6, ' ')}${'0'.padEnd(6, ' ')}${'100644'.padEnd(8, ' ')}${String(data.length).padEnd(10, ' ')}\`\n`,
+      'ascii',
+    );
+    chunks.push(header, data);
+    if (data.length % 2 !== 0) chunks.push(Buffer.from('\n', 'ascii'));
+  }
+  return Buffer.concat(chunks);
+}
+
 function packedAppleVersion(major, minor = 0, patch = 0) {
   return (major << 16) | (minor << 8) | patch;
 }

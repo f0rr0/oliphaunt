@@ -47,7 +47,7 @@ import {
   validateNativeShippingModule,
   writeJson,
 } from './native_carriers.mts';
-import { inspect } from './validate_member_payload.mts';
+import { inspect, inspectStaticArchiveBytes } from './validate_member_payload.mts';
 
 export interface MobileStaticArchive {
   target: string;
@@ -197,25 +197,6 @@ export function mobileArchivePlan(spec: MobileCarrierSpec, components: any) {
       symbolPrefix: stem === null ? '' : staticSymbolPrefix(stem),
     },
   };
-}
-
-function inspectStaticArchiveBytes(bytes: Buffer, target: string, label: string) {
-  assert(
-    bytes.subarray(0, 8).equals(Buffer.from('!<arch>\n')),
-    'static producer must emit an ordinary object archive',
-  );
-  const apple = ['macos-arm64', 'ios-device', 'ios-simulator'].includes(target);
-  return inspectPlatformBinaryEntries([{ name: 'member.a', data: bytes, isFile: true }], {
-    target: apple ? 'ios-xcframework' : target,
-    rootLabel: label,
-    ...(apple
-      ? {
-          requiredApplePlatforms: [
-            target === 'macos-arm64' ? 'macos' : target === 'ios-device' ? 'ios' : 'ios-simulator',
-          ],
-        }
-      : {}),
-  });
 }
 
 function actualRegistration(row: MobileStaticArchive, stem: string, work: string) {
@@ -455,7 +436,6 @@ export async function packageMobileCarriers(spec: {
           {
             target: 'ios-xcframework',
             rootLabel: framework.file,
-            requiredApplePlatforms: ['macos', 'ios', 'ios-simulator'],
           },
         );
         const frameworkName = nativeAssetNameForRow(spec.product, spec.version, {

@@ -1173,6 +1173,16 @@ function finalizeInspection(
     const required =
       requiredApplePlatforms ??
       contract.apple.requiredPlatforms.map((key) => contract.apple.platforms[key].id);
+    if (
+      !Array.isArray(required) ||
+      required.length === 0 ||
+      required.some((platform) => !APPLE_PLATFORM_BY_ID.has(platform))
+    ) {
+      fail(
+        'platform-binary contract',
+        'required Apple platforms must be a nonempty array of Mach-O platform IDs',
+      );
+    }
     const missing = required.filter((platform) => !platforms.has(platform));
     if (missing.length > 0) {
       fail(
@@ -1242,6 +1252,15 @@ function finalizeInspection(
   };
 }
 
+export interface PlatformBinaryInspectionOptions {
+  target: string;
+  rootLabel?: string;
+  /** Numeric Mach-O platform IDs; command-line names are translated by the CLI. */
+  requiredApplePlatforms?: readonly number[];
+  requireWindowsRuntimeImportLibrary?: boolean;
+  windowsVcRuntimeProfile?: string;
+}
+
 export function inspectPlatformBinaryEntries(
   entries,
   {
@@ -1250,7 +1269,7 @@ export function inspectPlatformBinaryEntries(
     requiredApplePlatforms,
     requireWindowsRuntimeImportLibrary = false,
     windowsVcRuntimeProfile,
-  },
+  }: PlatformBinaryInspectionOptions,
 ) {
   contractFor(target, rootLabel);
   if (requireWindowsRuntimeImportLibrary && target !== 'windows-x64-msvc') {
@@ -1364,7 +1383,7 @@ export async function inspectPlatformBinaryTree(
     requiredApplePlatforms,
     requireWindowsRuntimeImportLibrary = false,
     windowsVcRuntimeProfile,
-  },
+  }: PlatformBinaryInspectionOptions,
 ) {
   const absolute = path.resolve(root);
   const stat = await lstat(absolute).catch(() => null);
