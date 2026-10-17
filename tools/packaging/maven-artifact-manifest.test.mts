@@ -1,21 +1,21 @@
 import { afterEach, expect, test } from 'bun:test';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-
-import { buildMavenArtifactManifest } from './build-maven-artifact-manifest.mts';
-import { archiveDirectory } from './archive-directory.mts';
-import { createDeterministicTar } from './cargo-source-package.mts';
 import { stageExtensionUpstreamLicenses } from '../../src/extensions/tools/extension-upstream-licenses.mts';
-import { canonicalGzipSync } from './portable-archive.mts';
-import { parseMavenArtifactManifest } from './maven-artifact-manifest.mts';
-import { renderMavenArtifactPom } from './maven-artifact-staging.mts';
 import {
   currentProductVersionSync,
+  extensionArtifactTargets,
   extensionMetadata,
   extensionReleaseVersion,
+  registryPackageRows,
 } from '../release/release-artifact-targets.mts';
-import { ROOT } from '../release/release-graph.mts';
+import { archiveDirectory } from './archive-directory.mts';
+import { buildMavenArtifactManifest } from './build-maven-artifact-manifest.mts';
+import { createDeterministicTar } from './cargo-source-package.mts';
+import { parseMavenArtifactManifest } from './maven-artifact-manifest.mts';
+import { renderMavenArtifactPom } from './maven-artifact-staging.mts';
+import { canonicalGzipSync } from './portable-archive.mts';
 import { stageReleaseNotices } from './release-notices.mts';
 
 const temporaryRoots = [];
@@ -282,4 +282,49 @@ test('the Maven manifest builder validates singleton upstream licenses in the ru
       label,
     ).rejects.toThrow(pattern);
   }
+});
+
+test('declared extension Maven inputs preserve canonical writer bytes and reject incomplete targets', async () => {
+  const root = temporaryDirectory();
+  const product = 'oliphaunt-extension-pg-hashids';
+  for (const target of ['android-arm64-v8a', 'android-x86_64'])
+    await singletonAndroidRuntime(root, target);
+  const baseline = path.join(root, 'baseline.tsv');
+  const output = path.join(root, 'declared.tsv');
+  const options = { extensions: true, extensionProducts: [product], extensionArtifactRoot: root };
+  await buildMavenArtifactManifest(baseline, options);
+  const row = {
+    productRoot: path.join(root, product),
+    releaseProduct: product,
+    version: currentProductVersionSync(product),
+    sqlNames: ['pg_hashids'],
+    compatibility: extensionMetadata(product).compatibility,
+    runtimeSourceVersion: currentProductVersionSync('liboliphaunt-native'),
+    targets: extensionArtifactTargets({ product, family: 'native' }).filter(
+      (target) => target.kind === 'native-static-registry' && target.target.startsWith('android-'),
+    ),
+    registryPackages: registryPackageRows({ product, packageKind: 'maven' }).map(
+      (carrier) => carrier.packageName,
+    ),
+  };
+  const context = { extensions: { [product]: row } };
+  await buildMavenArtifactManifest(output, { ...options, context });
+  expect(readFileSync(output)).toEqual(readFileSync(baseline));
+  await expect(
+    buildMavenArtifactManifest(output, {
+      ...options,
+      context: { extensions: { [product]: { ...row, targets: row.targets.slice(1) } } },
+    }),
+  ).rejects.toThrow('both canonical Android targets');
+  await expect(
+    buildMavenArtifactManifest(output, {
+      ...options,
+      context: {
+        extensions: { [product]: { ...row, registryPackages: row.registryPackages.slice(1) } },
+      },
+    }),
+  ).rejects.toThrow('missing Maven carrier');
+  await expect(
+    buildMavenArtifactManifest(output, { ...options, context: { extensions: {} } }),
+  ).rejects.toThrow('absent from declared');
 });

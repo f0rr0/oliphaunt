@@ -187,12 +187,13 @@ test('freezes deterministic .crate bytes and prepares an extracted native consum
     path.resolve(ROOT, packedAggregator.cratePath),
     `${packedAggregator.name}-9.8.7/Cargo.toml`,
   );
-  assert.doesNotMatch(packedManifest, /oliphaunt-package-deps|registry\s*=/u);
-  assert.doesNotMatch(
-    packedManifest,
-    /\[build-dependencies[.]liboliphaunt-native-linux-x64-gnu-part-001\][\s\S]*?path\s*=/u,
+  assert.doesNotMatch(packedManifest, /oliphaunt-package-deps/u);
+  assert.deepEqual(
+    Bun.TOML.parse(packedManifest)['build-dependencies'][
+      'liboliphaunt-native-linux-x64-gnu-part-001'
+    ],
+    { version: '=9.8.7' },
   );
-  assert.match(packedManifest, /version\s*=\s*"=9[.]8[.]7"/u);
 
   const facade = manifest.packages.find(({ role }) => role === 'facade');
   assert.ok(facade);

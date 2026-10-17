@@ -16,3 +16,12 @@ registry_packages = [
   "npm:@oliphaunt/tools",
 ]
 release_artifacts = ["postgres-tools"]
+
+[artifact_targets]
+preset = "postgres-tools-native"
+targets = [
+  "linux-arm64-gnu",
+  "linux-x64-gnu",
+  "macos-arm64",
+  "windows-x64-msvc",
+]

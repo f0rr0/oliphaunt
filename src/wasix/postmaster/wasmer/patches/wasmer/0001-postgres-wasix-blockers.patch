@@ -2479,10 +2479,10 @@ index 3297890..4cfac63 100644
              .set_source(registry)
              .set_engine(engine);
 diff --git a/lib/compiler-llvm/src/compiler.rs b/lib/compiler-llvm/src/compiler.rs
-index b04e437..3950012 100644
+index b04e437..2c66a6d 100644
 --- a/lib/compiler-llvm/src/compiler.rs
 +++ b/lib/compiler-llvm/src/compiler.rs
-@@ -178,13 +178,17 @@ impl Compiler for LLVMCompiler {
+@@ -178,13 +178,17 @@
  
      fn deterministic_id(&self) -> String {
          format!(
@@ -2502,6 +2502,22 @@ index b04e437..3950012 100644
          )
      }
  
+@@ -497,6 +501,15 @@
+             let got_data: Vec<u8> = vec![0; got_targets.len() * got_entry_size];
+             let mut got_relocs = vec![];
+ 
++            // Randomized set iteration must not become serialized GOT offsets.
++            let mut got_targets = got_targets.into_iter().collect::<Vec<_>>();
++            got_targets.sort_unstable_by_key(|target| match target {
++                RelocationTarget::LocalFunc(index) => (0_u8, index.as_u32()),
++                RelocationTarget::DynamicTrampoline(index) => (1, index.as_u32()),
++                RelocationTarget::LibCall(libcall) => (2, *libcall as u16 as u32),
++                RelocationTarget::CustomSection(index) => (3, index.as_u32()),
++            });
++
+             for (i, target) in got_targets.into_iter().enumerate() {
+                 got_relocs.push(wasmer_compiler::types::relocation::Relocation {
+                     kind: got_entry_reloc_kind,
 diff --git a/lib/compiler-llvm/src/config.rs b/lib/compiler-llvm/src/config.rs
 index d732134..58918f0 100644
 --- a/lib/compiler-llvm/src/config.rs
@@ -38126,3 +38142,26 @@ index 271bd12..6379ce0 100644
  #[compiler_test(issues)]
  fn issue_5795_memory_reset_size(mut config: crate::Config) {
      let wasm_bytes = wat2wasm(
+diff --git a/lib/compiler/src/engine/unwind/systemv.rs b/lib/compiler/src/engine/unwind/systemv.rs
+index 11ef2ad9..7bd9a6e1 100644
+--- a/lib/compiler/src/engine/unwind/systemv.rs
++++ b/lib/compiler/src/engine/unwind/systemv.rs
+@@ -65,6 +65,18 @@ fn using_libunwind() -> bool {
+         return true;
+     }
+ 
++    // Native ELF toolchains can link LLVM libunwind with hidden symbols,
++    // making the existing dlsym probe miss the actual linked implementation.
++    #[cfg(all(target_os = "linux", oliphaunt_linked_libunwind))]
++    {
++        unsafe extern "C" {
++            fn oliphaunt_wasmer_has_linked_libunwind() -> libc::c_int;
++        }
++        if unsafe { oliphaunt_wasmer_has_linked_libunwind() } != 0 {
++            return true;
++        }
++    }
++
+     // On other platforms the unwinder can vary. Sometimes the unwinder is
+     // selected at build time and sometimes it differs at build time and runtime
+     // (or at least I think that's possible). Fall back to a `libc::dlsym` to

@@ -1,0 +1,127 @@
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_test")
+load("@bazel_lib//lib:directory_path.bzl", "directory_path")
+load("@javascript_consumer_packages//:defs.bzl", "javascript_type_links")
+load("@javascript_consumer_packages//:roots.bzl", "CONSUMER_BINS", "CONSUMER_CLOSURES", "CONSUMER_PACKAGES", "CONSUMER_TOOLS")
+load(":bazel.bzl", "docs_content", "docs_next_export", "docs_static_export")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["bazel.bzl", "package.json"] + glob(["tools/*.mts"]))
+
+filegroup(
+    name = "content_sources",
+    srcs = ["docs-manifest.toml"] + glob(["content/**/*.md", "content/**/*.mdx", "src/**/*.ts", "src/**/*.tsx"]),
+)
+
+DOCS = "@oliphaunt/docs"
+DOCS_ROOTS = CONSUMER_TOOLS[DOCS]
+DOCS_PACKAGES = {identity: json.encode(CONSUMER_PACKAGES[identity]) for identity in CONSUMER_CLOSURES[DOCS]}
+DOCS_DEPS = [":node_modules/" + name for name in DOCS_ROOTS]
+FONT_PACKAGES = [name for name in DOCS_ROOTS if name.startswith("@fontsource/") or name.startswith("@fontsource-variable/")]
+
+javascript_type_links(DOCS_ROOTS)
+
+filegroup(name = "next_package_directory", srcs = [":node_modules/next"], output_group = "package_directory")
+filegroup(name = "typescript_package_directory", srcs = [":node_modules/typescript"], output_group = "package_directory")
+directory_path(name = "next_entry_point", directory = ":next_package_directory", path = CONSUMER_BINS[DOCS]["next"]["next"])
+js_binary(name = "next_cli", entry_point = ":next_entry_point", data = DOCS_DEPS)
+
+docs_content(
+    name = "generated_content",
+    sources = {":content_sources": "src/docs/"},
+    completed_releases = "@docs_build_inputs//:completed-releases.json",
+    provenance = "@docs_build_inputs//:provenance.json",
+)
+
+docs_next_export(
+    name = "next_export",
+    content = ":generated_content",
+    next_binary = ":next_cli",
+    sources = {":site_sources": "src/docs/"},
+    package_identities = DOCS_PACKAGES,
+    deps = DOCS_DEPS,
+)
+
+[filegroup(name = "font_directory_" + name.split("/")[-1].replace("-", "_"), srcs = [":node_modules/" + name], output_group = "package_directory") for name in FONT_PACKAGES]
+[directory_path(name = "font_license_" + name.split("/")[-1].replace("-", "_"), directory = ":font_directory_" + name.split("/")[-1].replace("-", "_"), path = "LICENSE") for name in FONT_PACKAGES]
+
+docs_static_export(
+    name = "site",
+    content = ":generated_content",
+    site = ":next_export",
+    font_licenses = {":font_license_" + name.split("/")[-1].replace("-", "_"): "third-party-fonts/" + name.split("/")[-1] + "/LICENSE" for name in FONT_PACKAGES},
+)
+
+filegroup(name = "snippet_content", srcs = [":generated_content"], output_group = "site_docs")
+filegroup(name = "site_routes", srcs = [":generated_content"], output_group = "routes")
+
+js_test(
+    name = "snippets_test",
+    entry_point = "tools/check-docs-snippets.mts",
+    args = ["--native", "$(rootpath :snippet_content)", "$(rootpath :typescript_package_directory)"],
+    data = [":snippet_content", ":typescript_package_directory", ":node_modules/typescript", "//src/query/ts:source_inputs", "//src/native/sdks/ts:source_inputs", "//src/native/sdks/ts:source_config", "//src/native/sdks/react-native:source_inputs", "//src/native/sdks/react-native:base_tsconfig", "//src/wasix/sdks/ts:source_inputs", "//src/wasix/sdks/ts:source_config"],
+    include_types = True,
+    include_transitive_types = True,
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "medium",
+)
+
+js_test(
+    name = "smoke_test",
+    entry_point = "tools/smoke-built-site.mts",
+    args = ["$(rootpath :site)", "$(rootpath :site_routes)", ""],
+    data = [":site", ":site_routes", ":node_modules/fumadocs-core"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "medium",
+)
+
+test_suite(name = "site_checks", tests = [":snippets_test", ":smoke_test"])
+
+filegroup(
+    name = "site_sources",
+    srcs = ["next.config.ts", "package.json", "postcss.config.json", "proxy.ts", "source.config.ts", "tsconfig.json"] + glob(["src/**", "public/**"]),
+)
+
+bun_test(
+    name = "generation_test",
+    entry_point = "tools/generate-content.test.mts",
+    data = ["tools/generate-content.mts", "tools/check-docs-product.mts", "tools/published-products.mts", "//tools/release:platform-compatibility-policy.mts"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_test(
+    name = "native_adapter_test",
+    entry_point = "tools/native-docs.test.mts",
+    data = [
+        "tools/native-docs.mts", "tools/generate-content.mts", "tools/check-docs-product.mts", "tools/published-products.mts",
+        "//tools/release:platform-compatibility-policy.mts",
+    ],
+    tags = ["source-check"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "small",
+)
+
+bun_test(
+    name = "published_products_test",
+    entry_point = "tools/published-products.test.mts",
+    data = ["tools/published-products.mts"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_test(
+    name = "live_refresh_test",
+    entry_point = "tools/verify-live.test.mts",
+    data = ["tools/verify-live.mts", "tools/published-products.mts"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+test_suite(name = "source_checks", tests = [":generation_test", ":native_adapter_test", ":published_products_test", ":live_refresh_test"])
+
+source_quality_files()

@@ -5,202 +5,163 @@ description: Select, run, and diagnose Oliphaunt local and GitHub CI qualificati
 
 # Qualify Oliphaunt Change
 
-Use the repository graph to select work and require exact-SHA qualification for releases.
-CI's `release_products_json` input selects stable product IDs and their Moon
-task/dependency closure. Keep platform selectors at `all`; a focused platform
-debug run cannot qualify publication. Empty product selection remains the
-exhaustive audit. Selected-product records must cover every published product;
-producer evidence still comes from the same candidate run.
-Generated same-repository Release PRs and their merged main release commits
-derive scope automatically from Release Please manifest changes. Main push
-qualifies only after Plan and Required succeed; PR results cannot be published.
+Use stock Bazel targets and the owner's configured shipping export. Bazel's
+actual action graph and cache determine what executes; directory ownership,
+conventional dependency declarations and test dependencies do not select product
+releases. Native preparation compares qualified deliveries with each product's
+authenticated completed publication, then supplies necessary owners to Release
+Please for version and changelog calculation. Missing history stays unknown.
+
+`Native Bazel qualification / Required` is the release entrypoint's source gate.
+The migration still needs complete hosted platform/device qualification, the
+27-product construction audit, the genuine seed adoption anchor and legacy CI
+retirement. A local test, individual job or construction audit does not admit a
+publication. PR and merge-queue evidence cannot assert reviewed-main assurance.
 
 ## Local feedback
 
-1. Inspect the diff and ask Moon for affected projects/tasks. Do not infer affected products from directory names alone.
-2. Run affected formatting (`format-check`, `js-format-check`, or
-   `rust-format-check`), `lint`, `typecheck`, and `test` tasks as applicable.
-   Inspect the owner's actual task definitions before selecting `build`,
-   `package`, `test-consumer`, `test-integration`, `test-browser`, or installed
-   device tests. Let Moon build declared prerequisites; task names alone do
-   not justify running every available lane.
-3. If the diff changes a WASIX producer's source pins, patches, recipes,
-   toolchain or code, qualify that owner's affected portable/AOT output. Reuse
-   compiler outputs only when their declared source, dependency and toolchain
-   identities still match. A package envelope or test-only edit alone does not
-   justify rebuilding unrelated core, tools or extension producers.
-4. Select release-policy checks by the contract that changed:
+1. Read the changed owner's `BUILD.bazel`, actual configured dependencies and
+   shipping export policy. Use the target and host profiles from
+   `.github/workflows/bazel.yml`; do not invent a path-based affectedness map.
+   Run only relevant targets and let Bazel reuse unchanged actions.
+2. Start with source checks before expensive construction. On Linux x64 the
+   declared profile is `//build_defs/native:linux_x86_64_glibc_2_28`:
 
-```sh
-# Product/release metadata only:
-moon run release-tools:metadata
+   ```sh
+   profile=//build_defs/native:linux_x86_64_glibc_2_28
+   bash tools/dev/bazel.sh test \
+     //:biome_format_test //:biome_lint_test //:rustfmt_test \
+     //tools/ci:source_checks //tools/dev:source_checks \
+     --platforms="$profile" --host_platform="$profile" --jobs=2
+   ```
 
-# Release implementation changes:
-moon run release-tools:test
+   Select the relevant checks from this list. Rust owners also expose Clippy,
+   unit, integration and consumer targets; Clippy does not replace execution.
+   Shipping qualification must name actual test rules, including manual tests,
+   rather than relying on a `test_suite` to establish owner policy.
+3. Select release-tool checks by the contract that changed:
 
-# Release Please candidate ownership/version selection changes:
-moon run release-tools:graph-unit
+   ```sh
+   # Product/version and artifact declarations:
+   bash tools/dev/bun.sh tools/release/check_release_please_config.mts
+   bash tools/dev/bun.sh tools/release/check_artifact_targets.mts
 
-# Workflow and CI planning changes:
-moon run ci-workflows:check
+   # Release controller and pinned Release Please behavior:
+   bash tools/release/release-check.sh --mutation-tests-only
 
-# Release metadata and release implementation tests:
-bash tools/release/release-check.sh
+   # Metadata plus the release-owned controller suites:
+   bash tools/release/release-check.sh
 
-# Extension catalog, recipe, carrier, or generated extension metadata only:
-moon run extensions:lint extensions:test
-```
+   # Extension catalog and derived metadata:
+   bash tools/dev/bun.sh src/extensions/tools/check-extension-model.mts --check
+   ```
 
-Select only the checks whose inputs changed. `release-tools:metadata` validates
-product versions, compatibility, carrier declarations and derived files;
-`release-tools:test` exercises release behavior; `graph-unit` exercises the
-pinned Release Please candidate integration. `release-tools:check` is their
-local Moon aggregate. There is no separate policy test project. The Shell
-aggregate runs metadata and release tests, not product compilation or installed
-consumer qualification. CI's `Checks / Policy` job runs on Ubuntu and sets up
-only capabilities needed by its selected tasks. Workflow planning, affectedness,
-artifact-transfer and security checks belong to `ci-workflows:check`.
-Publishers consume source qualification and frozen artifacts instead of
-replaying source-only suites. Do not schedule both aggregates and their
-constituent checks in the same lane.
-`tools/ci/ci_plan.mts` writes `target/graph/ci-plan.json`; there is no
-`graph-tools` Moon project. The adapter consumes Moon's selected tasks; its
-behavioral tests do not replace planning against the actual candidate tree.
+   Run either the aggregate or its relevant constituents once. These checks do
+   not compile products or qualify installed consumers. Workflow and local-action
+   changes use `//tools/ci:source_checks`, whose pinned actionlint, zizmor and
+   ShellCheck checks include behavioral regressions; actionlint alone is
+   insufficient. Hosted permissions, environments and artifact handoffs still
+   need actual exact-source CI proof.
+4. For a producer source, patch, recipe or toolchain change, construct and test
+   that owner's affected output. Package-only and test-only edits should reuse
+   unchanged compiler outputs. Use `tools/bazel/README.md` for Linux native,
+   WASIX AOT, browser and captured cross-host consumer commands. Keep module
+   acquisition strict; ordinary commands verify `MODULE.bazel.lock`. Intentional
+   repins update it with `bazel.sh mod deps --lockfile_mode=update` and review the
+   resulting pins, rather than ignoring lock failures.
+5. Run SDK tests against the actual constructed packages and their declared
+   dependencies. Public carriers preserve held pins, even when a current
+   workspace producer has the same version. Imported completed bytes need their
+   genuine completion and physical identity. Current source compilation is
+   separate from final installed admission: Swift preparation proves workspace
+   source checks, while selected final Swift shipping also requires its exact
+   installed consumer. Never relabel preparation proof as final proof.
+6. Source acquisition changes require the paired Git/archive behavior test and
+   deterministic policy check:
 
-Ordinary source pushes, PR preparation and CI qualification do not select the
-protected `release-bootstrap` environment. Bootstrap-token lifecycle findings
-from the optional release-controls audit are setup/publication findings, not
-source-qualification blockers. Preserve the actual CI ref, permission and
-artifact checks; do not provision, remove or relabel registry credentials to
-make an unrelated source run pass.
+   ```sh
+   bash src/third-party/tools/source-fetch-core.test.sh
+   bash src/third-party/tools/fetch-sources.sh production-all --validate-only
+   ```
 
-For source-acquisition policy or a source `mirror_url`, run
-`bash src/third-party/tools/source-fetch-core.test.sh` and
-`bash src/third-party/tools/fetch-sources.sh production-all --validate-only`, or the
-complete owner task `moon run source-inputs:test`. The paired Shell test owns
-actual Git/archive operations and invokes its TypeScript assertions once. Prove a
-new endpoint with a live exact-commit fetch, but keep reachability out of the
-deterministic unit gate. Qualification must show bounded canonical-to-mirror
-failover, exact-pin rejection, canonical durable origin, and transactional
-preservation of an existing checkout when every endpoint fails.
+   Prove a changed endpoint with one live exact-pin fetch. Require bounded
+   canonical-to-mirror failover, exact-pin rejection and preservation of an
+   existing checkout when all endpoints fail. Reachability does not belong in
+   the deterministic unit gate. Declare required tools and SDKs through the
+   owner's Bazel rule/toolchain, including execution-platform constraints.
+7. Treat runner-image pins as toolchain inputs. Avoid mutable `*-latest` aliases.
+   Check the actual ELF, Mach-O or Android API contract after a relevant change.
+   Cross-compilation proves construction; native host/device execution remains
+   separate. Record the Bash actually used by macOS Shell paths. Keep focused
+   Bash 3.2 behavior checks where scripts claim that compatibility; do not impose
+   the entire Linux controller suite on macOS `/bin/bash`.
 
-5. For any workflow or local-action change, run
-   `bash tools/ci/check-workflows.sh` before waiting for CI. This is the
-   repository's exact pinned `actionlint` plus `zizmor` gate and its workflow
-   behavior tests; running `actionlint` alone is not sufficient. A disposable
-   credential-free workflow compiler probe is needed only when a release candidate
-   changes hosted-only job topology, permissions, protected environments, or
-   dispatch inputs. The local gate cannot prove hosted environment-secret
-   resolution or dispatch-time graph compilation.
-   Exercise macOS-executed Shell paths with the Bash actually selected by that
-   job, recording `command -v bash` and `bash --version`. `shell: bash` alone
-   does not establish a version. Normal release/Apple setup does not install
-   another Bash; the WASIX postmaster target job explicitly installs Homebrew
-   Bash. Keep focused Bash 3.2 behavioral checks for scripts claiming macOS
-   `/bin/bash` compatibility, including `set -u` empty-array behavior. Do not
-   impose the entire Linux release-tool suite on Bash 3.2. Syntax checks do not
-   replace actual Apple transport or publication-path behavior.
-6. Declare runner capabilities on the narrowest Moon task that needs them. Use
-   `requires-rust` for Cargo, rustc, rustfmt, or another Rust-toolchain command;
-   `requires-maintainer-tools` for the pinned tools installed by
-   `tools/dev/bootstrap-tools.sh`; and `requires-android-sdk` for Android SDK work.
-   Use `requires-swift` for the portable Swift compiler; add `requires-apple`
-   only for Xcode, Apple frameworks, simulators or other Apple-only work.
-   Portable Swift source checks use the pinned Linux Swift setup.
-   Capabilities propagate through task dependencies. The planner keeps
-   capability-bearing checks grouped only with tasks requiring the same setup.
-7. Treat a hosted runner-image pin as a toolchain dependency. Never introduce a mutable `*-latest` alias; after changing an explicit runner pin, inspect the image delta and run the platform binary contract for every affected release target.
-
-For a WASIX Docker, APT snapshot, or bootstrap trust change, also run the
-product-owned fault test and source verifier before the expensive build:
-
-```sh
-bash src/third-party/tools/fetch-sources.sh wasix-runtime --verify-only
-moon run liboliphaunt-wasix:build-orchestration-test liboliphaunt-wasix:test
-```
-
-Then use `liboliphaunt-wasix:compiler-output`, `runtime-portable` and
-`runtime-aot` for the actual selected producer proof. Optional PostgreSQL tools
-and extensions have separate owner producers; do not restore those as core
-runtime build prerequisites. For a Docker trust change, build the pinned
-Dockerfile from a clean builder context. Require a
-successful TLS-verified snapshot transaction and the exact declared wasixcc,
-Clang, and Binaryen versions; a source/static check alone does not prove
-that the pinned trust chain still reaches the snapshot service.
-
-For an SDK change, run each affected
-SDK's relevant source checks, `test`, and `package` tasks in one Moon invocation.
-Their declared dependencies remain necessary; `package` does not silently rerun
-unrelated source qualification. Set
-`MOON_BASE` and `MOON_HEAD`, inspect affected SDK projects, and pass the exact
-targets to `moon run`; a workspace-wide selector also selects non-SDK products.
-Confirm ownership with `moon query tasks --project <sdk-project>` when changing
-task topology. Never replace the product task with a narrower native command:
-for example, `cargo test -p oliphaunt --lib` omits other Cargo targets selected
-by the owner task. Carrier producers copy the canonical C header; real consumers
-compile against it instead of running a separate layout gate. Add
-the product's explicit runtime or installed-host tests when that proof is needed, and run
-`moon run extensions:lint extensions:test` when an extension catalog or generated SDK
-extension surface changes. Put new guarantees in a parsed schema/generated
-contract where consumers require one, a clean-consumer package check, or a
-product-owned behavioral test. Do
-not qualify SDK behavior by grepping prose, test names, or
-implementation-source spellings.
+Shared construction stays on Linux where reproducible. macOS and Windows own
+licensed SDK work and native execution; Android/iOS behavior needs the actual
+supported device or simulator. Use existing source-bound archive transports,
+not another resolver, remote executor or hand-maintained product matrix.
 
 ## GitHub qualification
 
-- Identify runs by workflow plus exact `headSha`; never accept “latest successful on branch.”
-- A manual exact-main dispatch compares against `format('{0}^', github.sha)`,
-  the dispatched commit's immutable sole parent. Never fall back to
-  `origin/main` for a main dispatch: after a merge that moving ref is the
-  dispatched head itself and turns release-intent validation into an invalid
-  self-comparison. Non-main diagnostic dispatches retain their explicit
-  comparison to current `origin/main`.
-- The `pull_request.closed` event is a runnerless cancellation tombstone. It
-  shares the PR concurrency group so merging cancels obsolete PR work, while
-  every root and `always()` aggregate job skips before runner allocation. It
-  cannot refund PR work that already completed. For an explicitly authorized
-  one-hosted-run recovery, keep CI disabled through every intermediate update
-  and the final merge, then enable it and manually dispatch exactly once from
-  the final `main` SHA. Do not also create a push run: non-PR runs for the same
-  SHA serialize rather than cancel one another.
-- The release prerequisite is the non-cancelled `Qualified` gate for that SHA, including required checks, builds, policy, tests, and selected E2E.
-- When WASIX or an extension is selected, require the same-run full lifecycle evidence artifact. It must cover every catalogued extension in direct, server, restart, materialization, and physical backup/restore modes and satisfy `--require-current-evidence` for the candidate source digest.
-- Ensure artifact attestations and the publication lock reference the same SHA/tree.
-- Require artifact evidence for the compatibility floors in
-  `src/docs/maintainers/release.md`: inspect Mach-O load commands, Android API/ELF
-  metadata, and Linux ELF symbol versions rather than inferring support from a
-  runner or package label.
-- Do not rerun duplicate downstream E2E workflows when the same evidence is already part of the required gate.
-- On failure, inspect the failing job log and earliest causal error. Fix the cause, push a new SHA, and restart qualification; do not reuse artifacts from the failed SHA.
-- A release preparation failure is not failed CI qualification. Before
-  publication starts, an allowlisted release-control fix may consume a prior
-  successful exact-source run through `qualification_run_id`. Require the
-  controller's `Required` gate, preserve the original source/run identity, and
-  never rebuild producers or substitute a different run.
+- Resolve the exact workflow, source SHA/tree, run, attempt and producing job;
+  never accept “latest successful on branch.” Closed PR events cancel stale PR
+  work and allocate no qualification runners.
+- `bazel.yml` runs the source-owned configured exports. The release-inputs job
+  acquires one immutable public-input pool for ordinary source or the canonical
+  authenticated Prepare snapshot for a generated release tree. Each consumer
+  validates and imports those same physical inputs.
+- Required first checks all predecessor jobs, then audits retained construction
+  across all 27 products. It does not require itself as a producer or grant
+  publication authority. Missing producer, source, carrier, supplier or owner
+  qualification coverage fails closed.
+- A generated release PR or queued release tree must resolve the canonical
+  Prepare producer and exact version-only source bridge. A mixed queue tree
+  cannot substitute its branch name or synthetic title for that proof.
+- Main preparation uses an exact successful Native run and Required gate.
+  Publication additionally authenticates final selected outputs, complete
+  supplier coverage and the prepared-source bridge. Selected Swift final
+  admission requires the source-owned final export and installed consumer.
+- Require the actual extension SQL/lifecycle, browser, host and device results
+  declared by each owner. A passing build or ABI comparison alone does not
+  replace those tests. Preserve final archives and seed receipt/frozen pairs;
+  the full action DAG remains evidence even when cached intermediate objects
+  are not materialized.
+- Fix the earliest causal failure and qualify a new source SHA. Do not reuse a
+  failed or wrong-source packet, widen scope from unknown facts, fabricate old
+  constructor history or create another download path to bypass authentication.
+- Pre-publication recovery may use an explicit exact-source qualification after
+  allowlisted control fixes. Preserve original source/run/file identity and
+  require the current controller's Native Required gate; never rebuild producers.
 
-## Report
-
-List commands and outcomes, skipped lanes with reasons, exact GitHub run/SHA, required gate state, produced artifact/lock evidence, WASIX lifecycle evidence when selected, and residual platform gaps. “Green CI” without exact-SHA and gate names is not release evidence.
+Ordinary branch work, source qualification and release-PR preparation do not use
+`release-bootstrap` credentials. Setup findings do not justify provisioning or
+relabeling credentials for an unrelated source run. Keep actual permission,
+source and artifact checks intact.
 
 ## Declared requirements and frozen consumers
 
-Conventional manifests own source consumer requirements. Compiled inputs,
-Release Please ecosystem updates and necessary default SDK/extension install
-updates justify generated retargets. Candidate preparation coordinates only the
-required dependency closure when exact extension hosts change; compatible SDK
-and extension updates and runtime-only releases keep independent scope. Admission
-checks the resulting default install against unchanged immutable releases.
-External extension host references declare `public_support = true`; private
-references declare `false`. Public host removal requires breaking intent before
-version selection and verification against the previous immutable product tag.
+Conventional manifests own consumer requirements. Only observed compiled
+incorporation, Release Please ecosystem updates and necessary explicit/default
+install adoption justify generated retargets. ABI compatibility or co-selection
+alone does not retarget a held consumer. Native, WASIX, resources, tools, SDKs,
+bindings and external extensions retain independent versions.
 
-Source `Qualified` and capsule preparation precede final installed consumer
-checks. Require `Frozen consumers` and `Publication ready` before bootstrap or
-normal mutation. The immutable consumer proof binds the lock, expected cases,
-test configuration, producing run/attempt and resolver/log evidence. Recovery
-imports prepared bytes and reruns these cases; an old missing/failed proof does
-not invalidate the bytes. Record installation, compilation/link and execution
-levels honestly. npm staging preserves full manifests and historical pins;
-Cargo path patches are staging evidence, not registry provenance. Keep the
-postpublication public checks and reconciliation.
+External host references declare `public_support`. Removing a public host needs
+breaking intent before version calculation and verification against its previous
+immutable product tag. Private dependency changes do not automatically imply a
+public breaking change.
+
+Source qualification and candidate freezing precede `Frozen consumers` and
+`Publication ready`; both gates are required before protected mutation. The
+consumer proof binds the lock, expected cases, configuration and producing
+run/attempt. Recovery imports the same bytes and reruns required consumers.
+npm staging keeps complete manifests and historical pins; Cargo source patches
+are staging evidence, not registry provenance. Retain public postpublication
+checks and immutable-state reconciliation.
+
+## Report
+
+Report commands and outcomes, exact source/run identities, Required and consumer
+gate states, original artifact/lock evidence and remaining platform gaps.
+Distinguish construction, install, compile/link and execution proof. “Green CI”
+without exact identity and gate names is not release evidence.

@@ -19,10 +19,14 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { stageCargoCarrierInputs } from '../packaging/frozen-cargo.mts';
 import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
 } from '../packaging/portable-archive.mts';
+
+export { stageCargoCarrierInputs } from '../packaging/frozen-cargo.mts';
+
 import { boundedResponseBytes } from './github-read.mts';
 import { publicCargoEnvironment, sanitizedPublicEnvironment } from './public-consumer-smoke.mts';
 import { loadPublicationCatalog } from './publication-catalog.mts';
@@ -701,23 +705,20 @@ function verifyFrozenFiles(lock) {
 }
 
 export function stageFrozenCargo(lock, directory) {
-  const patches = [];
-  for (const carrier of lock.carriers.filter((carrier) => carrier.ecosystem === 'cargo')) {
-    const { file: archive } = lockedCarrierFile(lock, 'cargo', carrier.name);
-    const destination = path.join(directory, 'crates', `${carrier.name}-${carrier.version}`);
-    extractPortableArchiveTree(archive, destination, `${carrier.name}-${carrier.version}`);
-    const manifest = Bun.TOML.parse(readFileSync(path.join(destination, 'Cargo.toml'), 'utf8'));
-    if (
-      manifest.package?.name !== carrier.name ||
-      manifest.package?.version !== carrier.version ||
-      Object.hasOwn(manifest.package?.metadata?.oliphaunt ?? {}, 'qualificationOnly')
-    )
-      throw new Error(`frozen Cargo identity differs: ${carrier.id}`);
-    patches.push(`${JSON.stringify(carrier.name)} = { path = ${JSON.stringify(destination)} }`);
-  }
-  const config = path.join(directory, 'cargo-config.toml');
-  writeFileSync(config, `[patch.crates-io]\n${patches.join('\n')}\n`);
-  return config;
+  return stageCargoCarrierInputs(
+    lock.carriers
+      .filter((carrier) => carrier.ecosystem === 'cargo')
+      .map((carrier) => {
+        const { file, carrier: verified } = lockedCarrierFile(lock, 'cargo', carrier.name);
+        return {
+          file,
+          name: carrier.name,
+          version: carrier.version,
+          sha256: verified.artifacts[0].sha256,
+        };
+      }),
+    directory,
+  );
 }
 
 async function npmConsumer(
@@ -1327,6 +1328,7 @@ async function swiftConsumer(test, lock, directory, environment) {
     outputFile: path.join(directory, 'Package.swift'),
   });
   const app = path.join(directory, 'app');
+  const swiftBuild = path.join(directory, 'swift-build');
   mkdirSync(path.join(app, 'Sources/FrozenConsumer'), { recursive: true });
   writeFileSync(
     path.join(app, 'Package.swift'),
@@ -1352,6 +1354,8 @@ async function swiftConsumer(test, lock, directory, environment) {
       [
         'swift',
         'build',
+        '--scratch-path',
+        swiftBuild,
         '--package-path',
         app,
         '--triple',
@@ -1365,11 +1369,133 @@ async function swiftConsumer(test, lock, directory, environment) {
     );
   } else
     await command(
-      ['swift', 'run', '--package-path', app, 'FrozenConsumer'],
+      ['swift', 'run', '--scratch-path', swiftBuild, '--package-path', app, 'FrozenConsumer'],
       directory,
       environment,
       path.join(directory, 'execute.log'),
     );
+  const fixture = lock.productArtifacts.find(
+    (artifact) =>
+      artifact.product === test.product && artifact.kind === 'swiftpm-extension-consumer-fixture',
+  );
+  if (fixture) {
+    const { extensionReleaseConsumerInputs } = await import(
+      '../../src/native/sdks/swift/tools/swift-extension-release-consumer-inputs.mts'
+    );
+    const { swiftExtensionReleaseConsumerFiles } = await import(
+      '../../src/native/sdks/swift/tools/extension-release-consumer.mts'
+    );
+    const { localizeSwiftExtensionFixturePackage } = await import(
+      '../../src/native/sdks/swift/tools/swift-extension-fixture-consumer.mts'
+    );
+    const source = lock.productArtifacts.find(
+      (artifact) =>
+        artifact.product === test.product && artifact.kind === 'swiftpm-ios-carrier-manifest',
+    );
+    if (!source) throw new Error('Swift fixture requires its original source carrier');
+    const sourceCarrier = path.join(ROOT, source.path);
+    const base = json(sourceCarrier).base;
+    const resources = base.assets.find((asset) => asset.role === 'runtime-resources');
+    if (!resources) throw new Error('Swift fixture requires original held resource archive');
+    const resourceFile = path.join(directory, resources.name);
+    const frozen = lock.productArtifacts.find((artifact) => artifact.name === resources.name);
+    let resourceBytes;
+    if (frozen) resourceBytes = readFileSync(path.join(ROOT, frozen.path));
+    else {
+      const response = await fetch(resources.url, { signal: AbortSignal.timeout(180_000) });
+      if (!response.ok)
+        throw new Error(`Swift fixture resource provider returned ${response.status}`);
+      resourceBytes = await boundedResponseBytes(
+        response,
+        2 * 1024 * 1024 * 1024,
+        'Swift fixture resource provider',
+      );
+    }
+    if (
+      resourceBytes.length !== resources.bytes ||
+      createHash('sha256').update(resourceBytes).digest('hex') !== resources.sha256
+    )
+      throw new Error('Swift fixture resource provider bytes differ');
+    writeFileSync(resourceFile, resourceBytes);
+    const selected = path.join(directory, 'selected-extensions');
+    cpSync(path.join(ROOT, fixture.path), selected, { recursive: true });
+    const products = json(path.join(selected, 'extension-products.json'));
+    const owners = new Set(products.selected.map((row) => row.releaseProduct ?? row.product));
+    const controls = lock.productArtifacts.filter(
+      (artifact) => artifact.kind === 'swift-extension-carrier' && owners.has(artifact.product),
+    );
+    const coreFile = assets.find((file) => path.basename(file).startsWith('liboliphaunt-'));
+    const input = (file) => ({
+      path: file,
+      size: readFileSync(file).length,
+      sha256: createHash('sha256').update(readFileSync(file)).digest('hex'),
+    });
+    const plan = extensionReleaseConsumerInputs({
+      sourceCarrierFile: sourceCarrier,
+      extensionCarrierFiles: controls.map((artifact) => path.join(ROOT, artifact.path)),
+      nativeBaseArchiveInputs: {
+        'base-xcframework': input(coreFile),
+        'runtime-resources': input(resourceFile),
+      },
+    });
+    writeFileSync(
+      path.join(selected, 'Package.swift'),
+      localizeSwiftExtensionFixturePackage(
+        readFileSync(path.join(selected, 'Package.swift'), 'utf8'),
+        products,
+        lock.products.find((product) => product.id === test.product).version,
+        directory,
+      ),
+    );
+    const consumer = path.join(directory, 'extension-consumer');
+    mkdirSync(path.join(consumer, 'Sources/OliphauntExtensionReleaseConsumer'), {
+      recursive: true,
+    });
+    const generated = swiftExtensionReleaseConsumerFiles({
+      plan,
+      products,
+      selectedPackage: selected,
+      releasePackage: directory,
+    });
+    writeFileSync(path.join(consumer, 'Package.swift'), generated.packageFile);
+    writeFileSync(
+      path.join(consumer, 'Sources/OliphauntExtensionReleaseConsumer/main.swift'),
+      generated.main,
+    );
+    const args =
+      test.integration === 'ios'
+        ? [
+            'build',
+            '--triple',
+            'arm64-apple-ios17.0-simulator',
+            '--sdk',
+            (
+              await command(
+                ['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'],
+                directory,
+                environment,
+                path.join(directory, 'extension-sdk.log'),
+              )
+            ).trim(),
+          ]
+        : ['run'];
+    const result = await command(
+      [
+        'swift',
+        ...args,
+        '--scratch-path',
+        swiftBuild,
+        '--package-path',
+        consumer,
+        ...(test.integration === 'ios' ? [] : ['OliphauntExtensionReleaseConsumer']),
+      ],
+      directory,
+      environment,
+      path.join(directory, 'extension-execute.log'),
+    );
+    if (test.integration !== 'ios' && !result.includes('OLIPHAUNT_SWIFT_'))
+      throw new Error('Swift fixture final-link proof marker is missing');
+  }
   const resolution = {
     manifest,
     providers: binaries.map(([, url, checksum]) => ({ url, checksum })),

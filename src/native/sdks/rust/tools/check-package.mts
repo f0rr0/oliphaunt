@@ -66,6 +66,7 @@ async function validateRustSdkCrate(crate) {
       ),
       'utf8',
     ),
+    readFileSync(path.join(ROOT, 'Cargo.toml'), 'utf8'),
   );
   const expected = Bun.TOML.parse(
     packageName === 'oliphaunt' ? renderReleaseCargoToml(source) : source,

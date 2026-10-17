@@ -1,0 +1,21 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files")
+load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["Cargo.toml"])
+
+PATH_DEPS = {"liboliphaunt-native-bindings": "//src/native/rust-bindings:packaging_lib"}
+
+cargo_package_env()
+cargo_library(path_dependencies = PATH_DEPS, compile_data = ["//src/extensions/generated/sdk:extensions.json", "//src/extensions/contracts:archive_policy_compile_data"])
+cargo_binary(name = "resources", source = "src/bin/package_resources.rs", path_dependencies = PATH_DEPS, library = ":lib")
+cargo_library_test()
+cargo_library_test(name = "resources_cli_test", crate = ":resources")
+
+# Private packaging code has source obligations rather than public shipping roots.
+test_suite(name = "source_tests", tests = [":unit_test", ":resources_cli_test"])
+
+rust_clippy_test(name = "clippy_test", targets = [":lib", ":unit_test", ":resources", ":resources_cli_test"], transitive = False, size = "small")
+
+rust_quality_files()

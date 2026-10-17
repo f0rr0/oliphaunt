@@ -4,22 +4,22 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import { requireSafeDirectoryChain as requireReleaseDirectoryChain } from '../../../tools/packaging/release-directory-safety.mts';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
+import { requireSafeDirectoryChain as requireReleaseDirectoryChain } from '../../../tools/packaging/release-directory-safety.mts';
 import {
   hasCanonicalReleaseStagingMode,
-  releaseNoticeRows,
   releaseMavenLicenses,
+  releaseNoticeRows,
   releaseProfilePackageLicense,
 } from '../../../tools/packaging/release-notices.mts';
+import { nativeExtensionModuleHostTarget } from '../contracts/extension-target-profiles.mts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const EXTERNAL_ROOT = path.join(ROOT, 'src/extensions/external');
@@ -49,6 +49,12 @@ const CONTRIB_LICENSE = Object.freeze({
   upstreamSpdx: 'PostgreSQL',
   packageSpdx: 'MIT AND PostgreSQL',
 });
+export const PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS = Object.freeze([
+  'linux-x64-gnu',
+  'linux-arm64-gnu',
+  'macos-arm64',
+  'windows-x64-msvc',
+]);
 const OPENSSL_EMBEDDED_NATIVE_TARGETS = new Set([
   'android-arm64-v8a',
   'android-x86_64',
@@ -442,7 +448,6 @@ export function externalReleaseExtensionSqlNames() {
         fail(`${path.relative(ROOT, releaseFile)} must declare a safe extension_sql_name`);
       }
       sqlNames.push(release.extension_sql_name);
-      continue;
     }
   }
   const canonical = [...new Set(sqlNames)].sort(compareText);
@@ -521,6 +526,24 @@ export function extensionMavenLicenses(product, members, { version } = {}) {
     }
   }
   return Object.freeze(entries);
+}
+
+/** Supplemental Maven entries follow the same validated physical receipts. */
+export function nativeExtensionConstructionMavenLicenses(sqlName, target, files = []) {
+  const validated = validateNativeExtensionConstructionLicenseInventory(sqlName, target, files);
+  if (!validated.some((file) => file.path.startsWith('share/licenses/llvm-compiler-rt/')))
+    return [];
+  const source = JSON.parse(
+    readFileSync(path.join(ROOT, 'build_defs/extensions/compiler_rt/source.json'), 'utf8'),
+  );
+  const license = source.files.find((file) => file.destination === 'LICENSE.TXT');
+  return [
+    {
+      name: `${source.license} (${source.project})`,
+      url: `https://github.com/llvm/llvm-project/blob/${source.commit}/${license.path}`,
+      distribution: 'repo',
+    },
+  ];
 }
 
 function hashFile(file) {
@@ -706,10 +729,82 @@ export function extensionUpstreamLicenseFileInventory(sqlNames) {
   );
 }
 
+/** Construction receipts bind bundled implementations to their immutable source pins. */
+export function nativeExtensionConstructionLicenseInventory(sqlName, target) {
+  target = nativeExtensionModuleHostTarget(target);
+  if (sqlName === 'pgcrypto' && PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS.includes(target)) {
+    const license = releaseNoticeRows({ profile: 'contrib-native-openssl' }).find(
+      (row) => row.id === 'openssl',
+    );
+    return Object.freeze(
+      [
+        {
+          path: 'share/licenses/openssl-native/LICENSE.txt',
+          sha256: createHash('sha256').update(readFileSync(license.source)).digest('hex'),
+          mode: '0644',
+        },
+        {
+          path: 'share/licenses/openssl-native/SOURCE.toml',
+          sha256: createHash('sha256').update(readFileSync(license.sourceManifest)).digest('hex'),
+          mode: '0644',
+        },
+      ].map(Object.freeze),
+    );
+  }
+  if (sqlName !== 'vector' || target !== 'linux-x64-gnu') {
+    fail('native construction legal closure has no declared source for this member/target');
+  }
+  const source = JSON.parse(
+    readFileSync(path.join(ROOT, 'build_defs/extensions/compiler_rt/source.json'), 'utf8'),
+  );
+  const sortKeys = (value) =>
+    Array.isArray(value)
+      ? value.map(sortKeys)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.keys(value)
+              .sort(compareText)
+              .map((key) => [key, sortKeys(value[key])]),
+          )
+        : value;
+  const license = source.files.find((file) => file.destination === 'LICENSE.TXT');
+  if (
+    source.schema !== 'oliphaunt-compiler-runtime-source-v1' ||
+    source.project !== 'llvm-compiler-rt' ||
+    source.license !== 'Apache-2.0 WITH LLVM-exception' ||
+    !GIT_COMMIT.test(source.commit) ||
+    !license ||
+    !SHA256.test(license.sha256)
+  ) {
+    fail('invalid immutable compiler-runtime legal source');
+  }
+  return Object.freeze(
+    [
+      { path: 'share/licenses/llvm-compiler-rt/LICENSE.TXT', sha256: license.sha256, mode: '0644' },
+      {
+        path: 'share/licenses/llvm-compiler-rt/SOURCE.json',
+        sha256: createHash('sha256')
+          .update(JSON.stringify(sortKeys(source)))
+          .digest('hex'),
+        mode: '0644',
+      },
+    ].map(Object.freeze),
+  );
+}
+
+export function validateNativeExtensionConstructionLicenseInventory(sqlName, target, files = []) {
+  if (!Array.isArray(files)) fail('native construction legal inventory must be an array');
+  if (files.length === 0) return Object.freeze([]);
+  const expected = nativeExtensionConstructionLicenseInventory(sqlName, target);
+  if (JSON.stringify(files) !== JSON.stringify(expected))
+    fail('native construction legal inventory differs from the immutable construction source');
+  return expected;
+}
+
 export function extensionCarrierLegalContract(
   product,
   sqlNames,
-  { family, target, carriesPayload = true } = {},
+  { family, target, carriesPayload = true, memberContracts = [] } = {},
 ) {
   if (
     typeof product !== 'string' ||
@@ -738,7 +833,17 @@ export function extensionCarrierLegalContract(
   if (product === CONTRIB_LICENSE.product) {
     const embedsOpenSsl =
       sqlNames.includes('pgcrypto') &&
-      (family === 'wasix' || OPENSSL_EMBEDDED_NATIVE_TARGETS.has(target));
+      (family === 'wasix' ||
+        OPENSSL_EMBEDDED_NATIVE_TARGETS.has(target) ||
+        memberContracts.some(
+          (member) =>
+            member.sqlName === 'pgcrypto' &&
+            validateNativeExtensionConstructionLicenseInventory(
+              member.sqlName,
+              target,
+              member.nativeConstructionLicenseFiles ?? [],
+            ).length > 0,
+        ));
     const profile = `${family === 'native' ? 'contrib-native' : 'contrib-wasix'}${embedsOpenSsl ? '-openssl' : ''}`;
     return Object.freeze({
       profile,
@@ -755,6 +860,54 @@ export function extensionCarrierLegalContract(
     upstreamMembers: Object.freeze([...sqlNames]),
     licenseFiles: Object.freeze(licenseFiles),
   });
+}
+
+export function nativeExtensionCarrierLegal(
+  product,
+  members,
+  { target = null, carriesPayload, memberContracts = [] },
+) {
+  if (
+    typeof product !== 'string' ||
+    !Array.isArray(members) ||
+    members.length === 0 ||
+    members.some((member) => typeof member !== 'string' || !member) ||
+    new Set(members).size !== members.length ||
+    typeof carriesPayload !== 'boolean'
+  ) {
+    fail(
+      'native extension carrier legal lookup requires a product, unique members, and carriesPayload',
+    );
+  }
+  try {
+    const legal = extensionCarrierLegalContract(product, members, {
+      family: 'native',
+      target,
+      carriesPayload,
+      memberContracts,
+    });
+    const construction = memberContracts.flatMap((member) =>
+      validateNativeExtensionConstructionLicenseInventory(
+        member.sqlName,
+        target,
+        member.nativeConstructionLicenseFiles ?? [],
+      ),
+    );
+    const incorporatesCompilerRuntime = construction.some((file) =>
+      file.path.startsWith('share/licenses/llvm-compiler-rt/'),
+    );
+    return !incorporatesCompilerRuntime
+      ? legal
+      : Object.freeze({
+          ...legal,
+          packageSpdx: `${legal.packageSpdx} AND Apache-2.0 WITH LLVM-exception`,
+        });
+  } catch (cause) {
+    throw new Error(
+      `extension-upstream-licenses: cannot derive the canonical native extension carrier legal contract: ${cause.message}`,
+      { cause },
+    );
+  }
 }
 
 export function extensionCarrierLegalFileInventory(
@@ -913,10 +1066,25 @@ function archiveEntryKind(entry) {
   return 'special';
 }
 
-export function assertExtensionUpstreamLicensesInEntries(sqlNames, entries, { prefix = '' } = {}) {
+export function assertExtensionUpstreamLicensesInEntries(
+  sqlNames,
+  entries,
+  { prefix = '', constructionLicenseFiles = [], target = null } = {},
+) {
   if (!(entries instanceof Map)) fail('upstream license archive entries must be a Map');
   const normalizedPrefix = checkedArchivePrefix(prefix);
   const expected = expectedLicenseFiles(sqlNames);
+  if (constructionLicenseFiles.length > 0) {
+    if (sqlNames.length !== 1)
+      fail('construction license closure requires its exact extension owner');
+    for (const row of validateNativeExtensionConstructionLicenseInventory(
+      sqlNames[0],
+      target,
+      constructionLicenseFiles,
+    )) {
+      expected.set(row.path, { destination: row.path, sha256: row.sha256 });
+    }
+  }
   const expectedNames = [...expected.keys()]
     .map((member) => prefixed(normalizedPrefix, member))
     .sort(compareText);

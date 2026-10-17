@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { packGeneratedNpmCarrier } from '../../../../tools/packaging/npm-package.mts';
 import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
@@ -8,7 +9,6 @@ import {
 import {
   extractReleaseArchiveFile,
   fail,
-  packStagedNpmCarrier,
   rel,
   stageNpmPackageDescriptor,
 } from '../../../../tools/packaging/release-carrier.mts';
@@ -33,25 +33,24 @@ import {
 
 const LIBOLIPHAUNT_ICU_PACKAGE_NAME = '@oliphaunt/icu';
 const LIBOLIPHAUNT_ICU_PACKAGE_ROOT = path.join(ROOT, 'src/database-resources/icu/npm');
-function stageLiboliphauntIcuNpmPayload(version) {
-  const stage = stageNpmPackageDescriptor(
-    LIBOLIPHAUNT_ICU_PACKAGE_NAME,
-    LIBOLIPHAUNT_ICU_PACKAGE_ROOT,
-    version,
-    {
-      extraDescriptors: [ICU_PODSPEC],
-      target: 'portable',
-    },
-  );
+function stageLiboliphauntIcuNpmPayload(version, context) {
+  const packageRoot = context.packageRoot ?? LIBOLIPHAUNT_ICU_PACKAGE_ROOT;
+  const stage = stageNpmPackageDescriptor(LIBOLIPHAUNT_ICU_PACKAGE_NAME, packageRoot, version, {
+    extraDescriptors: [ICU_PODSPEC],
+    target: 'portable',
+    ...(context.stageDir === undefined ? {} : { stageDir: context.stageDir }),
+  });
   copyFileSync(
-    path.join(LIBOLIPHAUNT_ICU_PACKAGE_ROOT, 'react-native.config.cts'),
+    path.join(packageRoot, 'react-native.config.cts'),
     path.join(stage, ICU_REACT_NATIVE_CONFIG),
   );
-  const sourceArchive = path.join(
-    ROOT,
-    'target/database-resources/release-assets',
-    `database-resources-${version}-icu-data.tar.gz`,
-  );
+  const sourceArchive =
+    context.sourceArchive ??
+    path.join(
+      ROOT,
+      'target/database-resources/release-assets',
+      `database-resources-${version}-icu-data.tar.gz`,
+    );
   extractPortableArchiveTree(
     sourceArchive,
     path.join(stage, ...ICU_DATA_RELATIVE_PATH.split('/')),
@@ -74,8 +73,11 @@ function stageLiboliphauntIcuNpmPayload(version) {
   }
   packageJson.oliphaunt.icuDataTreeSha256 = digest;
   writeFileSync(manifestFile, `${JSON.stringify(packageJson, null, 2)}\n`);
-  stageReleaseNotices(stage, { profile: 'native-icu-data' });
-  assertReleaseNoticesInDirectory(stage, { profile: 'native-icu-data' });
+  stageReleaseNotices(stage, { profile: 'native-icu-data', sourceRoot: context.noticeSourceRoot });
+  assertReleaseNoticesInDirectory(stage, {
+    profile: 'native-icu-data',
+    sourceRoot: context.noticeSourceRoot,
+  });
   try {
     assertIcuPackageManifest(
       JSON.parse(readFileSync(path.join(stage, 'package.json'), 'utf8')),
@@ -87,7 +89,8 @@ function stageLiboliphauntIcuNpmPayload(version) {
   return stage;
 }
 
-function validatePackedIcuPackage(packageName, version, tarball, sourceArchive) {
+function validatePackedIcuPackage(packageName, version, tarball, sourceArchive, context) {
+  const packageRoot = context.packageRoot ?? LIBOLIPHAUNT_ICU_PACKAGE_ROOT;
   let entries;
   let sourceEntries;
   try {
@@ -125,10 +128,8 @@ function validatePackedIcuPackage(packageName, version, tarball, sourceArchive) 
       packageJson,
       packedConfig: entries.get(`package/${ICU_REACT_NATIVE_CONFIG}`)?.data(),
       packedPodspec: entries.get(`package/${ICU_PODSPEC}`)?.data(),
-      sourceConfig: readFileSync(
-        path.join(LIBOLIPHAUNT_ICU_PACKAGE_ROOT, 'react-native.config.cts'),
-      ),
-      sourcePodspec: readFileSync(path.join(LIBOLIPHAUNT_ICU_PACKAGE_ROOT, ICU_PODSPEC)),
+      sourceConfig: readFileSync(path.join(packageRoot, 'react-native.config.cts')),
+      sourcePodspec: readFileSync(path.join(packageRoot, ICU_PODSPEC)),
       label: rel(tarball),
     });
     assertIcuPackedClosureMatchesSource({
@@ -141,21 +142,33 @@ function validatePackedIcuPackage(packageName, version, tarball, sourceArchive) 
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
-  assertReleaseNoticesInArchive(tarball, { profile: 'native-icu-data', prefix: 'package' });
+  assertReleaseNoticesInArchive(tarball, {
+    profile: 'native-icu-data',
+    prefix: 'package',
+    sourceRoot: context.noticeSourceRoot,
+  });
 }
 
-export function resourceNpmTarballs(version = currentProductVersionSync('database-resources')) {
-  const stage = stageLiboliphauntIcuNpmPayload(version);
-  const tarball = packStagedNpmCarrier(stage);
+export function resourceNpmTarballs(
+  version = currentProductVersionSync('database-resources'),
+  context = {},
+) {
+  const stage = stageLiboliphauntIcuNpmPayload(version, context);
+  const tarball = packGeneratedNpmCarrier(
+    stage,
+    context.outputDir ?? path.join(ROOT, 'target/release/npm-packages'),
+  );
   validatePackedIcuPackage(
     LIBOLIPHAUNT_ICU_PACKAGE_NAME,
     version,
     tarball,
-    path.join(
-      ROOT,
-      'target/database-resources/release-assets',
-      `database-resources-${version}-icu-data.tar.gz`,
-    ),
+    context.sourceArchive ??
+      path.join(
+        ROOT,
+        'target/database-resources/release-assets',
+        `database-resources-${version}-icu-data.tar.gz`,
+      ),
+    context,
   );
   return [[LIBOLIPHAUNT_ICU_PACKAGE_NAME, tarball]];
 }

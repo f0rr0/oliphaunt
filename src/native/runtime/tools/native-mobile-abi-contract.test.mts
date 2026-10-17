@@ -18,6 +18,7 @@ function fixture(target, overrides = {}) {
     [
       `#define SIZEOF_VOID_P ${overrides.pointerBytes ?? 8}`,
       `#define MAXIMUM_ALIGNOF ${overrides.alignment ?? 8}`,
+      ...(overrides.extraDefines ?? []),
       '#define BLCKSZ 8192',
       '#define XLOG_BLCKSZ 8192',
       '#define RELSEG_SIZE 131072',
@@ -80,6 +81,26 @@ test('rejects non-Datum64 producer headers', () => {
   expect(() => fixture('android-x86_64', { pointerBytes: 4 })).toThrow(/not a Datum64/u);
   expect(() => fixture('android-x86_64', { pointerBytes: '8garbage' })).toThrow(
     /invalid SIZEOF_VOID_P/u,
+  );
+});
+
+test('resolves integer aliases from the actual header and rejects unresolved, cyclic or expression aliases', () => {
+  const receipt = fixture('linux-x64-gnu', {
+    alignment: '(ALIGNOF_DOUBLE)',
+    extraDefines: ['#define ALIGNOF_DOUBLE ALIGNMENT_BYTES', '#define ALIGNMENT_BYTES 0x8UL'],
+  });
+  expect(parseNativeMobileAbiReceipt(receipt.text).get('maximumAlignof')).toBe('8');
+  expect(() => fixture('linux-x64-gnu', { alignment: 'ABSENT_ALIGNMENT' })).toThrow(
+    /does not define ABSENT_ALIGNMENT/u,
+  );
+  expect(() =>
+    fixture('linux-x64-gnu', {
+      alignment: 'ALIGNOF_DOUBLE',
+      extraDefines: ['#define ALIGNOF_DOUBLE MAXIMUM_ALIGNOF'],
+    }),
+  ).toThrow(/cyclic integer aliases/u);
+  expect(() => fixture('linux-x64-gnu', { alignment: '(4+4)' })).toThrow(
+    /invalid MAXIMUM_ALIGNOF/u,
   );
 });
 

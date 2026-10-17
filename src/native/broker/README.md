@@ -75,7 +75,7 @@ requests and responses, COPY, cancellation, callback recovery, connection reset,
 backup/shutdown, abrupt disconnect, and parent death. They fail when required
 runtime inputs are missing; source-only tests report them as ignored.
 
-Native Cargo entry points remain available: `cargo build -p oliphaunt-broker --locked`, `cargo test -p oliphaunt-broker --locked`, `cargo clippy -p oliphaunt-broker --all-targets --locked -- -D warnings`, and `cargo fmt -p oliphaunt-broker --check`. Moon supplies the additional source-test feature matrix and artifact staging where defined. `package` assembles bytes; it does not run the project test suite.
+Native Cargo entry points from this directory remain available: `cargo build --locked`, `cargo test --locked`, `cargo clippy --all-targets --locked -- -D warnings`, and `cargo fmt --check`. Moon supplies the additional source-test feature matrix and artifact staging where defined. `package` assembles bytes; it does not run the project test suite.
 
 The native SDK’s `moon run oliphaunt-rust:test-consumer` installs the real packed query, bindings and broker crates together with the SDK. This tests their public dependency closure without duplicate per-crate consumer harnesses.
 

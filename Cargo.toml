@@ -9,7 +9,6 @@ members = [
   "src/native/sdks/rust",
   "src/native/postgres-tools/crates/tools",
   "src/native/broker",
-  "src/wasix/pgwire-server",
   "src/database-resources/icu/cargo",
   "src/database-resources/seeds/wasix",
   "src/wasix/runtime/crates/assets",
@@ -22,7 +21,6 @@ members = [
   "src/wasix/postgres-tools/crates/aot/x86_64-unknown-linux-gnu",
   "src/wasix/postgres-tools/crates/aot/aarch64-unknown-linux-gnu",
   "src/wasix/postgres-tools/crates/aot/x86_64-pc-windows-msvc",
-  "src/wasix/node-addon",
   "src/benchmarks/perf/runner",
   "src/extensions/tests/native",
   "src/native/runtime/packaging",
@@ -30,6 +28,7 @@ members = [
   "src/wasix/runtime/tools/xtask",
 ]
 resolver = "3"
+exclude = ["src/wasix/node-addon", "src/wasix/pgwire-server"]
 
 [workspace.package]
 edition = "2024"
@@ -37,6 +36,10 @@ rust-version = "1.93"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
 license = "MIT"
+
+[workspace.dependencies]
+# These adapters exchange Rust types/state with the SDK they adopt.
+liboliphaunt-native-bindings = { path = "src/native/rust-bindings", version = "0.2.0" }
 
 [profile.release]
 strip = "symbols"

@@ -1,0 +1,27 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
+load("@javascript_consumer_packages//:roots.bzl", "CONSUMER_TOOLS")
+
+package(default_visibility = ["//visibility:public"])
+
+# Extract the original integrity-checked archive through the public package API.
+# The final regular modules live in tools/release, outside this package's link.
+_PROTOBUFJS = CONSUMER_TOOLS["@oliphaunt/release-tools"]["protobufjs"]
+npm_link_package(
+    name = "protobufjs_native_aquery_package",
+    src = "@javascript_consumer_packages//:" + _PROTOBUFJS,
+)
+
+exports_files(["metadata.mts", "repositories.bzl", "defs.bzl", "publish-manifest.mts", "consumer-test.mts", "unit-tests.mts", "unit-tests.bzl"])
+
+exports_files(["compiler-inputs.json"])
+
+bun_test(
+    name = "metadata_test",
+    entry_point = "metadata.test.mts",
+    data = ["metadata.mts", "//:tools/packaging/portable-archive.mts", "testdata/ts-query-0.1.1.tgz", "//src/wasix/postgres-tools/ts/tests/installed:package.json", "//src/wasix/postgres-tools/ts/tests/installed:bun.lock"],
+    size = "small",
+)
+
+source_quality_files()

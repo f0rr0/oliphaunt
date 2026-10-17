@@ -34,3 +34,13 @@ public_support = false
 source_product = "oliphaunt-wasix-ts"
 path = "src/wasix/postgres-tools/ts/package.json"
 parser = "json:oliphaunt.wasixSdkVersion"
+
+[artifact_targets]
+preset = "postgres-tools-wasix"
+targets = [
+  "portable",
+  "linux-arm64-gnu",
+  "linux-x64-gnu",
+  "macos-arm64",
+  "windows-x64-msvc",
+]

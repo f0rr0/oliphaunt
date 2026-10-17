@@ -37,6 +37,12 @@
 #include <unistd.h>
 #endif
 
+/* Syscache KEY initializers require constant, exact variadic key counts. */
+StaticAssertDecl(VA_ARGS_NARGS(1) == 1, "one syscache key");
+StaticAssertDecl(VA_ARGS_NARGS(1, 2) == 2, "two syscache keys");
+StaticAssertDecl(VA_ARGS_NARGS(1, 2, 3) == 3, "three syscache keys");
+StaticAssertDecl(VA_ARGS_NARGS(1, 2, 3, 4) == 4, "four syscache keys");
+
 #undef PG_MAGIC_FUNCTION_NAME
 #define PG_MAGIC_FUNCTION_NAME liboliphaunt_smoke_static_magic
 PG_MODULE_MAGIC_EXT(
@@ -1454,6 +1460,12 @@ static int parent_path(const char *path, char *out, size_t out_len) {
         return -1;
     }
     char *slash = strrchr(out, '/');
+#ifdef _WIN32
+    char *backslash = strrchr(out, '\\');
+    if (backslash != NULL && (slash == NULL || backslash > slash)) {
+        slash = backslash;
+    }
+#endif
     if (slash == NULL) {
         return snprintf(out, out_len, ".") >= (int)out_len ? -1 : 0;
     }
@@ -1461,6 +1473,12 @@ static int parent_path(const char *path, char *out, size_t out_len) {
         slash[1] = '\0';
         return 0;
     }
+#ifdef _WIN32
+    if (slash == out + 2 && out[1] == ':') {
+        slash[1] = '\0';
+        return 0;
+    }
+#endif
     *slash = '\0';
     return 0;
 }

@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -48,9 +48,16 @@ test('explicit native resources reject incompatible and altered bytes before ini
     await expect(validateSelectedNativeSeed(seed, 'linux-arm64-gnu', '1.2.3')).rejects.toThrow(
       'incompatible',
     );
+    expect(await validateSelectedNativeSeed(seed, 'linux-x64-gnu', '1.2.4')).toEqual({
+      catalogProfile: 'standard',
+      emptyDirectories: ['pg_notify'],
+    });
+    manifest.runtime.version = 'not-a-version';
+    await writeFile(seed.manifestPath, JSON.stringify(manifest));
     await expect(validateSelectedNativeSeed(seed, 'linux-x64-gnu', '1.2.4')).rejects.toThrow(
       'incompatible',
     );
+    manifest.runtime.version = '1.2.3';
     manifest.directory.emptyDirectories = ['../escape'];
     await writeFile(seed.manifestPath, JSON.stringify(manifest));
     await expect(validateSelectedNativeSeed(seed, 'linux-x64-gnu', '1.2.3')).rejects.toThrow(

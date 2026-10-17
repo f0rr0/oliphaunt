@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 liboliphaunt-native-bindings = { path = "../rust-bindings", version = "0.2.0" }
-oliphaunt-query = { path = "../../query/rust", version = "0.1.1" }
+oliphaunt-query = { version = "0.1.1" }
 getrandom = "0.3"
 
 [target.'cfg(unix)'.dev-dependencies]

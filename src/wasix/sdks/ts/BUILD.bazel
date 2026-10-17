@@ -1,0 +1,210 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
+load("@oliphaunt_metadata//:metadata.bzl", "PUBLICATION_CARRIERS")
+load("@javascript_packages//:defs.bzl", "javascript_type_links", RUNTIME_PACKAGES = "PACKAGES")
+load("@javascript_consumer_packages//:roots.bzl", "CONSUMER_ACQUISITIONS", "CONSUMER_CLOSURES", "CONSUMER_TOOLS")
+load("//build_defs/languages/ts:defs.bzl", "workspace_dependency_package", "workspace_dependency_link", "source_sdk_publish_files")
+load("//build_defs/query:defs.bzl", "query_envelope")
+load("//build_defs/languages/ts:unit-tests.bzl", "sdk_unit_test")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/resources:resources.bzl", "wasix_current_seed_assets")
+load("//build_defs/wasix/browser:defs.bzl", "browser_host_assets", "browser_sql_consumer", "browser_sql_lifecycle")
+load("//build_defs/wasix:sdk-installed.bzl", "wasix_sdk_installed_test")
+
+package(default_visibility = ["//visibility:public"])
+
+_MODULE_OUT_DIR = "lib"
+exports_files(["package.json", "tsconfig.json", "tools/package.mts", "tools/frozen-browser-consumer.mts", "tools/browser-cdp.mts"])
+exports_files(["tools/pgwire-client.mts"])
+exports_files(["tools/integration/verify-host.mts"])
+exports_files([
+    "src/resources/extensions.ts",
+    "src/resources/archive.ts",
+    "src/resources/asset-source.ts",
+    "src/resources/zstd.ts",
+    "src/storage/database-root.ts",
+])
+
+SDK = JAVASCRIPT["@oliphaunt/wasix-ts"]
+QUERY = JAVASCRIPT["@oliphaunt/ts-query"]
+SDK_SRCS = glob(["src/**/*.ts"], exclude = ["src/__tests__/**"])
+BROWSER_PACKAGES = {"@javascript_packages//:" + key: key for key in RUNTIME_PACKAGES} | {"@javascript_consumer_packages//:" + key: key for key in CONSUMER_CLOSURES[SDK["name"]]}
+
+javascript_type_links(SDK["types"] | SDK["packages"])
+
+workspace_dependency_package(name = "query_package", workspace = SDK, dependency = QUERY["name"], current = "//src/query/ts:shipping_package")
+workspace_dependency_link(name = "node_modules/@oliphaunt/ts-query", package = ":query_package", workspace = SDK, dependency = QUERY["name"])
+js_library(name = "package_metadata", srcs = ["package.json"])
+ts_config(name = "source_config", src = "tsconfig.json")
+
+# Source-mapped examples need the SDK's declared files and typings without its
+# emitted module, browser host or runtime carriers.
+js_library(
+    name = "source_inputs",
+    types = SDK_SRCS,
+    deps = [":package_metadata", "//src/wasix/sdks/ts/src/host:declaration"] + [":node_modules/" + name for name in SDK["types"] | SDK["packages"]],
+)
+
+ts_project(
+    name = "module",
+    srcs = SDK_SRCS,
+    tsconfig = "tsconfig.build.json",
+    extends = "tsconfig.json",
+    declaration = True,
+    declaration_map = False,
+    out_dir = _MODULE_OUT_DIR,
+    root_dir = "src",
+    transpiler = "tsc",
+    supports_workers = 0,
+    deps = [":package_metadata", ":node_modules/@oliphaunt/ts-query", "//src/wasix/sdks/ts/src/host:declaration"] + [":node_modules/" + name for name in SDK["types"] | SDK["packages"]],
+)
+
+filegroup(name = "module_outputs", srcs = [":module"])
+
+ts_project(
+    name = "source_checks",
+    srcs = glob(["src/**/*.ts"]),
+    tsconfig = "tsconfig.json",
+    no_emit = True,
+    declaration = True,
+    out_dir = _MODULE_OUT_DIR,
+    root_dir = "src",
+    supports_workers = 0,
+    deps = [":package_metadata", ":node_modules/@oliphaunt/ts-query", "//src/wasix/sdks/ts/src/host:declaration"] + [":node_modules/" + name for name in SDK["types"] | SDK["packages"]],
+)
+source_sdk_publish_files(name = "publish_files", manifest = "package.json", profile = "wasix-ts")
+filegroup(name = "publish_manifest", srcs = [":publish_files"], output_group = "manifest")
+filegroup(name = "license", srcs = [":publish_files"], output_group = "license")
+filegroup(name = "notices", srcs = [":publish_files"], output_group = "notices")
+browser_host_assets(name = "host_assets", host = "//src/wasix/browser-host:host")
+
+query_envelope(
+    name = "npm",
+    format = "npm",
+    manifest = ":publish_manifest",
+    entries = {
+        ":module_outputs": "lib/",
+        ":module_types": "lib/",
+        ":host_assets": "lib/",
+        ":publish_manifest": "package.json",
+        ":license": "LICENSE",
+        ":notices": "THIRD_PARTY_NOTICES.md",
+        "README.md": "README.md",
+        "ARCHITECTURE.md": "ARCHITECTURE.md",
+        "CHANGELOG.md": "CHANGELOG.md",
+    },
+    out = "oliphaunt-wasix-ts.tgz",
+)
+
+shipping_package(
+    name = "shipping_package",
+    owner = "@oliphaunt_metadata//:product_oliphaunt-wasix-ts",
+    artifacts = [":npm"],
+    ecosystem = "npm",
+    package_name = SDK["name"],
+    configuration = "portable",
+    role = [carrier["role"] for carrier in PUBLICATION_CARRIERS if carrier["product"] == "oliphaunt-wasix-ts" and carrier["ecosystem"] == "npm" and carrier["name"] == SDK["name"]][0],
+)
+
+shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = [":browser_sql_consumer", ":installed_host_test", ":unit_test", ":package_policy_test"], testonly = True)
+
+wasix_sdk_installed_test(
+    name = "installed_host_test",
+    sdk = ":npm",
+    extension = "//src/extensions/external/pgtap:wasix_npm_shipping_files",
+    fixture = "tools/integration/verify-host.mts",
+    pgwire = "tools/pgwire-client.mts",
+    packages = {":query_package": QUERY["name"]} | {"@javascript_packages//:" + identity: name for name, identity in SDK["packages"].items()},
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "large",
+    timeout = "long",
+    tags = ["manual", "installed-consumer"],
+)
+
+wasix_current_seed_assets(name = "browser_seed")
+
+browser_sql_consumer(
+    name = "browser_sql_consumer",
+    sdk = ":npm",
+    query = ":query_package",
+    runtime = "//src/wasix/runtime:npm",
+    seed_archive = ":browser_seed_archive",
+    seed_manifest = ":browser_seed_manifest",
+    manifest = ":publish_manifest",
+    fixture = "tools/frozen-browser-consumer.mts",
+    cdp = "tools/browser-cdp.mts",
+    packages = BROWSER_PACKAGES,
+    acquisition = CONSUMER_ACQUISITIONS[SDK["name"]],
+    roots = CONSUMER_TOOLS[SDK["name"]],
+    runtime_packages = SDK["packages"],
+    size = "large",
+    timeout = "long",
+    # Chrome is observed on this host; every qualification must execute it.
+    tags = ["manual", "external", "local", "installed-consumer"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+# Local qualification can consume byte-identified outputs from separate producer bases.
+# Unified CI uses browser_sql_consumer and its declared archive dependencies above.
+browser_sql_lifecycle(
+    name = "browser_sql_lifecycle",
+    manifest = ":publish_manifest",
+    fixture = "tools/frozen-browser-consumer.mts",
+    cdp = "tools/browser-cdp.mts",
+    packages = BROWSER_PACKAGES,
+    acquisition = CONSUMER_ACQUISITIONS[SDK["name"]],
+    roots = CONSUMER_TOOLS[SDK["name"]],
+    runtime_packages = SDK["packages"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+sdk_unit_test(
+    name = "unit_test",
+    manifest = "package.json",
+    configuration = "bunfig.toml",
+    sources = glob(["src/**/*.ts"]) + glob(["src/**/*.mts", "src/**/*.json"], allow_empty = True) + ["//src/wasix/sdks/ts/src/host:declaration"],
+    fixtures = ["//src/test-fixtures:rust_fixtures", "//src/database-resources:cluster_seed_contract_fixtures"],
+    packages = {":query_package": QUERY["name"]} | {"@javascript_packages//:" + identity: name for name, identity in SDK["packages"].items()},
+    size = "small",
+)
+
+source_quality_files(exclude = [_MODULE_OUT_DIR + "/**"])
+
+# Existing operational package policy tests use only this declared source closure.
+sdk_unit_test(
+    name = "package_policy_test",
+    manifest = "package.json",
+    tests = ["tools/wasix-typescript-package.test.mts"],
+    sources = [
+        "//build_defs/wasix/browser:metadata.mts",
+        "//build_defs/wasix/browser:provenance.mts",
+        "//:src/extensions/artifacts/packages/tools/contrib-carriers.mts",
+        "//src/wasix/node-addon:tools/carrier-contract.mts",
+        "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
+        "//src/wasix/sdks/ts:tools/package.mts",
+        "//src/wasix/sdks/ts:tools/wasix-typescript-package.mts",
+        "//:tools/packaging/platform-binary-contract.mts",
+        "//:tools/packaging/portable-archive.mts",
+        "//:tools/packaging/release-directory-safety.mts",
+        "//:tools/packaging/release-notices.mts",
+        "//:tools/packaging/windows-vc-runtime-closure.mts",
+        "//tools/release:compatibility-version-parser.mts",
+        "//tools/release:platform-compatibility-policy.mts",
+        "//tools/release:release-graph.mts",
+        "//tools/release:release-history.mts",
+    ],
+    fixtures = ["//:LICENSE", "//:tools/packaging/windows-vc-runtime-policy.json", "//src/database-resources:contracts/contract.json"],
+    size = "small",
+)
+
+test_suite(
+    name = "source_unit_tests",
+    tests = [":unit_test", ":package_policy_test"],
+)
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "tools/wasix-typescript-package.mts",
+], visibility = ["//visibility:public"])

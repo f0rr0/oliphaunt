@@ -1,5 +1,3 @@
-import { fileURLToPath } from 'node:url';
-import type { NativeExtension } from '../extensions.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -7,18 +5,20 @@ import { createRequire } from 'node:module';
 import { arch, platform, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
+import type { NativeExtension } from '../extensions.js';
 import {
   GENERATED_EXTENSION_METADATA,
   type GeneratedExtensionMetadata,
   generatedExtensionBySqlName,
 } from '../generated/extensions.js';
+import { validateManagedRoot } from '../root-descriptor.js';
+import type { NativeResourceDirectory } from '../types.js';
 import {
   type NativeCatalogProfile,
   validateSelectedIcuData,
   validateSelectedNativeSeed,
 } from './cluster-seed.js';
-import type { NativeResourceDirectory } from '../types.js';
-import { validateManagedRoot } from '../root-descriptor.js';
 import {
   liboliphauntPackageTarget,
   type NativePackageTarget,
@@ -100,6 +100,7 @@ type NpmExtensionMemberContract = {
   sqlName: string;
   createsExtension: boolean;
   nativeModuleStem: string | null;
+  nativeDependencyModules: string[];
   dependencies: string[];
   dataFiles: string[];
   extensionSqlFileNames: string[];
@@ -601,8 +602,11 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
   }
   const row = value as Record<string, unknown>;
   if (
-    JSON.stringify(Object.keys(row).sort(compareText)) !==
-    JSON.stringify(NPM_EXTENSION_CONTRACT_MEMBER_FIELDS)
+    JSON.stringify(
+      Object.keys(row)
+        .filter((field) => field !== 'nativeDependencyModules')
+        .sort(compareText),
+    ) !== JSON.stringify(NPM_EXTENSION_CONTRACT_MEMBER_FIELDS)
   ) {
     throw new Error(
       `${label} fields must be exactly ${NPM_EXTENSION_CONTRACT_MEMBER_FIELDS.join(', ')}`,
@@ -629,6 +633,19 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
     throw new Error(`${label}.dependencies contains an invalid or self dependency`);
   }
   const dataFiles = parseExtensionContractStringList(row.dataFiles, 'dataFiles', label);
+  const nativeDependencyModules = parseExtensionContractStringList(
+    row.nativeDependencyModules ?? [],
+    'nativeDependencyModules',
+    label,
+  );
+  if (
+    nativeDependencyModules.some((file) => !/^[A-Za-z0-9_-]+\.(?:so|dylib|dll)$/u.test(file)) ||
+    (nativeDependencyModules.length > 0 && row.nativeModuleStem === null)
+  ) {
+    throw new Error(
+      `${label}.nativeDependencyModules must contain portable native module basenames`,
+    );
+  }
   requirePortableExtensionContractPaths(dataFiles, 'dataFiles', label);
   const extensionSqlFileNames = parseExtensionContractStringList(
     row.extensionSqlFileNames,
@@ -663,6 +680,7 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
     sqlName: row.sqlName,
     createsExtension: row.createsExtension,
     nativeModuleStem: row.nativeModuleStem as string | null,
+    nativeDependencyModules,
     dependencies,
     dataFiles,
     extensionSqlFileNames,
@@ -1153,6 +1171,12 @@ async function requireExactExtensionRuntimeInventory(config: {
   const files = await exactRuntimeLeafPaths(config.runtimeDirectory, config.source);
   const dataFiles = new Set(config.contract.dataFiles.map((file) => `share/postgresql/${file}`));
   const licenseFiles = new Map(config.contract.licenseFiles.map((file) => [file.path, file]));
+  const dependencyModules = new Set(
+    config.contract.nativeDependencyModules.flatMap((file) => [
+      `lib/postgresql/${file}`,
+      `lib/modules/${file}`,
+    ]),
+  );
   const moduleFile =
     config.contract.nativeModuleStem === null
       ? undefined
@@ -1176,6 +1200,7 @@ async function requireExactExtensionRuntimeInventory(config: {
     }
     if (
       dataFiles.has(file) ||
+      dependencyModules.has(file) ||
       licenseFiles.has(file) ||
       file === moduleFile ||
       file === embeddedModuleFile
@@ -1185,6 +1210,11 @@ async function requireExactExtensionRuntimeInventory(config: {
     throw new Error(`${config.source} contains undeclared runtime file ${file}`);
   }
   const missingDataFiles = [...dataFiles].filter((file) => !files.includes(file));
+  const missingDependencies = [...dependencyModules].filter((file) => !files.includes(file));
+  if (missingDependencies.length > 0)
+    throw new Error(
+      `${config.source} is missing declared native dependency module(s): ${missingDependencies.join(', ')}`,
+    );
   if (missingDataFiles.length > 0) {
     throw new Error(
       `${config.source} is missing declared data file(s): ${missingDataFiles.join(', ')}`,

@@ -13,7 +13,7 @@ tree="$(git rev-parse 'HEAD^{tree}')"
 first="$(printf 'fix: validate release intent\n' | git commit-tree "$tree" -p HEAD)"
 sibling="$(printf 'fix: sibling change\n' | git commit-tree "$tree" -p HEAD)"
 script=.github/scripts/check-release-intent.sh
-bash "$script" 'fix: validate release intent' HEAD "$first" main workflow_dispatch refs/heads/main
+bash "$script" 'fix: validate release intent' HEAD "$first" main workflow_dispatch refs/heads/main --source-policy-only
 
 reject() {
   local expected="$1"
@@ -27,6 +27,8 @@ reject() {
 reject 'base must resolve to the exact commit parent' HEAD^ "$first" main workflow_dispatch refs/heads/main
 reject 'is not an ancestor' "$first" "$sibling" feature push refs/heads/feature
 reject 'requires matching main branch and full ref' HEAD "$first" main workflow_dispatch refs/heads/diagnostic
+merge="$(printf 'fix: merged source\n' | git commit-tree "$tree" -p "$first" -p "$sibling")"
+reject 'requires an exact one-parent commit' "$first" "$merge" main workflow_dispatch refs/heads/main --source-policy-only
 echo 'Release intent exact-parent and ancestry checks passed'
 
 # Exercise both generated-PR and main-merge admission without live registries.
@@ -80,8 +82,28 @@ for branch in release-please--branches--main main; do
   (cd "$fixture"; CI_TEST_CONSUMER_STATUS=0 bash .github/scripts/check-release-intent.sh \
     'chore(release): fixture' "$base" HEAD "$branch")
   [[ -s "$CI_TEST_CONSUMER_CALL" && -e "$CI_TEST_PLAN_CALL" ]]
+  rm -f "$CI_TEST_PLAN_CALL" "$CI_TEST_CONSUMER_CALL"
+  (cd "$fixture"; MOON_BIN=/definitely-unavailable-moon CI_TEST_CONSUMER_STATUS=9 bash .github/scripts/check-release-intent.sh \
+    'chore(release): fixture' "$base" HEAD "$branch" pull_request "refs/heads/$branch" --source-policy-only)
+  [[ ! -e "$CI_TEST_CONSUMER_CALL" && ! -e "$CI_TEST_PLAN_CALL" ]]
 done
-echo 'Release intent: consumer rejection blocks both generated PR and main release qualification'
+echo 'Legacy release intent rejects incompatible consumers; native source policy leaves admission to authenticated Prepare'
+status=0
+(cd "$fixture"; CI_TEST_CONSUMER_STATUS=0 bash .github/scripts/check-release-intent.sh \
+  'fix: manual version update' "$base" HEAD feature pull_request refs/heads/feature --source-policy-only \
+  > "$scratch/manual-version.log" 2>&1) || status=$?
+[[ "$status" == 1 ]]
+rg -Fq 'Release Please manifest version bumps are release owned' "$scratch/manual-version.log"
+normalized_head="$(git -C "$fixture" rev-parse HEAD)"
+git -C "$fixture" commit --allow-empty -qm 'chore(release): extra commit'
+status=0
+(cd "$fixture"; CI_TEST_CONSUMER_STATUS=0 bash .github/scripts/check-release-intent.sh \
+  'chore(release): fixture' "$base" HEAD release-please--branches--main pull_request refs/heads/release-please--branches--main --source-policy-only \
+  > "$scratch/normalized-parent.log" 2>&1) || status=$?
+[[ "$status" == 1 ]]
+rg -Fq 'does not exactly match base' "$scratch/normalized-parent.log"
+git -C "$fixture" reset --hard --quiet "$normalized_head"
+echo 'Native source policy preserves manual-version and normalized single-parent guards'
 base="$(git -C "$fixture" rev-parse HEAD)"
 git -C "$fixture" commit --allow-empty -qm 'fix: publication controller'
 rm -f "$CI_TEST_PLAN_CALL" "$CI_TEST_CONSUMER_CALL"
@@ -96,3 +118,14 @@ rm -f "$CI_TEST_CONSUMER_CALL"
   "$base" HEAD diagnostic workflow_dispatch refs/heads/diagnostic)
 [[ ! -e "$CI_TEST_CONSUMER_CALL" && -e "$CI_TEST_PLAN_CALL" ]]
 echo 'Release intent: selected main dispatch validates consumers; feature diagnostics retain source checks'
+base="$(git -C "$fixture" rev-parse HEAD)"
+mkdir -p "$fixture/sdk"
+printf '// harmless source maintenance\n' > "$fixture/sdk/source.rs"
+git -C "$fixture" add sdk
+git -C "$fixture" commit -qm 'chore: source maintenance'
+rm -f "$CI_TEST_PLAN_CALL" "$CI_TEST_CONSUMER_CALL"
+(cd "$fixture"; MOON_BIN=/definitely-unavailable-moon CI_TEST_CONSUMER_STATUS=0 \
+  bash .github/scripts/check-release-intent.sh 'chore: source maintenance' \
+  "$base" HEAD feature pull_request refs/heads/feature --source-policy-only)
+[[ ! -e "$CI_TEST_PLAN_CALL" && ! -e "$CI_TEST_CONSUMER_CALL" ]]
+echo 'Native source policy accepts a clean feature without path selection or Moon lookup'

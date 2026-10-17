@@ -1,0 +1,77 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//build_defs/foundation:bun.bzl", "bun_script_test")
+load("//build_defs/release:identity.bzl", "release_identity")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load(":fixture.bzl", "fixture_header", "fixture_package")
+
+package(default_visibility = ["//visibility:public"])
+
+fixture_header(
+    name = "config",
+    config = "config.txt",
+    tool = "config-header.mts",
+)
+
+cc_library(
+    name = "shared",
+    srcs = ["shared.c", ":config"],
+    hdrs = ["shared.h"],
+    includes = ["."],
+)
+
+cc_binary(name = "alpha_bin", srcs = ["alpha.c"], deps = [":shared"])
+cc_binary(name = "beta_bin", srcs = ["beta.c"], deps = [":shared"])
+cc_binary(name = "gamma_bin", srcs = ["gamma.c"])
+
+release_identity(name = "alpha_identity", product_id = "fixture-alpha", version = "1.0.0")
+release_identity(name = "beta_identity", product_id = "fixture-beta", version = "2.0.0")
+release_identity(name = "gamma_identity", product_id = "fixture-gamma", version = "3.0.0")
+
+[fixture_package(
+    name = product + "_archive",
+    binary = ":" + product + "_bin",
+    legal = "LEGAL.txt",
+    owner = ":" + product + "_identity",
+    tool = "package.mts",
+) for product in ["alpha", "beta", "gamma"]]
+
+[shipping_package(
+    name = product + "_ship",
+    owner = ":" + product + "_identity",
+    artifacts = [":" + product + "_archive"],
+    ecosystem = "github",
+    package_name = "fixture-" + product,
+    configuration = "fixture-host",
+    role = "package",
+) for product in ["alpha", "beta", "gamma"]]
+
+shipping_export(
+    name = "alpha_export",
+    testonly = True,
+    packages = [":alpha_ship"],
+    qualification = [":alpha_test"],
+)
+
+shipping_export(
+    name = "beta_gamma_export",
+    testonly = True,
+    packages = [":beta_ship", ":gamma_ship"],
+    qualification = [":beta_test", ":gamma_test"],
+)
+
+shipping_export(
+    name = "export",
+    testonly = True,
+    exports = [":alpha_export", ":beta_gamma_export"],
+)
+
+[bun_script_test(
+    name = product + "_test",
+    entry_point = "consumer.mts",
+    data = [":" + product + "_archive", product + ".expected"],
+) for product in ["alpha", "beta", "gamma"]]
+
+test_suite(name = "all_tests", tests = [":alpha_test", ":beta_test", ":gamma_test"])
+
+filegroup(name = "fixture_sources", srcs = glob(["*.c", "*.h", "*.txt", "*.expected", "*.mts", "*.bzl"]) + ["BUILD.bazel"])

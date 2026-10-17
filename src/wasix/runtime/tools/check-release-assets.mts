@@ -292,7 +292,7 @@ function parseChecksumManifest(file) {
     if (!line) {
       continue;
     }
-    const match = line.match(/^([0-9a-f]{64})  \.\/([^/]+)$/u);
+    const match = line.match(/^([0-9a-f]{64}) {2}\.\/([^/]+)$/u);
     if (match === null) {
       fail(`${rel(file)}:${index + 1} must use '<sha256>  ./<asset-name>' entries`);
     }
@@ -484,6 +484,7 @@ export function validatePortableReleaseAsset(archive) {
       `${rel(archive)} must not bundle standalone tools inside ${PORTABLE_RUNTIME_ARCHIVE_MEMBER}: ${bundledTools.join(', ')}`,
     );
   }
+  return entries;
 }
 
 export function validateAotReleaseAsset(archive, expectedTarget) {
@@ -555,6 +556,7 @@ export function validateAotReleaseAsset(archive, expectedTarget) {
         `expected ${JSON.stringify([...expectedFiles].sort(compareText))}, got ${JSON.stringify([...members].sort(compareText))}`,
     );
   }
+  return entries;
 }
 
 function validateAssetContents(assetDir, version) {

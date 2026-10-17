@@ -30,8 +30,8 @@ fn emit_manifest() {
         }
         return;
     }
-    let sha256 = fs::read_to_string(&checksum)
-        .expect("read packaged oliphaunt-broker payload checksum");
+    let sha256 =
+        fs::read_to_string(&checksum).expect("read packaged oliphaunt-broker payload checksum");
     let sha256 = sha256.trim();
     if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         panic!("invalid packaged oliphaunt-broker payload checksum");

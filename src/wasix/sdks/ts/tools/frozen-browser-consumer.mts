@@ -10,6 +10,7 @@ import { createCdpClient } from './browser-cdp.mts';
 const root = process.argv[2];
 assert(root, 'browser consumer requires its external app directory');
 const packages: { name: string; sqlName: string }[] = JSON.parse(process.argv[3]);
+const storageTests = process.argv[4] === '--opfs';
 writeFileSync(path.join(root, 'index.html'), '<script type="module" src="/probe.ts"></script>');
 writeFileSync(
   path.join(root, 'probe.ts'),
@@ -17,6 +18,7 @@ writeFileSync(
 import Default from '@oliphaunt/wasix-ts';
 import Worker from '@oliphaunt/wasix-ts/worker';
 import { checkExtensions } from './extensions.mts';
+${storageTests ? "import { expectOpfsPersistence, expectOpfsCrashRecovery } from './opfs-smoke.js';" : ''}
 ${packages.map(({ name }, index) => `import extension${index} from ${JSON.stringify(name)};`).join('\n')}
 const state = document.documentElement.dataset;
 state.frozenState = 'running';
@@ -31,6 +33,19 @@ state.frozenState = 'running';
     finally { await db.close(); }
   }
   state.frozenAnswers = JSON.stringify(answers);
+  ${
+    storageTests
+      ? `
+  const phase = (name: string) => {
+    state.frozenPhase = name;
+    console.debug('installed browser phase: ' + name + ' (' + Math.round(performance.now()) + 'ms)');
+  };
+  state.frozenOpfsAnswers = await expectOpfsPersistence([], phase);
+  phase('OPFS crash recovery');
+  state.frozenOpfsCrash = JSON.stringify(await expectOpfsCrashRecovery());
+  `
+      : ''
+  }
   state.frozenState = 'passed';
 })().catch(error => {
   state.frozenState = 'failed';
@@ -72,7 +87,7 @@ try {
   const profile = path.join(root, 'chrome-profile');
   mkdirSync(profile);
   chrome = spawn(
-    'google-chrome',
+    process.env.OLIPHAUNT_BROWSER_CHROME ?? 'google-chrome',
     [
       '--headless=new',
       '--no-sandbox',
@@ -116,6 +131,7 @@ try {
   await cdp.send('Page.navigate', { url: `http://127.0.0.1:${address.port}/` });
   // Poll outside the page so navigation cannot destroy an awaited JS promise.
   let passed = false;
+  let lastState: Record<string, string> = {};
   while (Date.now() < deadline) {
     if (failures.length) throw new Error(failures.at(-1));
     const result = await cdp.send('Runtime.evaluate', {
@@ -124,18 +140,29 @@ try {
     });
     if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
     const state = JSON.parse(result.result?.value ?? '{}');
+    lastState = state;
     if (state.frozenState === 'failed') throw new Error(state.frozenError);
     if (state.frozenState === 'passed') {
       assert.deepEqual(JSON.parse(state.frozenAnswers), ['42', '42']);
+      if (storageTests) {
+        assert.equal(state.frozenOpfsAnswers, '1,2,3');
+        assert.deepEqual(JSON.parse(state.frozenOpfsCrash), { answer: '73', relations: '48' });
+      }
       passed = true;
       break;
     }
     await delay(200);
   }
-  assert(passed, 'installed browser module timed out');
+  assert(passed, `installed browser module timed out: ${JSON.stringify(lastState)}`);
   console.log(
-    'Installed browser default and worker exports loaded extensions and executed queries',
+    packages.length
+      ? 'Installed browser default and worker exports loaded extensions and executed queries'
+      : 'Installed browser default and worker exports executed queries',
   );
+  if (storageTests)
+    console.log(
+      'Installed browser OPFS persistence, synchronous transport, and crash recovery passed',
+    );
 } finally {
   socket?.close();
   chrome?.kill('SIGKILL');

@@ -1,0 +1,22 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_binary")
+load("//build_defs/native/carriers:defs.bzl", "native_carrier_helpers", "native_payload_helpers")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(glob(["*.bzl", "*.mts"]))
+
+filegroup(name = "runtime_helpers", srcs = {label: True for label in native_carrier_helpers() + native_payload_helpers() + [
+    "//build_defs/native/carriers:payload.mts", "//build_defs/resources:shared.mts",
+    "//build_defs/native:host-runtime-test-helpers.mts",
+    "//src/native/runtime:tools/native-mobile-abi-contract.mts",
+    "//src/native/runtime:tools/finalize-native-runtime-carrier.mts",
+    "//src/native/runtime:tools/native-runtime-carrier-contract.mts",
+    "//src/database-resources:contracts/native-manifest.mts", "//src/database-resources:contracts/contract.json",
+    "//src/extensions/tools:extension-upstream-licenses.mts",
+    "//:tools/packaging/build-maven-artifact-manifest.mts", "//:tools/packaging/maven-artifact-manifest.mts",
+    "//:tools/packaging/maven-artifact-staging.mts", "//:tools/packaging/maven-central-contract.mts",
+    "//:tools/packaging/atomic-directory.mts", "//tools/release:compatibility-version-policy.mts", "//tools/release:product-version.mts",
+]}.keys())
+bun_binary(name = "runtime_envelope", entry_point = "runtime-envelope.mts", data = [":runtime_helpers"])
+
+source_quality_files()

@@ -539,9 +539,10 @@ impl Oliphaunt {
     /// is terminal even if the runtime reports a failure. New cancellation
     /// calls are rejected at the teardown cutoff; cancellation already admitted
     /// before it is allowed to finish before the engine session is closed.
-    /// Successful teardown releases the session and storage root. A failed
-    /// teardown deliberately retains that native ownership until process exit
-    /// rather than risking a second destructive cleanup attempt.
+    /// Direct mode detaches the session and retains its process-resident backend
+    /// and storage root until process exit. Broker mode releases the session
+    /// and storage root after successful teardown. A failed teardown retains
+    /// native ownership rather than risking a second destructive cleanup attempt.
     pub fn close(&mut self) -> Result<()> {
         if let Some(result) = &self.close_result {
             return result.clone();

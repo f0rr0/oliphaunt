@@ -1,11 +1,24 @@
 import { copyFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { currentProductVersionSync } from '../../../../../tools/release/release-artifact-targets.mts';
 import {
   githubReleaseQueryDeadline,
   requestGithubJsonWithRetry,
 } from '../../../../../tools/release/github-read.mts';
+import { currentProductVersionSync } from '../../../../../tools/release/release-artifact-targets.mts';
+import { publishedNativeBaseForSource } from './native-legal-source-basis.mts';
 import { materialize } from './swift-carrier-resolver.mts';
+
+async function stagePublishedAssets(assets, version, workRoot, fetchImpl) {
+  const directory = path.join(workRoot, 'pinned-native-carrier', version);
+  mkdirSync(directory, { recursive: true });
+  for (const asset of assets) {
+    const file = await materialize(asset, path.join(workRoot, 'pinned-native-carrier-cache'), {
+      fetchImpl,
+    });
+    copyFileSync(file, path.join(directory, asset.name));
+  }
+  return directory;
+}
 
 // Source builds use the same-run producer for the current runtime. Independent
 // SDK releases keep their exact older runtime and verify its published bytes.
@@ -14,10 +27,25 @@ export async function pinnedNativeCarrierDirectory({
   assetDir,
   workRoot,
   fetchImpl = fetch,
+  sourceBasis = undefined,
 }) {
   if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(version)) {
     throw new Error(`invalid native runtime pin: ${version}`);
   }
+  if (sourceBasis !== undefined) {
+    if (sourceBasis.kind === 'current-source') {
+      if (version !== currentProductVersionSync('liboliphaunt-native', 'pinned-native-carrier'))
+        throw new Error(`fresh native construction does not have version ${version}`);
+      if (!assetDir) throw new Error(`native runtime ${version} requires same-run producer assets`);
+      return assetDir;
+    }
+    const base = publishedNativeBaseForSource(sourceBasis);
+    if (base.version !== version)
+      throw new Error(`published native source basis does not bind runtime ${version}`);
+    return stagePublishedAssets(base.assets, version, workRoot, fetchImpl);
+  }
+  // Existing standalone Moon callers retain their behavior until publication
+  // preflight supplies the explicit producer/source origin above.
   if (version === currentProductVersionSync('liboliphaunt-native', 'pinned-native-carrier')) {
     if (!assetDir) throw new Error(`native runtime ${version} requires same-run producer assets`);
     return assetDir;
@@ -45,12 +73,10 @@ export async function pinnedNativeCarrierDirectory({
     assets.push(...rows);
     if (rows.length < 100) break;
   }
-  const directory = path.join(workRoot, 'pinned-native-carrier', version);
-  mkdirSync(directory, { recursive: true });
-  for (const name of [
+  const selected = [
     `liboliphaunt-${version}-apple-spm-xcframework.zip`,
     `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`,
-  ]) {
+  ].map((name) => {
     const matches = assets.filter((row) => row.name === name);
     const row = matches[0];
     const url = `https://github.com/f0rr0/oliphaunt/releases/download/${tag}/${name}`;
@@ -64,12 +90,7 @@ export async function pinnedNativeCarrierDirectory({
     ) {
       throw new Error(`${tag} must publish one checksummed ${name}`);
     }
-    const file = await materialize(
-      { name, url, bytes: row.size, sha256: row.digest.slice(7) },
-      path.join(workRoot, 'pinned-native-carrier-cache'),
-      { fetchImpl },
-    );
-    copyFileSync(file, path.join(directory, name));
-  }
-  return directory;
+    return { name, url, bytes: row.size, sha256: row.digest.slice(7) };
+  });
+  return stagePublishedAssets(selected, version, workRoot, fetchImpl);
 }

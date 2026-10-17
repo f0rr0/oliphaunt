@@ -20,3 +20,4 @@ src/native/runtime/patches/postgresql-18.4/0018-liboliphaunt-contain-embedded-pr
 src/native/runtime/patches/postgresql-18.4/0019-liboliphaunt-link-windows-embedded-modules-to-host.patch
 src/native/runtime/patches/postgresql-18.4/0020-liboliphaunt-enforce-embedded-signal-boundary.patch
 src/native/runtime/patches/postgresql-18.4/0021-liboliphaunt-wake-embedded-epoll-through-self-pipe.patch
+src/native/runtime/patches/postgresql-18.4/0022-liboliphaunt-match-msvc-variadic-preprocessor.patch

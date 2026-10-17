@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { gunzipSync, gzipSync } from 'node:zlib';
+import { buildSwiftExtensionFixture } from '../../../../../build_defs/languages/swift/extension-fixture.mts';
 import { archiveDirectory } from '../../../../../tools/packaging/archive-directory.mts';
 import { craftedTar } from '../../../../../tools/packaging/testdata/tar-fixture.mts';
 import {
@@ -13,6 +14,7 @@ import {
   maliciousZip,
   metadataZip,
 } from '../../../../../tools/packaging/testdata/zip-fixture.mts';
+import { iosBaseLegalMetadata } from './ios-carrier-manifest.mts';
 import { renderExtensionProducts } from './render-extension-products.mts';
 import {
   extractVerifiedZipArchive,
@@ -668,6 +670,21 @@ async function main() {
     localOutput,
   ]);
   const localPackage = await fs.readFile(path.join(localOutput, 'Package.swift'), 'utf8');
+  const localProducts = JSON.parse(
+    await fs.readFile(path.join(localOutput, 'extension-products.json'), 'utf8'),
+  );
+  for (const row of localProducts.selected) {
+    if (row.asset?.localPath !== undefined)
+      assert.equal(row.asset.localPath, `Artifacts/${row.swiftProduct}Binary.xcframework`);
+    for (const dependency of row.nativeDependencies)
+      assert.equal(dependency.asset.localPath, `Artifacts/${dependency.binaryTarget}.xcframework`);
+  }
+  assert.ok(
+    localProducts.selected.every(
+      (row) => row.asset?.localPath === undefined || !path.isAbsolute(row.asset.localPath),
+    ),
+    'delivered metadata must not retain private cache paths',
+  );
   assert.match(
     localPackage,
     /\.binaryTarget\([\s\S]*path: "Artifacts\/OliphauntExtensionPostgisBinary\.xcframework"/u,
@@ -711,6 +728,35 @@ async function main() {
     /tampered-cache-entry/u,
   );
   assert.deepEqual(await fixtureFiles(output), await fixtureFiles(offlineOutput));
+
+  const declaredCatalog = path.join(root, 'declared-owner-catalog.json');
+  await fs.copyFile(
+    path.join(sdk, '../../../extensions/generated/sdk/extensions.json'),
+    declaredCatalog,
+  );
+  const declaredOutput = path.join(root, 'declared-catalog-output');
+  await render([
+    ...common,
+    '--offline',
+    '--owner-catalog',
+    declaredCatalog,
+    '--output-dir',
+    declaredOutput,
+  ]);
+  assert.deepEqual(await fixtureFiles(output), await fixtureFiles(declaredOutput));
+  assert.match(
+    await render(
+      [
+        ...common,
+        '--owner-catalog',
+        path.join(root, 'missing-catalog.json'),
+        '--output-dir',
+        path.join(root, 'missing-catalog-output'),
+      ],
+      { expectFailure: true },
+    ),
+    /missing-catalog|ENOENT/u,
+  );
 
   async function expectCarrierFailure(name, candidate, selected, pattern) {
     const file = path.join(root, `${name}.json`);
@@ -809,6 +855,91 @@ async function main() {
   await fs.writeFile(
     earthdistanceCarrier,
     `${JSON.stringify(earthdistanceCarrierDocument, null, 2)}\n`,
+  );
+  // The constructor consumes exact original source/control/archive Files and
+  // uses its own offline cache; it cannot retarget the source native pin.
+  const originalSource = path.join(root, 'original-swift-source/package');
+  await fs.mkdir(originalSource, { recursive: true });
+  await fs.writeFile(path.join(originalSource, 'VERSION'), '0.1.0\n');
+  await fs.writeFile(path.join(originalSource, 'LIBOLIPHAUNT_VERSION'), '0.1.0\n');
+  const originalArchive = path.join(root, 'Oliphaunt-source.zip');
+  await archiveDirectory(originalSource, originalArchive, { keepParent: true });
+  const neutral = {
+    schema,
+    base: structuredClone(manifest.base),
+    carriers: [],
+    extensions: [],
+    legal: { base: iosBaseLegalMetadata(), extensions: [] },
+  };
+  for (const row of neutral.base.assets)
+    row.url = `https://github.com/f0rr0/oliphaunt/releases/download/${neutral.base.tag}/${row.name}`;
+  const originalCarrier = path.join(root, 'original-swift-ios-carriers.json');
+  await fs.writeFile(originalCarrier, JSON.stringify(neutral));
+  const offlineCarrier = structuredClone(earthdistanceCarrierDocument);
+  for (const row of offlineCarrier.carriers)
+    row.url = `https://github.com/f0rr0/oliphaunt/releases/download/${offlineCarrier.release.tag}/${row.name}`;
+  const offlineControl = path.join(root, 'offline-contrib-swift-ios-carrier.json');
+  await fs.writeFile(offlineControl, JSON.stringify(offlineCarrier));
+  const input = async (file) => ({
+    path: file,
+    size: (await fs.stat(file)).size,
+    sha256: await checksum(file),
+  });
+  const fixtureSpec = {
+    version: '0.1.0',
+    selectedProducts: ['oliphaunt-swift', 'liboliphaunt-native'],
+    sourceArchive: await input(originalArchive),
+    sourceCarrier: await input(originalCarrier),
+    ownerCatalog: await input(declaredCatalog),
+    carriers: [
+      { product: 'liboliphaunt-native', version: '1.1.0', file: await input(offlineControl) },
+    ],
+    assets: await Promise.all(
+      offlineCarrier.carriers.map(({ name }) => input(path.join(root, 'archives', name))),
+    ),
+  };
+  const fixtureOutput = path.join(root, 'constructed-offline-fixture');
+  const fixtureResult = await buildSwiftExtensionFixture(fixtureOutput, fixtureSpec);
+  assert.deepEqual(
+    fixtureResult.selected.map(({ sqlName }) => sqlName),
+    ['cube', 'earthdistance'],
+  );
+  assert(fixtureResult.selected.every(({ asset }) => asset.localPath.startsWith('Artifacts/')));
+  assert(
+    !JSON.stringify(fixtureResult).includes(root),
+    'constructed fixture must not contain private paths',
+  );
+  await assert.rejects(
+    () =>
+      buildSwiftExtensionFixture(path.join(root, 'wrong-source-version'), {
+        ...fixtureSpec,
+        version: '0.2.0',
+      }),
+    /cannot restamp/u,
+  );
+  await assert.rejects(
+    () =>
+      buildSwiftExtensionFixture(path.join(root, 'wrong-carrier-owner'), {
+        ...fixtureSpec,
+        carriers: [{ ...fixtureSpec.carriers[0], product: 'oliphaunt-extension-vector' }],
+      }),
+    /unselected carrier owner/u,
+  );
+  await assert.rejects(
+    () =>
+      buildSwiftExtensionFixture(path.join(root, 'missing-carrier-bytes'), {
+        ...fixtureSpec,
+        assets: [],
+      }),
+    /exact declared public carrier archive/u,
+  );
+  await assert.rejects(
+    () =>
+      buildSwiftExtensionFixture(path.join(root, 'changed-source-bytes'), {
+        ...fixtureSpec,
+        sourceArchive: { ...fixtureSpec.sourceArchive, sha256: '0'.repeat(64) },
+      }),
+    /input bytes differ/u,
   );
   const composedOutput = path.join(root, 'dependency-composed');
   await render([

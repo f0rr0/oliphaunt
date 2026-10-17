@@ -121,11 +121,16 @@ tasks:
       - /src/native/sdks/react-native/tools/check-package.mts
       - /src/extensions/artifacts/packages/tools/contrib-carriers.mts
       - /src/native/sdks/swift/tools/ios-carrier-manifest.mts
+      - /src/native/sdks/swift/tools/native-legal-source-basis.mts
+      - /src/native/sdks/swift/tools/swift-native-carrier-contract.mts
       - /src/native/sdks/swift/tools/pinned-native-carrier.mts
       - /tools/release/github-read.mts
       - /tools/release/github-core-request-journal.mts
       - /src/native/sdks/swift/tools/swift-carrier-resolver.mts
       - /src/native/sdks/swift/tools/render_swiftpm_release_package.mts
+      - /src/native/sdks/swift/tools/swift-release-manifest.mts
+      - /src/native/sdks/swift/tools/swift-xcframework-contract.mts
+      - /src/native/sdks/swift/tools/prepare-swift-release-consumer.mts
       - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
       - /tools/release/release-graph.mts
       - /tools/release/product-version.mts
@@ -198,10 +203,14 @@ tasks:
       - "@group(legal-files)"
       - /src/extensions/tools/extension-upstream-licenses.mts
       - /src/native/sdks/swift/tools/ios-carrier-manifest.mts
+      - /src/native/sdks/swift/tools/native-legal-source-basis.mts
+      - /src/native/sdks/swift/tools/swift-native-carrier-contract.mts
       - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
       - /src/native/sdks/swift/tools/pinned-native-carrier.mts
       - /src/native/sdks/swift/tools/swift-carrier-resolver.mts
       - /src/native/sdks/swift/tools/render_swiftpm_release_package.mts
+      - /src/native/sdks/swift/tools/swift-release-manifest.mts
+      - /src/native/sdks/swift/tools/swift-xcframework-contract.mts
       - /src/native/sdks/swift/tools/prepare-swift-release-consumer.mts
       - /src/native/sdks/swift/tools/swift-extension-release-consumer-inputs.mts
       - /src/native/runtime/VERSION

@@ -1,19 +1,21 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
 use super::super::NativeRuntimeProfile;
 use super::super::extensions::{
-    copy_embedded_module, copy_extension_data_files, copy_extension_sql_files,
-    copy_named_extension_sql_files, core_share_file, embedded_core_module_files,
-    packaged_extension_module_files,
+    ResolvedExtensionModules, copy_embedded_module, copy_extension_data_files,
+    copy_extension_sql_files, copy_named_extension_sql_files, core_share_file,
+    embedded_core_module_files, packaged_extension_module_files,
 };
 use super::super::files::{
     copy_directory_filtered, copy_directory_tree, copy_file_preserving_permissions,
     remove_file_if_exists,
 };
 use super::super::{NATIVE_RUNTIME_TOOLS, existing_native_tool_path, native_tool_path};
-use super::extension_artifact_root_for;
 use crate::error::{Error, Result};
+#[cfg(test)]
 use crate::extension::Extension;
 
 #[cfg(test)]
@@ -25,13 +27,18 @@ pub(super) fn install_cached_runtime(
     runtime_dir: &Path,
     extensions: &[Extension],
 ) -> Result<()> {
+    let extension_modules = super::super::extensions::resolve_extension_modules(
+        profile,
+        install_dir,
+        extension_artifact_dirs,
+        extensions,
+    )?;
     install_cached_runtime_with_icu(
         profile,
         install_dir,
         embedded_modules,
-        extension_artifact_dirs,
         runtime_dir,
-        extensions,
+        &extension_modules,
         None,
     )
 }
@@ -40,9 +47,8 @@ pub(super) fn install_cached_runtime_with_icu(
     profile: NativeRuntimeProfile,
     install_dir: &Path,
     embedded_modules: Option<&Path>,
-    extension_artifact_dirs: &[PathBuf],
     runtime_dir: &Path,
-    extensions: &[Extension],
+    extension_modules: &[ResolvedExtensionModules],
     icu_data: Option<&Path>,
 ) -> Result<()> {
     fs::create_dir_all(runtime_dir).map_err(|err| {
@@ -56,19 +62,13 @@ pub(super) fn install_cached_runtime_with_icu(
         install_required_runtime_tool(install_dir, runtime_dir, tool, "native runtime")?;
     }
 
-    install_native_share_tree(
-        install_dir,
-        extension_artifact_dirs,
-        runtime_dir,
-        extensions,
-    )?;
+    install_native_share_tree(install_dir, runtime_dir, extension_modules)?;
     install_native_library_tree(
         profile,
         install_dir,
         embedded_modules,
-        extension_artifact_dirs,
         runtime_dir,
-        extensions,
+        extension_modules,
     )?;
     if let Some(icu_data) = icu_data {
         copy_directory_tree(
@@ -132,9 +132,8 @@ fn ensure_runtime_tool_executable(_path: &Path) -> Result<()> {
 
 fn install_native_share_tree(
     install_dir: &Path,
-    extension_artifact_dirs: &[PathBuf],
     runtime_dir: &Path,
-    extensions: &[Extension],
+    extension_modules: &[ResolvedExtensionModules],
 ) -> Result<()> {
     let source_share = install_dir.join("share/postgresql");
     let target_share = runtime_dir.join("share/postgresql");
@@ -155,12 +154,10 @@ fn install_native_share_tree(
     })?;
 
     copy_named_extension_sql_files(&source_share, &target_share, "plpgsql", true)?;
-    for extension in extensions {
-        let extension_root =
-            extension_artifact_root_for(install_dir, extension_artifact_dirs, *extension);
-        let extension_share = extension_root.join("share/postgresql");
-        copy_extension_sql_files(&extension_share, &target_share, *extension)?;
-        copy_extension_data_files(&extension_share, &target_share, *extension)?;
+    for extension in extension_modules {
+        let extension_share = extension.source_root.join("share/postgresql");
+        copy_extension_sql_files(&extension_share, &target_share, extension.extension)?;
+        copy_extension_data_files(&extension_share, &target_share, extension.extension)?;
     }
     Ok(())
 }
@@ -172,7 +169,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-    use crate::extension::resolve_extensions;
+    use crate::extension::{extension_data_files, resolve_extensions};
 
     #[test]
     fn install_rejects_missing_transitive_extension_dependency_assets() {
@@ -343,6 +340,402 @@ mod tests {
             fs::read(embedded_runtime.join("lib/postgresql").join(module)).unwrap(),
             b"embedded-profile-module\n"
         );
+    }
+
+    #[test]
+    fn install_copies_declared_dependency_modules_from_the_selected_profile() {
+        let temp = TempTree::new("selected-dependency-modules");
+        let install_dir = temp.path().join("install");
+        let extension_dir = temp.path().join("postgis-sidecar");
+        let embedded_modules = temp.path().join("embedded-modules");
+        write_minimal_install(&install_dir);
+        write_extension_assets(&install_dir, Extension::POSTGIS);
+        write_extension_assets(&install_dir, Extension::HSTORE);
+        write_extension_assets(&extension_dir, Extension::POSTGIS);
+        for relative in extension_data_files(Extension::POSTGIS) {
+            write_file(
+                &extension_dir.join("share/postgresql").join(relative),
+                b"postgis data",
+            );
+        }
+        for module in embedded_core_module_files() {
+            write_file(&embedded_modules.join(module), b"embedded core");
+        }
+        for module in Extension::POSTGIS.native_module_files() {
+            write_file(
+                &extension_dir.join("lib/postgresql").join(&module),
+                b"server module",
+            );
+            write_file(
+                &extension_dir.join("lib/modules").join(&module),
+                b"embedded module",
+            );
+            write_file(
+                &embedded_modules.join(module),
+                b"global fallback must not win",
+            );
+        }
+        for (profile, expected) in [
+            (
+                NativeRuntimeProfile::PostgresServer,
+                b"server module".as_slice(),
+            ),
+            (
+                NativeRuntimeProfile::OliphauntEmbedded,
+                b"embedded module".as_slice(),
+            ),
+        ] {
+            let runtime = temp.path().join(profile.cache_id());
+            install_cached_runtime(
+                profile,
+                &install_dir,
+                Some(&embedded_modules),
+                std::slice::from_ref(&extension_dir),
+                &runtime,
+                &[Extension::POSTGIS],
+            )
+            .unwrap();
+            for module in Extension::POSTGIS.native_module_files() {
+                assert_eq!(
+                    fs::read(runtime.join("lib/postgresql").join(module)).unwrap(),
+                    expected
+                );
+            }
+            assert!(
+                !runtime
+                    .join("lib/postgresql")
+                    .join(Extension::HSTORE.native_module_file().unwrap())
+                    .exists()
+            );
+        }
+    }
+
+    #[test]
+    fn install_rejects_missing_declared_dependency_modules_in_both_profiles() {
+        let temp = TempTree::new("missing-dependency-modules");
+        let install_dir = temp.path().join("install");
+        let extension_dir = temp.path().join("postgis-sidecar");
+        let embedded_modules = temp.path().join("embedded-modules");
+        write_minimal_install(&install_dir);
+        write_extension_assets(&extension_dir, Extension::POSTGIS);
+        for relative in extension_data_files(Extension::POSTGIS) {
+            write_file(
+                &extension_dir.join("share/postgresql").join(relative),
+                b"postgis data",
+            );
+        }
+        for module in embedded_core_module_files() {
+            write_file(&embedded_modules.join(module), b"embedded core");
+        }
+        let main_module = Extension::POSTGIS.native_module_file().unwrap();
+        write_file(
+            &extension_dir.join("lib/modules").join(&main_module),
+            b"embedded module",
+        );
+        let dependency = Extension::POSTGIS
+            .native_module_files()
+            .find(|module| module != &main_module)
+            .unwrap();
+        write_file(
+            &extension_dir.join("extension.json"),
+            serde_json::json!({
+                "schema": "oliphaunt-extension-member-payload-v1",
+                "sql_name": "postgis",
+                "dependency_modules": [&dependency],
+            })
+            .to_string()
+            .as_bytes(),
+        );
+        fs::remove_file(extension_dir.join("lib/postgresql").join(&dependency)).unwrap();
+        for profile in [
+            NativeRuntimeProfile::PostgresServer,
+            NativeRuntimeProfile::OliphauntEmbedded,
+        ] {
+            let error = install_cached_runtime(
+                profile,
+                &install_dir,
+                Some(&embedded_modules),
+                std::slice::from_ref(&extension_dir),
+                &temp.path().join(profile.cache_id()),
+                &[Extension::POSTGIS],
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains(&dependency),
+                "unexpected dependency error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn install_preserves_legacy_statically_linked_modules_in_both_profiles() {
+        let temp = TempTree::new("legacy-static-dependency-modules");
+        let install_dir = temp.path().join("install");
+        let extension_dir = temp.path().join("postgis-sidecar");
+        let embedded_modules = temp.path().join("embedded-modules");
+        write_minimal_install(&install_dir);
+        write_extension_assets(&extension_dir, Extension::POSTGIS);
+        let main = Extension::POSTGIS.native_module_file().unwrap();
+        for module in Extension::POSTGIS
+            .native_module_files()
+            .filter(|module| module != &main)
+        {
+            fs::remove_file(extension_dir.join("lib/postgresql").join(module)).unwrap();
+        }
+        for relative in extension_data_files(Extension::POSTGIS) {
+            write_file(
+                &extension_dir.join("share/postgresql").join(relative),
+                b"postgis data",
+            );
+        }
+        for module in embedded_core_module_files() {
+            write_file(&embedded_modules.join(module), b"embedded core");
+        }
+        write_file(
+            &extension_dir.join("lib/modules").join(&main),
+            b"static embedded module",
+        );
+        let resolved = super::super::super::extensions::resolve_extension_modules(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            std::slice::from_ref(&extension_dir),
+            &[Extension::POSTGIS],
+        )
+        .unwrap();
+        assert_eq!(resolved[0].files, vec![main.clone()]);
+        for profile in [
+            NativeRuntimeProfile::PostgresServer,
+            NativeRuntimeProfile::OliphauntEmbedded,
+        ] {
+            let runtime = temp.path().join(profile.cache_id());
+            install_cached_runtime(
+                profile,
+                &install_dir,
+                Some(&embedded_modules),
+                std::slice::from_ref(&extension_dir),
+                &runtime,
+                &[Extension::POSTGIS],
+            )
+            .unwrap();
+            fs::write(runtime.join(".complete"), b"ok").unwrap();
+            fs::write(
+                runtime.join(".manifest"),
+                super::super::cache_key::runtime_cache_manifest(
+                    profile,
+                    "legacy-key",
+                    &[Extension::POSTGIS],
+                ),
+            )
+            .unwrap();
+            assert!(super::super::cache_key::cached_runtime_is_valid_with_icu(
+                profile,
+                &runtime,
+                "legacy-key",
+                &resolved,
+                false
+            ));
+            assert!(runtime.join("lib/postgresql").join(&main).is_file());
+        }
+    }
+
+    #[test]
+    fn install_excludes_unselected_dependency_modules_from_the_base_install() {
+        let temp = TempTree::new("unselected-dependency-modules");
+        let install_dir = temp.path().join("install");
+        let runtime_dir = temp.path().join("runtime");
+        write_minimal_install(&install_dir);
+        write_extension_assets(&install_dir, Extension::POSTGIS);
+        write_extension_assets(&install_dir, Extension::HSTORE);
+        install_cached_runtime(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            &[],
+            &runtime_dir,
+            &[Extension::HSTORE],
+        )
+        .unwrap();
+        for module in Extension::POSTGIS.native_module_files() {
+            assert!(!runtime_dir.join("lib/postgresql").join(module).exists());
+        }
+    }
+
+    #[test]
+    fn declared_embedded_modules_cannot_use_different_global_fallback_bytes() {
+        let temp = TempTree::new("declared-embedded-no-fallback");
+        let install_dir = temp.path().join("install");
+        let extension_dir = temp.path().join("postgis-sidecar");
+        let embedded_modules = temp.path().join("embedded-modules");
+        write_minimal_install(&install_dir);
+        write_extension_assets(&extension_dir, Extension::POSTGIS);
+        for relative in extension_data_files(Extension::POSTGIS) {
+            write_file(
+                &extension_dir.join("share/postgresql").join(relative),
+                b"postgis data",
+            );
+        }
+        for module in embedded_core_module_files() {
+            write_file(&embedded_modules.join(module), b"embedded core");
+        }
+        let files: Vec<_> = Extension::POSTGIS.native_module_files().collect();
+        let package = Box::leak(Box::new(crate::ExtensionPackage {
+            product: "oliphaunt-extension-postgis",
+            version: "3.6.4",
+            runtime_version: "0.3.3",
+            resources: Box::leak(
+                files
+                    .iter()
+                    .map(|module| {
+                        let relative: &'static str = Box::leak(
+                            format!("extension/oliphaunt-extension-postgis/lib/modules/{module}")
+                                .into_boxed_str(),
+                        );
+                        (
+                            relative,
+                            b"selected embedded".as_slice(),
+                            "unused-in-resolver",
+                            true,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            ),
+        }));
+        for extension in [Extension::POSTGIS, Extension::POSTGIS.with_package(package)] {
+            write_file(&extension_dir.join("extension.json"), serde_json::json!({
+                "schema": "oliphaunt-extension-member-payload-v1", "sql_name": "postgis", "dependency_modules": &files[1..],
+            }).to_string().as_bytes());
+            for missing in &files {
+                for module in &files {
+                    write_file(
+                        &extension_dir.join("lib/modules").join(module),
+                        b"selected embedded",
+                    );
+                    write_file(&embedded_modules.join(module), b"different global bytes");
+                }
+                fs::remove_file(extension_dir.join("lib/modules").join(missing)).unwrap();
+                let key = || {
+                    super::super::cache_key::runtime_cache_key(
+                        NativeRuntimeProfile::OliphauntEmbedded,
+                        &install_dir,
+                        Some(&embedded_modules),
+                        std::slice::from_ref(&extension_dir),
+                        &[extension],
+                    )
+                    .unwrap()
+                };
+                let missing_key = key();
+                write_file(
+                    &embedded_modules.join(missing),
+                    b"global bytes changed again",
+                );
+                assert_eq!(
+                    missing_key,
+                    key(),
+                    "missing declared files must not hash global fallback bytes"
+                );
+                let error = install_cached_runtime(
+                    NativeRuntimeProfile::OliphauntEmbedded,
+                    &install_dir,
+                    Some(&embedded_modules),
+                    std::slice::from_ref(&extension_dir),
+                    &temp.path().join("runtime"),
+                    &[extension],
+                )
+                .unwrap_err();
+                assert!(
+                    error.to_string().contains(
+                        &extension_dir
+                            .join("lib/modules")
+                            .join(missing)
+                            .display()
+                            .to_string()
+                    ),
+                    "unexpected owned-file error: {error}"
+                );
+                write_file(
+                    &extension_dir.join("lib/modules").join(missing),
+                    b"selected embedded",
+                );
+                assert_ne!(
+                    missing_key,
+                    key(),
+                    "restoring the original declared file must change its cache identity"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_primary_modules_keep_their_undeclared_embedded_fallback() {
+        let temp = TempTree::new("legacy-primary-fallback");
+        let install_dir = temp.path().join("install");
+        let extension_dir = temp.path().join("hstore-sidecar");
+        let embedded_modules = temp.path().join("embedded-modules");
+        write_minimal_install(&install_dir);
+        write_extension_assets(&extension_dir, Extension::HSTORE);
+        for module in embedded_core_module_files() {
+            write_file(&embedded_modules.join(module), b"embedded core");
+        }
+        let main = Extension::HSTORE.native_module_file().unwrap();
+        let old_path: &'static str = Box::leak(
+            format!("extension/oliphaunt-extension-contrib-pg18/lib/postgresql/{main}")
+                .into_boxed_str(),
+        );
+        let old_package = Box::leak(Box::new(crate::ExtensionPackage {
+            product: "oliphaunt-extension-contrib-pg18",
+            version: "0.3.3",
+            runtime_version: "0.3.3",
+            resources: Box::leak(
+                vec![(
+                    old_path,
+                    b"legacy server".as_slice(),
+                    "unused-in-resolver",
+                    true,
+                )]
+                .into_boxed_slice(),
+            ),
+        }));
+        for (index, extension) in [
+            Extension::HSTORE,
+            Extension::HSTORE.with_package(old_package),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let runtime = temp.path().join(format!("runtime-{index}"));
+            write_file(&embedded_modules.join(&main), b"legacy embedded v1");
+            let key = || {
+                super::super::cache_key::runtime_cache_key(
+                    NativeRuntimeProfile::OliphauntEmbedded,
+                    &install_dir,
+                    Some(&embedded_modules),
+                    std::slice::from_ref(&extension_dir),
+                    &[extension],
+                )
+                .unwrap()
+            };
+            let first = key();
+            install_cached_runtime(
+                NativeRuntimeProfile::OliphauntEmbedded,
+                &install_dir,
+                Some(&embedded_modules),
+                std::slice::from_ref(&extension_dir),
+                &runtime,
+                &[extension],
+            )
+            .unwrap();
+            assert_eq!(
+                fs::read(runtime.join("lib/postgresql").join(&main)).unwrap(),
+                b"legacy embedded v1"
+            );
+            write_file(&embedded_modules.join(&main), b"legacy embedded v2");
+            assert_ne!(
+                first,
+                key(),
+                "allowed legacy fallback bytes must remain part of cache identity"
+            );
+        }
     }
 
     #[test]
@@ -567,7 +960,7 @@ mod tests {
                 .join(format!("{}--1.0.sql", extension.sql_name())),
             format!("select '{} install';\n", extension.sql_name()).as_bytes(),
         );
-        if let Some(module) = extension.native_module_file() {
+        for module in extension.native_module_files() {
             write_file(
                 &install_dir.join("lib/postgresql").join(module),
                 format!("{} module\n", extension.sql_name()).as_bytes(),
@@ -587,9 +980,8 @@ fn install_native_library_tree(
     profile: NativeRuntimeProfile,
     install_dir: &Path,
     embedded_modules: Option<&Path>,
-    extension_artifact_dirs: &[PathBuf],
     runtime_dir: &Path,
-    extensions: &[Extension],
+    extension_modules: &[ResolvedExtensionModules],
 ) -> Result<()> {
     install_runtime_library_root(install_dir, runtime_dir)?;
 
@@ -608,7 +1000,7 @@ fn install_native_library_tree(
         ))
     })?;
 
-    let extension_modules = packaged_extension_module_files();
+    let packaged_modules = packaged_extension_module_files();
     let embedded_core_modules = embedded_core_module_files();
     for entry in fs::read_dir(&source_lib)
         .map_err(|err| Error::Engine(format!("read native library dir: {err}")))?
@@ -620,7 +1012,7 @@ fn install_native_library_tree(
             continue;
         }
         let file_name = entry.file_name().to_string_lossy().into_owned();
-        if extension_modules.contains(&file_name)
+        if packaged_modules.contains(&file_name)
             || (profile.needs_embedded_modules() && embedded_core_modules.contains(&file_name))
         {
             continue;
@@ -638,37 +1030,17 @@ fn install_native_library_tree(
             copy_embedded_module(embedded_modules, &target_lib, &module)?;
         }
     }
-    for extension in extensions {
-        let Some(module) = extension.native_module_file() else {
-            continue;
-        };
-        let extension_root =
-            extension_artifact_root_for(install_dir, extension_artifact_dirs, *extension);
-        let extension_lib = extension_root.join("lib/postgresql");
-        match profile {
-            NativeRuntimeProfile::OliphauntEmbedded => {
-                let embedded_extension_lib = extension_root.join("lib/modules");
-                if embedded_extension_lib.join(&module).is_file() {
-                    copy_file_preserving_permissions(
-                        &embedded_extension_lib.join(&module),
-                        &target_lib.join(&module),
-                    )?;
-                } else {
-                    let embedded_modules = embedded_modules.ok_or_else(|| {
-                        Error::Engine(
-                            "native liboliphaunt runtime requires embedded PostgreSQL extension modules"
-                                .to_owned(),
-                        )
-                    })?;
-                    copy_embedded_module(embedded_modules, &target_lib, &module)?;
-                }
+    for extension in extension_modules {
+        for module in &extension.files {
+            let source = extension.module_source(profile, embedded_modules, module)?;
+            if !source.is_file() {
+                return Err(Error::Engine(format!(
+                    "native extension '{}' module is missing {}",
+                    extension.extension.sql_name(),
+                    source.display()
+                )));
             }
-            NativeRuntimeProfile::PostgresServer => {
-                copy_file_preserving_permissions(
-                    &extension_lib.join(&module),
-                    &target_lib.join(&module),
-                )?;
-            }
+            copy_file_preserving_permissions(&source, &target_lib.join(module))?;
         }
     }
     Ok(())

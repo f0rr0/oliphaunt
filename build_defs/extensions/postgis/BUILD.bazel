@@ -1,0 +1,45 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@bazel_lib//lib:copy_file.bzl", "copy_file")
+load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_script_test", "bun_test")
+load(":compiler_facts.bzl", "postgis_compiler_facts")
+load(":sqlite.bzl", "postgis_sqlite")
+load(":libraries.bzl", "postgis_geos", "postgis_iconv", "postgis_json_c", "postgis_libxml2", "postgis_proj")
+load(":proj_db.bzl", "proj_database")
+load(":modules.bzl", "postgis_dependency_module", "postgis_standalone")
+load(":sql.bzl", "postgis_sql")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.bzl", "*.mts"]))
+bun_binary(name = "sqlite_generate", entry_point = "sqlite_generate.mts")
+bun_binary(name = "configure_headers", entry_point = "configure_headers.mts")
+copy_file(name = "libiconv_config_template", src = "@postgis_libiconv//:lib/config.h.in", out = "libiconv_templates/lib/config.h.in")
+copy_file(name = "libiconv_iconv_template", src = "@postgis_libiconv//:include/iconv.h.build.in", out = "libiconv_templates/include/iconv.h.build.in")
+copy_file(name = "libiconv_localcharset_template", src = "@postgis_libiconv//:libcharset/include/localcharset.h.build.in", out = "libiconv_templates/libcharset/include/localcharset.h.build.in")
+copy_file(name = "libiconv_libcharset_template", src = "@postgis_libiconv//:libcharset/include/libcharset.h.build.in", out = "libiconv_templates/libcharset/include/libcharset.h.build.in")
+bun_test(name = "configure_headers_test", entry_point = "configure_headers.test.mts", data = ["configure_headers.mts", ":libiconv_config_template", ":libiconv_iconv_template", ":libiconv_localcharset_template", ":libiconv_libcharset_template"], size = "small")
+bun_script_test(
+    name = "gpp_test",
+    entry_point = "gpp.test.mts",
+    args = ["$(location @postgis_gpp//:gpp)"],
+    data = ["@postgis_gpp//:gpp"],
+    size = "small",
+)
+bun_binary(name = "proj_db", entry_point = "proj_db.mts")
+bun_binary(name = "sql", entry_point = "sql.mts")
+postgis_compiler_facts()
+postgis_sqlite(name = "sqlite")
+postgis_geos(name = "geos")
+postgis_json_c(name = "json_c")
+postgis_proj(name = "proj", sqlite = ":sqlite")
+postgis_iconv(name = "iconv")
+postgis_libxml2(name = "libxml2", iconv = ":iconv")
+proj_database(name = "database")
+postgis_standalone(name = "postgis")
+postgis_dependency_module(name = "dependency_module")
+postgis_sql(name = "sql_resources", configuration = ":postgis_config", headers = ":postgis_headers")
+filegroup(name = "extension_sql", srcs = [":sql_resources"], output_group = "extension_sql")
+filegroup(name = "data_sql", srcs = [":sql_resources"], output_group = "data_sql")
+filegroup(name = "control", srcs = [":postgis_config"], output_group = "control")
+
+source_quality_files()

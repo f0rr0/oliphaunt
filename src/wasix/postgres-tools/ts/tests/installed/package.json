@@ -1,0 +1,10 @@
+{
+  "name": "oliphaunt-wasix-tools-installed-consumer",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@oliphaunt/wasix-ts": "0.2.2",
+    "@types/node": "24.12.4",
+    "typescript": "6.0.3"
+  }
+}

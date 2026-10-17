@@ -1,0 +1,290 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library", "cc_test")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files", "strip_prefix")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE", "NATIVE_C_COMPATIBLE", "NATIVE_EMBEDDED_DEFINES", "NATIVE_BUILTIN_SNOWBALL", "NATIVE_BUILTIN_SNOWBALL_DEPS", "NATIVE_LINKOPTS", "NATIVE_RELEASE_LINKOPTS", "NATIVE_WRAPPER_COPTS", "NATIVE_WRAPPER_DEFINES", "NATIVE_BUILTIN_PLPGSQL_DEPS", "NATIVE_RUNTIME_LINKOPTS", "NATIVE_EMBEDDED_MODULE_LINKOPTS", "NATIVE_ELF_C_COMPATIBLE", "NATIVE_MACOS_COMPATIBLE", "NATIVE_WINDOWS_COMPATIBLE", "NATIVE_HOST_COMPATIBLE", "NATIVE_LINUX_COMPATIBLE", "NATIVE_UNIX_COMPATIBLE")
+load("//build_defs/native:windows_link.bzl", "postgres_windows_exports")
+load("//build_defs/native:mobile.bzl", "native_apple_runtime_targets", "native_ios_runtime_targets")
+load("//build_defs/native/apple:static-carrier-consumer.bzl", "apple_static_carrier_consumer_test")
+load("//build_defs/native/android:runtime.bzl", "native_android_runtime_targets")
+load("//build_defs/foundation:bun.bzl", "bun_script_test")
+load("//build_defs/native/carriers:defs.bzl", "native_desktop_carriers")
+load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
+load("//build_defs/native/carriers:tests.bzl", "native_cargo_consumer_test")
+
+package(default_visibility = ["//visibility:public"])
+
+native_release_checksum_family(product = "liboliphaunt-native")
+
+exports_files(["release.toml", "postgres/series", "include/oliphaunt.h", "bin/android-cxx-runtime.map", "tools/native-mobile-abi-contract.mts"] + glob(["patches/**/*.patch"]))
+exports_files(["THIRD_PARTY_NOTICES.md", "tools/native-runtime-payload.mts", "tools/native-runtime-payload-policy.json"])
+exports_files(["tools/finalize-native-runtime-carrier.mts", "tools/native-runtime-carrier-contract.mts"])
+exports_files(["tools/testdata/native-runtime-fixture.mts"], visibility = ["//build_defs/android:__pkg__"])
+exports_files(glob(["packages/*/package.json", "packages/*/README.md"]))
+
+alias(name = "postgres_server_headers", actual = "@postgres//:server_headers")
+alias(name = "postgres_embedded_headers", actual = "@postgres//:embedded_headers")
+
+cc_library(
+    name = "wrapper",
+    srcs = [
+        "src/liboliphaunt_native.c",
+        "src/liboliphaunt_error.c",
+        "src/liboliphaunt_runtime.c",
+        "src/liboliphaunt_protocol.c",
+        "src/liboliphaunt_config.c",
+        "src/liboliphaunt_process.c",
+        "src/liboliphaunt_trace.c",
+        "src/liboliphaunt_fs.c",
+        "src/liboliphaunt_backup_state.c",
+        "src/liboliphaunt_archive.c",
+        "src/liboliphaunt_archive_tar.c",
+        "src/liboliphaunt_static_extensions.c",
+        "src/liboliphaunt_builtin_extensions.c",
+    ],
+    hdrs = glob(["include/*.h", "src/*.h"]),
+    defines = ["OLIPHAUNT_EMBEDDED", "OLIPHAUNT_BUILTIN_PLPGSQL"] + NATIVE_EMBEDDED_DEFINES + NATIVE_BUILTIN_SNOWBALL,
+    local_defines = NATIVE_WRAPPER_DEFINES,
+    copts = NATIVE_WRAPPER_COPTS,
+    includes = ["include", "src"],
+    # Resolve builtin libraries in the same slice as their wrapper defines.
+    implementation_deps = NATIVE_BUILTIN_PLPGSQL_DEPS + NATIVE_BUILTIN_SNOWBALL_DEPS,
+    alwayslink = True,
+    target_compatible_with = NATIVE_C_COMPATIBLE,
+)
+
+cc_binary(
+    name = "liboliphaunt.so",
+    deps = [":wrapper", "@postgres//:backend_embedded", "@postgres//:main_embedded"],
+    linkshared = True,
+    linkopts = NATIVE_RUNTIME_LINKOPTS + NATIVE_LINKOPTS + NATIVE_RELEASE_LINKOPTS + select({
+        "//build_defs/native:android": ["-Wl,--exclude-libs,libc++_static.a:libc++abi.a:libunwind.a", "-Wl,--version-script,$(location :bin/android-cxx-runtime.map)"],
+        "//conditions:default": [],
+    }),
+    additional_linker_inputs = select({"//build_defs/native:android": ["bin/android-cxx-runtime.map"], "//conditions:default": []}),
+    target_compatible_with = NATIVE_ELF_C_COMPATIBLE,
+    tags = ["native-development-slice"],
+)
+
+cc_binary(
+    name = "liboliphaunt.dylib",
+    deps = [":wrapper", "@postgres//:backend_embedded", "@postgres//:main_embedded"],
+    linkshared = True,
+    linkopts = NATIVE_RUNTIME_LINKOPTS + NATIVE_LINKOPTS,
+    target_compatible_with = NATIVE_MACOS_COMPATIBLE,
+    tags = ["native-development-slice"],
+)
+
+postgres_windows_exports(
+    name = "runtime_windows_exports",
+    roots = ["@postgres//:backend_embedded", "@postgres//:main_embedded"],
+    target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
+)
+
+cc_binary(
+    name = "oliphaunt.dll",
+    deps = [":wrapper", "@postgres//:backend_embedded", "@postgres//:main_embedded"],
+    linkshared = True,
+    win_def_file = ":runtime_windows_exports",
+    features = ["no_windows_export_all_symbols"],
+    linkopts = NATIVE_RUNTIME_LINKOPTS + NATIVE_LINKOPTS,
+    target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
+    tags = ["native-development-slice"],
+)
+
+alias(name = "runtime_shared", actual = select({"//build_defs/native:macos_arm64": ":liboliphaunt.dylib", "//build_defs/native:windows_x64": ":oliphaunt.dll", "//conditions:default": ":liboliphaunt.so"}))
+native_android_runtime_targets()
+native_ios_runtime_targets()
+native_apple_runtime_targets(qualification = [
+    "//build_defs/native:ios_device_builtin_link_test",
+    "//build_defs/native:ios_simulator_builtin_link_test",
+    ":apple_final_contract_test",
+    "//build_defs/native/apple:framework_contract_test",
+    ":apple_static_carrier_consumer_test",
+])
+apple_static_carrier_consumer_test(
+    name = "apple_static_carrier_consumer_test",
+    base = ":apple_swiftpm",
+    ios_resources = ":apple_resources",
+    macos_resources = ":apple_macos_resources",
+    base_manifest = ":apple_ios_manifest",
+    leaves = ["//build_defs/extensions/mobile/final:oliphaunt_extension_contrib_pg18_ios_xcframework"],
+    extensions = ["cube", "pg_trgm"],
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
+    size = "large",
+    timeout = "long",
+    tags = ["no-remote"],
+)
+# The ABI receipt consumes the producer's exact File, including the iOS archive.
+alias(name = "runtime_abi_binary", actual = select({"//build_defs/native:ios": ":mobile_static_archive", "//conditions:default": ":runtime_shared"}))
+filegroup(name = "runtime_windows_interface", srcs = [":oliphaunt.dll"], output_group = "interface_library", target_compatible_with = NATIVE_WINDOWS_COMPATIBLE)
+
+cc_import(
+    name = "runtime_shared_library",
+    shared_library = ":runtime_shared",
+    interface_library = select({"//build_defs/native:windows_x64": ":runtime_windows_interface", "//conditions:default": None}),
+    # An imported DLL does not inherit the producing binary's dependencies.
+    # Keep ICU's import/runtime closure so normal Windows C consumers receive
+    # the same three actual DLLs as the installed runtime payload.
+    deps = select({"//build_defs/native:windows_x64": ["@icu//:i18n"], "//conditions:default": []}),
+)
+
+cc_library(
+    name = "liboliphaunt",
+    deps = select({"//build_defs/native:ios": [":mobile_static"], "//conditions:default": [":runtime_shared_library"]}),
+    hdrs = ["include/oliphaunt.h"],
+    includes = ["include"],
+)
+
+cc_binary(
+    name = "dict_snowball.so",
+    deps = [":liboliphaunt", "@postgres//:snowball_embedded"],
+    linkshared = True,
+    linkopts = ["-Wl,-z,defs"] + NATIVE_RELEASE_LINKOPTS,
+    target_compatible_with = NATIVE_ELF_C_COMPATIBLE,
+)
+
+cc_binary(
+    name = "plpgsql.so",
+    deps = [":liboliphaunt", "@postgres//:plpgsql_embedded"],
+    linkshared = True,
+    linkopts = ["-Wl,-z,defs"] + NATIVE_RELEASE_LINKOPTS,
+    target_compatible_with = NATIVE_ELF_C_COMPATIBLE,
+)
+
+[cc_binary(name = name + suffix, deps = [":liboliphaunt", "@postgres//:" + role + "_embedded"], linkshared = True,
+           linkopts = NATIVE_EMBEDDED_MODULE_LINKOPTS, target_compatible_with = compatible)
+ for name, role in [("plpgsql", "plpgsql"), ("dict_snowball", "snowball")]
+ for suffix, compatible in [(".dylib", NATIVE_MACOS_COMPATIBLE), (".dll", NATIVE_WINDOWS_COMPATIBLE)]]
+[alias(name = name + "_module", actual = select({"//build_defs/native:macos_arm64": ":" + name + ".dylib", "//build_defs/native:windows_x64": ":" + name + ".dll", "//conditions:default": ":" + name + ".so"}))
+ for name in ["plpgsql", "dict_snowball"]]
+
+cc_test(
+    name = "unix_abi_conformance_test",
+    srcs = ["smoke/liboliphaunt_abi_conformance.c"],
+    deps = [":liboliphaunt"],
+    copts = ["-std=c11", "-pedantic", "-Wall", "-Wextra", "-Werror"],
+    target_compatible_with = NATIVE_UNIX_COMPATIBLE,
+)
+
+cc_binary(
+    name = "windows_abi_conformance",
+    srcs = ["smoke/liboliphaunt_abi_conformance.c"],
+    deps = [":liboliphaunt"],
+    copts = ["/std:c11", "/W4", "/WX"],
+    target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
+)
+
+bun_script_test(
+    name = "windows_abi_conformance_test",
+    entry_point = "//build_defs/native:windows-abi-conformance.test.mts",
+    args = ["$(location :runtime_payload)", "$(location :windows_abi_conformance)", "$(locations @native_msvc_sdk//:runtime_dlls)"],
+    data = [":runtime_payload", ":windows_abi_conformance", "@native_msvc_sdk//:runtime_dlls", "//build_defs/native:host-runtime-test-helpers.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json"],
+    target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
+    size = "small",
+)
+
+alias(name = "abi_conformance_test", actual = select({"//build_defs/native:windows_x64": ":windows_abi_conformance_test", "//conditions:default": ":unix_abi_conformance_test"}))
+
+cc_binary(
+    name = "runtime_smoke",
+    srcs = ["smoke/liboliphaunt_smoke.c"],
+    deps = [":liboliphaunt", ":smoke_internal_headers", "@postgres//:embedded_headers"],
+    copts = select({"//build_defs/native:windows_x64": ["/std:c11"], "//conditions:default": ["-std=c11", "-Wall", "-Wextra", "-Werror"]}),
+    linkopts = select({"//build_defs/native:windows_x64": [], "//conditions:default": ["-lpthread"]}),
+    target_compatible_with = NATIVE_COMPATIBLE,
+)
+
+cc_library(name = "smoke_internal_headers", hdrs = glob(["src/*.h"]), includes = ["src"])
+
+cc_binary(
+    name = "profile_smoke",
+    srcs = ["smoke/liboliphaunt_cluster_seed_smoke.c"],
+    deps = [":liboliphaunt"],
+    copts = select({"//build_defs/native:windows_x64": ["/std:c11"], "//conditions:default": ["-std=c11", "-Wall", "-Wextra", "-Werror"]}),
+    target_compatible_with = NATIVE_COMPATIBLE,
+)
+
+pkg_files(name = "runtime_binaries", srcs = ["@postgres//:initdb", "@postgres//:pg_ctl", "@postgres//:server_executable"], prefix = "bin", attributes = pkg_attributes(mode = "0755"))
+pkg_files(name = "tools_binaries", srcs = ["@postgres//:pg_basebackup", "@postgres//:pg_dump", "@postgres//:psql"], prefix = "bin", attributes = pkg_attributes(mode = "0755"))
+pkg_tar(name = "tools_payload", srcs = [":tools_binaries", ":runtime_libpq", ":runtime_vc_libraries"], tags = ["native-development-slice"])
+pkg_files(name = "runtime_libpq", srcs = ["@postgres//:libpq_shared"], prefix = select({"//build_defs/native:windows_x64": "bin", "//conditions:default": "lib"}),
+          renames = select({"//build_defs/native:windows_x64": {}, "//build_defs/native:macos_arm64": {"@postgres//:libpq_shared": "libpq.5.dylib"}, "//conditions:default": {"@postgres//:libpq_shared": "libpq.so.5"}}))
+pkg_files(name = "runtime_library", srcs = [":runtime_shared"], prefix = select({"//build_defs/native:windows_x64": "bin", "//conditions:default": "lib"}))
+pkg_files(name = "runtime_icu_libraries", srcs = select({"//build_defs/native:windows_x64": ["@icu//:windows_runtime_dlls"], "//conditions:default": []}), prefix = "bin")
+pkg_files(name = "runtime_vc_libraries", srcs = select({"//build_defs/native:windows_x64": ["@native_msvc_sdk//:runtime_dlls"], "//conditions:default": []}), prefix = "bin")
+pkg_files(name = "runtime_windows_import_library", srcs = select({"//build_defs/native:windows_x64": [":runtime_windows_interface"], "//conditions:default": []}), prefix = "lib",
+          renames = select({"//build_defs/native:windows_x64": {":runtime_windows_interface": "oliphaunt.lib"}, "//conditions:default": {}}))
+pkg_files(name = "runtime_public_header", srcs = ["include/oliphaunt.h"], prefix = "include")
+pkg_files(name = "runtime_server_modules", srcs = ["@postgres//:plpgsql_module", "@postgres//:dict_snowball_module"], prefix = "lib/postgresql")
+pkg_files(name = "runtime_embedded_modules", srcs = [":plpgsql_module", ":dict_snowball_module"], prefix = "lib/modules")
+pkg_files(name = "runtime_catalog", srcs = ["@postgres//:catalog_runtime_data"], prefix = "share/postgresql")
+pkg_files(name = "runtime_stopwords", srcs = ["@postgres//:stopwords"], prefix = "share/postgresql/tsearch_data")
+pkg_files(name = "runtime_extension_data", srcs = ["@postgres//:builtin_extension_data"], prefix = "share/postgresql/extension")
+pkg_files(name = "runtime_timezone", srcs = ["@postgres//:timezone"], prefix = "share/postgresql", strip_prefix = strip_prefix.files_only())
+pkg_files(name = "runtime_timezone_abbreviations", srcs = ["@postgres//:timezone_abbreviations"], prefix = "share/postgresql/timezonesets")
+pkg_files(name = "runtime_postgres_license", srcs = ["@postgres//:license"], prefix = "share/licenses/postgresql")
+pkg_files(name = "runtime_icu_data", srcs = ["@icu_data//:data"], prefix = "share/icu")
+pkg_files(name = "runtime_icu_notices", srcs = ["@icu_data//:notices"], prefix = "share/licenses/icu")
+
+native_desktop_carriers(
+    product = "liboliphaunt-native",
+    root_mappings = [":runtime_library", ":runtime_public_header", ":runtime_embedded_modules", ":runtime_windows_import_library", ":runtime_icu_libraries"],
+    runtime_mappings = [":runtime_binaries", ":runtime_libpq", ":runtime_server_modules", ":runtime_catalog", ":runtime_stopwords", ":runtime_extension_data", ":runtime_timezone", ":runtime_timezone_abbreviations", ":runtime_icu_libraries"],
+    binary_mappings = [":runtime_library", ":runtime_embedded_modules", ":runtime_binaries", ":runtime_libpq", ":runtime_server_modules", ":runtime_icu_libraries"],
+    qualification = [":installed_cargo_test"] + select({
+        "//build_defs/native:macos_arm64": [":host_runtime_sql_test"],
+        "//build_defs/native:windows_x64": [":host_runtime_sql_test", "//build_defs/native:windows_restricted_process_test"],
+        "//conditions:default": [":unix_runtime_sql_test"],
+    }),
+)
+
+native_cargo_consumer_test(
+    name = "installed_cargo_test",
+    packages = ":cargo_packages",
+    archive = ":github_archive",
+    target_compatible_with = NATIVE_COMPATIBLE,
+    size = "medium",
+)
+
+# This development payload proves the slice; release carriers keep their current
+# producer until profile, toolchain, platform and envelope equivalence is proven.
+pkg_tar(
+    name = "runtime_payload",
+    srcs = [":runtime_binaries", ":runtime_libpq", ":runtime_library", ":runtime_icu_libraries", ":runtime_vc_libraries", ":runtime_windows_import_library", ":runtime_public_header", ":runtime_server_modules", ":runtime_embedded_modules", ":runtime_catalog", ":runtime_stopwords", ":runtime_extension_data", ":runtime_timezone", ":runtime_timezone_abbreviations", ":runtime_postgres_license", ":runtime_icu_data", ":runtime_icu_notices"],
+    tags = ["native-development-slice"],
+)
+
+sh_test(
+    name = "unix_runtime_sql_test",
+    srcs = ["//build_defs/native:runtime_sql_test.sh"],
+    args = ["$(location :runtime_payload)", "$(location :runtime_smoke)", "$(location smoke/fixtures/physical-archive-native-v1.properties)", "$(location :profile_smoke)"],
+    data = [":runtime_payload", ":runtime_smoke", ":profile_smoke", "smoke/fixtures/physical-archive-native-v1.properties", "//src/test-fixtures:storage/physical-backup-wal-range-v1.properties"],
+    target_compatible_with = NATIVE_LINUX_COMPATIBLE,
+    size = "medium",
+)
+
+bun_script_test(
+    name = "host_runtime_sql_test",
+    entry_point = "//build_defs/native:host-runtime-sql.test.mts",
+    args = ["$(location :runtime_payload)", "$(location :runtime_smoke)", "$(location smoke/fixtures/physical-archive-native-v1.properties)", "$(location :profile_smoke)"],
+    data = [":runtime_payload", ":runtime_smoke", ":profile_smoke", "smoke/fixtures/physical-archive-native-v1.properties", "//src/test-fixtures:storage/physical-backup-wal-range-v1.properties", "//:tools/packaging/portable-archive.mts", "//build_defs/native:host-runtime-test-helpers.mts"],
+    target_compatible_with = NATIVE_HOST_COMPATIBLE,
+    size = "medium",
+)
+
+alias(name = "runtime_sql_test", actual = select({"//build_defs/native:macos_arm64": ":host_runtime_sql_test", "//build_defs/native:windows_x64": ":host_runtime_sql_test", "//conditions:default": ":unix_runtime_sql_test"}))
+
+bun_script_test(
+    name = "native_tools_sql_test",
+    entry_point = "//build_defs/native:native-tools-sql.test.mts",
+    args = ["$(location :runtime_payload)", "$(location :tools_payload)"],
+    data = [":runtime_payload", ":tools_payload", "//:tools/packaging/portable-archive.mts", "//build_defs/native:host-runtime-test-helpers.mts"],
+    target_compatible_with = NATIVE_COMPATIBLE,
+    size = "medium",
+)
+
+source_quality_files()
+
+filegroup(name = "mobile_e2e_sources", srcs = ["bin/build-output.bash", "bin/mobile-static-extensions.sh"])

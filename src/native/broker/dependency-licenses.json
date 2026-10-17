@@ -22,6 +22,7 @@
         "libloading@0.8.9",
         "linux-raw-sys@0.12.1",
         "memchr@2.8.1",
+        "oliphaunt-query@0.1.1",
         "proc-macro2@1.0.106",
         "quote@1.0.45",
         "rustix@1.1.4",
@@ -59,6 +60,7 @@
         "libloading@0.8.9",
         "linux-raw-sys@0.12.1",
         "memchr@2.8.1",
+        "oliphaunt-query@0.1.1",
         "proc-macro2@1.0.106",
         "quote@1.0.45",
         "rustix@1.1.4",
@@ -96,6 +98,7 @@
         "libc@0.2.186",
         "libloading@0.8.9",
         "memchr@2.8.1",
+        "oliphaunt-query@0.1.1",
         "proc-macro2@1.0.106",
         "quote@1.0.45",
         "rustix@1.1.4",
@@ -130,6 +133,7 @@
         "itoa@1.0.18",
         "libloading@0.8.9",
         "memchr@2.8.1",
+        "oliphaunt-query@0.1.1",
         "proc-macro2@1.0.106",
         "quote@1.0.45",
         "serde@1.0.228",
@@ -473,6 +477,26 @@
           "name": "UNLICENSE",
           "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c",
           "bytes": 1211
+        }
+      ]
+    },
+    {
+      "name": "oliphaunt-query",
+      "version": "0.1.1",
+      "checksum": "523a7416f6a830ef02928994a2a89e9fd9d01e4fe67b22f0480d377d5f9b235c",
+      "declaredLicense": "MIT",
+      "selectedLicense": "MIT",
+      "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
+      "licenseFiles": [
+        {
+          "name": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "bytes": 1085
+        },
+        {
+          "name": "THIRD_PARTY_NOTICES.md",
+          "sha256": "20fd67487d1a631ba959cf7ec3fdbaf4977997ed624c0188dcb3c8870eded830",
+          "bytes": 821
         }
       ]
     },

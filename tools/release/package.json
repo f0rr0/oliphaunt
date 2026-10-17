@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "protobufjs": "8.8.1",
     "release-please": "17.3.0"
   }
 }

@@ -193,9 +193,9 @@ export function publicationCatalogDigest(catalog) {
 
 export function loadPublicationCatalog(
   prefix = 'publication-catalog',
-  { products = undefined } = {},
+  { products = undefined, inputContext = undefined } = {},
 ) {
-  const graph = { products: loadProducts(prefix) };
+  const graph = { products: inputContext?.products ?? loadProducts(prefix) };
   const known = new Set(Object.keys(graph.products));
   const selected =
     products === undefined ? [...known] : sortedUniqueStrings(products, 'products', prefix);
@@ -214,7 +214,9 @@ export function loadPublicationCatalog(
       `${product}.publish_targets`,
       prefix,
     );
-    const registryPackages = registryPackageRows({ product }, prefix).map((row) => row.raw);
+    const registryPackages = registryPackageRows({ product, inputContext }, prefix).map(
+      (row) => row.raw,
+    );
     productRows.push({
       id: product,
       kind: config.kind,

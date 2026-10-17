@@ -67,12 +67,14 @@ mod tests {
     }
 
     fn fixture(name: &str) -> String {
-        std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../test-fixtures/postgres")
-                .join(name),
-        )
-        .unwrap_or_else(|error| panic!("read canonical logical tools fixture {name}: {error}"))
+        let owner = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let owner = std::env::var_os("TEST_SRCDIR")
+            .zip(std::env::var_os("TEST_WORKSPACE"))
+            .filter(|_| !owner.is_absolute())
+            .map(|(root, workspace)| PathBuf::from(root).join(workspace).join(owner))
+            .unwrap_or_else(|| owner.to_path_buf());
+        std::fs::read_to_string(owner.join("../../../test-fixtures/postgres").join(name))
+            .unwrap_or_else(|error| panic!("read canonical logical tools fixture {name}: {error}"))
     }
 
     fn expected_logical_tools_row() -> String {

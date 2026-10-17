@@ -18,23 +18,13 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
-import { RUST_BUILD_SCRIPT_SHA256 } from '../../../../../tools/packaging/rust-build-script-sha256.mts';
-import {
-  AOT_TARGET_TRIPLES,
-  CORE_RUNTIME_ARCHIVE_FILES,
-} from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
-import { parseNpmExtensionLicenseFiles } from '../../../../native/sdks/ts/src/native/extension-contract.ts';
 import {
   fitCargoPayloadParts,
   packageGeneratedCargoSource,
   readCargoPackageNameVersion,
 } from '../../../../../tools/packaging/cargo-source-package.mts';
-import {
-  buildIosCarrierManifest,
-  IOS_CARRIER_FILENAME,
-} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { packGeneratedNpmCarrier } from '../../../../../tools/packaging/npm-package.mts';
 import { NPM_TRUSTED_PUBLISHING_REPOSITORY } from '../../../../../tools/packaging/npm-trusted-publishing.mts';
 import {
@@ -47,6 +37,23 @@ import {
   releaseNoticeRows,
   stageReleaseNotices,
 } from '../../../../../tools/packaging/release-notices.mts';
+import { RUST_BUILD_SCRIPT_SHA256 } from '../../../../../tools/packaging/rust-build-script-sha256.mts';
+import {
+  compareText,
+  extensionRegistryPackageTargetSets,
+} from '../../../../../tools/release/release-artifact-targets.mts';
+import {
+  buildIosCarrierManifest,
+  IOS_CARRIER_FILENAME,
+  IOS_CARRIER_SCHEMA,
+} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
+import { parseNpmExtensionLicenseFiles } from '../../../../native/sdks/ts/src/native/extension-contract.ts';
+import { assertWasixAotArtifactPayloads } from '../../../../wasix/runtime/tools/check-release-assets.mts';
+import { assertCanonicalWasixAotManifest } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
+import {
+  AOT_TARGET_TRIPLES,
+  CORE_RUNTIME_ARCHIVE_FILES,
+} from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import {
   assertWasixExtensionArchiveInstall,
   assertWasixExtensionInstall,
@@ -57,29 +64,31 @@ import {
   WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
 } from '../../../contracts/wasix-extension-install.mts';
 import {
-  compareText,
-  extensionRegistryPackageTargetSets,
-} from '../../../../../tools/release/release-artifact-targets.mts';
-import {
   assertExtensionUpstreamLicensesInArchive,
   assertExtensionUpstreamLicensesInDirectory,
   extensionCarrierLegalContract,
   extensionUpstreamLicenseFileInventory,
+  nativeExtensionCarrierLegal,
   stageExtensionUpstreamLicenses,
+  validateNativeExtensionConstructionLicenseInventory,
 } from '../../../tools/extension-upstream-licenses.mts';
+
+export { nativeExtensionCarrierLegal } from '../../../tools/extension-upstream-licenses.mts';
+
 import { validateExtensionArtifactArchive } from './extension-artifact-inventory.mts';
 import {
   extensionNpmPackageForProduct,
   extensionNpmTargetPackageForProduct,
-  extensionNpmWasixPackageForProduct,
   extensionNpmWasixAotTargets,
+  extensionNpmWasixPackageForProduct,
   nativeExtensionCargoLinksName,
   nativeExtensionCargoPackageName,
   nativeExtensionCargoPartPackageName,
 } from './extension-registry-packages.mts';
-
-import { assertCanonicalWasixAotManifest } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
-import { assertWasixAotArtifactPayloads } from '../../../../wasix/runtime/tools/check-release-assets.mts';
+import {
+  extensionRuntimeAssetContract,
+  projectNativeRuntimeAssetMember,
+} from './extension-runtime-asset-contract.mts';
 
 const ROOT = path.resolve(import.meta.dirname, '../../../../..');
 const TOOL = 'package-extension-release-carriers.mts';
@@ -230,9 +239,7 @@ export function discoverExtensionManifests(roots) {
 }
 
 function archiveTempDir() {
-  const root = path.join(ROOT, 'target', 'extension-carrier-archive-extract');
-  mkdirSync(root, { recursive: true });
-  return mkdtempSync(path.join(root, 'extract-'));
+  return mkdtempSync(path.join(tmpdir(), 'extension-carrier-extract-'));
 }
 
 function cargoTargetTriple(targetId) {
@@ -253,33 +260,6 @@ function tomlString(value) {
 
 function localFail(message) {
   fail(TOOL, message);
-}
-
-export function nativeExtensionCarrierLegal(product, members, { target = null, carriesPayload }) {
-  if (
-    typeof product !== 'string' ||
-    !Array.isArray(members) ||
-    members.length === 0 ||
-    members.some((member) => typeof member !== 'string' || !member) ||
-    new Set(members).size !== members.length ||
-    typeof carriesPayload !== 'boolean'
-  ) {
-    throw new Error(
-      `${TOOL}: native extension carrier legal lookup requires a product, unique members, and carriesPayload`,
-    );
-  }
-  try {
-    return extensionCarrierLegalContract(product, members, {
-      family: 'native',
-      target,
-      carriesPayload,
-    });
-  } catch (cause) {
-    throw new Error(
-      `${TOOL}: cannot derive the canonical native extension carrier legal contract: ${cause.message}`,
-      { cause },
-    );
-  }
 }
 
 export function wasixExtensionCarrierLegal(product, members) {
@@ -342,12 +322,13 @@ function assertExtensionCarrierArchive(archive, legal, prefix) {
 
 function assertNpmExtensionRuntimeLegalArchive(
   archive,
-  { product, members, target, bundle, memberRuntimeRelativePaths },
+  { product, members, target, bundle, memberRuntimeRelativePaths, memberContracts },
 ) {
   for (const sqlName of members) {
     const legal = nativeExtensionCarrierLegal(product, [sqlName], {
       carriesPayload: true,
       target,
+      memberContracts: memberContracts.filter((member) => member.sqlName === sqlName),
     });
     if (legal.upstreamMembers.length === 0) continue;
     const runtimeRelativePath = bundle ? memberRuntimeRelativePaths?.[sqlName] : 'runtime';
@@ -356,6 +337,10 @@ function assertNpmExtensionRuntimeLegalArchive(
     }
     assertExtensionUpstreamLicensesInArchive(legal.upstreamMembers, archive, {
       prefix: `package/${runtimeRelativePath}`,
+      constructionLicenseFiles:
+        memberContracts.find((member) => member.sqlName === sqlName)
+          ?.nativeConstructionLicenseFiles ?? [],
+      target,
     });
   }
 }
@@ -396,22 +381,37 @@ export function renderNpmExtensionBundleManifest({ product, version, target, mem
 }
 
 export function npmExtensionMemberContract(product, version, target, member) {
-  const inventory = frozenExtensionMemberInventory(member, { product, version });
+  const { nativeConstructionLicenseFiles = [], ...inventory } = frozenExtensionMemberInventory(
+    member,
+    { product, version, target },
+  );
   const legal = nativeExtensionCarrierLegal(product, [inventory.sqlName], {
     target,
     carriesPayload: true,
+    memberContracts: [member],
   });
   const licenseFiles = Object.freeze(
     parseNpmExtensionLicenseFiles(
-      legal.upstreamMembers.length === 0
-        ? []
-        : extensionUpstreamLicenseFileInventory([inventory.sqlName]),
+      [
+        ...(legal.upstreamMembers.length === 0
+          ? []
+          : extensionUpstreamLicenseFileInventory([inventory.sqlName])),
+        ...validateNativeExtensionConstructionLicenseInventory(
+          inventory.sqlName,
+          target,
+          nativeConstructionLicenseFiles,
+        ),
+      ].sort((a, b) => compareText(a.path, b.path)),
       `${product}@${version}/${inventory.sqlName} npm extension licenseFiles`,
     ).map((file) => Object.freeze(file)),
   );
   if (
     JSON.stringify(licenseFiles.map(({ path: file }) => file)) !==
-    JSON.stringify([...legal.licenseFiles])
+    JSON.stringify(
+      [...legal.licenseFiles, ...nativeConstructionLicenseFiles.map((row) => row.path)].sort(
+        compareText,
+      ),
+    )
   ) {
     fail(
       TOOL,
@@ -475,7 +475,13 @@ const FROZEN_EXTENSION_INVENTORY_LIST_FIELDS = Object.freeze([
  * generated SDK catalog: independently versioned external products must remain
  * bound to the metadata that was qualified and versioned with that product.
  */
-export function frozenExtensionMemberInventory(member, { product, version } = {}) {
+export function frozenExtensionMemberInventory(
+  member,
+  { product, version, asset, target = asset?.target ?? 'linux-x64-gnu' } = {},
+) {
+  if (asset !== undefined && asset.target !== target)
+    throw new Error(`${TOOL}: selected native asset target differs from its inventory target`);
+  if (asset !== undefined) member = projectNativeRuntimeAssetMember(member, asset);
   const owner = [product, version].every((value) => typeof value === 'string' && value.length > 0)
     ? `${product}@${version}`
     : 'extension release';
@@ -512,6 +518,30 @@ export function frozenExtensionMemberInventory(member, { product, version } = {}
       throw new Error(`${TOOL}: ${owner}/${sqlName} frozen ${field} must be sorted and unique`);
     }
     inventory[field] = canonical;
+  }
+  if (Object.hasOwn(member, 'nativeDependencyModules')) {
+    const values = member.nativeDependencyModules;
+    if (
+      !Array.isArray(values) ||
+      values.length === 0 ||
+      values.some(
+        (file) => typeof file !== 'string' || !/^[A-Za-z0-9_-]+\.(?:so|dylib|dll)$/u.test(file),
+      ) ||
+      JSON.stringify(values) !== JSON.stringify([...new Set(values)].sort(compareText)) ||
+      inventory.nativeModuleStem === null
+    ) {
+      throw new Error(
+        `${TOOL}: ${owner}/${sqlName} nativeDependencyModules must be sorted unique native module basenames`,
+      );
+    }
+    inventory.nativeDependencyModules = [...values];
+  }
+  if (Object.hasOwn(member, 'nativeConstructionLicenseFiles')) {
+    inventory.nativeConstructionLicenseFiles = validateNativeExtensionConstructionLicenseInventory(
+      sqlName,
+      target,
+      member.nativeConstructionLicenseFiles,
+    );
   }
   if (inventory.dependencies.includes(sqlName)) {
     throw new Error(`${TOOL}: ${owner}/${sqlName} frozen dependencies must exclude itself`);
@@ -685,7 +715,24 @@ function extensionRuntimeAssets(extensionDir, manifest, releaseManifest, target)
         `${TOOL}: ${product}@${version}/${member.sqlName} CI and release runtime asset contracts differ`,
       );
     }
-    return { sqlName, metadata, asset: matches[0] };
+    const selectedMetadata = frozenExtensionMemberInventory(member, {
+      product,
+      version,
+      target,
+      asset: matches[0],
+    });
+    const selectedReleaseMetadata = frozenExtensionMemberInventory(releaseMember, {
+      product,
+      version,
+      target,
+      asset: releaseMatches[0],
+    });
+    if (!sameFrozenValue(selectedMetadata, selectedReleaseMetadata)) {
+      throw new Error(
+        `${TOOL}: ${product}@${version}/${sqlName} selected native asset inventories differ`,
+      );
+    }
+    return { sqlName, metadata: selectedMetadata, asset: matches[0] };
   });
   if (runtimeMembers.some((member) => member === null)) {
     return null;
@@ -1018,7 +1065,11 @@ function checkedArchiveMemberPath(name, archive) {
   return parts.join('/');
 }
 
-function extractExtensionRuntime(asset, runtimeDir, { metadata, target, nativeRuntimeVersion }) {
+function extractExtensionRuntime(
+  asset,
+  runtimeDir,
+  { metadata, target, nativeRuntimeVersion, product },
+) {
   // Native release assets are stripped and platform-validated on their target
   // builders. Carrier assembly preserves those qualified bytes; host-side
   // binary rewriting would make output coordinator-dependent.
@@ -1030,6 +1081,7 @@ function extractExtensionRuntime(asset, runtimeDir, { metadata, target, nativeRu
       metadata,
       target,
       nativeRuntimeVersion,
+      product,
     });
   } catch (error) {
     throw new Error(`${TOOL}: ${error instanceof Error ? error.message : String(error)}`, {
@@ -1729,6 +1781,49 @@ function npmPackageSizeSafe(tarball, result) {
   return false;
 }
 
+/** Package the complete facade without rebuilding a platform leaf. */
+export function stageExtensionNativeNpmFacade(packageDir, tarballRoot, metadata, result) {
+  const { product, version, members, targets, iosCarrier, liboliphauntVersion, runtimeBound } =
+    metadata;
+  if (
+    !Array.isArray(targets) ||
+    targets.length === 0 ||
+    targets.some((target) => typeof target !== 'string' || !target) ||
+    new Set(targets).size !== targets.length
+  ) {
+    fail(TOOL, 'native npm facade requires an explicit non-empty unique target list');
+  }
+  const legal = nativeExtensionCarrierLegal(product, members, { carriesPayload: false });
+  const requiresAppleIdentity = iosCarrier !== undefined || targets.includes('ios-xcframework');
+  if (
+    typeof version !== 'string' ||
+    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u.test(version) ||
+    typeof liboliphauntVersion !== 'string' ||
+    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u.test(liboliphauntVersion) ||
+    typeof runtimeBound !== 'boolean' ||
+    (runtimeBound && version !== liboliphauntVersion) ||
+    (requiresAppleIdentity &&
+      (iosCarrier?.schema !== IOS_CARRIER_SCHEMA ||
+        iosCarrier.base?.product !== 'liboliphaunt-native' ||
+        iosCarrier.base.version !== liboliphauntVersion ||
+        !Array.isArray(iosCarrier.extensions) ||
+        JSON.stringify(iosCarrier.extensions.map((member) => member?.sqlName).sort(compareText)) !==
+          JSON.stringify([...members].sort(compareText)) ||
+        iosCarrier.extensions.some(
+          (member) => member.product !== product || member.version !== version,
+        )))
+  ) {
+    fail(TOOL, `${product}@${version} native npm facade has mismatched Apple carrier identity`);
+  }
+  writeExtensionMetaPackage(packageDir, { ...metadata, legal });
+  stageExtensionCarrierLegal(packageDir, legal);
+  const tarball = packGeneratedNpmCarrier(packageDir, tarballRoot);
+  assertExtensionCarrierArchive(tarball, legal, 'package');
+  if (!npmPackageSizeSafe(tarball, result)) return null;
+  result.staged.push(rel(tarball));
+  return tarball;
+}
+
 export function stageExtensionNativeNpmPackages(roots, stagingRoot, target, result, options = {}) {
   const manifests = discoverExtensionManifests(roots);
   if (manifests.length === 0) {
@@ -1839,6 +1934,7 @@ export function stageExtensionNativeNpmPackages(roots, stagingRoot, target, resu
           metadata: member.metadata,
           target,
           nativeRuntimeVersion: liboliphauntVersion,
+          product,
         });
         if (walkFiles(runtimeDir).length === 0) {
           fail(
@@ -1885,6 +1981,7 @@ export function stageExtensionNativeNpmPackages(roots, stagingRoot, target, resu
         metadata: runtimeSet.members[0].metadata,
         target,
         nativeRuntimeVersion: liboliphauntVersion,
+        product,
       });
       if (walkFiles(runtimeDir).length === 0) {
         result.skipped.push(
@@ -1897,12 +1994,10 @@ export function stageExtensionNativeNpmPackages(roots, stagingRoot, target, resu
       typeof options.metaTargetsForProduct === 'function'
         ? options.metaTargetsForProduct(product)
         : options.metaTargets;
-    const metaLegal = nativeExtensionCarrierLegal(product, members, {
-      carriesPayload: false,
-    });
     const targetLegal = nativeExtensionCarrierLegal(product, members, {
       carriesPayload: true,
       target,
+      memberContracts: runtimeSet.members.map(({ metadata }) => metadata),
     });
     writeExtensionTargetPackage(targetDir, {
       product,
@@ -1924,6 +2019,7 @@ export function stageExtensionNativeNpmPackages(roots, stagingRoot, target, resu
       target,
       bundle: runtimeSet.bundle,
       memberRuntimeRelativePaths,
+      memberContracts: runtimeSet.members.map(({ metadata }) => metadata),
     });
     if (!npmPackageSizeSafe(targetTarball, result)) {
       continue;
@@ -1936,25 +2032,25 @@ export function stageExtensionNativeNpmPackages(roots, stagingRoot, target, resu
         baseCarrierManifest: options.baseCarrierManifest,
         extensionManifests: [manifestPath],
       });
-      writeExtensionMetaPackage(metaDir, {
-        product,
-        version,
-        members,
-        target,
-        targets: metaTargets ?? [target],
-        iosCarrier,
-        liboliphauntVersion,
-        runtimeBound,
-        legal: metaLegal,
-      });
-      stageExtensionCarrierLegal(metaDir, metaLegal);
-      const metaTarball = packGeneratedNpmCarrier(metaDir, tarballRoot);
-      assertExtensionCarrierArchive(metaTarball, metaLegal, 'package');
-      if (!npmPackageSizeSafe(metaTarball, result)) {
+      const metaTarball = stageExtensionNativeNpmFacade(
+        metaDir,
+        tarballRoot,
+        {
+          product,
+          version,
+          members,
+          target,
+          targets: metaTargets ?? [target],
+          iosCarrier,
+          liboliphauntVersion,
+          runtimeBound,
+        },
+        result,
+      );
+      if (metaTarball === null) {
         rmSync(targetTarball, { force: true });
         continue;
       }
-      result.staged.push(rel(metaTarball));
     }
     result.staged.push(rel(targetTarball));
     stagedAny = true;
@@ -2218,9 +2314,13 @@ function copyPayloadFile(source, destination) {
 export function buildNativeExtensionPartCrates(
   runtimeDir,
   sourceRoot,
-  { product, version, members, target, partBytes },
+  { product, version, members, target, partBytes, memberContracts = [] },
 ) {
-  const legal = nativeExtensionCarrierLegal(product, members, { target, carriesPayload: true });
+  const legal = nativeExtensionCarrierLegal(product, members, {
+    target,
+    carriesPayload: true,
+    memberContracts,
+  });
   const partDirs = [];
   let currentDir = null;
   let currentSize = 0;
@@ -2679,6 +2779,7 @@ function cargoPackage(crateDir, targetDir, legal) {
     {
       fail: localFail,
       rel,
+      fixedFileMode: 0o644,
       // The caller splits using the finished archive's compressed size.
       packageSizeLimitBytes: Number.MAX_SAFE_INTEGER,
     },
@@ -2693,7 +2794,11 @@ function discardCargoPackageArtifact(cratePath) {
   rmSync(path.dirname(cratePath), { recursive: true, force: true });
 }
 
-function stageNativeExtensionCargoPayload(crateDir, runtimeSet, { target, nativeRuntimeVersion }) {
+function stageNativeExtensionCargoPayload(
+  crateDir,
+  runtimeSet,
+  { target, nativeRuntimeVersion, product },
+) {
   const payload = path.join(crateDir, 'payload');
   rmSync(payload, { recursive: true, force: true });
   if (!runtimeSet.bundle) {
@@ -2701,6 +2806,7 @@ function stageNativeExtensionCargoPayload(crateDir, runtimeSet, { target, native
       metadata: runtimeSet.members[0].metadata,
       target,
       nativeRuntimeVersion,
+      product,
     });
     return payload;
   }
@@ -2716,6 +2822,7 @@ function stageNativeExtensionCargoPayload(crateDir, runtimeSet, { target, native
         metadata: member.metadata,
         target,
         nativeRuntimeVersion,
+        product,
       });
     }
   } finally {
@@ -2738,7 +2845,11 @@ function writeNativeExtensionCargoCrate(
     runtimeSet,
   },
 ) {
-  const legal = nativeExtensionCarrierLegal(product, members, { target, carriesPayload: true });
+  const legal = nativeExtensionCarrierLegal(product, members, {
+    target,
+    carriesPayload: true,
+    memberContracts: runtimeSet.members.map(({ metadata }) => metadata),
+  });
   const name = nativeExtensionCargoPackageName(product, target);
   const links = nativeExtensionCargoLinksName(product, target);
   const subject = members.length === 1 ? members[0] : `${members.length}-member bundle`;
@@ -2746,6 +2857,7 @@ function writeNativeExtensionCargoCrate(
   const runtimeDir = stageNativeExtensionCargoPayload(crateDir, runtimeSet, {
     target,
     nativeRuntimeVersion: runtimeVersion,
+    product,
   });
   if (walkFiles(runtimeDir).length === 0) {
     throw new Error(`${product}@${version} did not contain extension runtime files`);
@@ -2933,7 +3045,7 @@ export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, st
   mkdirSync(outputDir, { recursive: true });
 
   const outputs = [];
-  const packageOptions = { root: ROOT, fail: localFail, rel };
+  const packageOptions = { root: ROOT, fail: localFail, rel, fixedFileMode: 0o644 };
   const stagedIdentities = new Map();
   try {
     for (const manifestPath of manifests) {
@@ -3035,6 +3147,7 @@ export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, st
                 memberDependencies,
                 target,
                 partBytes,
+                memberContracts: runtimeSet.members.map(({ metadata }) => metadata),
               }),
             (partDir) =>
               packageGeneratedCargoSource(

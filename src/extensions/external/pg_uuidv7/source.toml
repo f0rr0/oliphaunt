@@ -7,3 +7,6 @@ commit = "c707aae2411181be4802f5fa565b44d9c0bcbc29"
 sql-name = "pg_uuidv7"
 source-path = "pg_uuidv7.control"
 default-version = "1.7"
+
+[archive]
+sha256 = "422b882887ace16a1358150eb8bcfcf41a74ae60db89818929ba4f59ba360251"

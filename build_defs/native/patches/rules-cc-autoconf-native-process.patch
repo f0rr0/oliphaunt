@@ -1,0 +1,473 @@
+diff -ruN oliphaunt-rules-cc-autoconf-0.24.0/autoconf/autoconf_hdr.bzl oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/autoconf_hdr.bzl
+--- oliphaunt-rules-cc-autoconf-0.24.0/autoconf/autoconf_hdr.bzl	2026-09-10 17:29:48.000000000 +0000
++++ oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/autoconf_hdr.bzl	2026-10-11 03:34:59.833011431 +0000
+@@ -128,7 +128,7 @@
+         inputs = inputs,
+         outputs = [ctx.outputs.out],
+         mnemonic = "CcAutoconfHdr",
+-        env = ctx.configuration.default_shell_env,
++        env = {"LC_ALL": "C"},
+         # TODO: https://github.com/periareon/rules_cc_autoconf/issues/148
+         execution_requirements = {"supports-path-mapping": ""} if bazel_features.rules.write_action_has_execution_requirements else {},
+     )
+diff -ruN oliphaunt-rules-cc-autoconf-0.24.0/autoconf/macros/AC_C_RESTRICT/restrict.bzl oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/macros/AC_C_RESTRICT/restrict.bzl
+--- oliphaunt-rules-cc-autoconf-0.24.0/autoconf/macros/AC_C_RESTRICT/restrict.bzl	2026-09-10 17:29:48.000000000 +0000
++++ oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/macros/AC_C_RESTRICT/restrict.bzl	2026-10-11 03:34:59.832011434 +0000
+@@ -102,7 +102,7 @@
+             outputs = [result_file],
+             mnemonic = "CcAutoconfCheck",
+             progress_message = "CcAutoconfCheck %{label} - " + cache_name,
+-            env = env | ctx.configuration.default_shell_env,
++            env = {"LC_ALL": "C"} | env,
+-            tools = toolchain_info.cc_toolchain.all_files,
++            tools = [toolchain_info.cc_toolchain.all_files],
+             # TODO: https://github.com/periareon/rules_cc_autoconf/issues/148
+             execution_requirements = {"supports-path-mapping": ""} if bazel_features.rules.write_action_has_execution_requirements else {},
+diff -ruN oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/autoconf_library.bzl oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/private/autoconf_library.bzl
+--- oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/autoconf_library.bzl	2026-09-10 17:29:48.000000000 +0000
++++ oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/private/autoconf_library.bzl	2026-10-11 03:34:59.832011434 +0000
+@@ -461,7 +461,7 @@
+             outputs = [check_result_file],
+             mnemonic = "CcAutoconfCheck",
+             progress_message = "CcAutoconfCheck %{label} - " + check_name,
+-            env = env | ctx.configuration.default_shell_env,
++            env = {"LC_ALL": "C"} | env,
+-            tools = toolchain_info.cc_toolchain.all_files,
++            tools = [toolchain_info.cc_toolchain.all_files],
+             # TODO: https://github.com/periareon/rules_cc_autoconf/issues/148
+             execution_requirements = {"supports-path-mapping": ""} if bazel_features.rules.write_action_has_execution_requirements else {},
+diff -ruN oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/checker/BUILD.bazel oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/private/checker/BUILD.bazel
+--- oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/checker/BUILD.bazel	2026-09-10 17:29:48.000000000 +0000
++++ oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/private/checker/BUILD.bazel	2026-10-11 03:35:45.275880222 +0000
+@@ -51,6 +51,7 @@
+     ],
+     hdrs = [
+         "check_runner.h",
++        "native_process.h",
+         "system_header.h",
+     ],
+     cxxopts = cxxopts(),
+@@ -124,3 +125,9 @@
+         "//tools/json",
+     ],
+ )
++
++cc_library(
++    name = "native_process",
++    hdrs = ["native_process.h"],
++    visibility = ["//visibility:public"],
++)
+diff -ruN oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/checker/compilation.cc oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/private/checker/compilation.cc
+--- oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/checker/compilation.cc	2026-09-10 17:29:48.000000000 +0000
++++ oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/private/checker/compilation.cc	2026-10-11 03:42:48.925623923 +0000
+@@ -16,6 +16,7 @@
+ 
+ #include "autoconf/private/checker/check_runner.h"
+ #include "autoconf/private/checker/debug_logger.h"
++#include "autoconf/private/checker/native_process.h"
+ #include "autoconf/private/common/file_util.h"
+ 
+ namespace rules_cc_autoconf {
+@@ -25,70 +26,6 @@
+ 
+ namespace {
+ 
+-#ifdef _WIN32
+-/**
+- * @brief Convert a long path to Windows 8.3 short path format (no spaces).
+- *
+- * This function is used to avoid issues with cmd.exe when paths contain spaces.
+- * If conversion fails, returns the original path wrapped in quotes.
+- *
+- * @param long_path The long path to convert.
+- * @return The short path (8.3 format) or quoted original path if conversion
+- * fails.
+- */
+-std::string get_short_path(const std::string& long_path) {
+-    // Get the required buffer size
+-    DWORD length = GetShortPathNameA(long_path.c_str(), nullptr, 0);
+-    if (length == 0) {
+-        // If conversion fails, return original path quoted
+-        return "\"" + long_path + "\"";
+-    }
+-
+-    // Get the short path
+-    std::vector<char> buffer(length);
+-    DWORD result = GetShortPathNameA(long_path.c_str(), buffer.data(), length);
+-    if (result == 0 || result >= length) {
+-        // If conversion fails, return original path quoted
+-        return "\"" + long_path + "\"";
+-    }
+-
+-    return std::string(buffer.data());
+-}
+-#endif
+-
+-/**
+- * @brief Quote an argument if it contains spaces.
+- *
+- * On Windows, uses double quotes. On Unix, uses single quotes.
+- * This prevents command-line parsing issues when paths or arguments contain
+- * spaces.
+- *
+- * @param arg The argument string to potentially quote.
+- * @return The quoted argument if it contains spaces, otherwise the original
+- * argument.
+- */
+-std::string quote_if_needed(const std::string& arg) {
+-#ifdef _WIN32
+-    if (arg.find_first_of(" \t()&|<>^") != std::string::npos) {
+-        return "\"" + arg + "\"";
+-    }
+-#else
+-    if (arg.find_first_of(" \t()|&;<>$`*?[]{}!#~'\"\\") != std::string::npos) {
+-        std::string quoted = "'";
+-        for (char c : arg) {
+-            if (c == '\'') {
+-                quoted += "'\\''";
+-            } else {
+-                quoted += c;
+-            }
+-        }
+-        quoted += "'";
+-        return quoted;
+-    }
+-#endif
+-    return arg;
+-}
+-
+ /**
+  * @brief Sanitize a define name for use in filenames.
+  *
+@@ -132,61 +69,9 @@
+         });
+ }
+ 
+-/**
+- * @brief Build a shell command string from a vector of arguments.
+- *
+- * On Windows, the first argument (compiler/linker path) is converted to
+- * 8.3 short path format. All arguments with spaces are quoted.
+- *
+- * @param cmd Vector of command parts (program + arguments).
+- * @return The assembled shell command string.
+- */
+-std::string build_command_string(const std::vector<std::string>& cmd) {
+-    std::stringstream cmd_str;
+-    for (size_t i = 0; i < cmd.size(); ++i) {
+-        if (i > 0) cmd_str << " ";
+-        if (i == 0) {
+-#ifdef _WIN32
+-            cmd_str << get_short_path(cmd[i]);
+-#else
+-            cmd_str << quote_if_needed(cmd[i]);
+-#endif
+-        } else {
+-            cmd_str << quote_if_needed(cmd[i]);
+-        }
+-    }
+-    return cmd_str.str();
+-}
+-
+-/**
+- * @brief Execute a shell command, optionally suppressing output.
+- *
+- * If verbose debug is not enabled, stdout and stderr are redirected to
+- * /dev/null (or NUL on Windows).
+- *
+- * @param label A label for debug logging (e.g., "compile", "link").
+- * @param cmd Vector of command parts.
+- * @return The process exit code (already WEXITSTATUS-unwrapped on Unix).
+- */
+ int run_command(const std::string& label, const std::vector<std::string>& cmd) {
+-    std::string full_cmd = build_command_string(cmd);
+-
+-    if (!DebugLogger::is_verbose_debug_enabled()) {
+-#ifdef _WIN32
+-        full_cmd += " >NUL 2>&1";
+-#else
+-        full_cmd += " >/dev/null 2>&1";
+-#endif
+-    }
+-
+-    DebugLogger::debug("Executing " + label + " command: " + full_cmd);
+-
+-    int result = std::system(full_cmd.c_str());
+-#ifdef _WIN32
+-    return result;
+-#else
+-    return WEXITSTATUS(result);
+-#endif
++    DebugLogger::debug("Executing declared native " + label + " tool: " + cmd.front());
++    return run_native_process(cmd, !DebugLogger::is_verbose_debug_enabled());
+ }
+ 
+ /**
+@@ -236,10 +121,11 @@
+         std::ofstream source = open_ofstream(source_file);
+         if (!source.is_open()) {
+             DebugLogger::warn("Failed to create source file");
+-            return std::nullopt;
++            throw NativeProcessError("cannot create native probe source: " + source_file.string());
+         }
+         source << code;
+         source.close();
++        if (!source) throw NativeProcessError("cannot write native probe source: " + source_file.string());
+         return source_file;
+     }
+ 
+diff -ruN oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/checker/native_process.h oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/private/checker/native_process.h
+--- oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/checker/native_process.h	1970-01-01 00:00:00.000000000 +0000
++++ oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/private/checker/native_process.h	2026-10-11 03:42:48.925623923 +0000
+@@ -0,0 +1,160 @@
++#ifndef RULES_CC_AUTOCONF_NATIVE_PROCESS_H
++#define RULES_CC_AUTOCONF_NATIVE_PROCESS_H
++
++#include <cerrno>
++#include <filesystem>
++#include <stdexcept>
++#include <string>
++#include <system_error>
++#include <vector>
++
++#ifdef _WIN32
++#include <windows.h>
++#else
++#include <fcntl.h>
++#include <spawn.h>
++#include <sys/wait.h>
++#include <unistd.h>
++extern char** environ;
++#endif
++
++namespace rules_cc_autoconf {
++
++// The maintained numeric probes catch runtime_error for an unknown expression.
++// Infrastructure failures must bypass that legitimate optional-result handler.
++class NativeProcessError : public std::logic_error {
++ public:
++    using std::logic_error::logic_error;
++};
++
++inline NativeProcessError native_process_error(const std::string& context, int code) {
++    return NativeProcessError(context + ": " +
++                              std::error_code(code, std::generic_category()).message());
++}
++
++// A compiler's ordinary nonzero exit is a negative feature result. A failed
++// process launch, signal, broken output path or wrapper failure is a broken
++// construction environment and must fail the action instead.
++inline int run_native_process(const std::vector<std::string>& args,
++                              bool quiet = true,
++                              const std::string& stdout_path = "") {
++    if (args.empty() || args.front().empty()) {
++        throw NativeProcessError("native probe has no declared executable");
++    }
++#ifdef _WIN32
++    // CreateProcess uses the CRT command-line convention, not cmd.exe syntax.
++    auto quote = [](const std::string& value) {
++        std::string result = "\"";
++        size_t slashes = 0;
++        for (char c : value) {
++            if (c == '\\') {
++                ++slashes;
++            } else {
++                result.append(slashes * (c == '"' ? 2 : 1), '\\');
++                slashes = 0;
++                if (c == '"') result += '\\';
++                result += c;
++            }
++        }
++        result.append(slashes * 2, '\\');
++        return result + '"';
++    };
++    std::string command;
++    for (const auto& arg : args) {
++        if (!command.empty()) command += ' ';
++        command += quote(arg);
++    }
++    SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
++    HANDLE null_output = INVALID_HANDLE_VALUE;
++    HANDLE file_output = INVALID_HANDLE_VALUE;
++    if (quiet) {
++        null_output = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_WRITE,
++                                  &security, OPEN_EXISTING, 0, nullptr);
++        if (null_output == INVALID_HANDLE_VALUE) {
++            throw NativeProcessError("cannot open native probe diagnostic sink");
++        }
++    }
++    if (!stdout_path.empty()) {
++        file_output = CreateFileA(stdout_path.c_str(), GENERIC_WRITE,
++                                  FILE_SHARE_READ, &security, CREATE_ALWAYS,
++                                  FILE_ATTRIBUTE_NORMAL, nullptr);
++        if (file_output == INVALID_HANDLE_VALUE) {
++            if (quiet) CloseHandle(null_output);
++            throw NativeProcessError("cannot create native probe output: " + stdout_path);
++        }
++    }
++    STARTUPINFOA startup{};
++    startup.cb = sizeof(startup);
++    startup.dwFlags = STARTF_USESTDHANDLES;
++    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
++    startup.hStdOutput = file_output != INVALID_HANDLE_VALUE ? file_output :
++        (quiet ? null_output : GetStdHandle(STD_OUTPUT_HANDLE));
++    startup.hStdError = quiet ? null_output : GetStdHandle(STD_ERROR_HANDLE);
++    PROCESS_INFORMATION process{};
++    auto application = std::filesystem::path(args.front()).make_preferred().string();
++    BOOL launched = CreateProcessA(application.c_str(), command.data(), nullptr,
++                                   nullptr, TRUE, 0, nullptr, nullptr,
++                                   &startup, &process);
++    DWORD launch_error = GetLastError();
++    if (file_output != INVALID_HANDLE_VALUE) CloseHandle(file_output);
++    if (quiet) CloseHandle(null_output);
++    if (!launched) {
++        throw NativeProcessError("cannot launch declared native probe tool " +
++                                 args.front() + ": Windows error " +
++                                 std::to_string(launch_error));
++    }
++    DWORD waited = WaitForSingleObject(process.hProcess, INFINITE);
++    DWORD code = 0;
++    BOOL obtained = GetExitCodeProcess(process.hProcess, &code);
++    CloseHandle(process.hThread);
++    CloseHandle(process.hProcess);
++    if (waited != WAIT_OBJECT_0 || !obtained || code >= 0xC0000000UL) {
++        throw NativeProcessError("declared native probe tool crashed: " + args.front());
++    }
++    return static_cast<int>(code);
++#else
++    posix_spawn_file_actions_t actions;
++    int error = posix_spawn_file_actions_init(&actions);
++    if (error) throw native_process_error("probe spawn setup", error);
++    auto redirect = [&](int descriptor, const std::string& path) {
++        int result = posix_spawn_file_actions_addopen(
++            &actions, descriptor, path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
++        if (result) {
++            posix_spawn_file_actions_destroy(&actions);
++            throw native_process_error("probe output setup", result);
++        }
++    };
++    if (!stdout_path.empty()) redirect(STDOUT_FILENO, stdout_path);
++    else if (quiet) redirect(STDOUT_FILENO, "/dev/null");
++    if (quiet) redirect(STDERR_FILENO, "/dev/null");
++    std::vector<char*> argv;
++    for (const auto& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
++    argv.push_back(nullptr);
++    pid_t pid = 0;
++    // No PATH lookup and no shell: args[0] is the declared toolchain path.
++    error = posix_spawn(&pid, args.front().c_str(), &actions, nullptr,
++                        argv.data(), environ);
++    posix_spawn_file_actions_destroy(&actions);
++    if (error) {
++        throw native_process_error("cannot launch declared native probe tool " + args.front(), error);
++    }
++    int status = 0;
++    pid_t waited;
++    do { waited = waitpid(pid, &status, 0); } while (waited == -1 && errno == EINTR);
++    if (waited == -1) {
++        throw native_process_error("probe wait", errno);
++    }
++    if (!WIFEXITED(status)) {
++        throw NativeProcessError("declared native probe tool was signalled: " + args.front());
++    }
++    int code = WEXITSTATUS(status);
++    if (code == 126 || code == 127) {
++        throw NativeProcessError("declared native probe wrapper failed: " + args.front());
++    }
++    return code;
++#endif
++}
++
++}  // namespace rules_cc_autoconf
++
++#endif
+diff -ruN oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/checker/system_header.cc oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/private/checker/system_header.cc
+--- oliphaunt-rules-cc-autoconf-0.24.0/autoconf/private/checker/system_header.cc	2026-09-10 17:29:48.000000000 +0000
++++ oliphaunt-rules-cc-autoconf-0.24.0-native/autoconf/private/checker/system_header.cc	2026-10-11 03:42:48.925623923 +0000
+@@ -13,34 +13,13 @@
+ 
+ #include "autoconf/private/checker/config.h"
+ #include "autoconf/private/checker/debug_logger.h"
++#include "autoconf/private/checker/native_process.h"
+ #include "autoconf/private/common/file_util.h"
+ 
+ namespace rules_cc_autoconf {
+ 
+ namespace {
+ 
+-#ifdef _WIN32
+-std::string get_short_path_sys(const std::string& long_path) {
+-    DWORD length = GetShortPathNameA(long_path.c_str(), nullptr, 0);
+-    if (length == 0) return "\"" + long_path + "\"";
+-    std::vector<char> buffer(length);
+-    DWORD result = GetShortPathNameA(long_path.c_str(), buffer.data(), length);
+-    if (result == 0 || result >= length) return "\"" + long_path + "\"";
+-    return std::string(buffer.data());
+-}
+-#endif
+-
+-std::string quote_arg(const std::string& arg) {
+-    if (arg.find(' ') != std::string::npos) {
+-#ifdef _WIN32
+-        return "\"" + arg + "\"";
+-#else
+-        return "'" + arg + "'";
+-#endif
+-    }
+-    return arg;
+-}
+-
+ bool ends_with(const std::string& str, const std::string& suffix) {
+     if (suffix.size() > str.size()) return false;
+     return str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+@@ -119,39 +98,25 @@
+         if (!src.is_open()) {
+             DebugLogger::warn("GL_NEXT_HEADER: failed to write source for " +
+                               header);
+-            return std::nullopt;
++            throw NativeProcessError("cannot create native preprocessor source: " + src_path.string());
+         }
+         src << src_code;
++        src.close();
++        if (!src) throw NativeProcessError("cannot write native preprocessor source: " + src_path.string());
+     }
+ 
+-    // Build the preprocessor command
+-    std::ostringstream cmd;
+-#ifdef _WIN32
+-    cmd << get_short_path_sys(compiler);
+-#else
+-    cmd << quote_arg(compiler);
+-#endif
+-
+-    for (const std::string& f : flags) {
+-        cmd << " " << quote_arg(f);
+-    }
+-
++    std::vector<std::string> command{compiler};
++    command.insert(command.end(), flags.begin(), flags.end());
+     if (msvc) {
+-        // MSVC: /E writes preprocessed output to stdout, /EP suppresses #line
+-        // markers so we use /E to keep them
+-        cmd << " /E " << quote_arg(src_path.string());
+-        cmd << " > " << quote_arg(pp_out.string()) << " 2>NUL";
++        command.push_back("/E");
++        command.push_back(src_path.string());
+     } else {
+-        cmd << " -E " << quote_arg(src_path.string());
+-        cmd << " -o " << quote_arg(pp_out.string()) << " 2>/dev/null";
++        command.push_back("-E");
++        command.push_back(src_path.string());
++        command.push_back("-o");
++        command.push_back(pp_out.string());
+     }
+-
+-    DebugLogger::debug("GL_NEXT_HEADER: running preprocessor: " + cmd.str());
+-
+-    int rc = std::system(cmd.str().c_str());
+-#ifndef _WIN32
+-    rc = WEXITSTATUS(rc);
+-#endif
++    int rc = run_native_process(command, true, msvc ? pp_out.string() : "");
+ 
+     // Clean up source file
+     std::error_code ec;

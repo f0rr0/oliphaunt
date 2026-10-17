@@ -1,0 +1,45 @@
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load(":requirement-selection-test.bzl", "requirement_selection_test")
+load(":slices-test.bzl", "apple_slices_test")
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.bzl", "*.mts", "*.json", "*.plist", "*.patch"]))
+
+bun_test(
+    name = "app_action_test",
+    entry_point = "app.test.mts",
+    data = ["app.mts", "testdata/expo56-original-apple-resolve.json", "//build_defs/android:app.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts"],
+    size = "small",
+)
+
+bun_test(
+    name = "captured_swift_source_test",
+    entry_point = "captured-swift-source.test.mts",
+    data = ["captured-swift-source.mts", "captured-file.mts", "captured-archive.mts", "resources.mts", "testdata/swift-0.8.2-original-Package.swift", "//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts", "//src/native/sdks/swift:tools/swift-native-carrier-contract.mts", "//build_defs/release:testdata/swift-0.8.2-carrier.json", "//build_defs/languages/swift:source-package.fixture.mts", "//build_defs/native/apple:static-carrier-consumer.mts", "//build_defs/native/apple:framework_helpers", "//src/native/sdks/swift:generator_sources", "//src/native/sdks/react-native:tools/stage-ios-app.mts", "//src/native/sdks/react-native:tools/native-resource-closure.mts", "//src/native/sdks/react-native:src/generated/extensions.json", "//src/database-resources:contracts/native-manifest.mts", "//src/database-resources:contracts/contract.json"],
+    size = "small",
+)
+
+bun_test(
+    name = "installed_app_boundary_test",
+    entry_point = "installed-app.test.mts",
+    data = ["installed-app.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts"],
+    size = "small",
+    target_compatible_with = ["@platforms//os:linux"],
+)
+
+
+# The original maintained rule tools execute licensed host paths selected by
+# the same Xcode policy. Their runfiles carry those watched bytes and receipt.
+filegroup(
+    name = "licensed_app_tools",
+    srcs = ["@native_apple_sdk//:app_tools"],
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64"],
+)
+
+source_quality_files()
+
+requirement_selection_test(name = "requirement_selection_test")
+apple_slices_test(name = "slices_test")
+bun_test(name = "final_libraries_test", entry_point = "final-libraries.test.mts", data = ["final-libraries.mts", "//build_defs/native/apple:static-carrier-consumer.mts", "//build_defs/native/apple:framework_helpers", "//src/native/sdks/swift:generator_sources", "//:tools/packaging/testdata/zip-fixture.mts"], size = "small")

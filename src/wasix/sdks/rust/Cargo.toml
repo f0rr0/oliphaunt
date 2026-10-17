@@ -14,6 +14,7 @@ license = "MIT"
 links = "oliphaunt_artifact_wasix_relay"
 build = "build.rs"
 exclude = [
+  "BUILD.bazel",
   "Cargo.toml.orig",
   "moon.yml",
   "release.toml",
@@ -22,6 +23,8 @@ exclude = [
 
 [package.metadata.oliphaunt]
 runtime-version = "0.3.2"
+tools-version = "0.2.4"
+icu-version = "0.2.2"
 
 [features]
 default = []
@@ -82,7 +85,7 @@ extension-vector = ["extensions", "liboliphaunt-wasix-portable/extension-vector"
 icu = ["dep:oliphaunt-icu"]
 
 [dependencies]
-oliphaunt-query = { version = "0.1.1", path = "../../../query/rust" }
+oliphaunt-query = { version = "=0.1.1" }
 anyhow = "1"
 async-trait = "0.1"
 cap-fs-ext = "4"

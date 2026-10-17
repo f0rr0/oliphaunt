@@ -1,0 +1,110 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
+load("@oliphaunt_toolchain_metadata//:query-package-type.bzl", "QUERY_NPM_NAME", "QUERY_PACKAGE_TYPE")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load("//build_defs/query:defs.bzl", "npm_consumer_test", "query_envelope", "require_commonjs_package")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+
+package(default_visibility = ["//visibility:public"])
+
+_MODULE_OUT_DIR = "dist"
+
+exports_files(["package.json"])
+
+require_commonjs_package(QUERY_PACKAGE_TYPE)
+
+QUERY_SRCS = glob(["src/**/*.ts"])
+
+js_library(name = "source_inputs", types = QUERY_SRCS, srcs = ["package.json"], deps = [":node_modules/@types/node", ":node_modules/undici-types"])
+
+npm_link_package(
+    name = "node_modules/@types/node",
+    src = "@query_types_node//:pkg",
+)
+
+npm_link_package(
+    name = "node_modules/undici-types",
+    src = "@query_undici_types//:pkg",
+)
+
+ts_project(
+    name = "module",
+    srcs = QUERY_SRCS,
+    tsconfig = "tsconfig.build.module.json",
+    extends = "tsconfig.json",
+    declaration = True,
+    out_dir = _MODULE_OUT_DIR + "/module",
+    root_dir = "src",
+    transpiler = "tsc",
+    supports_workers = 0,
+    deps = [":node_modules/@types/node", ":node_modules/undici-types"],
+)
+
+ts_project(
+    name = "commonjs",
+    srcs = QUERY_SRCS,
+    tsconfig = "tsconfig.build.commonjs.json",
+    extends = "tsconfig.json",
+    declaration = True,
+    out_dir = _MODULE_OUT_DIR + "/commonjs",
+    root_dir = "src",
+    transpiler = "tsc",
+    supports_workers = 0,
+    deps = [":node_modules/@types/node", ":node_modules/undici-types"],
+)
+
+bun_test(
+    name = "unit_test",
+    size = "small",
+    entry_point = "test/protocol.test.ts",
+    args = ["src/query/ts/test/query.test.ts"],
+    data = QUERY_SRCS + [
+        "test/query.test.ts",
+        "test/protocol-fixtures.mts",
+        "//src/test-fixtures:protocol/query-response-cases.json",
+        "//src/test-fixtures:protocol/structured-sql-cases.json",
+    ],
+)
+
+query_envelope(
+    name = "npm",
+    format = "npm",
+    manifest = "package.json",
+    entries = {
+        ":module": "dist/module/",
+        ":commonjs": "dist/commonjs/",
+        "package.json": "package.json",
+        "module.package.json": "dist/module/package.json",
+        "README.md": "README.md",
+        "LICENSE": "LICENSE",
+    },
+    out = "oliphaunt-ts-query.tgz",
+)
+
+shipping_package(
+    name = "shipping_package",
+    owner = "@oliphaunt_metadata//:product_oliphaunt-query-ts",
+    artifacts = [":npm"],
+    ecosystem = "npm",
+    role = "facade",
+    package_name = QUERY_NPM_NAME,
+    configuration = "portable",
+)
+
+shipping_export(
+    name = "shipping_export",
+    packages = [":shipping_package"],
+    qualification = [":consumer_test"],
+    testonly = True,
+)
+
+npm_consumer_test(
+    name = "consumer_test",
+    size = "small",
+    archive = ":npm",
+    consumer = "tools/frozen-consumer.mts",
+)
+
+source_quality_files(exclude = [_MODULE_OUT_DIR + "/**"])

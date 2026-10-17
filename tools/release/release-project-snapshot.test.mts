@@ -31,7 +31,15 @@ test('release planning consumes resolved dependency scopes independently of publ
   };
   assert.deepEqual(releaseOrder(products, graph, Object.keys(products)), [
     'consumer-build',
-    'runtime',
     'consumer-production',
+    'runtime',
   ]);
+});
+
+test('product selection accepts held and cross-package compatibility cycles', () => {
+  const products = {
+    sdk: { compatibility_versions: { tools: { source_product: 'tools' } } },
+    tools: { compatibility_versions: { sdk: { source_product: 'sdk' } } },
+  };
+  assert.deepEqual(releaseOrder(products, {}, ['tools', 'sdk', 'tools']), ['sdk', 'tools']);
 });

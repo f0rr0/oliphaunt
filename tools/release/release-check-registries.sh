@@ -6,7 +6,7 @@ args=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -h|--help)
-      echo 'usage: release-check-registries.sh [--products-json JSON] [--head-ref REF] [--registry-inventory-output FILE] [--require-identities]'
+      echo 'usage: release-check-registries.sh [--products-json JSON] [--head-ref REF] [--native-preparation] [--registry-inventory-output FILE] [--require-identities]'
       exit 0 ;;
     --require-identities) require_identities=true; shift ;;
     --products-json)

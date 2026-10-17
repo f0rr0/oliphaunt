@@ -1,0 +1,9 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["index.d.mts"])
+
+js_library(name = "declaration", srcs = ["index.d.mts"])
+
+source_quality_files()

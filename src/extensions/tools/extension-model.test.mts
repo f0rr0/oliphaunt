@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -10,7 +18,14 @@ import {
   sourceDigest,
   sourceDigestInputs,
 } from './extension-evidence.mts';
-import { discoverCatalog, extensionProjections, readJson } from './extension-projections.mts';
+import {
+  contribPath,
+  discoverCatalog,
+  extensionProjections,
+  readJson,
+  readToml,
+} from './extension-projections.mts';
+import { nativeComponentInventory } from './native-component-contract.mts';
 
 const identity = { commit: '1'.repeat(40), tree: '2'.repeat(40) };
 const catalog = { extensions: [{ id: 'vector', 'sql-name': 'vector' }] };
@@ -55,6 +70,36 @@ function run() {
     },
   };
 }
+
+test('native BUILD files leave legacy WASIX evidence unchanged while recipe edits invalidate it', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-evidence-inputs-'));
+  const inputs = sourceDigestInputs();
+  const digest = sourceDigest(inputs);
+  try {
+    for (const file of inputs) {
+      const destination = path.join(root, file);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      copyFileSync(file, destination);
+    }
+    assert.deepEqual(sourceDigestInputs(root), inputs);
+    assert.equal(sourceDigest(inputs, new Map(), root), digest);
+
+    const nativeBuild = 'src/extensions/external/pgtap/BUILD.bazel';
+    writeFileSync(path.join(root, nativeBuild), 'filegroup(name = "native_member")\n');
+    assert.deepEqual(sourceDigestInputs(root), inputs);
+    assert.equal(sourceDigest(sourceDigestInputs(root), new Map(), root), digest);
+
+    const recipe = path.join(root, 'src/extensions/external/pgtap/recipe.toml');
+    const original = readFileSync(recipe, 'utf8');
+    const changed = original.replace(/^postgres_majors\s*=.+$/m, 'postgres_majors = [18, 19]');
+    assert.notEqual(changed, original);
+    writeFileSync(recipe, changed);
+    assert.deepEqual(sourceDigestInputs(root), inputs);
+    assert.notEqual(sourceDigest(sourceDigestInputs(root), new Map(), root), digest);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('only observed passing results for the current source commit qualify', () => {
   const passing = run();
@@ -137,9 +182,64 @@ test('extension projections retain dependency and runtime data while deriving mo
     mavenArtifact: row['maven-artifact'],
   }));
   const outputs = extensionProjections(source, releases);
+  const context = {
+    inventory: nativeComponentInventory(),
+    contrib: readToml(contribPath).extensions,
+    recipes: new Map(
+      source.extensions.map((row: any) => {
+        const file = `src/extensions/external/${row['sql-name']}/recipe.toml`;
+        return [row['sql-name'], existsSync(file) ? readToml(file) : {}];
+      }),
+    ),
+  };
+  for (const sdk of ['ts', 'react-native', 'kotlin'] as const) {
+    const selected = extensionProjections(source, releases, { context, sdkOnly: sdk });
+    assert.equal(selected.size, 2);
+    for (const [file, text] of selected) {
+      assert.equal(text, outputs.get(file), file);
+      if (sdk === 'kotlin') assert.equal(text, readFileSync(file, 'utf8'), file);
+    }
+  }
   assert.deepEqual(
     JSON.parse(outputs.get('src/extensions/generated/sdk/extensions.json')!),
     metadata,
+  );
+  const rustPath = 'src/native/rust-bindings/src/generated/extensions.rs';
+  assert.match(outputs.get(rustPath)!, /ExtensionId::Postgis => &\["liboliphaunt_postgis_deps"\]/u);
+  assert.match(
+    outputs.get(rustPath)!,
+    /if cfg!\(all\(target_os = "windows", target_arch = "x86_64"\)\)/u,
+  );
+  assert.match(outputs.get(rustPath)!, /ExtensionId::Postgis => &\[\]/u);
+  const postgisRecipe = context.recipes.get('postgis')!;
+  const dependencyRecipes = new Map(context.recipes);
+  dependencyRecipes.set('postgis', {
+    ...postgisRecipe,
+    artifacts: {
+      ...postgisRecipe.artifacts,
+      native_dependency_modules: ['lib/postgresql/lib_fixture_dependency.so'],
+    },
+  });
+  const dependencyOutputs = extensionProjections(source, releases, {
+    context: { ...context, recipes: dependencyRecipes },
+  });
+  assert.match(
+    dependencyOutputs.get(rustPath)!,
+    /ExtensionId::Postgis => &\["lib_fixture_dependency"\]/u,
+  );
+  for (const [file, text] of outputs) {
+    if (file !== rustPath) assert.equal(dependencyOutputs.get(file), text, file);
+  }
+  dependencyRecipes.set('postgis', {
+    ...postgisRecipe,
+    artifacts: { ...postgisRecipe.artifacts, native_dependency_modules: ['../undeclared.so'] },
+  });
+  assert.throws(
+    () =>
+      extensionProjections(source, releases, {
+        context: { ...context, recipes: dependencyRecipes },
+      }),
+    /requires a canonical native dependency module/u,
   );
   const extension = source.extensions.find((row: any) => row.id === 'pg_textsearch');
   extension.control['default-version'] = '9.8.7';

@@ -1,0 +1,146 @@
+[
+  {
+    "product": "liboliphaunt-native",
+    "version": "0.3.2",
+    "tag": "liboliphaunt-native-v0.3.2",
+    "releaseId": 405480667,
+    "releaseName": "liboliphaunt-native v0.3.2",
+    "targetCommitish": "31b5803d80ce3884a1fc2d3e9ab869dd733b461c",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "assetId": 617903857,
+        "name": "liboliphaunt-0.3.2-android-arm64-v8a.tar.gz",
+        "sha256": "64febb7c599ba66074918dee4cdc4af91683d109bcd1df4e05a9a2d54b9e348c",
+        "size": 5386097
+      },
+      {
+        "assetId": 617906008,
+        "name": "liboliphaunt-0.3.2-android-x86_64.tar.gz",
+        "sha256": "89f8aa3057155b396b06d708cf38beecc57186a42caff0b48d9af4704b948a09",
+        "size": 5594884
+      },
+      {
+        "assetId": 617908152,
+        "name": "liboliphaunt-0.3.2-apple-spm-xcframework.zip",
+        "sha256": "915ea189f2ad74ac31fc4402dc31f00d4f42c4dcfe73e360db7cd0f36419dec8",
+        "size": 37968414
+      },
+      {
+        "assetId": 617910342,
+        "name": "liboliphaunt-0.3.2-ios-xcframework.tar.gz",
+        "sha256": "cd1e89e1b79acc6b69ecc15cfec9f487722049b92706a2f0d79c834a808d0514",
+        "size": 38770258
+      },
+      {
+        "assetId": 617912324,
+        "name": "liboliphaunt-0.3.2-linux-arm64-gnu.tar.gz",
+        "sha256": "65a37b4658cec4dcbe2390652c90d15dff64e447757258a96629f58bf1fd8c3b",
+        "size": 13778606
+      },
+      {
+        "assetId": 617913936,
+        "name": "liboliphaunt-0.3.2-linux-x64-gnu.tar.gz",
+        "sha256": "cb7aecb19398198c4c3ae48b95b0c7ce3ee4c90e5e7e783608f29ae2b84d55aa",
+        "size": 14152293
+      },
+      {
+        "assetId": 617915743,
+        "name": "liboliphaunt-0.3.2-macos-arm64.tar.gz",
+        "sha256": "95533e3beecae8c3e235efc7821d7057a8960b7eade5402b217f32221b3b4852",
+        "size": 12407735
+      },
+      {
+        "assetId": 617918335,
+        "name": "liboliphaunt-0.3.2-release-assets.sha256",
+        "sha256": "6a0b45068d50e5b02378b205e052561cb855ae636223d96ec91f4e8dac0da5a2",
+        "size": 1128
+      },
+      {
+        "assetId": 617920849,
+        "name": "liboliphaunt-0.3.2-runtime-resources-android-datum64.tar.gz",
+        "sha256": "5525d1c9a8f1b1325a17c27acbf3e9e58d7eae87d201eba3587866427fb655d7",
+        "size": 9601301
+      },
+      {
+        "assetId": 617923340,
+        "name": "liboliphaunt-0.3.2-runtime-resources-ios-datum64.tar.gz",
+        "sha256": "44409f9a63382d2ffb51e380df69df4323078b2ce6e806de6e9adcc3729bd20e",
+        "size": 7901759
+      },
+      {
+        "assetId": 617925129,
+        "name": "liboliphaunt-0.3.2-windows-x64-msvc.zip",
+        "sha256": "6df6d8fae057a554f15abf63ba05aad80846ecf9f11eb61475accafc58fa45a9",
+        "size": 41445885
+      },
+      {
+        "assetId": 617926860,
+        "name": "oliphaunt-extension-contrib-pg18-0.3.2-manifest.json",
+        "sha256": "5b347c0e9ec91c800572603fd323cc34295fa06b0247129e06ad43894c1da756",
+        "size": 399825
+      },
+      {
+        "assetId": 617928974,
+        "name": "oliphaunt-extension-contrib-pg18-0.3.2-manifest.properties",
+        "sha256": "c9daa3d344c7abd11ecf627a90effd90ef860878e5ad176d0bffa10cf0ade21e",
+        "size": 86679
+      },
+      {
+        "assetId": 617930789,
+        "name": "oliphaunt-extension-contrib-pg18-0.3.2-native-android-arm64-v8a-bundle.tar.gz",
+        "sha256": "468f850c41a4a0a0c8dbb39b03e92c3b18fe6260a006681c9fff6e3146e8d0ed",
+        "size": 4388780
+      },
+      {
+        "assetId": 617931403,
+        "name": "oliphaunt-extension-contrib-pg18-0.3.2-native-android-x86_64-bundle.tar.gz",
+        "sha256": "66967105d32255854f38e4d2c6bd31556209baca0ecc07fab66b0f3111d463b9",
+        "size": 3952020
+      },
+      {
+        "assetId": 617932218,
+        "name": "oliphaunt-extension-contrib-pg18-0.3.2-native-ios-xcframework-bundle.tar.gz",
+        "sha256": "dffa89d464984179a042c1ccca56f58af3f5581a51f29d05a0fd56e1b484f443",
+        "size": 20950350
+      },
+      {
+        "assetId": 617932966,
+        "name": "oliphaunt-extension-contrib-pg18-0.3.2-native-linux-arm64-gnu-bundle.tar.gz",
+        "sha256": "899841df7028960db7ce08b17e44dd7f7a3eac65b1d6abc5ffe4e44b9280c764",
+        "size": 1029686
+      },
+      {
+        "assetId": 617933583,
+        "name": "oliphaunt-extension-contrib-pg18-0.3.2-native-linux-x64-gnu-bundle.tar.gz",
+        "sha256": "f89c58a89c1f895ec793ff02d8d153693931b66685258c92fe70915db946e5ca",
+        "size": 978418
+      },
+      {
+        "assetId": 617934260,
+        "name": "oliphaunt-extension-contrib-pg18-0.3.2-native-macos-arm64-bundle.tar.gz",
+        "sha256": "7ed91c9697934afad480769981c70f38509197afd22945a67e785b68a000aa60",
+        "size": 5250439
+      },
+      {
+        "assetId": 617934997,
+        "name": "oliphaunt-extension-contrib-pg18-0.3.2-native-windows-x64-msvc-bundle.tar.gz",
+        "sha256": "a852b14d7097640d790e72bcbc2f0fc7d4a38744ed9843ecc03a2bf29de58c8b",
+        "size": 3527908
+      },
+      {
+        "assetId": 617935392,
+        "name": "oliphaunt-extension-contrib-pg18-0.3.2-release-assets.sha256",
+        "sha256": "6f7059584e645b8cb2f84eb974299f317ef4c22e92867c0981f9bccf877c16b3",
+        "size": 1388
+      },
+      {
+        "assetId": 617935753,
+        "name": "oliphaunt-extension-contrib-pg18-0.3.2-swift-extension-carrier.json",
+        "sha256": "79a20d7e0f59c0e5bc05acabbac963647835b3815c8e2d01824af317712caa64",
+        "size": 275977
+      }
+    ]
+  }
+]

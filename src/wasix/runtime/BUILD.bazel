@@ -1,0 +1,166 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//build_defs/wasix:wasm.bzl", "wasix_export_policy", "wasix_module", "wasix_relocatable")
+load("//build_defs/wasix:extensions.bzl", "wasix_contrib_modules", "wasix_external_c_modules")
+load("//build_defs/wasix:aot.bzl", "wasix_runtime_aot_targets")
+load("//build_defs/wasix:package.bzl", "postgres_patch_inputs", "wasix_runtime_payload")
+load("//build_defs/wasix:platform.bzl", "wasix_artifact")
+load("//build_defs/wasix:config.bzl", "WASIX_COPTS")
+load("@postgres_wasix//:patches.bzl", "POSTGRES_PATCHES")
+load("//build_defs/wasix:npm.bzl", "wasix_runtime_npm")
+load("//build_defs/wasix:cargo.bzl", "wasix_runtime_cargo_exports")
+load("//build_defs/wasix:runtime-release.bzl", "wasix_runtime_release_assets")
+load("//build_defs/release:supplier.bzl", "shipping_suppliers")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "toolchain.toml",
+    "release.toml",
+    "postgres/series",
+    "assets/build/docker/pinned-wasixcc-assets.tsv",
+    "tools/wasix-runtime-npm-payload.mts",
+    "tools/wasix-runtime-npm-contract.mts",
+    "tools/wasix-runtime-npm-descriptor.mts",
+    "tools/wasix-cargo-artifact-contract.mts",
+    "tools/package_liboliphaunt_wasix_cargo_artifacts.mts",
+    "tools/package-release-assets.mts",
+    "tools/check-release-assets.mts",
+    "tools/wasix-aot-manifest.mts",
+    "tools/wasix-cargo-toolchain-policy.mts",
+] + glob(["assets/build/postgres/patches/*.patch", "assets/build/wasix_shim/*.c"]))
+
+cc_library(
+    name = "bridge",
+    linkstatic = True,
+    srcs = ["assets/build/wasix_shim/oliphaunt_wasix_bridge.c"],
+    deps = ["@postgres_wasix//:port_headers"],
+    copts = WASIX_COPTS + ["-include", "stdbool.h", "-include", "stdlib.h"],
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+wasix_relocatable(
+    name = "postgres_core",
+    deps = ["@postgres_wasix//:backend"],
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+wasix_module(
+    name = "plpgsql",
+    output_name = "plpgsql.so",
+    deps = ["@postgres_wasix//:plpgsql"],
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+wasix_module(
+    name = "dict_snowball",
+    output_name = "dict_snowball.so",
+    deps = ["@postgres_wasix//:snowball"],
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+_EXTENSION_MODULES = wasix_contrib_modules(crypto = "@openssl//:wasix_crypto") + wasix_external_c_modules() + [
+    "//build_defs/wasix/dependencies:postgis",
+    "//build_defs/wasix/dependencies:postgis_dependency_module",
+]
+
+# Every policy symbol comes from the admitted compiled side-module closure.
+wasix_export_policy(
+    name = "export_policy",
+    modules = [":plpgsql", ":dict_snowball"] + _EXTENSION_MODULES,
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+wasix_module(
+    name = "postgres",
+    output_name = "postgres.wasm",
+    srcs = [":postgres_core"],
+    deps = ["@postgres_wasix//:main", ":bridge", "@icu_wasix//:i18n"],
+    export_policy = ":export_policy",
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+cc_library(
+    name = "initdb_shim",
+    linkstatic = True,
+    srcs = ["assets/build/wasix_shim/oliphaunt_wasix_initdb_shim.c"],
+    deps = ["@postgres_wasix//:frontend_headers"],
+    copts = WASIX_COPTS,
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+wasix_module(
+    name = "initdb",
+    output_name = "initdb.wasm",
+    kind = "command",
+    deps = ["@postgres_wasix//:initdb_objects", ":initdb_shim", "@icu_wasix//:i18n"],
+    linkopts = ["--wrap=system", "--wrap=popen", "--wrap=pclose"],
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+wasix_module(
+    name = "pg_dump",
+    output_name = "pg_dump.wasm",
+    kind = "command",
+    deps = ["@postgres_wasix//:pg_dump_objects", "@icu_wasix//:i18n_tools"],
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+wasix_module(
+    name = "psql",
+    output_name = "psql.wasm",
+    kind = "command",
+    deps = ["@postgres_wasix//:psql_objects", "@icu_wasix//:i18n_tools"],
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+wasix_runtime_payload(
+    name = "portable_payload_files",
+    runtime = ":postgres",
+    initdb = ":initdb",
+    export_policy = ":export_policy",
+    support = {":plpgsql": "plpgsql", ":dict_snowball": "dict_snowball"},
+    resources = {
+        "@postgres_wasix//:catalog_runtime_data": "share/postgresql/",
+        "@postgres_wasix//:builtin_extension_data": "share/postgresql/extension/",
+        "@postgres_wasix//:tsearch_dictionaries": "share/postgresql/tsearch_data/",
+        "@postgres_wasix//:stopwords": "share/postgresql/tsearch_data/",
+        "@postgres_wasix//:wasix_timezone_abbreviations": "share/postgresql/timezonesets/",
+        "@postgres_wasix//:timezone_data": "share/postgresql/timezone",
+    },
+    patches = postgres_patch_inputs(POSTGRES_PATCHES),
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+wasix_artifact(
+    name = "portable_payload",
+    artifact = ":portable_payload_files",
+)
+
+wasix_runtime_aot_targets()
+
+shipping_suppliers(name = "runtime_public_suppliers", inputs = [])
+
+wasix_runtime_npm()
+
+wasix_runtime_cargo_exports()
+
+wasix_runtime_release_assets(
+    patches = postgres_patch_inputs(POSTGRES_PATCHES),
+    generated = {
+        "//:src/extensions/generated/extensions.catalog.json": "src/extensions/generated/extensions.catalog.json",
+        "//:src/extensions/generated/contrib-build.tsv": "src/extensions/generated/contrib-build.tsv",
+        "//:src/extensions/generated/pgxs-build.tsv": "src/extensions/generated/pgxs-build.tsv",
+        "//:src/extensions/generated/wasix/extensions.json": "src/extensions/generated/wasix/extensions.json",
+        "//:src/extensions/generated/mobile/static-extensions.tsv": "src/extensions/generated/mobile/static-extensions.tsv",
+        "//:src/extensions/generated/mobile/static-registry.json": "src/extensions/generated/mobile/static-registry.json",
+        "//:src/extensions/generated/docs/extension-evidence.json": "src/extensions/generated/docs/extension-evidence.json",
+        "//src/extensions/generated/sdk:metadata": "src/extensions/generated/sdk/extensions.json",
+        "//src/extensions/generated/sdk:ios-static-dependencies.json": "src/extensions/generated/sdk/ios-static-dependencies.json",
+    },
+    qualification = ["//build_defs/extensions/wasix:contrib_installed_test"],
+)
+
+source_quality_files()
+
+rust_quality_files()

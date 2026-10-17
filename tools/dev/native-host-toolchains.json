@@ -1,0 +1,14 @@
+{
+  "apple": {
+    "xcode_version": "26.5",
+    "developer_dir": "/Applications/Xcode_26.5.app/Contents/Developer"
+  },
+  "windows": {
+    "visual_studio_major": 18,
+    "vc_toolset_major": 14,
+    "vc_toolset_minor_min": 50,
+    "vc_toolset_minor_max_exclusive": 60,
+    "windows_sdk_major": 10,
+    "crt_family": "VC145"
+  }
+}

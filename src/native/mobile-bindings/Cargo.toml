@@ -14,7 +14,7 @@ bindgen = ["uniffi/cli"]
 
 [dependencies]
 oliphaunt = { path = "../sdks/rust", default-features = false, features = ["mobile-bindings"] }
-liboliphaunt-native-bindings = { path = "../rust-bindings" }
+liboliphaunt-native-bindings.workspace = true
 uniffi = { version = "=0.32.1", default-features = false }
 thiserror = "2"
 

@@ -1,0 +1,2 @@
+# Package discovery must not walk generated outputs or package-manager installations.
+ignore_directories(["bazel-*", "**/node_modules"])

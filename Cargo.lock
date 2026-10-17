@@ -2451,8 +2451,8 @@ dependencies = [
  "libc",
  "liboliphaunt-native-bindings",
  "oliphaunt-broker",
- "oliphaunt-build",
- "oliphaunt-query",
+ "oliphaunt-build 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "oliphaunt-query 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
  "tokio",
@@ -2465,7 +2465,7 @@ dependencies = [
  "getrandom 0.3.4",
  "libc",
  "liboliphaunt-native-bindings",
- "oliphaunt-query",
+ "oliphaunt-query 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -2475,6 +2475,17 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "oliphaunt-build"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a2a676749df3756473b4fd0deea7ef194a5d78bbcfb6fb46f5ae1da8f058f82"
+dependencies = [
+ "serde",
+ "sha2 0.10.9",
  "toml 0.9.12+spec-1.1.0",
 ]
 
@@ -2556,24 +2567,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "oliphaunt-pgwire-server"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "futures-util",
- "oliphaunt-query",
- "oliphaunt-wasix",
- "serde_json",
- "sqlx",
- "tempfile",
- "tokio",
- "tokio-postgres",
- "tracing",
-]
+name = "oliphaunt-query"
+version = "0.1.1"
 
 [[package]]
 name = "oliphaunt-query"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "523a7416f6a830ef02928994a2a89e9fd9d01e4fe67b22f0480d377d5f9b235c"
 
 [[package]]
 name = "oliphaunt-tools"
@@ -2600,7 +2601,7 @@ dependencies = [
  "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
  "liboliphaunt-wasix-portable",
  "oliphaunt-icu",
- "oliphaunt-query",
+ "oliphaunt-query 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "oliphaunt-wasix-tools",
  "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
  "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
@@ -2626,21 +2627,6 @@ dependencies = [
  "wasmer-wasix-types",
  "webc",
  "zstd",
-]
-
-[[package]]
-name = "oliphaunt-wasix-napi"
-version = "0.2.1"
-dependencies = [
- "liboliphaunt-wasix-portable",
- "napi",
- "napi-build",
- "napi-derive",
- "oliphaunt-pgwire-server",
- "oliphaunt-wasix",
- "rustix",
- "serde_json",
- "sha2 0.10.9",
 ]
 
 [[package]]
@@ -5527,6 +5513,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "inkwell",
  "serde",
  "serde_json",
  "sha2 0.10.9",

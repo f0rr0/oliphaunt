@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { lstat, readFile, readdir } from 'node:fs/promises';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -8,8 +8,8 @@ import {
   platformCompatibilityContract,
 } from '../release/platform-compatibility-policy.mts';
 import {
-  WINDOWS_VC_RUNTIME_DLLS,
   inspectPortableExecutable,
+  WINDOWS_VC_RUNTIME_DLLS,
 } from './windows-vc-runtime-closure.mts';
 
 const MACHO_LC_BUILD_VERSION = 0x32;
@@ -17,6 +17,8 @@ const ELF_TYPE_REL = 1;
 const ELF_TYPE_EXEC = 2;
 const ELF_TYPE_DYN = 3;
 const ELF_SECTION_NOTE = 7;
+const ELF_PROGRAM_LOAD = 1;
+const ELF_PROGRAM_GNU_RELRO = 0x6474e552;
 const APPLE_PLATFORM_BY_ID = new Map(
   Object.values(APPLE_PLATFORM_COMPATIBILITY).map((platform) => [platform.id, platform]),
 );
@@ -994,6 +996,30 @@ function parseElf(buffer, label, contract) {
         );
       }
       validateAndroidCppRuntime(buffer, sectionOffset, sectionEntrySize, sectionCount, label);
+      const minimumAlignment = BigInt(contract.elf.minimumLoadSegmentAlignment);
+      let loads = 0;
+      for (let index = 0; index < programCount; index += 1) {
+        const entry = programOffset + programEntrySize * index;
+        const type = buffer.readUInt32LE(entry);
+        const virtualAddress = buffer.readBigUInt64LE(entry + 16);
+        if (type === ELF_PROGRAM_LOAD) {
+          loads += 1;
+          const alignment = buffer.readBigUInt64LE(entry + 48);
+          if (alignment < minimumAlignment || (alignment & (alignment - 1n)) !== 0n)
+            fail(
+              label,
+              `Android ELF PT_LOAD alignment ${alignment} must be a power of two at least ${minimumAlignment} bytes`,
+            );
+          const fileOffset = buffer.readBigUInt64LE(entry + 8);
+          if (fileOffset % alignment !== virtualAddress % alignment)
+            fail(label, 'Android ELF PT_LOAD file and virtual offsets are incongruent');
+        } else if (type === ELF_PROGRAM_GNU_RELRO) {
+          const memorySize = buffer.readBigUInt64LE(entry + 40);
+          if ((virtualAddress + memorySize) % minimumAlignment !== 0n)
+            fail(label, `Android ELF GNU_RELRO end must align to ${minimumAlignment} bytes`);
+        }
+      }
+      if (loads === 0) fail(label, 'Android ELF must contain a PT_LOAD segment');
     }
   } else {
     for (const required of requiredVersions) {
@@ -1147,6 +1173,16 @@ function finalizeInspection(
     const required =
       requiredApplePlatforms ??
       contract.apple.requiredPlatforms.map((key) => contract.apple.platforms[key].id);
+    if (
+      !Array.isArray(required) ||
+      required.length === 0 ||
+      required.some((platform) => !APPLE_PLATFORM_BY_ID.has(platform))
+    ) {
+      fail(
+        'platform-binary contract',
+        'required Apple platforms must be a nonempty array of Mach-O platform IDs',
+      );
+    }
     const missing = required.filter((platform) => !platforms.has(platform));
     if (missing.length > 0) {
       fail(
@@ -1216,6 +1252,15 @@ function finalizeInspection(
   };
 }
 
+export interface PlatformBinaryInspectionOptions {
+  target: string;
+  rootLabel?: string;
+  /** Numeric Mach-O platform IDs; command-line names are translated by the CLI. */
+  requiredApplePlatforms?: readonly number[];
+  requireWindowsRuntimeImportLibrary?: boolean;
+  windowsVcRuntimeProfile?: string;
+}
+
 export function inspectPlatformBinaryEntries(
   entries,
   {
@@ -1224,7 +1269,7 @@ export function inspectPlatformBinaryEntries(
     requiredApplePlatforms,
     requireWindowsRuntimeImportLibrary = false,
     windowsVcRuntimeProfile,
-  },
+  }: PlatformBinaryInspectionOptions,
 ) {
   contractFor(target, rootLabel);
   if (requireWindowsRuntimeImportLibrary && target !== 'windows-x64-msvc') {
@@ -1338,7 +1383,7 @@ export async function inspectPlatformBinaryTree(
     requiredApplePlatforms,
     requireWindowsRuntimeImportLibrary = false,
     windowsVcRuntimeProfile,
-  },
+  }: PlatformBinaryInspectionOptions,
 ) {
   const absolute = path.resolve(root);
   const stat = await lstat(absolute).catch(() => null);

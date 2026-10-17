@@ -1,0 +1,9 @@
+{
+  "reactNativeVersion": "0.85.3",
+  "hermesVersion": "250829098.0.10",
+  "archives": {
+    "reactnative-core-release": "bffa15d491a7d938a304bdbf0f8391ffcac29e7de54a3be53209b4557879a3f3",
+    "reactnative-dependencies-release": "e5f311bb17d10930d323a74b3e5f2a30021d25faddd08839157a59961d481d81",
+    "hermes-ios-release": "23f8f1b2f771a76e66c81be7d5bae82fb9e58eef18b597de3718bffad7adab51"
+  }
+}

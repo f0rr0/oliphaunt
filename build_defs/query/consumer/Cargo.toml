@@ -1,0 +1,9 @@
+[package]
+name = "query-envelope-consumer"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+oliphaunt-query = { path = "../installed" }
+
+[workspace]

@@ -1,0 +1,149 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
+load(":bazel-disk-cache-gc.bzl", "bazel_disk_cache_gc")
+
+package(default_visibility = ["//visibility:public"])
+
+bazel_disk_cache_gc(name = "bazel_disk_cache_gc", tags = ["manual"])
+
+filegroup(
+    name = "configured_ci_sources",
+    srcs = [
+        "bazel-recorded-inputs.mts",
+        "configured-scope.mts",
+        "run-configured-request.mts",
+        "//build_defs/resources:seed_construction.mts",
+        "//src/database-resources:contracts/native-manifest.mts",
+        "//src/database-resources:contracts/contract.json",
+        "//:tools/packaging/portable-archive.mts",
+        "//:tools/packaging/release-directory-safety.mts",
+        "//tools/release:bazel-shipping-inputs.mts",
+        "//tools/release:github-core-request-journal.mts",
+        "//tools/release:github-read.mts",
+        "//tools/release:github-release-lineage.mts",
+        "//tools/release:native-build-qualification.mts",
+        "//tools/release:native-configured-inputs.mts",
+        "//tools/release:native-file-identity.mts",
+        "//tools/release:with-source.mts",
+    ],
+)
+
+[bun_test(
+    name = name,
+    entry_point = entry,
+    data = ["bazel-recorded-inputs.mts"] if name == "bazel_recorded_inputs_test" else [":configured_ci_sources", "//:workflow_policy_sources", "//:tools/packaging/testdata/zip-fixture.mts", "//tools/release:with-source.sh", "//tools/release:qualified-release-replay.sh"],
+    tags = ["source-check"],
+    size = "small",
+) for name, entry in [
+    ("bazel_recorded_inputs_test", "bazel-recorded-inputs.test.mts"),
+    ("configured_scope_test", "configured-scope.test.mts"),
+    ("run_configured_request_test", "run-configured-request.test.mts"),
+]]
+
+bun_test(
+    name = "workflow_security_test",
+    entry_point = "workflow-security.test.mts",
+    data = ["workflow-security.mts"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_script_test(
+    name = "workflow_security_check",
+    entry_point = "workflow-security.mts",
+    data = ["//:workflow_policy_sources"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_test(
+    name = "workflow_bazel_cache_test",
+    entry_point = "workflow-bazel-cache.test.mts",
+    data = ["//:workflow_policy_sources"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_test(
+    name = "workflow_native_bazel_test",
+    entry_point = "workflow-native-bazel.test.mts",
+    data = [
+        "//:workflow_policy_sources",
+        "//:BUILD.bazel",
+        "//:.github/scripts/check-release-intent.sh",
+        "//:.github/scripts/release-intent-data.mts",
+        "//tools/release:with-source.sh",
+    ],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_test(
+    name = "ci_gate_test",
+    entry_point = "ci-gate.test.mts",
+    data = ["//:.github/scripts/check-ci-gate.mts"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_test(
+    name = "mobile_e2e_resolver_test",
+    entry_point = "//:.github/scripts/resolve-mobile-e2e.test.mts",
+    data = [
+        "//:.github/scripts/resolve-mobile-e2e.mts",
+        "//tools/release:github-read.mts",
+        "//tools/release:github-core-request-journal.mts",
+        "//tools/release:github-release-lineage.mts",
+    ],
+    tags = ["source-check"],
+    size = "small",
+)
+
+_WORKFLOW_LINTERS = ["@actionlint_linux_x64//:actionlint", "@zizmor_linux_x64//:zizmor", "@shellcheck_linux_x64//:shellcheck"]
+[bun_script_test(
+    name = name,
+    entry_point = entry,
+    args = ["$(location " + tool + ")" for tool in _WORKFLOW_LINTERS],
+    data = _WORKFLOW_LINTERS + (["workflow-lint.mts"] if name == "workflow_lint_contract_test" else ["//:workflow_policy_sources", "//:.github/zizmor.yml", "//:.gitignore"]),
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    tags = ["source-check"],
+    size = "small",
+) for name, entry in [("workflow_lint_test", "workflow-lint.mts"), ("workflow_lint_contract_test", "workflow-lint.test.mts")]]
+
+test_suite(
+    name = "source_checks",
+    tests = [
+        ":bazel_recorded_inputs_test",
+        ":configured_scope_test",
+        ":run_configured_request_test",
+        ":ci_gate_test",
+        ":installed_replay_tools_test",
+        ":mobile_e2e_resolver_test",
+        ":workflow_bazel_cache_test",
+        ":workflow_native_bazel_test",
+        ":workflow_security_check",
+        ":workflow_security_test",
+        ":workflow_lint_test",
+        ":workflow_lint_contract_test",
+    ],
+)
+
+alias(
+    name = "android_installed_replay_tools",
+    actual = "//src/examples/native/react-native-expo:android_installed_test_tools",
+)
+
+alias(
+    name = "ios_installed_replay_tools",
+    actual = "//src/examples/native/react-native-expo:ios_installed_test_tools",
+)
+
+bun_test(
+    name = "installed_replay_tools_test",
+    entry_point = "//build_defs/apple:installed-tools.test.mts",
+    data = ["//build_defs/apple:installed-tools.mts"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+source_quality_files()

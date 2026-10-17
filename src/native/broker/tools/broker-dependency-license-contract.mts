@@ -1,11 +1,15 @@
 #!/usr/bin/env bun
 import { createRustDependencyLicenseContract } from '../../../../tools/packaging/rust-dependency-license-contract.mts';
-const contract = createRustDependencyLicenseContract({
-  owner: 'src/native/broker',
-  product: 'oliphaunt-broker',
-  payloadLicense: 'MIT AND ISC AND Unicode-3.0 AND BSD-3-Clause',
-  noticeProfile: 'broker',
-});
+export function createBrokerDependencyLicenseContract(sourceRoot?: string) {
+  return createRustDependencyLicenseContract({
+    sourceRoot,
+    owner: 'src/native/broker',
+    product: 'oliphaunt-broker',
+    payloadLicense: 'MIT AND ISC AND Unicode-3.0 AND BSD-3-Clause',
+    noticeProfile: 'broker',
+  });
+}
+const contract = createBrokerDependencyLicenseContract();
 export const {
   RUST_DEPENDENCY_LICENSE_ROOT: BROKER_DEPENDENCY_LICENSE_ROOT,
   RUST_PAYLOAD_LICENSE: BROKER_PAYLOAD_LICENSE,

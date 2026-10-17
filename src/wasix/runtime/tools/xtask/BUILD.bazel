@@ -1,0 +1,48 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files")
+load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_package_env")
+load("@aot_serializer_crates//:defs.bzl", serializer_crate_deps = "crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Cargo.toml"])
+
+cargo_package_env()
+
+# Native Rust compilation of the existing bounded WASM metadata utility.
+cargo_binary(name = "xtask", source = "src/main.rs", proc_macro_names = ["async-trait"])
+
+cargo_binary(
+    name = "aot_serializer",
+    source = "src/main.rs",
+    features = ["aot-serializer"],
+    proc_macro_names = ["async-trait"],
+    crate_dependencies = serializer_crate_deps,
+    # Preserve typed native archive/runtime linking through cc_common.link.
+    experimental_use_cc_common_link = 1,
+    target_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+        "@zig_sdk//libc:gnu.2.34",
+    ],
+)
+
+rust_test(
+    name = "export_policy_test",
+    crate = ":xtask",
+    args = ["declared_"],
+    size = "small",
+)
+
+rust_test(
+    name = "aot_target_test",
+    crate = ":aot_serializer",
+    crate_features = ["aot-serializer"],
+    args = ["target"],
+    size = "small",
+    experimental_use_cc_common_link = 1,
+)
+
+rust_quality_files()
+
+rust_clippy_test(name = "clippy_test", targets = [":xtask", ":export_policy_test"], transitive = False, size = "small")

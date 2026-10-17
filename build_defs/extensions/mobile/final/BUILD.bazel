@@ -1,0 +1,5 @@
+load("//build_defs/extensions:mobile_carriers.bzl", "mobile_final_carrier_targets")
+
+package(default_visibility = ["//visibility:public"])
+
+mobile_final_carrier_targets()

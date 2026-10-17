@@ -713,36 +713,54 @@ async fn managed_async_transaction_rejects_and_chain_before_dispatch() -> Result
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn abandoning_an_in_flight_async_commit_retires_the_owner() -> Result<()> {
-    let database = AsyncOliphaunt::open().await?;
+    let workspace = tempfile::tempdir()?;
+    let database_root = workspace.path().join("database");
+    let database = AsyncOliphaunt::builder()
+        .storage(DatabaseStorage::Directory(database_root.clone()))
+        .open()
+        .await?;
+    database.query("SELECT pg_sleep(0.01)").await?;
     database
         .exec(
             "CREATE TABLE deferred_commit_probe(id int PRIMARY KEY); \
-             CREATE FUNCTION deferred_commit_sleep() RETURNS trigger \
-             LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(1); RETURN NEW; END $$; \
-             CREATE CONSTRAINT TRIGGER deferred_commit_sleep \
+             CREATE FUNCTION deferred_commit_wait() RETURNS trigger \
+             LANGUAGE plpgsql AS $$ BEGIN \
+             COPY (SELECT 1) TO '/base/commit.started'; \
+             FOR attempt IN 1..500 LOOP \
+               IF (pg_stat_file('/base/commit.release', true)).size IS NOT NULL THEN \
+                 RETURN NEW; \
+               END IF; \
+               PERFORM pg_sleep(0.01); \
+             END LOOP; \
+             RAISE EXCEPTION 'COMMIT barrier was not released'; END $$; \
+             CREATE CONSTRAINT TRIGGER deferred_commit_wait \
              AFTER INSERT ON deferred_commit_probe DEFERRABLE INITIALLY DEFERRED \
-             FOR EACH ROW EXECUTE FUNCTION deferred_commit_sleep()",
+             FOR EACH ROW EXECUTE FUNCTION deferred_commit_wait()",
         )
         .await?;
 
     let transaction_database = database.clone();
-    let (callback_finished, callback_finished_rx) = tokio::sync::oneshot::channel();
     let settlement = tokio::spawn(async move {
         transaction_database
             .transaction(async |transaction: &mut AsyncTransaction| {
                 transaction
                     .execute("INSERT INTO deferred_commit_probe VALUES (1)")
                     .await?;
-                let _ = callback_finished.send(());
                 Ok::<(), oliphaunt_wasix::Error>(())
             })
             .await
     });
-    callback_finished_rx
-        .await
-        .expect("transaction callback reaches settlement");
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let commit_started = tokio::time::timeout(Duration::from_secs(5), async {
+        while !database_root.join("pgdata/commit.started").try_exists()? {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        Ok::<(), std::io::Error>(())
+    })
+    .await;
     settlement.abort();
+    // Release PostgreSQL before reporting a failed wait, so the owner cannot strand.
+    std::fs::write(database_root.join("pgdata/commit.release"), b"release")?;
+    commit_started.expect("COMMIT reaches its deferred trigger")?;
     assert!(
         settlement
             .await
@@ -759,5 +777,18 @@ async fn abandoning_an_in_flight_async_commit_retires_the_owner() -> Result<()> 
     );
     database.close().await?;
     assert!(database.is_closed());
+    let reopened = AsyncOliphaunt::builder()
+        .storage(DatabaseStorage::Directory(database_root))
+        .open()
+        .await?;
+    assert_eq!(
+        reopened
+            .query("SELECT count(*)::text AS rows FROM deferred_commit_probe")
+            .await?
+            .get_text(0, "rows")?,
+        Some("1"),
+        "the unobserved COMMIT must succeed before the owner retires"
+    );
+    reopened.close().await?;
     Ok(())
 }

@@ -1,4 +1,5 @@
 [packages]
+emulator = "37.2.12"
 command_line_tools_build = "14742923"
 command_line_tools_revision = "20.0"
 ndk = "27.0.12077973"
@@ -7,8 +8,19 @@ expo_ndk = "27.1.12297006"
 cmake = "3.22.1"
 compile_sdk = "36"
 build_tools = "36.0.0"
+platform_tools = "37.0.0"
+
+# Google repository2-3.xml's NDK 27.0.12077973 Linux archive, verified against
+# its SHA-1 5e5cd517bdb98d7e0faf2c494a3041291e71bdcc before recording SHA-256.
+# Native Bazel cross-compilation runs this archive on Linux x86_64; Expo keeps
+# its separately pinned application NDK above.
+[ndk.linux]
+url = "https://dl.google.com/android/repository/android-ndk-r27-linux.zip"
+sha256 = "2f17eb8bcbfdc40201c0b36e9a70826fcd2524ab7a2a235e2c71186c302da1dc"
+strip_prefix = "android-ndk-r27"
 
 [command_line_tools.linux]
+bytes = "172789259"
 url = "https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip"
 mirror_url = "https://edgedl.me.gvt1.com/edgedl/android/repository/commandlinetools-linux-14742923_latest.zip"
 sha256 = "04453066b540409d975c676d781da1477479dde3761310f1a7eb92a1dfb15af7"
@@ -19,3 +31,41 @@ url = "https://dl.google.com/android/repository/commandlinetools-mac-14742923_la
 mirror_url = "https://edgedl.me.gvt1.com/edgedl/android/repository/commandlinetools-mac-14742923_latest.zip"
 sha256 = "ed304c5ede3718541e4f978e4ae870a4d853db74af6c16d920588d48523b9dee"
 entry_count = "324"
+
+# Platform revision 2 and Linux build tools match the conventional SDK pins.
+# Both archives were checked against Google's repository2-3.xml SHA-1 and size
+# before recording these SHA-256 acquisition identities.
+[platform]
+url = "https://dl.google.com/android/repository/platform-36_r02.zip"
+sha256 = "37607369a28c5b640b3a7998868d45898ebcb777565a0e85f9acf36f29631d2e"
+strip_prefix = "android-36"
+revision = "2"
+
+[build_tools.linux]
+url = "https://dl.google.com/android/repository/build-tools_r36_linux.zip"
+sha256 = "5d9ac77fb6ff43d9da518a337b4fcf8f9097113df531d99ccefe80ef7ce8250b"
+strip_prefix = "android-16"
+
+# The maintained SDK provider includes adb. Preserve the installed platform
+# tools revision with its immutable official archive rather than SDK discovery.
+[platform_tools.linux]
+url = "https://dl.google.com/android/repository/platform-tools_r37.0.0-linux.zip"
+sha256 = "198ae156ab285fa555987219af237b31102fefe8b9d2bc274708a8d4f2865a07"
+strip_prefix = "platform-tools"
+
+# Installed APK qualification uses a separate lazy emulator acquisition.
+[emulator.linux]
+url = "https://dl.google.com/android/repository/emulator-linux_x64-16428233.zip"
+sha256 = "b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1"
+bytes = "349654171"
+strip_prefix = "emulator"
+
+[system_image.linux_x86_64]
+api = "35"
+tag = "google_atd"
+abi = "x86_64"
+revision = "1"
+url = "https://dl.google.com/android/repository/sys-img/google_atd/x86_64-35_r01.zip"
+sha256 = "63183925a254127540af31485e8da141e5fb574cd2b183b9b029d0162cb6066b"
+bytes = "813411228"
+strip_prefix = "x86_64"

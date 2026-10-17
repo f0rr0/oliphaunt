@@ -8,7 +8,7 @@ homepage.workspace = true
 license.workspace = true
 description = "Rust bindings and database resource management for native liboliphaunt."
 readme = "README.md"
-exclude = ["moon.yml", "release.toml", "tools/**"]
+exclude = ["BUILD.bazel", "moon.yml", "release.toml", "tools/**"]
 [features]
 internal-native-packaging = []
 [dependencies]

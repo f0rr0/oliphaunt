@@ -15,7 +15,7 @@ assert_history() {
   bash "$root/tools/release/with-release-history.sh" "$repo" "$head" \
     bash "$root/tools/dev/bun.sh" "$fixture" assert "$repo" "$family" "$1" "$head" "${release:-}"
 }
-for family in bootstrap basic cargo wildcard wasix example compatibility public-support; do
+for family in bootstrap basic cargo cargo-path wildcard wasix example compatibility public-support; do
   repo="$scratch/$family"
   git init -q "$repo"
   git -C "$repo" config user.name 'Release Test'
@@ -30,17 +30,18 @@ for family in bootstrap basic cargo wildcard wasix example compatibility public-
     bootstrap) assert_history base; scenarios=(clean mutated) ;;
     basic) scenarios=(clean later-fix downgrade tainted kotlin-readme swift-readme deletion rename hidden-version-config hidden-derived-config derived-version-only unrelated-derived-dependency) ;;
     cargo) scenarios=(exact unrelated-pin unrelated-package unrelated-lock wrong-workspace-version unrelated-workspace-version workspace-metadata) ;;
+    cargo-path) scenarios=(private-path unselected-public-path wrong-private-path private-path-features selected-compatible-path held-compatible-path wrong-compatible-path) ;;
     wildcard) scenarios=(workspace-wildcard local-version wrong-version changed-path removed-path changed-features) ;;
     wasix) scenarios=(workspace-links) ;;
     example) scenarios=(exact wrong-registry-version wrong-runtime-version unrelated-registry-version missing-native-transition) ;;
-    compatibility) scenarios=(with-producer consumer-only unselected-consumer wrong-toml-pin wrong-json-pin wrong-raw-pin wrong-rust-const non-version-edit) ;;
+    compatibility) scenarios=(with-producer consumer-only supplier-map-isolation selected-held-supplier registry-update authored-adoption unselected-consumer wrong-toml-pin wrong-json-pin wrong-raw-pin wrong-rust-const non-version-edit) ;;
     public-support) scenarios=(authored-patch authored-breaking) ;;
   esac
   for scenario in "${scenarios[@]}"; do
     start="$base"
     if [[ "$scenario" == later-fix || "$scenario" == downgrade ]]; then start="$release"; fi
     git -C "$repo" switch -qc "$scenario" "$start"
-    if [[ "$family" == public-support ]]; then
+    if [[ "$family" == public-support || "$scenario" == authored-adoption ]]; then
       bash "$root/tools/dev/bun.sh" "$fixture" write "$repo" "$family" authored
       commit 'fix!: retarget the public native host before release generation'
     fi

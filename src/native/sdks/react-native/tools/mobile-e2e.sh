@@ -36,12 +36,9 @@ case "$platform" in
     export OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE="${OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE:-release}"
     export OLIPHAUNT_EXPO_ANDROID_E2E_ONLY=1
     export OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE="${OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE:-0}"
+    export OLIPHAUNT_MOBILE_E2E_EXPECT_LIFECYCLE="$OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE"
     export OLIPHAUNT_EXPO_ANDROID_SCRATCH="$mobile_scratch"
     if [ "$mobile_runner" = "smoke" ]; then
-      command -v unzip >/dev/null 2>&1 || {
-        echo "Android mobile E2E requires unzip to inspect the exact APK runtime manifest." >&2
-        exit 1
-      }
       export_mobile_e2e_icu_expectation_from_android_apk "$apk" "Android APK"
       rm -f \
         "$mobile_scratch/reports/smoke-report.json" \
@@ -69,6 +66,7 @@ case "$platform" in
     export OLIPHAUNT_EXPO_IOS_CONFIGURATION="${OLIPHAUNT_EXPO_IOS_CONFIGURATION:-Release}"
     export OLIPHAUNT_EXPO_IOS_E2E_ONLY=1
     export OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE="${OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE:-0}"
+    export OLIPHAUNT_MOBILE_E2E_EXPECT_LIFECYCLE="$OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE"
     export OLIPHAUNT_EXPO_IOS_SCRATCH="$mobile_scratch"
     if [ "$mobile_runner" = "smoke" ]; then
       export_mobile_e2e_icu_expectation_from_ios_app "$app"

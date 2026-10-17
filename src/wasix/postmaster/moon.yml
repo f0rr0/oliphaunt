@@ -26,12 +26,6 @@ project:
   release:
     component: liboliphaunt-wasix-postmaster
     packagePath: src/wasix/postmaster
-    artifactTargets:
-      preset: liboliphaunt-wasix-postmaster
-      targets:
-        - linux-arm64-gnu
-        - linux-x64-gnu
-        - macos-arm64
 owners:
   defaultOwner: "@oliphaunt/wasix"
   paths:

@@ -1,0 +1,46 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_CONFIGURATION")
+load(":supplier.bzl", "cc_shipping_supplier")
+
+package(default_visibility = ["//visibility:public"])
+
+NATIVE_BINARY_HELPERS = ["//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json", "//tools/release:platform-compatibility-policy.mts"]
+
+exports_files(glob(["*.bzl", "*.mts", "*-source.json", "*-releases.json", "*-completed-publication.json", "*-npm-*.json", "testdata/*.json"]))
+
+cc_shipping_supplier(
+    name = "current_native_core_supplier",
+    producer = "//src/native/runtime:runtime_shared_library",
+    owner = "@oliphaunt_metadata//:product_liboliphaunt-native",
+    configuration = NATIVE_EXTENSION_CONFIGURATION,
+    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+)
+
+bun_test(
+    name = "frozen_native_carrier_test",
+    entry_point = "frozen-native-carrier.test.mts",
+    data = ["frozen-native-carrier.mts", "//src/native/sdks/swift:tools/swift-native-carrier-contract.mts", "//src/native/sdks/swift:tools/native-legal-source-basis.mts"] + glob(["*-source.json", "*-releases.json", "*-completed-publication.json", "testdata/*.json"]),
+    size = "small",
+)
+
+bun_test(
+    name = "frozen_native_runtime_test",
+    entry_point = "frozen-native-runtime.test.mts",
+    data = ["frozen-native-runtime.mts", "native-0.3.2-releases.json", "native-0.3.2-completed-publication.json", "native-0.3.3-releases.json", "native-0.3.3-completed-publication.json",
+        "//src/native/sdks/rust:release.toml", "//src/native/sdks/rust:Cargo.toml", "//tools/release:compatibility-version-parser.mts",
+        "//src/native/sdks/kotlin:release.toml", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:src/main/resources/dev/oliphaunt/android/liboliphaunt.version",
+        "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts"] + NATIVE_BINARY_HELPERS,
+    size = "small",
+)
+
+bun_test(
+    name = "frozen_native_npm_test",
+    entry_point = "frozen-native-npm.test.mts",
+    data = ["frozen-native-npm.mts", "frozen-native-runtime.mts", "native-0.3.2-releases.json", "native-0.3.2-completed-publication.json",
+        "//src/native/sdks/ts:release.toml", "//src/native/sdks/ts:package.json", "//src/native/runtime:release.toml", "//tools/release:compatibility-version-parser.mts",
+        "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/testdata/release-fixture-utils.mts"] + glob(["*-npm-*.json"]) + NATIVE_BINARY_HELPERS,
+    size = "small",
+)
+
+source_quality_files()

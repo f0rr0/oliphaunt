@@ -1,0 +1,45 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "PGTAP_TARGET_OS_ARGS", "extension_identity", "extension_member_payload", "extension_member_validation_test", "pgtap_sql")
+load("//build_defs/release:shipping.bzl", "shipping_package")
+load("//build_defs/foundation:bun.bzl", "bun_script_test")
+load("//build_defs/extensions:native_carriers.bzl", "native_external_extension_carriers")
+load("//build_defs/extensions:wasix_carriers.bzl", "wasix_sql_extension_carriers")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["upstream-license-data.json", "release.toml", "source.toml", "recipe.toml"])
+
+native_external_extension_carriers(sql_name = "pgtap")
+wasix_sql_extension_carriers(sql_name = "pgtap")
+
+pgtap_sql(name = "sql", inputs = ["@pgtap//:sql_inputs"], control = "@pgtap//:pgtap.control")
+
+extension_member_payload(
+    name = "native_payload",
+    sql_name = "pgtap",
+    owner = extension_identity("pgtap"),
+    resources = [":sql"],
+)
+
+shipping_package(
+    name = "native_member",
+    owner = extension_identity("pgtap"),
+    artifacts = [":native_payload"],
+    ecosystem = "internal",
+    package_name = "pgtap",
+    configuration = NATIVE_EXTENSION_CONFIGURATION,
+    role = "extension-member",
+)
+
+extension_member_validation_test(name = "native_payload_test", payload = ":native_payload", sql_name = "pgtap")
+
+bun_script_test(
+    name = "upstream_sql_parity_test",
+    entry_point = "//build_defs/extensions:pgtap_upstream_parity_test.mts",
+    args = ["--control", "$(location @pgtap//:pgtap.control)", "--installed", "$(location :sql)",
+            "--perl", "$(location //build_defs/extensions:perl)", "--perl-options", "$(location //build_defs/extensions:perl_options)", "--patch", "$(location @native_exec_tools//:patch)"] + PGTAP_TARGET_OS_ARGS,
+    data = ["@pgtap//:sql_inputs", "@pgtap//:pgtap.control", ":sql", "//build_defs/extensions:perl", "//build_defs/extensions:perl_runtime", "//build_defs/extensions:perl_options", "@native_exec_tools//:patch"],
+    size = "small",
+)
+
+source_quality_files()

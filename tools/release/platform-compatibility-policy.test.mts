@@ -84,6 +84,8 @@ describe('platform compatibility policy', () => {
       PLATFORM_COMPATIBILITY_POLICY['ios-xcframework'].apple.platforms.ios.maximumMinimumOs,
     ).toEqual([17, 0, 0]);
     expect(PLATFORM_COMPATIBILITY_POLICY['android-arm64-v8a'].elf.androidApiLevel).toBe(24);
+    for (const target of ['android-arm64-v8a', 'android-x86_64'])
+      expect(PLATFORM_COMPATIBILITY_POLICY[target].elf.minimumLoadSegmentAlignment).toBe(16_384);
     expect(
       PLATFORM_COMPATIBILITY_POLICY['linux-x64-gnu'].elf.maximumRequiredVersions.GLIBC,
     ).toEqual([2, 38, 0]);

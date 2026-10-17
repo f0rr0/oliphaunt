@@ -6,6 +6,9 @@ rust-version = "1.93"
 license.workspace = true
 publish = false
 
+[package.metadata.oliphaunt]
+runtime-version = "0.3.2"
+
 [[bin]]
 name = "oliphaunt-wasix-seed-producer"
 path = "src/main.rs"

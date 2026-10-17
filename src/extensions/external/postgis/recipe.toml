@@ -62,6 +62,10 @@ licenses = [
   "share/licenses/sqlite/LICENSE.md",
 ]
 
+# Windows incorporates these dependencies into each ABI module.
+[artifacts.native_dependency_modules_by_target]
+windows-x64-msvc = []
+
 [[runtime_environment]]
 name = "PROJ_DATA"
 path = "share/postgresql/proj"

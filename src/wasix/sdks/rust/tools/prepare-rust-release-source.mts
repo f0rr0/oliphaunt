@@ -2,11 +2,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
-  canonicalWasixCargoToolchainVersions,
-  validateWasixConsumerDependencyPins,
-} from '../../../runtime/tools/wasix-cargo-toolchain-policy.mts';
-
-import {
   packagedCargoManifestText,
   parseCargoPackageNameVersion,
 } from '../../../../../tools/packaging/cargo-source-package.mts';
@@ -16,6 +11,10 @@ import {
 } from '../../../../../tools/packaging/release-notices.mts';
 import { loadPublicationCatalog } from '../../../../../tools/release/publication-catalog.mts';
 import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
+import {
+  canonicalWasixCargoToolchainVersions,
+  validateWasixConsumerDependencyPins,
+} from '../../../runtime/tools/wasix-cargo-toolchain-policy.mts';
 import { ROOT as root, stageWasixRustPackageSource } from './package-source.mts';
 
 const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
@@ -45,14 +44,13 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
-export function renderOliphauntWasixReleaseCargoToml(
-  source,
-  runtimeVersion = productCompatibilityVersion(
-    'oliphaunt-wasix-rust',
-    'liboliphaunt-wasix',
-    'prepare-rust-release-source.mts',
-  ),
-) {
+export function renderOliphauntWasixReleaseCargoToml(source, runtimeVersion) {
+  const metadata = Bun.TOML.parse(source).package?.metadata?.oliphaunt ?? {};
+  const requirements = {
+    'liboliphaunt-wasix': runtimeVersion ?? metadata['runtime-version'],
+    'postgres-tools-wasix': metadata['tools-version'],
+    'database-resources': metadata['icu-version'],
+  };
   let text = packagedCargoManifestText(source);
   const catalog = loadPublicationCatalog('prepare-rust-release-source.mts');
   for (const carrier of catalog.carriers.filter((entry) => entry.ecosystem === 'cargo')) {
@@ -66,11 +64,12 @@ export function renderOliphauntWasixReleaseCargoToml(
     }
     text = text.replace(pattern, (_, before, declaredVersion, after) => {
       const version =
-        carrier.product === 'liboliphaunt-wasix'
-          ? runtimeVersion
-          : declaredVersion === '*'
-            ? carrier.version
-            : declaredVersion.replace(/^=/u, '');
+        declaredVersion === '*'
+          ? requirements[carrier.product]
+          : declaredVersion.replace(/^=/u, '');
+      if (typeof version !== 'string' || version.length === 0) {
+        throw new Error(`Missing installed compatibility pin for ${crate}`);
+      }
       return `${before}=${version}${after}`;
     });
   }

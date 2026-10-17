@@ -1,8 +1,10 @@
 import path from 'node:path';
-const [command, input] = Bun.argv.slice(2);
-if (command === 'write-consumer') {
-  const plan = JSON.parse(process.env.OLIPHAUNT_CARRIER_PLAN);
-  const products = JSON.parse(await Bun.file(process.env.OLIPHAUNT_EXTENSION_PRODUCTS).text());
+export function swiftExtensionReleaseConsumerFiles({
+  plan,
+  products,
+  selectedPackage,
+  releasePackage,
+}) {
   if (!Array.isArray(products.selected) || products.selected.length === 0) {
     throw new Error('generated extension package selected no products');
   }
@@ -86,8 +88,8 @@ if (command === 'write-consumer') {
   } else {
     throw new Error(`unknown final-link proof kind ${plan.finalLink.kind}`);
   }
-  const packagePath = JSON.stringify(path.resolve(process.env.OLIPHAUNT_SELECTED_PACKAGE));
-  const releasePackagePath = JSON.stringify(path.resolve(process.env.OLIPHAUNT_RELEASE_PACKAGE));
+  const packagePath = JSON.stringify(path.resolve(selectedPackage));
+  const releasePackagePath = JSON.stringify(path.resolve(releasePackage));
   const dependencies = [
     `.product(name: "COliphaunt", package: "oliphaunt")`,
     `.product(name: "Oliphaunt", package: "oliphaunt")`,
@@ -127,27 +129,38 @@ if (command === 'write-consumer') {
     `let linkedNativeRuntimeVersion = oliphaunt_version().map { String(cString: $0) }\n` +
     `precondition(linkedNativeRuntimeVersion == ${runtimeVersion}, "linked liboliphaunt runtime version mismatch")\n` +
     nativeAssertion;
-  await Bun.write(
-    path.join(process.env.OLIPHAUNT_EXTENSION_CONSUMER, 'Package.swift'),
-    packageFile,
-  );
-  await Bun.write(
-    path.join(
-      process.env.OLIPHAUNT_EXTENSION_CONSUMER,
-      'Sources',
-      'OliphauntExtensionReleaseConsumer',
-      'main.swift',
-    ),
-    main,
-  );
-} else {
-  const plan = JSON.parse(input);
-  const value = {
-    extensions: plan.extensionsCsv,
-    extension: plan.finalLink.nativeExtension ?? '',
-    kind: plan.finalLink.kind,
-    version: plan.finalLink.runtimeVersion,
-  }[command];
-  if (typeof value !== 'string') throw Error('unknown Swift release consumer command');
-  process.stdout.write(value);
+  return { packageFile, main };
+}
+
+if (import.meta.main) {
+  const [command, input] = Bun.argv.slice(2);
+  if (command === 'write-consumer') {
+    const { packageFile, main } = swiftExtensionReleaseConsumerFiles({
+      plan: JSON.parse(process.env.OLIPHAUNT_CARRIER_PLAN),
+      products: JSON.parse(await Bun.file(process.env.OLIPHAUNT_EXTENSION_PRODUCTS).text()),
+      selectedPackage: process.env.OLIPHAUNT_SELECTED_PACKAGE,
+      releasePackage: process.env.OLIPHAUNT_RELEASE_PACKAGE,
+    });
+    await Bun.write(
+      path.join(process.env.OLIPHAUNT_EXTENSION_CONSUMER, 'Package.swift'),
+      packageFile,
+    );
+    await Bun.write(
+      path.join(
+        process.env.OLIPHAUNT_EXTENSION_CONSUMER,
+        'Sources/OliphauntExtensionReleaseConsumer/main.swift',
+      ),
+      main,
+    );
+  } else {
+    const plan = JSON.parse(input);
+    const value = {
+      extensions: plan.extensionsCsv,
+      extension: plan.finalLink.nativeExtension ?? '',
+      kind: plan.finalLink.kind,
+      version: plan.finalLink.runtimeVersion,
+    }[command];
+    if (typeof value !== 'string') throw Error('unknown Swift release consumer command');
+    process.stdout.write(value);
+  }
 }

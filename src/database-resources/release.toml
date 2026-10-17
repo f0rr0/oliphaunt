@@ -39,3 +39,9 @@ registry_packages = [
   "crates:oliphaunt-seed-wasix-icu",
 ]
 release_artifacts = ["icu-data", "cluster-seeds"]
+
+[compatibility_versions.wasix_runtime]
+public_support = false
+source_product = "liboliphaunt-wasix"
+path = "src/database-resources/seeds/wasix/Cargo.toml"
+parser = "toml:package.metadata.oliphaunt.runtime-version"

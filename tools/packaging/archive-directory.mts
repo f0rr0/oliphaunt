@@ -45,7 +45,10 @@ function archiveEntryName(root, item, keepParent) {
   return relative === '.' ? parent : `${parent}/${relative}`;
 }
 
-async function archiveEntries(root, { keepParent = false } = {}) {
+async function archiveEntries(
+  root,
+  { keepParent = false, modes = {} as Record<string, number> } = {},
+) {
   const rootStat = await fs.lstat(root);
   if (!rootStat.isDirectory()) {
     fail(`source is not a real directory: ${root}`);
@@ -101,7 +104,19 @@ async function archiveEntries(root, { keepParent = false } = {}) {
   }
 
   await walk(root);
-  return entries;
+  const byName = new Map(entries.map((entry) => [entry.name, entry]));
+  for (const [name, mode] of Object.entries(modes)) {
+    const entry = byName.get(name);
+    if (!entry || entry.isDirectory || typeof mode !== 'number' || ![0o644, 0o755].includes(mode)) {
+      fail(`explicit mode requires an existing regular member and mode 0644 or 0755: ${name}`);
+    }
+  }
+  return entries.map((entry) => ({
+    ...entry,
+    mode: Object.hasOwn(modes, entry.name)
+      ? modes[entry.name]
+      : normalizedMode(entry.stat, entry.isDirectory),
+  }));
 }
 
 function tarPathParts(relativePath) {
@@ -171,10 +186,8 @@ export function tarHeader(entry, size, mode) {
 export async function createDeterministicTar(root, options = {}) {
   const chunks = [];
   for (const entry of await archiveEntries(root, options)) {
-    const stat = entry.stat;
-    const mode = normalizedMode(stat, entry.isDirectory);
     const data = entry.isDirectory ? Buffer.alloc(0) : await fs.readFile(entry.fullPath);
-    chunks.push(tarHeader(entry, data.length, mode));
+    chunks.push(tarHeader(entry, data.length, entry.mode));
     if (data.length > 0) {
       chunks.push(data);
       const remainder = data.length % 512;
@@ -220,8 +233,6 @@ export async function createDeterministicZip(root, options = {}) {
     if (entry.name === '.') {
       continue;
     }
-    const stat = entry.stat;
-    const mode = normalizedMode(stat, entry.isDirectory);
     const name = Buffer.from(zipName(entry));
     const data = entry.isDirectory ? Buffer.alloc(0) : await fs.readFile(entry.fullPath);
     const compressed = entry.isDirectory ? Buffer.alloc(0) : deflateRawSync(data, { level: 9 });
@@ -230,7 +241,7 @@ export async function createDeterministicZip(root, options = {}) {
     // A Unix-origin ZIP must include the POSIX file type as well as permission
     // bits. Omitting S_IFREG/S_IFDIR makes the central directory ambiguous to
     // strict consumers and causes platform-dependent `zipinfo` rendering.
-    const unixMode = (entry.isDirectory ? 0o040000 : 0o100000) | (mode & 0o777);
+    const unixMode = (entry.isDirectory ? 0o040000 : 0o100000) | (entry.mode & 0o777);
     const externalAttributes = (unixMode << 16) | (entry.isDirectory ? 0x10 : 0);
     const localHeader = Buffer.concat([
       writeUInt32(0x04034b50),
@@ -305,7 +316,7 @@ function parseArgs(argv) {
   };
 }
 
-export async function archiveDirectory(source, output, { keepParent = false } = {}) {
+export async function archiveDirectory(source, output, { keepParent = false, modes = {} } = {}) {
   const sourceStat = await fs.lstat(source).catch(() => null);
   if (!sourceStat?.isDirectory()) {
     fail(`source is not a directory: ${source}`);
@@ -314,15 +325,15 @@ export async function archiveDirectory(source, output, { keepParent = false } = 
   if (output.endsWith('.tar.gz')) {
     await fs.writeFile(
       output,
-      canonicalGzipSync(await createDeterministicTar(source, { keepParent })),
+      canonicalGzipSync(await createDeterministicTar(source, { keepParent, modes })),
     );
   } else if (output.endsWith('.tar.zst')) {
     await fs.writeFile(
       output,
-      releaseZstdCompressSync(await createDeterministicTar(source, { keepParent })),
+      releaseZstdCompressSync(await createDeterministicTar(source, { keepParent, modes })),
     );
   } else if (path.extname(output) === '.zip') {
-    await fs.writeFile(output, await createDeterministicZip(source, { keepParent }));
+    await fs.writeFile(output, await createDeterministicZip(source, { keepParent, modes }));
   } else {
     fail(`unsupported archive extension: ${output}`);
   }

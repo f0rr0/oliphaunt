@@ -20,11 +20,17 @@ qualification_products=''
 qualification_plan=false
 qualification_dispatch=false
 qualification_wait=false
+native_request=false
+qualification_requested_run_id=''
 selected_artifacts_json='[]'
 selected_gate_artifacts_json='[]'
 selected_run_attempt=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --request-native-qualification)
+      native_request=true
+      shift
+      ;;
     --plan-qualification | --dispatch-qualification | --qualification-products)
       case "$1" in --plan-qualification) qualification_plan=true ;; --dispatch-qualification) qualification_dispatch=true ;; --qualification-products) qualification_wait=true ;; esac
       qualification_products="${2:?qualification scope requires product JSON}"
@@ -85,6 +91,18 @@ if [[ -n "$qualification_products" ]]; then
   QUALIFICATION_REQUEST_KEY="$(EXPECTED_SHA="$sha" PRODUCTS_JSON="$qualification_products" bun .github/scripts/workflow-run-metadata.mts qualification-key)"
   export QUALIFICATION_REQUEST_KEY
   required_events=(push workflow_dispatch)
+fi
+if [[ "$native_request" == true ]]; then
+  [[ "$workflow" == 'Native Bazel qualification' && -z "$expected_run_id" && -z "$qualification_products" && "$release_candidate" == false ]] || {
+    echo '--request-native-qualification requires the Native workflow without another selection mode' >&2
+    exit 2
+  }
+  required_jobs+=(Required)
+  required_events=(push workflow_dispatch)
+  export NATIVE_QUALIFICATION_REQUEST=true
+  qualification_scratch="$(mktemp -d)"
+  trap 'rm -rf "$qualification_scratch"' EXIT
+  timeout=0
 fi
 
 github_read() {
@@ -302,6 +320,76 @@ candidate_satisfies_gate() {
   fi
 }
 
+dispatch_qualification_request() {
+  local main_sha response requested_id row run_sha run_workflow rest
+  main_sha="$(github_read 'main ref before qualification request' "repos/$GH_REPO/git/ref/heads/main" main-sha)" || exit $?
+  if [[ "$main_sha" != "$(printf '%s' "$sha" | normalize_sha)" ]]; then
+    echo "cannot request missing qualification for $sha: main is $main_sha; reuse or rerun an existing exact-source CI run" >&2
+    exit 1
+  fi
+  # Dispatch is a mutation: never apply the read retry policy to an ambiguous POST.
+  if ! response="$(gh api --method POST -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$GH_REPO/actions/workflows/$workflow_id/dispatches" --input "$qualification_scratch/request.json")"; then
+    echo "qualification dispatch outcome is unknown; inspect $workflow at $sha before resuming" >&2
+    exit 1
+  fi
+  requested_id="$(bun .github/scripts/workflow-run-metadata.mts dispatch-run-id <<<"$response")" || exit 1
+  echo "requested qualification: https://github.com/$GH_REPO/actions/runs/$requested_id"
+  row="$(github_read "requested qualification run $requested_id" "repos/$GH_REPO/actions/runs/$requested_id" run-row)" || exit $?
+  IFS=$'\t' read -r run_sha run_workflow rest <<<"$row"
+  if [[ "$(printf '%s' "$run_sha" | normalize_sha)" != "$(printf '%s' "$sha" | normalize_sha)" || "$run_workflow" != "$workflow_id" ]]; then
+    echo "qualification dispatch source changed; refusing run $requested_id for $run_sha" >&2
+    exit 1
+  fi
+  qualification_requested_run_id="$requested_id"
+}
+
+native_pending() {
+  local run_id="$1" url="https://github.com/$GH_REPO/actions/runs/$1"
+  local row run_sha run_workflow rest run_attempt
+  row="$(github_read "pending Native run $run_id" "repos/$GH_REPO/actions/runs/$run_id" run-row)" || exit $?
+  IFS=$'\t' read -r run_sha run_workflow rest <<<"$row"
+  run_attempt="${row##*$'\t'}"
+  [[ "$(printf '%s' "$run_sha" | normalize_sha)" == "$(printf '%s' "$sha" | normalize_sha)" && "$run_workflow" == "$workflow_id" ]] || {
+    echo 'pending Native run source/workflow mismatch' >&2
+    exit 1
+  }
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    printf 'qualification_pending_run_id=%s\nqualification_pending_run_attempt=%s\nqualification_pending_run_url=%s\n' "$run_id" "$run_attempt" "$url" >>"$GITHUB_OUTPUT"
+  fi
+  echo "Native qualification pending: $url; the retained Prepare request will resume automatically after qualification." >&2
+  exit 0
+}
+
+request_native_qualification() {
+  local active failed run_id event jobs_file kind status
+  active="$(awk -F '\t' '$2 != "completed" { print $1; exit }' <<<"$runs")"
+  if [[ -n "$active" ]]; then native_pending "$active"; fi
+  failed="$(awk -F '\t' '$2 == "completed" && $3 != "success" { print $1; exit }' <<<"$runs")"
+  if [[ -n "$failed" ]]; then
+    echo "Native qualification failed: https://github.com/$GH_REPO/actions/runs/$failed; fix the cause or rerun that run." >&2
+    exit 1
+  fi
+  while IFS=$'\t' read -r run_id event; do
+    [[ -n "$run_id" ]] || continue
+    jobs_file="$(mktemp)"
+    if github_paginated_json "$workflow run $run_id jobs" jobs "repos/$GH_REPO/actions/runs/$run_id/jobs?filter=latest" >"$jobs_file"; then
+      kind="$(bun .github/scripts/workflow-run-metadata.mts native-run-kind "$jobs_file")" || { rm -f "$jobs_file"; exit 64; }
+      rm -f "$jobs_file"
+    else
+      status=$?
+      rm -f "$jobs_file"
+      exit "$status"
+    fi
+    if [[ "$kind" != source || "$event" != push ]]; then
+      echo "Native full qualification did not pass Required: https://github.com/$GH_REPO/actions/runs/$run_id; inspect or rerun that run." >&2
+      exit 1
+    fi
+  done < <(awk -F '\t' '$2 == "completed" && $3 == "success" { print $1 "\t" $5 }' <<<"$runs")
+  printf '{"ref":"main"}\n' >"$qualification_scratch/request.json"
+  dispatch_qualification_request
+  native_pending "$qualification_requested_run_id"
+}
+
 request_missing_qualification() {
   # Active work may become a covering proof; never dispatch beside it.
   if awk -F '\t' '$2 != "completed" && $6 == "causal" { found=1 } END { exit found ? 0 : 1 }' <<<"$runs"; then
@@ -323,26 +411,8 @@ request_missing_qualification() {
   fi
   if [[ "$qualification_wait" == true ]]; then return; fi
   if [[ "$qualification_dispatch" == true ]] && awk -F '\t' '$2 == "completed" && $3 == "success" && $7 == "requested" { found=1 } END { exit found ? 0 : 1 }' <<<"$runs"; then return; fi
-  local main_sha response requested_id row run_sha run_workflow rest
-  main_sha="$(github_read 'main ref before qualification request' "repos/$GH_REPO/git/ref/heads/main" main-sha)" || exit $?
-  if [[ "$main_sha" != "$sha" ]]; then
-    echo "cannot request missing qualification for $sha: main is $main_sha; reuse or rerun an existing exact-source CI run" >&2
-    exit 1
-  fi
   EXPECTED_SHA="$sha" PRODUCTS_JSON="$qualification_products" bun .github/scripts/workflow-run-metadata.mts qualification-request >"$qualification_scratch/request.json"
-  # Dispatch is a mutation: never apply the read retry policy to an ambiguous POST.
-  if ! response="$(gh api --method POST -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$GH_REPO/actions/workflows/$workflow_id/dispatches" --input "$qualification_scratch/request.json")"; then
-    echo "qualification dispatch outcome is unknown; inspect CI request $QUALIFICATION_REQUEST_KEY before resuming" >&2
-    exit 1
-  fi
-  requested_id="$(bun .github/scripts/workflow-run-metadata.mts dispatch-run-id <<<"$response")" || exit 1
-  echo "requested qualification: https://github.com/$GH_REPO/actions/runs/$requested_id"
-  row="$(github_read "requested qualification run $requested_id" "repos/$GH_REPO/actions/runs/$requested_id" run-row)" || exit $?
-  IFS=$'\t' read -r run_sha run_workflow rest <<<"$row"
-  if [[ "$run_sha" != "$sha" || "$run_workflow" != "$workflow_id" ]]; then
-    echo "qualification dispatch source changed; refusing run $requested_id for $run_sha" >&2
-    exit 1
-  fi
+  dispatch_qualification_request
 }
 
 resolve_workflow_id() {
@@ -453,6 +523,7 @@ while true; do
     request_missing_qualification
     [[ "$qualification_dispatch" == false ]] || exit 0
   fi
+  if [[ "$native_request" == true && "$inventory_ready" == true ]]; then request_native_qualification; fi
   if [ "$SECONDS" -ge "$deadline" ]; then
     echo "timed out waiting for successful $workflow workflow for $sha" >&2
     exit 1

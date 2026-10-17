@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { verifyReceipts } from '../../src/extensions/tests/native/tools/verify-native-extension-lifecycle-receipts.mts';
+import { authenticateNativeBuildEvidence } from '../../tools/release/authenticate-native-build-evidence.mts';
+import {
+  assertNativeBuildGithub,
+  validateNativeBuildEvidence,
+} from '../../tools/release/native-build-qualification.mts';
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -430,11 +435,106 @@ export function nativeEvidenceBinding(
   };
 }
 
+/** Controller expectations constrain a fresh API-authenticated download; JSON cannot assert origin. */
+export async function nativeBuildEvidenceBinding(evidenceRoot, { sha, tree, context }) {
+  const file = 'native-build-evidence.json';
+  assert(
+    context && typeof context === 'object' && !Array.isArray(context),
+    'native build controller context is missing',
+  );
+  assert(
+    JSON.stringify(Object.keys(context).sort()) ===
+      JSON.stringify(['artifactName', 'event', 'github', 'ref', 'requiredTests']),
+    'native build controller context fields are invalid',
+  );
+  assert(
+    Array.isArray(context.requiredTests) && context.requiredTests.length > 0,
+    'native build controller context requires mandatory configured tests',
+  );
+  const source = { commit: sha, tree };
+  const authenticated = await authenticateNativeBuildEvidence(evidenceRoot, {
+    source,
+    github: context.github,
+    event: context.event,
+    ref: context.ref,
+    artifactName: context.artifactName,
+  });
+  const verified = validateNativeBuildEvidence(authenticated.evidence, {
+    source,
+    github: authenticated.github,
+    bazelVersion: readFileSync(new URL('../../.bazelversion', import.meta.url), 'utf8').trim(),
+    requiredTests: context.requiredTests,
+  });
+  return {
+    ...verified,
+    artifact: authenticated.artifact,
+    file,
+    digest: authenticated.evidenceDigest,
+    unverified: verified.unverified.filter(
+      (check) => check !== 'authenticated producing workflow, attempt, job and immutable artifact',
+    ),
+  };
+}
+
+function assertNativeBuildBindingShape(binding, candidate) {
+  assert(
+    binding?.scope === 'construction' && binding.releaseDecision === 'unverified',
+    'native build evidence cannot grant release authority',
+  );
+  assert(binding.file === 'native-build-evidence.json', 'native build evidence file is invalid');
+  assert(/^sha256:[0-9a-f]{64}$/u.test(binding.digest), 'native build evidence digest is invalid');
+  same(binding.source?.commit, candidate.sha, 'native build evidence source commit');
+  same(binding.source?.tree, candidate.tree, 'native build evidence source tree');
+  assertNativeBuildGithub(binding.github);
+  same(binding.github.repository, candidate.repository, 'native build evidence repository');
+  assert(
+    Array.isArray(binding.cohorts) && binding.cohorts.length > 0,
+    'native build configured cohorts are missing',
+  );
+  assert(
+    binding.testQualification === 'passed' &&
+      Array.isArray(binding.requiredTests) &&
+      binding.requiredTests.length > 0,
+    'native build mandatory configured tests are missing',
+  );
+  for (const test of binding.requiredTests) {
+    assert(
+      test &&
+        JSON.stringify(Object.keys(test).sort()) ===
+          JSON.stringify(['configuration', 'invocationId', 'label']) &&
+        typeof test.label === 'string' &&
+        test.label.startsWith('//') &&
+        typeof test.configuration === 'string' &&
+        test.configuration.length > 0 &&
+        typeof test.invocationId === 'string' &&
+        test.invocationId.length > 0 &&
+        binding.cohorts.some((cohort) => cohort.invocationId === test.invocationId),
+      'native build mandatory configured test binding is invalid',
+    );
+  }
+  uniqueStrings(
+    binding.requiredTests.map((test) => `${test.label}\0${test.configuration}`),
+    'native build mandatory configured tests',
+  );
+  positiveInteger(binding.artifact?.id, 'native build artifact ID');
+  positiveInteger(binding.artifact?.size, 'native build artifact size');
+  assert(
+    typeof binding.artifact?.name === 'string' && binding.artifact.name.length > 0,
+    'native build artifact name is invalid',
+  );
+  assert(
+    /^sha256:[0-9a-f]{64}$/u.test(binding.artifact?.digest),
+    'native build immutable artifact digest is invalid',
+  );
+}
+
 export function assertCandidateBindingShape(candidate) {
   assert(
     candidate?.schemaVersion === 2,
     `release candidate schemaVersion must be 2, got ${candidate?.schemaVersion}`,
   );
+  if (Object.hasOwn(candidate.evidence ?? {}, 'nativeBuild'))
+    assertNativeBuildBindingShape(candidate.evidence.nativeBuild, candidate);
   assert(
     candidate.affectedPlan !== null && typeof candidate.affectedPlan === 'object',
     'release candidate affectedPlan is missing',

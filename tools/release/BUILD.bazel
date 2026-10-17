@@ -1,0 +1,153 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load("@bazel_lib//lib:copy_file.bzl", "copy_file")
+load("@bazel_lib//lib:directory_path.bzl", "directory_path")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["bazel-release-metadata.mts", "bazel-shipping-inputs.mts", "extension-release-metadata.mts", "compatibility-version-parser.mts", "compatibility-version-policy.mts", "product-version.mts", "platform-compatibility-policy.mts", "frozen-extension-consumer.mts", "release-artifact-targets.mts", "release-graph.mts", "release-history.mts"])
+exports_files(["native-file-identity.mts", "with-source.sh", "with-source.mts", "qualified-release-replay.sh", "native-configured-inputs.mts"])
+exports_files(["checksum-manifest.mts"])
+exports_files(["native-extension-final-inputs.mts", "qualified-native-extension-final-inputs.mts"])
+exports_files(["native-supplier-artifacts.mts"])
+exports_files(["cargo-payload-part-contract.mts"])
+
+bun_test(
+    name = "native_extension_final_inputs_test",
+    entry_point = "native-extension-final-inputs.test.mts",
+    data = ["native-extension-final-inputs.mts", "native-file-identity.mts", "//:tools/packaging/release-directory-safety.mts"],
+    size = "small",
+)
+exports_files(["github-read.mts", "github-core-request-journal.mts", "github-release-lineage.mts"])
+
+bun_test(
+    name = "native_file_identity_test",
+    entry_point = "native-file-identity.test.mts",
+    data = ["native-file-identity.mts", "//:tools/packaging/release-directory-safety.mts"],
+    size = "small",
+)
+
+bun_test(
+    name = "bazel_metadata_test",
+    size = "small",
+    entry_point = "bazel-release-metadata.test.mts",
+    data = [
+        "//:src/extensions/generated/wasix/extensions.json",
+        "bazel-release-metadata.mts",
+        "bazel-shipping-inputs.mts",
+        "compatibility-version-parser.mts",
+        "extension-release-metadata.mts",
+        "native-extension-final-inputs.mts",
+        "native-file-identity.mts",
+        "native-seed-inputs.mts",
+        "native-supplier-artifacts.mts",
+        "platform-compatibility-policy.mts",
+        "publication-catalog.mts",
+        "release-artifact-targets.mts",
+        "release-graph.mts",
+        "release-history.mts",
+        "//:src/extensions/artifacts/packages/tools/contrib-carriers.mts",
+        "//:src/extensions/artifacts/native/tools/ios-extension-registration.mts",
+        "//:src/extensions/artifacts/packages/tools/extension-registry-packages.mts",
+        "//:tools/packaging/portable-archive.mts",
+        "//:tools/packaging/release-directory-safety.mts",
+        "//:tools/packaging/release-notices.mts",
+        "//:tools/packaging/rust-dependency-license-contract.mts",
+        "//:tools/packaging/rust-native-targets.mts",
+        "//src/database-resources:seeds/carrier-identities.mts",
+        "//src/database-resources/seeds/wasix:consumer-contract.mts",
+        "//src/extensions/contracts:extension-target-profiles.mts",
+        "//src/extensions/catalog:native-components.toml",
+        "//src/extensions/contracts:extension-target-profiles.toml",
+        "//src/extensions/tools:native-component-contract.mts",
+        "//:src/extensions/generated/extensions.catalog.json",
+        "//src/native/mobile-bindings:tools/dependency-license-contract.mts",
+        "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
+        "//src/wasix/runtime:tools/wasix-runtime-npm-contract.mts",
+    ],
+)
+
+bun_test(
+    name = "bazel_shipping_inputs_test",
+    size = "small",
+    entry_point = "bazel-shipping-inputs.test.mts",
+    data = ["bazel-shipping-inputs.mts"],
+)
+
+bun_test(
+    name = "compatibility_version_parser_test",
+    size = "small",
+    entry_point = "compatibility-version-parser.test.mts",
+    data = ["compatibility-version-parser.mts"],
+)
+
+source_quality_files()
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "authenticate-native-build-evidence.mts",
+    "check_registry_publication.mts",
+    "completed-contrib-carrier-context.mts",
+    "completed-release-publication.mts",
+    "completed-swift-source-delivery.mts",
+    "consumer-compatibility.mts",
+    "example-cargo-versions.mts",
+    "frozen-consumer.mts",
+    "frozen-npm-publish.mts",
+    "github-content-write-pacer.mts",
+    "github-release-mutations.mts",
+    "native-build-files.mts",
+    "native-build-qualification.mts",
+    "native-build-source-tag.mts",
+    "native-completed-delivery.mts",
+    "native-freeze-publication-candidate.mts",
+    "native-publication-artifacts.mts",
+    "native-publication-candidate.mts",
+    "native-publication-delivery.mts",
+    "native-publication-metadata-contract.mts",
+    "native-publication-metadata.mts",
+    "native-publication-observation.mts",
+    "native-publication-payloads.mts",
+    "native-publication-staging.mts",
+    "native-release-inputs.mts",
+    "native-release-preparation.mts",
+    "qualified-native-current-exact-inputs.mts",
+    "native-seed-baseline.mts",
+    "native-seed-inputs.mts",
+    "native-shipping-suppliers.mts",
+    "native-source-carrier-changes.mts",
+    "native-version-source.mts",
+    "public-consumer-smoke.mts",
+    "publication-catalog.mts",
+    "publication-consumer-proof.mts",
+    "publication-controller.mts",
+    "publication-lock.mts",
+    "registry-http-retry.mts",
+    "registry-integrity.mts",
+    "registry-publication-deferral.mts",
+    "release-dependency-plan.mts",
+    "release-please-bootstrap.mts",
+    "release-please-pr-lifecycle.mts",
+    "release-please-transition.mts",
+    "retained-download.mts",
+    "sync-release-pr.mts",
+    "verify-release-commit.mts",
+    "verify_github_release_attestations.mts",
+], visibility = ["//visibility:public"])
+
+# Copy the publisher's regular standalone module and original CommonJS manifest.
+directory_path(
+    name = "protobufjs_bundle_module_source",
+    directory = "//build_defs/languages/ts:protobufjs_native_aquery_package/dir",
+    path = "dist/protobuf.js",
+)
+directory_path(
+    name = "protobufjs_bundle_manifest_source",
+    directory = "//build_defs/languages/ts:protobufjs_native_aquery_package/dir",
+    path = "package.json",
+)
+copy_file(name = "protobufjs_bundle_module", src = ":protobufjs_bundle_module_source", out = "node_modules/protobufjs/dist/protobuf.js")
+copy_file(name = "protobufjs_bundle_manifest", src = ":protobufjs_bundle_manifest_source", out = "node_modules/protobufjs/package.json")
+exports_files(["package.json", "native-aquery.mts"] + glob(["bazel-8.8.1/*"]))
+filegroup(name = "native_aquery_sources", srcs = ["native-aquery.mts", ":protobufjs_bundle_module", ":protobufjs_bundle_manifest"] + glob(["bazel-8.8.1/*"]))
+bun_test(name = "native_aquery_test", entry_point = "native-aquery.test.mts", data = [":native_aquery_sources", "bazel-shipping-inputs.mts"] + glob(["fixtures/aquery-bazel-8.8.1/*"]), size = "small")

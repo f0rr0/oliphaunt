@@ -54,7 +54,7 @@ if [[ "$target_id" == linux-*-gnu ]]; then
   broker_bin="$cargo_target_dir/release/$broker_stage_name"
   src/native/broker/tools/build-linux-broker-baseline.sh "$cargo_target_dir"
 else
-  cargo build -p oliphaunt-broker --release --locked
+  cargo build --manifest-path src/native/broker/Cargo.toml --release --locked
 fi
 [ -x "$broker_bin" ] || fail "missing broker helper at $broker_bin"
 

@@ -5,6 +5,12 @@ import { arch, cpus, hostname, platform, release, totalmem } from 'node:os';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
+import {
+  assertNativeBrowserHostProvenance,
+  HOST_FILES,
+  NATIVE_BROWSER_HOST_SCHEMA,
+  readNativeBrowserSourceContract,
+} from '../../../../build_defs/wasix/browser/provenance.mts';
 import { loadHostBuildContract } from '../../../wasix/browser-host/build-provenance.mts';
 import { directoryTreeSha256, installedPackageClosure } from '../wasix-node/installed-closure.mts';
 import { assertRuntimeBuildConfiguration, runtimeBuildProvenance } from '../wasix-node/plan.mts';
@@ -134,10 +140,7 @@ async function candidateProvenance(plan) {
   if (clusterSeedSha256 !== clusterSeed.sha256) {
     throw new Error('canonical WASIX standard cluster seed does not match its manifest');
   }
-  const hostBuild = await installedHostBuildProvenance(
-    packageFile,
-    (await loadHostBuildContract()).provenance,
-  );
+  const hostBuild = await installedHostBuildProvenance(packageFile);
   const runtimeBuild = await runtimeBuildProvenance(manifest);
   assertRuntimeBuildConfiguration(
     runtimeBuild.configuration,
@@ -183,7 +186,7 @@ async function candidateProvenance(plan) {
   };
 }
 
-async function installedHostBuildProvenance(packageManifestFile, expected) {
+async function installedHostBuildProvenance(packageManifestFile) {
   const file = resolve(dirname(packageManifestFile), 'lib/host/provenance.json');
   let provenance;
   try {
@@ -193,7 +196,17 @@ async function installedHostBuildProvenance(packageManifestFile, expected) {
       cause: error,
     });
   }
-  if (!isDeepStrictEqual(provenance, expected)) {
+  if (provenance.schema === NATIVE_BROWSER_HOST_SCHEMA) {
+    const host = dirname(file);
+    assertNativeBrowserHostProvenance(provenance, {
+      source: await readNativeBrowserSourceContract(repositoryRoot),
+      files: Object.fromEntries(
+        await Promise.all(
+          HOST_FILES.map(async (name) => [name, await readFile(resolve(host, name))]),
+        ),
+      ),
+    });
+  } else if (!isDeepStrictEqual(provenance, (await loadHostBuildContract()).provenance)) {
     throw new Error(
       'installed @oliphaunt/wasix-ts host provenance does not match the source build contract',
     );

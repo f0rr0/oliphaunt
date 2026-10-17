@@ -151,6 +151,11 @@ fn assets(args: Vec<String>) -> Result<()> {
             let source_lane = value_after(&args, "--source-lane").unwrap_or(DEFAULT_SOURCE_LANE);
             generate_wasix_export_list(write, source_lane)
         }
+        Some("export-policy") => generate_declared_wasix_export_policy(&args[1..]),
+        Some("declared-extension-link") => generate_declared_extension_link(&args[1..]),
+        Some("declared-manifest") => generate_declared_wasix_manifest(&args[1..]),
+        Some("declared-tools-manifest") => generate_declared_tools_manifest(&args[1..]),
+        Some("declared-aot-manifest") => generate_declared_aot_manifest(&args[1..]),
         Some("prepare-aot") => {
             let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
             let source_lane = value_after(&args, "--source-lane").unwrap_or(DEFAULT_SOURCE_LANE);
@@ -216,4 +221,9 @@ fn print_usage() {
     eprintln!("  cargo run -p xtask -- assets package-extension-aot [--target-triple <triple>]");
     eprintln!("  cargo run -p xtask -- assets check-aot [--target-triple <triple>]");
     eprintln!("  cargo run -p xtask -- assets export-list [--write]");
+    eprintln!(
+        "  xtask assets export-policy --module <name=path>... --output <path> --response <path>"
+    );
+    eprintln!("  xtask assets declared-manifest --spec <path> --output <path>");
+    eprintln!("  xtask assets declared-aot-manifest --spec <path> --output <path>");
 }

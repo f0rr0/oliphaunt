@@ -1101,10 +1101,7 @@ class OliphauntAndroidRuntimeAssetsTest {
 }
 
 private fun databaseRootFixture(): JSONObject {
-    val directory =
-        checkNotNull(System.getProperty("oliphaunt.sharedFixturesDir")?.takeIf(String::isNotBlank)) {
-            "Run fixture tests through Gradle to configure oliphaunt.sharedFixturesDir"
-        }
+    val directory = sharedFixtureDirectory()
     return JSONObject(Path.of(directory, "storage", "database-root.json").toFile().readText())
 }
 
@@ -1257,12 +1254,7 @@ private fun retargetNativeClusterSeedFixture(
     target: String,
     icuDataTreeSha256: String? = null,
 ): String {
-    val fixtureRoot =
-        System
-            .getProperty("oliphaunt.clusterSeedFixturesDir")
-            ?.takeIf(String::isNotBlank)
-            ?.let(Path::of)
-            ?: error("oliphaunt.clusterSeedFixturesDir is not configured")
+    val fixtureRoot = clusterSeedFixtureDirectory()
     val overrides =
         buildMap {
             put("target", target)

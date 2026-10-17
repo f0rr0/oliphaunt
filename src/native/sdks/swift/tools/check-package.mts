@@ -1,39 +1,38 @@
 #!/usr/bin/env bun
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { ROOT, compareText } from '../../../../../tools/release/release-artifact-targets.mts';
 import {
-  PREFIX,
+  bundleJavaScript,
+  releaseJavaScript,
+} from '../../../../../tools/packaging/emit-javascript.mts';
+import {
   directoryNames,
   fail,
   inspectSdkProduct,
   isDirectory,
   isFile,
+  PREFIX,
   readZipEntries,
   rejectSdkRuntimePayload,
   rel,
 } from '../../../../../tools/packaging/release-carrier.mts';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { compareText, ROOT } from '../../../../../tools/release/release-artifact-targets.mts';
+import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
 import {
   validateSelectionNeutralSwiftSourceCarrierFile,
   validateSwiftSourceReleaseContract,
 } from './swift-source-carrier-contract.mts';
-import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
 import {
-  bundleJavaScript,
-  releaseJavaScript,
-} from '../../../../../tools/packaging/emit-javascript.mts';
+  SWIFT_SOURCE_FIXTURE_PREFIX,
+  validateSwiftSourceFixtureEntries as validateDeclaredSwiftSourceFixtureEntries,
+} from './swift-source-fixture-contract.mts';
 
 const SWIFT_SOURCE_FIXTURE_REPOSITORY_ROOT = path.join(
   ROOT,
   'src/native/sdks/swift/Tests/Fixtures/swiftpm-extension-resources',
 );
 
-const SWIFT_SOURCE_FIXTURE_ARCHIVE_ROOT = 'package/Tests/Fixtures/swiftpm-extension-resources';
-
 export function validateSwiftSourceFixtureEntries(artifact, entries) {
-  if (!(entries instanceof Map)) {
-    throw new Error(`${rel(artifact)} Swift source fixture entries must be a Map`);
-  }
   if (!isDirectory(SWIFT_SOURCE_FIXTURE_REPOSITORY_ROOT)) {
     throw new Error(
       `${rel(artifact)} cannot validate Swift source fixtures because ` +
@@ -41,46 +40,16 @@ export function validateSwiftSourceFixtureEntries(artifact, entries) {
     );
   }
 
-  const prefix = `${SWIFT_SOURCE_FIXTURE_ARCHIVE_ROOT}/`;
-  const expectedNames = directoryNames(SWIFT_SOURCE_FIXTURE_REPOSITORY_ROOT)
-    .map((name) => `${prefix}${name}`)
-    .sort(compareText);
-  const actualNames = [...entries]
-    .filter(([name, entry]) => name.startsWith(prefix) && entry.isFile)
-    .map(([name]) => name)
-    .sort(compareText);
-  if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
-    const expected = new Set(expectedNames);
-    const actual = new Set(actualNames);
-    const missing = expectedNames.filter((name) => !actual.has(name));
-    const extra = actualNames.filter((name) => !expected.has(name));
-    throw new Error(
-      `${rel(artifact)} Swift source fixture file set must exactly match ` +
-        `${rel(SWIFT_SOURCE_FIXTURE_REPOSITORY_ROOT)}; missing=${JSON.stringify(missing)}, ` +
-        `extra=${JSON.stringify(extra)}`,
-    );
-  }
-
-  for (const archiveName of expectedNames) {
-    const repositoryName = archiveName.slice(prefix.length);
-    const repositoryFile = path.join(
-      SWIFT_SOURCE_FIXTURE_REPOSITORY_ROOT,
-      ...repositoryName.split('/'),
-    );
-    const actual = Buffer.from(entries.get(archiveName).data());
-    const expected = readFileSync(repositoryFile);
-    if (!actual.equals(expected)) {
-      throw new Error(
-        `${rel(artifact)} Swift source fixture ${archiveName} must byte-for-byte match ` +
-          rel(repositoryFile),
-      );
-    }
-  }
-
-  return new Set(expectedNames);
+  const expected = new Map(
+    directoryNames(SWIFT_SOURCE_FIXTURE_REPOSITORY_ROOT).map((name) => [
+      `${SWIFT_SOURCE_FIXTURE_PREFIX}${name}`,
+      readFileSync(path.join(SWIFT_SOURCE_FIXTURE_REPOSITORY_ROOT, ...name.split('/'))),
+    ]),
+  );
+  return validateDeclaredSwiftSourceFixtureEntries(rel(artifact), entries, expected);
 }
 
-export async function checkSwiftPackage(root) {
+export async function checkSwiftPackage(root, { nativeSourceBasis = undefined } = {}) {
   const product = 'oliphaunt-swift';
   let checked = false;
 
@@ -129,6 +98,7 @@ export async function checkSwiftPackage(root) {
       const carrier = validateSelectionNeutralSwiftSourceCarrierFile(
         sourceCarrier,
         rel(sourceCarrier),
+        { sourceBasis: nativeSourceBasis },
       );
       validateSwiftSourceReleaseContract({
         carrier,
@@ -139,6 +109,7 @@ export async function checkSwiftPackage(root) {
         ),
         label: `${product} staged source release`,
         manifestText: text,
+        sourceBasis: nativeSourceBasis,
       });
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));

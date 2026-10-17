@@ -30,8 +30,8 @@ function noticeProfileForSpec(spec) {
   fail(`WASIX Cargo package ${spec.name} has no release notice profile for kind ${spec.kind}`);
 }
 
-function injectCargoNoticeIncludes(text, profile) {
-  const members = releaseNoticeRows({ profile }).map((row) => row.member);
+function injectCargoNoticeIncludes(text, profile, sourceRoot) {
+  const members = releaseNoticeRows({ profile, sourceRoot }).map((row) => row.member);
   const match =
     text.match(/^include = \[(?<body>[\s\S]*?)^\]$/mu) ??
     text.match(/^include = \[(?<body>[^\n]*?)\]$/mu);
@@ -44,7 +44,7 @@ function injectCargoNoticeIncludes(text, profile) {
 
 function rewriteCargoManifest(
   manifest,
-  { packageName, version, transformManifest, noticeProfile },
+  { packageName, version, transformManifest, noticeProfile, noticeSourceRoot },
 ) {
   let text = readFileSync(manifest, 'utf8');
   text = text.replace(/^name = "[^"]+"$/mu, `name = "${packageName}"`);
@@ -52,9 +52,9 @@ function rewriteCargoManifest(
   text = text.replace(/^publish = false\n?/gmu, '');
   text = text.replace(
     /^license = "[^"]+"$/mu,
-    `license = ${JSON.stringify(releaseProfilePackageLicense(noticeProfile).spdx)}`,
+    `license = ${JSON.stringify(releaseProfilePackageLicense(noticeProfile, { sourceRoot: noticeSourceRoot }).spdx)}`,
   );
-  text = injectCargoNoticeIncludes(text, noticeProfile);
+  text = injectCargoNoticeIncludes(text, noticeProfile, noticeSourceRoot);
   if (transformManifest) text = transformManifest(text);
   if (!text.includes('\n[workspace]')) {
     text = `${text.trimEnd()}\n\n[workspace]\n`;
@@ -68,7 +68,7 @@ function rewriteCargoManifest(
   }
 }
 
-function copyPackageSource(spec, sourceRoot, version, transformManifest) {
+function copyPackageSource(spec, sourceRoot, version, transformManifest, noticeSourceRoot) {
   const crateDir = path.join(sourceRoot, spec.name);
   if (existsSync(crateDir)) {
     fail(`duplicate generated WASIX Cargo package source: ${rel(crateDir)}`);
@@ -85,14 +85,18 @@ function copyPackageSource(spec, sourceRoot, version, transformManifest) {
     );
   }
   const noticeProfile = noticeProfileForSpec(spec);
-  stageReleaseNotices(crateDir, { profile: noticeProfile });
+  stageReleaseNotices(crateDir, { profile: noticeProfile, sourceRoot: noticeSourceRoot });
   rewriteCargoManifest(path.join(crateDir, 'Cargo.toml'), {
     packageName: spec.name,
     version,
     transformManifest,
     noticeProfile,
+    noticeSourceRoot,
   });
-  assertReleaseNoticesInDirectory(crateDir, { profile: noticeProfile });
+  assertReleaseNoticesInDirectory(crateDir, {
+    profile: noticeProfile,
+    sourceRoot: noticeSourceRoot,
+  });
   return crateDir;
 }
 
@@ -103,6 +107,7 @@ export function cargoPackage(crateDir, targetDir) {
     root: ROOT,
     fail,
     rel,
+    fixedFileMode: 0o644,
   });
 }
 
@@ -117,9 +122,15 @@ export function validateCrateSize(cratePath) {
 
 export function packageSpec(
   spec,
-  { version, sourceRoot, outputDir, cargoTargetDir, transformManifest },
+  { version, sourceRoot, outputDir, cargoTargetDir, transformManifest, noticeSourceRoot },
 ) {
-  const crateDir = copyPackageSource(spec, sourceRoot, version, transformManifest);
+  const crateDir = copyPackageSource(
+    spec,
+    sourceRoot,
+    version,
+    transformManifest,
+    noticeSourceRoot,
+  );
   const cratePath = cargoPackage(crateDir, cargoTargetDir);
   validateCrateSize(cratePath);
   const output = path.join(outputDir, path.basename(cratePath));
@@ -128,6 +139,7 @@ export function packageSpec(
   assertReleaseNoticesInArchive(output, {
     prefix: `${spec.name}-${version}`,
     profile: noticeProfile,
+    sourceRoot: noticeSourceRoot,
   });
   return {
     name: spec.name,

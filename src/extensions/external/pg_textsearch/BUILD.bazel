@@ -1,0 +1,28 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/extensions:external.bzl", "native_external_extension_modules")
+load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "extension_identity", "extension_member_payload", "extension_member_validation_test")
+load("//build_defs/release:shipping.bzl", "shipping_package")
+load("//build_defs/extensions:native_carriers.bzl", "native_external_extension_carriers")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["upstream-license-data.json", "release.toml", "source.toml", "recipe.toml"])
+
+native_external_extension_carriers(sql_name = "pg_textsearch")
+
+native_external_extension_modules(name = "pg_textsearch")
+
+
+extension_member_payload(
+    name = "native_payload",
+    sql_name = "pg_textsearch",
+    owner = extension_identity("pg_textsearch"),
+    resources = ["@pg_textsearch//:sql_resources"],
+    server_module = ":pg_textsearch_server_module",
+    embedded_module = ":pg_textsearch_embedded_module",
+)
+
+shipping_package(name = "native_member", owner = extension_identity("pg_textsearch"), artifacts = [":native_payload"], ecosystem = "internal", package_name = "pg_textsearch", configuration = NATIVE_EXTENSION_CONFIGURATION, role = "extension-member")
+extension_member_validation_test(name = "native_payload_test", payload = ":native_payload", sql_name = "pg_textsearch")
+
+source_quality_files()

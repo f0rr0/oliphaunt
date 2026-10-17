@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import {
   catalogPath,
   contribPath,
@@ -22,10 +23,10 @@ const string = (value: unknown): value is string => typeof value === 'string' &&
 const list = (value: unknown): value is string[] => Array.isArray(value) && value.every(string);
 const id = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-z][a-z0-9_]*$/.test(value);
-const files = (pattern: string) =>
-  [...new Bun.Glob(pattern).scanSync({ cwd: '.', onlyFiles: true })].sort();
+const files = (pattern: string, root = '.') =>
+  [...new Bun.Glob(pattern).scanSync({ cwd: root, onlyFiles: true })].sort();
 
-export function sourceDigestInputs(): string[] {
+export function sourceDigestInputs(root = '.'): string[] {
   const envelope = new Set(['CHANGELOG.md', 'VERSION', 'moon.yml', 'release.toml']);
   return [
     'src/third-party/postgres/source.toml',
@@ -35,32 +36,42 @@ export function sourceDigestInputs(): string[] {
     catalogPath,
     'src/extensions/generated/contrib-build.tsv',
     'src/extensions/generated/pgxs-build.tsv',
-    ...files('src/third-party/{icu,openssl}/source.toml')
-      .concat(files('src/native/runtime/sources/*.toml'))
-      .concat(files('src/extensions/external/**/source.toml'))
+    ...files('src/third-party/{icu,openssl}/source.toml', root)
+      .concat(files('src/native/runtime/sources/*.toml', root))
+      .concat(files('src/extensions/external/**/source.toml', root))
       .concat('src/database-resources/icu/source.toml')
       .sort(),
-    ...files('src/extensions/external/**/*').filter(
+    ...files('src/extensions/external/**/*', root).filter(
       (file) =>
         !envelope.has(file.split('/').at(-1)!) &&
+        // This evidence tier covers legacy WASIX PGXS/target adapters. Native
+        // Bazel construction has separate proof; moving WASIX to that graph
+        // must explicitly revise its evidence inputs/tier before reuse.
+        !file.endsWith('/BUILD.bazel') &&
         !file.endsWith('/source.toml') &&
         !/\.test\.[cm]?ts$/.test(file),
     ),
     'src/test-fixtures/extensions/manifest.json',
-    ...files('src/test-fixtures/extensions/*.sql'),
+    ...files('src/test-fixtures/extensions/*.sql', root),
   ];
 }
 
 export function sourceDigest(
-  paths = sourceDigestInputs(),
+  paths: string[] | undefined = undefined,
   overrides = new Map<string, string>(),
+  root = '.',
 ): string {
   const digest = createHash('sha256');
-  for (const file of paths)
+  for (const file of paths ?? sourceDigestInputs(root))
     digest
       .update(file)
       .update('\0')
-      .update((overrides.get(file) ?? readFileSync(file, 'utf8')).replace(/\r\n?/g, '\n'))
+      .update(
+        (overrides.get(file) ?? readFileSync(path.join(root, file), 'utf8')).replace(
+          /\r\n?/g,
+          '\n',
+        ),
+      )
       .update('\0');
   return `sha256:${digest.digest('hex')}`;
 }

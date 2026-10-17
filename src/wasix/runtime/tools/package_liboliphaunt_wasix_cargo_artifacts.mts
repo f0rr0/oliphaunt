@@ -14,12 +14,6 @@ import fs, {
 } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  assertExtensionUpstreamLicensesInArchive,
-  assertExtensionUpstreamLicensesInDirectory,
-  extensionRegistryLicense,
-  stageExtensionUpstreamLicenses,
-} from '../../../extensions/tools/extension-upstream-licenses.mts';
 import { createDeterministicTar } from '../../../../tools/packaging/cargo-source-package.mts';
 import {
   portableMemberName,
@@ -48,8 +42,21 @@ import {
   extensionSqlNames,
 } from '../../../../tools/release/release-artifact-targets.mts';
 import { compareText } from '../../../../tools/release/release-graph.mts';
+import {
+  assertWasixExtensionArchiveInstall,
+  WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
+} from '../../../extensions/contracts/wasix-extension-install.mts';
+import {
+  assertExtensionUpstreamLicensesInArchive,
+  assertExtensionUpstreamLicensesInDirectory,
+  extensionRegistryLicense,
+  stageExtensionUpstreamLicenses,
+} from '../../../extensions/tools/extension-upstream-licenses.mts';
 import { assertWasixAotArtifactPayloads } from './check-release-assets.mts';
-import { assertCanonicalWasixAotManifest } from './wasix-aot-manifest.mts';
+import {
+  assertCanonicalWasixAotManifest,
+  canonicalWasixAotMetadata,
+} from './wasix-aot-manifest.mts';
 import {
   AOT_PACKAGES,
   AOT_TARGET_CFGS,
@@ -239,11 +246,12 @@ function readJson(file) {
   }
 }
 
-function validateCanonicalAotManifest(manifest, manifestPath, expectedTarget) {
+function validateCanonicalAotManifest(manifest, manifestPath, expectedTarget, sourceRoot = ROOT) {
   try {
     assertCanonicalWasixAotManifest(manifest, {
       context: rel(manifestPath),
       expectedTarget,
+      canonical: canonicalWasixAotMetadata(sourceRoot),
     });
   } catch (error) {
     fail(error.message);
@@ -421,10 +429,10 @@ function runtimeCorePayload(runtimeRoot, extractRoot) {
   return coreRoot;
 }
 
-export function validateAotPayload(root, expectedTarget) {
+export function validateAotPayload(root, expectedTarget, { sourceRoot = ROOT } = {}) {
   const manifestPath = path.join(root, 'manifest.json');
   const manifest = readJson(manifestPath);
-  validateCanonicalAotManifest(manifest, manifestPath, expectedTarget);
+  validateCanonicalAotManifest(manifest, manifestPath, expectedTarget, sourceRoot);
   let artifactRows;
   try {
     artifactRows = assertWasixAotArtifactPayloads(manifest, {
@@ -444,7 +452,7 @@ export function validateAotPayload(root, expectedTarget) {
   }
   const expected = new Set([
     'manifest.json',
-    ...releaseNoticeRows({ profile: 'wasix-aot' }).map((row) => row.member),
+    ...releaseNoticeRows({ profile: 'wasix-aot', sourceRoot }).map((row) => row.member),
   ]);
   for (const row of artifactRows) {
     if (row.name.startsWith('extension:')) {
@@ -452,7 +460,7 @@ export function validateAotPayload(root, expectedTarget) {
     }
     expected.add(row.path);
   }
-  assertReleaseNoticesInDirectory(root, { profile: 'wasix-aot' });
+  assertReleaseNoticesInDirectory(root, { profile: 'wasix-aot', sourceRoot });
   const actual = new Set(payloadFiles(root).map((file) => relPath(root, file)));
   if (!sameSet(actual, expected)) {
     fail(
@@ -461,8 +469,8 @@ export function validateAotPayload(root, expectedTarget) {
   }
 }
 
-export function validateRuntimeAotPayload(root, expectedTarget) {
-  validateAotPayload(root, expectedTarget);
+export function validateRuntimeAotPayload(root, expectedTarget, options = {}) {
+  validateAotPayload(root, expectedTarget, options);
   const manifestPath = path.join(root, 'manifest.json');
   assertCoreRuntimeAotArtifacts(readJson(manifestPath), rel(manifestPath));
 }
@@ -1542,6 +1550,168 @@ function packageExtensionSource(source, { outputDir, cargoTargetDir }) {
     versioning: source.spec.versioning,
     dependencyRequirement: source.spec.dependencyRequirement,
   });
+  return packages;
+}
+
+/** Package one declared SQL-only leaf without rediscovering workspace release owners. */
+export function packageSqlOnlyWasixExtensionCargo(
+  spec: {
+    product: string;
+    version: string;
+    runtimeProduct: string;
+    runtimeVersion: string;
+    member: {
+      sqlName: string;
+      dependencies: string[];
+      archive: string;
+      sha256: string;
+      size: number;
+      install: Record<string, unknown>;
+    };
+  },
+  { outputDir, workDir }: { outputDir: string; workDir: string },
+) {
+  const { member } = spec;
+  if (spec.product !== `oliphaunt-extension-${member.sqlName}`) {
+    fail('SQL-only WASIX Cargo leaf must bind its external member to its release owner');
+  }
+  if (spec.runtimeProduct !== PRODUCT)
+    fail('SQL-only WASIX Cargo leaf has the wrong runtime owner');
+  extensionDependencyRequirement(spec.runtimeVersion, 'runtime-bound');
+  const { install } = assertWasixExtensionArchiveInstall(readFileSync(member.archive), {
+    schema: WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
+    sqlName: member.sqlName,
+    archive: `extensions/${member.sqlName}.tar.zst`,
+    sha256: member.sha256,
+    size: member.size,
+    install: member.install,
+  });
+  if (
+    install.nativeModule !== null ||
+    install.nativeModules.length !== 0 ||
+    install.coreExportsRequired.length !== 0 ||
+    install.unresolvedImports.length !== 0
+  ) {
+    fail('SQL-only WASIX Cargo leaf cannot package a compiled member without its AOT closure');
+  }
+  if (member.size > DEFAULT_EXTENSION_PART_BYTES) {
+    fail('SQL-only WASIX Cargo leaf exceeds the declared single-crate payload boundary');
+  }
+  const sourceRoot = path.join(workDir, 'cargo-package-sources');
+  mkdirSync(sourceRoot, { recursive: true });
+  mkdirSync(outputDir, { recursive: true });
+  const source = writeExtensionCargoSource(
+    {
+      ...spec,
+      name: wasixExtensionPackageName(spec.product),
+      members: [{ ...member, nativeModuleStem: null, requiresAot: false }],
+      versioning: 'upstream-bound',
+      dependencyRequirement: extensionDependencyRequirement(spec.version, 'upstream-bound'),
+      aotTargets: [],
+    },
+    sourceRoot,
+    DEFAULT_EXTENSION_PART_BYTES,
+  );
+  return packageExtensionSource(source, {
+    outputDir,
+    cargoTargetDir: path.join(workDir, 'cargo-package-target'),
+  });
+}
+
+/** Package a declared owner and complete AOT cohort without checkout discovery. */
+export function packageDeclaredWasixExtensionCargo(
+  spec: {
+    product: string;
+    version: string;
+    runtimeProduct: string;
+    runtimeVersion: string;
+    versioning: 'upstream-bound' | 'runtime-bound';
+    extensionRoot: string;
+    members: {
+      sqlName: string;
+      dependencies: string[];
+      nativeModuleStem: string | null;
+      archive: string;
+      sha256: string;
+      size: number;
+      install: Record<string, unknown>;
+    }[];
+  },
+  { outputDir, workDir }: { outputDir: string; workDir: string },
+) {
+  if (spec.runtimeProduct !== PRODUCT) fail('declared WASIX extension has the wrong runtime owner');
+  extensionDependencyRequirement(spec.runtimeVersion, 'runtime-bound');
+  const contrib = spec.product === 'oliphaunt-extension-contrib-pg18';
+  if (
+    !spec.members.length ||
+    new Set(spec.members.map((member) => member.sqlName)).size !== spec.members.length
+  )
+    fail('declared WASIX extension requires unique SQL members');
+  if (
+    contrib
+      ? spec.versioning !== 'runtime-bound' || spec.version !== spec.runtimeVersion
+      : spec.members.length !== 1 ||
+        spec.product !== `oliphaunt-extension-${spec.members[0].sqlName.replaceAll('_', '-')}` ||
+        spec.versioning !== 'upstream-bound'
+  )
+    fail('declared WASIX extension differs from its release owner or versioning');
+  const members = spec.members.map((member) => {
+    const { install } = assertWasixExtensionArchiveInstall(readFileSync(member.archive), {
+      schema: WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
+      sqlName: member.sqlName,
+      archive: `extensions/${member.sqlName}.tar.zst`,
+      sha256: member.sha256,
+      size: member.size,
+      install: member.install,
+    });
+    const requiresAot = install.nativeModule !== null;
+    if (requiresAot !== Boolean(member.nativeModuleStem) || install.unresolvedImports.length)
+      fail('declared WASIX member has inconsistent modules or unresolved imports');
+    return { ...member, requiresAot };
+  });
+  const declared = {
+    ...spec,
+    name: wasixExtensionPackageName(spec.product),
+    members,
+    dependencyRequirement: extensionDependencyRequirement(spec.version, spec.versioning),
+  };
+  const aotTargets = extensionAotSpecs(spec.extensionRoot, declared);
+  validateExtensionAotCoverage([{ ...declared, aotTargets }]);
+  for (const target of aotTargets)
+    for (const member of target.members) {
+      const portable = members.find((row) => row.sqlName === member.sqlName)!;
+      const manifest = readJson(path.join(member.sourceDir, 'manifest.json'));
+      const expected = new Map(
+        (portable.install.nativeModules as { name: string; moduleSha256: string }[]).map((row) => [
+          `extension:${member.sqlName}${row.name === member.sqlName ? '' : `:${row.name}`}`,
+          row.moduleSha256,
+        ]),
+      );
+      if (
+        manifest.artifacts.length !== expected.size ||
+        manifest.artifacts.some((row) => expected.get(row.name) !== row['module-sha256'])
+      )
+        fail('declared WASIX AOT cohort differs from its exact portable module identities');
+    }
+  const sourceRoot = path.join(workDir, 'cargo-package-sources');
+  const cargoTargetDir = path.join(workDir, 'cargo-package-target');
+  mkdirSync(sourceRoot, { recursive: true });
+  mkdirSync(outputDir, { recursive: true });
+  const source = writeExtensionCargoSource(
+    { ...declared, aotTargets },
+    sourceRoot,
+    DEFAULT_EXTENSION_PART_BYTES,
+  );
+  const packages = [
+    ...packageExtensionSource(source, { outputDir, cargoTargetDir }),
+    ...aotTargets.flatMap((target) =>
+      packageExtensionAotSource(
+        writeExtensionAotCargoSource(target, sourceRoot, DEFAULT_EXTENSION_PART_BYTES),
+        { outputDir, cargoTargetDir },
+      ),
+    ),
+  ];
+  writePackagesManifest(packages, outputDir);
   return packages;
 }
 

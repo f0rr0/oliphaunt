@@ -5,7 +5,6 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
-  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -109,11 +108,14 @@ function exactFiles(directory, expected, label) {
   return names;
 }
 
-async function writeCompanionJar(stageRoot, row, classifier) {
+async function writeCompanionJar(stageRoot, row, classifier, noticeSourceRoot) {
   const coordinate = `${row.groupId}:${row.artifactId}:${row.version}`;
   const root = path.join(stageRoot, `${classifier}-stage`);
   mkdirSync(path.join(root, 'META-INF'), { recursive: true });
-  stageReleaseNotices(path.join(root, 'META-INF'), { profile: 'source-sdk' });
+  stageReleaseNotices(path.join(root, 'META-INF'), {
+    profile: 'source-sdk',
+    sourceRoot: noticeSourceRoot,
+  });
   writeFileSync(path.join(root, 'META-INF/MANIFEST.MF'), MANIFEST, { mode: 0o644 });
   if (classifier === 'sources') {
     writeFileSync(
@@ -135,7 +137,7 @@ async function writeCompanionJar(stageRoot, row, classifier) {
  * Materialize the immutable, unsigned Maven Central input closure without
  * Gradle, Java, registry access, credentials, or dependency resolution.
  */
-export async function stageMavenArtifactManifest(manifest, outputRoot) {
+export async function stageMavenArtifactManifest(manifest, outputRoot, { noticeSourceRoot } = {}) {
   const rows = parseMavenArtifactManifest(path.resolve(manifest));
   const destination = path.resolve(outputRoot);
   const stage = createSiblingStage(destination, 'maven-artifacts');
@@ -153,12 +155,20 @@ export async function stageMavenArtifactManifest(manifest, outputRoot) {
       chmodSync(primary, 0o644);
       writeFileSync(pom, renderMavenArtifactPom(row), { mode: 0o644 });
       const companionRoot = path.join(stage, '.companion-stage', row.artifactId, row.version);
-      writeFileSync(sources, await writeCompanionJar(companionRoot, row, 'sources'), {
-        mode: 0o644,
-      });
-      writeFileSync(javadoc, await writeCompanionJar(companionRoot, row, 'javadoc'), {
-        mode: 0o644,
-      });
+      writeFileSync(
+        sources,
+        await writeCompanionJar(companionRoot, row, 'sources', noticeSourceRoot),
+        {
+          mode: 0o644,
+        },
+      );
+      writeFileSync(
+        javadoc,
+        await writeCompanionJar(companionRoot, row, 'javadoc', noticeSourceRoot),
+        {
+          mode: 0o644,
+        },
+      );
       rmSync(companionRoot, { recursive: true, force: true });
       const files = exactFiles(
         directory,
