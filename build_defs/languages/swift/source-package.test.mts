@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   mkdirSync,
@@ -355,3 +356,110 @@ test('final source envelope preserves held native version, exact source-tag path
     rmSync(scratch, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  'installed Swift consumer supplies captured signing tools to both SwiftPM phases',
+  async () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), 'swift-consumer-signing-'));
+    try {
+      const spec = await fixture(path.join(scratch, 'inputs'));
+      const nativeTests = path.join(scratch, 'NativeRuntimeTests.swift');
+      writeFileSync(nativeTests, 'import Testing\n');
+      spec.sources['Tests/OliphauntTests/NativeRuntimeTests.swift'] = nativeTests;
+      const packaged = path.join(scratch, 'packaged');
+      await packageSwiftSource(packaged, spec);
+      const sdk = path.join(scratch, 'declared-sdk');
+      const bin = path.join(sdk, 'toolchain/bin');
+      const tools = path.join(sdk, 'tools');
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(tools);
+      for (const name of ['codesign', 'codesign_allocate'])
+        symlinkSync(process.execPath, path.join(tools, name));
+      const sdkFile = path.join(sdk, 'sdk_macosx/usr/include/fixture.h');
+      mkdirSync(path.dirname(sdkFile), { recursive: true });
+      writeFileSync(sdkFile, '// declared SDK fixture\n');
+      const receipt = path.join(sdk, 'receipt.json');
+      writeFileSync(
+        receipt,
+        JSON.stringify({
+          developerDirectory: '/declared/developer',
+          deploymentTargets: { package_macos: '13.0' },
+        }),
+      );
+      const trace = path.join(scratch, 'swiftpm-phases');
+      const executable = path.join(bin, 'swift');
+      // These tool fixtures exercise the real consumer runner and child PATH;
+      // they are not Swift compilation or macOS signing evidence.
+      writeFileSync(
+        executable,
+        '#!' +
+          process.execPath +
+          '\n' +
+          `
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+const args = process.argv.slice(2);
+const signing = spawnSync('codesign', ['--version'], { env: process.env, encoding: 'utf8' });
+assert.equal(signing.error, undefined, 'captured codesign must resolve from the consumer PATH');
+assert.equal(signing.status, 0);
+assert.equal(process.env.CODESIGN_ALLOCATE, ${JSON.stringify(path.join(tools, 'codesign_allocate'))});
+assert.equal(spawnSync(process.env.CODESIGN_ALLOCATE, ['--version'], { env: process.env }).status, 0);
+assert.equal(process.env.SWIFTPM_CUSTOM_BIN_DIR, ${JSON.stringify(bin)});
+appendFileSync(${JSON.stringify(trace)}, args[0] + '\\n');
+if (args[0] === 'build') {
+  const build = args[args.indexOf('--scratch-path') + 1];
+  mkdirSync(path.join(build, 'debug'), { recursive: true });
+  writeFileSync(path.join(build, 'debug/InstalledConsumer'), ${JSON.stringify('#!' + process.execPath + '\nconsole.log("installed-swift-" + process.argv[2] + "-42");\n')}, { mode: 0o755 });
+} else {
+  assert.equal(args[0], 'test');
+  assert(args.includes('--disable-xctest'));
+  console.log('Test run with 1 test passed');
+}
+`,
+        { mode: 0o755 },
+      );
+      const preload = path.join(scratch, 'darwin-fixture.mts');
+      writeFileSync(
+        preload,
+        "Object.defineProperty(process, 'platform', { value: 'darwin' });\nObject.defineProperty(process, 'arch', { value: 'arm64' });\n",
+      );
+      const runRoot = path.join(scratch, 'test-root');
+      mkdirSync(runRoot);
+      const sourceTree = path.join(packaged, 'release-tree');
+      const result = spawnSync(
+        process.execPath,
+        [
+          '--no-install',
+          '--no-env-file',
+          '--preload',
+          preload,
+          path.join(import.meta.dir, 'consumer-test.mts'),
+          path.join(packaged, 'Oliphaunt-source.zip'),
+          spec.xcframework,
+          spec.bindingsArchive,
+          nativeTests,
+          executable,
+          path.join(bin, 'swiftc'),
+          path.join(bin, 'clang'),
+          path.join(bin, 'clang++'),
+          sdkFile,
+          receipt,
+          'arm64-apple-macosx13.0',
+          sourceTree,
+          sourceTree,
+        ],
+        { env: { TEST_TMPDIR: runRoot }, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(trace, 'utf8')).toBe('build\ntest\n');
+      const proof = JSON.parse(
+        readFileSync(path.join(runRoot, 'swift-consumer-receipt.json'), 'utf8'),
+      );
+      expect(proof.cases).toEqual(['create-query-42', 'reopen-query-42', 'native-runtime-suite']);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);

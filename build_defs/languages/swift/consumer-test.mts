@@ -100,10 +100,13 @@ import PackageDescription
 let package = Package(name: "InstalledConsumer", platforms: [.macOS("${facts.deploymentTargets.package_macos}")], dependencies: [.package(name: "OliphauntSDK", path: "../package")], targets: [.executableTarget(name: "InstalledConsumer", dependencies: [${['COliphaunt', 'Oliphaunt', 'OliphauntCore', 'OliphauntBroker', 'OliphauntBrokerExtension', 'OliphauntExtensionSupport'].map((product) => `.product(name: "${product}", package: "OliphauntSDK")`).join(', ')}]), .testTarget(name: "NativeRuntimeTests", dependencies: [.product(name: "Oliphaunt", package: "OliphauntSDK"), .product(name: "OliphauntCore", package: "OliphauntSDK")])])
 `,
 );
+const signingTools = path.join(path.dirname(receipt), 'tools');
 const environment = {
   HOME: home,
   TMPDIR: root,
-  PATH: path.dirname(swift),
+  PATH: [path.dirname(swift), signingTools].join(path.delimiter),
+  CODESIGN_ALLOCATE: path.join(signingTools, 'codesign_allocate'),
+  SWIFTPM_CUSTOM_BIN_DIR: path.dirname(swift),
   DEVELOPER_DIR: facts.developerDirectory,
   SDKROOT: sdk,
   SWIFT_EXEC: swiftc,
@@ -167,11 +170,15 @@ for (const phase of ['create', 'reopen']) {
   assert.equal(run.status, 0, `Installed Swift ${phase} failed: ${run.stderr}`);
   assert.equal(run.stdout.trim(), `installed-swift-${phase}-42`);
 }
-const native = spawnSync(swift, ['test', ...swiftOptions, '--filter', 'NativeRuntimeTests'], {
-  env: { ...environment, OLIPHAUNT_SWIFT_REQUIRE_NATIVE: '1' },
-  encoding: 'utf8',
-  maxBuffer: 32 * 1024 * 1024,
-});
+const native = spawnSync(
+  swift,
+  ['test', ...swiftOptions, '--disable-xctest', '--filter', 'NativeRuntimeTests'],
+  {
+    env: { ...environment, OLIPHAUNT_SWIFT_REQUIRE_NATIVE: '1' },
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+  },
+);
 assert.equal(native.error, undefined, String(native.error));
 const nativeOutput = `${native.stdout}\n${native.stderr}`;
 assert.equal(native.status, 0, `Installed Swift native suite failed:\n${nativeOutput}`);

@@ -26,7 +26,7 @@ def _consumer_impl(ctx):
         fail("Installed Swift consumer requires one exact host SDK receipt")
     inputs = [ctx.file.archive, framework, ctx.file.bindings, ctx.file.consumer]
     arguments = inputs + selected + [sdk_files[0], receipts[0], "arm64-apple-macosx%s" % APPLE_DEPLOYMENT_TARGETS["package_macos"], ctx.file.source_tree, ctx.file.source_tree.path]
-    inputs.append(ctx.file.source_tree)
+    inputs.extend([ctx.file.source_tree, ctx.file._codesign, ctx.file._codesign_allocate])
     return bun_test_entrypoint(ctx, ctx.file._runner, arguments, tools + inputs + ctx.files._helpers, source_files = [ctx.file._runner] + ctx.files._helpers)
 
 _swift_package_consumer_test = rule(
@@ -39,6 +39,8 @@ _swift_package_consumer_test = rule(
         "native_base": attr.label(default = Label("//src/native/sdks/swift:source_package_native_requirement"), providers = [NativeAppleBaseInfo]),
         "bindings": attr.label(mandatory = True, allow_single_file = [".zip"]),
         "consumer": attr.label(mandatory = True, allow_single_file = [".swift"]),
+        "_codesign": attr.label(default = Label("@native_apple_sdk//:tools/codesign"), allow_single_file = True),
+        "_codesign_allocate": attr.label(default = Label("@native_apple_sdk//:tools/codesign_allocate"), allow_single_file = True),
         "_runner": attr.label(default = Label("//build_defs/languages/swift:consumer-test.mts"), allow_single_file = True),
         "_helpers": attr.label_list(default = [Label(value) for value in [
             "//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts",

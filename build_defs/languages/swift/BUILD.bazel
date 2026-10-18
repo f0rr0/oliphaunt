@@ -26,6 +26,9 @@ bun_test(
     entry_point = "source-package.test.mts",
     data = [
         "source-package.fixture.mts",
+        "consumer-test.mts",
+        "//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts",
+        "//build_defs/native/apple:swift-candidate-contract.mts",
         "source-package.mts",
         "source-delivery-contract.mts",
         "//build_defs/native/carriers:payload.mts",
