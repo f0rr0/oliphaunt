@@ -33,6 +33,8 @@ export type JsiRawProtocolTransport = {
   readonly restore: (
     destination: {
       startupTimeoutMs?: number;
+      recoveryTimeoutMs?: number;
+      shutdownTimeoutMs?: number;
       operationTimeoutMs?: number;
       storageKind: 'directory' | 'applicationData';
       storagePath?: string;

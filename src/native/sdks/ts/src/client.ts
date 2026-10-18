@@ -1,3 +1,4 @@
+import { normalizeRuntimeTimeouts } from '@oliphaunt/ts-query/internal/resource-options';
 import {
   OperationBudget,
   TRANSACTION_BEGIN_REQUEST_BYTES,
@@ -1325,6 +1326,8 @@ export function createOliphauntClient(
 function snapshotOpenConfig(config: OpenConfig) {
   const topology = normalizeDatabaseTopology(config.topology);
   validateNativeStartupGUCs(topology, config.startupGUCs ?? {});
+  if (topology === 'direct' && config.timeouts !== undefined)
+    throw new TypeError('timeouts require broker or server placement');
   return {
     ...snapshotCommonOpenConfig(config),
     admission: normalizeAdmissionLimits(config.admission),
@@ -1332,6 +1335,7 @@ function snapshotOpenConfig(config: OpenConfig) {
     libraryPath: validateOptionalPathOverride(config.libraryPath, 'libraryPath'),
     brokerExecutable: validateOptionalPathOverride(config.brokerExecutable, 'brokerExecutable'),
     broker: normalizeBrokerOptions(config.broker, topology),
+    timeouts: normalizeRuntimeTimeouts(config.timeouts),
   };
 }
 
@@ -1370,6 +1374,7 @@ function snapshotServerOpenConfig(config: ServerOpenConfig) {
   return {
     ...snapshotCommonOpenConfig(config),
     topology: 'server' as const,
+    timeouts: normalizeRuntimeTimeouts(config.timeouts),
     serverExecutable: validateOptionalPathOverride(config.serverExecutable, 'serverExecutable'),
     listen: snapshotServerListen(config.listen),
   };

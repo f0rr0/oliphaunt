@@ -3,8 +3,6 @@ use std::time::Duration;
 
 use crate::{Error, Result};
 
-pub(super) const SETTLEMENT: Duration = Duration::from_secs(3);
-
 #[derive(Clone, Copy)]
 pub(super) enum Expiry {
     Cancel,

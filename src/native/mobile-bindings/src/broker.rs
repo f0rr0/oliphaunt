@@ -59,6 +59,27 @@ fn epoch(bytes: Vec<u8>) -> Result<Epoch, NativeError> {
     })
 }
 
+#[derive(uniffi::Record)]
+pub struct BrokerTimeoutOptions {
+    pub recovery_timeout_ms: u64,
+    pub shutdown_timeout_ms: u64,
+}
+
+impl BrokerTimeoutOptions {
+    fn native(self) -> Result<broker::BrokerTimeouts, NativeError> {
+        let timeouts = broker::BrokerTimeouts {
+            recovery_timeout: Duration::from_millis(self.recovery_timeout_ms),
+            shutdown_timeout: Duration::from_millis(self.shutdown_timeout_ms),
+        };
+        timeouts
+            .validate()
+            .map_err(|message| NativeError::Database {
+                detail: message.into(),
+            })?;
+        Ok(timeouts)
+    }
+}
+
 #[uniffi::export]
 impl NativeDatabase {
     /// The adapter retains its descriptor through this call; Rust duplicates it.
@@ -68,6 +89,7 @@ impl NativeDatabase {
         generation: Vec<u8>,
         control: Box<dyn BrokerControl>,
         operation_timeout_ms: Option<u64>,
+        timeouts: BrokerTimeoutOptions,
     ) -> Result<Arc<Self>, NativeError> {
         let socket = broker::duplicate_socket(fd)?;
         let (database, connection) = broker::connect(
@@ -75,6 +97,7 @@ impl NativeDatabase {
             epoch(generation)?,
             Arc::new(Control(control)),
             operation_timeout_ms.map(Duration::from_millis),
+            timeouts.native()?,
         )
         .await?;
         Ok(Arc::new(Self {
@@ -128,6 +151,7 @@ impl NativeBrokerWorker {
         fd: i32,
         retirement: Box<dyn BrokerRetirement>,
         startup_timeout_ms: u64,
+        timeouts: BrokerTimeoutOptions,
     ) -> Result<Arc<Self>, NativeError> {
         let socket = broker::duplicate_socket(fd)?;
         Ok(Arc::new(Self {
@@ -135,6 +159,7 @@ impl NativeBrokerWorker {
                 socket,
                 Arc::new(Retirement(retirement)),
                 Duration::from_millis(startup_timeout_ms),
+                timeouts.native()?,
             )?,
         }))
     }
@@ -198,6 +223,7 @@ pub async fn broker_restore(
     generation: Vec<u8>,
     control: Box<dyn BrokerControl>,
     operation_timeout_ms: Option<u64>,
+    timeouts: BrokerTimeoutOptions,
     source_fd: i32,
 ) -> Result<(), NativeError> {
     let socket = broker::duplicate_socket(fd)?;
@@ -207,6 +233,7 @@ pub async fn broker_restore(
         epoch(generation)?,
         Arc::new(Control(control)),
         operation_timeout_ms.map(Duration::from_millis),
+        timeouts.native()?,
         source,
     )
     .await?)

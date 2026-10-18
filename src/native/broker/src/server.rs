@@ -22,6 +22,26 @@ use crate::{BrokerArgs, BrokerListener};
 pub(super) struct Socket {
     inner: SocketStream,
     deadline: Option<Instant>,
+    handshake: Option<PendingHandshake>,
+}
+
+struct PendingHandshake(Arc<AtomicUsize>);
+
+impl PendingHandshake {
+    fn acquire(count: &Arc<AtomicUsize>, limit: usize) -> Option<Self> {
+        count
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                (value < limit).then_some(value + 1)
+            })
+            .ok()
+            .map(|_| Self(Arc::clone(count)))
+    }
+}
+
+impl Drop for PendingHandshake {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 enum SocketStream {
@@ -45,6 +65,7 @@ impl Socket {
         Self {
             inner: SocketStream::Tcp(stream),
             deadline: None,
+            handshake: None,
         }
     }
 
@@ -53,6 +74,7 @@ impl Socket {
         Self {
             inner: SocketStream::Unix(stream),
             deadline: None,
+            handshake: None,
         }
     }
 
@@ -65,6 +87,7 @@ impl Socket {
         Ok(Self {
             inner,
             deadline: self.deadline,
+            handshake: None,
         })
     }
     fn shutdown(&self) {
@@ -81,6 +104,7 @@ impl Socket {
         if deadline.is_none() {
             self.read_timeout(None)?;
             self.write_timeout(None)?;
+            self.handshake.take();
         }
         self.deadline = deadline;
         Ok(())
@@ -154,7 +178,7 @@ struct Shared {
     stopping: AtomicBool,
     occupied: AtomicBool,
     owner_connected: AtomicBool,
-    connection_count: AtomicUsize,
+    recovery_timeout: Duration,
     active: Mutex<Option<(Socket, [u8; 8])>>,
     password: String,
     username: String,
@@ -198,7 +222,7 @@ pub(super) fn serve(args: BrokerArgs) -> io::Result<()> {
         stopping: AtomicBool::new(false),
         occupied: AtomicBool::new(false),
         owner_connected: AtomicBool::new(false),
-        connection_count: AtomicUsize::new(0),
+        recovery_timeout: args.recovery_timeout,
         active: Mutex::new(None),
         password: args.auth_token,
         username: args.username,
@@ -214,16 +238,25 @@ pub(super) fn serve(args: BrokerArgs) -> io::Result<()> {
         control.ready_endpoint()
     );
     io::stdout().flush()?;
+    let sql_handshakes = Arc::new(AtomicUsize::new(0));
+    let control_handshakes = Arc::new(AtomicUsize::new(0));
     while !shared.stopping.load(Ordering::Acquire) {
         for (listener, management) in [(&control, true), (&sql, false)] {
             match listener.accept() {
                 Ok(mut socket) => {
                     socket.set_deadline(Some(Instant::now() + args.handshake_timeout))?;
-                    if shared.connection_count.fetch_add(1, Ordering::AcqRel) >= 16 {
-                        shared.connection_count.fetch_sub(1, Ordering::AcqRel);
+                    let count = if management {
+                        &control_handshakes
+                    } else {
+                        &sql_handshakes
+                    };
+                    let Some(permit) =
+                        PendingHandshake::acquire(count, args.max_pending_handshakes)
+                    else {
                         socket.shutdown();
                         continue;
-                    }
+                    };
+                    socket.handshake = Some(permit);
                     let state = Arc::clone(&shared);
                     thread::Builder::new()
                         .name("oliphaunt-broker-client".into())
@@ -244,7 +277,6 @@ pub(super) fn serve(args: BrokerArgs) -> io::Result<()> {
                             {
                                 eprintln!("OLIPHAUNT_BROKER_CLIENT_ERROR {error}");
                             }
-                            state.connection_count.fetch_sub(1, Ordering::AcqRel);
                         })?;
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
@@ -700,7 +732,7 @@ fn exchange(socket: &mut Socket, shared: &Shared) -> io::Result<()> {
         cancel_execution(shared);
         socket.shutdown();
         if matches!(
-            done.recv_timeout(Duration::from_secs(3)),
+            done.recv_timeout(shared.recovery_timeout),
             Err(mpsc::RecvTimeoutError::Timeout)
         ) {
             // A disconnected peer can abandon Parse/Flush or COPY before its

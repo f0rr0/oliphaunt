@@ -60,6 +60,27 @@ fn retain_addon_image_for_process_runtime() {
     napi::bindgen_prelude::retain_current_module_for_unload_safety();
 }
 
+/// Process-wide executor and file-helper configuration; select before first use.
+#[napi(object)]
+pub struct NativeHostRuntimeOptions {
+    pub async_worker_threads: Option<u32>,
+    pub max_blocking_threads: Option<u32>,
+    pub max_dedicated_threads: Option<u32>,
+    pub max_concurrent_io: Option<u32>,
+}
+
+#[napi(catch_unwind)]
+pub fn configure_host_runtime(options: NativeHostRuntimeOptions) -> Result<()> {
+    retain_addon_image_for_process_runtime();
+    oliphaunt_wasix::configure_host_runtime(oliphaunt_wasix::HostRuntimeOptions {
+        async_worker_threads: options.async_worker_threads.map(|count| count as usize),
+        max_blocking_threads: options.max_blocking_threads.map(|count| count as usize),
+        max_dedicated_threads: options.max_dedicated_threads.map(|count| count as usize),
+        max_concurrent_io: options.max_concurrent_io.map(|count| count as usize),
+    })
+    .map_err(|error| invalid_argument(error.to_string()))
+}
+
 #[napi(object)]
 pub struct NativeStorageOptions {
     pub kind: String,
@@ -176,7 +197,8 @@ pub struct NativeToolSummary {
 }
 
 #[napi(object)]
-pub struct NativeToolAssets {
+pub struct NativeToolInput {
+    pub startup_timeout_ms: Option<u32>,
     pub wasm: Uint8Array,
     pub aot: Uint8Array,
     pub manifest: String,
@@ -184,7 +206,7 @@ pub struct NativeToolAssets {
 
 #[cfg(feature = "tools")]
 #[allow(unsafe_code)]
-fn tool_assets(assets: NativeToolAssets) -> ToolAssets {
+fn tool_assets(assets: NativeToolInput) -> ToolAssets {
     // SAFETY: this API loads the caller's trusted native-code tool package.
     // Rust validates its target, source identity and all content hashes before
     // deserializing. Own both buffers before any asynchronous execution.
@@ -406,12 +428,12 @@ impl NativeWasixDatabase {
         &mut self,
         env: Env,
         args: Vec<String>,
-        assets: NativeToolAssets,
+        assets: NativeToolInput,
     ) -> Result<NativeToolResult> {
         #[cfg(feature = "tools")]
         {
             let output = self.invoke_core(&env, "run WASIX pg_dump", |database| {
-                database.pg_dump_output(PgDumpOptions::new().args(args).assets(tool_assets(assets)))
+                database.pg_dump_output(pg_dump_options(args, assets))
             })?;
             native_tool_result(&env, "run WASIX pg_dump", output)
         }
@@ -427,7 +449,7 @@ impl NativeWasixDatabase {
         &mut self,
         env: Env,
         args: Vec<String>,
-        assets: NativeToolAssets,
+        assets: NativeToolInput,
         command: Option<String>,
         script: Option<String>,
     ) -> Result<NativeToolResult> {
@@ -438,7 +460,7 @@ impl NativeWasixDatabase {
         }
         #[cfg(feature = "tools")]
         {
-            let options = psql_options(args, command, script).assets(tool_assets(assets));
+            let options = psql_options(args, command, script, assets);
             let output = self.invoke_core(&env, "run WASIX psql", |database| {
                 database.psql_output(options)
             })?;
@@ -456,12 +478,12 @@ impl NativeWasixDatabase {
         &mut self,
         env: Env,
         args: Vec<String>,
-        assets: NativeToolAssets,
+        assets: NativeToolInput,
         destination: String,
     ) -> Result<NativeToolSummary> {
         #[cfg(feature = "tools")]
         {
-            let options = PgDumpOptions::new().args(args).assets(tool_assets(assets));
+            let options = pg_dump_options(args, assets);
             let output = self.invoke_core(&env, "write WASIX pg_dump file", |database| {
                 database.pg_dump_to_file(options, destination, None)
             })?;
@@ -479,7 +501,7 @@ impl NativeWasixDatabase {
         &mut self,
         env: Env,
         args: Vec<String>,
-        assets: NativeToolAssets,
+        assets: NativeToolInput,
         destination: String,
         command: Option<String>,
         script: Option<String>,
@@ -491,7 +513,7 @@ impl NativeWasixDatabase {
         }
         #[cfg(feature = "tools")]
         {
-            let options = psql_options(args, command, script).assets(tool_assets(assets));
+            let options = psql_options(args, command, script, assets);
             let output = self.invoke_core(&env, "write WASIX psql file", |database| {
                 database.psql_to_file(options, destination, None)
             })?;
@@ -509,13 +531,13 @@ impl NativeWasixDatabase {
         &mut self,
         env: Env,
         args: Vec<String>,
-        assets: NativeToolAssets,
+        assets: NativeToolInput,
         registration: u32,
     ) -> Result<NativeToolSummary> {
         #[cfg(feature = "tools")]
         {
             let writers = take_tool_output(registration)?;
-            let options = PgDumpOptions::new().args(args).assets(tool_assets(assets));
+            let options = pg_dump_options(args, assets);
             let output = self.invoke_core(&env, "stream WASIX pg_dump", |database| {
                 database.pg_dump_to_writer(options, writers.stdout, writers.stderr)
             })?;
@@ -533,7 +555,7 @@ impl NativeWasixDatabase {
         &mut self,
         env: Env,
         args: Vec<String>,
-        assets: NativeToolAssets,
+        assets: NativeToolInput,
         registration: u32,
         command: Option<String>,
         script: Option<String>,
@@ -546,7 +568,7 @@ impl NativeWasixDatabase {
         #[cfg(feature = "tools")]
         {
             let writers = take_tool_output(registration)?;
-            let options = psql_options(args, command, script).assets(tool_assets(assets));
+            let options = psql_options(args, command, script, assets);
             let output = self.invoke_core(&env, "stream WASIX psql", |database| {
                 database.psql_to_writer(options, writers.stdout, writers.stderr)
             })?;
@@ -1314,9 +1336,33 @@ fn apply_server_extensions(
     }
 }
 
+#[napi]
+pub fn tool_options_version() -> u32 {
+    1
+}
+
 #[cfg(feature = "tools")]
-fn psql_options(args: Vec<String>, command: Option<String>, script: Option<String>) -> PsqlOptions {
-    let mut options = PsqlOptions::new().args(args);
+fn pg_dump_options(args: Vec<String>, input: NativeToolInput) -> PgDumpOptions {
+    let timeout = input.startup_timeout_ms;
+    let mut options = PgDumpOptions::new().args(args).assets(tool_assets(input));
+    if let Some(millis) = timeout {
+        options = options.startup_timeout(std::time::Duration::from_millis(u64::from(millis)));
+    }
+    options
+}
+
+#[cfg(feature = "tools")]
+fn psql_options(
+    args: Vec<String>,
+    command: Option<String>,
+    script: Option<String>,
+    input: NativeToolInput,
+) -> PsqlOptions {
+    let timeout = input.startup_timeout_ms;
+    let mut options = PsqlOptions::new().args(args).assets(tool_assets(input));
+    if let Some(millis) = timeout {
+        options = options.startup_timeout(std::time::Duration::from_millis(u64::from(millis)));
+    }
     if let Some(command) = command {
         options = options.command(command);
     }
@@ -1892,19 +1938,15 @@ impl NativeWasixActorDatabase {
         &self,
         env: Env,
         args: Vec<String>,
-        assets: NativeToolAssets,
+        assets: NativeToolInput,
     ) -> Result<Object<'static>> {
         #[cfg(feature = "tools")]
         {
             let database = self.database.clone();
             let (deferred, promise) = env.create_deferred()?;
-            database.pg_dump_output_with_completion(
-                PgDumpOptions::new().args(args).assets(tool_assets(assets)),
-                move |result| {
-                    deferred
-                        .resolve(move |env| native_tool_result(&env, "run WASIX pg_dump", result));
-                },
-            );
+            database.pg_dump_output_with_completion(pg_dump_options(args, assets), move |result| {
+                deferred.resolve(move |env| native_tool_result(&env, "run WASIX pg_dump", result));
+            });
             Ok(static_object(&env, promise))
         }
         #[cfg(not(feature = "tools"))]
@@ -1919,7 +1961,7 @@ impl NativeWasixActorDatabase {
         &self,
         env: Env,
         args: Vec<String>,
-        assets: NativeToolAssets,
+        assets: NativeToolInput,
         command: Option<String>,
         script: Option<String>,
     ) -> Result<Object<'static>> {
@@ -1933,7 +1975,7 @@ impl NativeWasixActorDatabase {
             let database = self.database.clone();
             let (deferred, promise) = env.create_deferred()?;
             database.psql_output_with_completion(
-                psql_options(args, command, script).assets(tool_assets(assets)),
+                psql_options(args, command, script, assets),
                 move |result| {
                     deferred.resolve(move |env| native_tool_result(&env, "run WASIX psql", result));
                 },
@@ -1956,7 +1998,7 @@ impl NativeWasixActorDatabase {
         &self,
         env: Env,
         args: Vec<String>,
-        assets: NativeToolAssets,
+        assets: NativeToolInput,
         destination: String,
     ) -> Result<Object<'static>> {
         #[cfg(feature = "tools")]
@@ -1964,7 +2006,7 @@ impl NativeWasixActorDatabase {
             let database = self.database.clone();
             let (deferred, promise) = env.create_deferred()?;
             database.pg_dump_to_file_with_completion(
-                PgDumpOptions::new().args(args).assets(tool_assets(assets)),
+                pg_dump_options(args, assets),
                 PathBuf::from(destination),
                 move |result| {
                     deferred.resolve(move |env| {
@@ -1990,7 +2032,7 @@ impl NativeWasixActorDatabase {
         &self,
         env: Env,
         args: Vec<String>,
-        assets: NativeToolAssets,
+        assets: NativeToolInput,
         destination: String,
         command: Option<String>,
         script: Option<String>,
@@ -2005,7 +2047,7 @@ impl NativeWasixActorDatabase {
             let database = self.database.clone();
             let (deferred, promise) = env.create_deferred()?;
             database.psql_to_file_with_completion(
-                psql_options(args, command, script).assets(tool_assets(assets)),
+                psql_options(args, command, script, assets),
                 PathBuf::from(destination),
                 move |result| {
                     deferred.resolve(move |env| {
@@ -2031,7 +2073,7 @@ impl NativeWasixActorDatabase {
         &self,
         env: Env,
         args: Vec<String>,
-        assets: NativeToolAssets,
+        assets: NativeToolInput,
         destination: Object<'_>,
     ) -> Result<Object<'static>> {
         #[cfg(feature = "tools")]
@@ -2048,7 +2090,7 @@ impl NativeWasixActorDatabase {
                 .map(|writer| Box::new(writer) as Box<dyn std::io::Write + Send>);
             let (deferred, promise) = env.create_deferred()?;
             self.database.pg_dump_to_writer_with_completion(
-                PgDumpOptions::new().args(args).assets(tool_assets(assets)),
+                pg_dump_options(args, assets),
                 writer,
                 diagnostics,
                 move |result| {
@@ -2075,7 +2117,7 @@ impl NativeWasixActorDatabase {
         &self,
         env: Env,
         args: Vec<String>,
-        assets: NativeToolAssets,
+        assets: NativeToolInput,
         destination: Object<'_>,
         command: Option<String>,
         script: Option<String>,
@@ -2099,7 +2141,7 @@ impl NativeWasixActorDatabase {
                 .map(|writer| Box::new(writer) as Box<dyn std::io::Write + Send>);
             let (deferred, promise) = env.create_deferred()?;
             self.database.psql_to_writer_with_completion(
-                psql_options(args, command, script).assets(tool_assets(assets)),
+                psql_options(args, command, script, assets),
                 writer,
                 diagnostics,
                 move |result| {

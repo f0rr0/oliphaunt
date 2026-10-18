@@ -9,7 +9,9 @@ pub(crate) mod data_dir;
 pub(crate) mod database_root_descriptor;
 #[cfg(feature = "extensions")]
 pub(crate) mod extensions;
+pub(crate) mod host_runtime;
 pub(crate) mod lifecycle;
+pub use host_runtime::{HostRuntimeOptions, configure_host_runtime};
 pub(crate) mod postgres_mod;
 pub(crate) mod protocol_limits_generated;
 pub(crate) mod query;

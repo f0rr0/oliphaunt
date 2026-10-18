@@ -20,17 +20,26 @@ export type ProtocolChunkCallback = (chunk: Uint8Array) => undefined;
 export type AdmissionLimits =
   import('@oliphaunt/ts-query/internal/operation-budget').AdmissionLimits;
 
+export type RuntimeTimeouts =
+  import('@oliphaunt/ts-query/internal/resource-options').RuntimeTimeouts;
+
 export type BrokerOptions = Readonly<{
   /** Per-connection login deadline in whole milliseconds, 1..2147483647.
    * Defaults to 5000. Larger values allow slower handshakes but retain unauthenticated
    * connections longer. This does not limit broker startup, queries or backups.
    */
   handshakeTimeoutMs?: number;
+  /** Grace after a disconnected query is cancelled, before retiring the helper. Default: 3000 ms. */
+  recoveryTimeoutMs?: number;
+  /** Pending logins per endpoint. Management keeps an independent allowance. Default: 16. */
+  maxPendingHandshakes?: number;
 }>;
 
 export type OpenConfig = {
   /** Pending work shared by the database and its transaction handles. */
   admission?: AdmissionLimits;
+  /** Owned process lifecycle budgets; supported by broker and server placements. */
+  timeouts?: RuntimeTimeouts;
   /**
    * Runtime placement topology. `direct` is in-process; it does not mean that
    * PostgreSQL work runs synchronously on the JavaScript caller thread.

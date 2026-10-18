@@ -272,3 +272,51 @@ test('normalizes file URL inputs consistently before native serialization', () =
     /file/,
   );
 });
+
+// Each budget has a different owner even when its default number happens to match.
+test('snapshots independent broker and lifecycle controls and rejects unsupported controls', () => {
+  const selected = normalizeOpenConfig(
+    {
+      topology: 'broker',
+      broker: {
+        handshakeTimeoutMs: 11,
+        recoveryTimeoutMs: 22,
+        maxPendingHandshakes: 3,
+      },
+      timeouts: { startupTimeoutMs: 44, shutdownTimeoutMs: 55 },
+    },
+    {
+      instanceDirectory: '/tmp/oliphaunt-config-budget',
+      temporaryDirectory: false,
+    },
+  );
+  assert.deepEqual(
+    [
+      selected.brokerHandshakeTimeoutMs,
+      selected.brokerRecoveryTimeoutMs,
+      selected.brokerMaxPendingHandshakes,
+      selected.timeouts,
+    ],
+    [11, 22, 3, { startupTimeoutMs: 44, shutdownTimeoutMs: 55 }],
+  );
+  for (const broker of [
+    { recoveryTimeoutMs: 0 },
+    { maxPendingHandshakes: 0 },
+    { maxPendingHandshakes: 0x1_0000_0000 },
+  ]) {
+    assert.throws(() =>
+      normalizeOpenConfig(
+        { topology: 'broker', broker },
+        { instanceDirectory: '/tmp/unused', temporaryDirectory: false },
+      ),
+    );
+  }
+  assert.throws(
+    () =>
+      normalizeOpenConfig(
+        { timeouts: { startupTimeoutMs: 1 } },
+        { instanceDirectory: '/tmp/unused', temporaryDirectory: false },
+      ),
+    /broker or server/,
+  );
+});

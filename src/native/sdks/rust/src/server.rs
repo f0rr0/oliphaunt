@@ -56,8 +56,14 @@ impl NativeRuntime for NativeServerRuntime {
     fn open(&self, config: OpenConfig) -> Result<Box<dyn EngineSession>> {
         debug_assert_eq!(config.mode, EngineMode::Server);
         config.validate()?;
-        let startup_timeout = lifecycle_timeout(STARTUP_TIMEOUT_ENV, DEFAULT_STARTUP_TIMEOUT)?;
-        let control_timeout = lifecycle_timeout(CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT)?;
+        let startup_timeout = config
+            .startup_timeout
+            .map(Ok)
+            .unwrap_or_else(|| lifecycle_timeout(STARTUP_TIMEOUT_ENV, DEFAULT_STARTUP_TIMEOUT))?;
+        let control_timeout = config
+            .shutdown_timeout
+            .map(Ok)
+            .unwrap_or_else(|| lifecycle_timeout(CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT))?;
         let extensions = config.resolved_extensions()?;
         let explicit_executable = self
             .executable

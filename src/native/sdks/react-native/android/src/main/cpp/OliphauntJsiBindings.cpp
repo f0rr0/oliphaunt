@@ -678,6 +678,8 @@ class OliphauntModuleJSIBindings
                         "restore storageName");
                     const auto startup = static_cast<jlong>(copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "startupTimeoutMs")));
                     const auto operation = static_cast<jlong>(copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "operationTimeoutMs")));
+                    const auto recovery = static_cast<jlong>(copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "recoveryTimeoutMs")));
+                    const auto shutdown = static_cast<jlong>(copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "shutdownTimeoutMs")));
                     std::vector<uint8_t> artifact = copyBinaryArgument(runtime, args[1]);
                     auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
                     auto executor = jsi::Function::createFromHostFunction(
@@ -686,7 +688,7 @@ class OliphauntModuleJSIBindings
                         2,
                         [owner, moduleGlobal,
                          callInvoker,
-                         startup, operation,
+                         startup, operation, recovery, shutdown,
                          storageKind = std::move(storageKind),
                          storagePath = std::move(storagePath),
                          storageName = std::move(storageName),
@@ -717,7 +719,7 @@ class OliphauntModuleJSIBindings
                                         jni::JString::javaobject,
                                         jni::JString::javaobject,
                                         jni::JString::javaobject,
-                                        jlong, jlong,
+                                        jlong, jlong, jlong, jlong,
                                         jbyteArray,
                                         OliphauntJsiPromiseCallback::javaobject)>("restoreBytes");
                             restoreBytes(
@@ -725,7 +727,7 @@ class OliphauntModuleJSIBindings
                                 storageKindString.get(),
                                 storagePathString.get(),
                                 storageNameString.get(),
-                                startup, operation,
+                                startup, operation, recovery, shutdown,
                                 artifactArray.get(),
                                 callback.get());
                           } catch (const std::exception &error) {

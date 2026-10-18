@@ -81,7 +81,9 @@
             }
             guard let descriptor: xpc_object_t = message["socket"],
                 xpc_get_type(descriptor) == XPC_TYPE_FD,
-                let timeout: UInt64 = message["startupMillis"], timeout > 0
+                let timeout: UInt64 = message["startupMillis"], timeout > 0,
+                let recovery: UInt64 = message["recoveryMillis"], recovery > 0, recovery <= UInt64(Int32.max),
+                let shutdown: UInt64 = message["shutdownMillis"], shutdown > 0, shutdown <= UInt64(Int32.max)
             else {
                 throw OliphauntBrokerXPC.invalid("missing socket or startup deadline")
             }
@@ -102,7 +104,8 @@
             guard fd >= 0 else { throw POSIXError(.EBADF) }
             defer { Darwin.close(fd) }
             let native = try NativeBrokerWorker.create(
-                fd: fd, retirement: ExtensionRetirement(), startupTimeoutMs: timeout)
+                fd: fd, retirement: ExtensionRetirement(), startupTimeoutMs: timeout,
+                timeouts: BrokerTimeoutOptions(recoveryTimeoutMs: recovery, shutdownTimeoutMs: shutdown))
             try lock.withLock {
                 worker = native
                 if closed { try native.close(generation: native.generation()) }

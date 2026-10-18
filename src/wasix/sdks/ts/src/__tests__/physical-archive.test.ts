@@ -20,6 +20,44 @@ import type { StorageDirectory } from '../storage/storage-provider.js';
 import type { StoredSnapshot } from '../storage/storage-snapshot.js';
 
 describe('WASIX physical archives', () => {
+  it('round-trips an archive above the old entry ceiling with an explicit policy', () => {
+    const snapshot = completeSnapshot();
+    snapshot.directories.push(...Array.from({ length: 65_536 }, (_, index) => `dir${index}`));
+    expect(() => encodePhysicalArchive(snapshot)).toThrow('entry count');
+    const policy = { maxEntries: 70_000 };
+    const archive = encodePhysicalArchive(snapshot, policy);
+    expect(() => decodePhysicalArchive(archive)).toThrow('physical archive is malformed');
+    const restored = new Set(decodePhysicalArchive(archive, policy).directories);
+    expect(restored.size).toBe(snapshot.directories.length);
+    expect(snapshot.directories.every((path) => restored.has(path))).toBe(true);
+  });
+
+  it('uses the selected entry, byte, and path limits for both writing and reading', () => {
+    const snapshot = completeSnapshot();
+    const bytes = encodePhysicalArchive(snapshot);
+    const limits = [
+      { maxEntries: 1 },
+      { maxEntryBytes: 1 },
+      { maxArchiveBytes: bytes.length - 1 },
+      { maxPathBytes: 1 },
+      { maxPathDepth: 1 },
+    ];
+    for (const policy of limits) {
+      expect(() => encodePhysicalArchive(snapshot, policy)).toThrow();
+      expect(() => decodePhysicalArchive(bytes, policy)).toThrow();
+    }
+    const policy = {
+      maxEntries: 16,
+      maxEntryBytes: 1024,
+      maxArchiveBytes: bytes.length,
+      maxPathBytes: 128,
+      maxPathDepth: 4,
+    };
+    const custom = encodePhysicalArchive(snapshot, policy);
+    expect(decodePhysicalArchive(custom, policy)).toEqual(decodePhysicalArchive(bytes));
+    expect(() => encodePhysicalArchive(snapshot, { maxEntries: 0 })).toThrow();
+  });
+
   it('does not stop backup mode when pg_backup_start fails in PostgreSQL', async () => {
     const calls: string[] = [];
     await expect(

@@ -461,10 +461,19 @@ test('broker options cannot override normalized database admission or storage', 
     admissionHighWaterMarkBytes: 999,
     storageKind: 'directory',
   };
+  await assert.rejects(
+    createOliphauntClient(native).open({ broker }),
+    /broker options accepts only/,
+  );
   const db = await createOliphauntClient(native).open({
     admission: { maxPendingOperations: 2, highWaterMarkBytes: 8 },
     storage: applicationData('main'),
-    broker,
+    broker: {
+      startupTimeoutMs: 5000,
+      operationTimeoutMs: 1000,
+      recoveryTimeoutMs: 7000,
+      shutdownTimeoutMs: 8000,
+    },
   });
   const opened = native.openCalls[0] as NativeOpenConfig;
   assert.equal(opened.admissionMaxPendingOperations, 2);
@@ -473,6 +482,8 @@ test('broker options cannot override normalized database admission or storage', 
   assert.equal(opened.storageName, 'main');
   assert.equal(opened.startupTimeoutMs, 5000);
   assert.equal(opened.operationTimeoutMs, 1000);
+  assert.equal(opened.recoveryTimeoutMs, 7000);
+  assert.equal(opened.shutdownTimeoutMs, 8000);
   await db.close();
 });
 

@@ -87,16 +87,24 @@ test('runtime adapters implement the shared internal operation boundary', async 
   assert.equal(serverFailure.state, 'terminal');
 });
 
-test('broker launch forwards only an explicitly selected handshake timeout', () => {
+test('broker launch forwards explicitly selected connection controls', () => {
   const storage = { instanceDirectory: '/broker/root', temporaryDirectory: false };
   const endpoint = { kind: 'tcp', listen: '127.0.0.1:0', controlListen: '127.0.0.1:0' } as const;
   const args = brokerSpawnArgs(
-    normalizeOpenConfig({ topology: 'broker', broker: { handshakeTimeoutMs: 125 } }, storage),
+    normalizeOpenConfig(
+      {
+        topology: 'broker',
+        broker: { handshakeTimeoutMs: 125, recoveryTimeoutMs: 45, maxPendingHandshakes: 2 },
+      },
+      storage,
+    ),
     endpoint,
   );
   const index = args.indexOf('--handshake-timeout-ms');
   assert.ok(index >= 0);
   assert.equal(args[index + 1], '125');
+  assert.equal(args[args.indexOf('--recovery-timeout-ms') + 1], '45');
+  assert.equal(args[args.indexOf('--max-pending-handshakes') + 1], '2');
   assert.ok(
     !brokerSpawnArgs(normalizeOpenConfig({ topology: 'broker' }, storage), endpoint).includes(
       '--handshake-timeout-ms',

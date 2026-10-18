@@ -259,6 +259,8 @@ static NSDictionary *OliphauntNativeOpenConfigToDictionary(
   dictionary[@"storageKind"] = config.storageKind();
   if (config.admissionMaxPendingOperations()) dictionary[@"admissionMaxPendingOperations"] = @(*config.admissionMaxPendingOperations());
   if (config.admissionHighWaterMarkBytes()) dictionary[@"admissionHighWaterMarkBytes"] = @(*config.admissionHighWaterMarkBytes());
+  if (config.recoveryTimeoutMs()) dictionary[@"recoveryTimeoutMs"] = @(*config.recoveryTimeoutMs());
+  if (config.shutdownTimeoutMs()) dictionary[@"shutdownTimeoutMs"] = @(*config.shutdownTimeoutMs());
   if (config.startupTimeoutMs()) dictionary[@"startupTimeoutMs"] = @(*config.startupTimeoutMs());
   if (config.operationTimeoutMs()) dictionary[@"operationTimeoutMs"] = @(*config.operationTimeoutMs());
   OliphauntSetIfPresent(dictionary, @"storagePath", config.storagePath());
@@ -881,7 +883,11 @@ RCT_EXPORT_MODULE(Oliphaunt)
                 "restore storageName");
             const double startup = copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "startupTimeoutMs"));
             const double operation = copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "operationTimeoutMs"));
+            const double recovery = copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "recoveryTimeoutMs"));
+            const double shutdown = copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "shutdownTimeoutMs"));
             NSMutableDictionary *options = [NSMutableDictionary dictionary];
+            if (recovery != 0) options[@"recoveryTimeoutMs"] = @(recovery);
+            if (shutdown != 0) options[@"shutdownTimeoutMs"] = @(shutdown);
             if (startup != 0) options[@"startupTimeoutMs"] = @(startup);
             if (operation != 0) options[@"operationTimeoutMs"] = @(operation);
             std::vector<uint8_t> artifact = copyBinaryArgument(runtime, args[1]);

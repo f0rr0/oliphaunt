@@ -1,3 +1,5 @@
+import { physicalArchiveOptions } from '../../resources/archive-limits.js';
+import { extractTar } from '../../resources/archive.js';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,9 +15,12 @@ import type { BinaryInput } from '../../core/types.js';
 export async function restoreNodeWasix(
   storage: PersistentWasixStorage,
   bytes: BinaryInput,
+  restoreOptions?: import('../../core/types.js').RestoreOptions,
 ): Promise<void> {
+  const limits = physicalArchiveOptions(restoreOptions);
   const options = serializeOpenConfig({ storage });
   requireNodeStorage(options);
+  if (limits !== undefined) extractTar(toUint8Array(bytes), limits);
   return restoreNativeWasix(options, toUint8Array(bytes));
 }
 
@@ -23,14 +28,22 @@ export async function restoreNodeWasix(
 export async function restoreNodeWasixDirect(
   storage: PersistentWasixStorage,
   bytes: BinaryInput,
+  restoreOptions?: import('../../core/types.js').RestoreOptions,
 ): Promise<void> {
+  const limits = physicalArchiveOptions(restoreOptions);
   const options = serializeOpenConfig({ storage });
   requireNodeStorage(options);
+  if (limits !== undefined) extractTar(toUint8Array(bytes), limits);
   return restoreNativeWasixDirect(options, toUint8Array(bytes));
 }
 
-/** @internal Validate and normalize storage shared by direct and Worker entrypoints. */
+/** @internal Validate host capabilities and normalize storage for all native entrypoints. */
 export function requireNodeStorage(options: SerializedOpenOptions): void {
+  if (options.timeouts !== undefined) {
+    throw new TypeError(
+      'WASIX lifecycle timeouts require the browser host; native addon owners need quiescent cleanup',
+    );
+  }
   if (options.storage.kind === 'indexed-db' || options.storage.kind === 'opfs') {
     const provider = options.storage.kind === 'indexed-db' ? 'IndexedDB' : 'OPFS';
     throw new TypeError(

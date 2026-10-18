@@ -6,7 +6,7 @@ import dev.oliphaunt.broker.IBrokerClient;
 oneway interface IBroker {
     void open(IBrokerClient owner, in ParcelFileDescriptor socket, @nullable String name,
         boolean legacyExists, boolean restore, in String[] gucNames, in String[] gucValues,
-        @nullable String username, @nullable String database, in String[] extensions, long startupTimeoutMillis);
+        @nullable String username, @nullable String database, in String[] extensions, long startupTimeoutMillis, long recoveryTimeoutMillis, long shutdownTimeoutMillis);
     void cancel(IBrokerClient owner, in byte[] generation, long request);
     void close(IBrokerClient owner, in @nullable byte[] generation);
 }

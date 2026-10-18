@@ -454,11 +454,12 @@ async function openBrokerHandle(
     paths: [undefined, config.temporaryDirectory ? config.instanceDirectory : undefined],
   };
   try {
-    controlTimeoutMs = lifecycleTimeoutMs(CONTROL_TIMEOUT_MS_ENV, DEFAULT_CONTROL_TIMEOUT_MS);
-    const startupTimeoutMs = lifecycleTimeoutMs(
-      OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS_ENV,
-      DEFAULT_STARTUP_TIMEOUT_MS,
-    );
+    controlTimeoutMs =
+      config.timeouts?.shutdownTimeoutMs ??
+      lifecycleTimeoutMs(CONTROL_TIMEOUT_MS_ENV, DEFAULT_CONTROL_TIMEOUT_MS);
+    const startupTimeoutMs =
+      config.timeouts?.startupTimeoutMs ??
+      lifecycleTimeoutMs(OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS_ENV, DEFAULT_STARTUP_TIMEOUT_MS);
     const authToken = randomHexToken();
     const resolvedExecutable = await resolveBrokerExecutable(executable);
     const endpoint = await allocateBrokerEndpoint(config);
@@ -649,6 +650,10 @@ export function brokerSpawnArgs(
   } else {
     args.push('--listen', endpoint.listen, '--control-listen', endpoint.controlListen);
   }
+  if (config.brokerRecoveryTimeoutMs !== undefined)
+    args.push('--recovery-timeout-ms', String(config.brokerRecoveryTimeoutMs));
+  if (config.brokerMaxPendingHandshakes !== undefined)
+    args.push('--max-pending-handshakes', String(config.brokerMaxPendingHandshakes));
   if (config.brokerHandshakeTimeoutMs !== undefined) {
     args.push('--handshake-timeout-ms', String(config.brokerHandshakeTimeoutMs));
   }

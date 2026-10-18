@@ -93,6 +93,7 @@ export type SerializedSeed = { archive: SerializedAssetSource; manifest: Seriali
 
 /** Host-ready open options shared by both public execution surfaces. */
 export type SerializedOpenOptions = {
+  timeouts?: import('@oliphaunt/ts-query/internal/resource-options').RuntimeTimeouts;
   admission?: import('../core/types.js').AdmissionLimits;
   runtime: SerializedRuntimeDescriptor;
   icu?: SerializedIcuDescriptor;
@@ -111,6 +112,7 @@ export type WorkerRequest =
   | {
       id: number;
       method: 'restore';
+      limits?: import('../resources/archive-limits.js').ArchiveLimits;
       storage: SerializedWasixStorage;
       bytes: Uint8Array;
     }
@@ -128,10 +130,15 @@ export type WorkerRequest =
       control: SharedArrayBuffer;
     }
   | { id: number; method: 'sync'; boundary: WasixStorageSyncBoundary }
-  | { id: number; method: 'backup' }
+  | {
+      id: number;
+      method: 'backup';
+      limits?: import('../resources/archive-limits.js').ArchiveLimits;
+    }
   | {
       id: number;
       method: 'runPgDump';
+      startupTimeoutMs?: number;
       tool: WasixToolDescriptor;
       args: string[];
     }

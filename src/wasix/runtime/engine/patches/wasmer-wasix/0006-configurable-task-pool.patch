@@ -1,0 +1,28 @@
+--- a/src/runtime/task_manager/tokio.rs
++++ b/src/runtime/task_manager/tokio.rs
+@@ -80,11 +80,23 @@
+     where
+         I: Into<RuntimeOrHandle>,
+     {
++        Self::with_max_threads(rt, Self::default_max_threads())
++    }
++
++    /// Existing dedicated-worker policy, independent of Tokio's blocking pool.
++    pub fn default_max_threads() -> usize {
+         let concurrency = std::thread::available_parallelism()
+             .unwrap_or(NonZeroUsize::new(1).unwrap())
+             .get();
+-        let max_threads = 200usize.max(concurrency * 100);
+-
++        200usize.max(concurrency * 100)
++    }
++
++    /// Bound the dedicated Wasm/host task pool. Workers are created on demand.
++    pub fn with_max_threads<I>(rt: I, max_threads: usize) -> Self
++    where
++        I: Into<RuntimeOrHandle>,
++    {
++        assert!(max_threads > 0, "dedicated worker count must be positive");
+         Self {
+             rt: rt.into(),
+             pool: Arc::new(ThreadPool {

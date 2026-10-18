@@ -1,10 +1,14 @@
 # Resource configuration contract
 
 Status: admission, OPFS options, native TypeScript filesystem inputs, desktop
-broker handshake deadlines and legacy override validation are implemented in this checkout. Transport/protocol,
-additional tool controls, typed runtime/lifecycle settings and producer policies
-below remain design proposals, not public APIs. Defaults and current owners are
-recorded in the [runtime resource inventory](../maintainers/runtime-resource-budgets.md).
+broker login/recovery controls, mobile cleanup budgets, supported typed lifecycle
+budgets, WASIX host executor/file-helper settings, WASIX tool startup budgets and
+WASIX TypeScript physical archive limits are implemented in this checkout.
+Transport/protocol options, additional tool output controls, native C runtime
+options, package-import policies and producer profiles below remain proposals.
+The public [performance guide](../content/reference/performance.mdx) gives the
+implemented names, defaults, examples and platform limits. The
+[runtime inventory](../maintainers/runtime-resource-budgets.md) records owners.
 
 Resource settings should let developers control burst admission, transport
 memory, startup capacity and supported input sizes. Each setting needs a
@@ -47,10 +51,8 @@ The names below identify concepts; their language spelling can differ.
 | Tool output options | `stderrTailBytes`, `terminateGraceMs` | Diagnostic tail on streaming summaries; termination grace applies to native subprocess tools only |
 | Runtime build profile | Guest stack, initial/maximum guest memory and Postmaster task capacity | Producer-owned and included in artifact identity; native backend stack is a separate physical-runtime setting |
 
-The initial implementation covers admission, OPFS concurrency, filesystem input
-normalization and validation of existing native stream/stack/lifecycle overrides. Protocol
-quotas and additional batching options follow with complete producer/consumer
-proof. A management-frame ceiling remains owned by the broker protocol until
+Implemented controls are listed in the status above. Protocol quotas and
+additional batching options still require complete producer/consumer proof. A management-frame ceiling remains owned by the broker protocol until
 an actual supported management operation needs consumer tuning.
 
 The prepared-runtime cache is shared within a JavaScript realm. A per-database
@@ -71,10 +73,12 @@ SDK admission because its public operations use an asynchronous serial gate.
 
 ## Proposed product bindings
 
-These are additions to the existing configuration surfaces, not executable
-examples or implemented exports. The admission and protocol meanings below
-are shared; transport and lifecycle fields exist only for owners that can
-enforce them. Types follow each product's current naming style.
+The tables mix implemented concepts with remaining proposals; use the public
+performance guide for executable API examples. Transport and lifecycle fields
+exist only for their owning placements. Types follow each product's current
+naming style. Native Rust exposes lifecycle durations directly through
+`.startup_timeout(...)` and `.shutdown_timeout(...)`, rather than the earlier
+proposed `.timeouts(...)` wrapper.
 
 ### Existing storage constructors and filesystem inputs
 
@@ -330,11 +334,15 @@ and [Node buffering semantics](https://nodejs.org/api/stream.html#buffering).
 
 ## Lifecycle deadline boundaries
 
-For new typed controls, startup time runs from the physical runtime start
-request to protocol readiness, after resource resolution. Shutdown time runs
-from destructive teardown beginning to owner retirement, after already-admitted
-work drains. Neither is the duration of the complete `open()` or `close()` call.
-Keep existing mobile operation-timeout semantics, which also cover queued time.
+Lifecycle controls retain each owner's boundary. Native desktop startup runs
+from helper/server launch through readiness after asset resolution; teardown
+starts after ordinary work drains. Browser startup includes asset preparation,
+storage setup and protocol readiness. Its Worker close deadline includes work
+still draining after `close()` is requested, preserving bounded-close behavior.
+Mobile recovery and destructive-close budgets are separate from startup and
+operation budgets. Existing mobile operation timeouts also include queued time.
+The public guide states these differences; equal names do not imply that a
+native process and an in-process guest can be interrupted in the same way.
 
 Use one monotonic deadline through each owned lifecycle phase rather than
 resetting the full duration for every retry. A native tool's termination grace

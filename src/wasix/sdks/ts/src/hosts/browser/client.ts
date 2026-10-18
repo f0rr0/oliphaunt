@@ -1,3 +1,4 @@
+import { DEFAULT_BROWSER_STARTUP_TIMEOUT_MS, StartupBudget } from '../../core/startup-budget.js';
 import { restoreWasix } from './client-common.js';
 import { requireBrowserStorage, serializeOpenConfig } from '../../core/open-config.js';
 import {
@@ -24,13 +25,23 @@ export async function openWasixWithHost(
       '@oliphaunt/wasix-ts requires COOP: same-origin and COEP: require-corp response headers',
     );
   }
-  const host = await loadHost();
-  return openWasixDirect(openOptions, host, browserRealm());
+  if (openOptions.timeouts?.shutdownTimeoutMs !== undefined)
+    throw new TypeError('shutdownTimeoutMs requires a /worker database');
+  const budget = new StartupBudget(
+    openOptions.timeouts?.startupTimeoutMs ?? DEFAULT_BROWSER_STARTUP_TIMEOUT_MS,
+  );
+  try {
+    const host = await budget.prepare(loadHost());
+    return await openWasixDirect(openOptions, host, browserRealm(), budget);
+  } finally {
+    budget.finish();
+  }
 }
 
 export const Oliphaunt: OliphauntClient = {
   open: openWasix,
-  restore: (storage, bytes) => restoreWasix(storage, bytes, requireBrowserStorage),
+  restore: (storage, bytes, options) =>
+    restoreWasix(storage, bytes, requireBrowserStorage, options),
 };
 
 function browserRealm(): DirectWasixEnvironment {

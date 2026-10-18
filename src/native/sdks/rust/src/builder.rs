@@ -34,6 +34,8 @@ pub struct AsyncOliphauntServerBuilder {
 
 #[derive(Debug, Clone)]
 struct CommonOpenOptions {
+    startup_timeout: Option<std::time::Duration>,
+    shutdown_timeout: Option<std::time::Duration>,
     storage: DatabaseStorage,
     startup_gucs: Vec<PostgresStartupGuc>,
     username: String,
@@ -46,6 +48,8 @@ struct CommonOpenOptions {
 impl Default for CommonOpenOptions {
     fn default() -> Self {
         Self {
+            startup_timeout: None,
+            shutdown_timeout: None,
             storage: DatabaseStorage::TemporaryDirectory,
             startup_gucs: Vec::new(),
             username: DEFAULT_USERNAME.to_owned(),
@@ -78,6 +82,8 @@ impl CommonOpenOptions {
         }
         let config = OpenConfig {
             mode,
+            startup_timeout: self.startup_timeout,
+            shutdown_timeout: self.shutdown_timeout,
             storage: self.storage.clone(),
             broker,
             server,
@@ -105,6 +111,20 @@ impl Default for AsyncOliphauntBuilder {
 }
 
 impl AsyncOliphauntBuilder {
+    /// Bound owned process startup, independently of login and SQL deadlines.
+    #[cfg(feature = "desktop")]
+    pub fn startup_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.common.startup_timeout = Some(timeout);
+        self
+    }
+
+    /// Bound owned process teardown. Requires broker or server placement.
+    #[cfg(feature = "desktop")]
+    pub fn shutdown_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.common.shutdown_timeout = Some(timeout);
+        self
+    }
+
     /// Bound pending preparation, queued and executing work; clones and transactions share it.
     /// Omitting this preserves the legacy queued-only admission policy.
     pub fn admission(mut self, limits: crate::AdmissionLimits) -> Self {
@@ -157,6 +177,20 @@ impl AsyncOliphauntBuilder {
     #[cfg(feature = "desktop")]
     pub fn broker_handshake_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.broker.handshake_timeout = Some(timeout);
+        self
+    }
+
+    /// Grace for a cancelled disconnected stream to drain before helper retirement.
+    #[cfg(feature = "desktop")]
+    pub fn broker_recovery_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.broker.recovery_timeout = Some(timeout);
+        self
+    }
+
+    /// Bound pending logins per endpoint; management has an independent allowance.
+    #[cfg(feature = "desktop")]
+    pub fn broker_max_pending_handshakes(mut self, count: u32) -> Self {
+        self.broker.max_pending_handshakes = Some(count);
         self
     }
 
@@ -238,6 +272,20 @@ impl AsyncOliphauntBuilder {
 }
 
 impl AsyncOliphauntServerBuilder {
+    /// Bound owned process startup, independently of login and SQL deadlines.
+    #[cfg(feature = "desktop")]
+    pub fn startup_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.common.startup_timeout = Some(timeout);
+        self
+    }
+
+    /// Bound owned process teardown. Requires broker or server placement.
+    #[cfg(feature = "desktop")]
+    pub fn shutdown_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.common.shutdown_timeout = Some(timeout);
+        self
+    }
+
     /// Select independently packaged ICU data and its receipt.
     pub fn icu_data(mut self, data: liboliphaunt_native_bindings::NativeResourceDirectory) -> Self {
         self.common.icu_data = Some(data);

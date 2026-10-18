@@ -20,6 +20,13 @@ struct Broker {
 }
 impl Broker {
     fn start(handshake_timeout_ms: Option<u32>) -> Self {
+        Self::start_with_capacity(
+            handshake_timeout_ms,
+            oliphaunt_broker::config::DEFAULT_MAX_PENDING_HANDSHAKES as u32,
+        )
+    }
+
+    fn start_with_capacity(handshake_timeout_ms: Option<u32>, capacity: u32) -> Self {
         for key in ["LIBOLIPHAUNT_PATH", "OLIPHAUNT_INSTALL_DIR"] {
             std::env::var_os(key).unwrap_or_else(|| panic!("{key} is required"));
         }
@@ -51,6 +58,7 @@ impl Broker {
         if let Some(timeout) = handshake_timeout_ms {
             command.args(["--handshake-timeout-ms", &timeout.to_string()]);
         }
+        command.args(["--max-pending-handshakes", &capacity.to_string()]);
         let mut child = command.spawn().unwrap();
         let mut ready = String::new();
         BufReader::new(child.stdout.take().unwrap())
@@ -144,6 +152,35 @@ fn connect(address: &str) -> TcpStream {
         .set_write_timeout(Some(Duration::from_secs(10)))
         .unwrap();
     stream
+}
+
+#[test]
+#[ignore = "requires a prepared native runtime; runs the actual broker executable"]
+fn pending_login_capacity_preserves_management_and_releases_after_authentication() {
+    let broker = Broker::start_with_capacity(Some(10_000), 1);
+    let idle = connect(&broker.sql);
+    thread::sleep(Duration::from_millis(20));
+    let mut excess = connect(&broker.sql);
+    assert_eq!(excess.read(&mut [0]).unwrap(), 0);
+    let mut owner = broker.owner();
+    drop(idle);
+    let (client, _) = broker.reconnect();
+    let mut pending = connect(&broker.sql);
+    pending
+        .set_read_timeout(Some(Duration::from_millis(50)))
+        .unwrap();
+    let error = pending.read(&mut [0]).unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    ));
+    drop(pending);
+    drop(client);
+    ipc::write_request(&mut owner, RequestFrame::Close).unwrap();
+    assert_eq!(
+        ipc::read_response(&mut owner).unwrap(),
+        ResponseFrame::Ok(Vec::new())
+    );
 }
 
 #[test]

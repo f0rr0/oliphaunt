@@ -52,6 +52,20 @@ impl Default for OliphauntBuilder {
 }
 
 impl OliphauntBuilder {
+    /// Bound owned process startup, independently of login and SQL deadlines.
+    #[cfg(feature = "desktop")]
+    pub fn startup_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.startup_timeout(timeout);
+        self
+    }
+
+    /// Bound owned process teardown. Requires broker or server placement.
+    #[cfg(feature = "desktop")]
+    pub fn shutdown_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.shutdown_timeout(timeout);
+        self
+    }
+
     /// Select an explicit cluster seed for a new database.
     pub fn seed(mut self, seed: liboliphaunt_native_bindings::NativeClusterSeed) -> Self {
         self.inner = self.inner.seed(seed);
@@ -100,6 +114,20 @@ impl OliphauntBuilder {
     #[cfg(feature = "desktop")]
     pub fn broker_handshake_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.inner = self.inner.broker_handshake_timeout(timeout);
+        self
+    }
+
+    /// Grace for a cancelled disconnected stream to drain before helper retirement.
+    #[cfg(feature = "desktop")]
+    pub fn broker_recovery_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.broker_recovery_timeout(timeout);
+        self
+    }
+
+    /// Bound pending logins per endpoint; management has an independent allowance.
+    #[cfg(feature = "desktop")]
+    pub fn broker_max_pending_handshakes(mut self, count: u32) -> Self {
+        self.inner = self.inner.broker_max_pending_handshakes(count);
         self
     }
 
@@ -159,6 +187,20 @@ pub struct OliphauntServerBuilder {
 }
 
 impl OliphauntServerBuilder {
+    /// Bound owned process startup, independently of login and SQL deadlines.
+    #[cfg(feature = "desktop")]
+    pub fn startup_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.startup_timeout(timeout);
+        self
+    }
+
+    /// Bound owned process teardown. Requires broker or server placement.
+    #[cfg(feature = "desktop")]
+    pub fn shutdown_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.shutdown_timeout(timeout);
+        self
+    }
+
     /// Select independently packaged ICU data and its receipt.
     pub fn icu_data(mut self, data: liboliphaunt_native_bindings::NativeResourceDirectory) -> Self {
         self.inner = self.inner.icu_data(data);

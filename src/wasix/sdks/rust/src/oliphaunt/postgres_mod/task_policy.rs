@@ -21,7 +21,7 @@ impl GuestWasmTasks {
     ) -> Arc<dyn VirtualTaskManager> {
         match self {
             Self::Allow => task_manager,
-            Self::Deny => Arc::new(SingleBackendTaskManager::new(task_manager)),
+            Self::Deny => Arc::new(GuestTaskManager::new(task_manager)),
         }
     }
 }
@@ -33,16 +33,31 @@ pub(super) fn constrain_single_backend_tasks(builder: &mut WasiEnvBuilder) {
     builder.capabilities_mut().threading.max_threads = Some(1);
 }
 
-/// Keeps host-side asynchronous work available while preventing a shared
-/// single-backend database from creating another guest execution context.
-#[derive(Debug)]
-pub(super) struct SingleBackendTaskManager {
+type TaskObserver = Arc<dyn Fn(&TaskWasm) -> Result<(), WasiThreadError> + Send + Sync>;
+
+/// Delegates host work while rejecting database guest tasks or observing tool startup.
+pub(crate) struct GuestTaskManager {
     inner: Arc<dyn VirtualTaskManager>,
+    observer: Option<TaskObserver>,
 }
 
-impl SingleBackendTaskManager {
+impl GuestTaskManager {
     pub(super) fn new(inner: Arc<dyn VirtualTaskManager>) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            observer: None,
+        }
+    }
+
+    #[cfg(feature = "tools-execution")]
+    pub(crate) fn observe(
+        inner: Arc<dyn VirtualTaskManager>,
+        observer: impl Fn(&TaskWasm) -> Result<(), WasiThreadError> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            inner,
+            observer: Some(Arc::new(observer)),
+        }
     }
 
     fn reject_guest_wasm_task<T>(_task: T) -> Result<(), WasiThreadError> {
@@ -50,7 +65,16 @@ impl SingleBackendTaskManager {
     }
 }
 
-impl VirtualTaskManager for SingleBackendTaskManager {
+impl std::fmt::Debug for GuestTaskManager {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GuestTaskManager")
+            .field("observed", &self.observer.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl VirtualTaskManager for GuestTaskManager {
     fn build_memory(
         &self,
         store: &mut StoreMut,
@@ -76,7 +100,12 @@ impl VirtualTaskManager for SingleBackendTaskManager {
     }
 
     fn task_wasm(&self, task: TaskWasm) -> Result<(), WasiThreadError> {
-        Self::reject_guest_wasm_task(task)
+        if let Some(observer) = &self.observer {
+            observer(&task)?;
+            self.inner.task_wasm(task)
+        } else {
+            Self::reject_guest_wasm_task(task)
+        }
     }
 
     fn task_dedicated(
@@ -87,7 +116,11 @@ impl VirtualTaskManager for SingleBackendTaskManager {
     }
 
     fn thread_parallelism(&self) -> Result<usize, WasiThreadError> {
-        Ok(1)
+        if self.observer.is_some() {
+            self.inner.thread_parallelism()
+        } else {
+            Ok(1)
+        }
     }
 
     fn spawn_with_module(
@@ -95,7 +128,11 @@ impl VirtualTaskManager for SingleBackendTaskManager {
         module: Module,
         task: Box<dyn FnOnce(Module) + Send + 'static>,
     ) -> Result<(), WasiThreadError> {
-        Self::reject_guest_wasm_task((module, task))
+        if self.observer.is_some() {
+            self.inner.spawn_with_module(module, task)
+        } else {
+            Self::reject_guest_wasm_task((module, task))
+        }
     }
 }
 
@@ -120,12 +157,12 @@ mod tests {
     fn task_managers() -> Result<(
         tokio::runtime::Runtime,
         Arc<dyn VirtualTaskManager>,
-        SingleBackendTaskManager,
+        GuestTaskManager,
     )> {
         let runtime = tokio::runtime::Builder::new_multi_thread().build()?;
         let inner: Arc<dyn VirtualTaskManager> =
             Arc::new(TokioTaskManager::new(runtime.handle().clone()));
-        let policy = SingleBackendTaskManager::new(inner.clone());
+        let policy = GuestTaskManager::new(inner.clone());
         Ok((runtime, inner, policy))
     }
 
@@ -156,7 +193,7 @@ mod tests {
     fn guest_wasm_entrypoints_share_a_fail_closed_gate() {
         let task_ran = Arc::new(AtomicBool::new(false));
         let task_ran_in_guest = task_ran.clone();
-        let error = SingleBackendTaskManager::reject_guest_wasm_task(Box::new(move || {
+        let error = GuestTaskManager::reject_guest_wasm_task(Box::new(move || {
             task_ran_in_guest.store(true, Ordering::SeqCst);
         }))
         .expect_err("guest task_wasm must be denied");
@@ -165,7 +202,7 @@ mod tests {
 
         let module_task_ran = Arc::new(AtomicBool::new(false));
         let module_task_ran_in_guest = module_task_ran.clone();
-        let error = SingleBackendTaskManager::reject_guest_wasm_task(Box::new(move || {
+        let error = GuestTaskManager::reject_guest_wasm_task(Box::new(move || {
             module_task_ran_in_guest.store(true, Ordering::SeqCst);
         }))
         .expect_err("guest spawn_with_module must be denied");

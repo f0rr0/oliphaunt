@@ -173,12 +173,17 @@ Compare one change at a time. Measure queue delay, query latency, bulk throughpu
 
 ## Configure broker login
 
-Native TypeScript accepts the deadline on its broker configuration:
+Native TypeScript supplies per-connection controls in `broker` and process lifecycle deadlines in `timeouts`:
 
 ```ts
 const db = await Oliphaunt.open({
   topology: 'broker',
-  broker: { handshakeTimeoutMs: 10_000 },
+  broker: {
+    handshakeTimeoutMs: 10_000,
+    recoveryTimeoutMs: 3_000,
+    maxPendingHandshakes: 16,
+  },
+  timeouts: { startupTimeoutMs: 60_000, shutdownTimeoutMs: 5_000 },
 });
 ```
 
@@ -188,6 +193,10 @@ Native Rust uses the same option on synchronous and asynchronous builders:
 let mut db = Oliphaunt::builder()
     .broker()
     .broker_handshake_timeout(std::time::Duration::from_secs(10))
+    .broker_recovery_timeout(std::time::Duration::from_secs(3))
+    .broker_max_pending_handshakes(16)
+    .startup_timeout(std::time::Duration::from_secs(60))
+    .shutdown_timeout(std::time::Duration::from_secs(5))
     .open()?;
 ```
 
@@ -199,9 +208,184 @@ handshakes but keep unauthenticated connections longer.
 
 This option requires desktop broker mode. It is separate from the SDK's wait
 for the helper to start and PostgreSQL's `startupGUCs`. After login, it does not
-apply to queries or backups, including slow backup destinations. Mobile brokers
-use a different transport and do not expose this setting. Custom helper
-executables must support `--handshake-timeout-ms` to accept an explicit override.
+apply to queries or backups, including slow backup destinations. Mobile brokers use the controls below. Custom desktop helpers must support
+`--handshake-timeout-ms`, `--recovery-timeout-ms` and `--max-pending-handshakes`
+when you select those overrides.
+
+| Option | Default and meaning | Raising it |
+| --- | --- | --- |
+| `broker.recoveryTimeoutMs` / `.broker_recovery_timeout(Duration)` | 3 seconds to settle a disconnected stream before retiring the helper | Gives PostgreSQL longer to recover; delays forced cleanup |
+| `broker.maxPendingHandshakes` / `.broker_max_pending_handshakes(count)` | 16 incomplete logins **per endpoint**. SQL and management have independent allowances; authenticated connections release their slot | Allows more simultaneous logins and retains more unauthenticated sockets |
+| `timeouts.startupTimeoutMs` / `.startup_timeout(Duration)` | Helper launch through protocol readiness, after asset resolution. Native TS defaults to 60 seconds; Rust to 20 seconds | Allows slower startup and delays detection of a stalled helper |
+| `timeouts.shutdownTimeoutMs` / `.shutdown_timeout(Duration)` | 5 seconds for owned teardown before forced process cleanup, after ordinary work drains | Gives shutdown longer to finish before escalation |
+
+The two lifecycle settings also work on native server handles. Direct native
+placement rejects them. Typed selections override the existing process
+environment defaults. The native backend has a separate readiness wait, normally
+60 seconds, selected by `OLIPHAUNT_STARTUP_TIMEOUT_MS`; a larger helper deadline
+does not raise that inner wait. Pending-login counts must be positive and fit a `u32`.
+New timeout values must fit the portable millisecond range above. Management
+admission remains available when SQL logins are full; PostgreSQL cancellation
+packets still enter through the SQL endpoint.
+
+## Configure mobile broker cleanup
+
+Swift and Kotlin keep lifecycle settings on their existing broker options:
+
+```swift
+import OliphauntBroker
+
+let options = OliphauntBrokerOptions(
+    startupTimeout: .seconds(30),
+    operationTimeout: nil,
+    recoveryTimeout: .seconds(3),
+    shutdownTimeout: .seconds(3)
+)
+let db = try await OliphauntBroker.open(configuration: configuration, options: options)
+```
+
+```kotlin
+import dev.oliphaunt.OliphauntBroker
+import dev.oliphaunt.OliphauntBrokerOptions
+
+val options = OliphauntBrokerOptions(
+    startupTimeoutMillis = 30_000,
+    operationTimeoutMillis = null,
+    recoveryTimeoutMillis = 3_000,
+    shutdownTimeoutMillis = 3_000,
+)
+val db = OliphauntBroker.open(context, config, options)
+```
+
+React Native forwards the same selections to the platform client and worker:
+
+```ts
+const db = await Oliphaunt.open({
+  topology: 'broker',
+  broker: {
+    startupTimeoutMs: 30_000,
+    recoveryTimeoutMs: 3_000,
+    shutdownTimeoutMs: 3_000,
+    // operationTimeoutMs: 60_000, // optional; includes queue time
+  },
+});
+```
+
+`recoveryTimeout` gives cancellation or a lost worker three seconds to produce a
+known terminal result. `shutdownTimeout` gives destructive close three seconds
+to retire the owner. Increasing either tolerates slower cleanup and delays
+forced retirement. The client and worker receive the same settings, including
+restore. These budgets do not impose an ordinary SQL deadline; the optional
+operation timeout does. New cleanup values must be positive and fit
+2147483647 milliseconds. Direct mobile placement rejects broker options.
+
+## Configure WASIX startup and host resources
+
+For a browser Worker database:
+
+```ts
+import { Oliphaunt } from '@oliphaunt/wasix-ts/worker';
+
+const db = await Oliphaunt.open({
+  timeouts: { startupTimeoutMs: 120_000, shutdownTimeoutMs: 120_000 },
+});
+```
+
+Browser startup includes asset fetching, preparation, storage setup and protocol
+readiness. Fetches receive cancellation signals. A shared preparation is cancelled
+only after its last caller leaves. The browser default is 120 seconds.
+`shutdownTimeoutMs` applies the Worker close deadline: it starts when `close()`
+is requested, including accepted work still draining, and requests termination
+on expiry. Increase it if you intentionally close during long operations.
+
+The browser root placement accepts startup only. Without an isolated Worker,
+a timer cannot interrupt synchronous Wasm or a blocked host callback. If an
+owned allocation finishes late, cleanup keeps its storage lease until the
+instance is closed. Use the Worker placement when you need guest termination.
+Native-host WASIX placements, including `/worker`, reject lifecycle options:
+addon owners need quiescent cleanup before their Worker realm is destroyed.
+A JavaScript timer cannot establish that native code has stopped. Existing
+native cleanup behavior is preserved.
+
+For native-host WASIX databases and tools, configure the shared executor before
+first use. This is process-wide, including Worker realms using the same addon:
+
+```ts
+import { configureHostRuntime } from '@oliphaunt/wasix-ts';
+
+configureHostRuntime({
+  asyncWorkerThreads: 2,
+  maxBlockingThreads: 32,
+  maxDedicatedThreads: 32,
+  maxConcurrentIO: 4,
+});
+```
+
+```rust
+oliphaunt_wasix::configure_host_runtime(oliphaunt_wasix::HostRuntimeOptions {
+    async_worker_threads: Some(2),
+    max_blocking_threads: Some(32),
+    max_dedicated_threads: Some(32),
+    max_concurrent_io: Some(4),
+})?;
+```
+
+| Option | Omitted default | Meaning and tradeoff |
+| --- | --- | --- |
+| `asyncWorkerThreads` | Tokio's CPU/environment selection (`TOKIO_WORKER_THREADS`) | Shared async executor workers. More threads can overlap host work, with more memory and scheduling cost |
+| `maxBlockingThreads` | 512 | Ceiling for Tokio blocking workers, created on demand. A small ceiling can delay or starve file/host work |
+| `maxDedicatedThreads` | `max(200, available CPUs × 100)` | Separate Wasmer pool for dedicated guest/host tasks. Workers are created on demand and retained. A small cap can starve nested guest work, including initialization |
+| `maxConcurrentIO` | 4 | File helpers per initial-copy/publication operation. More I/O can reduce copying time until storage contention dominates; durability barriers remain mandatory |
+
+All four accept positive counts fitting a `u32`. Databases and tools share the
+Tokio executor and dedicated task pool. Omitted fields keep its selected values; a conflicting selection after
+initialization fails. These are host controls, distinct from browser OPFS
+`maxConcurrentIO`, PostgreSQL workers and artifact stack/memory settings.
+
+WASIX `PgDumpOptions` and `PsqlOptions` accept `.startup_timeout(Duration)` in
+Rust; WASIX npm tool options accept `startupTimeoutMs`. The budget ends when the
+tool opens its virtual connection (first protocol activity in the browser).
+It includes tool asset preparation and does not limit SQL execution or output
+delivery afterward. Native WASIX defaults to 30 seconds; browser tools retain
+no startup deadline unless selected. Expiry stops the owned guest/Worker and
+waits for cleanup; blocking host work may delay that cleanup.
+
+## Select physical archive limits
+
+WASIX TypeScript physical backup and restore accept the same per-call policy:
+
+```ts
+const options = { archiveLimits: {
+  maxArchiveBytes: 4 * 1024 ** 3,
+  maxEntryBytes: 1024 ** 3,
+  maxEntries: 131_072,
+  maxPathBytes: 1024,
+  maxPathDepth: 64,
+} };
+const archive = await db.backup(options);
+await Oliphaunt.restore(destinationStorage, archive, options);
+```
+
+| Field | Browser default | What it accepts |
+| --- | --- | --- |
+| `maxArchiveBytes` | 2 GiB | Complete uncompressed TAR, including headers and padding |
+| `maxEntryBytes` | 512 MiB | One file or metadata entry |
+| `maxEntries` | 65,536 | All file, directory and TAR metadata entries |
+| `maxPathBytes` | 1,024 | UTF-8 bytes of a normalized relative path |
+| `maxPathDepth` | 64 | Relative path components |
+
+Raising a ceiling permits larger archives; it does not reserve space or reduce
+the memory needed to collect a complete backup. Every value is a positive safe
+integer. Use the same selections when creating and restoring an archive. The
+writer now rejects archives its matching reader would reject. Path safety,
+duplicate-path checks and backup identity checks remain mandatory at every
+setting. The physical writer retains its ustar field widths; larger path
+ceilings cannot widen that format. Native-host WASIX keeps its existing
+uncapped default; an explicit
+`archiveLimits` selects the same policy (with omitted fields filled from the
+table). Other native SDK backups do not acquire browser TAR limits.
+These physical-backup settings do not change package/seed/ICU/extension import
+ceilings.
 
 ## Compare runtime modes
 

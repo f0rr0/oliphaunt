@@ -112,13 +112,14 @@ export type PreparedWasixRuntime = {
  */
 export async function prepareWasixRuntime(
   options: SerializedOpenOptions,
+  signal?: AbortSignal,
 ): Promise<PreparedWasixRuntime> {
   const descriptor = options.runtime;
   const profile = options.icu === undefined ? 'standard' : 'icu';
   const [manifestBytes, runtimeBytes, icuData] = await Promise.all([
-    loadAsset(descriptor.manifest.source, 'WASIX asset manifest'),
-    loadAsset(descriptor.runtimeArchive.source, 'WASIX runtime archive'),
-    options.icu === undefined ? Promise.resolve(undefined) : loadIcuData(options.icu),
+    loadAsset(descriptor.manifest.source, 'WASIX asset manifest', signal),
+    loadAsset(descriptor.runtimeArchive.source, 'WASIX runtime archive', signal),
+    options.icu === undefined ? Promise.resolve(undefined) : loadIcuData(options.icu, signal),
   ]);
   await Promise.all([
     assertDeclaredAssetBytes(
@@ -166,6 +167,7 @@ export async function prepareWasixRuntime(
       const bytes = await loadAsset(
         carrier.source,
         `WASIX extension ${extension['sql-name']} from ${carrier.product}@${carrier.version}`,
+        signal,
       );
       if (bytes.length !== extension.size) {
         throw new Error(
@@ -189,7 +191,13 @@ export async function prepareWasixRuntime(
     ...(options.seed === undefined
       ? {}
       : {
-          loadClusterSeed: lazyClusterSeedLoader(options, manifest, profile, icuData?.treeSha256),
+          loadClusterSeed: lazyClusterSeedLoader(
+            options,
+            manifest,
+            profile,
+            icuData?.treeSha256,
+            signal,
+          ),
         }),
     moduleSha256: manifest.runtime['module-sha256'],
     catalogProfile: profile,
@@ -204,11 +212,12 @@ function lazyClusterSeedLoader(
   runtime: WasixAssetManifest,
   profile: CatalogProfile,
   icuTree?: string,
+  signal?: AbortSignal,
 ): () => Promise<WasixDirectoryMount> {
   let cached: Promise<WasixDirectoryMount> | undefined;
   return () => {
     if (cached === undefined) {
-      cached = loadClusterSeed(options, runtime, profile, icuTree);
+      cached = loadClusterSeed(options, runtime, profile, icuTree, signal);
       void cached.catch(() => {
         cached = undefined;
       });
@@ -217,18 +226,24 @@ function lazyClusterSeedLoader(
   };
 }
 
-export async function loadSeedBytes(seed: NonNullable<SerializedOpenOptions['seed']>) {
+export async function loadSeedBytes(
+  seed: NonNullable<SerializedOpenOptions['seed']>,
+  signal?: AbortSignal,
+) {
   const [archive, manifest] = await Promise.all([
-    loadAsset(seed.archive, 'WASIX seed archive'),
-    loadAsset(seed.manifest, 'WASIX seed manifest'),
+    loadAsset(seed.archive, 'WASIX seed archive', signal),
+    loadAsset(seed.manifest, 'WASIX seed manifest', signal),
   ]);
   return { archive, manifest };
 }
 
-export async function loadIcuData(icu: NonNullable<SerializedOpenOptions['icu']>) {
+export async function loadIcuData(
+  icu: NonNullable<SerializedOpenOptions['icu']>,
+  signal?: AbortSignal,
+) {
   const [data, manifest] = await Promise.all([
-    loadAsset(icu.data, 'ICU data'),
-    loadAsset(icu.manifest, 'ICU manifest'),
+    loadAsset(icu.data, 'ICU data', signal),
+    loadAsset(icu.manifest, 'ICU manifest', signal),
   ]);
   const fields = new Map<string, string>();
   for (const line of decodeUtf8(manifest).split(/\r?\n/)) {
@@ -260,9 +275,10 @@ async function loadClusterSeed(
   runtime: WasixAssetManifest,
   profile: CatalogProfile,
   icuTree?: string,
+  signal?: AbortSignal,
 ): Promise<WasixDirectoryMount> {
   if (options.seed === undefined) throw new Error('new browser storage requires an explicit seed');
-  const { archive, manifest } = await loadSeedBytes(options.seed);
+  const { archive, manifest } = await loadSeedBytes(options.seed, signal);
   const seed = parseClusterSeedManifest(manifest, profile);
   verifyClusterSeedIdentity(options, runtime, seed, icuTree);
   await assertDeclaredAssetBytes(

@@ -404,6 +404,8 @@ class OliphauntModule(
     storageName: String?,
     startupTimeoutMs: Long,
     operationTimeoutMs: Long,
+    recoveryTimeoutMs: Long,
+    shutdownTimeoutMs: Long,
     artifact: ByteArray,
     callback: OliphauntJsiPromiseCallback,
   ) {
@@ -415,11 +417,11 @@ class OliphauntModule(
           try {
             archive.outputStream().use { it.write(artifact) }
             OliphauntBroker.restore(reactContext, DatabaseStorage.ApplicationData(validateApplicationDataName(storageName)), archive,
-              OliphauntBrokerOptions(startupTimeoutMs.takeIf { it > 0 } ?: 30_000, operationTimeoutMs.takeIf { it > 0 }))
+              OliphauntBrokerOptions(startupTimeoutMs.takeIf { it > 0 } ?: 30_000, operationTimeoutMs.takeIf { it > 0 }, recoveryTimeoutMs.takeIf { it > 0 } ?: 3_000, shutdownTimeoutMs.takeIf { it > 0 } ?: 3_000))
           } finally { archive.delete() }
           return@runCatching
         }
-        require(startupTimeoutMs == 0L && operationTimeoutMs == 0L) { "broker timeouts require a broker native build" }
+        require(startupTimeoutMs == 0L && operationTimeoutMs == 0L && recoveryTimeoutMs == 0L && shutdownTimeoutMs == 0L) { "broker timeouts require a broker native build" }
         val storage = when (storageKind) {
           "directory" -> DatabaseStorage.Directory(File(validatePath(storagePath, "restore destination directory")))
           "applicationData" -> DatabaseStorage.ApplicationData(validateApplicationDataName(storageName))
@@ -479,11 +481,11 @@ class OliphauntModule(
     val username = config.startupIdentity("username")
     val database = config.startupIdentity("database")
 
-    require(getTopology() == "broker" || (!config.hasKey("startupTimeoutMs") && !config.hasKey("operationTimeoutMs"))) {
+    require(getTopology() == "broker" || listOf("startupTimeoutMs", "operationTimeoutMs", "recoveryTimeoutMs", "shutdownTimeoutMs").none(config::hasKey)) {
       "broker timeouts require a broker native build"
     }
     return ReactNativeAndroidOpenConfig(
-      broker = OliphauntBrokerOptions(config.positiveInteger("startupTimeoutMs") ?: 30000, config.positiveInteger("operationTimeoutMs")),
+      broker = OliphauntBrokerOptions(config.positiveInteger("startupTimeoutMs") ?: 30000, config.positiveInteger("operationTimeoutMs"), config.positiveInteger("recoveryTimeoutMs") ?: 3_000, config.positiveInteger("shutdownTimeoutMs") ?: 3_000),
       config = OliphauntConfig(
         storage = storage,
         admission = config.admissionLimits(),

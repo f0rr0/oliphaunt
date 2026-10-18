@@ -1,3 +1,4 @@
+import { optionRecord, timeoutMilliseconds } from '@oliphaunt/ts-query/internal/resource-options';
 import {
   OperationBudget,
   TRANSACTION_BEGIN_REQUEST_BYTES,
@@ -62,6 +63,8 @@ export type RestoreDestination = Exclude<DatabaseStorage, { readonly kind: 'temp
 
 export type BrokerOptions = {
   startupTimeoutMs?: number;
+  recoveryTimeoutMs?: number;
+  shutdownTimeoutMs?: number;
   operationTimeoutMs?: number;
 };
 
@@ -1448,6 +1451,12 @@ export function createOliphauntClient(
       const storage = normalizeRestoreDestination(destination);
       const normalized = normalizeOpenConfig({ ...options, storage: destination }, topology);
       Object.assign(storage, {
+        ...(normalized.recoveryTimeoutMs === undefined
+          ? {}
+          : { recoveryTimeoutMs: normalized.recoveryTimeoutMs }),
+        ...(normalized.shutdownTimeoutMs === undefined
+          ? {}
+          : { shutdownTimeoutMs: normalized.shutdownTimeoutMs }),
         ...(normalized.startupTimeoutMs === undefined
           ? {}
           : { startupTimeoutMs: normalized.startupTimeoutMs }),
@@ -1485,7 +1494,18 @@ function normalizeRestoreDestination(destination: RestoreDestination): {
 function normalizeOpenConfig(config: OpenConfig, topology: 'direct' | 'broker'): NativeOpenConfig {
   const admission = normalizeAdmissionLimits(config.admission);
   const broker = config.broker;
-  const { startupTimeoutMs, operationTimeoutMs } = broker ?? {};
+  const { startupTimeoutMs, operationTimeoutMs, recoveryTimeoutMs, shutdownTimeoutMs } =
+    broker ?? {};
+  if (broker !== undefined)
+    optionRecord(
+      broker,
+      ['startupTimeoutMs', 'operationTimeoutMs', 'recoveryTimeoutMs', 'shutdownTimeoutMs'],
+      'broker options',
+    );
+  if (recoveryTimeoutMs !== undefined)
+    timeoutMilliseconds(recoveryTimeoutMs, 'broker recoveryTimeoutMs');
+  if (shutdownTimeoutMs !== undefined)
+    timeoutMilliseconds(shutdownTimeoutMs, 'broker shutdownTimeoutMs');
   if (admission !== undefined && admission.maxPendingOperations > 2_147_483_647) {
     throw new RangeError('admission maxPendingOperations exceeds the mobile integer range');
   }
@@ -1516,6 +1536,8 @@ function normalizeOpenConfig(config: OpenConfig, topology: 'direct' | 'broker'):
           admissionHighWaterMarkBytes: admission.highWaterMarkBytes,
         }),
     ...(startupTimeoutMs === undefined ? {} : { startupTimeoutMs }),
+    ...(recoveryTimeoutMs === undefined ? {} : { recoveryTimeoutMs }),
+    ...(shutdownTimeoutMs === undefined ? {} : { shutdownTimeoutMs }),
     ...(operationTimeoutMs === undefined ? {} : { operationTimeoutMs }),
     startupGUCs,
     username: config.username,

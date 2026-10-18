@@ -68,7 +68,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
                         configuration: parsed.configuration,
                         options: .init(
                             startupTimeout: .milliseconds(parsed.startupTimeoutMs),
-                            operationTimeout: parsed.operationTimeoutMs.map { .milliseconds($0) }))
+                            operationTimeout: parsed.operationTimeoutMs.map { .milliseconds($0) },
+                            recoveryTimeout: .milliseconds(parsed.recoveryTimeoutMs),
+                            shutdownTimeout: .milliseconds(parsed.shutdownTimeoutMs)))
                 #else
                     database = try await OliphauntDatabase.open(configuration: parsed.configuration)
                 #endif
@@ -112,7 +114,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
                             storage: parsed.configuration.storage, from: archive,
                             options: .init(
                                 startupTimeout: .milliseconds(parsed.startupTimeoutMs),
-                                operationTimeout: parsed.operationTimeoutMs.map { .milliseconds($0) }))
+                                operationTimeout: parsed.operationTimeoutMs.map { .milliseconds($0) },
+                                recoveryTimeout: .milliseconds(parsed.recoveryTimeoutMs),
+                                shutdownTimeout: .milliseconds(parsed.shutdownTimeoutMs)))
                     #else
                         try await OliphauntDatabase.restore(storage: parsed.configuration.storage, bytes: backupData)
                     #endif
@@ -278,6 +282,8 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
     private struct ParsedOpenConfig {
         let startupTimeoutMs: Int64
         let operationTimeoutMs: Int64?
+        let recoveryTimeoutMs: Int64
+        let shutdownTimeoutMs: Int64
         var configuration: OliphauntConfiguration
     }
 
@@ -311,12 +317,14 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
             extensions: extensions,
             admission: admission
         )
-        if topology() == "direct", config["startupTimeoutMs"] != nil || config["operationTimeoutMs"] != nil {
+        if topology() == "direct", ["startupTimeoutMs", "operationTimeoutMs", "recoveryTimeoutMs", "shutdownTimeoutMs"].contains(where: { config[$0] != nil }) {
             throw adapterError("broker timeouts require a broker native build")
         }
         return ParsedOpenConfig(
             startupTimeoutMs: try positiveInteger("startupTimeoutMs") ?? 30_000,
-            operationTimeoutMs: try positiveInteger("operationTimeoutMs"), configuration: configuration)
+            operationTimeoutMs: try positiveInteger("operationTimeoutMs"),
+            recoveryTimeoutMs: try positiveInteger("recoveryTimeoutMs") ?? 3_000,
+            shutdownTimeoutMs: try positiveInteger("shutdownTimeoutMs") ?? 3_000, configuration: configuration)
     }
 
     private static func string(_ dictionary: NSDictionary, _ key: String) throws -> String? {

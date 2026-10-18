@@ -1,3 +1,4 @@
+import { timeoutMilliseconds } from '@oliphaunt/ts-query/internal/resource-options';
 import { assertSha256 } from './extensions.js';
 import type { Directory, RunWasixOptions } from '../host/index.mjs';
 import { loadAsset } from './archive.js';
@@ -14,6 +15,8 @@ export type WasixToolDescriptor = Readonly<{
 
 export type WasixToolProcessOptions = Readonly<{
   runtimeVersion: string;
+  /** Budget until embedded protocol connection; excludes SQL and output delivery. Native hosts default to 30000 ms; browser hosts have no default limit. */
+  startupTimeoutMs?: number;
   tool: WasixToolDescriptor;
   args: readonly string[];
   /** @internal The admitted database-owned copy may be transferred to a worker. */
@@ -42,6 +45,8 @@ export function snapshotWasixToolProcessOptions(
   retain: (bytes: number) => void,
 ): WasixToolProcessOptions {
   const options = typeof input === 'function' ? input() : input;
+  if (options.startupTimeoutMs !== undefined)
+    timeoutMilliseconds(options.startupTimeoutMs, 'tool startupTimeoutMs');
   if (options.stdin !== undefined && options.script !== undefined) {
     throw new TypeError('WASIX tools accept stdin or script, not both');
   }
@@ -71,6 +76,7 @@ export type WasixToolProcessResult = Readonly<{
 
 /** @internal The already-open database worker does not need carrier runtime metadata again. */
 export type WasixPgDumpProcessOptions = Readonly<{
+  startupTimeoutMs?: number;
   tool: WasixToolDescriptor;
   args: readonly string[];
 }>;
@@ -84,9 +90,10 @@ export type PreparedWasixToolAsset = Readonly<{
 /** @internal Verify and compile one immutable frontend program once per owning worker. */
 export async function prepareWasixToolAsset(
   descriptor: WasixToolDescriptor,
+  signal?: AbortSignal,
 ): Promise<PreparedWasixToolAsset> {
   validateWasixToolDescriptor(descriptor);
-  const loaded = await loadAsset(descriptor.source, `WASIX ${descriptor.name} module`);
+  const loaded = await loadAsset(descriptor.source, `WASIX ${descriptor.name} module`, signal);
   const bytes = standaloneBytes(loaded);
   if (bytes.length !== descriptor.size) {
     throw new Error(`WASIX ${descriptor.name} module size mismatch`);

@@ -37,6 +37,7 @@ export {
 export type {
   BinaryInput,
   BrokerOptions,
+  RuntimeTimeouts,
   FilePathInput,
   AdmissionLimits,
   DatabaseStorage,

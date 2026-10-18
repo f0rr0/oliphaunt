@@ -1,3 +1,4 @@
+import { physicalArchiveOptions, type ArchiveLimits } from '../resources/archive-limits.js';
 import {
   OperationBudget,
   TRANSACTION_BEGIN_REQUEST_BYTES,
@@ -142,7 +143,7 @@ export type WasixDatabaseSession = {
   ): Promise<WasixProtocolStreamOutcome>;
   sync(boundary: WasixStorageSyncBoundary): Promise<void>;
   /** Internal test seams may omit backup; production sessions always provide it. */
-  backup?(): Promise<Uint8Array>;
+  backup?(limits?: ArchiveLimits): Promise<Uint8Array>;
   runPgDump?(options: WasixPgDumpProcessOptions): Promise<WasixToolProcessResult>;
   /** Internal Node-compatible native path for both packaged frontend tools. */
   runTool?(options: WasixToolProcessOptions): Promise<WasixToolProcessResult>;
@@ -262,6 +263,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     session: WasixDatabaseSession,
     forgottenRegistry: WasixForgottenDatabaseRegistry | undefined = forgottenDatabaseRegistry,
     admission?: AdmissionLimits,
+    private readonly shutdownTimeoutMs = CLOSE_DEADLINE_MS,
   ) {
     this.#operationBudget = new OperationBudget(admission);
     this.#session = session;
@@ -449,7 +451,8 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     );
   }
 
-  async backup(): Promise<Uint8Array> {
+  async backup(options?: import('./types.js').BackupOptions): Promise<Uint8Array> {
+    const limits = physicalArchiveOptions(options);
     return this.#operationBudget.admit(
       () => {
         this.#assertAvailable();
@@ -458,7 +461,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
           if (this.#session.backup === undefined) {
             throw new Error('this WASIX execution session does not support physical backup');
           }
-          const bytes = await this.#session.backup();
+          const bytes = await this.#session.backup(limits);
           await this.#syncPersistence('operation');
           return bytes;
         });
@@ -1007,7 +1010,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     const sessionClose =
       this.#session.abort === undefined
         ? orderlyClose
-        : withDeadline(orderlyClose, CLOSE_DEADLINE_MS, () => this.#session.abort?.());
+        : withDeadline(orderlyClose, this.shutdownTimeoutMs, () => this.#session.abort?.());
     const attempt = (async () => {
       let sessionFailed = false;
       let sessionFailure: unknown;

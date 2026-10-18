@@ -1,9 +1,14 @@
 import {
+  normalizeArchiveLimits,
+  checkArchiveLimit,
+  type ArchiveLimits,
+} from '../resources/archive-limits.js';
+import {
   PHYSICAL_FORMAT as WASIX_PHYSICAL_FORMAT,
   POSTGRES_MAJOR as WASIX_POSTGRES_MAJOR,
 } from '@oliphaunt/liboliphaunt-wasix';
 
-import { extractTar } from '../resources/archive.js';
+import { extractTar, sanitizeTarPath } from '../resources/archive.js';
 import { WasixStorageError } from '../core/errors.js';
 import { simpleQuery } from '../protocol/protocol.js';
 import {
@@ -54,6 +59,7 @@ export class BackupModeExitUnconfirmedError extends Error {
 export async function createPhysicalArchive(
   exec: ExecProtocol,
   directory: StorageDirectory,
+  limits?: ArchiveLimits,
 ): Promise<Uint8Array> {
   let state: BackupModeState = 'not-entered';
   try {
@@ -118,7 +124,7 @@ export async function createPhysicalArchive(
       }),
     );
     const snapshot = mergeBackupSnapshots(beforeStop, walFiles, backupLabel, tablespaceMap);
-    return encodePhysicalArchive(snapshot);
+    return encodePhysicalArchive(snapshot, limits);
   } catch (primaryError) {
     if (state === 'exit-required' || state === 'exit-unconfirmed') {
       const cleanup = await stopPhysicalBackup(exec);
@@ -323,10 +329,10 @@ function parseWalName(name: string, segmentSize: number): { timeline: number; se
 }
 
 /** Validate one Oliphaunt physical tar and return its provider-neutral PGDATA snapshot. */
-export function decodePhysicalArchive(bytes: Uint8Array): StoredSnapshot {
+export function decodePhysicalArchive(bytes: Uint8Array, limits?: ArchiveLimits): StoredSnapshot {
   try {
     validateTarFraming(bytes);
-    const archive = extractTar(bytes);
+    const archive = extractTar(bytes, normalizeArchiveLimits(limits));
     const manifest = archive.files.get(ARCHIVE_MANIFEST_PATH);
     if (manifest === undefined || new TextDecoder().decode(manifest) !== ARCHIVE_MANIFEST) {
       throw corruptArchive('has a missing or incompatible backup manifest');
@@ -462,17 +468,28 @@ export function mergeBackupSnapshots(
 }
 
 /** @internal Strict ustar writer shared by backup and conformance tests. */
-export function encodePhysicalArchive(snapshot: StoredSnapshot): Uint8Array {
+export function encodePhysicalArchive(
+  snapshot: StoredSnapshot,
+  policy?: ArchiveLimits,
+): Uint8Array {
+  const limits = normalizeArchiveLimits(policy);
+  checkArchiveLimit(
+    2 + snapshot.directories.length + snapshot.files.length,
+    limits.maxEntries,
+    'physical archive entry count',
+  );
   const chunks: Uint8Array[] = [];
-  appendTarEntry(chunks, 'pgdata/', new Uint8Array(), '5');
+  appendTarEntry(chunks, 'pgdata/', new Uint8Array(), '5', limits);
   for (const path of snapshot.directories) {
-    appendTarEntry(chunks, `pgdata/${path}/`, new Uint8Array(), '5');
+    appendTarEntry(chunks, `pgdata/${path}/`, new Uint8Array(), '5', limits);
   }
   for (const { path, bytes } of snapshot.files) {
-    appendTarEntry(chunks, `pgdata/${path}`, bytes, '0');
+    appendTarEntry(chunks, `pgdata/${path}`, bytes, '0', limits);
   }
-  appendTarEntry(chunks, ARCHIVE_MANIFEST_PATH, encoder.encode(ARCHIVE_MANIFEST), '0');
+  appendTarEntry(chunks, ARCHIVE_MANIFEST_PATH, encoder.encode(ARCHIVE_MANIFEST), '0', limits);
   chunks.push(new Uint8Array(TAR_BLOCK_BYTES * 2));
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  checkArchiveLimit(total, limits.maxArchiveBytes, 'physical archive bytes');
   return concatenate(chunks);
 }
 
@@ -481,22 +498,14 @@ function appendTarEntry(
   path: string,
   contents: Uint8Array,
   type: '0' | '5',
+  limits: Required<ArchiveLimits>,
 ): void {
-  if (splitUstarPath(path) === undefined) {
-    throw new Error(`physical archive path cannot be represented by ustar: ${path}`);
-  }
-  appendRawTarEntry(chunks, path, contents, type);
-}
-
-function appendRawTarEntry(
-  chunks: Uint8Array[],
-  path: string,
-  contents: Uint8Array,
-  type: '0' | '5',
-): void {
-  const header = new Uint8Array(TAR_BLOCK_BYTES);
+  sanitizeTarPath(path, limits);
+  checkArchiveLimit(contents.length, limits.maxEntryBytes, 'physical archive entry bytes');
   const split = splitUstarPath(path);
-  if (split === undefined) throw new Error(`tar path cannot be represented: ${path}`);
+  if (split === undefined)
+    throw new Error(`physical archive path cannot be represented by ustar: ${path}`);
+  const header = new Uint8Array(TAR_BLOCK_BYTES);
   writeAscii(header, 0, 100, split.name);
   writeOctal(header, 100, 8, type === '5' ? 0o700 : 0o600);
   writeOctal(header, 108, 8, 0);
@@ -510,7 +519,7 @@ function appendRawTarEntry(
   writeAscii(header, 345, 155, split.prefix);
   const checksum = header.reduce((sum, byte) => sum + byte, 0);
   writeAscii(header, 148, 8, `${checksum.toString(8).padStart(6, '0')}\0 `);
-  chunks.push(header, contents.slice());
+  chunks.push(header, contents);
   const padding = (TAR_BLOCK_BYTES - (contents.length % TAR_BLOCK_BYTES)) % TAR_BLOCK_BYTES;
   if (padding > 0) chunks.push(new Uint8Array(padding));
 }

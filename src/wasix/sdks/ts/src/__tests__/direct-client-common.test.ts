@@ -1158,28 +1158,40 @@ describe('direct WASIX session lifecycle', () => {
     expect(initializations).toBe(2);
   });
 
-  it('keeps direct host startup event-loop-visible and releases storage on timeout', async () => {
+  it('keeps storage owned until a late startup allocation is closed after timeout', async () => {
     vi.useFakeTimers();
     const events: string[] = [];
     const storage = fakeLease(async (_directory, outcome) => {
       events.push(`storage:${outcome}`);
     });
+    let completeInstantiation!: (instance: OliphauntDirectInstance) => void;
     try {
       const opening = DirectWasixSession.open(
         openOptions(),
         fakeHost({
-          instantiate: () => new Promise<OliphauntDirectInstance>(() => undefined),
+          instantiate: () =>
+            new Promise<OliphauntDirectInstance>((resolve) => {
+              completeInstantiation = resolve;
+            }),
         }),
         fakeDependencies(storage),
       );
       const timedOut = rejects(opening, (error: Error) =>
         error.message.includes('Oliphaunt WASIX startup exceeded 120000ms'),
       );
-      while (vi.getTimerCount() === 0) await Promise.resolve();
+      while (completeInstantiation === undefined) await Promise.resolve();
       vi.advanceTimersByTime(120_000);
-
+      expect(events).toEqual([]);
+      completeInstantiation({
+        close() {
+          events.push('close');
+        },
+        free() {
+          events.push('free');
+        },
+      } as OliphauntDirectInstance);
       await timedOut;
-      expect(events).toEqual(['storage:failed']);
+      expect(events).toEqual(['close', 'storage:failed', 'free']);
     } finally {
       vi.useRealTimers();
     }

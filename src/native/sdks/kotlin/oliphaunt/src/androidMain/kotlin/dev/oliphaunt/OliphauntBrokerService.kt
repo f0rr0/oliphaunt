@@ -50,6 +50,8 @@ public class OliphauntBrokerService : Service() {
             database: String?,
             extensions: Array<String>,
             startupTimeoutMillis: Long,
+            recoveryTimeoutMillis: Long,
+            shutdownTimeoutMillis: Long,
         ) {
             check(Binder.getCallingUid() == Process.myUid())
             val acquired = synchronized(lock) {
@@ -68,6 +70,7 @@ public class OliphauntBrokerService : Service() {
             try {
                 client.asBinder().linkToDeath(ownerDeath, 0)
                 require(startupTimeoutMillis > 0)
+                require(recoveryTimeoutMillis in 1..Int.MAX_VALUE.toLong() && shutdownTimeoutMillis in 1..Int.MAX_VALUE.toLong())
                 val native = socket.use {
                     NativeBrokerWorker.create(
                         it.fd,
@@ -77,6 +80,7 @@ public class OliphauntBrokerService : Service() {
                             }
                         },
                         startupTimeoutMillis.toULong(),
+                        dev.oliphaunt.bindings.BrokerTimeoutOptions(recoveryTimeoutMillis.toULong(), shutdownTimeoutMillis.toULong()),
                     )
                 }
                 synchronized(lock) {

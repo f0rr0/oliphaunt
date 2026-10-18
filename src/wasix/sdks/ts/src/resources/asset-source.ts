@@ -1,4 +1,7 @@
-export type PackageAssetReader = (source: URL) => Promise<Uint8Array>;
+export type PackageAssetReader = (
+  source: URL,
+  options?: { signal?: AbortSignal },
+) => Promise<Uint8Array>;
 
 let packageAssetReader: PackageAssetReader | undefined;
 
@@ -10,10 +13,15 @@ export function installPackageAssetReader(reader: PackageAssetReader): void {
   packageAssetReader = reader;
 }
 
-export async function readPackageAsset(source: string, label: string): Promise<Uint8Array> {
+export async function readPackageAsset(
+  source: string,
+  label: string,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  signal?.throwIfAborted();
   const url = new URL(source);
   if (url.protocol !== 'file:' || packageAssetReader === undefined) {
     throw new Error(`cannot read package-relative ${label} URL ${JSON.stringify(source)}`);
   }
-  return packageAssetReader(url);
+  return signal === undefined ? packageAssetReader(url) : packageAssetReader(url, { signal });
 }

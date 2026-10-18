@@ -19,6 +19,7 @@ export type WorkerSessionOpener = (options: SerializedOpenOptions) => Promise<Wa
 export type WorkerStorageRestorer = (
   storage: SerializedOpenOptions['storage'],
   bytes: Uint8Array,
+  limits?: import('../resources/archive-limits.js').ArchiveLimits,
 ) => Promise<void>;
 export type WorkerDispatcherLifecycle = Readonly<{
   /** Called only after close has settled and its response has been posted. */
@@ -81,7 +82,7 @@ export function createWorkerSessionDispatcher(
           if (process !== undefined) {
             throw new Error('this worker already owns an Oliphaunt WASIX process');
           }
-          await restore(request.storage, request.bytes);
+          await restore(request.storage, request.bytes, request.limits);
           respond({ id: request.id, ok: true });
           return;
         case 'exec': {
@@ -149,7 +150,7 @@ export function createWorkerSessionDispatcher(
           if (session.backup === undefined) {
             throw new Error('this WASIX worker session does not support physical backup');
           }
-          const archive = prepareTransferableBytes(await session.backup());
+          const archive = prepareTransferableBytes(await session.backup(request.limits));
           respond({ id: request.id, ok: true, value: archive.value }, archive.transfer);
           return;
         }
@@ -158,7 +159,11 @@ export function createWorkerSessionDispatcher(
           if (session.runPgDump === undefined) {
             throw new Error('this WASIX worker session does not support pg_dump');
           }
-          const result = await session.runPgDump({ tool: request.tool, args: request.args });
+          const result = await session.runPgDump({
+            tool: request.tool,
+            args: request.args,
+            startupTimeoutMs: request.startupTimeoutMs,
+          });
           const stdout = prepareTransferableBytes(result.stdout);
           const stderr = prepareTransferableBytes(result.stderr);
           respond(

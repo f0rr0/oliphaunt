@@ -31,6 +31,16 @@
         "types": "./dist/commonjs/operation-budget.d.ts",
         "default": "./dist/commonjs/operation-budget.js"
       }
+    },
+    "./internal/resource-options": {
+      "import": {
+        "types": "./dist/module/resource-options.d.ts",
+        "default": "./dist/module/resource-options.js"
+      },
+      "require": {
+        "types": "./dist/commonjs/resource-options.d.ts",
+        "default": "./dist/commonjs/resource-options.js"
+      }
     }
   },
   "files": [

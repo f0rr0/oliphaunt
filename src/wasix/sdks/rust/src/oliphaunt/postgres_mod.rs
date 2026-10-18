@@ -17,8 +17,7 @@ use wasmer_wasix::fs::WasiFsRoot;
 use wasmer_wasix::runners::wasi::{PackageOrHash, RuntimeOrEngine, WasiRunner};
 use wasmer_wasix::runtime::module_cache::ModuleCache;
 use wasmer_wasix::runtime::module_cache::SharedCache;
-use wasmer_wasix::runtime::task_manager::tokio::TokioTaskManager;
-use wasmer_wasix::runtime::task_manager::{VirtualTaskManager, VirtualTaskManagerExt};
+use wasmer_wasix::runtime::task_manager::VirtualTaskManagerExt;
 use wasmer_wasix::runtime::{PluggableRuntime, Runtime};
 use wasmer_wasix::virtual_fs::null_file::NullFile;
 use wasmer_wasix::{WasiError, WasiFunctionEnv, virtual_fs};
@@ -33,7 +32,7 @@ use super::extensions::Extension;
 use super::storage::{PgDataStorage, StorageRoot};
 
 mod stdio;
-mod task_policy;
+pub(super) mod task_policy;
 mod wasix_fs;
 
 use super::protocol_limits_generated::BUFFERED_PROTOCOL_OUTPUT_LIMIT_BYTES;
@@ -1076,15 +1075,8 @@ fn finish_guest_phase<T>(result: Result<T>, phase: &str, poison: impl FnOnce(Str
 fn process_wasix_runtime(engine: &Engine) -> Result<Arc<WasixProcessRuntime>> {
     WASIX_PROCESS_RUNTIME
         .get_or_init(|| {
-            let tokio_runtime = {
-                Arc::new(
-                    tokio::runtime::Builder::new_multi_thread()
-                        .enable_all()
-                        .build()
-                        .context("create Tokio runtime for Wasmer/WASIX filesystem")
-                        .map_err(|err| format!("{err:#}"))?,
-                )
-            };
+            let tokio_runtime =
+                super::host_runtime::runtime().map_err(|error| format!("{error:#}"))?;
             let wasix_module_cache = { Arc::new(SharedCache::new()) };
             let wasix_runtime = {
                 build_wasix_runtime(
@@ -1093,6 +1085,7 @@ fn process_wasix_runtime(engine: &Engine) -> Result<Arc<WasixProcessRuntime>> {
                     wasix_module_cache.clone(),
                     GuestWasmTasks::Deny,
                 )
+                .map_err(|error| format!("{error:#}"))?
             };
 
             Ok(Arc::new(WasixProcessRuntime {
@@ -1228,16 +1221,15 @@ fn build_wasix_runtime(
     engine: &Engine,
     module_cache: Arc<SharedCache>,
     guest_wasm_tasks: GuestWasmTasks,
-) -> Arc<dyn Runtime + Send + Sync> {
+) -> Result<Arc<dyn Runtime + Send + Sync>> {
     let _guard = runtime.enter();
-    let task_manager: Arc<dyn VirtualTaskManager> =
-        Arc::new(TokioTaskManager::new(runtime.handle().clone()));
+    let task_manager = super::host_runtime::tasks()?;
     let task_manager = guest_wasm_tasks.apply(task_manager);
     let mut wasix_runtime = PluggableRuntime::new(task_manager);
     wasix_runtime.set_engine(engine.clone());
     wasix_runtime.module_cache_only = true;
     wasix_runtime.set_module_cache(module_cache);
-    Arc::new(wasix_runtime)
+    Ok(Arc::new(wasix_runtime))
 }
 
 fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStorage) -> Result<()> {
@@ -1288,7 +1280,7 @@ fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStora
         &engine,
         process_runtime.wasix_module_cache.clone(),
         GuestWasmTasks::Allow,
-    );
+    )?;
 
     let package = split_initdb_binary_package(&initdb_module, &postgres_module)?;
     let root_fs = split_initdb_root_filesystem(runtime_layout, pgdata_storage)?;

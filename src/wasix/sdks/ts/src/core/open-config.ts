@@ -1,3 +1,4 @@
+import { normalizeRuntimeTimeouts } from '@oliphaunt/ts-query/internal/resource-options';
 import { normalizeAdmissionLimits } from '@oliphaunt/ts-query/internal/operation-budget';
 import defaultWasixRuntime from '@oliphaunt/liboliphaunt-wasix';
 
@@ -14,11 +15,13 @@ export function serializeOpenConfig(
   runtimeDescriptor: WasixRuntimeDescriptor = defaultWasixRuntime,
 ): SerializedOpenOptions {
   const admission = normalizeAdmissionLimits(config.admission);
+  const timeouts = normalizeRuntimeTimeouts(config.timeouts);
   const extensions = serializeWasixExtensionDescriptors(config.extensions ?? []);
   const runtime = serializeWasixRuntimeDescriptor(runtimeDescriptor);
   const storage = serializeWasixStorage(config.storage);
   return {
     runtime,
+    ...(timeouts === undefined ? {} : { timeouts }),
     ...(admission === undefined ? {} : { admission }),
     ...(config.seed === undefined ? {} : { seed: serializeWasixSeed(config.seed) }),
     ...(config.icu === undefined ? {} : { icu: serializeWasixIcuDescriptor(config.icu) }),

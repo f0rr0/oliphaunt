@@ -66,9 +66,13 @@ impl NativeRuntime for NativeBrokerRuntime {
     fn open(&self, config: OpenConfig) -> Result<Box<dyn EngineSession>> {
         debug_assert_eq!(config.mode, EngineMode::Broker);
         config.validate()?;
-        let startup_timeout =
-            lifecycle_timeout(BROKER_STARTUP_TIMEOUT_ENV, DEFAULT_STARTUP_TIMEOUT)?;
-        let control_timeout = lifecycle_timeout(CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT)?;
+        let startup_timeout = config.startup_timeout.map(Ok).unwrap_or_else(|| {
+            lifecycle_timeout(BROKER_STARTUP_TIMEOUT_ENV, DEFAULT_STARTUP_TIMEOUT)
+        })?;
+        let control_timeout = config
+            .shutdown_timeout
+            .map(Ok)
+            .unwrap_or_else(|| lifecycle_timeout(CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT))?;
         let executable = self
             .executable
             .clone()
@@ -594,6 +598,20 @@ fn broker_spawn_args(
     args.push(OsString::from("--database"));
     args.push(OsString::from(&config.database));
     endpoint.add_args_to(&mut args);
+    if let Some(timeout) = config.broker.recovery_timeout {
+        let millis = oliphaunt_broker::config::timeout_millis(timeout)
+            .map_err(|message| Error::InvalidConfig(message.into()))?;
+        args.extend([
+            OsString::from("--recovery-timeout-ms"),
+            OsString::from(millis.to_string()),
+        ]);
+    }
+    if let Some(count) = config.broker.max_pending_handshakes {
+        args.extend([
+            OsString::from("--max-pending-handshakes"),
+            OsString::from(count.to_string()),
+        ]);
+    }
     if let Some(timeout) = config.broker.handshake_timeout {
         let millis = oliphaunt_broker::config::handshake_timeout_millis(timeout)
             .map_err(|message| Error::InvalidConfig(message.to_owned()))?;
@@ -1179,6 +1197,8 @@ mod tests {
         config.username = "app_user".to_owned();
         config.database = "app_db".to_owned();
         config.broker.handshake_timeout = Some(Duration::from_micros(12_001));
+        config.broker.recovery_timeout = Some(Duration::from_millis(27));
+        config.broker.max_pending_handshakes = Some(2);
         config.extensions = vec![Extension::PG_TEXTSEARCH, Extension::PG_TEXTSEARCH];
         let extensions = config.resolved_extensions().unwrap();
         let endpoint = BrokerEndpoint::Tcp {
@@ -1200,6 +1220,8 @@ mod tests {
         assert_arg_pair(&args, "--username", "app_user");
         assert_arg_pair(&args, "--database", "app_db");
         assert_arg_pair(&args, "--handshake-timeout-ms", "13");
+        assert_arg_pair(&args, "--recovery-timeout-ms", "27");
+        assert_arg_pair(&args, "--max-pending-handshakes", "2");
         assert_arg_pair(&args, "--extension", "pg_textsearch");
         assert_eq!(
             args.windows(2)

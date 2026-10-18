@@ -1,3 +1,5 @@
+import { StartupBudget } from '../core/startup-budget.js';
+import { physicalArchiveOptions } from '../resources/archive-limits.js';
 import {
   WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES,
   WasixDatabaseImpl,
@@ -76,16 +78,24 @@ export async function restoreWasixWithWorker(
   storage: OpenConfig['storage'],
   bytes: BinaryInput,
   validate?: (options: SerializedOpenOptions) => void,
+  options?: import('../core/types.js').RestoreOptions,
 ): Promise<void> {
   if (storage === undefined) throw new TypeError('WASIX restore requires persistent storage');
   const openOptions = serializeOpenConfig({ storage });
   validate?.(openOptions);
+  const limits = physicalArchiveOptions(options);
   const input = toUint8Array(bytes).slice();
   const rpc = new WorkerRpc(createWorker(openOptions));
   try {
-    await rpc.request({ method: 'restore', storage: openOptions.storage, bytes: input }, [
-      input.buffer,
-    ]);
+    await rpc.request(
+      {
+        method: 'restore',
+        storage: openOptions.storage,
+        bytes: input,
+        ...(limits === undefined ? {} : { limits }),
+      },
+      [input.buffer],
+    );
   } catch (error) {
     return rethrowAfterWorkerTermination(
       rpc,
@@ -272,6 +282,11 @@ export class WorkerRpc {
     }
   }
 
+  /** Native addon owners require quiescent exit before their realm can be destroyed. */
+  get supportsAbort(): boolean {
+    return this.#worker.expectSelfExit === undefined;
+  }
+
   #fail(error: Error): void {
     // A package-requested terminate is expected ownership teardown, not an
     // independently observed crash. The public close state remains governed
@@ -318,12 +333,14 @@ export async function openWorkerDatabase(
   transfer: Transferable[] = [],
 ): Promise<OliphauntDatabase> {
   const rpc = new WorkerRpc(worker);
+  const startup = new StartupBudget(options.timeouts?.startupTimeoutMs);
   try {
-    await rpc.request({ method: 'open', options }, transfer);
+    await startup.prepare(rpc.request({ method: 'open', options }, transfer));
     return new WasixDatabaseImpl(
       new WorkerDatabaseSession(rpc, options),
       undefined,
       options.admission,
+      options.timeouts?.shutdownTimeoutMs,
     );
   } catch (error) {
     return rethrowAfterWorkerTermination(
@@ -331,6 +348,8 @@ export async function openWorkerDatabase(
       error,
       'Oliphaunt WASIX worker open and termination both failed',
     );
+  } finally {
+    startup.finish();
   }
 }
 
@@ -381,6 +400,7 @@ function appendAssetTransfer(
 }
 
 class WorkerDatabaseSession implements WasixDatabaseSession {
+  readonly abort?: () => Promise<void>;
   readonly supportsProtocolConnections: boolean;
   readonly identity: WasixDatabaseIdentity;
   readonly terminalState: WasixDatabaseSessionTerminalState;
@@ -390,6 +410,7 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
 
   constructor(rpc: WorkerRpc, options: SerializedOpenOptions) {
     this.#rpc = rpc;
+    if (rpc.supportsAbort) this.abort = () => rpc.terminate();
     this.supportsProtocolConnections = rpc.supportsSharedMemory;
     this.terminalState = rpc.terminalState;
     this.identity = normalizeWasixDatabaseIdentity(options.username, options.database);
@@ -445,9 +466,14 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     await this.#rpc.request({ method: 'sync', boundary });
   }
 
-  async backup(): Promise<Uint8Array> {
+  async backup(
+    limits?: import('../resources/archive-limits.js').ArchiveLimits,
+  ): Promise<Uint8Array> {
     this.#assertOpen();
-    const response = await this.#rpc.request({ method: 'backup' });
+    const response = await this.#rpc.request({
+      method: 'backup',
+      ...(limits === undefined ? {} : { limits }),
+    });
     if (!(response instanceof Uint8Array)) {
       throw new Error('Oliphaunt WASIX worker returned an invalid physical archive');
     }
@@ -458,6 +484,9 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     this.#assertOpen();
     const response = await this.#rpc.request({
       method: 'runPgDump',
+      ...(options.startupTimeoutMs === undefined
+        ? {}
+        : { startupTimeoutMs: options.startupTimeoutMs }),
       tool: options.tool,
       args: [...options.args],
     });

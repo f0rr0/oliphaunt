@@ -7,6 +7,7 @@ import {
   type WasixByteChannel,
   WASIX_BYTE_CHANNEL_ALLOCATION_BYTES,
   wasixByteChannelProtocolOutcomeUnknown,
+  wasixByteChannelProtocolStarted,
 } from '../../protocol/byte-channel.js';
 import {
   assertWasixProtocolConnectionTarget,
@@ -178,6 +179,17 @@ class WasixToolController {
     connection: ToolConnectionReservation,
   ): Promise<WasixToolProcessResult> {
     const { frontend, backend } = connection;
+    let startupFailure: Error | undefined;
+    const startupTimer =
+      options.startupTimeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            if (wasixByteChannelProtocolStarted(frontend)) return;
+            startupFailure = new Error(
+              'WASIX tool startup deadline exceeded before protocol activity',
+            );
+            this.#handleFatal(startupFailure);
+          }, options.startupTimeoutMs);
     try {
       if (this.#closing) throw this.#fatal;
       if (this.#fatal !== undefined) throw this.#fatal;
@@ -263,6 +275,7 @@ class WasixToolController {
           : { stdoutBytes: response.stdoutBytes, stderrTruncated: response.stderrTruncated }),
       };
     } finally {
+      clearTimeout(startupTimer);
       connection.completed.resolve();
       connection.outputStopped.abort();
       if (connection.output !== undefined) {
@@ -275,6 +288,14 @@ class WasixToolController {
       if (connection.serving !== undefined && !this.#closing) await connection.serving;
       closeWasixByteChannel(backend);
       this.#connections.delete(connection);
+      if (startupFailure !== undefined) {
+        await Promise.all(this.#retiredWorkerTerminations).catch((error: unknown) => {
+          throw new AggregateError(
+            [startupFailure, error],
+            'WASIX tool startup and termination both failed',
+          );
+        });
+      }
     }
   }
 

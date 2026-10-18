@@ -1,3 +1,9 @@
+import {
+  DEFAULT_BROWSER_STARTUP_TIMEOUT_MS,
+  StartupBudget,
+  observePreparation,
+} from '../../core/startup-budget.js';
+import type { ArchiveLimits } from '../../resources/archive-limits.js';
 import { initializeWasixStorage } from './initialize.js';
 import {
   WasixDatabaseImpl,
@@ -83,7 +89,10 @@ export type DirectWasixHost = Readonly<{
 
 /** @internal Dependency seam for deterministic direct-lifecycle qualification. */
 export type DirectWasixDependencies = Readonly<{
-  prepareRuntime(options: SerializedOpenOptions): Promise<PreparedWasixRuntime>;
+  prepareRuntime(
+    options: SerializedOpenOptions,
+    signal?: AbortSignal,
+  ): Promise<PreparedWasixRuntime>;
   acquireStorage(
     storage: SerializedOpenOptions['storage'],
     loadClusterSeed: WasixClusterSeedLoader,
@@ -116,12 +125,11 @@ const preparedRuntimes = new Map<string, Promise<PreparedWasixRuntime>>();
 const MAX_PREPARED_RUNTIMES = 1;
 const initializedHosts = new WeakMap<object, Promise<void>>();
 const CHROMIUM_SYNC_WASM_LIMIT_BYTES = 8 * 1024 * 1024;
-const DIRECT_INSTANCE_DEADLINE_MS = 120_000;
 const PROTOCOL_STREAM_COMPLETE = 0;
 const PROTOCOL_STREAM_CALLBACK_ABORTED = 1;
 
 const defaultDependencies: DirectWasixDependencies = {
-  prepareRuntime: prepareRuntimeCached,
+  prepareRuntime: (options, signal) => prepareRuntimeCached(options, prepareWasixRuntime, signal),
   acquireStorage: acquireWasixStorage,
   compileModule: compileWasixModule,
 };
@@ -131,8 +139,17 @@ export async function openWasixDirect(
   options: SerializedOpenOptions,
   host: DirectWasixHost,
   environment: DirectWasixEnvironment = 'browser-main',
+  budget?: StartupBudget,
 ): Promise<OliphauntDatabase> {
-  const session = await DirectWasixSession.open(options, host, defaultDependencies, environment);
+  if (options.timeouts?.shutdownTimeoutMs !== undefined)
+    throw new TypeError('shutdownTimeoutMs requires a /worker database');
+  const session = await DirectWasixSession.open(
+    options,
+    host,
+    defaultDependencies,
+    environment,
+    budget,
+  );
   return new WasixDatabaseImpl(session, undefined, options.admission);
 }
 
@@ -190,112 +207,126 @@ export class DirectWasixSession implements WasixDatabaseSession {
     host: DirectWasixHost,
     dependencies: DirectWasixDependencies = defaultDependencies,
     environment: DirectWasixEnvironment = 'browser-main',
+    budget?: StartupBudget,
   ): Promise<DirectWasixSession> {
-    if (environment === 'browser-main') assertDirectExtensionCompatibility(options);
-    if (options.storage.kind === 'memory' && options.username !== 'postgres') {
-      throw newStorageRoleError(options.username);
-    }
-    const prepared = await dependencies.prepareRuntime(options);
-    const startupGUCs = normalizeWasixStartupGUCs(prepared.startupGUCs);
-    const eagerClusterSeed =
-      options.storage.kind === 'memory' ? prepared.loadClusterSeed?.() : undefined;
-    const [, module] = await Promise.all([
-      initializeHost(host),
-      dependencies.compileModule(prepared.layout.module, prepared.moduleSha256),
-      eagerClusterSeed,
-    ]);
-    // Acquire persistent ownership only after every non-owning preparation
-    // step succeeds, so a compilation rejection cannot strand its lock.
-    const storage = await dependencies.acquireStorage(
-      options.storage,
-      () => {
-        if (options.username !== 'postgres') {
-          throw newStorageRoleError(options.username);
-        }
-        return (
-          eagerClusterSeed ?? prepared.loadClusterSeed?.() ?? initializeWasixStorage(host, prepared)
-        );
-      },
-      prepared.physicalIdentity,
-    );
-
-    let instance: OliphauntDirectInstance | undefined;
-    let baseDirectory: Directory | undefined;
-    let opened: DirectWasixSession | undefined;
+    const startup =
+      budget ??
+      new StartupBudget(options.timeouts?.startupTimeoutMs ?? DEFAULT_BROWSER_STARTUP_TIMEOUT_MS);
     try {
-      const materialized = await materializeWasixMounts(
-        host.Directory,
-        prepared.layout,
-        storage.mount,
-        storage.createPgdataDirectory,
+      if (environment === 'browser-main') assertDirectExtensionCompatibility(options);
+      if (options.storage.kind === 'memory' && options.username !== 'postgres') {
+        throw newStorageRoleError(options.username);
+      }
+      const prepared = await startup.prepare(dependencies.prepareRuntime(options, startup.signal));
+      const startupGUCs = normalizeWasixStartupGUCs(prepared.startupGUCs);
+      const eagerClusterSeed =
+        options.storage.kind === 'memory' ? prepared.loadClusterSeed?.() : undefined;
+      const [, module] = await startup.prepare(
+        Promise.all([
+          initializeHost(host),
+          dependencies.compileModule(prepared.layout.module, prepared.moduleSha256),
+          eagerClusterSeed,
+        ]),
       );
-      baseDirectory = materialized.baseDirectory;
-      const runtimeOptions = { ...options, startupGUCs };
-      const instantiate = () =>
-        instantiateDirectWithDeadline(
+      // Acquire persistent ownership only after every non-owning preparation
+      // step succeeds, so a compilation rejection cannot strand its lock.
+      const storage = await dependencies.acquireStorage(
+        options.storage,
+        () => {
+          if (options.username !== 'postgres') {
+            throw newStorageRoleError(options.username);
+          }
+          return (
+            eagerClusterSeed ??
+            prepared.loadClusterSeed?.() ??
+            initializeWasixStorage(host, prepared)
+          );
+        },
+        prepared.physicalIdentity,
+      );
+
+      let instance: OliphauntDirectInstance | undefined;
+      let baseDirectory: Directory | undefined;
+      let opened: DirectWasixSession | undefined;
+      try {
+        startup.check();
+        const materialized = await materializeWasixMounts(
+          host.Directory,
+          prepared.layout,
+          storage.mount,
+          storage.createPgdataDirectory,
+        );
+        baseDirectory = materialized.baseDirectory;
+        const runtimeOptions = { ...options, startupGUCs };
+        const instantiate = () =>
           host.instantiateOliphauntDirect(module, prepared.layout.module, {
             program: '/bin/postgres',
             args: wasixPostgresArgs(runtimeOptions),
             cwd: '/',
             env: wasixPostgresEnvironment(runtimeOptions, prepared.icuEnabled),
             mount: materialized.mounts,
-          }),
+          });
+        const initialize: DirectInstanceInitializer = async (candidate, _storageState) => {
+          const response = candidate.startup(startupPacket(options.username, options.database));
+          assertSuccessfulStartupResponse(response);
+          return new Uint8Array(response);
+        };
+        startup.check();
+        instance = await instantiate();
+        startup.check();
+        const session = new DirectWasixSession(
+          instance,
+          storage,
+          baseDirectory,
+          instantiate,
+          initialize,
+          options.username,
+          options.database,
+          host,
         );
-      const initialize: DirectInstanceInitializer = async (candidate, _storageState) => {
-        const response = candidate.startup(startupPacket(options.username, options.database));
-        assertSuccessfulStartupResponse(response);
-        return new Uint8Array(response);
-      };
-      instance = await instantiate();
-      const session = new DirectWasixSession(
-        instance,
-        storage,
-        baseDirectory,
-        instantiate,
-        initialize,
-        options.username,
-        options.database,
-        host,
-      );
-      opened = session;
-      session.#startupResponse = await initialize(instance, storage.state);
-      if (storage.state === 'new') {
-        await storage.sync(baseDirectory, 'full');
-      }
-      return session;
-    } catch (error) {
-      let failure = directStartupFailure(error);
-      if (opened !== undefined) {
-        throw await opened.#closeAfterOpenFailure(failure);
-      }
-      if (instance !== undefined) {
-        try {
-          instance.close();
-        } catch (closeError) {
-          failure = composeLifecycleFailure(
-            failure,
-            'WASIX instance cleanup also failed',
-            closeError,
-          );
+        opened = session;
+        session.#startupResponse = await initialize(instance, storage.state);
+        if (storage.state === 'new') {
+          await storage.sync(baseDirectory, 'full');
         }
-      }
-      try {
-        await storage.close(baseDirectory, 'failed');
-      } catch (releaseError) {
-        failure = composeLifecycleFailure(failure, 'storage release also failed', releaseError);
-      }
-      if (instance !== undefined) {
-        try {
-          instance.free();
-        } catch (freeError) {
-          failure = composeLifecycleFailure(
-            failure,
-            'WASIX allocation release also failed',
-            freeError,
-          );
+        startup.check();
+        return session;
+      } catch (error) {
+        let failure = directStartupFailure(error);
+        if (opened !== undefined) {
+          throw await opened.#closeAfterOpenFailure(failure);
         }
+        if (instance !== undefined) {
+          try {
+            instance.close();
+          } catch (closeError) {
+            failure = composeLifecycleFailure(
+              failure,
+              'WASIX instance cleanup also failed',
+              closeError,
+            );
+          }
+        }
+        try {
+          await storage.close(baseDirectory, 'failed');
+        } catch (releaseError) {
+          failure = composeLifecycleFailure(failure, 'storage release also failed', releaseError);
+        }
+        if (instance !== undefined) {
+          try {
+            instance.free();
+          } catch (freeError) {
+            failure = composeLifecycleFailure(
+              failure,
+              'WASIX allocation release also failed',
+              freeError,
+            );
+          }
+        }
+        throw failure;
       }
-      throw failure;
+    } finally {
+      startup.finish();
     }
   }
 
@@ -366,48 +397,65 @@ export class DirectWasixSession implements WasixDatabaseSession {
     if (options.tool.name !== 'pg_dump') {
       throw new TypeError('the same-realm tool path supports only pg_dump');
     }
-    const cached = await this.#preparePgDump(options.tool);
-    const runTool = this.#host.runOliphauntToolDirect;
-    if (runTool === undefined) {
-      throw new Error('this WASIX host does not support same-realm pg_dump');
-    }
-    const mounts = await materializeWasixToolMounts(this.#host.Directory, cached.asset);
-    let result: WasixToolProcessResult | undefined;
-    let failure: Readonly<{ primary: unknown }> | undefined;
-    let connection: SynchronousPgDumpConnection | undefined;
+    const startup = new StartupBudget(options.startupTimeoutMs, 'WASIX tool startup');
     try {
-      result = await this.#runToolSession(
-        async () => {
-          const activeConnection = new SynchronousPgDumpConnection({
-            startupResponse: this.#startupResponse,
-            startupIdentity: this.identity,
-            exec: (input, onChunk) => {
-              this.#callGuest((instance) => instance.execProtocolStream(input, onChunk));
-            },
-          });
-          connection = activeConnection;
-          const output = await runTool(
-            cached.prepared,
-            wasixToolRunOptions(cached.asset, options.args, mounts),
-            (maximumBytes) => activeConnection.read(maximumBytes),
-            (chunk) => activeConnection.write(chunk),
-          );
-          activeConnection.finish();
-          return {
-            exitCode: output.code,
-            stdout: output.stdoutBytes,
-            stderr: output.stderrBytes,
-          };
-        },
-        () => connection?.protocolStarted === true,
-      );
-    } catch (error) {
-      failure = { primary: error };
+      const cached = await startup.prepare(this.#preparePgDump(options.tool, startup.signal));
+      const runTool = this.#host.runOliphauntToolDirect;
+      if (runTool === undefined) {
+        throw new Error('this WASIX host does not support same-realm pg_dump');
+      }
+      const mounts = await materializeWasixToolMounts(this.#host.Directory, cached.asset);
+      let result: WasixToolProcessResult | undefined;
+      let failure: Readonly<{ primary: unknown }> | undefined;
+      let connection: SynchronousPgDumpConnection | undefined;
+      try {
+        result = await this.#runToolSession(
+          async () => {
+            const activeConnection = new SynchronousPgDumpConnection({
+              startupResponse: this.#startupResponse,
+              startupIdentity: this.identity,
+              exec: (input, onChunk) => {
+                this.#callGuest((instance) => instance.execProtocolStream(input, onChunk));
+              },
+            });
+            connection = activeConnection;
+            const output = await runTool(
+              cached.prepared,
+              wasixToolRunOptions(cached.asset, options.args, mounts),
+              (maximumBytes) => {
+                if (!activeConnection.protocolStarted) {
+                  startup.check();
+                  startup.finish();
+                }
+                return activeConnection.read(maximumBytes);
+              },
+              (chunk) => {
+                if (!activeConnection.protocolStarted) {
+                  startup.check();
+                  startup.finish();
+                }
+                activeConnection.write(chunk);
+              },
+            );
+            activeConnection.finish();
+            return {
+              exitCode: output.code,
+              stdout: output.stdoutBytes,
+              stderr: output.stderrBytes,
+            };
+          },
+          () => connection?.protocolStarted === true,
+        );
+      } catch (error) {
+        failure = { primary: error };
+      }
+      if (failure !== undefined) releaseWasixToolMounts(mounts, failure);
+      releaseWasixToolMounts(mounts);
+      if (result === undefined) throw new Error('pg_dump completed without a process result');
+      return result;
+    } finally {
+      startup.finish();
     }
-    if (failure !== undefined) releaseWasixToolMounts(mounts, failure);
-    releaseWasixToolMounts(mounts);
-    if (result === undefined) throw new Error('pg_dump completed without a process result');
-    return result;
   }
 
   async serve(
@@ -518,7 +566,10 @@ export class DirectWasixSession implements WasixDatabaseSession {
     return result as T;
   }
 
-  #preparePgDump(descriptor: WasixPgDumpProcessOptions['tool']): Promise<CachedPgDump> {
+  #preparePgDump(
+    descriptor: WasixPgDumpProcessOptions['tool'],
+    signal?: AbortSignal,
+  ): Promise<CachedPgDump> {
     validateWasixToolDescriptor(descriptor);
     if (descriptor.name !== 'pg_dump') {
       return Promise.reject(new TypeError('the same-realm tool path supports only pg_dump'));
@@ -534,7 +585,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
     if (prepare === undefined) {
       return Promise.reject(new Error('this WASIX host does not support same-realm pg_dump'));
     }
-    const pending = prepareWasixToolAsset(descriptor).then((asset) => ({
+    const pending = prepareWasixToolAsset(descriptor, signal).then((asset) => ({
       identity,
       asset,
       prepared: prepare(asset.module, asset.bytes),
@@ -640,13 +691,14 @@ export class DirectWasixSession implements WasixDatabaseSession {
     }
   }
 
-  async backup(): Promise<Uint8Array> {
+  async backup(limits?: ArchiveLimits): Promise<Uint8Array> {
     this.#assertGuestEntryAllowed();
     this.#assertHealthy();
     try {
       return await createPhysicalArchive(
         (input) => this.#execBackupProtocol(input),
         this.#baseDirectory,
+        limits,
       );
     } catch (error) {
       if (error instanceof BackupModeExitUnconfirmedError) this.#failed = true;
@@ -892,17 +944,37 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(describeError(error));
 }
 
+const preparationLoads = new WeakMap<
+  Promise<PreparedWasixRuntime>,
+  { controller: AbortController; users: number; settled: boolean }
+>();
+
 /** @internal Cache verified runtime materialization without caching transient failures. */
 export function prepareRuntimeCached(
   options: SerializedOpenOptions,
-  prepare: (options: SerializedOpenOptions) => Promise<PreparedWasixRuntime> = prepareWasixRuntime,
+  prepare: (
+    options: SerializedOpenOptions,
+    signal?: AbortSignal,
+  ) => Promise<PreparedWasixRuntime> = prepareWasixRuntime,
+  signal?: AbortSignal,
 ): Promise<PreparedWasixRuntime> {
   // Explicit resource URLs/bytes can change independently of the runtime carrier.
-  if (options.seed !== undefined || options.icu !== undefined) return prepare(options);
+  if (options.seed !== undefined || options.icu !== undefined) return prepare(options, signal);
   const identity = preparedRuntimeIdentity(options);
   let prepared = preparedRuntimes.get(identity);
   if (prepared === undefined) {
-    const attempt = prepare(options);
+    const controller = new AbortController();
+    const attempt = prepare(options, controller.signal);
+    const load = { controller, users: 0, settled: false };
+    preparationLoads.set(attempt, load);
+    void attempt.then(
+      () => {
+        load.settled = true;
+      },
+      () => {
+        load.settled = true;
+      },
+    );
     prepared = attempt;
     preparedRuntimes.set(identity, attempt);
     void attempt.catch(() => {
@@ -916,7 +988,20 @@ export function prepareRuntimeCached(
       preparedRuntimes.delete(oldest);
     }
   }
-  return prepared;
+  const load = preparationLoads.get(prepared)!;
+  load.users++;
+  const release = () => {
+    load.users--;
+    if (load.users === 0 && !load.settled) {
+      load.controller.abort(new Error('WASIX runtime preparation has no remaining callers'));
+      if (preparedRuntimes.get(identity) === prepared) preparedRuntimes.delete(identity);
+    }
+  };
+  if (signal === undefined) {
+    void prepared.then(release, release);
+    return prepared;
+  }
+  return observePreparation(prepared, signal).finally(release);
 }
 
 function initializeHost(host: DirectWasixHost): Promise<void> {
@@ -931,43 +1016,6 @@ function initializeHost(host: DirectWasixHost): Promise<void> {
     });
   }
   return initialized;
-}
-
-/** Keep direct host startup observable to every JS event loop and bound genuine stalls. */
-function instantiateDirectWithDeadline(
-  operation: Promise<OliphauntDirectInstance>,
-): Promise<OliphauntDirectInstance> {
-  return new Promise((resolve, reject) => {
-    let expired = false;
-    const timer = setTimeout(() => {
-      expired = true;
-      reject(new Error(`Oliphaunt WASIX startup exceeded ${DIRECT_INSTANCE_DEADLINE_MS}ms`));
-    }, DIRECT_INSTANCE_DEADLINE_MS);
-    void operation.then(
-      (instance) => {
-        if (expired) {
-          try {
-            instance.close();
-          } catch {
-            // Startup has already failed; continue to release the late allocation.
-          }
-          try {
-            instance.free();
-          } catch {
-            // The primary timeout remains the actionable failure.
-          }
-          return;
-        }
-        clearTimeout(timer);
-        resolve(instance);
-      },
-      (error) => {
-        if (expired) return;
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
 }
 
 function preparedRuntimeIdentity(options: SerializedOpenOptions): string {

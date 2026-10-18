@@ -5,6 +5,7 @@ import { openNodeActorSession } from './node-actor.js';
 import { openNodeDirectSession } from './node-direct.js';
 import { loadNativeWasixAddon, supportsNativeWorkerOutput } from './native-addon.js';
 import { restoreNativeWasixStorageDirect } from './native-session.js';
+import { extractTar } from '../../resources/archive.js';
 import type { WorkerRequest, WorkerResponse } from '../../workers/rpc.js';
 import { createWorkerSessionDispatcher } from '../../workers/worker-dispatch.js';
 
@@ -19,7 +20,10 @@ const supportsParentOutput = supportsNativeWorkerOutput(addon);
 const dispatch = createWorkerSessionDispatcher(
   supportsParentOutput ? openNodeDirectSession : openNodeActorSession,
   respond,
-  restoreNativeWasixStorageDirect,
+  (storage, bytes, limits) => {
+    if (limits !== undefined) extractTar(bytes, limits);
+    return restoreNativeWasixStorageDirect(storage, bytes);
+  },
   {
     onQuiescentClose() {
       // Run after the close reply and dispatcher frame have unwound. Release

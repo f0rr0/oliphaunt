@@ -241,10 +241,10 @@ pub(super) fn for_each_publication_file<T: Sync>(
     files: &[T],
     operation: impl Fn(&T) -> Result<()> + Sync,
 ) -> Result<()> {
-    const WORKERS: usize = 4;
+    let concurrency = super::host_runtime::publication_concurrency()?;
     std::thread::scope(|scope| {
         let mut workers = Vec::new();
-        for chunk in files.chunks(files.len().div_ceil(WORKERS).max(1)) {
+        for chunk in files.chunks(files.len().div_ceil(concurrency).max(1)) {
             let operation = &operation;
             workers.push(
                 std::thread::Builder::new()

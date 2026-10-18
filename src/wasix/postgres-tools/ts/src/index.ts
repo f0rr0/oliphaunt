@@ -40,11 +40,15 @@ const PSQL_VALUE_OPTIONS = [
 ] as const;
 
 export type PgDumpOptions = Readonly<{
+  /** Startup budget until protocol activity; SQL and output delivery are excluded. Native hosts default to 30000 ms; browser hosts have no default limit. */
+  startupTimeoutMs?: number;
   /** Ordinary PostgreSQL pg_dump arguments. Connection, file input/output, format, compression, encoding, and job flags are managed. */
   args?: readonly string[];
 }>;
 
 export type PsqlOptions = Readonly<{
+  /** Startup budget until protocol activity; SQL and output delivery are excluded. Native hosts default to 30000 ms; browser hosts have no default limit. */
+  startupTimeoutMs?: number;
   /** Ordinary PostgreSQL psql arguments. Connection, input, and output are managed. */
   args?: readonly string[];
   command?: string;
@@ -100,6 +104,7 @@ export async function pgDump(
 
 function pgDumpInvocation(options: PgDumpOptions) {
   return {
+    startupTimeoutMs: options.startupTimeoutMs,
     args: validatedArguments(
       'pg_dump',
       options.args,
@@ -137,7 +142,7 @@ function psqlInvocation(options: PsqlOptions) {
   if (command === undefined && script === undefined && args.length === 0) {
     throw new TypeError('psql requires non-interactive input through command, script, or args');
   }
-  return { args, script, command };
+  return { args, script, command, startupTimeoutMs: options.startupTimeoutMs };
 }
 
 /** Publish stdout create-only to a host path, including synchronous `/direct` databases. */
@@ -179,6 +184,7 @@ export async function psqlToStream(
 }
 
 type ToolInvocation = {
+  startupTimeoutMs?: number;
   args: string[];
   script?: string;
   command?: string;

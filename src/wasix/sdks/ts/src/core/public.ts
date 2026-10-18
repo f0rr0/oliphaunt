@@ -47,6 +47,10 @@ export {
 } from '../storage/types.js';
 export type {
   BinaryInput,
+  ArchiveLimits,
+  RuntimeTimeouts,
+  BackupOptions,
+  RestoreOptions,
   OliphauntClient,
   OliphauntDatabase,
   OliphauntTransaction,

@@ -127,10 +127,19 @@ describe('WASIX shared client orchestration', () => {
   it('runs Worker restore without detaching caller bytes', async () => {
     const port = new FakeWorkerPort();
     const bytes = Uint8Array.of(1, 2, 3);
-    const restoring = restoreWasixWithWorker(() => port, indexedDB('restore-target'), bytes);
+    const policy = { archiveLimits: { maxEntries: 3 } };
+    const restoring = restoreWasixWithWorker(
+      () => port,
+      indexedDB('restore-target'),
+      bytes,
+      undefined,
+      policy,
+    );
+    policy.archiveLimits.maxEntries = 9;
     const request = port.requests[0];
     expect(request?.message).toMatchObject({ method: 'restore' });
     if (request?.message.method !== 'restore') throw new Error('restore request was not posted');
+    expect(request.message.limits?.maxEntries).toBe(3);
     expect(request.message.bytes).toEqual(bytes);
     expect(request.message.bytes).not.toBe(bytes);
     expect(request.transfer).toEqual([request.message.bytes.buffer]);

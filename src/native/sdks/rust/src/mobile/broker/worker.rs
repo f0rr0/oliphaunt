@@ -9,8 +9,8 @@ use std::time::Duration;
 use liboliphaunt_native_bindings::{NativeOpenOptions, NativeSession};
 use oliphaunt_broker::mobile::{self as wire, Kind};
 
-use super::watchdog::{Expiry, SETTLEMENT, Watchdog};
-use super::{Completion, Epoch, Execution, Reason, block_on, failure};
+use super::watchdog::{Expiry, Watchdog};
+use super::{BrokerTimeouts, Completion, Epoch, Execution, Reason, block_on, failure};
 use crate::engine::{EngineCancel, EngineSession, ProtocolStreamOutcome};
 use crate::executor::{EngineExecutor, run_off_thread};
 use crate::mobile::Request;
@@ -43,6 +43,7 @@ struct State {
 
 pub struct Worker {
     epoch: Epoch,
+    timeouts: BrokerTimeouts,
     socket: Mutex<Option<UnixStream>>,
     shutdown: UnixStream,
     retirement: Arc<dyn Retirement>,
@@ -59,7 +60,11 @@ impl Worker {
         socket: UnixStream,
         retirement: Arc<dyn Retirement>,
         startup_timeout: Duration,
+        timeouts: BrokerTimeouts,
     ) -> Result<Arc<Self>> {
+        timeouts
+            .validate()
+            .map_err(|message| Error::InvalidConfig(message.into()))?;
         if WORKER_CLAIMED.swap(true, Ordering::AcqRel) {
             return Err(failure(
                 Reason::WorkerInterrupted,
@@ -74,6 +79,7 @@ impl Worker {
             .map_err(|e| Error::Engine(e.to_string()))?;
         let worker = Arc::new(Self {
             epoch,
+            timeouts,
             socket: Mutex::new(Some(socket)),
             shutdown,
             retirement,
@@ -161,7 +167,7 @@ impl Worker {
         self.watchdog
             .get()
             .unwrap()
-            .arm(request, SETTLEMENT, Expiry::Retire);
+            .arm(request, self.timeouts.recovery_timeout, Expiry::Retire);
     }
 
     pub fn close(&self, epoch: Epoch) {
@@ -179,7 +185,7 @@ impl Worker {
         self.watchdog
             .get()
             .unwrap()
-            .arm(0, SETTLEMENT, Expiry::Retire);
+            .arm(0, self.timeouts.shutdown_timeout, Expiry::Retire);
         // Wake an idle/upload reader; keep the output half for terminal results.
         let _ = self.shutdown.shutdown(Shutdown::Read);
     }
@@ -644,6 +650,10 @@ mod tests {
                 } else {
                     Duration::from_secs(10)
                 },
+                oliphaunt_broker::config::BrokerTimeouts {
+                    recovery_timeout: Duration::from_millis(100),
+                    shutdown_timeout: Duration::from_millis(150),
+                },
             )
             .unwrap();
             if mode != "startup" {
@@ -691,7 +701,7 @@ mod tests {
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .unwrap();
-            let deadline = std::time::Instant::now() + Duration::from_secs(8);
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
             while child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -714,7 +724,13 @@ mod tests {
         let (mut host, socket) = UnixStream::pair().unwrap();
         host.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         let retirement = Arc::new(Retire(AtomicUsize::new(0)));
-        let worker = Worker::new(socket, retirement.clone(), Duration::from_secs(10)).unwrap();
+        let worker = Worker::new(
+            socket,
+            retirement.clone(),
+            Duration::from_secs(10),
+            oliphaunt_broker::config::BrokerTimeouts::default(),
+        )
+        .unwrap();
         let executions = Arc::new(AtomicUsize::new(0));
         worker
             .database

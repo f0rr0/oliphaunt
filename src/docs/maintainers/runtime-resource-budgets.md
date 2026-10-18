@@ -7,7 +7,7 @@ values for every workload. MiB and KiB mean powers of 1024.
 
 The [resource configuration proposal](../architecture/resource-policy.md)
 defines units, scopes, admission lifetime and validation. Its status separates
-implemented admission/OPFS/path controls from the remaining proposed APIs. The public
+implemented controls from the remaining proposed APIs. The public
 [performance guide](../content/reference/performance.mdx) explains the controls
 and tradeoffs available to developers today.
 
@@ -311,14 +311,17 @@ These determine how much diagnostic text is retained/accepted, not query speed.
 
 | Owner | Current selection | Meaning and tuning boundary |
 | --- | --- | --- |
-| Native Rust `broker.rs`, `server.rs` | 20 s startup; 5 s shutdown | Owned transport/process deadlines; ordinary SQL is separate. Startup/shutdown retain environment overrides rather than public builder fields. |
+| Native Rust `broker.rs`, `server.rs` | 20 s startup; 5 s shutdown | Owned transport/process deadlines; ordinary SQL is separate. Both builders accept `.startup_timeout(Duration)` and `.shutdown_timeout(Duration)` for broker/server; explicit fields override legacy environment defaults. Direct placement rejects them. |
 | Desktop broker `config.rs`, `server.rs` | 5 s per accepted login by default; CLI `--handshake-timeout-ms`, native TS `broker.handshakeTimeoutMs`, native Rust `.broker_handshake_timeout(Duration)` | One deadline across the complete SQL or management handshake. Larger values retain unauthenticated connections longer. Both socket limits are cleared before queries/backups. Whole milliseconds in 1..2147483647; Rust rounds up. Mobile transports do not use this handshake. |
-| Native C `liboliphaunt_protocol.c::oliphaunt_startup_timeout_ms` | 60 s by default, `OLIPHAUNT_STARTUP_TIMEOUT_MS` override | Backend readiness wait beneath SDK lifecycle deadlines. The current `atoi` parser accepts a numeric prefix and does not perform checked range validation. A future SDK deadline must reach this owner rather than be silently defeated by its separate timeout. |
+| Native C `liboliphaunt_protocol.c::oliphaunt_startup_timeout_ms` | 60 s by default, `OLIPHAUNT_STARTUP_TIMEOUT_MS` override | Backend readiness wait beneath SDK lifecycle deadlines. The shared strict resource parser rejects prefixes/overflow and falls back for invalid legacy overrides. This is a separate backend wait, not an alias for the helper/server readiness deadline. |
 | Native Rust `server.rs::CONNECT_ATTEMPT_TIMEOUT` | 250 ms per readiness connection attempt | One probe within the overall startup/shutdown deadline; not an independent limit on total startup duration. Keep it internal or derive it from remaining time. |
-| Native TS `runtime/broker.ts`, `runtime/server.ts` | 60 s startup; 5 s shutdown | Startup uses `OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS` or `OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS`. Lifecycle overrides reject noncanonical integers and values above the signed 32-bit timer range. |
+| Native TS `runtime/broker.ts`, `runtime/server.ts` | 60 s startup; 5 s shutdown | Startup uses `OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS` or `OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS`. `timeouts.startupTimeoutMs` / `shutdownTimeoutMs` override those environment defaults on broker/server. Lifecycle overrides reject noncanonical integers and values above the signed 32-bit timer range. |
 | Native TS `native/assets.ts` runtime-cache lock | 25 ms polling; 30 s acquisition timeout; stale after 5 minutes | Asset preparation can time out before runtime startup begins. Staleness currently uses directory age, not owner liveness, so a live builder lasting over 5 minutes can lose its lock. Do not expose a stale-age tuning option as if it established safe abandoned-owner recovery. |
-| Swift/Kotlin mobile broker options; React Native broker options | 30 s startup by default; optional operation timeout | Existing typed broker controls. Operation budgets include queued time and preserve submitted/unsubmitted and terminal outcomes. |
-| WASIX TS `core/database.ts`, `hosts/browser/direct-client-common.ts` | 120 s close/startup deadlines | Owned lifecycle deadlines; not SQL preemption or a deadline for arbitrary blocked host callbacks. |
+| Swift/Kotlin mobile broker options; React Native broker options | 30 s startup; optional operation timeout; 3 s recovery and destructive close | `recoveryTimeout` / `shutdownTimeout` in Swift; `...Millis` in Kotlin; `...Ms` in RN broker options. The same values reach client and worker, including restore. Operation budgets retain queued-time and terminal-outcome semantics. |
+| WASIX TS `core/database.ts`, `hosts/browser/direct-client-common.ts` | Browser startup 120 s; Worker close 120 s | `timeouts.startupTimeoutMs` covers preparation through readiness; immutable preparation/fetch is abortable. Owned direct allocations keep their lease until cleanup. `shutdownTimeoutMs` requires `/worker` and includes accepted work draining after close. All native-addon placements reject lifecycle options because they require quiescent cleanup. Browser Worker shutdown now reaches its actual abort capability; the existing facade-only deadline did not terminate those sessions. |
+| Desktop broker `server.rs` pending login and recovery | 16 pending handshakes per endpoint; 3 s disconnected-stream recovery | `broker.maxPendingHandshakes` / `.broker_max_pending_handshakes(u32)` and `broker.recoveryTimeoutMs` / `.broker_recovery_timeout(Duration)`. Authenticated connections release login permits; independent management admission prevents SQL saturation from consuming it. SQL cancellation still shares SQL admission. |
+| WASIX Rust `tools.rs`, `tools/startup.rs`; npm tool options | Native-host startup 30 s; browser startup unlimited when omitted | `.startup_timeout(Duration)` / `startupTimeoutMs` ends at virtual connect (browser: first protocol activity). Guest process signals or Worker retirement precede cleanup/join; no new post-connect SQL/output deadline. |
+| WASIX Rust `host_runtime.rs`, `storage.rs`; native-host TS `configureHostRuntime` | CPU/environment async workers; 512 Tokio blocking workers; max(200, CPUs × 100) dedicated task workers; 4 file helpers per operation | `configure_host_runtime(HostRuntimeOptions)` / `configureHostRuntime`. Process-wide `asyncWorkerThreads`, `maxBlockingThreads`, `maxDedicatedThreads`, `maxConcurrentIO`, selected before use and shared by database and tool execution. Conflicting reconfiguration fails. File concurrency retains publication ordering and durability barriers; small blocking ceilings can starve work. |
 | Native npm tool runner | 5 s termination grace | Escalates SIGTERM to SIGKILL after abort; subprocess cleanup remains owned. |
 | Browser `adapter/clock.rs`; embedded PostgreSQL timeout patches | Canonical fallback after 16 ms or 1,024 reads per clock domain; deadline clock sampled every 32 interrupt predicates | Internal scheduling policies trading host calls against responsiveness. Blocking boundaries still check deadlines directly. A sampling count is not a wall-clock cancellation guarantee. |
 
@@ -349,7 +352,8 @@ that limit as a streaming decompression memory guarantee.
 
 | Owner (repository-relative) | Selection | Meaning / cost |
 | --- | --- | --- |
-| `src/wasix/sdks/ts/src/resources/archive.ts` | 2 GiB tar; 512 MiB entry; 65,536 entries; 1,024-byte paths; 64 path levels | Runtime archive acceptance limits. Larger allowances accept larger archives and increase worst-case processing/memory exposure. |
+| `src/wasix/sdks/ts/src/resources/archive-limits.ts` | Package TAR: 2 GiB archive; 512 MiB entry; 65,536 entries; 1,024 path bytes; 64 path levels | Package import defaults remain internal and separate from physical backup policy. |
+| Same file, `PHYSICAL_ARCHIVE_LIMITS` | Browser physical TAR: same initial defaults, independently owned | `db.backup({ archiveLimits })` / `Oliphaunt.restore(storage, bytes, { archiveLimits })`. Writer and reader enforce the same selected ceilings. Native-host WASIX preserves its uncapped default and enforces an explicit policy when supplied; other native SDK backups do not inherit JS TAR quotas. |
 | `src/native/rust-bindings/src/liboliphaunt/root/resources.rs` | 1 GiB resource bytes; 8,192 files | Separate seed/ICU resource acceptance. Streamed reads use the byte ceiling, while an already-owned archive still exists outside a total process-memory bound. |
 | `src/extensions/contracts/extension-artifact-archive-policy.properties` | 128 MiB compressed; 512 MiB expanded; 256 MiB member; 4,096 members | Separate extension archive policy shared across consumers. Not the general runtime archive policy. |
 | `src/native/sdks/ts/src/native/assets.ts` | 4,096 extension-runtime files; 48 MiB per file; 256 MiB total; 4,096-byte path check | Limits installed extension runtime resources, not query results. |
@@ -533,6 +537,52 @@ host timer and rejection of the next integer before scheduling. Node documents
 that a larger timer delay becomes 1 ms, which is why this bound is validation,
 not a tunable performance default: [timer scheduling](https://nodejs.org/api/timers.html#settimeoutcallback-delay-args).
 The source evidence and candidate checks do not establish zero regressions on
-unrun hosts or justify selecting different numerical defaults. Remaining
-transport/protocol, additional tool, typed runtime/lifecycle and producer-profile
-APIs are still proposals in the architecture contract.
+unrun hosts or justify selecting different numerical defaults. Remaining transport/protocol, additional tool-output, native C runtime, package-import and producer-profile APIs are still proposals in the architecture contract.
+
+
+## 2026-10-18 owner audit
+
+The follow-up found seven omissions: physical backup/restore quota asymmetry,
+WASIX tool connect waits followed by uncancelled joins, startup preparation
+outside browser deadlines, desktop/mobile three-second cleanup assumptions,
+shared desktop connection admission, repeated CPU-sized WASIX tool executors
+and fixed four-way native-host publication helpers. Following those owners also
+found Wasmer's separate dedicated task pool. Its default is now named at the
+upstream constructor and independently selectable; the shared host reuses it
+instead of constructing a pool for every tool. The options above now reach
+their owners, rather than accepting a field that an inner fixed limit defeats.
+Numerical defaults stay at their previous values. The intentional admission correction
+counts pending logins instead of retaining slots for authenticated clients, and
+management has its own allowance.
+
+Browser startup cancellation reaches runtime, extension, seed and ICU reads.
+Shared runtime preparation tracks callers; one timeout cannot cancel another
+open. Cancellation cannot safely abandon an owned allocation or release its
+storage before cleanup. Host compilation and native calls are cooperative
+boundaries; the deadline is not a promise to preempt them immediately.
+
+The native C backend timeout/stack/stream environment settings, prepared-runtime
+cache size, native asset-cache lock policy, callback batches, protocol bounds,
+package decompression limits and producer profiles retain their existing owners.
+In particular, raising a JS TAR extraction ceiling is not a decompression-memory
+bound. These have not been silently advertised as new per-open settings.
+
+
+Validation for this follow-up: native broker and Rust SDK source suites passed,
+including 139 native nextest cases, 109 mobile client/worker unit cases, 190
+WASIX unit cases and eight public API cases. Native TypeScript passed 104 tests;
+WASIX TypeScript passed 413, including a physical TAR above 65,536 entries with
+an explicit policy, selected Worker lifecycle budgets, abortable fetch and shared
+preparation cancellation. Real native broker tests passed all five cases,
+including SQL login saturation with independent management and slot release
+after authentication. The native mobile round-trip and WASIX large logical
+dump/restore/destination-failure recovery test passed.
+
+Android Kotlin build/unit/lint and React Native Android adapter/codegen checks
+passed. The JNI library compiled for all four configured Android ABIs. Portable
+Swift passed 102 tests; that does not compile the iOS-only broker/XPC branches.
+The checked source packages passed for both Rust SDKs, broker, shared query,
+native/WASIX TypeScript and WASIX tools. Docs check/build and all 49 HTML smoke
+pages passed. Apple broker/adapter compilation, installed-device execution,
+full cross-platform consumer qualification and alternative-size performance
+benchmarks remain unrun for this follow-up.

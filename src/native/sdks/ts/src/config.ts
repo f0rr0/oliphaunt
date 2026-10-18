@@ -1,3 +1,9 @@
+import {
+  normalizeRuntimeTimeouts,
+  optionRecord,
+  positiveInteger,
+  timeoutMilliseconds,
+} from '@oliphaunt/ts-query/internal/resource-options';
 import { normalizeExtensions, type NativeExtension } from './extensions.js';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,6 +52,9 @@ export type NormalizedOpenConfig = {
   icuData?: NormalizedResourceDirectory;
   brokerExecutable?: string;
   brokerHandshakeTimeoutMs?: number;
+  brokerRecoveryTimeoutMs?: number;
+  brokerMaxPendingHandshakes?: number;
+  timeouts?: import('./types.js').RuntimeTimeouts;
   serverExecutable?: string;
   serverListen?: NormalizedServerListen;
 };
@@ -65,6 +74,9 @@ export function normalizeOpenConfig(
   const topology =
     config.topology === 'server' ? 'server' : normalizeDatabaseTopology(config.topology);
   const broker = normalizeBrokerOptions('broker' in config ? config.broker : undefined, topology);
+  const timeouts = normalizeRuntimeTimeouts(config.timeouts);
+  if (topology === 'direct' && timeouts !== undefined)
+    throw new TypeError('timeouts require broker or server placement');
   validateNativeStartupGUCs(topology, config.startupGUCs ?? {});
   const startupArgs = buildStartupArgs({
     startupGUCs: config.startupGUCs ?? {},
@@ -107,6 +119,13 @@ export function normalizeOpenConfig(
       ? { icuData: validateResourceDirectory(config.icuData, 'icuData') }
       : {}),
     brokerExecutable,
+    ...(timeouts === undefined ? {} : { timeouts }),
+    ...(broker?.recoveryTimeoutMs === undefined
+      ? {}
+      : { brokerRecoveryTimeoutMs: broker.recoveryTimeoutMs }),
+    ...(broker?.maxPendingHandshakes === undefined
+      ? {}
+      : { brokerMaxPendingHandshakes: broker.maxPendingHandshakes }),
     ...(broker?.handshakeTimeoutMs === undefined
       ? {}
       : { brokerHandshakeTimeoutMs: broker.handshakeTimeoutMs }),
@@ -121,23 +140,38 @@ export function normalizeBrokerOptions(
 ): BrokerOptions | undefined {
   if (value === undefined) return undefined;
   if (topology !== 'broker') throw new TypeError('broker options require topology: "broker"');
-  if (
-    value === null ||
-    typeof value !== 'object' ||
-    Array.isArray(value) ||
-    Object.keys(value).some((key) => key !== 'handshakeTimeoutMs')
-  )
-    throw new TypeError('broker options accept only handshakeTimeoutMs');
-  const timeout = (value as { handshakeTimeoutMs?: unknown }).handshakeTimeoutMs;
-  if (timeout === undefined) return {};
-  if (
-    typeof timeout !== 'number' ||
-    !Number.isInteger(timeout) ||
-    timeout < 1 ||
-    timeout > 2_147_483_647
-  )
-    throw new TypeError('broker handshakeTimeoutMs must be an integer between 1 and 2147483647');
-  return { handshakeTimeoutMs: timeout };
+  const options = optionRecord(
+    value,
+    ['handshakeTimeoutMs', 'recoveryTimeoutMs', 'maxPendingHandshakes'],
+    'broker options',
+  );
+  return {
+    ...(options.handshakeTimeoutMs === undefined
+      ? {}
+      : {
+          handshakeTimeoutMs: timeoutMilliseconds(
+            options.handshakeTimeoutMs,
+            'broker handshakeTimeoutMs',
+          ),
+        }),
+    ...(options.recoveryTimeoutMs === undefined
+      ? {}
+      : {
+          recoveryTimeoutMs: timeoutMilliseconds(
+            options.recoveryTimeoutMs,
+            'broker recoveryTimeoutMs',
+          ),
+        }),
+    ...(options.maxPendingHandshakes === undefined
+      ? {}
+      : {
+          maxPendingHandshakes: positiveInteger(
+            options.maxPendingHandshakes,
+            'broker maxPendingHandshakes',
+            0xffff_ffff,
+          ),
+        }),
+  };
 }
 
 export function validateResourceDirectory(

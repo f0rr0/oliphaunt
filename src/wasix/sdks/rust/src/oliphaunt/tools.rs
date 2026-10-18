@@ -1,3 +1,5 @@
+mod startup;
+
 use std::error::Error as StdError;
 use std::fmt;
 use std::io::{Cursor, Read, Seek, Write};
@@ -9,14 +11,13 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::task::{Context as TaskContext, Poll};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use tempfile::TempDir;
 use wasmer_types::ModuleHash;
 use wasmer_wasix::WasiRuntimeError;
 use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
-use wasmer_wasix::runtime::task_manager::tokio::TokioTaskManager;
 use wasmer_wasix::virtual_fs::{self, AsyncRead, AsyncSeek, AsyncWrite};
 use wasmer_wasix::virtual_net::tcp_pair::TcpSocketHalf;
 use wasmer_wasix::virtual_net::{
@@ -69,6 +70,7 @@ const PSQL_VALUE_OPTIONS: &[&str] = &[
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PgDumpOptions {
     args: Vec<String>,
+    startup_timeout: Option<Duration>,
     assets: Option<Arc<ToolAssets>>,
 }
 
@@ -97,6 +99,13 @@ impl ToolAssets {
 }
 
 impl PgDumpOptions {
+    /// Budget through opening the embedded protocol connection; queries/output are excluded.
+    /// Defaults to 30 seconds. Expiry cancels the owned guest and waits for cleanup.
+    pub fn startup_timeout(mut self, timeout: Duration) -> Self {
+        self.startup_timeout = Some(timeout);
+        self
+    }
+
     pub(crate) fn retained_bytes(&self) -> usize {
         tool_input_bytes(&self.args, self.assets.as_deref())
     }
@@ -299,6 +308,9 @@ impl PgDumpOptions {
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
+        if let Some(timeout) = self.startup_timeout {
+            startup::validate_timeout(timeout)?;
+        }
         validate_tool_args(
             "pg_dump",
             &self.args,
@@ -317,6 +329,7 @@ impl PgDumpOptions {
 pub struct PsqlOptions {
     args: Vec<String>,
     input: Option<PsqlInput>,
+    startup_timeout: Option<Duration>,
     assets: Option<Arc<ToolAssets>>,
 }
 
@@ -327,6 +340,13 @@ enum PsqlInput {
 }
 
 impl PsqlOptions {
+    /// Budget through opening the embedded protocol connection; queries/output are excluded.
+    /// Defaults to 30 seconds. Expiry cancels the owned guest and waits for cleanup.
+    pub fn startup_timeout(mut self, timeout: Duration) -> Self {
+        self.startup_timeout = Some(timeout);
+        self
+    }
+
     pub(crate) fn retained_bytes(&self) -> usize {
         let input = match &self.input {
             Some(PsqlInput::Command(value) | PsqlInput::Script(value)) => value.capacity(),
@@ -370,6 +390,9 @@ impl PsqlOptions {
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
+        if let Some(timeout) = self.startup_timeout {
+            startup::validate_timeout(timeout)?;
+        }
         anyhow::ensure!(
             !self.args.is_empty() || self.input.is_some(),
             "psql runner requires non-interactive input; use PsqlOptions::command, PsqlOptions::script, or pass a non-input psql argument"
@@ -680,25 +703,22 @@ pub(crate) struct ToolWriters {
 
 type SharedToolOutputCapture = Arc<Mutex<ToolOutputCapture>>;
 
-struct ToolInvocation<'a, N> {
+struct ToolInvocation<'a> {
     name: &'static str,
     wasm: &'a [u8],
     load_module: fn(&wasmer::Engine) -> Result<wasmer::Module>,
     assets: Option<&'a ToolAssets>,
     username: &'a str,
-    networking: N,
+    networking: DirectToolNetworking,
     stdin: Option<Vec<u8>>,
     args: Vec<String>,
 }
 
 #[allow(unsafe_code)]
-fn run_wasix_client_tool<N>(
-    invocation: ToolInvocation<'_, N>,
+fn run_wasix_client_tool(
+    invocation: ToolInvocation<'_>,
     writers: Option<ToolWriters>,
-) -> Result<PostgresToolOutput>
-where
-    N: VirtualNetworking + Sync,
-{
+) -> Result<PostgresToolOutput> {
     let ToolInvocation {
         name,
         wasm,
@@ -709,6 +729,8 @@ where
         stdin,
         args,
     } = invocation;
+    let startup = networking.startup.clone();
+    startup.check()?;
     let engine = aot::headless_engine()?;
     let module = match assets {
         // SAFETY: ToolAssets construction requires trusted compiler output.
@@ -719,6 +741,7 @@ where
     }
     .with_context(|| format!("load {name} AOT artifact from oliphaunt-wasix-tools-aot-*"))?;
 
+    startup.check()?;
     let fs_root = TempDir::new().with_context(|| format!("create {name} WASIX filesystem root"))?;
     if let Some(runtime_archive) = assets::runtime_archive() {
         unpack_runtime_archive_reader(
@@ -729,10 +752,8 @@ where
         .with_context(|| format!("install WASIX runtime files for {name}"))?;
     }
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .with_context(|| format!("create Tokio runtime for WASIX {name}"))?;
+    startup.check()?;
+    let runtime = super::host_runtime::runtime()?;
     let (host_fs, wasix_runtime) = {
         let _runtime_guard = runtime.enter();
         let host_fs = SyncHostFileSystem::new(fs_root.path()).with_context(|| {
@@ -742,9 +763,15 @@ where
             )
         })?;
         let host_fs = Arc::new(host_fs) as Arc<dyn virtual_fs::FileSystem + Send + Sync>;
-        let mut wasix_runtime = PluggableRuntime::new(Arc::new(TokioTaskManager::new(
-            tokio::runtime::Handle::current(),
-        )));
+        let tasks = super::host_runtime::tasks()?;
+        let supervision = startup.clone();
+        let tasks =
+            super::postgres_mod::task_policy::GuestTaskManager::observe(tasks, move |task| {
+                supervision
+                    .register(task.env.process.clone())
+                    .map_err(|_| wasmer_wasix::WasiThreadError::Unsupported)
+            });
+        let mut wasix_runtime = PluggableRuntime::new(Arc::new(tasks));
         wasix_runtime.set_engine(engine.clone());
         wasix_runtime.set_networking_implementation(networking);
         (host_fs, wasix_runtime)
@@ -785,6 +812,8 @@ where
         Some(input) => runner.with_stdin(Box::new(virtual_fs::StaticFile::new(input))),
         None => runner.with_stdin(Box::<virtual_fs::null_file::NullFile>::default()),
     };
+    startup.check()?;
+    let _runtime_guard = runtime.enter();
     let run_result = runner.run_wasm(
         RuntimeOrEngine::Runtime(Arc::new(wasix_runtime)),
         name,
@@ -898,17 +927,14 @@ fn take_tool_output(
     Ok(output)
 }
 
-fn pg_dump_with_networking<N>(
+fn pg_dump_with_networking(
     addr: SocketAddr,
     username: &str,
     database: &str,
     options: &PgDumpOptions,
-    networking: N,
+    networking: DirectToolNetworking,
     writers: Option<ToolWriters>,
-) -> Result<PostgresToolOutput>
-where
-    N: VirtualNetworking + Sync,
-{
+) -> Result<PostgresToolOutput> {
     options.validate()?;
     let mut args = options.args.clone();
     args.extend([
@@ -937,17 +963,14 @@ where
     )
 }
 
-fn run_psql_with_networking<N>(
+fn run_psql_with_networking(
     addr: SocketAddr,
     username: &str,
     database: &str,
     options: &PsqlOptions,
-    networking: N,
+    networking: DirectToolNetworking,
     writers: Option<ToolWriters>,
-) -> Result<PostgresToolOutput>
-where
-    N: VirtualNetworking + Sync,
-{
+) -> Result<PostgresToolOutput> {
     options.validate()?;
     let stdin = match &options.input {
         Some(PsqlInput::Script(script)) => Some(script.as_bytes().to_vec()),
@@ -1028,6 +1051,7 @@ where
     let database = database.to_owned();
     let options = options.clone();
     run_direct_tool(
+        options.startup_timeout.unwrap_or(startup::DEFAULT_TIMEOUT),
         move |networking| {
             pg_dump_with_networking(
                 DIRECT_TOOL_ADDR,
@@ -1056,6 +1080,7 @@ where
     let database = database.to_owned();
     let options = options.clone();
     run_direct_tool(
+        options.startup_timeout.unwrap_or(startup::DEFAULT_TIMEOUT),
         move |networking| {
             run_psql_with_networking(
                 DIRECT_TOOL_ADDR,
@@ -1070,15 +1095,17 @@ where
     )
 }
 
-fn run_direct_tool<T, R, F>(run: R, serve: F) -> Result<T>
+fn run_direct_tool<T, R, F>(timeout: Duration, run: R, serve: F) -> Result<T>
 where
     T: Send + 'static,
     R: FnOnce(DirectToolNetworking) -> Result<T> + Send + 'static,
     F: FnOnce(DirectToolSocket) -> Result<()>,
 {
+    let startup = Arc::new(startup::Startup::new(timeout)?);
     let (socket_tx, socket_rx) = mpsc::sync_channel(1);
-    let runner = thread::spawn(move || run(DirectToolNetworking::new(socket_tx)));
-    let accepted = receive_direct_tool_socket(&socket_rx, &runner)
+    let guest_startup = startup.clone();
+    let runner = thread::spawn(move || run(DirectToolNetworking::new(socket_tx, guest_startup)));
+    let accepted = receive_direct_tool_socket(&socket_rx, &runner, &startup)
         .context("accept direct WASIX tool protocol connection");
     let connection_started = accepted.is_ok();
     drop(socket_rx);
@@ -1128,12 +1155,14 @@ const DIRECT_TOOL_LOCAL_ADDR: SocketAddr =
 
 struct DirectToolNetworking {
     socket_tx: Mutex<Option<SyncSender<DirectToolSocket>>>,
+    startup: Arc<startup::Startup>,
 }
 
 impl DirectToolNetworking {
-    fn new(socket_tx: SyncSender<DirectToolSocket>) -> Self {
+    fn new(socket_tx: SyncSender<DirectToolSocket>, startup: Arc<startup::Startup>) -> Self {
         Self {
             socket_tx: Mutex::new(Some(socket_tx)),
+            startup,
         }
     }
 }
@@ -1167,6 +1196,9 @@ impl VirtualNetworking for DirectToolNetworking {
         } else {
             addr
         };
+        self.startup
+            .connected()
+            .map_err(|_| NetworkError::ConnectionAborted)?;
         let (guest, host) = TcpSocketHalf::channel(DIRECT_TOOL_SOCKET_BUFFER, local, peer);
         sender
             .send(host)
@@ -1305,18 +1337,16 @@ impl VirtualTcpSocket for DirectToolTcpSocket {
 fn receive_direct_tool_socket<T>(
     socket_rx: &Receiver<DirectToolSocket>,
     runner: &thread::JoinHandle<Result<T>>,
+    startup: &startup::Startup,
 ) -> Result<DirectToolSocket> {
-    let started = Instant::now();
     loop {
-        match socket_rx.recv_timeout(Duration::from_millis(5)) {
+        match socket_rx.recv_timeout(startup.remaining().min(Duration::from_millis(5))) {
             Ok(socket) => return Ok(socket),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if runner.is_finished() {
                     bail!("WASIX tool exited before opening its virtual protocol connection");
                 }
-                if started.elapsed() > Duration::from_secs(30) {
-                    bail!("timed out waiting for WASIX tool virtual protocol connection");
-                }
+                startup.check()?;
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 bail!("WASIX tool virtual networking channel closed before connect")
@@ -1937,6 +1967,7 @@ mod tests {
     #[test]
     fn failure_before_direct_tool_connection_has_known_outcome() {
         let error = run_direct_tool(
+            startup::DEFAULT_TIMEOUT,
             |_| Err::<String, _>(anyhow!("tool failed before opening its virtual connection")),
             |_| panic!("a pre-connection failure must not enter the database protocol server"),
         )
@@ -1949,8 +1980,43 @@ mod tests {
     }
 
     #[test]
+    fn selected_startup_budget_expires_before_connect_but_not_during_serving() {
+        let error = run_direct_tool(
+            Duration::from_millis(20),
+            |network| {
+                while network.startup.check().is_ok() {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err::<(), _>(anyhow!("guest observed startup expiry"))
+            },
+            |_| panic!("expired startup must not enter the database"),
+        )
+        .unwrap_err();
+        assert!(!is_direct_tool_outcome_unknown(&error));
+        assert!(format!("{error:#}").contains("deadline exceeded"));
+
+        let output = run_direct_tool(
+            Duration::from_millis(100),
+            |network| {
+                let _socket = crate::oliphaunt::host_runtime::runtime()?
+                    .block_on(network.connect_tcp(DIRECT_TOOL_LOCAL_ADDR, DIRECT_TOOL_ADDR))?;
+                thread::sleep(Duration::from_millis(150));
+                network.startup.check()?;
+                Ok("finished")
+            },
+            |_| {
+                thread::sleep(Duration::from_millis(150));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(output, "finished");
+    }
+
+    #[test]
     fn successful_direct_tool_without_connection_returns_output() {
         let output = run_direct_tool(
+            startup::DEFAULT_TIMEOUT,
             |_| Ok("pg_dump (PostgreSQL) 18.4\n".to_owned()),
             |_| panic!("a successful pre-connection tool must not enter the protocol server"),
         )
@@ -1985,6 +2051,7 @@ mod tests {
     #[test]
     fn runner_panic_is_unknown_only_after_direct_tool_connection() {
         let before_connection = run_direct_tool(
+            startup::DEFAULT_TIMEOUT,
             |_| -> Result<String> {
                 panic!("tool runner panicked before opening its virtual connection")
             },

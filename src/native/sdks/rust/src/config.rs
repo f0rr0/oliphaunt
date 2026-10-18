@@ -74,6 +74,10 @@ pub(crate) struct NativeBrokerConfig {
     pub(crate) executable: Option<PathBuf>,
     #[cfg(feature = "desktop")]
     pub(crate) handshake_timeout: Option<std::time::Duration>,
+    #[cfg(feature = "desktop")]
+    pub(crate) recovery_timeout: Option<std::time::Duration>,
+    #[cfg(feature = "desktop")]
+    pub(crate) max_pending_handshakes: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -144,6 +148,8 @@ impl ServerListen {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OpenConfig {
     pub(crate) mode: EngineMode,
+    pub(crate) startup_timeout: Option<std::time::Duration>,
+    pub(crate) shutdown_timeout: Option<std::time::Duration>,
     pub(crate) storage: DatabaseStorage,
     pub(crate) broker: NativeBrokerConfig,
     pub(crate) server: NativeServerConfig,
@@ -160,6 +166,8 @@ impl OpenConfig {
     pub(crate) fn direct(directory: impl Into<PathBuf>) -> Self {
         Self {
             mode: EngineMode::Direct,
+            startup_timeout: None,
+            shutdown_timeout: None,
             storage: DatabaseStorage::Directory(directory.into()),
             broker: NativeBrokerConfig::default(),
             server: NativeServerConfig::default(),
@@ -183,6 +191,39 @@ impl OpenConfig {
             }
             oliphaunt_broker::config::handshake_timeout_millis(timeout)
                 .map_err(|message| Error::InvalidConfig(message.to_owned()))?;
+        }
+        #[cfg(feature = "desktop")]
+        {
+            for timeout in [self.startup_timeout, self.shutdown_timeout]
+                .into_iter()
+                .flatten()
+            {
+                if self.mode == EngineMode::Direct {
+                    return Err(Error::InvalidConfig(
+                        "lifecycle timeouts require broker or server placement".into(),
+                    ));
+                }
+                oliphaunt_broker::config::timeout_millis(timeout)
+                    .map_err(|message| Error::InvalidConfig(message.into()))?;
+            }
+            if self.broker.recovery_timeout.is_some()
+                || self.broker.max_pending_handshakes.is_some()
+            {
+                if self.mode != EngineMode::Broker {
+                    return Err(Error::InvalidConfig(
+                        "broker options require broker().open()".into(),
+                    ));
+                }
+                if let Some(timeout) = self.broker.recovery_timeout {
+                    oliphaunt_broker::config::timeout_millis(timeout)
+                        .map_err(|message| Error::InvalidConfig(message.into()))?;
+                }
+                if self.broker.max_pending_handshakes == Some(0) {
+                    return Err(Error::InvalidConfig(
+                        "broker max_pending_handshakes must be positive".into(),
+                    ));
+                }
+            }
         }
         match self.mode {
             EngineMode::Broker => {

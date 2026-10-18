@@ -5,6 +5,8 @@ export type NativeOpenConfig = {
   admissionMaxPendingOperations?: number;
   admissionHighWaterMarkBytes?: number;
   startupTimeoutMs?: number;
+  recoveryTimeoutMs?: number;
+  shutdownTimeoutMs?: number;
   operationTimeoutMs?: number;
   storageKind: string;
   storagePath?: string;

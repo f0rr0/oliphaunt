@@ -36,8 +36,9 @@ export const Oliphaunt: OliphauntClient = {
 async function restoreNodeWasixWithWorker(
   storage: PersistentWasixStorage,
   bytes: BinaryInput,
+  options?: import('../../core/types.js').RestoreOptions,
 ): Promise<void> {
-  return restoreWasixWithWorker(createNodeWorker, storage, bytes, requireNodeStorage);
+  return restoreWasixWithWorker(createNodeWorker, storage, bytes, requireNodeStorage, options);
 }
 
 function createNodeWorker(_options: SerializedOpenOptions): WasixWorkerPort {

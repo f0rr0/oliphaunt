@@ -297,11 +297,12 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
   let child: ManagedChild | undefined;
   let controlTimeoutMs = DEFAULT_CONTROL_TIMEOUT_MS;
   try {
-    controlTimeoutMs = lifecycleTimeoutMs(CONTROL_TIMEOUT_MS_ENV, DEFAULT_CONTROL_TIMEOUT_MS);
-    const startupTimeoutMs = lifecycleTimeoutMs(
-      SERVER_STARTUP_TIMEOUT_MS_ENV,
-      DEFAULT_STARTUP_TIMEOUT_MS,
-    );
+    controlTimeoutMs =
+      config.timeouts?.shutdownTimeoutMs ??
+      lifecycleTimeoutMs(CONTROL_TIMEOUT_MS_ENV, DEFAULT_CONTROL_TIMEOUT_MS);
+    const startupTimeoutMs =
+      config.timeouts?.startupTimeoutMs ??
+      lifecycleTimeoutMs(SERVER_STARTUP_TIMEOUT_MS_ENV, DEFAULT_STARTUP_TIMEOUT_MS);
     const tools = await resolveServerTools({
       icuData: config.icuData,
       serverExecutable: config.serverExecutable,

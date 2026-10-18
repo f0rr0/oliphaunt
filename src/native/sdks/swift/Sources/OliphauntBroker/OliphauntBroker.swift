@@ -11,9 +11,30 @@
     public struct OliphauntBrokerOptions: Sendable {
         public var startupTimeout: Duration
         public var operationTimeout: Duration?
-        public init(startupTimeout: Duration = .seconds(30), operationTimeout: Duration? = nil) {
+        /// Grace for cancellation/worker loss to settle before retirement.
+        public var recoveryTimeout: Duration
+        /// Grace from destructive close to forced worker retirement.
+        public var shutdownTimeout: Duration
+        public init(startupTimeout: Duration = .seconds(30), operationTimeout: Duration? = nil,
+                    recoveryTimeout: Duration = .seconds(3), shutdownTimeout: Duration = .seconds(3)) {
             self.startupTimeout = startupTimeout
             self.operationTimeout = operationTimeout
+            self.recoveryTimeout = recoveryTimeout
+            self.shutdownTimeout = shutdownTimeout
+        }
+    }
+
+    @available(iOS 26, *)
+    extension OliphauntBrokerOptions {
+        fileprivate var nativeTimeouts: BrokerTimeoutOptions {
+            get throws {
+                let recovery = try milliseconds(recoveryTimeout)
+                let shutdown = try milliseconds(shutdownTimeout)
+                guard recovery <= UInt64(Int32.max), shutdown <= UInt64(Int32.max) else {
+                    throw OliphauntBrokerXPC.invalid("broker cleanup timeouts must be 1...2147483647 milliseconds")
+                }
+                return BrokerTimeoutOptions(recoveryTimeoutMs: recovery, shutdownTimeoutMs: shutdown)
+            }
         }
     }
 
@@ -33,7 +54,8 @@
                     let database = try await NativeDatabase.connectBroker(
                         fd: connection.socket.fileDescriptor,
                         generation: connection.generation, control: connection,
-                        operationTimeoutMs: try options.operationTimeout.map(milliseconds))
+                        operationTimeoutMs: try options.operationTimeout.map(milliseconds),
+                        timeouts: try options.nativeTimeouts)
                     connection.attach(database)
                     guard database.brokerIsUsable() else {
                         throw OliphauntBrokerError(
@@ -72,6 +94,7 @@
                         fd: connection.socket.fileDescriptor, generation: connection.generation,
                         control: connection,
                         operationTimeoutMs: try options.operationTimeout.map(milliseconds),
+                        timeouts: try options.nativeTimeouts,
                         sourceFd: input.fileDescriptor)
                 } catch { throw nativeError(error) }
             } onCancel: {
@@ -108,6 +131,7 @@
             else {
                 throw OliphauntBrokerXPC.invalid("broker startup configuration exceeds 64 KiB")
             }
+            _ = try options.nativeTimeouts
             _ = try milliseconds(options.startupTimeout)
             _ = try options.operationTimeout.map(milliseconds)
         }
@@ -253,6 +277,9 @@
                         configuration.extensions.map(\.sqlName))
                     message["username"] = configuration.username
                     message["database"] = configuration.database
+                    let cleanup = try options.nativeTimeouts
+                    message["recoveryMillis"] = cleanup.recoveryTimeoutMs
+                    message["shutdownMillis"] = cleanup.shutdownTimeoutMs
                     message["startupMillis"] = try milliseconds(
                         ContinuousClock.now.duration(to: deadline))
                     guard let descriptor = xpc_fd_create(workerSocket.fileDescriptor) else {
