@@ -21,6 +21,7 @@ import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
 import { canonicalShippingLabel } from '../release/bazel-shipping-inputs.mts';
 import {
   boundedResponseBytes,
+  latestGithubJob,
   requestGithubDownload,
   requestGithubPages,
   requestGithubRepositoryJson,
@@ -562,8 +563,12 @@ export function verifyConfiguredCiResults(
       'CI request receipt transport prerequisites differ',
     );
     assert.deepEqual(record.source, plan.source, 'CI request receipt source differs');
-    for (const key of ['repository', 'workflow', 'workflowPath', 'runId', 'runAttempt'] as const)
+    for (const key of ['repository', 'workflow', 'workflowPath', 'runId'] as const)
       assert(record.github[key] === github[key], 'CI request receipt producer context differs');
+    assert(
+      record.github.runAttempt <= github.runAttempt,
+      'CI request receipt producer attempt is newer than the observer',
+    );
   }
 }
 
@@ -669,8 +674,11 @@ function basisIdentity(basis: ConfiguredCiBasis, run: any, jobs: any[], root: st
       run.path === WORKFLOW,
     'CI basis did not come from a completed main workflow',
   );
+  const required = latestGithubJob({ runAttempt: run.run_attempt, jobs }, 'Required');
   assert(
-    jobs.filter((job) => job.name === 'Required' && job.conclusion === 'success').length === 1,
+    required?.status === 'completed' &&
+      required.conclusion === 'success' &&
+      required.run_attempt === run.run_attempt,
     'CI basis has no successful complete Required gate',
   );
   assert(
@@ -699,8 +707,12 @@ function basisIdentity(basis: ConfiguredCiBasis, run: any, jobs: any[], root: st
   for (const request of basis.requests) {
     validateRequest(request, true);
     assert.deepEqual(request.source, basis.source, 'CI basis request source differs');
-    for (const key of ['repository', 'workflow', 'workflowPath', 'runId', 'runAttempt'] as const)
+    for (const key of ['repository', 'workflow', 'workflowPath', 'runId'] as const)
       assert(request.github[key] === basis.github[key], 'CI basis request origin differs');
+    assert(
+      request.github.runAttempt <= basis.github.runAttempt,
+      'CI basis request producer attempt is newer than the basis',
+    );
   }
   requestClosure(basis.requests, []);
 }

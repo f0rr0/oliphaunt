@@ -68,6 +68,57 @@ export function matchesGithubWorkflowRef(
     : ref === `refs/heads/${origin.headBranch}`;
 }
 
+/** The latest execution of one role, not the latest workflow attempt.
+ * A newer failed or cancelled execution must never fall back to an older success.
+ */
+export function latestGithubJob(snapshot, name: string) {
+  const jobs = snapshot.jobs.filter((job) => job.name === name);
+  if (!jobs.length) return undefined;
+  if (
+    jobs.some(
+      (job) =>
+        !Number.isSafeInteger(job.run_attempt) ||
+        job.run_attempt <= 0 ||
+        job.run_attempt > snapshot.runAttempt,
+    )
+  )
+    throw new Error(`job ${name} has an invalid producing attempt`);
+  const attempt = jobs.reduce((maximum, job) => Math.max(maximum, job.run_attempt), 0);
+  const latest = jobs.filter((job) => job.run_attempt === attempt);
+  if (latest.length !== 1) throw new Error(`job ${name} has ambiguous latest executions`);
+  return latest[0];
+}
+
+/** Artifact names can repeat on reruns. Bind the exact source and producer window first. */
+export function githubJobArtifact(snapshot, job, name: string, source: string) {
+  const start = Date.parse(job.started_at);
+  const end = Date.parse(job.completed_at);
+  if (
+    job.status !== 'completed' ||
+    job.conclusion !== 'success' ||
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    start > end
+  )
+    throw new Error(`job ${job.name} did not complete successfully with a valid producing window`);
+  const matches = snapshot.artifacts.filter((artifact) => {
+    const created = Date.parse(artifact.created_at);
+    return (
+      artifact.name === name &&
+      artifact.expired === false &&
+      artifact.head_sha === source &&
+      Number.isFinite(created) &&
+      created >= start &&
+      created < end + 1000
+    );
+  });
+  if (matches.length !== 1)
+    throw new Error(
+      `${snapshot.runId}/${name} requires exactly one artifact bound to the selected source/job attempt; found ${matches.length}`,
+    );
+  return matches[0];
+}
+
 export class GitHubReadError extends Error {
   constructor(
     message,

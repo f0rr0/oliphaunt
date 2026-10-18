@@ -769,6 +769,100 @@ test('one controller session shares only its owned origin metadata and still aut
   });
 });
 
+test('mixed producer attempts retain untouched and retried job identities from one owned snapshot', async () => {
+  await fixture(async (root) => {
+    const session = createNativeBuildEvidenceAcquirer();
+    try {
+      const untouched = await session.acquire(path.join(root, 'untouched'), expected);
+      const retried = await session.acquire(path.join(root, 'retried'), {
+        ...expected,
+        github: { ...expected.github, job: 'Linux runtime (aarch64)', runAttempt: 2 },
+        artifactName: 'native-build-evidence-aarch64',
+      });
+      expect(untouched.github).toEqual(expected.github);
+      expect(retried.github).toEqual({
+        ...expected.github,
+        job: 'Linux runtime (aarch64)',
+        runAttempt: 2,
+      });
+      expect(untouched.artifact.id).toBe(101);
+      expect(retried.artifact.id).toBe(103);
+      expect(untouched.evidence).toEqual({ synthetic: true });
+      expect(retried.evidence).toEqual(untouched.evidence);
+      const requests: string[] = readFileSync(path.join(root, 'api.log'), 'utf8')
+        .trim()
+        .split('\n')
+        .map(JSON.parse);
+      expect(requests.filter((url) => url.includes('/actions/runs/77/jobs?'))).toHaveLength(1);
+      expect(requests.find((url) => url.includes('/actions/runs/77/jobs?'))).toContain(
+        'filter=all',
+      );
+      expect(requests.some((url) => url.includes('/actions/artifacts/102/zip'))).toBe(false);
+    } finally {
+      session.dispose();
+    }
+  }, 'mixed');
+});
+
+for (const fault of [
+  'mixed-failed',
+  'mixed-cancelled',
+  'mixed-pending',
+  'mixed-ambiguous',
+  'mixed-stale',
+])
+  test(`mixed producer attempts reject a newer unusable role before archive download (${fault})`, async () => {
+    await fixture(async (root) => {
+      await expect(
+        acquireAuthenticatedNativeBuildEvidence(path.join(root, 'rejected'), {
+          ...expected,
+          github: { ...expected.github, job: 'Linux runtime (aarch64)', runAttempt: 2 },
+          artifactName: 'native-build-evidence-aarch64',
+        }),
+      ).rejects.toThrow();
+      expect(existsSync(path.join(root, 'download-count'))).toBe(false);
+    }, fault);
+  });
+
+test('mixed producer attempts reject a forged producing attempt instead of restamping a retained job', async () => {
+  await fixture(async (root) => {
+    await expect(
+      acquireAuthenticatedNativeBuildEvidence(path.join(root, 'forged'), {
+        ...expected,
+        github: { ...expected.github, runAttempt: 2 },
+      }),
+    ).rejects.toThrow();
+    expect(existsSync(path.join(root, 'download-count'))).toBe(false);
+  }, 'mixed');
+});
+
+test('mixed producer acquisition can resolve the own attempt without inheriting the observer attempt', async () => {
+  await fixture(async (root) => {
+    const { runAttempt: _, ...github } = expected.github;
+    const origin = await acquireAuthenticatedNativeBuildEvidence(path.join(root, 'selected'), {
+      ...expected,
+      github,
+      workflowRunAttempt: 2,
+    });
+    expect(origin.github).toEqual(expected.github);
+    expect(origin.evidence).toEqual({ synthetic: true });
+  }, 'mixed');
+});
+
+test('mixed producer selection rejects a changed workflow observation without relabelling its producer', async () => {
+  await fixture(async (root) => {
+    const { runAttempt: _, ...github } = expected.github;
+    await expect(
+      acquireAuthenticatedNativeBuildEvidence(path.join(root, 'changed-run'), {
+        ...expected,
+        github,
+        workflowRunAttempt: 1,
+      }),
+    ).rejects.toThrow();
+    expect(existsSync(path.join(root, 'download-count'))).toBe(false);
+  }, 'mixed');
+});
+
 test('native origin rejects stale source/tree/attempt/job, wrong workflow/event/ref and cross-attempt artifacts', async () => {
   for (const kind of [
     'source',

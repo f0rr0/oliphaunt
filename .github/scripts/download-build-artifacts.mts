@@ -30,7 +30,9 @@ import {
 } from '../../tools/packaging/atomic-directory.mts';
 import { validateZipEntryTypes } from '../../tools/packaging/portable-archive.mts';
 import {
+  githubJobArtifact,
   isRetryableGitHubReadError,
+  latestGithubJob,
   matchesGithubWorkflowRef,
   RetryableReadError,
   requestGithubDownload,
@@ -41,7 +43,7 @@ import { mergeChecksumManifest } from './merge-checksum-manifest.mts';
 
 const USAGE =
   'usage: download-build-artifacts.sh <workflow> <sha> <destination> [--run-id <id>] [--job <name>] ' +
-  '[--artifact-metadata-json <json>] [--job-success-only --workflow-path <path> --event <event> --ref <ref> --run-attempt <attempt> --source-tree <sha>] --artifact <name> [--artifact <name>...]';
+  '[--artifact-metadata-json <json>] [--job-success-only --job-attempt <producer-attempt> --workflow-path <path> --event <event> --ref <ref> --run-attempt <workflow-attempt> --source-tree <sha>] --artifact <name> [--artifact <name>...]';
 const SNAPSHOT_SCHEMA = 'oliphaunt-github-actions-run-snapshot-v1';
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const MAX_CAPTURE_BYTES = 128 * 1024 * 1024;
@@ -73,6 +75,7 @@ function parseArgs(argv) {
     event: '',
     ref: '',
     runAttempt: '',
+    jobAttempt: '',
     sourceTree: '',
     jobSuccessOnly: false,
   };
@@ -94,13 +97,21 @@ function parseArgs(argv) {
       args.jobSuccessOnly = true;
       index += 1;
     } else if (
-      ['--workflow-path', '--event', '--ref', '--run-attempt', '--source-tree'].includes(arg)
+      [
+        '--workflow-path',
+        '--event',
+        '--ref',
+        '--run-attempt',
+        '--job-attempt',
+        '--source-tree',
+      ].includes(arg)
     ) {
       const key = {
         '--workflow-path': 'workflowPath',
         '--event': 'event',
         '--ref': 'ref',
         '--run-attempt': 'runAttempt',
+        '--job-attempt': 'jobAttempt',
         '--source-tree': 'sourceTree',
       }[arg];
       if (args[key] !== '') fail(`duplicate argument: ${arg}`, 2);
@@ -133,6 +144,13 @@ function parseArgs(argv) {
     (!/^[1-9][0-9]*$/u.test(args.runAttempt) || !Number.isSafeInteger(Number(args.runAttempt)))
   )
     fail('--run-attempt requires a positive safe integer', 2);
+  if (
+    args.jobAttempt &&
+    (!args.jobSuccessOnly ||
+      !/^[1-9][0-9]*$/u.test(args.jobAttempt) ||
+      !Number.isSafeInteger(Number(args.jobAttempt)))
+  )
+    fail('--job-attempt requires job-success-only and a positive safe integer', 2);
   if (args.sourceTree && !FULL_SHA.test(args.sourceTree))
     fail('--source-tree requires an exact SHA', 2);
   return args;
@@ -299,13 +317,10 @@ function exactExpectedArtifact(records, runId, name, expectedMetadata = null) {
 }
 
 async function jobRecords(repo, runId) {
-  const records = await requestGithubPages(
-    `repos/${repo}/actions/runs/${runId}/jobs?filter=latest`,
-    {
-      itemsField: 'jobs',
-      label: `jobs for run ${runId}`,
-    },
-  );
+  const records = await requestGithubPages(`repos/${repo}/actions/runs/${runId}/jobs?filter=all`, {
+    itemsField: 'jobs',
+    label: `jobs for run ${runId}`,
+  });
   const jobs = [];
   for (const job of records) {
     if (
@@ -393,10 +408,10 @@ function validateSnapshot(snapshot, { requireWorkflowSuccess = true, sourceTree 
       (job.conclusion !== null && typeof job.conclusion !== 'string') ||
       !Number.isSafeInteger(job.run_attempt) ||
       job.run_attempt <= 0 ||
-      (requireWorkflowSuccess && job.run_attempt !== snapshot.runAttempt)
+      job.run_attempt > snapshot.runAttempt
     ) {
       throw new Error(
-        'cached GitHub workflow run snapshot contains malformed or cross-attempt jobs',
+        'cached GitHub workflow run snapshot contains malformed or future-attempt jobs',
       );
     }
   }
@@ -497,13 +512,8 @@ function requiredJobSuccess(snapshot, requiredJob) {
   if (requiredJob === '') {
     return true;
   }
-  const matches = snapshot.jobs.filter((candidate) => candidate.name === requiredJob);
-  return (
-    matches.length === 1 &&
-    matches[0]?.status === 'completed' &&
-    matches[0]?.conclusion === 'success' &&
-    matches[0]?.run_attempt === snapshot.runAttempt
-  );
+  const job = latestGithubJob(snapshot, requiredJob);
+  return job?.status === 'completed' && job?.conclusion === 'success';
 }
 
 function runMatchesRequest(snapshot, workflow, sha) {
@@ -524,29 +534,12 @@ function assertRunIdentity(snapshot, args) {
     if (!matches) throw new Error(`workflow run ${snapshot.runId} ref mismatch`);
   }
   if (args.jobSuccessOnly) {
-    const job = snapshot.jobs.find((row) => row.name === args.requiredJob);
-    const start = Date.parse(job.started_at);
-    const end = Date.parse(job.completed_at);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end)
-      throw new Error(`workflow run ${snapshot.runId} selected job timing is missing or malformed`);
-    for (const name of args.artifacts) {
-      const artifact = exactExpectedArtifact(
-        snapshot.artifacts,
-        snapshot.runId,
-        name,
-        args.expectedArtifactMetadata,
-      );
-      const created = Date.parse(artifact.created_at);
-      if (
-        artifact.head_sha !== args.sha ||
-        !Number.isFinite(created) ||
-        created < start ||
-        created >= end + 1000
-      )
-        throw new Error(
-          `workflow run ${snapshot.runId}/${name} artifact is not bound to the selected source/job attempt`,
-        );
-    }
+    const job = latestGithubJob(snapshot, args.requiredJob);
+    if (args.jobAttempt && String(job.run_attempt) !== args.jobAttempt)
+      throw new Error(`workflow run ${snapshot.runId} producing job attempt mismatch`);
+    const selected = args.artifacts.map((name) => githubJobArtifact(snapshot, job, name, args.sha));
+    for (const name of args.artifacts)
+      exactExpectedArtifact(selected, snapshot.runId, name, args.expectedArtifactMetadata);
   }
 }
 
@@ -831,10 +824,22 @@ async function selectRunId(repo, args) {
       );
     }
     assertRunIdentity(snapshot, args);
-    for (const artifact of args.artifacts) {
-      exactExpectedArtifact(snapshot.artifacts, runId, artifact, args.expectedArtifactMetadata);
-    }
-    return snapshot;
+    if (!args.jobSuccessOnly)
+      for (const artifact of args.artifacts)
+        exactExpectedArtifact(snapshot.artifacts, runId, artifact, args.expectedArtifactMetadata);
+    return args.jobSuccessOnly
+      ? {
+          ...snapshot,
+          artifacts: args.artifacts.map((name) =>
+            githubJobArtifact(
+              snapshot,
+              latestGithubJob(snapshot, args.requiredJob),
+              name,
+              args.sha,
+            ),
+          ),
+        }
+      : snapshot;
   }
 
   for (const candidate of await candidateRunIds(repo, args.workflow, args.sha)) {

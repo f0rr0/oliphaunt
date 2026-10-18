@@ -862,6 +862,14 @@ function producer(
   return {
     file,
     origin: {
+      github: {
+        repository: 'f0rr0/oliphaunt',
+        workflow: 'Native Bazel qualification',
+        workflowPath: '.github/workflows/bazel.yml',
+        runId: 77,
+        runAttempt: 1,
+        job: 'Linux runtime (x86_64)',
+      },
       evidence: {
         source,
         cohorts: [
@@ -1010,7 +1018,8 @@ test('PR family construction uses finite completed producer transport and never 
     expect(acquired.map((row) => row.artifactName)).toEqual(['native-build-evidence-x86_64']);
     expect(acquired[0].event).toBe('pull_request');
     expect(acquired[0].ref).toBe('refs/pull/295/merge');
-    expect(acquired[0].github.runAttempt).toBe(1);
+    expect(acquired[0].github).not.toHaveProperty('runAttempt');
+    expect([...result.origins.values()][0].github.runAttempt).toBe(1);
     expect(result.families).toHaveLength(1);
     expect([...result.origins.values()].every((origin) => !('producerAssurance' in origin))).toBe(
       true,
@@ -1442,7 +1451,10 @@ test('RN bootstrap acquires only the original Apple role and cannot wait on its 
     ];
     const acquire = async (_root: string, expected: any) => {
       requests.push(expected.artifactName);
-      return { finalFiles: { qualification: { requiredTests: [] } } } as any;
+      return {
+        github: { ...expected.github, runAttempt: 1 },
+        finalFiles: { qualification: { requiredTests: [] } },
+      } as any;
     };
     const result = await acquireNativePublicationBuilds(options, { readJson, readPages, acquire });
     expect(requests).toEqual(['native-build-evidence-mobile-ios']);
@@ -1460,6 +1472,42 @@ test('RN bootstrap acquires only the original Apple role and cannot wait on its 
       ),
     ).rejects.toThrow('no retained source producer');
     expect(requests).toHaveLength(1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('mixed producer acquisition keeps latest run observation separate from each authenticated role', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'native-mixed-attempts-'));
+  try {
+    const requests: any[] = [];
+    const attempts = new Map([
+      ['native-build-evidence-x86_64', 2],
+      ['native-build-evidence-aarch64', 1],
+    ]);
+    const result = await acquireNativePublicationBuilds(
+      { source, runId: 77, directory: path.join(directory, 'producers') },
+      {
+        readJson: async () => ({ ...eligible, run_attempt: 2 }),
+        readPages: async () => [...attempts.keys()].map((name) => ({ name, expired: false })),
+        acquire: async (_directory, expected) => {
+          requests.push(expected);
+          return {
+            github: { ...expected.github, runAttempt: attempts.get(expected.artifactName) },
+            finalFiles: { qualification: { requiredTests: [] } },
+          } as any;
+        },
+      },
+    );
+    expect(result.run.run_attempt).toBe(2);
+    expect(
+      requests.every(
+        (request) =>
+          !Object.hasOwn(request.github, 'runAttempt') && request.workflowRunAttempt === 2,
+      ),
+    ).toBe(true);
+    expect(result.builds.map((build) => build.expected.github.runAttempt)).toEqual([2, 1]);
+    expect([...result.origins.values()].map((origin) => origin.github.runAttempt)).toEqual([2, 1]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

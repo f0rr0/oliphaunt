@@ -346,10 +346,11 @@ async function observeAuthenticated(
     assert.ok(build, 'native publication cannot import an unacquired producer');
     equal(expected, build.expected, 'cached native producer constraints changed');
     assert.equal(expected.github.runId, acquisition.run.id, 'native producer run differs');
-    assert.equal(
-      expected.github.runAttempt,
-      acquisition.run.run_attempt,
-      'native producer attempt differs',
+    assert.ok(
+      Number.isSafeInteger(expected.github.runAttempt) &&
+        expected.github.runAttempt > 0 &&
+        expected.github.runAttempt <= acquisition.run.run_attempt,
+      'native producer attempt is newer than the observation',
     );
     assert.equal(expected.ref, 'refs/heads/main', 'native publication producer must be main');
     assert.equal(expected.event, acquisition.run.event, 'native producer event differs');

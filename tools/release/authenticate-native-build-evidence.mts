@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual, parseArgs, promisify } from 'node:util';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
-import { matchesGithubWorkflowRef } from './github-read.mts';
+import { githubJobArtifact, latestGithubJob, matchesGithubWorkflowRef } from './github-read.mts';
 import { readNativeBuildFinalFiles } from './native-build-files.mts';
 import {
   assertNativeBuildGithub,
@@ -161,6 +161,11 @@ type NativeBuildOriginExpectation = {
   artifactName: string;
 };
 
+type NativeBuildOriginSelection = Omit<NativeBuildOriginExpectation, 'github'> & {
+  github: Omit<NativeBuildGithub, 'runAttempt'>;
+  workflowRunAttempt: number;
+};
+
 export function authenticateNativeBuildEvidence(
   evidenceRoot: string,
   expected: NativeBuildOriginExpectation,
@@ -171,7 +176,7 @@ export function authenticateNativeBuildEvidence(
 /** Acquire once into an owned directory; observation can reuse this authenticated origin. */
 export function acquireAuthenticatedNativeBuildEvidence(
   directory: string,
-  expected: NativeBuildOriginExpectation,
+  expected: NativeBuildOriginExpectation | NativeBuildOriginSelection,
 ) {
   const destination = path.resolve(directory);
   requireSafeDirectoryChain(path.dirname(destination), {
@@ -190,7 +195,10 @@ export function createNativeBuildEvidenceAcquirer() {
   const owner = mkdtempSync(path.join(tmpdir(), 'oliphaunt-native-acquisition-'));
   let closed = false;
   return {
-    acquire(directory: string, expected: NativeBuildOriginExpectation) {
+    acquire(
+      directory: string,
+      expected: NativeBuildOriginExpectation | NativeBuildOriginSelection,
+    ) {
       if (closed) throw new Error('native evidence acquisition session is closed');
       const destination = path.resolve(directory);
       requireSafeDirectoryChain(path.dirname(destination), {
@@ -215,11 +223,16 @@ export function createNativeBuildEvidenceAcquirer() {
 
 async function readAuthenticatedNativeBuildEvidence(
   evidenceRoot: string | undefined,
-  expected: NativeBuildOriginExpectation,
+  expected: NativeBuildOriginExpectation | NativeBuildOriginSelection,
   retainedRoot?: string,
   snapshotDirectory?: string,
 ) {
-  assertNativeBuildGithub(expected.github);
+  if ('runAttempt' in expected.github) assertNativeBuildGithub(expected.github);
+  if (
+    'workflowRunAttempt' in expected &&
+    (!Number.isSafeInteger(expected.workflowRunAttempt) || expected.workflowRunAttempt <= 0)
+  )
+    throw new Error('native origin workflow observation requires a positive attempt');
   if (![expected.source.commit, expected.source.tree].every((sha) => /^[0-9a-f]{40}$/u.test(sha)))
     throw new Error('native origin requires exact source commit and tree');
   if (
@@ -263,8 +276,12 @@ async function readAuthenticatedNativeBuildEvidence(
         expected.event,
         '--ref',
         expected.ref,
-        '--run-attempt',
-        String(expected.github.runAttempt),
+        ...('runAttempt' in expected.github
+          ? ['--job-attempt', String(expected.github.runAttempt)]
+          : []),
+        ...('workflowRunAttempt' in expected
+          ? ['--run-attempt', String(expected.workflowRunAttempt)]
+          : []),
         '--source-tree',
         expected.source.tree,
         '--artifact',
@@ -295,10 +312,30 @@ async function readAuthenticatedNativeBuildEvidence(
     const snapshot = JSON.parse(
       readFileSync(path.join(snapshots, `run-${expected.github.runId}.json`), 'utf8'),
     );
-    const artifact = snapshot.artifacts.find(
-      (row) => row.name === expected.artifactName && row.expired === false,
+    const job = latestGithubJob(snapshot, expected.github.job);
+    if (!job) throw new Error('native producing job is missing');
+    const artifact = githubJobArtifact(
+      snapshot,
+      job,
+      expected.artifactName,
+      expected.source.commit,
     );
-    const job = snapshot.jobs.find((row) => row.name === expected.github.job);
+    const github: NativeBuildGithub = {
+      repository: snapshot.repo,
+      workflow: snapshot.workflowName,
+      workflowPath: snapshot.workflowPath,
+      runId: Number(snapshot.runId),
+      runAttempt: job.run_attempt,
+      job: job.name,
+    };
+    assertNativeBuildGithub(github);
+    deepStrictEqual(
+      'runAttempt' in expected.github
+        ? expected.github
+        : { ...expected.github, runAttempt: job.run_attempt },
+      github,
+      'native producing GitHub identity differs',
+    );
     const evidence = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
     const hasFiles = (directory: string) => existsSync(path.join(directory, 'files'));
     if (hasFiles(evidenceRoot) !== hasFiles(downloaded))
@@ -311,28 +348,21 @@ async function readAuthenticatedNativeBuildEvidence(
     const finalFiles = hasFiles(downloaded)
       ? readNativeBuildFinalFiles(evidenceRoot, evidence, {
           source: expected.source,
-          github: expected.github,
+          github,
           bazelVersion: producingBazelVersion,
         })
       : undefined;
     if (finalFiles) {
       const downloadedFiles = readNativeBuildFinalFiles(downloaded, evidence, {
         source: expected.source,
-        github: expected.github,
+        github,
         bazelVersion: producingBazelVersion,
       });
       deepStrictEqual(finalFiles.files, downloadedFiles.files, 'authenticated native final files');
       finalFiles.assertUnchanged?.();
     }
     const origin = {
-      github: {
-        repository: snapshot.repo,
-        workflow: snapshot.workflowName,
-        workflowPath: snapshot.workflowPath,
-        runId: Number(snapshot.runId),
-        runAttempt: snapshot.runAttempt,
-        job: job.name,
-      } as NativeBuildGithub,
+      github,
       artifact: {
         id: artifact.id,
         name: artifact.name,

@@ -1332,15 +1332,18 @@ jobs:
           bun_directory="$(dirname "$bun_binary")"
           PATH="$bun_directory:$PATH"
           export PATH
+          origin_snapshots="$input_root/linux-origin"
+          OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR="$origin_snapshots" \
           bash .github/scripts/download-build-artifacts.sh "$GITHUB_WORKFLOW" "$EXPECTED_SOURCE_COMMIT" \
             "$RUNNER_TEMP/postmaster-linux-packet" --run-id "$GITHUB_RUN_ID" \
             --job 'Linux native postmaster lifecycle' --job-success-only \
             --workflow-path .github/workflows/bazel.yml --event "$WORKFLOW_EVENT" --ref "$WORKFLOW_REF" \
             --run-attempt "$GITHUB_RUN_ATTEMPT" --source-tree "$EXPECTED_SOURCE_TREE" \
             --artifact native-build-evidence-postmaster-linux
+          producer_attempt="$(jq -er '[.jobs[] | select(.name == "Linux native postmaster lifecycle")] | max_by(.run_attempt) | .run_attempt' "$origin_snapshots/run-$GITHUB_RUN_ID.json")"
           jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
             --arg workflowPath .github/workflows/bazel.yml --arg job 'Linux native postmaster lifecycle' \
-            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$producer_attempt" \
             '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
             > "$input_root/linux-github.json"
           bash tools/dev/bun.sh tools/release/native-build-files.mts \
@@ -1349,7 +1352,8 @@ jobs:
             --github-json "$input_root/linux-github.json" --output-directory target/postmaster-linux-import \
             > "$input_root/files.json"
           archive="$(jq -er '[.[] | select(endswith("-linux-x64-gnu.tar.zst"))] | if length == 1 then .[0] else error("one canonical Linux archive required") end' "$input_root/files.json")"
-          jq --arg job "$QUALIFICATION_JOB_NAME" '.job=$job' "$input_root/linux-github.json" \
+          jq --arg job "$QUALIFICATION_JOB_NAME" --argjson attempt "$GITHUB_RUN_ATTEMPT" \
+            '.job=$job | .runAttempt=$attempt' "$input_root/linux-github.json" \
             > "$input_root/github.json"
           jq -nc --arg base "$RUNNER_TEMP/postmaster-native" \
             '["--output_base="+$base,"--host_jvm_args=-Xmx3g"]' > "$input_root/startup.json"

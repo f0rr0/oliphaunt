@@ -1003,6 +1003,7 @@ for (const fault of [
   'outside-update',
   'feature-dispatch',
   'preserved-old-head',
+  'retained-producer-attempt',
   'wrong-parent',
 ] as const)
   test(`actual Prepare acquisition joins PR/API/source/Files (${fault})`, async () => {
@@ -1114,6 +1115,9 @@ for (const fault of [
             jobs: [
               {
                 name: 'Prepare release PR',
+                run_attempt: fault === 'retained-producer-attempt' ? 1 : 2,
+                started_at: '2026-10-11T01:00:00Z',
+                completed_at: '2026-10-11T01:02:00Z',
                 status: 'completed',
                 conclusion: fault === 'failed-job' ? 'failure' : 'success',
               },
@@ -1122,6 +1126,8 @@ for (const fault of [
               {
                 name: 'native-release-inputs',
                 expired: false,
+                head_sha: f.record.bridge.source.commit,
+                created_at: '2026-10-11T01:01:00Z',
                 id: 51,
                 size_in_bytes: 512,
                 digest: fault === 'artifact-digest' ? 'unknown' : `sha256:${'b'.repeat(64)}`,
@@ -1134,7 +1140,11 @@ for (const fault of [
         { runId: 41, pullNumber: 17, source: currentSource, directory: destination },
         { read, download: download as never, gitDirectory: f.root },
       );
-      if (fault === 'none' || fault === 'preserved-old-head') {
+      if (
+        fault === 'none' ||
+        fault === 'preserved-old-head' ||
+        fault === 'retained-producer-attempt'
+      ) {
         const result = await acquisition;
         expect(() => assertAcquiredPreparedNativeReleaseInputs(result)).toThrow(
           /authenticated Prepare producer/u,
@@ -1146,6 +1156,7 @@ for (const fault of [
         expect(snapshot.seedControls[0].promotion.frozen.sha256).toBe(
           f.controls[0].promotion.frozen.sha256,
         );
+        expect(result.origin.runAttempt).toBe(fault === 'retained-producer-attempt' ? 1 : 2);
         expect(result.buildBound.size).toBe(27);
         expect(downloads).toBe(1);
       } else {

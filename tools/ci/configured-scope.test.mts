@@ -157,13 +157,23 @@ test('seeded content mutations match an independent request-input and transport 
 
 test('aggregate binds every selected receipt to source, run, job, transport and full Required', () => {
   const plan = select([modified('mac.rs')]);
-  const receipts = rows
-    .slice(0, 2)
-    .map((row) => ({ ...row, mode: 'source' as const, projection: undefined }));
-  verifyConfiguredCiResults(plan, receipts, 'skipped', github, inventory);
+  const currentGithub = { ...github, runAttempt: 2 };
+  const receipts = rows.slice(0, 2).map((row, index) => ({
+    ...row,
+    github: { ...row.github, runAttempt: index + 1 },
+    mode: 'source' as const,
+    projection: undefined,
+  }));
+  verifyConfiguredCiResults(plan, receipts, 'skipped', currentGithub, inventory);
   for (const mutation of [
     (row: ConfiguredCiRequest) => {
       row.github.runId++;
+    },
+    (row: ConfiguredCiRequest) => {
+      row.github.runAttempt = 0;
+    },
+    (row: ConfiguredCiRequest) => {
+      row.github.runAttempt = 3;
     },
     (row: ConfiguredCiRequest) => {
       row.source.commit = '9'.repeat(40);
@@ -177,14 +187,16 @@ test('aggregate binds every selected receipt to source, run, job, transport and 
   ]) {
     const corrupt = structuredClone(receipts);
     mutation(corrupt[1]);
-    assert.throws(() => verifyConfiguredCiResults(plan, corrupt, 'skipped', github, inventory));
+    assert.throws(() =>
+      verifyConfiguredCiResults(plan, corrupt, 'skipped', currentGithub, inventory),
+    );
   }
   assert.throws(() =>
-    verifyConfiguredCiResults(plan, receipts.slice(0, 1), 'skipped', github, inventory),
+    verifyConfiguredCiResults(plan, receipts.slice(0, 1), 'skipped', currentGithub, inventory),
   );
   const full = select([], { full: true });
-  assert.throws(() => verifyConfiguredCiResults(full, rows, 'skipped', github, inventory));
-  verifyConfiguredCiResults(full, rows, 'success', github, inventory);
+  assert.throws(() => verifyConfiguredCiResults(full, rows, 'skipped', currentGithub, inventory));
+  verifyConfiguredCiResults(full, rows, 'success', currentGithub, inventory);
 });
 
 test('verification recomputes omissions instead of trusting a shortened plan', () => {
@@ -673,17 +685,28 @@ test('basis acquisition admits only the exact completed main Required artifact a
     const actual = {
       ...basis,
       source: actualSource,
-      requests: rows.map((row) => ({ ...row, source: actualSource })),
+      github: { ...github, runAttempt: 2 },
+      requests: rows.map((row, index) => ({
+        ...row,
+        source: actualSource,
+        github: { ...row.github, runAttempt: index === 1 ? 2 : 1 },
+      })),
     };
     const run = {
       id: github.runId,
-      run_attempt: 1,
+      run_attempt: 2,
       status: 'completed',
       conclusion: 'success',
       event: 'push',
       head_branch: 'main',
       head_sha: actualSource.commit,
       path: '.github/workflows/bazel.yml',
+    };
+    const required = {
+      name: 'Required',
+      status: 'completed',
+      conclusion: 'success',
+      run_attempt: 2,
     };
     const bytes = zipArchive([{ name: 'basis.json', data: JSON.stringify(actual) }]);
     const artifact = {
@@ -697,9 +720,7 @@ test('basis acquisition admits only the exact completed main Required artifact a
     const io = {
       read: async () => run,
       pages: async (endpoint: string) =>
-        endpoint.includes('/artifacts?')
-          ? [artifact]
-          : [{ name: 'Required', conclusion: 'success' }],
+        endpoint.includes('/artifacts?') ? [artifact] : [required],
       download: async () => new Response(bytes),
     };
     assert.deepEqual(await acquireConfiguredCiBasis(root, github.repository, io as any), actual);
@@ -714,19 +735,60 @@ test('basis acquisition admits only the exact completed main Required artifact a
       {
         ...io,
         pages: async (endpoint: string) =>
+          endpoint.includes('/artifacts?') ? [artifact] : [{ ...required, run_attempt: 1 }],
+      },
+      {
+        ...io,
+        pages: async (endpoint: string) =>
           endpoint.includes('/artifacts?')
             ? [artifact]
-            : [{ name: 'Required', conclusion: 'skipped' }],
+            : [
+                { ...required, run_attempt: 1 },
+                { ...required, conclusion: 'failure' },
+              ],
+      },
+      {
+        ...io,
+        pages: async (endpoint: string) =>
+          endpoint.includes('/artifacts?') ? [artifact] : [{ ...required, conclusion: 'skipped' }],
       },
       {
         ...io,
         pages: async (endpoint: string) =>
           endpoint.includes('/artifacts?')
             ? [{ ...artifact, digest: `sha256:${'0'.repeat(64)}` }]
-            : [{ name: 'Required', conclusion: 'success' }],
+            : [required],
       },
       { ...io, read: async () => ({ ...run, head_sha: '9'.repeat(40) }) },
     ])
       await assert.rejects(acquireConfiguredCiBasis(root, github.repository, mutation as any));
+    for (const mutate of [
+      (value: ConfiguredCiBasis) => {
+        value.github.runAttempt = 1;
+      },
+      (value: ConfiguredCiBasis) => {
+        value.requests[0].github.runAttempt = 3;
+      },
+    ]) {
+      const corrupted = structuredClone(actual);
+      mutate(corrupted);
+      const contents = zipArchive([{ name: 'basis.json', data: JSON.stringify(corrupted) }]);
+      await assert.rejects(
+        acquireConfiguredCiBasis(root, github.repository, {
+          ...io,
+          pages: async (endpoint: string) =>
+            endpoint.includes('/artifacts?')
+              ? [
+                  {
+                    ...artifact,
+                    size_in_bytes: contents.length,
+                    digest: `sha256:${createHash('sha256').update(contents).digest('hex')}`,
+                  },
+                ]
+              : [required],
+          download: async () => new Response(contents),
+        } as any),
+      );
+    }
   });
 });

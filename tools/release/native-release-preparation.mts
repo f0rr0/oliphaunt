@@ -1197,9 +1197,9 @@ export async function acquireNativePublicationBuilds(
           workflow: 'Native Bazel qualification',
           workflowPath: '.github/workflows/bazel.yml',
           runId,
-          runAttempt: run.run_attempt,
           job,
         },
+        workflowRunAttempt: run.run_attempt,
         event: run.event as NativePublicationBuild['expected']['event'],
         ref,
         artifactName,
@@ -1208,9 +1208,10 @@ export async function acquireNativePublicationBuilds(
       const origin = await (session?.acquire ?? acquire)(evidenceRoot, expected);
       assert.ok(origin.finalFiles, `native producer ${artifactName} has no physical transport`);
       origins.set(evidenceRoot, origin);
+      const { workflowRunAttempt: _, ...producingExpected } = expected;
       builds.push({
         evidenceRoot,
-        expected,
+        expected: { ...producingExpected, github: origin.github },
         requiredTests: (origin.finalFiles.qualification?.requiredTests ?? []).map(
           ({ label, configuration }) => ({
             label,

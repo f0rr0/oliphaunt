@@ -76,7 +76,7 @@ for status in in_progress completed; do
   [[ ! -e "$case_root/durable" && ! -e "$case_root/state" ]]
 done
 prepare duplicate-job
-duplicate_job=true reject 1 'does not satisfy required job Qualified' success --run-id 77
+duplicate_job=true reject 1 'job Qualified has ambiguous latest executions' success --run-id 77
 [[ ! -e "$case_root/durable" && ! -e "$case_root/state" ]]
 for kind in traversal corrupt; do
   prepare "$kind" "$kind"

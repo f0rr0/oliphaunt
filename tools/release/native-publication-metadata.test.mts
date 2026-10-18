@@ -250,7 +250,7 @@ test('post-version metadata preserves the exact Prepare bridge and Native run wi
       selectedProducts: ['alpha'],
       producer: {
         runId: build.runId,
-        runAttempt: build.runAttempt,
+        runAttempt: build.runAttempt + 1,
         event: 'push',
         ref: 'refs/heads/main',
         workflowPath: '.github/workflows/bazel.yml',
@@ -266,7 +266,13 @@ test('post-version metadata preserves the exact Prepare bridge and Native run wi
       qualification,
     );
     expect(described.scope).toBe('construction');
+    expect(described.builds[0].github.runAttempt).toBe(build.runAttempt);
     expect(historical.publicationQualification).toBeUndefined();
+    for (const attempt of [undefined, 0, 1.5, qualification.producer.runAttempt + 1]) {
+      const changed = structuredClone(described);
+      changed.builds[0].github.runAttempt = attempt;
+      expect(() => validateNativePublicationMetadata(changed)).toThrow(/producing run/);
+    }
     for (const mutate of [
       (control) => {
         control.source.commit = '7'.repeat(40);
@@ -281,7 +287,7 @@ test('post-version metadata preserves the exact Prepare bridge and Native run wi
         control.prepare.codeSource = { ...control.prepare.codeSource, commit: '7'.repeat(40) };
       },
       (control) => {
-        control.producer.runAttempt++;
+        control.producer.runId++;
       },
       (control) => {
         control.selectedProducts = ['beta'];

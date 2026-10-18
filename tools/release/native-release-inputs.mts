@@ -18,7 +18,12 @@ import { parseArgs, promisify } from 'node:util';
 import { validateSeedConstructionReceipt } from '../../build_defs/resources/seed_construction.mts';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import type { CompletedPublication } from './completed-release-publication.mts';
-import { requestGithubPages, requestGithubRepositoryJson } from './github-read.mts';
+import {
+  githubJobArtifact,
+  latestGithubJob,
+  requestGithubPages,
+  requestGithubRepositoryJson,
+} from './github-read.mts';
 import type { NativeBuildSource } from './native-build-qualification.mts';
 import {
   type ExtensionFinalInput,
@@ -767,16 +772,15 @@ export async function acquirePreparedNativeReleaseInputs(
     assert.equal(origin.runAttempt, run.run_attempt);
     assert.equal(origin.event, 'workflow_dispatch');
     assert.equal(origin.headBranch, 'main');
-    const jobs = origin.jobs.filter((row) => row.name === 'Prepare release PR');
-    assert.equal(jobs.length, 1);
+    const job = latestGithubJob(origin, 'Prepare release PR');
+    assert.ok(job);
     assert.ok(
-      jobs[0].status === 'completed' && jobs[0].conclusion === 'success',
+      job.status === 'completed' && job.conclusion === 'success',
       'native Prepare producer did not complete successfully',
     );
-    const artifacts = origin.artifacts.filter(
-      (row) => row.name === nativeReleaseInputsArtifact && row.expired === false,
-    );
-    assert.equal(artifacts.length, 1);
+    const artifacts = [
+      githubJobArtifact(origin, job, nativeReleaseInputsArtifact, codeSource.commit),
+    ];
     assert.ok(
       Number.isSafeInteger(artifacts[0].id) &&
         artifacts[0].id > 0 &&
@@ -827,7 +831,7 @@ export async function acquirePreparedNativeReleaseInputs(
       buildBound,
       origin: {
         runId,
-        runAttempt: run.run_attempt,
+        runAttempt: job.run_attempt,
         artifact: artifacts[0],
         codeSource,
         preparedSource,

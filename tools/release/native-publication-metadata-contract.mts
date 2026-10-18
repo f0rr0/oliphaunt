@@ -451,7 +451,12 @@ export function validateNativePublicationQualification(qualification: any, metad
   )
     throw new Error('native publication selection or complete inventory differs');
   for (const build of metadata.builds)
-    if (build.github.runId !== producer.runId || build.github.runAttempt !== producer.runAttempt)
+    if (
+      build.github.runId !== producer.runId ||
+      !Number.isSafeInteger(build.github.runAttempt) ||
+      build.github.runAttempt <= 0 ||
+      build.github.runAttempt > producer.runAttempt
+    )
       throw new Error('native publication producing run differs from observed builds');
   return qualification;
 }

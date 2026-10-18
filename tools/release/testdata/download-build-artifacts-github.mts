@@ -4,6 +4,7 @@ import fs from 'node:fs';
 
 const native = process.env.FAKE_NATIVE_ORIGIN === 'true';
 const nativeCase = process.env.FAKE_NATIVE_CASE;
+const mixed = nativeCase?.startsWith('mixed') === true;
 const nativeSourceCommit = process.env.FAKE_NATIVE_SOURCE_COMMIT || 'a'.repeat(40);
 const nativeSourceTree = process.env.FAKE_NATIVE_SOURCE_TREE || 'b'.repeat(40);
 
@@ -60,6 +61,13 @@ globalThis.fetch = async (input, options) => {
           }
         : {}),
     };
+    if (mixed) {
+      const old = { ...identity, id: 102, name: 'native-build-evidence-aarch64' };
+      const retry = { ...old, id: 103, created_at: '2026-10-11T02:01:00Z' };
+      return Response.json({
+        artifacts: nativeCase === 'mixed-stale' ? [identity, old] : [identity, old, retry],
+      });
+    }
     if (nativeCase === 'digest') identity.digest = 'sha256:' + 'f'.repeat(64);
     if (nativeCase === 'artifact-missing') identity.name = 'other-artifact';
     if (nativeCase === 'artifact-window-missing') delete identity.created_at;
@@ -88,6 +96,28 @@ globalThis.fetch = async (input, options) => {
           : {}),
       },
     ];
+    if (mixed) {
+      const retry = {
+        ...jobs[0],
+        id: 503,
+        name: 'Linux runtime (aarch64)',
+        run_attempt: 2,
+        status: nativeCase === 'mixed-pending' ? 'in_progress' : 'completed',
+        started_at: '2026-10-11T02:00:00Z',
+        completed_at: nativeCase === 'mixed-pending' ? null : '2026-10-11T02:02:00Z',
+        conclusion:
+          nativeCase === 'mixed-pending'
+            ? null
+            : nativeCase === 'mixed-failed'
+              ? 'failure'
+              : nativeCase === 'mixed-cancelled'
+                ? 'cancelled'
+                : 'success',
+      };
+      const all = [jobs[0], { ...jobs[0], id: 502, name: retry.name }, retry];
+      if (nativeCase === 'mixed-ambiguous') all.push({ ...retry, id: 504 });
+      return Response.json({ jobs: url.searchParams.get('filter') === 'all' ? all : [retry] });
+    }
     if (native)
       jobs.push({
         id: 502,
@@ -106,7 +136,7 @@ globalThis.fetch = async (input, options) => {
       head_sha:
         nativeCase === 'source' ? 'f'.repeat(40) : native ? nativeSourceCommit : 'a'.repeat(40),
       workflow_id: 9,
-      run_attempt: nativeCase === 'attempt' ? 2 : 1,
+      run_attempt: nativeCase === 'attempt' ? 0 : mixed ? 2 : 1,
       status: process.env.FAKE_RUN_STATUS || 'completed',
       conclusion: process.env.FAKE_RUN_CONCLUSION || 'success',
       ...(native
@@ -144,7 +174,7 @@ globalThis.fetch = async (input, options) => {
       sha: url.pathname.split('/').at(-1),
       tree: { sha: nativeCase === 'tree' ? 'f'.repeat(40) : nativeSourceTree },
     });
-  if (/actions\/artifacts\/101\/zip$/.test(endpoint)) {
+  if (/actions\/artifacts\/(101|103)\/zip$/.test(endpoint)) {
     const state = process.env.FAKE_GH_STATE;
     const count = fs.existsSync(state) ? Number(fs.readFileSync(state, 'utf8')) : 0;
     fs.writeFileSync(state, String(count + 1));
