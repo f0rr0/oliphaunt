@@ -18,6 +18,9 @@ import { readPortableArchiveEntries } from '../../../tools/packaging/portable-ar
 import { packageBindingsXcframework } from './xcframework-envelope.mts';
 
 const OWNER = 'src/native/mobile-bindings';
+const inputRoot = process.env.TEST_SRCDIR
+  ? path.join(process.env.TEST_SRCDIR, process.env.TEST_WORKSPACE ?? '_main')
+  : process.cwd();
 function legalSources(root: string): Record<string, string> {
   const members = [
     'LICENSE',
@@ -25,13 +28,13 @@ function legalSources(root: string): Record<string, string> {
     'Cargo.lock',
     `${OWNER}/dependency-licenses.json`,
   ];
-  for (const name of readdirSync(`${OWNER}/dependency-license-blobs`))
+  for (const name of readdirSync(path.join(inputRoot, OWNER, 'dependency-license-blobs')))
     members.push(`${OWNER}/dependency-license-blobs/${name}`);
   return Object.fromEntries(
     members.map((member) => {
       const destination = path.join(root, member);
       mkdirSync(path.dirname(destination), { recursive: true });
-      copyFileSync(realpathSync(member), destination);
+      copyFileSync(realpathSync(path.join(inputRoot, member)), destination);
       chmodSync(destination, 0o644);
       return [member, destination];
     }),

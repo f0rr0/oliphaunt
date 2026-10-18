@@ -12,6 +12,17 @@ load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "current_rust_
 
 _MACOS_PROFILE = "@apple_support//platforms:macos_arm64_platform"
 
+BINDINGS_ENVELOPE_HELPERS = [
+    Label("//build_defs/languages:mobile-legal.mts"),
+    Label("//src/native/mobile-bindings:tools/dependency-license-contract.mts"),
+    Label("//:tools/packaging/archive-directory.mts"),
+    Label("//:tools/packaging/portable-archive.mts"),
+    Label("//:tools/packaging/release-notices.mts"),
+    Label("//:tools/packaging/release-directory-safety.mts"),
+    Label("//:tools/packaging/rust-dependency-license-contract.mts"),
+    Label("//src/native/sdks/swift:tools/swift-xcframework-contract.mts"),
+]
+
 def _package_platform_impl(settings, attr):
     # Standard Apple split transitions consult this supported label setting.
     # Preserve the SDK package's Mac deployment profile through that split.
@@ -209,7 +220,7 @@ _bindings_envelope = rule(
         "archive_name": attr.string(mandatory = True),
         "checksum_name": attr.string(mandatory = True),
         "_packager": attr.label(default = Label("//build_defs/languages/swift:xcframework-envelope.mts"), allow_single_file = True),
-        "_helpers": attr.label_list(default = [Label("//build_defs/languages:mobile-legal.mts"), Label("//:tools/packaging/archive-directory.mts"), Label("//:tools/packaging/portable-archive.mts"), Label("//:tools/packaging/release-notices.mts"), Label("//:tools/packaging/release-directory-safety.mts"), Label("//:tools/packaging/rust-dependency-license-contract.mts"), Label("//src/native/sdks/swift:tools/swift-xcframework-contract.mts")], allow_files = True),
+        "_helpers": attr.label_list(default = BINDINGS_ENVELOPE_HELPERS, allow_files = True),
     },
 )
 

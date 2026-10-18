@@ -1,6 +1,7 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":extension-fixture.bzl", "selected_swift_extension_fixture")
+load(":xcframework.bzl", "BINDINGS_ENVELOPE_HELPERS")
 
 package(default_visibility = ["//visibility:public"])
 exports_files(glob(["*.bzl", "*.mts"]))
@@ -11,18 +12,12 @@ bun_test(
     entry_point = "xcframework-envelope.test.mts",
     data = [
         "xcframework-envelope.mts",
-        "//build_defs/languages:mobile-legal.mts",
         "//src/native/mobile-bindings:license_inputs",
         "//:Cargo.lock",
         "//:LICENSE",
         "//:THIRD_PARTY_NOTICES.md",
-        "//:tools/packaging/archive-directory.mts",
-        "//:tools/packaging/portable-archive.mts",
-        "//:tools/packaging/release-notices.mts",
-        "//:tools/packaging/release-directory-safety.mts",
-        "//:tools/packaging/rust-dependency-license-contract.mts",
-        "//src/native/sdks/swift:tools/swift-xcframework-contract.mts",
-    ],
+    ] + BINDINGS_ENVELOPE_HELPERS,
+    source_files = ["xcframework-envelope.mts"] + BINDINGS_ENVELOPE_HELPERS,
     size = "small",
 )
 bun_test(
