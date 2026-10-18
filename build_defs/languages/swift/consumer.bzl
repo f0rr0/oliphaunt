@@ -3,6 +3,7 @@
 load("@oliphaunt_toolchain_metadata//:apple-platforms.bzl", "APPLE_DEPLOYMENT_TARGETS")
 load("//build_defs/extensions:final_leaf.bzl", "NativeAppleBaseInfo")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
+load("//build_defs/native/carriers:defs.bzl", "native_payload_helpers")
 
 _SWIFT_TOOLCHAIN = "@rules_swift//toolchains:toolchain_type"
 
@@ -25,7 +26,7 @@ def _consumer_impl(ctx):
     if len(receipts) != 1:
         fail("Installed Swift consumer requires one exact host SDK receipt")
     inputs = [ctx.file.archive, framework, ctx.file.bindings, resources, ctx.file.consumer]
-    arguments = inputs + selected + [sdk_files[0], receipts[0], "arm64-apple-macosx%s" % APPLE_DEPLOYMENT_TARGETS["package_macos"], "bundled-candidate" if ctx.attr.require_bundled_resources else "frozen", ctx.file.source_tree]
+    arguments = inputs + selected + [sdk_files[0], receipts[0], "arm64-apple-macosx%s" % APPLE_DEPLOYMENT_TARGETS["package_macos"], "bundled-candidate" if ctx.attr.require_bundled_resources else "frozen", ctx.file.source_tree, ctx.file.source_tree.path]
     inputs.append(ctx.file.source_tree)
     return bun_test_entrypoint(ctx, ctx.file._runner, arguments, tools + inputs + ctx.files._helpers, source_files = [ctx.file._runner] + ctx.files._helpers)
 
@@ -41,7 +42,13 @@ _swift_package_consumer_test = rule(
         "consumer": attr.label(mandatory = True, allow_single_file = [".swift"]),
         "require_bundled_resources": attr.bool(default = False),
         "_runner": attr.label(default = Label("//build_defs/languages/swift:consumer-test.mts"), allow_single_file = True),
-        "_helpers": attr.label_list(default = [Label("//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts"), Label("//build_defs/native/apple:swift-candidate-contract.mts"), Label("//build_defs/languages/swift:source-delivery-contract.mts"), Label("//tools/release:native-file-identity.mts"), Label("//:tools/packaging/release-directory-safety.mts"), Label("//:tools/packaging/portable-archive.mts")], allow_files = True),
+        "_helpers": attr.label_list(default = [Label(value) for value in [
+            "//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts",
+            "//build_defs/native/apple:swift-candidate-contract.mts",
+            "//build_defs/native/carriers:payload.mts",
+            "//build_defs/languages/swift:source-delivery-contract.mts",
+            "//tools/release:native-file-identity.mts",
+        ] + native_payload_helpers()], allow_files = True),
     }),
 )
 

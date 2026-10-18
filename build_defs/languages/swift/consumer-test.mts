@@ -6,6 +6,7 @@ import path from 'node:path';
 import { localizeSwiftReleaseManifest } from '../../../src/native/sdks/swift/tools/prepare-swift-release-consumer.mts';
 import { extractPortableArchiveTree } from '../../../tools/packaging/portable-archive.mts';
 import { composeSwiftCandidateManifest } from '../../native/apple/swift-candidate-contract.mts';
+import { copyDeclaredTree } from '../../native/carriers/payload.mts';
 import {
   assertSwiftIosResourceParity,
   assertSwiftSourceDeliveryParity,
@@ -29,10 +30,11 @@ const [
   triple,
   mode,
   sourceTree,
+  sourceTreePath,
 ] = process.argv.slice(2);
 assert.equal(
   process.argv.length,
-  16,
+  17,
   'Expected exact Swift package, native assets, consumer and declared toolchain',
 );
 assert.ok(['frozen', 'bundled-candidate'].includes(mode), 'Expected a declared consumer mode');
@@ -46,10 +48,12 @@ mkdirSync(home);
 const packageRoot = path.join(root, 'package');
 extractPortableArchiveTree(realpathSync(source), packageRoot, 'package');
 const checksum = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
+const stagedSource = path.join(root, 'source-tag');
+copyDeclaredTree(sourceTree, stagedSource, [], sourceTreePath);
 assertSwiftSourceDeliveryParity(
   realpathSync(source),
-  readSwiftSourceTagMembers(sourceTree),
-  readFileSync(path.join(sourceTree, 'Package.swift')),
+  readSwiftSourceTagMembers(stagedSource),
+  readFileSync(path.join(stagedSource, 'Package.swift')),
 );
 const manifestFile = path.join(packageRoot, 'Package.swift');
 let composition;
@@ -118,6 +122,7 @@ const environment = {
   CXX: clangxx,
 };
 const build = path.join(root, 'build');
+const testing = path.resolve(path.dirname(swift), '../lib/swift/macosx/testing');
 const swiftOptions = [
   '--package-path',
   consumerRoot,
@@ -142,6 +147,17 @@ const swiftOptions = [
   '-resource-dir',
   '-Xswiftc',
   path.resolve(path.dirname(swift), '../lib/swift'),
+  ...['plugins', 'plugins/testing'].flatMap((directory) => [
+    '-Xswiftc',
+    '-external-plugin-path',
+    '-Xswiftc',
+    `${path.resolve(path.dirname(swift), '../lib/swift/host', directory)}#${path.join(path.dirname(swift), 'swift-plugin-server')}`,
+  ]),
+  ...['-I', '-L'].flatMap((flag) => ['-Xswiftc', flag, '-Xswiftc', testing]),
+  '-Xlinker',
+  '-rpath',
+  '-Xlinker',
+  testing,
   '-Xcc',
   '-isysroot',
   '-Xcc',

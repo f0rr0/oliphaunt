@@ -22,6 +22,7 @@ import {
   readPortableArchiveEntries,
 } from '../../../tools/packaging/portable-archive.mts';
 import { zipArchive } from '../../../tools/packaging/testdata/zip-fixture.mts';
+import { copyDeclaredTree } from '../../native/carriers/payload.mts';
 import {
   assertSwiftIosResourceParity,
   assertSwiftSourceDeliveryParity,
@@ -262,6 +263,27 @@ test('final source envelope preserves held native version, exact source-tag path
     // and file symlink creation may require privileges. Encoded ZIP faults
     // above cover both contracts portably without weakening the public reader.
     if (process.platform !== 'win32') {
+      const declaredTree = 'first/release-tree';
+      const runfilesTree = path.join(scratch, 'runfiles/_main', declaredTree);
+      for (const row of readSwiftSourceTagMembers(tree)) {
+        const destination = path.join(runfilesTree, row.path);
+        if (row.type === 'directory') mkdirSync(destination, { recursive: true });
+        else {
+          mkdirSync(path.dirname(destination), { recursive: true });
+          chmodSync(path.join(tree, row.path), 0o555);
+          symlinkSync(path.join(tree, row.path), destination);
+        }
+      }
+      expect(() => readSwiftSourceTagMembers(runfilesTree)).toThrow('regular members');
+      const stagedTree = path.join(scratch, 'staged-source-tag');
+      copyDeclaredTree(runfilesTree, stagedTree, [], declaredTree);
+      assertSwiftSourceDeliveryParity(
+        path.join(first, 'Oliphaunt-source.zip'),
+        readSwiftSourceTagMembers(stagedTree),
+        readFileSync(path.join(stagedTree, 'Package.swift')),
+      );
+      for (const row of readSwiftSourceTagMembers(stagedTree))
+        if (row.type === 'file') chmodSync(path.join(tree, row.path), 0o644);
       const parity = () =>
         assertSwiftSourceDeliveryParity(
           path.join(first, 'Oliphaunt-source.zip'),

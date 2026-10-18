@@ -57,6 +57,8 @@ const flags = [
   sdk,
   '-resource-dir',
   path.join(sdkRoot, 'toolchain/lib/swift'),
+  '-external-plugin-path',
+  `${path.join(sdkRoot, 'toolchain/lib/swift/host/plugins')}#${path.join(sdkRoot, 'toolchain/bin/swift-plugin-server')}`,
   '-swift-version',
   '6',
   '-package-name',
