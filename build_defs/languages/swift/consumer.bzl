@@ -10,7 +10,6 @@ _SWIFT_TOOLCHAIN = "@rules_swift//toolchains:toolchain_type"
 def _consumer_impl(ctx):
     base = ctx.attr.native_base[NativeAppleBaseInfo]
     framework = [file for file in base.archive_files if file.path == base.archives["base-xcframework"]["path"]][0]
-    resources = [file for file in base.archive_files if file.path == base.archives["runtime-resources"]["path"]][0]
     info = ctx.toolchains[_SWIFT_TOOLCHAIN].swift_toolchain
     tools = depset(transitive = [depset(config.additional_tools) for config in info.tool_configs.values()]).to_list()
     selected = []
@@ -25,8 +24,8 @@ def _consumer_impl(ctx):
     receipts = [file for file in tools if file.basename == "receipt.json"]
     if len(receipts) != 1:
         fail("Installed Swift consumer requires one exact host SDK receipt")
-    inputs = [ctx.file.archive, framework, ctx.file.bindings, resources, ctx.file.consumer]
-    arguments = inputs + selected + [sdk_files[0], receipts[0], "arm64-apple-macosx%s" % APPLE_DEPLOYMENT_TARGETS["package_macos"], "bundled-candidate" if ctx.attr.require_bundled_resources else "frozen", ctx.file.source_tree, ctx.file.source_tree.path]
+    inputs = [ctx.file.archive, framework, ctx.file.bindings, ctx.file.consumer]
+    arguments = inputs + selected + [sdk_files[0], receipts[0], "arm64-apple-macosx%s" % APPLE_DEPLOYMENT_TARGETS["package_macos"], ctx.file.source_tree, ctx.file.source_tree.path]
     inputs.append(ctx.file.source_tree)
     return bun_test_entrypoint(ctx, ctx.file._runner, arguments, tools + inputs + ctx.files._helpers, source_files = [ctx.file._runner] + ctx.files._helpers)
 
@@ -40,7 +39,6 @@ _swift_package_consumer_test = rule(
         "native_base": attr.label(default = Label("//src/native/sdks/swift:source_package_native_requirement"), providers = [NativeAppleBaseInfo]),
         "bindings": attr.label(mandatory = True, allow_single_file = [".zip"]),
         "consumer": attr.label(mandatory = True, allow_single_file = [".swift"]),
-        "require_bundled_resources": attr.bool(default = False),
         "_runner": attr.label(default = Label("//build_defs/languages/swift:consumer-test.mts"), allow_single_file = True),
         "_helpers": attr.label_list(default = [Label(value) for value in [
             "//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts",

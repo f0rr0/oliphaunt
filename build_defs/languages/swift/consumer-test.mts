@@ -8,7 +8,6 @@ import { extractPortableArchiveTree } from '../../../tools/packaging/portable-ar
 import { composeSwiftCandidateManifest } from '../../native/apple/swift-candidate-contract.mts';
 import { copyDeclaredTree } from '../../native/carriers/payload.mts';
 import {
-  assertSwiftIosResourceParity,
   assertSwiftSourceDeliveryParity,
   readSwiftSourceTagMembers,
 } from './source-delivery-contract.mts';
@@ -19,7 +18,6 @@ const [
   source,
   base,
   bindings,
-  resources,
   consumer,
   swift,
   swiftc,
@@ -28,16 +26,14 @@ const [
   sdkFile,
   receipt,
   triple,
-  mode,
   sourceTree,
   sourceTreePath,
 ] = process.argv.slice(2);
 assert.equal(
   process.argv.length,
-  17,
+  15,
   'Expected exact Swift package, native assets, consumer and declared toolchain',
 );
-assert.ok(['frozen', 'bundled-candidate'].includes(mode), 'Expected a declared consumer mode');
 const root = process.env.TEST_TMPDIR;
 assert.ok(root && path.isAbsolute(root), 'Bazel must supply a private TEST_TMPDIR');
 const sdkMarker = `${path.sep}sdk_macosx${path.sep}`;
@@ -56,18 +52,13 @@ assertSwiftSourceDeliveryParity(
   readFileSync(path.join(stagedSource, 'Package.swift')),
 );
 const manifestFile = path.join(packageRoot, 'Package.swift');
-let composition;
-if (mode === 'bundled-candidate') {
-  const { manifest, ...identity } = composeSwiftCandidateManifest(
-    readFileSync(manifestFile, 'utf8'),
-    readFileSync(path.join(packageRoot, 'LIBOLIPHAUNT_VERSION'), 'utf8'),
-    path.basename(base),
-    checksum(base),
-  );
-  composition = identity;
-  writeFileSync(manifestFile, manifest);
-  assertSwiftIosResourceParity(base, resources);
-}
+const { manifest, ...composition } = composeSwiftCandidateManifest(
+  readFileSync(manifestFile, 'utf8'),
+  readFileSync(path.join(packageRoot, 'LIBOLIPHAUNT_VERSION'), 'utf8'),
+  path.basename(base),
+  checksum(base),
+);
+writeFileSync(manifestFile, manifest);
 localizeSwiftReleaseManifest({
   manifestFile,
   assetFile: realpathSync(base),
@@ -84,8 +75,6 @@ extractPortableArchiveTree(
   path.join(packageRoot, 'Artifacts/OliphauntNativeBindingsFFI.xcframework'),
   'OliphauntNativeBindingsFFI.xcframework',
 );
-const runtimeRoot = path.join(root, 'runtime');
-if (mode === 'frozen') extractPortableArchiveTree(realpathSync(resources), runtimeRoot);
 const consumerRoot = path.join(root, 'consumer');
 mkdirSync(path.join(consumerRoot, 'Sources/InstalledConsumer'), { recursive: true });
 writeFileSync(
@@ -142,6 +131,8 @@ const swiftOptions = [
   '2',
   '--disable-sandbox',
   '-Xswiftc',
+  '-disable-sandbox',
+  '-Xswiftc',
   '-enable-testing',
   '-Xswiftc',
   '-resource-dir',
@@ -167,15 +158,9 @@ const result = spawnSync(swift, ['build', ...swiftOptions], { env: environment, 
 assert.equal(result.error, undefined, String(result.error));
 assert.equal(result.status, 0, 'Installed Swift source ZIP failed to compile/link');
 const executable = path.join(build, 'debug/InstalledConsumer');
-const runtimeEnvironment = {
-  ...environment,
-  ...(mode === 'frozen'
-    ? { OLIPHAUNT_RUNTIME_DIR: path.join(runtimeRoot, 'oliphaunt/runtime/files') }
-    : {}),
-};
 for (const phase of ['create', 'reopen']) {
   const run = spawnSync(executable, [phase, path.join(root, 'database')], {
-    env: runtimeEnvironment,
+    env: environment,
     encoding: 'utf8',
   });
   assert.equal(run.error, undefined, String(run.error));
@@ -183,7 +168,7 @@ for (const phase of ['create', 'reopen']) {
   assert.equal(run.stdout.trim(), `installed-swift-${phase}-42`);
 }
 const native = spawnSync(swift, ['test', ...swiftOptions, '--filter', 'NativeRuntimeTests'], {
-  env: { ...runtimeEnvironment, OLIPHAUNT_SWIFT_REQUIRE_NATIVE: '1' },
+  env: { ...environment, OLIPHAUNT_SWIFT_REQUIRE_NATIVE: '1' },
   encoding: 'utf8',
   maxBuffer: 32 * 1024 * 1024,
 });
@@ -199,15 +184,15 @@ writeFileSync(
   `${JSON.stringify(
     {
       schema: 'oliphaunt-installed-swift-consumer-v1',
-      mode,
+      mode: 'bundled-candidate',
       composition,
       inputs: Object.fromEntries(
-        Object.entries({ source, base, bindings, resources, consumer, hostSdk: receipt }).map(
+        Object.entries({ source, base, bindings, consumer, hostSdk: receipt }).map(
           ([name, file]) => [name, { name: path.basename(file), sha256: checksum(file) }],
         ),
       ),
       triple,
-      resourceResolution: mode === 'bundled-candidate' ? 'framework-bundle' : 'explicit-runtime',
+      resourceResolution: 'framework-bundle',
       cases: ['create-query-42', 'reopen-query-42', 'native-runtime-suite'],
     },
     null,

@@ -53,6 +53,8 @@ for (const [key, destination] of [
 ])
   copyFileSync(declared(inputs[key]), path.join(stage, destination));
 const flags = [
+  // Match rules_swift: Swift's macro sandbox cannot nest inside Bazel's sandbox.
+  '-disable-sandbox',
   '-sdk',
   sdk,
   '-resource-dir',

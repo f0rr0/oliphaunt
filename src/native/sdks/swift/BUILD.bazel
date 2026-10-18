@@ -84,7 +84,6 @@ swift_package_consumer_test(
     source_tree = ":release_input_release-tree",
     bindings = ":bindings_archive",
     consumer = "Tests/PublicApiConsumer/Sources/OliphauntPublicApiConsumer/main.swift",
-    require_bundled_resources = True,
     target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
     size = "large",
     timeout = "long",
