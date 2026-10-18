@@ -103,6 +103,7 @@ let package = Package(name: "InstalledConsumer", platforms: [.macOS("${facts.dep
 const signingTools = path.join(path.dirname(receipt), 'tools');
 const environment = {
   HOME: home,
+  CFFIXED_USER_HOME: home,
   TMPDIR: root,
   PATH: [path.dirname(swift), signingTools].join(path.delimiter),
   CODESIGN_ALLOCATE: path.join(signingTools, 'codesign_allocate'),

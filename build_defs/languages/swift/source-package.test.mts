@@ -358,7 +358,7 @@ test('final source envelope preserves held native version, exact source-tag path
 });
 
 test.skipIf(process.platform === 'win32')(
-  'installed Swift consumer supplies captured signing tools to both SwiftPM phases',
+  'installed Swift consumer isolates its home and supplies captured signing tools',
   async () => {
     const scratch = mkdtempSync(path.join(tmpdir(), 'swift-consumer-signing-'));
     try {
@@ -387,6 +387,17 @@ test.skipIf(process.platform === 'win32')(
         }),
       );
       const trace = path.join(scratch, 'swiftpm-phases');
+      const runRoot = path.join(scratch, 'test-root');
+      mkdirSync(runRoot);
+      const checkHome = `assert.equal(process.env.HOME, ${JSON.stringify(path.join(runRoot, 'home'))});
+assert.equal(process.env.CFFIXED_USER_HOME, process.env.HOME, 'Foundation must use the private test home');`;
+      const installedConsumer = `#!${process.execPath}
+import assert from 'node:assert/strict';
+import { appendFileSync } from 'node:fs';
+${checkHome}
+appendFileSync(${JSON.stringify(trace)}, process.argv[2] + '\\n');
+console.log('installed-swift-' + process.argv[2] + '-42');
+`;
       const executable = path.join(bin, 'swift');
       // These tool fixtures exercise the real consumer runner and child PATH;
       // they are not Swift compilation or macOS signing evidence.
@@ -400,6 +411,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+${checkHome}
 const args = process.argv.slice(2);
 const signing = spawnSync('codesign', ['--version'], { env: process.env, encoding: 'utf8' });
 assert.equal(signing.error, undefined, 'captured codesign must resolve from the consumer PATH');
@@ -411,7 +423,7 @@ appendFileSync(${JSON.stringify(trace)}, args[0] + '\\n');
 if (args[0] === 'build') {
   const build = args[args.indexOf('--scratch-path') + 1];
   mkdirSync(path.join(build, 'debug'), { recursive: true });
-  writeFileSync(path.join(build, 'debug/InstalledConsumer'), ${JSON.stringify('#!' + process.execPath + '\nconsole.log("installed-swift-" + process.argv[2] + "-42");\n')}, { mode: 0o755 });
+  writeFileSync(path.join(build, 'debug/InstalledConsumer'), ${JSON.stringify(installedConsumer)}, { mode: 0o755 });
 } else {
   assert.equal(args[0], 'test');
   assert(args.includes('--disable-xctest'));
@@ -425,8 +437,6 @@ if (args[0] === 'build') {
         preload,
         "Object.defineProperty(process, 'platform', { value: 'darwin' });\nObject.defineProperty(process, 'arch', { value: 'arm64' });\n",
       );
-      const runRoot = path.join(scratch, 'test-root');
-      mkdirSync(runRoot);
       const sourceTree = path.join(packaged, 'release-tree');
       const result = spawnSync(
         process.execPath,
@@ -453,7 +463,7 @@ if (args[0] === 'build') {
         { env: { TEST_TMPDIR: runRoot }, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
       );
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(trace, 'utf8')).toBe('build\ntest\n');
+      expect(readFileSync(trace, 'utf8')).toBe('build\ncreate\nreopen\ntest\n');
       const proof = JSON.parse(
         readFileSync(path.join(runRoot, 'swift-consumer-receipt.json'), 'utf8'),
       );
