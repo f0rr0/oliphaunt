@@ -59,6 +59,12 @@ bash tools/dev/bazel.sh test -c opt --config=macos-sandbox \
   --platforms="$profile" --host_platform="$profile" --jobs=2
 ```
 
+Extension inventories use the same stock Apple slice transition as their
+XCFrameworks, so both consume the same configured object files. The desktop
+member transition preserves its native deployment contract. On macOS,
+`//build_defs/extensions:mobile_cpp_reuse_test` checks actual object-file reuse
+across the macOS, iOS device and simulator inventories and frameworks.
+
 Installed SDK checks also consume the completed dependencies declared by their
 manifests. With an existing GitHub CLI login, acquire their source-bound public
 input snapshot once:

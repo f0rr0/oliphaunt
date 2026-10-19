@@ -17,12 +17,19 @@ load(":family_carriers.bzl", "native_extension_final_families")
 load(":forced_header_inputs_test.bzl", "native_forced_header_input_tests")
 load(":windows_module_test.bzl", "native_windows_module_tests")
 load(":mobile_host_profile_test.bzl", "mobile_host_profile_tests")
+load(":mobile_cpp_reuse_test.bzl", "mobile_cpp_reuse_test")
 
 package(default_visibility = ["//visibility:public"])
 
 native_forced_header_input_tests()
 native_windows_module_tests()
 mobile_host_profile_tests()
+mobile_cpp_reuse_test(
+    name = "mobile_cpp_reuse_test",
+    target_under_test = "//build_defs/extensions/mobile/final:oliphaunt_extension_pg_hashids_ios_xcframework",
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64"],
+    size = "small",
+)
 
 exports_files(["contrib.bzl", "extensions.bzl", "repositories.bzl", "uuid_config.h", "pgtap_upstream_parity_test.mts", "validate_member_payload.mts"])
 exports_files(["native_extension_all_sql_test.sh"])
