@@ -292,6 +292,16 @@ const DEFINITION_PGCRYPTO: Extension = Extension {
     package: None,
 };
 
+const DEFINITION_PGMQ: Extension = Extension {
+    sql_name: "pgmq",
+    native_support_modules: &[],
+    native_module_file: None,
+    aot_name: None,
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
 const DEFINITION_PGTAP: Extension = Extension {
     sql_name: "pgtap",
     native_support_modules: &[],
@@ -483,6 +493,9 @@ impl Extension {
     /// Select the `pgcrypto` artifact.
 
     pub const PGCRYPTO: Self = DEFINITION_PGCRYPTO;
+    /// Select the `pgmq` artifact.
+
+    pub const PGMQ: Self = DEFINITION_PGMQ;
     /// Select the `pgtap` artifact.
 
     pub const PGTAP: Self = DEFINITION_PGTAP;
@@ -545,6 +558,7 @@ impl Extension {
         Self::PG_VISIBILITY,
         Self::PG_WALINSPECT,
         Self::PGCRYPTO,
+        Self::PGMQ,
         Self::PGTAP,
         Self::POSTGIS,
         Self::SEG,
@@ -618,6 +632,8 @@ pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
         "pg_walinspect" => true,
 
         "pgcrypto" => true,
+
+        "pgmq" => true,
 
         "pgtap" => true,
 
@@ -735,6 +751,11 @@ pub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'stati
         }
 
         "pgcrypto" => &["CREATE EXTENSION IF NOT EXISTS \"pgcrypto\";"],
+
+        "pgmq" => &[
+            "CREATE SCHEMA IF NOT EXISTS \"pgmq\";",
+            "CREATE EXTENSION IF NOT EXISTS \"pgmq\" WITH SCHEMA \"pgmq\";",
+        ],
 
         "pgtap" => &["CREATE EXTENSION IF NOT EXISTS \"pgtap\" WITH SCHEMA \"pg_catalog\";"],
 

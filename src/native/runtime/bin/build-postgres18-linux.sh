@@ -125,6 +125,7 @@ external_extensions=(
   pg_hashids
   pg_uuidv7
   pgtap
+  pgmq
   pgvector
   pg_textsearch
   postgis
@@ -161,6 +162,7 @@ required_extension_controls=(
   pg_visibility
   pg_walinspect
   pgtap
+  pgmq
   seg
   tablefunc
   tcn
@@ -1146,12 +1148,17 @@ build_pgxs_extension() {
   cp -a "$checkout/." "$build_checkout/"
   rm -rf "$build_checkout/.git"
   make -C "$build_checkout" PG_CONFIG="$install_dir/bin/pg_config" clean >> "$make_log" 2>&1 || true
-  make -C "$build_checkout" \
-    PG_CONFIG="$install_dir/bin/pg_config" \
-    CC="$cc_string" \
-    OPTFLAGS="" \
-    "${normal_link_args[@]}" \
-    install >> "$make_log" 2>&1
+  # PGXS freezes DATA before building; generated SQL must exist before the
+  # separate install invocation (PGMQ derives its default-version script).
+  local target
+  for target in all install; do
+    make -C "$build_checkout" \
+      PG_CONFIG="$install_dir/bin/pg_config" \
+      CC="$cc_string" \
+      OPTFLAGS="" \
+      "${normal_link_args[@]}" \
+      "$target" >> "$make_log" 2>&1
+  done
   make -C "$build_checkout" PG_CONFIG="$install_dir/bin/pg_config" clean >> "$make_log" 2>&1 || true
   make -C "$build_checkout" \
     PG_CONFIG="$install_dir/bin/pg_config" \

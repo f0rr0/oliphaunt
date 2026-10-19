@@ -30,6 +30,7 @@
     "pg_visibility": "pg_visibility.sql",
     "pg_walinspect": "pg_walinspect.sql",
     "pgcrypto": "pgcrypto.sql",
+    "pgmq": "pgmq.sql",
     "pgtap": "pgtap.sql",
     "postgis": "postgis.sql",
     "seg": "seg.sql",

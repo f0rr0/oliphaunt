@@ -259,6 +259,13 @@
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },
+    "src/extensions/external/pgmq": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pgmq",
+      "package-name": "oliphaunt-extension-pgmq",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
     "src/extensions/external/pgtap": {
       "release-type": "simple",
       "component": "oliphaunt-extension-pgtap",

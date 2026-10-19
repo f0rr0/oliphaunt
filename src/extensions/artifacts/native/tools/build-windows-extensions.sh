@@ -141,7 +141,7 @@ windows_extension_postgis_flatgeobuf() {
   logged flatgeobuf-library.log native lib.exe /nologo "/OUT:$(native_path "$prefix/lib/flatgeobuf.lib")" "${objects[@]}"
 }
 
-windows_extension_install() {
+windows_extension_install_pgtap() {
   selected pgtap || return 0
   local directory="$work_root/pgtap-windows" destination="$install_dir/share/postgresql/extension"
   windows_extension_generate pgtap
@@ -151,4 +151,9 @@ windows_extension_install() {
   windows_extension_generate pgtap-install
   mkdir -p "$destination"
   cp "$directory/pgtap.control" "$directory/sql/"pgtap*.sql "$directory/sql/uninstall_pgtap.sql" "$destination/"
+}
+
+windows_extension_install() {
+  windows_extension_install_pgtap
+  if selected pgmq; then windows_extension_generate pgmq-install; fi
 }

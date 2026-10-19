@@ -952,6 +952,38 @@
       "notes": []
     },
     {
+      "id": "pgmq",
+      "sql-name": "pgmq",
+      "rust-constant": "PGMQ",
+      "display-name": "PGMQ",
+      "source-kind": "oliphaunt-other-extension",
+      "upstream-import-name": "pgmq",
+      "package-export": "./pgmq",
+      "tags": ["postgres extension"],
+      "control-file": "target/oliphaunt-sources/checkouts/pgmq/pgmq-extension/pgmq.control",
+      "control": {
+        "module-pathname": "$libdir/pgmq",
+        "requires": [],
+        "relocatable": "false",
+        "schema": "pgmq",
+        "superuser": "false"
+      },
+      "dependencies": ["plpgsql"],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pgmq",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": ["src/test-fixtures/extensions/pgmq.sql"],
+      "notes": ["Partitioned queues additionally require pg_partman; basic queues do not."]
+    },
+    {
       "id": "pgtap",
       "sql-name": "pgtap",
       "rust-constant": "PGTAP",

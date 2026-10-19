@@ -70,6 +70,8 @@ enum ExtensionId {
     PgWalinspect,
     /// PostgreSQL `pgcrypto`.
     Pgcrypto,
+    /// PostgreSQL `pgmq`.
+    Pgmq,
     /// PostgreSQL `pgtap`.
     Pgtap,
     /// PostgreSQL `postgis`.
@@ -238,6 +240,11 @@ impl Extension {
         id: ExtensionId::Pgcrypto,
         package: None,
     };
+    /// Select the `pgmq` artifact.
+    pub const PGMQ: Self = Self {
+        id: ExtensionId::Pgmq,
+        package: None,
+    };
     /// Select the `pgtap` artifact.
     pub const PGTAP: Self = Self {
         id: ExtensionId::Pgtap,
@@ -320,6 +327,7 @@ impl Extension {
         Extension::PG_VISIBILITY,
         Extension::PG_WALINSPECT,
         Extension::PGCRYPTO,
+        Extension::PGMQ,
         Extension::PGTAP,
         Extension::POSTGIS,
         Extension::SEG,
@@ -365,6 +373,7 @@ pub(super) const fn sql_name(extension: Extension) -> &'static str {
         ExtensionId::PgVisibility => "pg_visibility",
         ExtensionId::PgWalinspect => "pg_walinspect",
         ExtensionId::Pgcrypto => "pgcrypto",
+        ExtensionId::Pgmq => "pgmq",
         ExtensionId::Pgtap => "pgtap",
         ExtensionId::Postgis => "postgis",
         ExtensionId::Seg => "seg",
@@ -410,6 +419,7 @@ pub(super) const fn artifact_product(extension: Extension) -> &'static str {
         ExtensionId::PgVisibility => "oliphaunt-extension-contrib-pg18",
         ExtensionId::PgWalinspect => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Pgcrypto => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Pgmq => "oliphaunt-extension-pgmq",
         ExtensionId::Pgtap => "oliphaunt-extension-pgtap",
         ExtensionId::Postgis => "oliphaunt-extension-postgis",
         ExtensionId::Seg => "oliphaunt-extension-contrib-pg18",
@@ -455,6 +465,7 @@ pub(super) const fn native_module_stem(extension: Extension) -> Option<&'static 
         ExtensionId::PgVisibility => Some("pg_visibility"),
         ExtensionId::PgWalinspect => Some("pg_walinspect"),
         ExtensionId::Pgcrypto => Some("pgcrypto"),
+        ExtensionId::Pgmq => None,
         ExtensionId::Pgtap => None,
         ExtensionId::Postgis => Some("postgis-3"),
         ExtensionId::Seg => Some("seg"),
@@ -500,6 +511,7 @@ pub(super) const fn creates_extension(extension: Extension) -> bool {
         ExtensionId::PgVisibility => true,
         ExtensionId::PgWalinspect => true,
         ExtensionId::Pgcrypto => true,
+        ExtensionId::Pgmq => true,
         ExtensionId::Pgtap => true,
         ExtensionId::Postgis => true,
         ExtensionId::Seg => true,
@@ -545,6 +557,7 @@ pub(super) const fn dependencies(extension: Extension) -> &'static [Extension] {
         ExtensionId::PgVisibility => &[],
         ExtensionId::PgWalinspect => &[],
         ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgmq => &[],
         ExtensionId::Pgtap => &[],
         ExtensionId::Postgis => &[],
         ExtensionId::Seg => &[],
@@ -590,6 +603,7 @@ pub(super) const fn required_shared_preload_library(extension: Extension) -> Opt
         ExtensionId::PgVisibility => None,
         ExtensionId::PgWalinspect => None,
         ExtensionId::Pgcrypto => None,
+        ExtensionId::Pgmq => None,
         ExtensionId::Pgtap => None,
         ExtensionId::Postgis => None,
         ExtensionId::Seg => None,
@@ -635,6 +649,7 @@ pub(super) const fn extension_data_files(extension: Extension) -> &'static [&'st
         ExtensionId::PgVisibility => &[],
         ExtensionId::PgWalinspect => &[],
         ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgmq => &[],
         ExtensionId::Pgtap => &[],
         ExtensionId::Postgis => &[
             "contrib/postgis-3.6/legacy.sql",
@@ -690,6 +705,7 @@ pub(super) const fn extension_sql_file_prefixes(extension: Extension) -> &'stati
         ExtensionId::PgVisibility => &[],
         ExtensionId::PgWalinspect => &[],
         ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgmq => &[],
         ExtensionId::Pgtap => &["pgtap-core", "pgtap-schema"],
         ExtensionId::Postgis => &[
             "postgis_comments",
@@ -739,6 +755,7 @@ pub(super) const fn extension_sql_file_names(extension: Extension) -> &'static [
         ExtensionId::PgVisibility => &[],
         ExtensionId::PgWalinspect => &[],
         ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgmq => &[],
         ExtensionId::Pgtap => &["uninstall_pgtap.sql"],
         ExtensionId::Postgis => &["uninstall_postgis.sql"],
         ExtensionId::Seg => &[],
@@ -786,6 +803,7 @@ pub(super) const fn runtime_environment(
         ExtensionId::PgVisibility => &[],
         ExtensionId::PgWalinspect => &[],
         ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgmq => &[],
         ExtensionId::Pgtap => &[],
         ExtensionId::Postgis => &[ExtensionRuntimeEnvironment {
             name: "PROJ_DATA",

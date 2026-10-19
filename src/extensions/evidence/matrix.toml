@@ -12,6 +12,7 @@ source-digest-inputs = [
   "src/extensions/external/pg_ivm/source.toml",
   "src/extensions/external/pg_textsearch/source.toml",
   "src/extensions/external/pg_uuidv7/source.toml",
+  "src/extensions/external/pgmq/source.toml",
   "src/extensions/external/pgtap/source.toml",
   "src/extensions/external/postgis/dependencies/geos/source.toml",
   "src/extensions/external/postgis/dependencies/json-c/source.toml",
@@ -32,6 +33,11 @@ source-digest-inputs = [
   "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
   "src/extensions/external/pg_textsearch/upstream-license-data.json",
   "src/extensions/external/pg_uuidv7/upstream-license-data.json",
+  "src/extensions/external/pgmq/recipe.toml",
+  "src/extensions/external/pgmq/targets/native-static-registry.toml",
+  "src/extensions/external/pgmq/targets/native.toml",
+  "src/extensions/external/pgmq/targets/wasix.toml",
+  "src/extensions/external/pgmq/upstream-license-data.json",
   "src/extensions/external/pgtap/recipe.toml",
   "src/extensions/external/pgtap/targets/native-static-registry.toml",
   "src/extensions/external/pgtap/targets/native.toml",
@@ -83,6 +89,7 @@ source-digest-inputs = [
   "src/test-fixtures/extensions/pg_visibility.sql",
   "src/test-fixtures/extensions/pg_walinspect.sql",
   "src/test-fixtures/extensions/pgcrypto.sql",
+  "src/test-fixtures/extensions/pgmq.sql",
   "src/test-fixtures/extensions/pgtap.sql",
   "src/test-fixtures/extensions/postgis.sql",
   "src/test-fixtures/extensions/seg.sql",
@@ -321,6 +328,14 @@ evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
 extension = "pgcrypto"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "pgmq"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]

@@ -34,6 +34,7 @@ public enum class OliphauntExtension(public val sqlName: String) {
     PG_VISIBILITY("pg_visibility"),
     PG_WALINSPECT("pg_walinspect"),
     PGCRYPTO("pgcrypto"),
+    PGMQ("pgmq"),
     PGTAP("pgtap"),
     POSTGIS("postgis"),
     SEG("seg"),

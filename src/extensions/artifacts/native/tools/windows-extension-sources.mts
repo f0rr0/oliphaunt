@@ -622,6 +622,26 @@ export function pgtap(config: Config, install = false) {
   }
 }
 
+// PGMQ's PGXS build only copies the canonical SQL and all versioned upgrades.
+// Keep this equivalent Windows path independent of GNU Make or a C compiler.
+export function installPgmq(config: Config) {
+  const directory = path.join(
+    config.repo,
+    'target/oliphaunt-sources/checkouts/pgmq/pgmq-extension',
+  );
+  const destination = path.join(config.install, 'share/postgresql/extension');
+  const release = version(directory, 'pgmq');
+  assert(/^[a-zA-Z0-9._-]+$/.test(release) && !release.includes('--'), 'invalid PGMQ version');
+  mkdirSync(destination, { recursive: true });
+  copyFileSync(path.join(directory, 'pgmq.control'), path.join(destination, 'pgmq.control'));
+  for (const file of glob(path.join(directory, 'sql'), 'pgmq--*.sql'))
+    copyFileSync(path.join(directory, 'sql', file), path.join(destination, file));
+  copyFileSync(
+    path.join(directory, 'sql/pgmq.sql'),
+    path.join(destination, `pgmq--${release}.sql`),
+  );
+}
+
 if (import.meta.main) {
   const phase = process.argv[2];
   const { values } = parseArgs({
@@ -671,6 +691,9 @@ if (import.meta.main) {
       break;
     case 'pgtap-install':
       pgtap(config, true);
+      break;
+    case 'pgmq-install':
+      installPgmq(config);
       break;
     default:
       throw new Error(`unknown Windows extension phase ${phase}`);

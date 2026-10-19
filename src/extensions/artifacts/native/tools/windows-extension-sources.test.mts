@@ -1,9 +1,35 @@
 import { test } from 'bun:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { patchTextsearch } from './windows-extension-sources.mts';
+import { installPgmq, patchTextsearch } from './windows-extension-sources.mts';
+
+test('PGMQ SQL packaging includes the current installation and upgrades, without unrelated files', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'pgmq-windows-'));
+  const source = path.join(root, 'target/oliphaunt-sources/checkouts/pgmq/pgmq-extension');
+  const install = path.join(root, 'install');
+  try {
+    mkdirSync(path.join(source, 'sql'), { recursive: true });
+    writeFileSync(path.join(source, 'pgmq.control'), "default_version = '1.13.0'\n");
+    writeFileSync(path.join(source, 'sql/pgmq.sql'), '-- current SQL\n');
+    writeFileSync(path.join(source, 'sql/pgmq--1.12.0--1.13.0.sql'), '-- upgrade SQL\n');
+    writeFileSync(path.join(source, 'sql/unrelated.sql'), '-- foreign SQL\n');
+    installPgmq({ repo: root, work: root, postgres: root, install });
+    const destination = path.join(install, 'share/postgresql/extension');
+    assert.deepEqual(readdirSync(destination).sort(), [
+      'pgmq--1.12.0--1.13.0.sql',
+      'pgmq--1.13.0.sql',
+      'pgmq.control',
+    ]);
+    assert.equal(
+      readFileSync(path.join(destination, 'pgmq--1.13.0.sql'), 'utf8'),
+      '-- current SQL\n',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('Windows packing applies to each exact textsearch struct, including V3 predecessors', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'textsearch-windows-'));

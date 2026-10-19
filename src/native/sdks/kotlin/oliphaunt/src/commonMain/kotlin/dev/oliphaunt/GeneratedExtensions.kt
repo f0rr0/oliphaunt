@@ -38,6 +38,7 @@ internal val generatedExtensionRuntimeContracts: Map<String, GeneratedExtensionR
     "pg_visibility" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_visibility"),
     "pg_walinspect" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_walinspect"),
     "pgcrypto" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pgcrypto"),
+    "pgmq" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = null),
     "pgtap" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = null),
     "postgis" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "postgis-3"),
     "seg" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "seg"),

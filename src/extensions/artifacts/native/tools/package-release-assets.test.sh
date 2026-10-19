@@ -40,4 +40,30 @@ if OLIPHAUNT_EXTENSION_PHASE=android-package OLIPHAUNT_EXTENSION_TARGET=ios-xcfr
   echo 'accepted Android phase for iOS' >&2; exit 1
 fi
 grep -q 'invalid extension phase' "$scratch/wrong-phase.log"
-echo 'Android split extension producer checks passed'
+
+# SQL-only iOS products do not produce an XCFramework. Exercise the real
+# packager with a host fixture, replacing only the platform compiler producer.
+(
+  export OLIPHAUNT_EXTENSION_TARGET=ios-xcframework
+  export OLIPHAUNT_EXTENSION_PRODUCTS=oliphaunt-extension-pgmq
+  export OLIPHAUNT_EXTENSION_HOST_RUNTIME_ROOT="$scratch/ios-host"
+  export OLIPHAUNT_EXTENSION_RELEASE_ASSET_DIR="$scratch/ios-assets"
+  export OLIPHAUNT_EXTENSION_RELEASE_STAGE_ROOT="$scratch/ios-stage"
+  ios_sql="$scratch/ios-host/share/postgresql/extension"
+  mkdir -p "$ios_sql"
+  bun - "$scratch/ios-host/postgres" <<'JS'
+import {writeFileSync} from 'node:fs';
+import {machoFixture} from './tools/packaging/testdata/release-fixture-utils.mts';
+writeFileSync(process.argv[2], machoFixture());
+JS
+  printf "default_version = '1.13.0'\n" > "$ios_sql/pgmq.control"
+  printf 'select 1;\n' > "$ios_sql/pgmq--1.13.0.sql"
+  source "$producer"
+  build_mobile_static_artifacts() { [ -z "$1" ]; }
+  bun "$packager" list-catalog > "$catalog_file"
+  write_indexes
+  package_ios_target
+  [ ! -e "$mobile_extension_work_root/ios-xcframework/ios-extension-xcframeworks/out" ]
+  [ "$(find "$out_dir" -name '*-pgmq-*-runtime.tar.gz' | wc -l)" = 1 ]
+)
+echo 'Android split and SQL-only iOS extension producer checks passed'

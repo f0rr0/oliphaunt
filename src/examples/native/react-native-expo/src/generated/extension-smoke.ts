@@ -7,7 +7,7 @@ export type GeneratedMobileExtensionProof = {
   readonly selectedExtensionDependencies: readonly string[];
 };
 
-export const GENERATED_MOBILE_EXTENSION_METADATA_SHA256 = "c1d2e09905d7ecc0172173b34b9e4104dad58987503dd3dab7af4ae78890d9f3" as const;
+export const GENERATED_MOBILE_EXTENSION_METADATA_SHA256 = "f6982b4f5ace1f2b8478bbb794dece00d6379545e64bf65a28fa28b459210028" as const;
 
 export const GENERATED_MOBILE_EXTENSION_PLAN = [
   {
@@ -154,6 +154,11 @@ export const GENERATED_MOBILE_EXTENSION_PLAN = [
   },
   {
     "sqlName": "pgcrypto",
+    "createsExtension": true,
+    "selectedExtensionDependencies": []
+  },
+  {
+    "sqlName": "pgmq",
     "createsExtension": true,
     "selectedExtensionDependencies": []
   },
@@ -347,6 +352,18 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "DO $$ BEGIN IF encode(hmac('test', 'key', 'sha1'), 'hex') <> '671f54ce0c540f78ffe1e26dcf9c2a047aea4fda' THEN RAISE EXCEPTION 'hmac failed'; END IF; IF gen_random_uuid()::text !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN RAISE EXCEPTION 'random uuid format failed'; END IF; END $$;",
     "DO $$ DECLARE armored text; header_count int; BEGIN SELECT armor(digest('test', 'sha1'), ARRAY['Version'], ARRAY['oliphaunt']) INTO armored; IF position('Version: oliphaunt' in armored) = 0 THEN RAISE EXCEPTION 'armor header failed'; END IF; SELECT count(*) INTO header_count FROM pgp_armor_headers(armored); IF header_count <> 1 THEN RAISE EXCEPTION 'armor header count failed: %', header_count; END IF; END $$;",
     "DO $$ DECLARE encrypted bytea; crypto_key bytea := decode('000102030405060708090a0b0c0d0e0f', 'hex'); crypto_iv bytea := decode('101112131415161718191a1b1c1d1e1f', 'hex'); BEGIN SELECT pgp_sym_encrypt('oliphaunt secret', 'passphrase') INTO encrypted; IF pgp_key_id(encrypted) <> 'SYMKEY' THEN RAISE EXCEPTION 'PGP symmetric key id failed'; END IF; SELECT encrypt(convert_to('oliphaunt raw cipher', 'UTF8'), crypto_key, 'aes') INTO encrypted; IF convert_from(decrypt(encrypted, crypto_key, 'aes'), 'UTF8') <> 'oliphaunt raw cipher' THEN RAISE EXCEPTION 'raw decrypt failed'; END IF; SELECT encrypt_iv(convert_to('oliphaunt iv cipher', 'UTF8'), crypto_key, crypto_iv, 'aes-cbc') INTO encrypted; IF convert_from(decrypt_iv(encrypted, crypto_key, crypto_iv, 'aes-cbc'), 'UTF8') <> 'oliphaunt iv cipher' THEN RAISE EXCEPTION 'raw iv decrypt failed'; END IF; END $$;"
+  ],
+  "pgmq": [
+    "DO $proof$\nBEGIN\n  IF EXISTS (SELECT FROM pgmq.meta WHERE queue_name = 'oliphaunt_queue') THEN\n    PERFORM pgmq.drop_queue('oliphaunt_queue');\n  END IF;\nEND\n$proof$;",
+    "SELECT pgmq.create('oliphaunt_queue');",
+    "SELECT pgmq.send('oliphaunt_queue', '{\"payload\":\"persistent\"}'::jsonb);",
+    "DO $proof$\nDECLARE\n  message record;\nBEGIN\n  SELECT * INTO STRICT message FROM pgmq.read('oliphaunt_queue', 30, 1);\n  IF message.message <> '{\"payload\":\"persistent\"}'::jsonb OR message.read_ct <> 1 THEN\n    RAISE EXCEPTION 'PGMQ read lost payload or delivery count';\n  END IF;\n  IF EXISTS (SELECT FROM pgmq.read('oliphaunt_queue', 30, 1)) THEN\n    RAISE EXCEPTION 'PGMQ visibility timeout did not hide the leased message';\n  END IF;\n  IF NOT pgmq.archive('oliphaunt_queue', message.msg_id) THEN\n    RAISE EXCEPTION 'PGMQ archive failed';\n  END IF;\n  IF (SELECT count(*) FROM pgmq.a_oliphaunt_queue) <> 1 THEN\n    RAISE EXCEPTION 'PGMQ archive lost the message';\n  END IF;\nEND\n$proof$;",
+    "SELECT pgmq.send('oliphaunt_queue', '{\"payload\":\"delete\"}'::jsonb);",
+    "DO $proof$\nDECLARE\n  message record;\nBEGIN\n  SELECT * INTO STRICT message FROM pgmq.pop('oliphaunt_queue');\n  IF message.message <> '{\"payload\":\"delete\"}'::jsonb THEN\n    RAISE EXCEPTION 'PGMQ pop returned the wrong message';\n  END IF;\n  IF EXISTS (SELECT FROM pgmq.read('oliphaunt_queue', 30, 1)) THEN\n    RAISE EXCEPTION 'PGMQ pop did not remove the message';\n  END IF;\nEND\n$proof$;",
+    "SELECT pgmq.create('oliphaunt_drop_queue');",
+    "SELECT pgmq.drop_queue('oliphaunt_drop_queue');",
+    "SELECT pgmq.send('oliphaunt_queue', '{\"payload\":\"restart-and-restore\"}'::jsonb);",
+    "-- oliphaunt-verify\nDO $proof$\nBEGIN\n  IF (SELECT count(*) FROM pgmq.q_oliphaunt_queue) <> 1 OR\n      NOT EXISTS (SELECT FROM pgmq.q_oliphaunt_queue\n                  WHERE message = '{\"payload\":\"restart-and-restore\"}'::jsonb) THEN\n    RAISE EXCEPTION 'PGMQ persistent queue message did not survive';\n  END IF;\n  IF (SELECT count(*) FROM pgmq.a_oliphaunt_queue) <> 1 OR\n      NOT EXISTS (SELECT FROM pgmq.a_oliphaunt_queue\n                  WHERE message = '{\"payload\":\"persistent\"}'::jsonb) THEN\n    RAISE EXCEPTION 'PGMQ archived message did not survive';\n  END IF;\nEND\n$proof$;"
   ],
   "pgtap": [
     "SELECT plan(2);",

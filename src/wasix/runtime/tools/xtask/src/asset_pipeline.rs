@@ -1691,6 +1691,21 @@ fn stage_pgxs_style_extension(
                 .join(control_file.file_name().unwrap_or_default()),
         )?;
     }
+    if sql_name == "pgmq" {
+        let sql_dir = build_dir.join("sql");
+        let mut copied = false;
+        for entry in sorted_children(&sql_dir)? {
+            let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if entry.is_file() && name.starts_with("pgmq--") && name.ends_with(".sql") {
+                copy_file(&entry, &extension_sql_dir.join(name))?;
+                copied = true;
+            }
+        }
+        ensure!(copied, "PGMQ build has no versioned SQL files");
+        return Ok(());
+    }
     let mut copied_root_sql = copy_extension_sql_files(&build_dir, sql_name, &extension_sql_dir)?;
     if !copied_root_sql {
         copied_root_sql = copy_extension_sql_files(source, sql_name, &extension_sql_dir)?;
@@ -2557,6 +2572,65 @@ fn extension_control_files_for_asset_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pgmq_stages_generated_install_and_upgrade_sql_only() {
+        let root = temp_aot_manifest_path("pgmq-stage");
+        let source = root.join("source");
+        let build = root.join("build");
+        let stage = root.join("stage");
+        let sql = build.join("pgxs/pgmq/sql");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&sql).unwrap();
+        fs::write(source.join("pgmq.control"), "default_version = '1.13.0'\n").unwrap();
+        for name in [
+            "pgmq.sql",
+            "pgmq--1.13.0.sql",
+            "pgmq--1.12.0--1.13.0.sql",
+            "foreign.sql",
+        ] {
+            fs::write(sql.join(name), "-- SQL\n").unwrap();
+        }
+        let extension = extension_catalog::ExtensionBuildSpec {
+            id: "pgmq".into(),
+            display_name: "PGMQ".into(),
+            sql_name: "pgmq".into(),
+            build_kind: "pgxs-sql-only".into(),
+            source_dir: source.to_string_lossy().into(),
+            contrib_dir: None,
+            module_file: None,
+            archive: "extensions/pgmq.tar.zst".into(),
+            control_file: None,
+            native_support_modules: vec![],
+            excluded_sql_extensions: vec![],
+            staging: None,
+            lifecycle: extension_catalog::ExtensionLifecycle {
+                create_extension: true,
+                create_schema: Some("pgmq".into()),
+                load_sql: vec![],
+                post_create_sql: vec![],
+                startup_config: vec![],
+                preload_required: false,
+                restart_required: false,
+                shared_memory_required: false,
+            },
+        };
+        stage_pgxs_style_extension(&build, &extension, &stage).unwrap();
+        let files: Vec<_> = sorted_children(&stage.join("share/postgresql/extension"))
+            .unwrap()
+            .into_iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            files,
+            [
+                "pgmq--1.12.0--1.13.0.sql",
+                "pgmq--1.13.0.sql",
+                "pgmq.control"
+            ]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn manifest_extension_metadata(
         create_extension: bool,

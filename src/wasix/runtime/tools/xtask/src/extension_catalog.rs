@@ -54,7 +54,7 @@ fn build_specs_at(
             display_name: extension.display_name.clone(),
             sql_name: extension.sql_name.clone(),
             build_kind,
-            source_dir: extension_source_dir(extension),
+            source_dir: extension_source_dir_at(extension, repository_root)?,
             contrib_dir: (extension.source_kind == "postgres-contrib")
                 .then(|| extension_contrib_dir_name(&extension.id)),
             module_file: extension.native_module_file.clone(),
@@ -205,8 +205,41 @@ fn build_kind(
     }
 }
 
-fn extension_source_dir(extension: &ExtensionCatalogEntry) -> String {
-    extension_source_dir_for(&extension.id, &extension.source_kind)
+fn extension_source_dir_at(
+    extension: &ExtensionCatalogEntry,
+    repository_root: &Path,
+) -> Result<String> {
+    let root = extension_source_dir_for(&extension.id, &extension.source_kind);
+    let recipe = repository_root
+        .join(EXTERNAL_EXTENSION_RECIPE_ROOT)
+        .join(&extension.sql_name)
+        .join("recipe.toml");
+    if !recipe.is_file() {
+        return Ok(root);
+    }
+    let text = fs::read_to_string(&recipe).with_context(|| format!("read {}", recipe.display()))?;
+    let recipe: toml::Value = toml::from_str(&text).context("parse extension recipe")?;
+    let Some(subdirectory) = recipe
+        .get("build")
+        .and_then(|value| value.get("source_subdirectory"))
+    else {
+        return Ok(root);
+    };
+    let subdirectory = subdirectory
+        .as_str()
+        .context("PGXS source subdirectory must be a string")?;
+    ensure!(
+        subdirectory.split('/').all(|part| {
+            let mut bytes = part.bytes();
+            bytes
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+                && bytes
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        }),
+        "PGXS source subdirectory must stay within the pinned checkout"
+    );
+    Ok(format!("{root}/{subdirectory}"))
 }
 
 fn extension_source_dir_for(id: &str, source_kind: &str) -> String {
@@ -375,6 +408,12 @@ mod tests {
                 .native_support_modules
                 .iter()
                 .any(|module| module.name == "postgis_deps")
+        );
+        let pgmq = specs.iter().find(|spec| spec.id == "pgmq").unwrap();
+        assert_eq!(pgmq.build_kind, "pgxs-sql-only");
+        assert_eq!(
+            pgmq.source_dir,
+            "target/oliphaunt-sources/checkouts/pgmq/pgmq-extension"
         );
     }
 }

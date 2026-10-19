@@ -1,5 +1,5 @@
 {
-  "extension-catalog-sha256": "c1d2e09905d7ecc0172173b34b9e4104dad58987503dd3dab7af4ae78890d9f3",
+  "extension-catalog-sha256": "f6982b4f5ace1f2b8478bbb794dece00d6379545e64bf65a28fa28b459210028",
   "extensions": [
     {
       "artifact-product": "oliphaunt-extension-contrib-pg18",
@@ -863,6 +863,34 @@
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
       "sql-name": "pgcrypto"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-pgmq",
+      "cargo-package": "oliphaunt-extension-pgmq",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [
+        "plpgsql"
+      ],
+      "display-name": "PGMQ",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pgmq",
+      "maven-artifact": "oliphaunt-extension-pgmq",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": null,
+      "npm-package": "@oliphaunt/extension-pgmq",
+      "postgres-major": 18,
+      "release-product": "oliphaunt-extension-pgmq",
+      "runtime-bound": false,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "oliphaunt-other-extension",
+      "sql-name": "pgmq"
     },
     {
       "artifact-product": "oliphaunt-extension-pgtap",

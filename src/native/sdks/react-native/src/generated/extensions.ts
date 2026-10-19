@@ -26,7 +26,7 @@ export type GeneratedExtensionMetadata = {
   readonly sourceKind: string;
 };
 
-export const GENERATED_EXTENSION_METADATA_SHA256 = "c1d2e09905d7ecc0172173b34b9e4104dad58987503dd3dab7af4ae78890d9f3" as const;
+export const GENERATED_EXTENSION_METADATA_SHA256 = "f6982b4f5ace1f2b8478bbb794dece00d6379545e64bf65a28fa28b459210028" as const;
 
 export const GENERATED_EXTENSION_METADATA = [
   {
@@ -736,6 +736,32 @@ export const GENERATED_EXTENSION_METADATA = [
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
     "sqlName": "pgcrypto"
+  },
+  {
+    "artifactProduct": "oliphaunt-extension-pgmq",
+    "cargoPackage": "oliphaunt-extension-pgmq",
+    "createsExtension": true,
+    "dataFiles": [],
+    "dependencies": [
+      "plpgsql"
+    ],
+    "displayName": "PGMQ",
+    "extensionSqlFileNames": [],
+    "extensionSqlFilePrefixes": [],
+    "id": "pgmq",
+    "iosStaticDependencies": [],
+    "mavenArtifact": "oliphaunt-extension-pgmq",
+    "mavenGroup": "dev.oliphaunt.extensions",
+    "nativeModuleStem": null,
+    "npmPackage": "@oliphaunt/extension-pgmq",
+    "postgresMajor": 18,
+    "releaseProduct": "oliphaunt-extension-pgmq",
+    "runtimeBound": false,
+    "runtimeShareDataFiles": [],
+    "selectedExtensionDependencies": [],
+    "sharedPreloadLibraries": [],
+    "sourceKind": "oliphaunt-other-extension",
+    "sqlName": "pgmq"
   },
   {
     "artifactProduct": "oliphaunt-extension-pgtap",

@@ -650,6 +650,30 @@
       "sql-name": "pgcrypto"
     },
     {
+      "archive": "extensions/pgmq.tar.zst",
+      "dependencies": [
+        "plpgsql"
+      ],
+      "id": "pgmq",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pgmq",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
+      "native-module-file": null,
+      "native-runtime-files": [],
+      "native-support-modules": [],
+      "sql-name": "pgmq"
+    },
+    {
       "archive": "extensions/pgtap.tar.zst",
       "dependencies": [
         "plpgsql"
