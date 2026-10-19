@@ -1,0 +1,6 @@
+id = "oliphaunt-query-ts"
+owner = "@oliphaunt/sdk-js"
+kind = "sdk"
+publish_targets = ["npm"]
+registry_packages = ["npm:@oliphaunt/ts-query"]
+release_artifacts = ["npm-package"]

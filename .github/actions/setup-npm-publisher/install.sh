@@ -11,8 +11,8 @@ if [ -z "$root" ]; then
   root="$(git rev-parse --show-toplevel 2>/dev/null)" ||
     fail "must run inside the Oliphaunt checkout"
 fi
-manifest="${OLIPHAUNT_NPM_PUBLISHER_MANIFEST:-$root/src/sources/toolchains/npm-publisher.toml}"
-extractor="${OLIPHAUNT_NPM_PUBLISHER_ARCHIVE_EXTRACTOR:-$root/.github/actions/setup-moon/toolchain-archive.py}"
+manifest="${OLIPHAUNT_NPM_PUBLISHER_MANIFEST:-$root/tools/release/npm-publisher.toml}"
+extractor="${OLIPHAUNT_NPM_PUBLISHER_ARCHIVE_EXTRACTOR:-$root/.github/actions/setup-moon/toolchain-archive.mts}"
 curl_platform_flags="$root/tools/dev/curl-platform-flags.sh"
 cache_root="${OLIPHAUNT_NPM_PUBLISHER_CACHE_ROOT:-${RUNNER_TEMP:-$root/target}/oliphaunt-npm-publisher}"
 
@@ -29,12 +29,9 @@ for path in "$manifest" "$extractor" "$curl_platform_flags"; do
 done
 # shellcheck source=tools/dev/curl-platform-flags.sh
 . "$curl_platform_flags"
+. "${curl_platform_flags%/*}/acquisition.sh"
+oliphaunt_acquisition_start "npm publisher bootstrap" 300
 
-python=""
-for candidate in python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1; then python="$candidate"; break; fi
-done
-[ -n "$python" ] || fail "python3 or python is required for safe archive extraction"
 command -v node >/dev/null 2>&1 || fail "the verified Node.js runtime must be on PATH"
 
 manifest_value() {
@@ -68,16 +65,7 @@ hash_file() {
       sha512) shasum -a 512 "$path" | awk '{print $1}' ;;
     esac
   else
-    "$python" - "$algorithm" "$path" <<'PY'
-import hashlib
-import pathlib
-import sys
-digest = hashlib.new(sys.argv[1])
-with pathlib.Path(sys.argv[2]).open("rb") as stream:
-    while block := stream.read(1024 * 1024):
-        digest.update(block)
-print(digest.hexdigest())
-PY
+    fail "sha256sum/sha512sum or shasum is required"
   fi
 }
 
@@ -195,7 +183,7 @@ cache_valid() {
   esac
   local args=(tree-digest --root "$candidate/npm") executable
   for executable in "${executables[@]}"; do args+=(--executable "$executable"); done
-  [ "$("$python" "$extractor" "${args[@]}" 2>/dev/null)" = "$file_count $tree_sha256" ] || return 1
+  [ "$(node "$extractor" "${args[@]}" 2>/dev/null)" = "$file_count $tree_sha256" ] || return 1
   [ "$(node_script_version "$candidate/npm/$binary_path" 2>/dev/null)" = "$version" ] || return 1
   [ "$(cat "$candidate/receipt")" = "$receipt_text" ] || return 1
 }
@@ -210,12 +198,12 @@ if ! { [ -f "$archive" ] && [ ! -L "$archive" ] &&
   partial="$(mktemp "$archive_root/.download.XXXXXX")"
   tls_flag="$(oliphaunt_curl_platform_tls_flag)"
   curl_args=(--fail --location --silent --show-error --proto '=https' --proto-redir '=https'
-    --tlsv1.2 --retry 5 --retry-all-errors --retry-connrefused --retry-delay 2
-    --retry-max-time 300 --connect-timeout 20 --max-time 300 --speed-limit 1024
+    --tlsv1.2
+    --connect-timeout 20 --speed-limit 1024
     --speed-time 30 --remove-on-error --max-filesize "$archive_bytes" --output "$partial")
   [ -z "$tls_flag" ] || curl_args+=("$tls_flag")
   curl_args+=("$url")
-  if ! "$curl_command" "${curl_args[@]}"; then
+  if ! oliphaunt_acquisition_curl 300 6 2 "$curl_command" "${curl_args[@]}"; then
     rm -f "$partial"; fail "could not download pinned npm publisher archive"
   fi
   [ "$(wc -c <"$partial" | tr -d '[:space:]')" = "$archive_bytes" ] &&
@@ -226,7 +214,6 @@ if ! { [ -f "$archive" ] && [ ! -L "$archive" ] &&
   chmod 0444 "$partial"
   mv "$partial" "$archive"
 fi
-
 stage="$(mktemp -d "$install_parent/.verified.stage.XXXXXX")"
 backup=""
 old_moved=0
@@ -243,7 +230,6 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-
 extract_args=(extract --archive "$archive" --format "$format" --prefix "$prefix"
   --entry-count "$entry_count" --expected-bytes "$archive_bytes"
   --expanded-bytes "$expanded_bytes" --destination "$stage/npm"
@@ -251,7 +237,7 @@ extract_args=(extract --archive "$archive" --format "$format" --prefix "$prefix"
 for executable in "${executables[@]}"; do
   extract_args+=(--required "$executable" --executable "$executable")
 done
-"$python" "$extractor" "${extract_args[@]}"
+node "$extractor" "${extract_args[@]}"
 mkdir -p "$stage/bin"
 printf '%s\n' "$npm_wrapper_text" >"$stage/bin/npm"
 printf '%s\n' "$npx_wrapper_text" >"$stage/bin/npx"
@@ -262,7 +248,6 @@ chmod 0444 "$stage/bin/npm.cmd" "$stage/bin/npx.cmd"
 printf '%s\n' "$receipt_text" >"$stage/receipt"
 chmod 0444 "$stage/receipt"
 cache_valid "$stage" || fail "staged npm publisher failed integrity or version validation"
-
 if [ -e "$final" ] || [ -L "$final" ]; then
   backup="$(mktemp -d "$install_parent/.verified.backup.XXXXXX")"; rmdir "$backup"
   mv "$final" "$backup"; old_moved=1

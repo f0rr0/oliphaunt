@@ -1,0 +1,289 @@
+import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+import { expectedOidcIdentity } from '../../.github/scripts/verify-github-oidc-identity.mts';
+import { frozenNpmIntegrity } from './frozen-npm-publish.mts';
+import { verifyNpmTrustedPublishers } from './npm-trusted-publisher-readiness.mts';
+import { isolatedGitHubTestEnvironment } from './testdata/isolated-github-test-environment.mts';
+
+const environment = {
+  ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'github-request-secret',
+  ACTIONS_ID_TOKEN_REQUEST_URL: 'https://actions.example/token?api-version=1',
+  CANONICAL_RELEASE_REPOSITORY: 'f0rr0/oliphaunt',
+  GITHUB_EVENT_NAME: 'workflow_dispatch',
+  GITHUB_REF: 'refs/heads/main',
+  GITHUB_SHA: '1'.repeat(40),
+  RELEASE_OPERATION: 'publish',
+};
+const now = Date.parse('2026-10-07T12:00:00Z');
+const response = (value, status = 200) => new Response(JSON.stringify(value), { status });
+const jwt = (claims) =>
+  ['header', Buffer.from(JSON.stringify(claims)).toString('base64url'), 'signature'].join('.');
+
+function fixture(t) {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-npm-trust-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  return ['first', 'second', 'third'].map((name) => {
+    const tarball = path.join(directory, name + '.tgz');
+    writeFileSync(tarball, 'frozen-' + name);
+    return { name: '@oliphaunt/' + name, version: '0.3.1', tarball };
+  });
+}
+
+function transport(
+  carriers,
+  {
+    denied = undefined,
+    published = [],
+    claims = {},
+    exchanged = { token: 'npm-issued-secret' },
+  } = {},
+) {
+  const calls = [];
+  const fetchImpl = async (input, options) => {
+    const url = new URL(input);
+    calls.push({ url, options });
+    assert.equal(options.redirect, 'error');
+    assert(options.signal instanceof AbortSignal);
+    if (url.hostname === 'actions.example') {
+      assert.equal(url.searchParams.get('audience'), 'npm:registry.npmjs.org');
+      assert.equal(options.headers.Authorization, 'Bearer github-request-secret');
+      return response({
+        value: jwt({
+          ...expectedOidcIdentity(environment),
+          aud: 'npm:registry.npmjs.org',
+          ...claims,
+        }),
+      });
+    }
+    assert.equal(url.origin, 'https://registry.npmjs.org');
+    if (url.pathname.startsWith('/-/npm/v1/oidc/token/exchange/package/')) {
+      assert.equal(options.method, 'POST');
+      assert(options.headers.Authorization.startsWith('Bearer header.'));
+      const name = decodeURIComponent(url.pathname.split('/').at(-1));
+      if (name === denied) return response({ error: 'expired publisher; registry-secret' }, 401);
+      return response(exchanged, 201);
+    }
+    assert.equal(options.method, undefined);
+    const [name, version] = url.pathname.slice(1).split('/').map(decodeURIComponent);
+    const carrier = carriers.find((row) => row.name === name);
+    assert(carrier);
+    if (version === undefined) return response({ name });
+    assert.equal(version, carrier.version);
+    return published.includes(name)
+      ? response({ dist: { integrity: frozenNpmIntegrity(carrier.tarball) } })
+      : response({ error: 'version absent' }, 404);
+  };
+  return { calls, fetchImpl };
+}
+
+test('exchanges every pending frozen package and skips byte-matching public versions', async (t) => {
+  const carriers = fixture(t);
+  const mock = transport(carriers, { published: [carriers[1].name] });
+  const result = await verifyNpmTrustedPublishers({
+    carriers,
+    environment,
+    fetchImpl: mock.fetchImpl,
+    nowImpl: () => now,
+  });
+  assert.deepEqual(result, {
+    published: [carriers[1].name],
+    authorized: [carriers[0].name, carriers[2].name],
+  });
+  assert.equal(mock.calls.filter(({ options }) => options.method === 'POST').length, 2);
+  assert(!JSON.stringify(result).includes('secret'));
+});
+
+// npm 11.18.0's lib/utils/oidc.js consumes only response.token. The preflight
+// discards this credential; npm exchanges a fresh one when it actually publishes.
+test('accepts the npm CLI token contract without depending on descriptive metadata', async (t) => {
+  const carriers = fixture(t).slice(0, 1);
+  for (const exchanged of [
+    { token: 'npm-issued-secret' },
+    { token: 'npm-issued-secret', token_type: 'oidc', expires: '2026-10-07T13:00:00Z' },
+    { token: 'npm-issued-secret', token_type: 'Bearer', expires: now + 3_600_000 },
+  ]) {
+    const mock = transport(carriers, { exchanged });
+    const result = await verifyNpmTrustedPublishers({
+      carriers,
+      environment,
+      fetchImpl: mock.fetchImpl,
+      nowImpl: () => now,
+    });
+    assert.deepEqual(result, { published: [], authorized: [carriers[0].name] });
+    assert(!JSON.stringify(result).includes('secret'));
+  }
+});
+
+test('an expired publisher stops the complete preflight before later packages, without exposing tokens', async (t) => {
+  const carriers = fixture(t);
+  const mock = transport(carriers, { denied: carriers[1].name });
+  await assert.rejects(
+    verifyNpmTrustedPublishers({
+      carriers,
+      environment,
+      fetchImpl: mock.fetchImpl,
+      nowImpl: () => now,
+    }),
+    (error) => {
+      assert(error.message.includes(carriers[1].name));
+      assert(error.message.includes('HTTP 401'));
+      assert(error.message.includes('unused rules expire after two days'));
+      assert(!error.message.includes('secret'));
+      return true;
+    },
+  );
+  assert(
+    !mock.calls.some(({ url }) => decodeURIComponent(url.pathname).includes(carriers[2].name)),
+  );
+});
+
+test('rejects a different workflow identity before exchanging an npm credential', async (t) => {
+  const carriers = fixture(t);
+  const mock = transport(carriers, { claims: { environment: 'release-bootstrap' } });
+  await assert.rejects(
+    verifyNpmTrustedPublishers({
+      carriers,
+      environment,
+      fetchImpl: mock.fetchImpl,
+      nowImpl: () => now,
+    }),
+    /claim environment mismatch/u,
+  );
+  assert(!mock.calls.some(({ options }) => options.method === 'POST'));
+});
+
+test('rejects missing or invalid tokens and stops at the shared deadline', async (t) => {
+  const carriers = fixture(t);
+  for (const exchanged of [null, {}, { token: '' }, { token: 123 }]) {
+    const mock = transport(carriers, { exchanged });
+    await assert.rejects(
+      verifyNpmTrustedPublishers({
+        carriers,
+        environment,
+        fetchImpl: mock.fetchImpl,
+        nowImpl: () => now,
+      }),
+      /exchange returned no nonempty token/u,
+    );
+  }
+  await assert.rejects(
+    verifyNpmTrustedPublishers({
+      carriers,
+      environment,
+      fetchImpl: async () => assert.fail('network after deadline'),
+      nowImpl: () => now,
+      deadlineEpochSeconds: Math.floor(now / 1000),
+    }),
+    /deadline/u,
+  );
+});
+
+test('the workflow CLI verifies an earlier frozen source and rejects source drift', (t) => {
+  const root = fileURLToPath(new URL('../../', import.meta.url));
+  mkdirSync(path.join(root, 'target'), { recursive: true });
+  const directory = mkdtempSync(path.join(root, 'target/npm-trust-cli-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const commit = (ref) =>
+    execFileSync('git', ['rev-parse', ref], { cwd: root, encoding: 'utf8' }).trim();
+  const source = commit('HEAD^');
+  const cliEnvironment = isolatedGitHubTestEnvironment({
+    ...environment,
+    RELEASE_HEAD_SHA: source,
+    PUBLICATION_LOCK_PATH: path.join(directory, 'publication-lock.json'),
+  });
+  delete cliEnvironment.OLIPHAUNT_GIT_SOURCE_JSON;
+  const run = (args, env = cliEnvironment) =>
+    spawnSync('bash', args, { cwd: root, env, encoding: 'utf8', timeout: 25_000 });
+  const prepared = run([
+    'tools/release/release-please-state.sh',
+    root,
+    'HEAD',
+    'bash',
+    'tools/release/with-source.sh',
+    source,
+    process.execPath,
+    'tools/release/publication-lock.test.mts',
+    'prepare-npm-preflight',
+    directory,
+    source,
+  ]);
+  assert.equal(prepared.status, 0, prepared.stderr);
+  const preload = path.join(directory, 'registry.mts');
+  writeFileSync(
+    preload,
+    `
+    import assert from 'node:assert/strict';
+    import { readFileSync } from 'node:fs';
+    import { frozenNpmIntegrity } from ${JSON.stringify(new URL('./frozen-npm-publish.mts', import.meta.url).href)};
+    import { expectedOidcIdentity } from ${JSON.stringify(new URL('../../.github/scripts/verify-github-oidc-identity.mts', import.meta.url).href)};
+    const lock = JSON.parse(readFileSync(process.env.PUBLICATION_LOCK_PATH, 'utf8'));
+    globalThis.fetch = async (input) => {
+      const url = new URL(input);
+      if (url.hostname === 'actions.example') {
+        const claims = { ...expectedOidcIdentity(), aud: 'npm:registry.npmjs.org' };
+        return Response.json({ value: 'header.' + Buffer.from(JSON.stringify(claims)).toString('base64url') + '.signature' });
+      }
+      assert.equal(url.origin, 'https://registry.npmjs.org');
+      if (url.pathname.startsWith('/-/npm/v1/oidc/token/exchange/package/'))
+        return Response.json({ token: 'npm-issued-secret' }, { status: 201 });
+      if (process.env.OLIPHAUNT_TEST_PENDING_NPM === 'true') {
+        const carrier = lock.carriers.find(row => url.pathname === '/' + encodeURIComponent(row.name));
+        if (carrier) return Response.json({ name: carrier.name });
+        assert(lock.carriers.some(row => url.pathname === '/' + encodeURIComponent(row.name) + '/' + row.version), 'unexpected registry request');
+        return Response.json({ error: 'version absent' }, { status: 404 });
+      }
+      const carrier = lock.carriers.find(row => url.pathname === '/' + encodeURIComponent(row.name) + '/' + row.version);
+      assert(carrier, 'unexpected registry request');
+      return Response.json({ dist: { integrity: frozenNpmIntegrity(${JSON.stringify(root)} + carrier.artifacts[0].path) } });
+    };
+  `,
+  );
+  const workflow = Bun.YAML.parse(
+    readFileSync(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8'),
+  );
+  const step = workflow.jobs.publish.steps.find(
+    ({ id }) => id === 'verify_npm_trusted_authorization',
+  );
+  // Inject only the read-only registry fixture; execute the actual workflow command.
+  const command = step.run.replace(
+    'tools/release/npm-trusted-publisher-readiness.mts',
+    `--preload '${preload.replaceAll("'", "'\\''")}' tools/release/npm-trusted-publisher-readiness.mts`,
+  );
+  const verified = run(['-c', command]);
+  assert.equal(verified.status, 0, verified.stderr);
+  assert(verified.stdout.includes('1 immutable matching versions need no publication'));
+  const pending = run(['-c', command], { ...cliEnvironment, OLIPHAUNT_TEST_PENDING_NPM: 'true' });
+  assert.equal(pending.status, 0, pending.stderr);
+  assert(pending.stdout.includes('1 pending packages authorized'));
+  assert(!(pending.stdout + pending.stderr).includes('secret'));
+  const drifted = run(['-c', command], { ...cliEnvironment, RELEASE_HEAD_SHA: commit('HEAD') });
+  assert.notEqual(drifted.status, 0);
+  assert(drifted.stderr.includes('does not match'), drifted.stderr);
+});
+
+test('the publish workflow checks the complete frozen npm scope before any release mutation', () => {
+  const workflow = Bun.YAML.parse(
+    readFileSync(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8'),
+  );
+  const steps = workflow.jobs.publish.steps;
+  const preflight = steps.findIndex(({ id }) => id === 'verify_npm_trusted_authorization');
+  assert(preflight >= 0);
+  assert(steps[preflight].run.includes('--publication-lock "$PUBLICATION_LOCK_PATH"'));
+  assert.equal(steps[preflight].env.RELEASE_OPERATION, 'publish');
+  assert.equal(workflow.jobs.publish.environment, 'release-publish');
+  for (const id of [
+    'ensure_release_transport_ref',
+    'stage_github_releases',
+    'publish_github_assets',
+    'publish_registries',
+  ]) {
+    const mutation = steps.findIndex((step) => step.id === id);
+    assert(mutation > preflight, `${id} must follow npm authorization preflight`);
+  }
+});

@@ -1,0 +1,1100 @@
+diff --git a/src/backend/commands/collationcmds.c b/src/backend/commands/collationcmds.c
+index 8acbfbb..ee138a5 100644
+--- a/src/backend/commands/collationcmds.c
++++ b/src/backend/commands/collationcmds.c
+@@ -575,7 +575,12 @@ pg_collation_actual_version(PG_FUNCTION_ARGS)
+
+
+ /* will we use "locale -a" in pg_import_system_collations? */
+-#if !defined(WIN32)
++/*
++ * WASIX has no ambient POSIX userland, so there is no reliable "locale"
++ * utility to execute here. Treat libc locale enumeration as a runtime/tooling
++ * capability gap rather than routing through a fake shell.
++ */
++#if !defined(WIN32) && !defined(__wasi__)
+ #define READ_LOCALE_A_OUTPUT
+ #endif
+
+diff --git a/src/backend/main/main.c b/src/backend/main/main.c
+index 32e0e97..0bcb553 100644
+--- a/src/backend/main/main.c
++++ b/src/backend/main/main.c
+@@ -442,7 +442,7 @@ help(const char *progname)
+ static void
+ check_root(const char *progname)
+ {
+-#ifndef WIN32
++#if !defined(WIN32) && !defined(__wasi__)
+ 	if (geteuid() == 0)
+ 	{
+ 		write_stderr("\"root\" execution of the PostgreSQL server is not permitted.\n"
+@@ -466,7 +466,7 @@ check_root(const char *progname)
+ 					 progname);
+ 		exit(1);
+ 	}
+-#else							/* WIN32 */
++#elif defined(WIN32)
+ 	if (pgwin32_is_admin())
+ 	{
+ 		write_stderr("Execution of PostgreSQL by a user with administrative permissions is not\n"
+@@ -476,7 +476,14 @@ check_root(const char *progname)
+ 					 "more information on how to properly start the server.\n");
+ 		exit(1);
+ 	}
+-#endif							/* WIN32 */
++#else							/* __wasi__ */
++	/*
++	 * The pinned WASIX runtime reports uid/euid 0 inside the sandbox and does
++	 * not expose a CLI credential mapping. This is not host-root execution.
++	 * Keep this as an explicit runtime blocker marker and restore the native
++	 * guard when WASIX credentials reflect a real unprivileged user.
++	 */
++#endif
+ }
+
+ /*
+diff --git a/src/backend/postmaster/launch_backend.c b/src/backend/postmaster/launch_backend.c
+index ae94cc9..224caa8 100644
+--- a/src/backend/postmaster/launch_backend.c
++++ b/src/backend/postmaster/launch_backend.c
+@@ -31,6 +31,7 @@
+ 
+ #include "postgres.h"
+ 
++#include <fcntl.h>
+ #include <unistd.h>
+ 
+ #include "libpq/libpq-be.h"
+@@ -153,6 +154,12 @@ typedef struct
+ static void read_backend_variables(char *id, void **startup_data, size_t *startup_data_len);
+ static void restore_backend_variables(BackendParameters *param);
+ 
++#ifdef __wasi__
++static void wasix_read_exact_backend_file(int fd, void *buf, size_t len,
++										  const char *id,
++										  const char *description);
++#endif
++
+ static bool save_backend_variables(BackendParameters *param, int child_slot,
+ 								   ClientSocket *client_sock,
+ #ifdef WIN32
+@@ -297,6 +304,37 @@ postmaster_child_launch(BackendType child_type, int child_slot,
+ #ifdef EXEC_BACKEND
+ #ifndef WIN32
+ 
++#ifdef __wasi__
++static void
++wasix_read_exact_backend_file(int fd, void *buf, size_t len,
++							  const char *id, const char *description)
++{
++	char	   *pos = buf;
++	size_t		done = 0;
++
++	while (done < len)
++	{
++		ssize_t		nread = read(fd, pos + done, len - done);
++
++		if (nread < 0)
++		{
++			if (errno == EINTR)
++				continue;
++			write_stderr("could not read %s from backend variables file \"%s\": %m\n",
++						 description, id);
++			exit(1);
++		}
++		if (nread == 0)
++		{
++			write_stderr("could not read %s from backend variables file \"%s\": expected %zu bytes, got %zu\n",
++						 description, id, len, done);
++			exit(1);
++		}
++		done += nread;
++	}
++}
++#endif
++
+ /*
+  * internal_forkexec non-win32 implementation
+  *
+@@ -379,23 +417,50 @@ internal_forkexec(const char *child_kind, int child_slot,
+ 	}
+ 
+ 	/* set up argv properly */
++#ifdef __wasi__
++	/*
++	 * The re-execed WASIX child uses argv[0] to rediscover installation paths.
++	 * Pass the already-validated absolute backend path instead of relying on a
++	 * PATH search inside the child process.
++	 */
++	argv[0] = postgres_exec_path;
++#else
+ 	argv[0] = "postgres";
++#endif
+ 	snprintf(forkav, MAXPGPATH, "--forkchild=%s", child_kind);
+ 	argv[1] = forkav;
+ 	/* Insert temp file name after --forkchild argument */
+ 	argv[2] = tmpfilename;
+ 	argv[3] = NULL;
+ 
++	/*
++	 * WASIX supports the EXEC_BACKEND handoff through vfork-style
++	 * proc_fork_env plus proc_exec.
++	 */
++#ifdef __wasi__
++	if ((pid = vfork()) == 0)
++#else
+ 	/* Fire off execv in child */
+ 	if ((pid = fork_process()) == 0)
++#endif
+ 	{
+ 		if (execv(postgres_exec_path, argv) < 0)
+ 		{
++#ifdef __wasi__
++			/*
++			 * A vfork child still shares the parent's address space.  PostgreSQL
++			 * error reporting and exit handlers are therefore unsafe here: either
++			 * can mutate or flush parent-owned state.  Use shell-compatible exec
++			 * failure statuses and terminate without running process cleanup.
++			 */
++			_exit(errno == ENOENT ? 127 : 126);
++#else
+ 			ereport(LOG,
+ 					(errmsg("could not execute server process \"%s\": %m",
+ 							postgres_exec_path)));
+ 			/* We're already in the child process here, can't return */
+ 			exit(1);
++#endif
+ 		}
+ 	}
+ 
+@@ -904,7 +969,50 @@ read_backend_variables(char *id, void **startup_data, size_t *startup_data_len)
+ {
+ 	BackendParameters param;
+ 
+-#ifndef WIN32
++#if defined(__wasi__)
++	int			fd;
++
++	fd = open(id, O_RDONLY | PG_BINARY, 0);
++	if (fd < 0)
++	{
++		write_stderr("could not open backend variables file \"%s\": %m\n", id);
++		exit(1);
++	}
++
++	memset(&param, 0, sizeof(param));
++
++	/*
++	 * The serialized non-Windows EXEC_BACKEND handoff contains the fixed
++	 * header up to startup_data, not sizeof(BackendParameters).  On wasm32 the
++	 * struct has trailing alignment padding after the flexible array member,
++	 * so sizeof(BackendParameters) is larger than the bytes written by the
++	 * parent.
++	 */
++	wasix_read_exact_backend_file(fd, &param, SizeOfBackendParameters(0),
++								  id, "header");
++
++	/* read startup data */
++	*startup_data_len = param.startup_data_len;
++	if (param.startup_data_len > 0)
++	{
++		*startup_data = palloc(*startup_data_len);
++		wasix_read_exact_backend_file(fd, *startup_data, *startup_data_len,
++									  id, "startup data");
++	}
++	else
++		*startup_data = NULL;
++
++	if (close(fd) != 0)
++	{
++		write_stderr("could not close backend variables file \"%s\": %m\n", id);
++		exit(1);
++	}
++	if (unlink(id) != 0)
++	{
++		write_stderr("could not remove file \"%s\": %m\n", id);
++		exit(1);
++	}
++#elif !defined(WIN32)
+ 	/* Non-win32 implementation reads from file */
+ 	FILE	   *fp;
+ 
+diff --git a/src/backend/utils/misc/guc_tables.c b/src/backend/utils/misc/guc_tables.c
+index 6b82a23..79b27cc 100644
+--- a/src/backend/utils/misc/guc_tables.c
++++ b/src/backend/utils/misc/guc_tables.c
+@@ -448,7 +448,7 @@ static const struct config_enum_entry shared_memory_options[] = {
+ #ifndef WIN32
+ 	{"sysv", SHMEM_TYPE_SYSV, false},
+ #endif
+-#ifndef EXEC_BACKEND
++#if !defined(EXEC_BACKEND) || defined(__wasi__)
+ 	{"mmap", SHMEM_TYPE_MMAP, false},
+ #endif
+ #ifdef WIN32
+diff --git a/src/bin/initdb/initdb.c b/src/bin/initdb/initdb.c
+index 62bbd08..f0b3e5f 100644
+--- a/src/bin/initdb/initdb.c
++++ b/src/bin/initdb/initdb.c
+@@ -51,6 +51,11 @@
+ #include <dirent.h>
+ #include <fcntl.h>
+ #include <netdb.h>
++#ifdef __wasi__
++#include <wasi/api_wasix.h>
++#undef stdin
++#undef stdout
++#endif
+ #include <sys/socket.h>
+ #include <sys/stat.h>
+ #ifdef USE_ICU
+@@ -222,11 +227,16 @@ static bool authwarning = false;
+  * but here it is more convenient to pass it as an environment variable
+  * (no quoting to worry about).
+  */
++#ifndef __wasi__
+ static const char *const boot_options = "-F -c log_checkpoints=false";
+ static const char *const backend_options = "--single -F -O -j -c search_path=pg_catalog -c exit_on_error=true -c log_checkpoints=false";
++#endif
+
+ /* Additional switches to pass to backend (either boot or standalone) */
+ static char *extra_options = "";
++#ifdef __wasi__
++static bool debug_discard_caches = false;
++#endif
+
+ static const char *const subdirs[] = {
+ 	"global",
+@@ -267,7 +277,9 @@ static char **replace_guc_value(char **lines,
+ static bool guc_value_requires_quotes(const char *guc_value);
+ static char **readfile(const char *path);
+ static void writefile(char *path, char **lines);
++#ifndef __wasi__
+ static FILE *popen_check(const char *command, const char *mode);
++#endif
+ static char *get_id(void);
+ static int	get_encoding_id(const char *encoding_name);
+ static void set_input(char **dest, const char *filename);
+@@ -313,11 +325,34 @@ void		create_xlog_or_symlink(void);
+ void		warn_on_mount_point(int error);
+ void		initialize_data_directory(void);
+
++#ifdef __wasi__
++static void wasix_add_boot_options(char **argv, int *argc);
++static void wasix_add_backend_options(char **argv, int *argc);
++static char *wasix_join_argv_lines(char *const argv[]);
++static FILE *wasix_spawn_backend_writer(char *const argv[]);
++static int	wasix_close_backend_writer(FILE *cmdfd);
++static int	wasix_run_argv_silent(char *const argv[]);
++#endif
++
+ /*
+  * macros for running pipes to postgres
+  */
+ #define PG_CMD_DECL		FILE *cmdfd
+
++#ifdef __wasi__
++#define PG_CMD_OPEN_ARGV(argv) \
++do { \
++	cmdfd = wasix_spawn_backend_writer(argv); \
++	if (cmdfd == NULL) \
++		exit(1); /* message already printed by wasix_spawn_backend_writer */ \
++} while (0)
++
++#define PG_CMD_CLOSE() \
++do { \
++	if (wasix_close_backend_writer(cmdfd)) \
++		exit(1); /* message already printed by wasix_close_backend_writer */ \
++} while (0)
++#else
+ #define PG_CMD_OPEN(cmd) \
+ do { \
+ 	cmdfd = popen_check(cmd, "w"); \
+@@ -330,6 +365,7 @@ do { \
+ 	if (pclose_check(cmdfd)) \
+ 		exit(1); /* message already printed by pclose_check */ \
+ } while (0)
++#endif
+
+ #define PG_CMD_PUTS(line) \
+ do { \
+@@ -741,6 +777,202 @@ writefile(char *path, char **lines)
+ /*
+  * Open a subcommand with suitable error messaging
+  */
++#ifdef __wasi__
++static __wasi_pid_t wasix_backend_writer_pid = -1;
++
++static void
++wasix_add_boot_options(char **argv, int *argc)
++{
++	argv[(*argc)++] = "-F";
++	argv[(*argc)++] = "-c";
++	argv[(*argc)++] = "log_checkpoints=false";
++	if (debug_discard_caches)
++	{
++		argv[(*argc)++] = "-c";
++		argv[(*argc)++] = "debug_discard_caches=1";
++	}
++}
++
++static void
++wasix_add_backend_options(char **argv, int *argc)
++{
++	argv[(*argc)++] = "--single";
++	argv[(*argc)++] = "-F";
++	argv[(*argc)++] = "-O";
++	argv[(*argc)++] = "-j";
++	argv[(*argc)++] = "-c";
++	argv[(*argc)++] = "search_path=pg_catalog";
++	argv[(*argc)++] = "-c";
++	argv[(*argc)++] = "exit_on_error=true";
++	argv[(*argc)++] = "-c";
++	argv[(*argc)++] = "log_checkpoints=false";
++	if (debug_discard_caches)
++	{
++		argv[(*argc)++] = "-c";
++		argv[(*argc)++] = "debug_discard_caches=1";
++	}
++}
++
++static char *
++wasix_join_argv_lines(char *const argv[])
++{
++	size_t		len = 1;
++	char	   *args;
++	char	   *pos;
++	int			i;
++
++	for (i = 0; argv[i] != NULL; i++)
++		len += strlen(argv[i]) + 1;
++
++	args = pg_malloc(len);
++	pos = args;
++	for (i = 0; argv[i] != NULL; i++)
++	{
++		size_t		arglen = strlen(argv[i]);
++
++		if (i > 0)
++			*pos++ = '\n';
++		memcpy(pos, argv[i], arglen);
++		pos += arglen;
++	}
++	*pos = '\0';
++
++	return args;
++}
++
++static int
++wasix_wait_for_pid(__wasi_pid_t pid, const char *command)
++{
++	__wasi_option_pid_t join_pid;
++	__wasi_join_status_t join_status;
++	__wasi_errno_t wasi_rc;
++
++	join_pid.tag = 1;
++	join_pid.u.some = pid;
++	wasi_rc = __wasi_proc_join(&join_pid, 0, &join_status);
++	if (wasi_rc != 0)
++	{
++		pg_log_error("could not wait for command \"%s\": WASIX proc_join failed with errno %d",
++					 command, wasi_rc);
++		return -1;
++	}
++
++	if (join_status.tag != __WASI_JOIN_STATUS_TYPE_EXIT_NORMAL)
++	{
++		pg_log_error("command \"%s\" did not exit normally under WASIX", command);
++		return -1;
++	}
++
++	if (join_status.u.exit_normal != 0)
++	{
++		pg_log_error("command \"%s\" exited with status %d",
++					 command, join_status.u.exit_normal);
++		return join_status.u.exit_normal;
++	}
++
++	return 0;
++}
++
++static FILE *
++wasix_spawn_backend_writer(char *const argv[])
++{
++	__wasi_process_handles_t handles;
++	__wasi_errno_t wasi_rc;
++	char	   *args;
++	FILE	   *stream;
++
++	if (wasix_backend_writer_pid != -1)
++	{
++		pg_log_error("internal error: WASIX backend writer is already active");
++		return NULL;
++	}
++
++	args = wasix_join_argv_lines(argv);
++	wasi_rc = __wasi_proc_spawn(argv[0],
++								0,
++								args,
++								"",
++								__WASI_STDIO_MODE_PIPED,
++								__WASI_STDIO_MODE_NULL,
++								__WASI_STDIO_MODE_INHERIT,
++								".",
++								&handles);
++	pfree(args);
++	if (wasi_rc != 0)
++	{
++		pg_log_error("could not execute command \"%s\": WASIX proc_spawn failed with errno %d",
++					 argv[0], wasi_rc);
++		return NULL;
++	}
++
++	if (handles.stdin.tag == 0)
++	{
++		pg_log_error("command \"%s\" did not return a stdin pipe", argv[0]);
++		(void) wasix_wait_for_pid(handles.pid, argv[0]);
++		return NULL;
++	}
++
++	stream = fdopen(handles.stdin.u.some, "w");
++	if (stream == NULL)
++	{
++		pg_log_error("could not open pipe to command \"%s\": %m", argv[0]);
++		close(handles.stdin.u.some);
++		(void) wasix_wait_for_pid(handles.pid, argv[0]);
++		return NULL;
++	}
++
++	wasix_backend_writer_pid = handles.pid;
++	return stream;
++}
++
++static int
++wasix_close_backend_writer(FILE *cmdfd)
++{
++	int			fclose_rc;
++	int			wait_rc;
++	__wasi_pid_t pid = wasix_backend_writer_pid;
++
++	wasix_backend_writer_pid = -1;
++	fclose_rc = fclose(cmdfd);
++	wait_rc = wasix_wait_for_pid(pid, backend_exec);
++
++	if (fclose_rc != 0)
++	{
++		pg_log_error("could not close pipe to command \"%s\": %m", backend_exec);
++		return -1;
++	}
++
++	return wait_rc;
++}
++
++static int
++wasix_run_argv_silent(char *const argv[])
++{
++	__wasi_process_handles_t handles;
++	__wasi_errno_t wasi_rc;
++	char	   *args;
++
++	args = wasix_join_argv_lines(argv);
++	wasi_rc = __wasi_proc_spawn(argv[0],
++								0,
++								args,
++								"",
++								__WASI_STDIO_MODE_NULL,
++								__WASI_STDIO_MODE_NULL,
++								__WASI_STDIO_MODE_NULL,
++								".",
++								&handles);
++	pfree(args);
++	if (wasi_rc != 0)
++	{
++		pg_log_error("could not execute command \"%s\": WASIX proc_spawn failed with errno %d",
++					 argv[0], wasi_rc);
++		return -1;
++	}
++
++	return wasix_wait_for_pid(handles.pid, argv[0]);
++}
++#else
+ static FILE *
+ popen_check(const char *command, const char *mode)
+ {
+@@ -753,6 +985,7 @@ popen_check(const char *command, const char *mode)
+ 		pg_log_error("could not execute command \"%s\": %m", command);
+ 	return cmdfd;
+ }
++#endif
+
+ /*
+  * clean up any files we created on failure
+@@ -816,13 +1049,20 @@ get_id(void)
+ {
+ 	const char *username;
+
+-#ifndef WIN32
++#if !defined(WIN32) && !defined(__wasi__)
+ 	if (geteuid() == 0)			/* 0 is root's uid */
+ 	{
+ 		pg_log_error("cannot be run as root");
+ 		pg_log_error_hint("Please log in (using, e.g., \"su\") as the (unprivileged) user that will own the server process.");
+ 		exit(1);
+ 	}
++#elif defined(__wasi__)
++	/*
++	 * The pinned WASIX runtime currently reports uid/euid 0 inside the
++	 * sandbox and does not provide a CLI uid mapping.  This is not host root
++	 * execution; restore the native guard when the runtime exposes real
++	 * process credentials.
++	 */
+ #endif
+
+ 	username = get_user_name_or_exit(progname);
+@@ -1220,11 +1460,72 @@ test_config_settings(void)
+ static bool
+ test_specific_config_settings(int test_conns, int test_av_slots, int test_buffs)
+ {
++#ifndef __wasi__
+ 	PQExpBufferData cmd;
++#endif
+ 	_stringlist *gnames,
+ 			   *gvalues;
+ 	int			status;
+
++#ifdef __wasi__
++	char		max_connections_arg[64];
++	char		autovacuum_worker_slots_arg[64];
++	char		shared_buffers_arg[64];
++	char		dsm_arg[128];
++	int			extra_gucs = 0;
++	int			argc = 0;
++	int			guc_index = 0;
++	char	  **argv;
++	char	  **guc_args;
++
++	for (gnames = extra_guc_names; gnames != NULL; gnames = gnames->next)
++		extra_gucs++;
++
++	argv = pg_malloc0(sizeof(char *) * (34 + extra_gucs * 2));
++	guc_args = pg_malloc0(sizeof(char *) * (extra_gucs + 1));
++
++	snprintf(max_connections_arg, sizeof(max_connections_arg),
++			 "max_connections=%d", test_conns);
++	snprintf(autovacuum_worker_slots_arg, sizeof(autovacuum_worker_slots_arg),
++			 "autovacuum_worker_slots=%d", test_av_slots);
++	snprintf(shared_buffers_arg, sizeof(shared_buffers_arg),
++			 "shared_buffers=%d", test_buffs);
++	snprintf(dsm_arg, sizeof(dsm_arg),
++			 "dynamic_shared_memory_type=%s", dynamic_shared_memory_type);
++
++	argv[argc++] = backend_exec;
++	argv[argc++] = "--check";
++	argv[argc++] = "-D";
++	argv[argc++] = pg_data;
++	wasix_add_boot_options(argv, &argc);
++	argv[argc++] = "-c";
++	argv[argc++] = max_connections_arg;
++	argv[argc++] = "-c";
++	argv[argc++] = autovacuum_worker_slots_arg;
++	argv[argc++] = "-c";
++	argv[argc++] = shared_buffers_arg;
++	argv[argc++] = "-c";
++	argv[argc++] = dsm_arg;
++
++	for (gnames = extra_guc_names, gvalues = extra_guc_values;
++		 gnames != NULL;
++		 gnames = gnames->next, gvalues = gvalues->next)
++	{
++		guc_args[guc_index] = psprintf("%s=%s", gnames->str, gvalues->str);
++		argv[argc++] = "-c";
++		argv[argc++] = guc_args[guc_index++];
++	}
++	argv[argc] = NULL;
++
++	status = wasix_run_argv_silent(argv);
++
++	for (guc_index = 0; guc_args[guc_index] != NULL; guc_index++)
++		pfree(guc_args[guc_index]);
++	pfree(guc_args);
++	pfree(argv);
++
++	return (status == 0);
++#else
+ 	initPQExpBuffer(&cmd);
+
+ 	/* Set up the test postmaster invocation */
+@@ -1257,6 +1558,7 @@ test_specific_config_settings(int test_conns, int test_av_slots, int test_buffs)
+ 	termPQExpBuffer(&cmd);
+
+ 	return (status == 0);
++#endif
+ }
+
+ /*
+@@ -1545,7 +1847,9 @@ static void
+ bootstrap_template1(void)
+ {
+ 	PG_CMD_DECL;
++#ifndef __wasi__
+ 	PQExpBufferData cmd;
++#endif
+ 	char	  **line;
+ 	char	  **bki_lines;
+ 	char		headerline[MAXPGPATH];
+@@ -1607,6 +1911,33 @@ bootstrap_template1(void)
+ 	/* Also ensure backend isn't confused by this environment var: */
+ 	unsetenv("PGCLIENTENCODING");
+
++#ifdef __wasi__
++	{
++		char	   *argv[32];
++		int			argc = 0;
++		char		xarg[32];
++
++		snprintf(xarg, sizeof(xarg), "%d", wal_segment_size_mb * (1024 * 1024));
++
++		argv[argc++] = backend_exec;
++		argv[argc++] = "--boot";
++		argv[argc++] = "-D";
++		argv[argc++] = pg_data;
++		wasix_add_boot_options(argv, &argc);
++		argv[argc++] = "-X";
++		argv[argc++] = xarg;
++		if (data_checksums)
++			argv[argc++] = "-k";
++		if (debug)
++		{
++			argv[argc++] = "-d";
++			argv[argc++] = "5";
++		}
++		argv[argc] = NULL;
++
++		PG_CMD_OPEN_ARGV(argv);
++	}
++#else
+ 	initPQExpBuffer(&cmd);
+
+ 	printfPQExpBuffer(&cmd, "\"%s\" --boot %s %s", backend_exec, boot_options, extra_options);
+@@ -1618,6 +1949,7 @@ bootstrap_template1(void)
+
+
+ 	PG_CMD_OPEN(cmd.data);
++#endif
+
+ 	for (line = bki_lines; *line != NULL; line++)
+ 	{
+@@ -1627,7 +1959,9 @@ bootstrap_template1(void)
+
+ 	PG_CMD_CLOSE();
+
++#ifndef __wasi__
+ 	termPQExpBuffer(&cmd);
++#endif
+ 	free(bki_lines);
+
+ 	check_ok();
+@@ -3044,7 +3378,9 @@ void
+ initialize_data_directory(void)
+ {
+ 	PG_CMD_DECL;
++#ifndef __wasi__
+ 	PQExpBufferData cmd;
++#endif
+ 	int			i;
+
+ 	setup_signals();
+@@ -3108,11 +3444,27 @@ initialize_data_directory(void)
+ 	fputs(_("performing post-bootstrap initialization ... "), stdout);
+ 	fflush(stdout);
+
++#ifdef __wasi__
++	{
++		char	   *argv[32];
++		int			argc = 0;
++
++		argv[argc++] = backend_exec;
++		wasix_add_backend_options(argv, &argc);
++		argv[argc++] = "-D";
++		argv[argc++] = pg_data;
++		argv[argc++] = "template1";
++		argv[argc] = NULL;
++
++		PG_CMD_OPEN_ARGV(argv);
++	}
++#else
+ 	initPQExpBuffer(&cmd);
+ 	printfPQExpBuffer(&cmd, "\"%s\" %s %s template1 >%s",
+ 					  backend_exec, backend_options, extra_options, DEVNULL);
+
+ 	PG_CMD_OPEN(cmd.data);
++#endif
+
+ 	setup_auth(cmdfd);
+
+@@ -3148,7 +3500,9 @@ initialize_data_directory(void)
+ 	make_postgres(cmdfd);
+
+ 	PG_CMD_CLOSE();
++#ifndef __wasi__
+ 	termPQExpBuffer(&cmd);
++#endif
+
+ 	check_ok();
+ }
+@@ -3363,6 +3717,9 @@ main(int argc, char *argv[])
+ 				extra_options = psprintf("%s %s",
+ 										 extra_options,
+ 										 "-c debug_discard_caches=1");
++#ifdef __wasi__
++				debug_discard_caches = true;
++#endif
+ 				break;
+ 			case 15:
+ 				if (strcmp(optarg, "builtin") == 0)
+diff --git a/src/common/exec.c b/src/common/exec.c
+index 8b690a1..e9dac8b 100644
+--- a/src/common/exec.c
++++ b/src/common/exec.c
+@@ -30,6 +30,10 @@
+ #endif
+
+ #include <signal.h>
++#ifdef __wasi__
++#include <wasi/api_wasix.h>
++#undef stdout
++#endif
+ #include <sys/stat.h>
+ #include <sys/wait.h>
+ #include <unistd.h>
+@@ -71,6 +75,11 @@ extern int	_CRT_glob = 0;		/* 0 turns off globbing; 1 turns it on */
+
+ static int	normalize_exec_path(char *path);
+ static char *pg_realpath(const char *fname);
++#ifdef __wasi__
++static char *wasix_read_first_line_from_argv(char *const argv[]);
++static char *wasix_join_argv_lines(char *const argv[]);
++static int	wasix_join_process(__wasi_pid_t pid, const char *command);
++#endif
+
+ #ifdef WIN32
+ static BOOL GetTokenUser(HANDLE hToken, PTOKEN_USER *ppTokenUser);
+@@ -310,7 +319,9 @@ int
+ find_other_exec(const char *argv0, const char *target,
+ 				const char *versionstr, char *retpath)
+ {
++#ifndef __wasi__
+ 	char		cmd[MAXPGPATH];
++#endif
+ 	char	   *line;
+
+ 	if (find_my_exec(argv0, retpath) < 0)
+@@ -327,10 +338,17 @@ find_other_exec(const char *argv0, const char *target,
+ 	if (validate_exec(retpath) != 0)
+ 		return -1;
+
+-	snprintf(cmd, sizeof(cmd), "\"%s\" -V", retpath);
++#ifdef __wasi__
++	{
++		char	   *argv[] = {retpath, "-V", NULL};
+
++		line = wasix_read_first_line_from_argv(argv);
++	}
++#else
++	snprintf(cmd, sizeof(cmd), "\"%s\" -V", retpath);
+ 	if ((line = pipe_read_line(cmd)) == NULL)
+ 		return -1;
++#endif
+
+ 	if (strcmp(line, versionstr) != 0)
+ 	{
+@@ -342,6 +360,191 @@ find_other_exec(const char *argv0, const char *target,
+ 	return 0;
+ }
+
++#ifdef __wasi__
++/*
++ * WASIX supports real subprocesses and pipes, but its libc popen() currently
++ * routes through /bin/sh.  PostgreSQL owns this argv exactly, so keep the
++ * upstream validation behavior while avoiding a shell dependency.
++ */
++static char *
++wasix_read_first_line_from_argv(char *const argv[])
++{
++	__wasi_process_handles_t handles;
++	__wasi_errno_t wasi_rc;
++	char	   *args;
++	char	   *line = NULL;
++	size_t		line_size = 0;
++	size_t		line_len = 0;
++	char		ch;
++	ssize_t		nread;
++
++	args = wasix_join_argv_lines(argv);
++	if (args == NULL)
++		return NULL;
++
++	wasi_rc = __wasi_proc_spawn(argv[0],
++								0,
++								args,
++								"",
++								__WASI_STDIO_MODE_NULL,
++								__WASI_STDIO_MODE_PIPED,
++								__WASI_STDIO_MODE_NULL,
++								".",
++								&handles);
++	free(args);
++	if (wasi_rc != 0)
++	{
++		log_error(errcode(ERRCODE_SYSTEM_ERROR),
++				  _("could not execute command \"%s\": WASIX proc_spawn failed with errno %d"),
++				  argv[0], wasi_rc);
++		return NULL;
++	}
++
++	if (handles.stdout.tag == 0)
++	{
++		log_error(errcode(ERRCODE_SYSTEM_ERROR),
++				  _("command \"%s\" did not return a stdout pipe"), argv[0]);
++		(void) wasix_join_process(handles.pid, argv[0]);
++		return NULL;
++	}
++
++	for (;;)
++	{
++		nread = read(handles.stdout.u.some, &ch, 1);
++		if (nread < 0 && errno == EINTR)
++			continue;
++		if (nread != 1)
++			break;
++		if (line_len + 2 >= line_size)
++		{
++			size_t		new_size = line_size == 0 ? 128 : line_size * 2;
++#ifndef FRONTEND
++			char	   *new_line = line == NULL ? palloc(new_size) : repalloc(line, new_size);
++#else
++			char	   *new_line = realloc(line, new_size);
++
++			if (new_line == NULL)
++			{
++				free(line);
++				line = NULL;
++				log_error(errcode(ERRCODE_OUT_OF_MEMORY),
++						  _("out of memory"));
++				break;
++			}
++#endif
++			line = new_line;
++			line_size = new_size;
++		}
++		line[line_len++] = ch;
++		if (ch == '\n')
++			break;
++	}
++	close(handles.stdout.u.some);
++
++	if (nread < 0)
++	{
++		log_error(errcode_for_file_access(),
++				  _("could not read from command \"%s\": %m"), argv[0]);
++#ifndef FRONTEND
++		pfree(line);
++#else
++		free(line);
++#endif
++		line = NULL;
++	}
++	else if (line == NULL)
++	{
++		log_error(errcode(ERRCODE_NO_DATA),
++				  _("no data was returned by command \"%s\""), argv[0]);
++	}
++	else
++	{
++		line[line_len] = '\0';
++	}
++
++	if (wasix_join_process(handles.pid, argv[0]) != 0 && line != NULL)
++	{
++#ifndef FRONTEND
++		pfree(line);
++#else
++		free(line);
++#endif
++		line = NULL;
++	}
++
++	return line;
++}
++
++static char *
++wasix_join_argv_lines(char *const argv[])
++{
++	size_t		len = 1;
++	char	   *args;
++	char	   *pos;
++	int			i;
++
++	for (i = 0; argv[i] != NULL; i++)
++		len += strlen(argv[i]) + 1;
++
++	args = malloc(len);
++	if (args == NULL)
++	{
++		log_error(errcode(ERRCODE_OUT_OF_MEMORY), _("out of memory"));
++		return NULL;
++	}
++
++	pos = args;
++	for (i = 0; argv[i] != NULL; i++)
++	{
++		size_t		arglen = strlen(argv[i]);
++
++		if (i > 0)
++			*pos++ = '\n';
++		memcpy(pos, argv[i], arglen);
++		pos += arglen;
++	}
++	*pos = '\0';
++
++	return args;
++}
++
++static int
++wasix_join_process(__wasi_pid_t pid, const char *command)
++{
++	__wasi_option_pid_t join_pid;
++	__wasi_join_status_t join_status;
++	__wasi_errno_t wasi_rc;
++
++	join_pid.tag = 1;
++	join_pid.u.some = pid;
++	wasi_rc = __wasi_proc_join(&join_pid, 0, &join_status);
++	if (wasi_rc != 0)
++	{
++		log_error(errcode(ERRCODE_SYSTEM_ERROR),
++				  _("could not wait for command \"%s\": WASIX proc_join failed with errno %d"),
++				  command, wasi_rc);
++		return -1;
++	}
++
++	if (join_status.tag != __WASI_JOIN_STATUS_TYPE_EXIT_NORMAL)
++	{
++		log_error(errcode(ERRCODE_SYSTEM_ERROR),
++				  _("command \"%s\" did not exit normally under WASIX"), command);
++		return -1;
++	}
++
++	if (join_status.u.exit_normal != 0)
++	{
++		log_error(errcode(ERRCODE_SYSTEM_ERROR),
++				  _("command \"%s\" exited with status %d"),
++				  command, join_status.u.exit_normal);
++		return join_status.u.exit_normal;
++	}
++
++	return 0;
++}
++#endif
++
+
+ /*
+  * Execute a command in a pipe and read the first line from it. The returned
+diff --git a/src/common/file_utils.c b/src/common/file_utils.c
+index 7b62687..c7dd9d7 100644
+--- a/src/common/file_utils.c
++++ b/src/common/file_utils.c
+@@ -557,7 +557,7 @@ get_dirent_type(const char *path,
+ 	 * interface is present, sometimes the type is unknown, depending on the
+ 	 * filesystem.
+ 	 */
+-#if defined(DT_REG) && defined(DT_DIR) && defined(DT_LNK)
++#if !defined(__wasi__) && defined(DT_REG) && defined(DT_DIR) && defined(DT_LNK)
+ 	if (de->d_type == DT_REG)
+ 		result = PGFILETYPE_REG;
+ 	else if (de->d_type == DT_DIR)
+@@ -567,6 +568,13 @@ get_dirent_type(const char *path,
+ 	else
+ 		result = PGFILETYPE_UNKNOWN;
+ #else
++#ifdef __wasi__
++	/*
++	 * WASIX exposes d_type constants, but the host-backed directory entries
++	 * observed by this port are not reliable enough for PostgreSQL's sync
++	 * traversal.  Fall back to lstat(), which is the existing POSIX-safe path.
++	 */
++#endif
+ 	result = PGFILETYPE_UNKNOWN;
+ #endif
+
+diff --git a/src/common/username.c b/src/common/username.c
+index ae5f02d..aed3d1d 100644
+--- a/src/common/username.c
++++ b/src/common/username.c
+@@ -30,7 +30,17 @@
+ const char *
+ get_user_name(char **errstr)
+ {
+-#ifndef WIN32
++#ifdef __wasi__
++	const char *username;
++
++	*errstr = NULL;
++	username = getenv("USER");
++	if (username == NULL || username[0] == '\0')
++		username = getenv("LOGNAME");
++	if (username == NULL || username[0] == '\0')
++		username = "wasix";
++	return username;
++#elif !defined(WIN32)
+ 	struct passwd *pw;
+ 	uid_t		user_id = geteuid();
+
+diff --git a/src/include/pg_config_manual.h b/src/include/pg_config_manual.h
+index 125d3eb..eb574b8 100644
+--- a/src/include/pg_config_manual.h
++++ b/src/include/pg_config_manual.h
+@@ -122,7 +122,7 @@
+  * fork()).  On other platforms, it's only useful for verifying those
+  * otherwise Windows-specific code paths.
+  */
+-#if defined(WIN32) && !defined(__CYGWIN__)
++#if (defined(WIN32) && !defined(__CYGWIN__)) || defined(__wasi__)
+ #define EXEC_BACKEND
+ #endif
+
+diff --git a/src/include/port.h b/src/include/port.h
+index caf65ce..466d204 100644
+--- a/src/include/port.h
++++ b/src/include/port.h
+@@ -556,7 +556,14 @@ extern int	wait_result_to_exit_code(int exit_status);
+ #define HAVE_POLL 1
+ #define HAVE_POLL_H 1
+ #define HAVE_READLINK 1
++/*
++ * WASIX libc exposes setsid(), but the pinned Wasmer runtime returns EINVAL
++ * for spawned PostgreSQL children.  Do not advertise POSIX session semantics
++ * until the runtime can actually provide them.
++ */
++#ifndef __wasi__
+ #define HAVE_SETSID 1
++#endif
+ #define HAVE_SHM_OPEN 1
+ #define HAVE_SYMLINK 1
+ #endif
+diff --git a/src/include/storage/pg_shmem.h b/src/include/storage/pg_shmem.h
+index 5f7d4b8..a7a2f42 100644
+--- a/src/include/storage/pg_shmem.h
++++ b/src/include/storage/pg_shmem.h
+@@ -72,7 +72,9 @@ extern PGDLLIMPORT void *ShmemProtectiveRegion;
+ #endif
+ extern PGDLLIMPORT void *UsedShmemSegAddr;
+
+-#if !defined(WIN32) && !defined(EXEC_BACKEND)
++#if defined(__wasi__)
++#define DEFAULT_SHARED_MEMORY_TYPE SHMEM_TYPE_MMAP
++#elif !defined(WIN32) && !defined(EXEC_BACKEND)
+ #define DEFAULT_SHARED_MEMORY_TYPE SHMEM_TYPE_MMAP
+ #elif !defined(WIN32)
+ #define DEFAULT_SHARED_MEMORY_TYPE SHMEM_TYPE_SYSV

@@ -1,18 +1,22 @@
 import { RootProvider } from 'fumadocs-ui/provider/next';
 import './global.css';
-import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
 import type { Metadata } from 'next';
+import { DM_Sans, Geist_Mono, Instrument_Serif } from 'next/font/google';
 
-const plexSans = IBM_Plex_Sans({
+const sans = DM_Sans({
   subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
   variable: '--font-oliphaunt-sans',
 });
 
-const plexMono = IBM_Plex_Mono({
+const mono = Geist_Mono({
   subsets: ['latin'],
-  weight: ['400', '500', '600'],
   variable: '--font-oliphaunt-mono',
+});
+
+const serif = Instrument_Serif({
+  subsets: ['latin'],
+  weight: '400',
+  variable: '--font-oliphaunt-serif',
 });
 
 export const metadata: Metadata = {
@@ -21,8 +25,7 @@ export const metadata: Metadata = {
     default: 'Oliphaunt Docs',
     template: '%s | Oliphaunt',
   },
-  description:
-    'Embedded PostgreSQL SDKs for Rust, Swift, Kotlin, React Native, TypeScript, and WASM apps.',
+  description: 'Embedded PostgreSQL SDKs for native, Rust WASIX, and WASIX TypeScript apps.',
   icons: {
     icon: [{ url: '/img/favicon.svg', type: 'image/svg+xml' }],
     shortcut: '/img/favicon.svg',
@@ -33,11 +36,21 @@ export default function Layout({ children }: LayoutProps<'/'>) {
   return (
     <html
       lang="en"
-      className={`${plexSans.variable} ${plexMono.variable}`}
+      className={`${sans.variable} ${mono.variable} ${serif.variable}`}
       suppressHydrationWarning
     >
-      <body className="flex flex-col min-h-screen">
-        <RootProvider>{children}</RootProvider>
+      <body className="flex flex-col min-h-screen antialiased">
+        <RootProvider
+          theme={{ defaultTheme: 'dark' }}
+          search={{
+            options: {
+              type: 'static',
+              api: `${process.env.OLIPHAUNT_DOCS_BASE_PATH || ''}/api/search`,
+            },
+          }}
+        >
+          {children}
+        </RootProvider>
       </body>
     </html>
   );

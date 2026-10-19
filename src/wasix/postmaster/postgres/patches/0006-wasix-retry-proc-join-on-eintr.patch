@@ -1,0 +1,50 @@
+diff --git a/src/bin/initdb/initdb.c b/src/bin/initdb/initdb.c
+--- a/src/bin/initdb/initdb.c
++++ b/src/bin/initdb/initdb.c
+@@ -848,9 +848,18 @@ wasix_wait_for_pid(__wasi_pid_t pid, const char *command)
+ 	__wasi_join_status_t join_status;
+ 	__wasi_errno_t wasi_rc;
+ 
+-	join_pid.tag = 1;
+-	join_pid.u.some = pid;
+-	wasi_rc = __wasi_proc_join(&join_pid, 0, &join_status);
++	/*
++	 * proc_join uses join_pid as both input and output and clears it before
++	 * blocking.  SIGCHLD can therefore interrupt the call after the child has
++	 * exited.  Restore the requested PID before retrying, just as waitpid()
++	 * callers retry after EINTR.
++	 */
++	do
++	{
++		join_pid.tag = 1;
++		join_pid.u.some = pid;
++		wasi_rc = __wasi_proc_join(&join_pid, 0, &join_status);
++	} while (wasi_rc == __WASI_ERRNO_INTR);
+ 	if (wasi_rc != 0)
+ 	{
+ 		pg_log_error("could not wait for command \"%s\": WASIX proc_join failed with errno %d",
+diff --git a/src/common/exec.c b/src/common/exec.c
+--- a/src/common/exec.c
++++ b/src/common/exec.c
+@@ -511,9 +511,18 @@ wasix_join_process(__wasi_pid_t pid, const char *command)
+ 	__wasi_join_status_t join_status;
+ 	__wasi_errno_t wasi_rc;
+ 
+-	join_pid.tag = 1;
+-	join_pid.u.some = pid;
+-	wasi_rc = __wasi_proc_join(&join_pid, 0, &join_status);
++	/*
++	 * proc_join uses join_pid as both input and output and clears it before
++	 * blocking.  SIGCHLD can therefore interrupt the call after the child has
++	 * exited.  Restore the requested PID before retrying, just as waitpid()
++	 * callers retry after EINTR.
++	 */
++	do
++	{
++		join_pid.tag = 1;
++		join_pid.u.some = pid;
++		wasi_rc = __wasi_proc_join(&join_pid, 0, &join_status);
++	} while (wasi_rc == __WASI_ERRNO_INTR);
+ 	if (wasi_rc != 0)
+ 	{
+ 		log_error(errcode(ERRCODE_SYSTEM_ERROR),

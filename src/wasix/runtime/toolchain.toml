@@ -1,0 +1,4 @@
+[toolchain]
+wasmer = "7.2.1"
+wasmer-wasix = "0.702.1"
+webc = "12.0.0"

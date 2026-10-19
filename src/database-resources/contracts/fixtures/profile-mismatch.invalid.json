@@ -1,0 +1,37 @@
+{
+  "schema": "oliphaunt-cluster-seed-v1",
+  "artifactRole": "cluster-seed-standard",
+  "catalogProfile": "icu",
+  "runtime": {
+    "product": "liboliphaunt-wasix",
+    "version": "1.2.3",
+    "engineFamily": "wasix",
+    "physicalFormat": "wasix-pg18-v1",
+    "postgresMajor": 18,
+    "compatibilityKey": "wasix-pg18-datum32-v1",
+    "consumerSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "producerSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "initdbSha256": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "source": {
+    "fingerprint": "postgresql-18.4:test",
+    "catalogVersion": "202505281",
+    "lane": "stable",
+    "producer": "wasix-initdb"
+  },
+  "initProfile": "test",
+  "archive": {
+    "path": "cluster-seeds/standard.tar.zst",
+    "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "compressedBytes": 1,
+    "expandedBytes": 1,
+    "regularFiles": 1,
+    "directories": 1
+  },
+  "requiredRuntimeFeatures": [],
+  "extensions": {
+    "selected": [],
+    "startupConfiguration": []
+  },
+  "icu": null
+}

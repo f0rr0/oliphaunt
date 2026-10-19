@@ -1,0 +1,46 @@
+{
+  "schema": "oliphaunt-cluster-seed-v1",
+  "artifactRole": "cluster-seed-icu",
+  "catalogProfile": "icu",
+  "runtime": {
+    "product": "liboliphaunt-wasix",
+    "version": "1.2.3",
+    "engineFamily": "wasix",
+    "physicalFormat": "wasix-pg18-v1",
+    "postgresMajor": 18,
+    "compatibilityKey": "wasix-pg18-datum32-v1",
+    "consumerSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "producerSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "initdbSha256": "7777777777777777777777777777777777777777777777777777777777777777"
+  },
+  "source": {
+    "fingerprint": "postgresql-18.4:test",
+    "catalogVersion": "202505281",
+    "lane": "stable",
+    "producer": "native-initdb"
+  },
+  "initProfile": "encoding=UTF8,locale=C,locale-provider=libc,auth=trust",
+  "archive": {
+    "path": "cluster-seeds/icu.tar.zst",
+    "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+    "compressedBytes": 1024,
+    "expandedBytes": 4096,
+    "regularFiles": 12,
+    "directories": 8
+  },
+  "requiredRuntimeFeatures": [
+    "icu"
+  ],
+  "extensions": {
+    "selected": [],
+    "startupConfiguration": []
+  },
+  "icu": {
+    "artifactRole": "icu-data",
+    "upstreamVersion": "76.1",
+    "sourceCommit": "9999999999999999999999999999999999999999",
+    "dataTreeSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "dataVersion": "76.1",
+    "dataForm": "files-le"
+  }
+}

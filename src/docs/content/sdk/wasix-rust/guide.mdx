@@ -1,0 +1,83 @@
+---
+title: WASIX Rust guide
+description: Use typed queries, transactions, extensions, backups, and async execution.
+---
+
+These recipes use a mutable synchronous `db` from the [WASIX Rust quickstart](/docs/sdk/wasix-rust). The async API exposes equivalent operations with `.await`.
+
+## Query application data
+
+```rust
+db.execute("CREATE TABLE IF NOT EXISTS notes (body text NOT NULL)")?;
+db.execute_with_params("INSERT INTO notes (body) VALUES ($1)", ["First note"])?;
+let result = db.query("SELECT body FROM notes")?;
+let body: String = result.rows()[0].try_get("body")?;
+```
+
+Use bound parameters for values. Match Rust result types to PostgreSQL column types and use `Option<T>` for nullable values.
+
+## Run a transaction
+
+```rust
+db.transaction(|tx| {
+    tx.execute_with_params("INSERT INTO notes (body) VALUES ($1)", ["First"])?;
+    tx.execute_with_params("INSERT INTO notes (body) VALUES ($1)", ["Second"])?;
+    Ok::<_, oliphaunt_wasix::Error>(())
+})?;
+```
+
+Return `Ok` to commit or `Err` to roll back. Use the transaction handle for all callback SQL. Manual outer transaction-lifecycle SQL is unsupported; use the rollback API or savepoints instead.
+
+## Select extensions
+
+Add the extension crate with its WASIX feature:
+
+```sh
+cargo add oliphaunt-extension-pgtap --no-default-features --features wasix
+```
+
+Select it before opening, then enable it with SQL:
+
+```rust
+use oliphaunt_wasix::Oliphaunt;
+
+let mut db = Oliphaunt::builder()
+    .extension(oliphaunt_extension_pgtap::PGTAP)
+    .open()?;
+db.execute("CREATE EXTENSION IF NOT EXISTS pgtap")?;
+```
+
+Reopen persistent databases with the same required extension selection. The [extension catalog](/docs/reference/extension-catalog) lists supported names and targets.
+
+## Back up and restore
+
+```rust
+let archive = db.backup()?;
+db.close()?;
+oliphaunt_wasix::Oliphaunt::restore("./data/restored", archive)?;
+```
+
+The destination must be new or empty. Use a compatible WASIX runtime for physical restore, and ship required extensions separately. For SQL export and upgrades, see [Dump and restore](/docs/sdk/wasix-rust/dump-restore).
+
+## Configure startup
+
+Use the builder's `startup_guc(name, value)`, `username(...)`, and `database(...)` methods. Fresh roots use the `postgres` role and database. Selecting another identity does not create it.
+
+## Use async execution
+
+Use `AsyncOliphaunt` to keep blocking guest execution off an async executor. Cloned handles share the same session. Closing any clone closes it for all callers.
+
+The synchronous handle remains on one OS thread for its entire lifetime. Do not move it into a generic blocking pool between calls. See [runtime ownership](/docs/sdk/wasix-rust/runtime).
+
+## Errors and shutdown
+
+Inspect `error.kind()` and `error.postgres_error()` for structured failures. PostgreSQL errors include SQLSTATE. Transaction errors preserve callback and rollback/database failures when both occur.
+
+Close explicitly to observe shutdown errors. After a terminal failure, stop using the handle and reopen persistent storage when appropriate. The SDK does not expose direct-query cancellation; dropping a future does not guarantee that an already-running statement stops.
+
+| Symptom | Check |
+| --- | --- |
+| Cannot send the handle to another thread | Use `AsyncOliphaunt` or keep the synchronous handle on its original thread |
+| Directory is locked | Another process, Worker, or binding owns the root |
+| Extension constant is unavailable | Add the extension crate with its `wasix` feature |
+| SQL dump fails to import through `execute` | Use the `psql` tool to handle COPY and psql commands |

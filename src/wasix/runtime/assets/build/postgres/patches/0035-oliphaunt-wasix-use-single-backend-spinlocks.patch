@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000035 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Wed, 12 Aug 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: use single-backend spinlocks
+
+The embedded WASIX runtime executes one PostgreSQL backend per WebAssembly
+instance.  Host workers may run concurrently, but each owns a distinct
+instance and PostgreSQL shared-memory arena.  Atomic read-modify-write
+instructions therefore add cost without protecting a concurrent PostgreSQL
+access in this lane.
+
+Keep the spinlock state machine and its stuck-lock detection, but use volatile
+loads and stores plus compiler barriers for the explicitly single-backend
+WASIX build.  Preserve the existing int-sized slock_t ABI.  Concurrent native
+and non-embedded WASIX builds continue through PostgreSQL's normal atomic
+implementation.
+---
+ src/include/storage/s_lock.h | 35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/src/include/storage/s_lock.h b/src/include/storage/s_lock.h
+--- a/src/include/storage/s_lock.h
++++ b/src/include/storage/s_lock.h
+@@ -93,7 +93,40 @@
+ #error "s_lock.h may not be included from frontend code"
+ #endif
+
++#if defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER) && defined(OLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS)
++/*
++ * The embedded WASIX lane has one PostgreSQL execution thread per Wasm
++ * instance.  Separate host workers own separate instances, so no other
++ * thread can observe this PostgreSQL shared-memory arena.
++ *
++ * Keep volatile lock state and compiler barriers: they preserve ordering and
++ * retain the normal stuck-lock behavior if backend code accidentally attempts
++ * recursive acquisition.  Hardware atomics remain mandatory everywhere that
++ * can execute PostgreSQL code concurrently.
++ */
++#define HAS_TEST_AND_SET
++
++typedef int slock_t;
++
++static inline int
++oliphaunt_wasix_single_user_tas(volatile slock_t *lock)
++{
++	int			previous = *lock;
++
++	*lock = 1;
++	__asm__ __volatile__("" : : : "memory");
++	return previous;
++}
++
++#define TAS(lock) oliphaunt_wasix_single_user_tas(lock)
++#define S_UNLOCK(lock) \
++	do { \
++		__asm__ __volatile__("" : : : "memory"); \
++		*(lock) = 0; \
++	} while (0)
++#endif
++
+ #if defined(__GNUC__) || defined(__INTEL_COMPILER)
+ /*************************************************************************
+  * All the gcc inlines
+  * Gcc consistently defines the CPU as __cpu__.

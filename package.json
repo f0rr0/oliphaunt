@@ -1,10 +1,55 @@
 {
   "name": "oliphaunt-monorepo",
   "private": true,
-  "packageManager": "pnpm@11.5.0",
+  "packageManager": "bun@1.4.2",
   "engines": {
     "node": ">=22.13 <25",
-    "pnpm": "11.5.0"
+    "bun": "1.4.2"
   },
-  "scripts": {}
+  "scripts": {},
+  "devDependencies": {
+    "@biomejs/biome": "2.4.16"
+  },
+  "workspaces": {
+    "packages": [
+      "tools/release",
+      "src/query/ts",
+      "src/docs",
+      "src/native/sdks/ts",
+      "src/database-resources/icu/npm",
+      "src/native/runtime/packages/*",
+      "src/native/postgres-tools/npm-platforms/*",
+      "src/native/postgres-tools/npm",
+      "src/native/broker/packages/*",
+      "src/native/node-addon",
+      "src/native/node-addon/packages/*",
+      "src/wasix/node-addon",
+      "src/wasix/node-addon/packages/*",
+      "src/native/sdks/react-native",
+      "src/examples/wasix/browser",
+      "src/examples/native/react-native-expo",
+      "src/wasix/sdks/ts",
+      "src/wasix/postgres-tools/ts",
+      "src/wasix/postgres-tools/npm",
+      "src/wasix/postgres-tools/npm-platforms/*",
+      "src/benchmarks/perf/wasix-node"
+    ],
+    "catalog": {
+      "typescript": "^6.0.3",
+      "@types/bun": "1.4.2"
+    }
+  },
+  "overrides": {
+    "esbuild": "0.28.1",
+    "js-yaml": "4.3.0",
+    "postcss": "8.5.15",
+    "uuid": "11.1.1"
+  },
+  "trustedDependencies": [
+    "electron",
+    "esbuild",
+    "msgpackr-extract",
+    "sharp",
+    "unrs-resolver"
+  ]
 }

@@ -1,5 +1,5 @@
-import { defineConfig, defineDocs } from 'fumadocs-mdx/config';
 import { metaSchema, pageSchema } from 'fumadocs-core/source/schema';
+import { defineConfig, defineDocs } from 'fumadocs-mdx/config';
 import indexFile from 'fumadocs-mdx/plugins/index-file';
 
 export const docs = defineDocs({
@@ -18,6 +18,8 @@ export const docs = defineDocs({
 export default defineConfig({
   plugins: [indexFile()],
   mdxOptions: {
-    // Keep MDX options centralized here; generated docs stay in target/.
+    rehypeCodeOptions: {
+      themes: { light: 'github-light', dark: 'github-dark-default' },
+    },
   },
 });

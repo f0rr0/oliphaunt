@@ -1,0 +1,116 @@
+{
+  "schema": "oliphaunt-logical-tools-v1",
+  "database": "postgres",
+  "username": "postgres",
+  "extension": "pgtap",
+  "pgDump": {
+    "acceptedArgs": [
+      "--schema-only",
+      "--inserts",
+      "--quote-all-identifiers",
+      "--no-owner",
+      "--table=public.logical_items",
+      "-tpublic.logical_items"
+    ],
+    "acceptedArgv": [
+      ["--table", "public.logical_items"],
+      ["-vt", "public.logical_items"],
+      ["--role", "postgres"]
+    ],
+    "rejectedArgs": [
+      "--",
+      "--password",
+      "--pass",
+      "-W",
+      "-vW",
+      "--file=out.sql",
+      "--fil=out.sql",
+      "--filter=filters.txt",
+      "--filt=filters.txt",
+      "-fout.sql",
+      "-vfout.sql",
+      "--format=custom",
+      "--form=custom",
+      "-Fc",
+      "-vFc",
+      "--compress=9",
+      "-Z9",
+      "--encoding=UTF8",
+      "-EUTF8",
+      "--host=localhost",
+      "-hlocalhost",
+      "--port=5432",
+      "-p5432",
+      "--username=postgres",
+      "-Upostgres",
+      "--dbname=postgres",
+      "-dpostgres",
+      "--jobs=2",
+      "-j2"
+    ],
+    "rejectedArgv": [
+      ["postgres"],
+      ["--", "postgres"],
+      ["--schema-only", "postgres"],
+      ["--table", "public.logical_items", "postgres"],
+      ["--table"],
+      ["-t"]
+    ]
+  },
+  "psql": {
+    "acceptedArgs": ["--echo-errors", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "-vAPP_MODE=test"],
+    "acceptedArgv": [
+      ["--set", "APP_MODE=test"],
+      ["-Av", "APP_MODE=test"],
+      ["--field-separator", "|"]
+    ],
+    "rejectedArgs": [
+      "--",
+      "--password",
+      "--pass",
+      "-W",
+      "-AW",
+      "--single-step",
+      "--single-st",
+      "-s",
+      "-As",
+      "--host=localhost",
+      "-hlocalhost",
+      "--port=5432",
+      "-p5432",
+      "--username=postgres",
+      "-Upostgres",
+      "--dbname=postgres",
+      "-dpostgres",
+      "--output=out.txt",
+      "--out=out.txt",
+      "-oout.txt",
+      "-Aoout.txt",
+      "--log-file=errors.txt",
+      "-Lerrors.txt",
+      "--command=SELECT 1",
+      "--comm=SELECT 1",
+      "-cSELECT 1",
+      "-AtcSELECT 1",
+      "--file=input.sql",
+      "-finput.sql",
+      "-Afoops.sql"
+    ],
+    "rejectedArgv": [
+      ["postgres"],
+      ["--", "postgres"],
+      ["--echo-errors", "postgres"],
+      ["--set", "APP_MODE=test", "postgres"],
+      ["--set"],
+      ["-v"]
+    ]
+  },
+  "expected": {
+    "rows": 3,
+    "sum": 123,
+    "sequenceLastValue": 42,
+    "quotedValue": "quoted-value",
+    "normalizedMatches": 1,
+    "extensionLoaded": true
+  }
+}

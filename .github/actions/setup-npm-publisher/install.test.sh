@@ -3,67 +3,36 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-npm-publisher/install.sh"
-action="$root/.github/actions/setup-npm-publisher/action.yml"
-extractor="$root/.github/actions/setup-moon/toolchain-archive.py"
+extractor="$root/.github/actions/setup-moon/toolchain-archive.mts"
 work="$(mktemp -d)"
+mkdir -p "$work/no-delay"
+printf '#!/bin/sh\nexit 0\n' > "$work/no-delay/sleep"
+chmod +x "$work/no-delay/sleep"
+export PATH="$work/no-delay:$PATH"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/payload/package/bin" "$work/bin" "$work/blockers"
-# These are intentionally literal composite-action source assertions.
-# shellcheck disable=SC2016
-{
-  grep -Fq 'export_dir="$(cygpath -w "$export_dir")"' "$action"
-  grep -Fq "printf '%s\\n' \"\$export_dir\" >> \"\$GITHUB_PATH\"" "$action"
-  grep -Fq 'value: ${{ steps.install.outputs.node-executable }}' "$action"
-  grep -Fq 'value: ${{ steps.install.outputs.npm-cli }}' "$action"
-  grep -Fq 'node_launcher="$(command -v node)"' "$action"
-  grep -Fq 'node_launcher="$(cygpath -u "$node_launcher")"' "$action"
-  grep -Fq -- "-e 'process.stdout.write(process.execPath)'" "$action"
-  grep -Fq 'npm_cli="$(cygpath -aw "$npm_cli_fs")"' "$action"
-  grep -Fq 'verifier="$(cygpath -aw "$verifier_fs")"' "$action"
-  grep -Fq "MSYS2_ARG_CONV_EXCL='*' \"\$node_launcher\" \"\$@\"" "$action"
-  grep -Fq 'run_native_node "$verifier" check-trust-cli' "$action"
-  grep -Fq -- '--npm-cli "$npm_cli"' "$action"
-  grep -Fq 'output_node="$node_executable"' "$action"
-  grep -Fq 'output_npm_cli="$npm_cli"' "$action"
-  if grep -Fq -- '--node-executable' "$action"; then
-    echo "setup action reintroduced a redundant shell-to-Node executable path handoff" >&2
-    exit 1
-  fi
-}
-if grep -Eq '(^|[[:space:]])npm[[:space:]]+--version' "$action"; then
-  echo "setup action reintroduced an ambient npm version probe" >&2
-  exit 1
-fi
-
-cat >"$work/payload/package/bin/npm-cli.js" <<'EOF'
-#!/usr/bin/env node
-console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === "1"
-  ? JSON.stringify(process.argv.slice(2))
-  : "11.18.0");
-EOF
-cat >"$work/payload/package/bin/npx-cli.js" <<'EOF'
-#!/usr/bin/env node
-console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === "1"
-  ? JSON.stringify(process.argv.slice(2))
-  : "11.18.0");
-EOF
+bash "$root/tools/dev/bun.sh" build "$root/.github/actions/setup-npm-publisher/testdata/package-manager-fixture.mts" \
+  --target=node --define 'FIXTURE_VERSION="11.18.0"' --outfile "$work/payload/package/bin/npm-cli.js" >/dev/null
+cp "$work/payload/package/bin/npm-cli.js" "$work/payload/package/bin/npx-cli.js"
 printf '{"name":"npm","version":"11.18.0"}\n' >"$work/payload/package/package.json"
 chmod 0755 "$work/payload/package/bin/npm-cli.js" "$work/payload/package/bin/npx-cli.js"
-tar -C "$work/payload" -czf "$work/npm.tgz" package
+COPYFILE_DISABLE=1 tar --format ustar -C "$work/payload" -czf "$work/npm.tgz" package
 archive_bytes="$(wc -c <"$work/npm.tgz" | tr -d '[:space:]')"
 archive_sha256="$(sha256sum "$work/npm.tgz" | awk '{print $1}')"
 archive_sha512="$(sha512sum "$work/npm.tgz" | awk '{print $1}')"
 entry_count="$(tar -tzf "$work/npm.tgz" | wc -l | tr -d '[:space:]')"
 expanded_bytes="$(
-  find "$work/payload/package" -type f -printf '%s\n' | awk '{ total += $1 } END { print total }'
+  find "$work/payload/package" -type f \
+    -exec sh -c 'for file do wc -c < "$file"; done' sh {} + |
+    awk '{ total += $1 } END { print total }'
 )"
-python3 "$extractor" extract --archive "$work/npm.tgz" --format tar.gz --prefix package \
+node "$extractor" extract --archive "$work/npm.tgz" --format tar.gz --prefix package \
   --entry-count "$entry_count" --expected-bytes "$archive_bytes" \
   --expanded-bytes "$expanded_bytes" --destination "$work/extracted" \
   --required bin/npm-cli.js --executable bin/npm-cli.js \
   --required bin/npx-cli.js --executable bin/npx-cli.js \
   --required package.json
-tree_result="$(python3 "$extractor" tree-digest --root "$work/extracted" \
+tree_result="$(node "$extractor" tree-digest --root "$work/extracted" \
   --executable bin/npm-cli.js --executable bin/npx-cli.js)"
 file_count="${tree_result%% *}"
 tree_sha256="${tree_result#* }"
@@ -97,7 +66,7 @@ cat >"$work/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 joined=" $* "
-for required in "--fail" "--location" "--proto =https" "--proto-redir =https" "--tlsv1.2" "--retry-all-errors" "--retry-connrefused" "--remove-on-error" "--max-filesize" "--ssl-revoke-best-effort"; do
+for required in "--fail" "--location" "--proto =https" "--proto-redir =https" "--tlsv1.2" "--retry 0" "--remove-on-error" "--max-filesize" "--ssl-revoke-best-effort"; do
   [[ "$joined" == *" $required "* ]] || exit 91
 done
 output=""
@@ -143,10 +112,6 @@ for command_name in npm npx; do
   )"
   [ "$observed_argv" = "$expected_argv" ]
 done
-grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$publisher_bin/npm"
-grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$publisher_bin/npx"
-grep -Fq 'exec node "$cli_path" "$@"' "$publisher_bin/npm"
-grep -Fq 'exec node "$cli_path" "$@"' "$publisher_bin/npx"
 [ ! -e "$work/ambient.log" ]
 [ "$(wc -l <"$work/requests.log" | tr -d '[:space:]')" = 1 ]
 

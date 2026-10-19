@@ -1,0 +1,11 @@
+id: third-party-openssl
+language: unknown
+layer: configuration
+tags:
+  - third-party
+  - sources
+fileGroups:
+  sources:
+    - source.toml
+  legal:
+    - LICENSE*

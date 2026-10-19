@@ -1,6 +1,0 @@
-id = "oliphaunt-wasix-rust"
-owner = "@oliphaunt/wasix-rust"
-kind = "sdk"
-publish_targets = ["crates-io"]
-registry_packages = ["crates:oliphaunt-wasix"]
-release_artifacts = ["cargo-crate"]

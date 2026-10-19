@@ -1,0 +1,77 @@
+---
+title: Dump and restore
+description: Choose a physical backup or a logical PostgreSQL dump for data movement and upgrades.
+---
+
+Use a physical backup for compatible WASIX restores. Use a logical SQL dump for upgrades that change the physical format or transfers between native and WASIX runtimes.
+
+## Enable logical tools
+
+```sh
+cargo add oliphaunt-wasix --features tools
+```
+
+## Export and import SQL
+
+This complete example exports a database and restores it into another in-memory database:
+
+```rust
+use oliphaunt_wasix::{Oliphaunt, tools};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut source = Oliphaunt::open()?;
+    source.execute("CREATE TABLE notes (body text NOT NULL)")?;
+    source.execute("INSERT INTO notes VALUES ('First note')")?;
+    let sql = source.pg_dump(tools::PgDumpOptions::new())?;
+    source.close()?;
+
+    let mut target = Oliphaunt::open()?;
+    target.psql(tools::PsqlOptions::new().script(sql))?;
+    let rows = target.query("SELECT body FROM notes")?;
+    let body: String = rows.rows()[0].try_get("body")?;
+    assert_eq!(body, "First note");
+    target.close()?;
+    Ok(())
+}
+```
+
+`pg_dump` returns ordinary UTF-8 PostgreSQL SQL. It can contain COPY data and psql commands, so pass it to `psql`, not `execute`. The async handle exposes the same tool methods with `.await`.
+
+Tools reset session state and cannot run inside a callback transaction. Restore into an empty database with required extensions available, then verify schema and data before switching the application to it.
+
+## Shape a dump
+
+Use `PgDumpOptions::new().arg("--schema-only")` for schema-only output. Other shaping options include `--quote-all-identifiers`, `-n` for a schema, and `-t` for a table.
+
+The SDK manages connection and output settings. Do not override host, port, username, database, file, encoding, compression, format, or parallel-job flags. This API returns uncompressed plain SQL; it does not provide custom archives or `pg_restore`.
+
+## Use the command line
+
+Install the CLI with the tools feature:
+
+```sh
+cargo install oliphaunt-wasix --features tools
+oliphaunt-wasix-dump --directory ./data/notes > notes.sql
+```
+
+Close other owners of that root first. Use `--database` and `--username` only for identities already present in the database. Enable required extension Cargo features at installation and repeat `--extension NAME` for each selection when dumping an extension-bearing root.
+
+Pass dump-shaping arguments after `--`:
+
+```sh
+oliphaunt-wasix-dump --directory ./data/notes -- --schema-only
+```
+
+## Restore a physical backup
+
+```rust
+let archive = db.backup()?;
+db.close()?;
+Oliphaunt::restore("./data/restored", archive)?;
+```
+
+This fragment assumes an open source `db`. The destination must be absent or empty. Restore does not replace a nonempty root. Reopen it with a compatible WASIX runtime and the required extension selection.
+
+## Upgrade application data
+
+Keep a recoverable copy of the old data. Read the SDK and runtime release notes, choose physical restore only when compatibility is documented, and otherwise export logical SQL with the old runtime. Import into a fresh database with the new runtime, verify application queries and constraints, then switch the app to the new root.

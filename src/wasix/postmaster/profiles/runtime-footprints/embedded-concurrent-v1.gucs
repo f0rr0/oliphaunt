@@ -1,0 +1,6 @@
+io_method=sync
+shared_buffers=32MB
+max_connections=8
+max_wal_senders=10
+autovacuum_worker_slots=4
+max_worker_processes=8

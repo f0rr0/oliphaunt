@@ -1,27 +1,45 @@
 ---
-title: API Reference
-description: React Native SDK API map for TypeScript, config plugin, TurboModule, JSI binary transport, and mobile lifecycle.
+title: React Native API reference
+description: Storage, query methods, transactions, and lifecycle in @oliphaunt/react-native.
 ---
 
-# API Reference
+Import the default `Oliphaunt` export or the named export from `@oliphaunt/react-native`. The package includes TypeScript declarations.
 
-Use the TypeDoc reference for exact declarations. This page maps the React Native
-SDK by task.
+## Entry points and storage
 
-| Area | Public surface | Use it for |
-| --- | --- | --- |
-| Opening | `Oliphaunt.open`, `OpenConfig` | Open a `nativeDirect` database from TypeScript with root, durability, and selected extensions |
-| Config plugin | Expo plugin options | Include the selected native runtime and exact extension artifacts in iOS and Android builds |
-| Platform support | `supportedModes()`, `capabilities()` | Read what the installed Swift or Kotlin runtime can actually do |
-| Database handle | `OliphauntDatabase` | Keep the opened database in app state and route calls through one native handle |
-| SQL | `query`, `execute`, `QueryResult` | Run SQL and read typed values from JavaScript |
-| Raw protocol | `execProtocolRaw` | Send PostgreSQL protocol bytes through JSI `ArrayBuffer` transport |
-| Streaming | `execProtocolStream` | Receive large protocol responses as native-backed chunks |
-| Lifecycle | `prepareForBackground`, `resumeFromBackground`, `close` | Coordinate database work with app background and foreground transitions |
-| Data movement | `backup`, `restore` | Delegate archive validation and root materialization to Swift or Kotlin |
-| Package report | package-size and extension artifact reports | Verify that the app ships only selected extensions and target ABIs |
-| Errors | `OliphauntError`, `PostgresError` | Handle SDK errors and PostgreSQL SQLSTATE data in TypeScript |
+`Oliphaunt.open(config?)` returns `Promise<OliphauntDatabase>`. Configuration accepts `storage`, `startupGUCs`, `username`, `database`, `extensions` (typed `NativeExtension` descriptors), and `broker` (timeouts for a broker build).
 
-The React Native SDK owns the JavaScript boundary. Runtime behavior remains
-platform-native: Apple calls flow through Swift, Android calls flow through
-Kotlin.
+| Storage value | Lifetime |
+| --- | --- |
+| `{ kind: 'temporaryDirectory' }` | Disposable; default |
+| `{ kind: 'directory', path: string }` | Persistent explicit path |
+| `{ kind: 'applicationData', name: string }` | Persistent platform-resolved app-data path |
+
+`Oliphaunt.restore(destination, bytes, options?)` accepts either persistent storage form and returns `Promise<void>`. The destination must be new or empty. Archive input accepts supported binary buffers and byte arrays.
+
+## Query methods
+
+| Method | Purpose |
+| --- | --- |
+| `query(sql, parameters?, options?)` | Decoded rows and field metadata |
+| `execute(sql, parameters?, options?)` | Command metadata |
+| `queryRaw(sql, parameters?, options?)` | Nullable column bytes and metadata |
+| `exec(sql, options?)` | Multi-statement SQL results |
+| `describe(sql, parameterTypeOids?)` | Statement metadata |
+| `transaction(body)` | Callback-owned transaction |
+
+Query options include positional rows and custom codecs. Duplicate field names require array row mode. Row type annotations do not validate a query's schema at runtime.
+
+Transactions expose typed query methods and `rollback()`. They do not expose raw protocol, backup, or close. Return to commit, throw to roll back, and use the callback handle only during its lifetime. Savepoints are supported; manual outer transaction-lifecycle SQL is not.
+
+## Lifecycle and errors
+
+`backup()` returns `Promise<Uint8Array>`. `cancel()` requests an interrupt. `close()` returns `Promise<void>`, `closed` reports state, and `Symbol.asyncDispose` supports explicit async disposal where the JavaScript runtime provides it.
+
+`PostgresError` preserves SQLSTATE and backend diagnostics. Composite transaction failures use `AggregateError` with the callback failure followed by the rollback or database failure. Unknown commit outcomes are not automatically retried.
+
+## Raw protocol
+
+`execProtocolRaw` buffers backend frames. `execProtocolRawStream` passes chunks to a synchronous callback returning `undefined`; promises and reentrant query calls are unsupported. Raw protocol requires a protocol-aware caller and is separate from typed row queries.
+
+The native build selects direct or broker mode. Broker mode accepts only `temporaryDirectory` or `applicationData` storage. `broker.startupTimeoutMs` and `broker.operationTimeoutMs` accept positive integer milliseconds. Broker failures expose `reason`, `execution`, and `requiresReopen`; an `unknown` execution outcome must not be retried blindly. There is no local server API. See [native integration](/docs/sdk/react-native/architecture) for packaging and runtime behavior.

@@ -23,8 +23,7 @@
           "artifact-family",
           "platform-targets",
           "runtime-modes",
-          "evidence-required",
-          "public"
+          "evidence-required"
         ],
         "properties": {
           "extension": { "type": "string" },
@@ -32,8 +31,7 @@
           "artifact-family": { "type": "string" },
           "platform-targets": { "type": "array", "items": { "type": "string" } },
           "runtime-modes": { "type": "array", "items": { "type": "string" } },
-          "evidence-required": { "type": "array", "items": { "type": "string" } },
-          "public": { "type": "boolean" }
+          "evidence-required": { "type": "array", "items": { "type": "string" } }
         }
       }
     }

@@ -1,0 +1,6 @@
+# PostgreSQL and extension C symbols remain available across DSOs. C++ objects,
+# exceptions and allocators stay inside the library that owns them.
+{
+  global: *;
+  local: _Z*; __cxa_*; __gxx_*; _Unwind_*;
+};

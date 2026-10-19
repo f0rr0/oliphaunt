@@ -1,163 +1,125 @@
 ---
-title: Build With Rust
-description: Use the Rust SDK in Tauri or native Rust apps with direct, broker, server, app-owned roots, exact extensions, lifecycle, and backup APIs.
+title: Rust guide
+description: Use parameters, transactions, runtime modes, extensions, and backups in Rust.
 ---
 
-# Build With Rust
+These recipes use the synchronous native API from the [Rust quickstart](/docs/sdk/rust). Its async counterpart provides the same application operations with `.await`.
 
-Use the Rust SDK in Tauri backends and native Rust desktop apps. It owns the
-complete native mode model: direct for lowest latency, broker for helper-process
-isolation, and server when independent PostgreSQL clients are required.
+## Query application data
 
-<Callout type="info" title="Rust owns the complete native mode surface">
-Use this guide when the app runtime is Rust. Tauri webviews and desktop
-JavaScript apps use their SDKs and call into Rust through app commands or helper
-processes.
-</Callout>
-
-<SdkGuideSummary id="rust" />
-
-<Steps>
-<Step>
-
-### Install
-
-Add the crate and let the SDK resolve released runtime assets and helpers
-through configuration:
-
-```toml
-[dependencies]
-oliphaunt = "0.1"
-```
-
-</Step>
-<Step>
-
-### Open and query
-
-Create a builder, choose storage, select exact extensions, open, query, and
-close.
-
-<!-- oliphaunt-snippet: oliphaunt-rust -->
+With an open mutable `db`, create a table and insert a parameterized value:
 
 ```rust
-use oliphaunt::{Extension, Oliphaunt};
-
-async fn open_database() -> oliphaunt::Result<()> {
-    let db = Oliphaunt::builder()
-        .path(".oliphaunt")
-        .native_direct()
-        .extension(Extension::Vector)
-        .open()
-        .await?;
-
-    let rows = db.query("SELECT 1::text AS value").await?;
-    assert_eq!(rows.get_text(0, "value")?, Some("1"));
-
-    db.close().await?;
-    Ok(())
-}
+db.execute("CREATE TABLE IF NOT EXISTS notes (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, body text NOT NULL)")?;
+let inserted = db
+    .sql("INSERT INTO notes (body) VALUES ($1) RETURNING id")
+    .bind("First note")
+    .query()?;
+let id: i64 = inserted.rows()[0].try_get("id")?;
 ```
 
-Keep the opened `Oliphaunt` handle in application state. Cloned handles point to
-the same executor. Use server mode when the app needs a connection pool or
-independent PostgreSQL client sessions.
+Use `query` for rows and `execute` for command metadata. `sql(...).bind(...)` builds typed parameters; `query_with_params` and `execute_with_params` are also available. Match Rust types to PostgreSQL result types when calling `try_get`.
 
-</Step>
-<Step>
+## Run a transaction
 
-### Create app data
-
-Use typed helpers for application queries and keep the database handle in Tauri
-state, an async service, or another app-owned dependency container:
+Use the callback's transaction handle for all statements:
 
 ```rust
-db.execute(
-    r#"
-    CREATE TABLE IF NOT EXISTS notes (
-        id bigserial PRIMARY KEY,
-        title text NOT NULL,
-        body text NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now()
-    )
-    "#,
-)
-.await?;
-
-db.query_params(
-    "INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id",
-    ["First note", "Stored in an embedded PostgreSQL root"],
-)
-.await?;
-
-let notes = db
-    .query("SELECT id, title FROM notes ORDER BY id DESC LIMIT 20")
-    .await?;
+db.transaction(|tx| {
+    tx.execute_with_params("INSERT INTO notes (body) VALUES ($1)", ["First"])?;
+    tx.execute_with_params("INSERT INTO notes (body) VALUES ($1)", ["Second"])?;
+    Ok::<_, oliphaunt::Error>(())
+})?;
 ```
 
-Expose app-specific commands to a Tauri webview instead of exposing raw database
-handles directly to frontend code.
+Returning `Ok` commits; returning `Err` rolls back. Callback errors can use your own type if it implements `From<oliphaunt::Error>`. Do not send manual transaction-lifecycle SQL inside the callback. Use the transaction's rollback API; savepoints are supported.
 
-</Step>
-<Step>
+For the async API, use an async closure:
 
-### Configure
+```rust
+db.transaction(async |tx| {
+    tx.execute("INSERT INTO notes (body) VALUES ('Async note')").await?;
+    Ok::<_, oliphaunt::Error>(())
+}).await?;
+```
 
-Configure engine mode, root, durability, startup identity, selected extensions,
-runtime assets, broker executable, and server executable through the builder.
-Use a persistent app-owned directory for user data. Temporary roots are useful
-for tests and short-lived tools.
+This fragment requires an `AsyncOliphaunt` handle. Keep unrelated network work outside a transaction so it does not hold the database session unnecessarily.
 
-</Step>
-<Step>
+## Choose a runtime mode
 
-### Choose a mode
+Direct mode runs in your process. Broker mode moves the database into a helper process:
 
-`NativeDirect` runs one serialized embedded session in the process. It gives the
-lowest round-trip latency and rejects pool sizes above one.
+```rust
+let mut db = Oliphaunt::builder()
+    .storage(DatabaseStorage::Directory("./app-data/main.oliphaunt".into()))
+    .broker()
+    .open()?;
+```
 
-`NativeBroker` talks to a local helper process. Use it for desktop apps that need
-process isolation, crash recovery, or several roots managed by one application.
+For an ORM or connection pool, start a server and keep the returned handle alive:
 
-`NativeServer` starts a PostgreSQL-compatible server process. Use it when `psql`,
-`pg_dump`, ORMs, or true independent client sessions matter.
+```rust
+use oliphaunt::OliphauntServer;
 
-</Step>
-<Step>
+let mut server = OliphauntServer::builder()
+    .storage(DatabaseStorage::Directory("./app-data/server.oliphaunt".into()))
+    .start()?;
+println!("{}", server.connection_string());
+// Connect a PostgreSQL driver here. Close clients before closing server.
+server.close()?;
+```
 
-### Handle lifecycle
+The server lifecycle handle does not run SQL itself. Use `AsyncOliphauntServer` for async server ownership. See [runtime modes](/docs/learn/native-runtime) for failure and concurrency behavior.
 
-Direct-mode work queues fairly on one owner executor. Transactions pin the
-physical session until commit or rollback. `close()` rejects queued work, waits
-for active work, then closes or detaches from the selected runtime. Use explicit
-cancellation for long-running SQL.
+## Select extensions
 
-</Step>
-<Step>
+Add the extension crate:
 
-### Select extensions
+```sh
+cargo add oliphaunt-extension-vector
+```
 
-Select exact SQL extension names before open. There are no packs, aliases, or
-implicit selectors. If you select `vector`, the generated artifacts include
-`vector` and only its declared dependencies.
+Select it before opening, then enable it with SQL:
 
-</Step>
-<Step>
+```rust
+let mut db = Oliphaunt::builder()
+    .direct()
+    .extension(oliphaunt_extension_vector::VECTOR)
+    .open()?;
+db.execute("CREATE EXTENSION IF NOT EXISTS vector")?;
+```
 
-### Back up and restore
+Use the same selection when reopening a database that depends on the extension. See [Extensions](/docs/reference/extensions).
 
-Use SDK backup and restore APIs instead of copying PostgreSQL directories from
-application code. The SDK validates formats, target roots, locks, and restore
-options before materializing data.
+## Back up and restore
 
-</Step>
-</Steps>
+A native backup contains PostgreSQL data and required WAL. Restore into a new or empty root:
 
-<SdkGuideProof id="rust" />
+```rust
+let archive = db.backup()?;
+db.close()?;
+Oliphaunt::restore("./app-data/restored.oliphaunt", &archive)?;
+let mut restored = Oliphaunt::builder()
+    .storage(DatabaseStorage::Directory("./app-data/restored.oliphaunt".into()))
+    .broker()
+    .open()?;
+restored.close()?;
+```
+
+The restored handle uses broker mode because direct mode remains bound to its original root for the lifetime of the process, even after close. Reapply required extension selections when opening restored data. Native and WASIX archives are separate families. Server applications use PostgreSQL tools through their endpoint; the optional `oliphaunt-tools` crate supplies `pg_dump` and non-interactive `psql`.
+
+## Cancel and close
+
+Before starting a long synchronous query, obtain `db.cancel_handle()` and pass that cancellation handle to the thread that may interrupt it. The async API exposes `cancel().await`. Cancellation requests do not replace checking the operation's eventual result.
+
+Close explicitly to observe shutdown errors. A failed close leaves the handle terminal; do not retry database work on it. If a broker process dies, close the handle and reopen the persistent root. Check application state before retrying a write with an unknown outcome.
 
 ## Troubleshooting
 
-Check root locks, missing runtime assets, mode capability errors, extension
-selection errors, and SQLSTATE-bearing PostgreSQL errors. If concurrency looks
-surprising, confirm the selected mode first: direct mode serializes work by
-design, while independent sessions require server mode.
+| Symptom | Check |
+| --- | --- |
+| Async executor stalls | Use `AsyncOliphaunt` instead of synchronous calls on the executor |
+| Cannot share a synchronous handle | It is not `Sync`; use an exclusive owner or the async handle |
+| PostgreSQL rejects a value | Check SQLSTATE and the parameter/result PostgreSQL type |
+| Root is already owned | Close the existing owner before opening another |
+| Restored data cannot open | Runtime compatibility and required extensions |

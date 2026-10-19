@@ -1,0 +1,85 @@
+---
+title: WASIX TypeScript SDK
+description: Run PostgreSQL as WebAssembly in browsers and desktop JavaScript runtimes.
+---
+
+Use `@oliphaunt/wasix-ts` in browsers, Node.js, Bun, Deno, or Electron. It runs the WASIX PostgreSQL runtime. For native desktop PostgreSQL, use the separate [TypeScript SDK](/docs/sdk/typescript).
+
+## Install
+
+Desktop requirements are Node.js 22.13 through 24.x, Bun 1.3.14+, or Deno 2.8.1+.
+
+```sh
+npm install @oliphaunt/wasix-ts
+```
+
+Deno imports the same package with `npm:@oliphaunt/wasix-ts`; see [host setup](/docs/sdk/wasix-typescript/guide#desktop-host-setup).
+
+## Prepare a browser app
+
+Serve the application with these HTTP response headers:
+
+```text
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Check that `window.crossOriginIsolated` is `true`. Serve all runtime and Worker assets with compatible cross-origin policies. Configure your bundler to preserve the package's module Worker asset when using `/worker`.
+
+For Vite, keep the SDK and runtime asset packages out of dependency prebundling:
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  optimizeDeps: {
+    exclude: ['@oliphaunt/wasix-ts', '@oliphaunt/liboliphaunt-wasix'],
+  },
+  worker: { format: 'es' },
+  server: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
+});
+```
+
+Add any selected WASIX extension and tools packages to `optimizeDeps.exclude` too. These packages resolve binary archives relative to their own modules, so relocating those modules during prebundling breaks asset loading.
+
+Desktop runtimes do not need these browser headers.
+
+## Run your first query
+
+The root import works across hosts. In a browser it runs in the importing realm; use the Worker import shown below when database execution must stay off the UI thread.
+
+<!-- oliphaunt-snippet: oliphaunt-wasix-typescript -->
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
+
+const db = await Oliphaunt.open();
+try {
+  const result = await db.query('SELECT $1::int4 AS answer', [42]);
+  console.log(result.rows[0]?.answer); // 42
+} finally {
+  await db.close();
+}
+```
+
+The default database lives in memory and is discarded on close.
+
+## Keep browser data between sessions
+
+Use IndexedDB and run the database in a Worker:
+
+```ts
+import OliphauntWorker from '@oliphaunt/wasix-ts/worker';
+import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
+
+const db = await OliphauntWorker.open({ storage: indexedDB('notes') });
+```
+
+Reopen the same name from the same origin to access saved data. Browser storage remains subject to browser quotas and user data-clearing policies. Keep the handle in application state and close it when finished.
+
+For OPFS, desktop directories, transactions, and data export, continue with the [WASIX TypeScript guide](/docs/sdk/wasix-typescript/guide). Use the [API reference](/docs/sdk/wasix-typescript/api-reference) for import paths and methods.

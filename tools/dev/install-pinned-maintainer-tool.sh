@@ -13,7 +13,7 @@ if [ -z "$root" ]; then
   root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 fi
 [ -n "$root" ] || { echo "could not determine repository root" >&2; exit 1; }
-manifest="${OLIPHAUNT_MAINTAINER_TOOLS_MANIFEST:-$root/src/sources/toolchains/maintainer-tools.toml}"
+manifest="${OLIPHAUNT_MAINTAINER_TOOLS_MANIFEST:-$root/tools/dev/maintainer-tools.toml}"
 if [ ! -f "$manifest" ] || [ -L "$manifest" ]; then
   echo "missing regular maintainer tool manifest: $manifest" >&2
   exit 1
@@ -235,7 +235,6 @@ archive_sha="$(manifest_value "$section" sha256 || true)"
 binary_sha="$(manifest_value "$section" binary_sha256 || true)"
 archive_format="$(manifest_value "$section" format || true)"
 binary_path="$(manifest_value "$section" binary_path || true)"
-entry_count="$(manifest_value "$section" entry_count || true)"
 max_archive_bytes="$(manifest_value "$section" max_archive_bytes || true)"
 max_binary_bytes="$(manifest_value "$section" max_binary_bytes || true)"
 for digest in "$archive_sha" "$binary_sha"; do
@@ -244,7 +243,7 @@ for digest in "$archive_sha" "$binary_sha"; do
     exit 1
   fi
 done
-for number in "$entry_count" "$max_archive_bytes" "$max_binary_bytes"; do
+for number in "$max_archive_bytes" "$max_binary_bytes"; do
   [[ "$number" =~ ^[1-9][0-9]*$ ]] || { echo "$manifest has invalid bounds in $section" >&2; exit 1; }
 done
 [ "$binary_path" = "$tool" ] || { echo "$section.binary_path must be $tool" >&2; exit 1; }
@@ -273,6 +272,8 @@ if cache_valid_release; then
   exit 0
 fi
 
+. "$(dirname "${BASH_SOURCE[0]}")/acquisition.sh"
+oliphaunt_acquisition_start "$tool bootstrap" 180
 curl_command="${OLIPHAUNT_MAINTAINER_TOOLS_CURL:-curl}"
 command -v "$curl_command" >/dev/null 2>&1 || { echo "missing required download command: $curl_command" >&2; exit 1; }
 command -v mktemp >/dev/null 2>&1 || { echo "missing required command: mktemp" >&2; exit 1; }
@@ -283,17 +284,12 @@ archive="$temporary_root/archive.partial"
 extract_root="$temporary_root/extracted"
 mkdir -p "$extract_root"
 set +e
-"$curl_command" \
+oliphaunt_acquisition_curl 180 5 2 "$curl_command" \
   --fail \
   --location \
   --silent \
   --show-error \
-  --retry 4 \
-  --retry-all-errors \
-  --retry-delay 2 \
-  --retry-max-time 120 \
   --connect-timeout 20 \
-  --max-time 180 \
   --max-filesize "$max_archive_bytes" \
   --proto '=https' \
   --proto-redir '=https' \
@@ -325,7 +321,7 @@ actual_archive_sha="$(sha256_file "$archive")"
 case "$tool:$archive_format" in
   cargo-binstall:zip)
     members="$(unzip -Z1 "$archive")" || { echo "invalid cargo-binstall ZIP archive" >&2; exit 1; }
-    if [ "$members" != cargo-binstall ] || [ "$(printf '%s\n' "$members" | awk 'NF { count++ } END { print count + 0 }')" != "$entry_count" ]; then
+    if [ "$members" != cargo-binstall ]; then
       echo "cargo-binstall ZIP archive has an unexpected member layout" >&2
       exit 1
     fi
@@ -337,7 +333,7 @@ case "$tool:$archive_format" in
     ;;
   cargo-binstall:tgz)
     members="$(tar -tzf "$archive")" || { echo "invalid cargo-binstall tar archive" >&2; exit 1; }
-    if [ "$members" != cargo-binstall ] || [ "$(printf '%s\n' "$members" | awk 'NF { count++ } END { print count + 0 }')" != "$entry_count" ]; then
+    if [ "$members" != cargo-binstall ]; then
       echo "cargo-binstall tar archive has an unexpected member layout" >&2
       exit 1
     fi
@@ -347,15 +343,10 @@ case "$tool:$archive_format" in
     tar -xzf "$archive" -C "$extract_root" cargo-binstall
     ;;
   actionlint:tgz)
-    members="$(tar -tzf "$archive")" || { echo "invalid actionlint tar archive" >&2; exit 1; }
-    expected_members="$(printf '%s\n' LICENSE.txt README.md actionlint docs/README.md docs/api.md docs/checks.md docs/config.md docs/install.md docs/reference.md docs/usage.md man/actionlint.1 | LC_ALL=C sort)"
-    if [ "$(printf '%s\n' "$members" | LC_ALL=C sort)" != "$expected_members" ] || \
-      [ "$(printf '%s\n' "$members" | awk 'NF { count++ } END { print count + 0 }')" != "$entry_count" ]; then
-      echo "actionlint tar archive has an unexpected member layout" >&2
-      exit 1
-    fi
-    [ "$(tar -tvzf "$archive" | awk '{ print substr($1, 1, 1) }' | LC_ALL=C sort -u)" = - ] || {
-      echo "actionlint tar archive contains a non-regular member" >&2; exit 1;
+    # The archive is pinned; documentation names are not an installation contract.
+    # Select only this exact top-level member and reject duplicates or links.
+    [ "$(tar -tvzf "$archive" actionlint | awk '{ print substr($1, 1, 1) }')" = - ] || {
+      echo "actionlint tar archive must contain one regular actionlint binary" >&2; exit 1;
     }
     tar -xzf "$archive" -C "$extract_root" actionlint
     ;;

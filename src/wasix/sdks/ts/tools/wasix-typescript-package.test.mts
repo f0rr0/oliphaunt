@@ -1,0 +1,125 @@
+import { describe, expect, test } from 'bun:test';
+
+import {
+  assertWasixTypescriptManifest,
+  assertWasixTypescriptNativeCarrier,
+} from './wasix-typescript-package.mts';
+
+function manifest() {
+  return {
+    name: '@oliphaunt/wasix-ts',
+    version: '1.2.3',
+    license: 'MIT',
+    type: 'module',
+    sideEffects: ['./lib/browser.js', './lib/native-only.js'],
+    publishConfig: { access: 'public', provenance: true },
+    dependencies: {
+      '@oliphaunt/ts-query': '0.1.0',
+      '@oliphaunt/liboliphaunt-wasix': '1.1.0',
+      fzstd: '0.1.1',
+    },
+    optionalDependencies: {
+      '@oliphaunt/wasix-napi-darwin-arm64': '0.9.1',
+      '@oliphaunt/wasix-napi-linux-arm64-gnu': '0.9.1',
+      '@oliphaunt/wasix-napi-linux-x64-gnu': '0.9.1',
+      '@oliphaunt/wasix-napi-win32-x64-msvc': '0.9.1',
+    },
+    engines: {
+      node: '>=22.13 <25',
+      bun: '>=1.3.14',
+      deno: '>=2.8.1',
+    },
+    oliphaunt: {
+      runtimeProduct: 'liboliphaunt-wasix',
+      runtimeVersion: '1.1.0',
+      wasixNapiProduct: 'oliphaunt-wasix-napi',
+      wasixNapiVersion: '0.9.1',
+      wasixAddonAbiVersion: 3,
+      nodeApiVersion: 8,
+      browserHost: 'wasmer-js-patched',
+      serverHost: 'wasix-rust-napi',
+    },
+  };
+}
+
+describe('WASIX TypeScript package dependency contract', () => {
+  test('checks the embedded runtime of every independently versioned native carrier', () => {
+    const sdk = manifest();
+    for (const [name, version] of Object.entries(sdk.optionalDependencies)) {
+      const carrier = {
+        name,
+        version,
+        oliphaunt: {
+          runtimeProduct: sdk.oliphaunt.runtimeProduct,
+          runtimeVersion: sdk.oliphaunt.runtimeVersion,
+          addonAbiVersion: sdk.oliphaunt.wasixAddonAbiVersion,
+          nodeApiVersion: sdk.oliphaunt.nodeApiVersion,
+          profiles: ['standard', 'icu'],
+        },
+      };
+      expect(() => assertWasixTypescriptNativeCarrier(sdk, carrier)).not.toThrow();
+      carrier.oliphaunt.runtimeVersion = '1.0.0';
+      expect(() => assertWasixTypescriptNativeCarrier(sdk, carrier)).toThrow(
+        /carrier embeds runtime 1\.0\.0/u,
+      );
+    }
+  });
+
+  test('accepts the portable browser runtime and exact native platform carriers', () => {
+    expect(() => assertWasixTypescriptManifest(manifest())).not.toThrow();
+  });
+
+  test('rejects a missing native platform carrier', () => {
+    const candidate = manifest();
+    delete candidate.optionalDependencies['@oliphaunt/wasix-napi-linux-x64-gnu'];
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(/must depend only/u);
+  });
+
+  test('rejects a native platform carrier outside the pinned N-API release', () => {
+    const candidate = manifest();
+    candidate.optionalDependencies['@oliphaunt/wasix-napi-linux-x64-gnu'] = '1.2.4';
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(/must depend only/u);
+  });
+
+  test('rejects compatibility metadata that could route a server runtime back to Wasmer', () => {
+    const candidate = manifest();
+    candidate.oliphaunt.serverHost = 'wasmer-js-patched';
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
+      'runtime compatibility metadata differs from its exact dependencies',
+    );
+  });
+
+  test('rejects a carrier ABI outside the qualified Node-API contract', () => {
+    const candidate = manifest();
+    candidate.oliphaunt.nodeApiVersion = 9;
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
+      'runtime compatibility metadata differs from its exact dependencies',
+    );
+  });
+
+  test('rejects runtime floors outside the qualified envelope', () => {
+    const candidate = manifest();
+    candidate.engines.bun = '>=1';
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
+      'must declare the qualified Node, Bun, and Deno runtime floors',
+    );
+  });
+
+  for (const [family, dependency] of [
+    ['dependencies', 'unrelated'],
+    ['optionalDependencies', '@wasmer/sdk'],
+    ['peerDependencies', '@oliphaunt/native-host'],
+  ]) {
+    test(`rejects an extra ${family} entry`, () => {
+      const candidate = manifest();
+      candidate[family] = { ...candidate[family], [dependency]: '1.0.0' };
+      expect(() => assertWasixTypescriptManifest(candidate)).toThrow(/must depend only/u);
+    });
+  }
+
+  test('rejects bundled dependencies', () => {
+    const candidate = manifest();
+    candidate.bundledDependencies = ['fzstd'];
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(/must depend only/u);
+  });
+});

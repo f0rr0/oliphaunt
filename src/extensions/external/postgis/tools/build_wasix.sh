@@ -13,7 +13,7 @@ oliphaunt_postgis_bootstrap_repo_root() {
   repo_root="$SCRIPT_DIR"
   while [ "$repo_root" != "/" ]; do
     if [ -f "$repo_root/package.json" ] &&
-       [ -d "$repo_root/src/runtimes/liboliphaunt/wasix/assets/build" ]; then
+       [ -d "$repo_root/src/wasix/runtime/assets/build" ]; then
       printf '%s\n' "$repo_root"
       return 0
     fi
@@ -25,7 +25,7 @@ oliphaunt_postgis_bootstrap_repo_root() {
 }
 
 BOOTSTRAP_REPO_ROOT="$(oliphaunt_postgis_bootstrap_repo_root)"
-ROOT="${OLIPHAUNT_WASIX_BUILD_ROOT:-$BOOTSTRAP_REPO_ROOT/src/runtimes/liboliphaunt/wasix/assets/build}"
+ROOT="${OLIPHAUNT_WASIX_BUILD_ROOT:-$BOOTSTRAP_REPO_ROOT/src/wasix/runtime/assets/build}"
 . "$ROOT/wasix_third_party.sh"
 . "$ROOT/source_lane.sh"
 
@@ -51,7 +51,7 @@ while IFS= read -r flag; do
 done < <(oliphaunt_wasix_extension_wasix_configure_flags "$REPO_ROOT" postgis)
 
 if [ ! -f "$POSTGIS_SOURCE_DIR/configure.ac" ]; then
-  echo "missing PostGIS source checkout at $POSTGIS_SOURCE_DIR; run assets fetch/source-spine first" >&2
+  echo "missing PostGIS source checkout at $POSTGIS_SOURCE_DIR; run bash src/third-party/tools/fetch-sources.sh wasix-runtime --force first" >&2
   exit 1
 fi
 if [ ! -f "$BUILD_DIR/config.status" ]; then
@@ -124,7 +124,7 @@ EOF
 set -euo pipefail
 case "\${1:-}" in
   --version)
-    echo "3.13.2"
+    echo "3.13.3"
     ;;
   --ogr-enabled)
     echo "yes"
@@ -153,7 +153,7 @@ if [ "\${@: -1}" = "proj" ]; then
       exit 0
       ;;
     *" --modversion "*)
-      echo "9.8.1"
+      echo "9.9.0"
       exit 0
       ;;
     *" --cflags "*)
@@ -204,11 +204,12 @@ EOF
   export CXX=wasixcc++
   export AR=wasixar
   export RANLIB=wasixranlib
-  export CPPFLAGS="-I$BUILD_DIR/src/include -I$PGSRC/src/include -I$PGSRC/src/include/port/wasix-dl -I$LIBICONV_PREFIX/include"
+export CPPFLAGS="$("$ROOT/pg_config_wasix.sh" --cppflags) -I$LIBICONV_PREFIX/include"
   export CFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -Wno-unused-command-line-argument"
   export CXXFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -fvisibility-inlines-hidden -Wno-unused-command-line-argument"
   export LDFLAGS="-L$LIBICONV_PREFIX/lib -L$SQLITE_PREFIX/lib -liconv -lsqlite3 -lc++ -lc++abi -lunwind"
   export ac_cv_lib_pq_PQserverVersion=yes
+  export ac_cv_lib_xml2_xmlInitParser=yes
   oliphaunt_postgis_enable_reproducible_time "$REPO_ROOT"
   [ "$SOURCE_DATE_EPOCH" = "$source_date_epoch" ] || {
     echo "PostGIS WASIX build epoch changed after fingerprinting" >&2
@@ -358,6 +359,9 @@ EOF
 
   # Keep extension SQL generation serial: the PostGIS SQL Makefiles share
   # generated .tmp files and do not declare complete parallel dependency edges.
+  oliphaunt_wasix_verify_side_module_sjlj "$postgis_deps_module"
+  oliphaunt_wasix_verify_side_module_sjlj "$POSTGIS_BUILD_DIR/postgis/postgis-3.so"
+  oliphaunt_wasix_verify_side_module_sjlj "$POSTGIS_BUILD_DIR/raster/rt_pg/postgis_raster-3.so"
   make -s -j1 -C extensions postgis_extension_helper.sql
   make -s -j1 -C extensions all
   mkdir -p "$POSTGIS_BUILD_DIR/share"

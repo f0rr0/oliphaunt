@@ -6,24 +6,24 @@
       "manifest": "src/extensions/external/postgis/dependencies/gdal/source.toml",
       "kind": "git",
       "url": "https://github.com/OSGeo/gdal.git",
-      "branch": "v3.13.2",
-      "commit": "b40672525acf3f5c4f29d8541aa7dcff1e18eb92"
+      "branch": "v3.13.3",
+      "commit": "c8b4c45fca87d3e6fbf80e7a7898b8a661ad0edc"
     },
     {
       "id": "geos",
       "manifest": "src/extensions/external/postgis/dependencies/geos/source.toml",
       "kind": "git",
       "url": "https://github.com/libgeos/geos.git",
-      "branch": "3.14.1",
-      "commit": "c389f532d25fe6228861d9b19339f9cb57ca4bdb"
+      "branch": "3.15.0",
+      "commit": "d0228513abb0c29c185443cf2bfb06c9281024b5"
     },
     {
       "id": "json-c",
       "manifest": "src/extensions/external/postgis/dependencies/json-c/source.toml",
       "kind": "git",
       "url": "https://github.com/json-c/json-c.git",
-      "branch": "json-c-0.18-20240915",
-      "commit": "41a55cfcedb54d9c1874f2f0eb07b504091d7e37"
+      "branch": "json-c-0.19-20260627",
+      "commit": "aa716cd8d663c976b99b0f30f102ee1d8ef63146"
     },
     {
       "id": "libiconv",
@@ -38,8 +38,8 @@
       "manifest": "src/extensions/external/postgis/dependencies/libxml2/source.toml",
       "kind": "git",
       "url": "https://gitlab.gnome.org/GNOME/libxml2.git",
-      "branch": "v2.14.6",
-      "commit": "d23960a130c5bb82779c9405fbbf85e65fb3c57c"
+      "branch": "v2.15.4",
+      "commit": "96498992efa48d52b0e8b83058bd88dbdaf153c1"
     },
     {
       "id": "postgis",
@@ -54,16 +54,16 @@
       "manifest": "src/extensions/external/postgis/dependencies/proj/source.toml",
       "kind": "git",
       "url": "https://github.com/OSGeo/PROJ.git",
-      "branch": "9.8.1",
-      "commit": "f08fa86c478c4bbbf003b1ec751dd84aa6eca486"
+      "branch": "9.9.0",
+      "commit": "1df2be61c0e4732aa1326126113776b291ae7657"
     },
     {
       "id": "sqlite",
       "manifest": "src/extensions/external/postgis/dependencies/sqlite/source.toml",
       "kind": "git",
       "url": "https://github.com/sqlite/sqlite.git",
-      "branch": "version-3.53.1",
-      "commit": "ccd445d76a9362c63add000354fac84ba9022176"
+      "branch": "version-3.54.1",
+      "commit": "57520227c95396ce39ba6ecaac8d475b78dd3964"
     }
   ],
   "extension": {
@@ -75,7 +75,7 @@
         "destination": "share/licenses/gdal/LICENSE.TXT",
         "role": "license",
         "spdx": "MIT",
-        "license_url": "https://github.com/OSGeo/gdal/blob/b40672525acf3f5c4f29d8541aa7dcff1e18eb92/LICENSE.TXT",
+        "license_url": "https://github.com/OSGeo/gdal/blob/c8b4c45fca87d3e6fbf80e7a7898b8a661ad0edc/LICENSE.TXT",
         "sha256": "1dae3468e81d00da56e2936f74d33b8b3ad09d726437f19ce209a5dabea41f77"
       },
       {
@@ -84,7 +84,7 @@
         "destination": "share/licenses/geos/COPYING",
         "role": "license",
         "spdx": "LGPL-2.1-or-later",
-        "license_url": "https://github.com/libgeos/geos/blob/c389f532d25fe6228861d9b19339f9cb57ca4bdb/COPYING",
+        "license_url": "https://github.com/libgeos/geos/blob/d0228513abb0c29c185443cf2bfb06c9281024b5/COPYING",
         "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
       },
       {
@@ -93,7 +93,7 @@
         "destination": "share/licenses/geos/src/deps/ryu/LICENSE",
         "role": "notice",
         "spdx": "Apache-2.0",
-        "license_url": "https://github.com/libgeos/geos/blob/c389f532d25fe6228861d9b19339f9cb57ca4bdb/src/deps/ryu/LICENSE",
+        "license_url": "https://github.com/libgeos/geos/blob/d0228513abb0c29c185443cf2bfb06c9281024b5/src/deps/ryu/LICENSE",
         "sha256": "087edee322a9d2e527453ddc6731ccb4f015a36e55864b30715934f32a4879c1"
       },
       {
@@ -102,7 +102,7 @@
         "destination": "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
         "role": "license",
         "spdx": "Apache-2.0",
-        "license_url": "https://github.com/libgeos/geos/blob/c389f532d25fe6228861d9b19339f9cb57ca4bdb/src/deps/ryu/LICENSE-Apache2",
+        "license_url": "https://github.com/libgeos/geos/blob/d0228513abb0c29c185443cf2bfb06c9281024b5/src/deps/ryu/LICENSE-Apache2",
         "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
       },
       {
@@ -111,7 +111,7 @@
         "destination": "share/licenses/geos/src/deps/ryu/LICENSE-Boost",
         "role": "notice",
         "spdx": "Apache-2.0",
-        "license_url": "https://github.com/libgeos/geos/blob/c389f532d25fe6228861d9b19339f9cb57ca4bdb/src/deps/ryu/LICENSE-Boost",
+        "license_url": "https://github.com/libgeos/geos/blob/d0228513abb0c29c185443cf2bfb06c9281024b5/src/deps/ryu/LICENSE-Boost",
         "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
       },
       {
@@ -120,7 +120,7 @@
         "destination": "share/licenses/json-c/COPYING",
         "role": "license",
         "spdx": "MIT",
-        "license_url": "https://github.com/json-c/json-c/blob/41a55cfcedb54d9c1874f2f0eb07b504091d7e37/COPYING",
+        "license_url": "https://github.com/json-c/json-c/blob/aa716cd8d663c976b99b0f30f102ee1d8ef63146/COPYING",
         "sha256": "74c1e6ca5eba76b54d0ad00d4815c8315c1b3bc45ff99de61d103dc92486284c"
       },
       {
@@ -147,7 +147,7 @@
         "destination": "share/licenses/libxml2/Copyright",
         "role": "license",
         "spdx": "MIT",
-        "license_url": "https://gitlab.gnome.org/GNOME/libxml2/-/blob/d23960a130c5bb82779c9405fbbf85e65fb3c57c/Copyright",
+        "license_url": "https://gitlab.gnome.org/GNOME/libxml2/-/blob/96498992efa48d52b0e8b83058bd88dbdaf153c1/Copyright",
         "sha256": "5d4873884a890122a4b9b20ad56ac6f7da1d796a5bfcf04a427970ac96217626"
       },
       {
@@ -210,7 +210,7 @@
         "destination": "share/licenses/proj/COPYING",
         "role": "license",
         "spdx": "MIT",
-        "license_url": "https://github.com/OSGeo/PROJ/blob/f08fa86c478c4bbbf003b1ec751dd84aa6eca486/COPYING",
+        "license_url": "https://github.com/OSGeo/PROJ/blob/1df2be61c0e4732aa1326126113776b291ae7657/COPYING",
         "sha256": "6a8f30793e877d32e3f88b972f0970a051a3b5a26cd057d3993cb51e21c43319"
       },
       {
@@ -219,7 +219,7 @@
         "destination": "share/licenses/sqlite/LICENSE.md",
         "role": "license",
         "spdx": "blessing",
-        "license_url": "https://github.com/sqlite/sqlite/blob/ccd445d76a9362c63add000354fac84ba9022176/LICENSE.md",
+        "license_url": "https://github.com/sqlite/sqlite/blob/57520227c95396ce39ba6ecaac8d475b78dd3964/LICENSE.md",
         "sha256": "ee6af51062b30d532991face5164136ae6f84e265ecf8abe89dc69dac45ca1e7"
       }
     ]

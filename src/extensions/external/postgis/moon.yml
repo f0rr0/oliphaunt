@@ -4,9 +4,10 @@ id: "oliphaunt-extension-postgis"
 language: "unknown"
 layer: "library"
 stack: "systems"
-tags: ["extensions", "external", "postgis", "release-product"]
+tags: ["javascript-quality", "extensions", "external", "postgis", "release-product"]
 dependsOn:
-  - "extension-runtime-contract"
+  - id: "extension-runtime-contract"
+    scope: "build"
   - id: "liboliphaunt-native"
     scope: "build"
   - id: "liboliphaunt-wasix"
@@ -18,37 +19,13 @@ project:
     packagePath: "src/extensions/external/postgis"
 
 tasks:
-  check:
-    tags: ["quality", "static"]
-    command: "bun src/extensions/tools/check-extension-tree.mjs src/extensions/external/postgis"
-    deps:
-      - "extension-runtime-contract:check"
+  test:
+    tags: ["quality", "unit"]
+    command: "bash tools/dev/bun.sh test ./src/extensions/external/postgis/tools/preprocess-sql.test.mts"
     inputs:
-      - "/src/extensions/external/postgis/**/*"
-      - "/src/extensions/tools/check-extension-tree.mjs"
-      - "/src/shared/extension-runtime-contract/**/*"
+      - "/tools/dev/bun.sh"
+      - "tools/preprocess-sql.mts"
+      - "tools/preprocess-sql.test.mts"
     options:
       cache: true
-      runFromWorkspaceRoot: true
-
-  assemble-release:
-    tags: ["release", "artifact-package"]
-    command: "bash tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs oliphaunt-extension-postgis --require-native --require-wasix"
-    deps:
-      - "oliphaunt-extension-postgis:check"
-    inputs:
-      - "/.release-please-manifest.json"
-      - "/release-please-config.json"
-      - "/src/extensions/external/postgis/**/*"
-      - "/src/extensions/generated/wasix/extensions.json"
-      - "/tools/release/build-extension-ci-artifacts.mjs"
-      - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "/target/extensions/native/release-assets/**/*"
-      - "/target/extensions/wasix/release-assets/**/*"
-    outputs:
-      - "/target/extension-artifacts/oliphaunt-extension-postgis/**/*"
-    options:
-      cache: false
       runFromWorkspaceRoot: true

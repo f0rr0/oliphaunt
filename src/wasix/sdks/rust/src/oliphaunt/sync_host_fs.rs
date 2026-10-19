@@ -1,0 +1,721 @@
+use std::fs;
+use std::future::Future;
+use std::io::{self, Write};
+use std::path::{Component, Path, PathBuf};
+use std::pin::Pin;
+use std::sync::OnceLock;
+use std::task::{Context, Poll};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
+use wasmer_wasix::virtual_fs::{
+    self, DirEntry, FileType, FsError, Metadata, OpenOptions, OpenOptionsConfig, ReadDir,
+    VirtualFile,
+};
+
+#[derive(Debug, Clone)]
+pub(crate) struct SyncHostFileSystem {
+    root: PathBuf,
+}
+
+impl SyncHostFileSystem {
+    pub(crate) fn new(root: impl Into<PathBuf>) -> virtual_fs::Result<Self> {
+        let root = root.into();
+        if !root.exists() {
+            return Err(FsError::InvalidInput);
+        }
+        let root = dunce::canonicalize(root).map_err(FsError::from)?;
+        Ok(Self { root })
+    }
+
+    fn prepare_path(&self, path: &Path) -> virtual_fs::Result<PathBuf> {
+        let path = normalize_path(path);
+
+        if matches!(path.components().next(), Some(Component::Prefix(..))) {
+            return Err(FsError::InvalidInput);
+        }
+
+        if self.root != Path::new("/") && path.starts_with(&self.root) {
+            return Err(FsError::InvalidInput);
+        }
+
+        let path = path.strip_prefix("/").unwrap_or(&path);
+        let path = self.root.join(path);
+        self.reject_symlink_components(&path)?;
+        Ok(path)
+    }
+
+    fn reject_symlink_components(&self, path: &Path) -> virtual_fs::Result<()> {
+        let relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| FsError::InvalidInput)?;
+        let mut current = self.root.clone();
+        for component in relative.components() {
+            let Component::Normal(part) = component else {
+                return Err(FsError::InvalidInput);
+            };
+            current.push(part);
+            match fs::symlink_metadata(&current) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(FsError::PermissionDenied);
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+                Err(error) => return Err(FsError::from(error)),
+            }
+        }
+        Ok(())
+    }
+}
+
+impl virtual_fs::FileSystem for SyncHostFileSystem {
+    fn readlink(&self, path: &Path) -> virtual_fs::Result<PathBuf> {
+        fs::read_link(self.prepare_path(path)?).map_err(FsError::from)
+    }
+
+    fn read_dir(&self, path: &Path) -> virtual_fs::Result<ReadDir> {
+        let path = self.prepare_path(path)?;
+        let mut data = fs::read_dir(path)?
+            .map(|entry| {
+                let entry = entry?;
+                let path = entry
+                    .path()
+                    .strip_prefix(&self.root)
+                    .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?
+                    .to_owned();
+                let path = Path::new("/").join(path);
+                Ok(DirEntry {
+                    path,
+                    metadata: entry
+                        .metadata()
+                        .map(metadata_from_std)
+                        .map_err(FsError::from),
+                })
+            })
+            .collect::<std::result::Result<Vec<_>, io::Error>>()?;
+        data.sort_by(|a, b| a.path.file_name().cmp(&b.path.file_name()));
+        Ok(ReadDir::new(data))
+    }
+
+    fn create_dir(&self, path: &Path) -> virtual_fs::Result<()> {
+        let path = self.prepare_path(path)?;
+        if path.parent().is_none() {
+            return Err(FsError::BaseNotDirectory);
+        }
+        fs::create_dir(&path).map_err(FsError::from)?;
+        sync_parent_directory(&path).map_err(FsError::from)
+    }
+
+    fn remove_dir(&self, path: &Path) -> virtual_fs::Result<()> {
+        let path = self.prepare_path(path)?;
+        if path.parent().is_none() {
+            return Err(FsError::BaseNotDirectory);
+        }
+        if path.is_dir()
+            && fs::read_dir(&path)
+                .map(|mut entries| entries.next().is_some())
+                .unwrap_or(false)
+        {
+            return Err(FsError::DirectoryNotEmpty);
+        }
+        fs::remove_dir(&path).map_err(FsError::from)?;
+        sync_parent_directory(&path).map_err(FsError::from)
+    }
+
+    fn rename<'a>(
+        &'a self,
+        from: &'a Path,
+        to: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = virtual_fs::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            let norm_from = normalize_path(from);
+            let norm_to = normalize_path(to);
+
+            if norm_from.parent().is_none() || norm_to.parent().is_none() {
+                return Err(FsError::BaseNotDirectory);
+            }
+
+            let from = self.prepare_path(from)?;
+            let to = self.prepare_path(to)?;
+
+            if !from.exists() {
+                return Err(FsError::EntryNotFound);
+            }
+            if !from.parent().is_some_and(Path::exists) || !to.parent().is_some_and(Path::exists) {
+                return Err(FsError::EntryNotFound);
+            }
+
+            let from_parent = from.parent().map(Path::to_path_buf);
+            let to_parent = to.parent().map(Path::to_path_buf);
+            fs::rename(&from, &to).map_err(FsError::from)?;
+            if let Some(parent) = from_parent {
+                sync_directory(&parent).map_err(FsError::from)?;
+            }
+            if let Some(parent) = to_parent
+                && from.parent() != Some(parent.as_path())
+            {
+                sync_directory(&parent).map_err(FsError::from)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn metadata(&self, path: &Path) -> virtual_fs::Result<Metadata> {
+        fs::metadata(self.prepare_path(path)?)
+            .map(metadata_from_std)
+            .map_err(FsError::from)
+    }
+
+    fn symlink_metadata(&self, path: &Path) -> virtual_fs::Result<Metadata> {
+        fs::symlink_metadata(self.prepare_path(path)?)
+            .map(metadata_from_std)
+            .map_err(FsError::from)
+    }
+
+    fn remove_file(&self, path: &Path) -> virtual_fs::Result<()> {
+        let path = self.prepare_path(path)?;
+        if path.parent().is_none() {
+            return Err(FsError::BaseNotDirectory);
+        }
+        fs::remove_file(&path).map_err(FsError::from)?;
+        sync_parent_directory(&path).map_err(FsError::from)
+    }
+
+    fn new_open_options(&self) -> OpenOptions<'_> {
+        OpenOptions::new(self)
+    }
+}
+
+impl virtual_fs::FileOpener for SyncHostFileSystem {
+    fn open(
+        &self,
+        path: &Path,
+        conf: &OpenOptionsConfig,
+    ) -> virtual_fs::Result<Box<dyn VirtualFile + Send + Sync + 'static>> {
+        let path = self.prepare_path(path)?;
+        let append = conf.append() && !conf.truncate();
+        let existed = path.exists();
+        let file = fs::OpenOptions::new()
+            .read(conf.read())
+            .write(conf.write())
+            .create_new(conf.create_new())
+            .create(conf.create())
+            .append(append)
+            .truncate(conf.truncate())
+            .open(&path)
+            .map_err(FsError::from)?;
+
+        if !existed && (conf.create() || conf.create_new()) {
+            sync_parent_directory(&path).map_err(FsError::from)?;
+        }
+
+        Ok(Box::new(SyncHostFile::new(file, path)) as Box<dyn VirtualFile + Send + Sync + 'static>)
+    }
+}
+
+#[derive(Debug)]
+struct SyncHostFile {
+    file: fs::File,
+    position: u64,
+    host_path: PathBuf,
+    is_regular_file: OnceLock<bool>,
+}
+
+impl SyncHostFile {
+    fn new(file: fs::File, host_path: PathBuf) -> Self {
+        Self {
+            file,
+            position: 0,
+            host_path,
+            is_regular_file: OnceLock::new(),
+        }
+    }
+
+    fn metadata(&self) -> io::Result<fs::Metadata> {
+        self.file.metadata()
+    }
+}
+
+impl VirtualFile for SyncHostFile {
+    fn last_accessed(&self) -> u64 {
+        self.metadata()
+            .ok()
+            .and_then(|metadata| metadata.accessed().ok())
+            .map(system_time_nanos)
+            .unwrap_or(0)
+    }
+
+    fn last_modified(&self) -> u64 {
+        self.metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .map(system_time_nanos)
+            .unwrap_or(0)
+    }
+
+    fn created_time(&self) -> u64 {
+        self.metadata()
+            .ok()
+            .and_then(|metadata| metadata.created().ok())
+            .map(system_time_nanos)
+            .unwrap_or(0)
+    }
+
+    fn size(&self) -> u64 {
+        self.metadata().map(|metadata| metadata.len()).unwrap_or(0)
+    }
+
+    fn set_len(&mut self, new_size: u64) -> virtual_fs::Result<()> {
+        self.file.set_len(new_size).map_err(FsError::from)
+    }
+
+    fn set_times(&mut self, atime: Option<u64>, mtime: Option<u64>) -> virtual_fs::Result<()> {
+        let atime = atime.map(nanos_to_file_time);
+        let mtime = mtime.map(nanos_to_file_time);
+        filetime::set_file_handle_times(&self.file, atime, mtime).map_err(|_| FsError::IOError)
+    }
+
+    fn unlink(&mut self) -> virtual_fs::Result<()> {
+        fs::remove_file(&self.host_path).map_err(FsError::from)?;
+        sync_parent_directory(&self.host_path).map_err(FsError::from)
+    }
+
+    fn poll_read_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
+        let file = self.get_mut();
+        Poll::Ready(
+            file.file
+                .metadata()
+                .map(|metadata| metadata.len().saturating_sub(file.position) as usize),
+        )
+    }
+
+    fn poll_write_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
+        Poll::Ready(Ok(8192))
+    }
+}
+
+impl AsyncRead for SyncHostFile {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let file = self.get_mut();
+        let result = read_at(&file.file, buf.initialize_unfilled(), file.position).map(|read| {
+            file.position = file.position.saturating_add(read as u64);
+            buf.advance(read);
+        });
+        Poll::Ready(result)
+    }
+}
+
+impl AsyncWrite for SyncHostFile {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let file = self.get_mut();
+        let result = write_at(&file.file, buf, file.position).inspect(|written| {
+            file.position = file.position.saturating_add(*written as u64);
+        });
+        Poll::Ready(result)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(self.get_mut().file.sync_all())
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(self.get_mut().file.flush())
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let file = self.get_mut();
+        let mut total = 0usize;
+        for buf in bufs.iter().filter(|buf| !buf.is_empty()) {
+            match write_at(&file.file, buf, file.position) {
+                Ok(written) => {
+                    file.position = file.position.saturating_add(written as u64);
+                    total += written;
+                    if written != buf.len() {
+                        break;
+                    }
+                }
+                Err(_) if total > 0 => break,
+                Err(err) => return Poll::Ready(Err(err)),
+            }
+        }
+        Poll::Ready(Ok(total))
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        true
+    }
+}
+
+fn sync_parent_directory(path: &Path) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
+    sync_directory(parent)
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> io::Result<()> {
+    // Windows does not provide a portable directory fsync operation:
+    // FlushFileBuffers on a directory handle fails with ERROR_ACCESS_DENIED.
+    // File contents are still flushed by SyncHostFile::poll_flush.
+    Ok(())
+}
+
+impl AsyncSeek for SyncHostFile {
+    fn start_seek(self: Pin<&mut Self>, position: io::SeekFrom) -> io::Result<()> {
+        let file = self.get_mut();
+        let current = file.position as i128;
+        let target = match position {
+            io::SeekFrom::Start(offset) => offset as i128,
+            io::SeekFrom::Current(delta) => current + delta as i128,
+            io::SeekFrom::End(delta) => {
+                host_file_len(&file.file, &file.is_regular_file)? as i128 + delta as i128
+            }
+        };
+        if target < 0 || target > u64::MAX as i128 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid seek before start or past u64::MAX",
+            ));
+        }
+        file.position = target as u64;
+        Ok(())
+    }
+
+    fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
+        Poll::Ready(Ok(self.get_mut().position))
+    }
+}
+
+#[cfg(unix)]
+fn read_at(file: &fs::File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    file.read_at(buf, offset)
+}
+
+fn host_file_len(file: &fs::File, is_regular_file: &OnceLock<bool>) -> io::Result<u64> {
+    if is_regular_file.get().copied() == Some(true) {
+        return regular_file_len(file).or_else(|_| file.metadata().map(|metadata| metadata.len()));
+    }
+
+    let metadata = file.metadata()?;
+    let is_regular = metadata.file_type().is_file();
+    let _ = is_regular_file.set(is_regular);
+    Ok(metadata.len())
+}
+
+#[cfg(any(unix, windows))]
+fn regular_file_len(file: &fs::File) -> io::Result<u64> {
+    use std::io::{Seek as _, SeekFrom};
+
+    // SyncHostFile uses positional I/O, so the host descriptor cursor is
+    // otherwise unused and can answer SEEK_END without an fstat/statx.
+    let mut file = file;
+    file.seek(SeekFrom::End(0))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn regular_file_len(file: &fs::File) -> io::Result<u64> {
+    file.metadata().map(|metadata| metadata.len())
+}
+
+#[cfg(windows)]
+fn read_at(file: &fs::File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    file.seek_read(buf, offset)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn read_at(file: &fs::File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    use std::io::{Read as _, Seek as _};
+
+    let mut file = file.try_clone()?;
+    file.seek(io::SeekFrom::Start(offset))?;
+    file.read(buf)
+}
+
+#[cfg(unix)]
+fn write_at(file: &fs::File, buf: &[u8], offset: u64) -> io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    file.write_at(buf, offset)
+}
+
+#[cfg(windows)]
+fn write_at(file: &fs::File, buf: &[u8], offset: u64) -> io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    file.seek_write(buf, offset)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn write_at(file: &fs::File, buf: &[u8], offset: u64) -> io::Result<usize> {
+    use std::io::{Seek as _, Write as _};
+
+    let mut file = file.try_clone()?;
+    file.seek(io::SeekFrom::Start(offset))?;
+    file.write(buf)
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut components = path.components().peekable();
+    let mut normalized = if let Some(Component::Prefix(prefix)) = components.peek().cloned() {
+        components.next();
+        PathBuf::from(prefix.as_os_str())
+    } else {
+        PathBuf::new()
+    };
+
+    for component in components {
+        match component {
+            Component::Prefix(_) => unreachable!(),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+
+    normalized
+}
+
+fn metadata_from_std(metadata: fs::Metadata) -> Metadata {
+    let filetype = metadata.file_type();
+    let (char_device, block_device, socket, fifo) = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt;
+            (
+                filetype.is_char_device(),
+                filetype.is_block_device(),
+                filetype.is_socket(),
+                filetype.is_fifo(),
+            )
+        }
+        #[cfg(not(unix))]
+        {
+            (false, false, false, false)
+        }
+    };
+
+    Metadata {
+        ft: FileType {
+            dir: filetype.is_dir(),
+            file: filetype.is_file(),
+            symlink: filetype.is_symlink(),
+            char_device,
+            block_device,
+            socket,
+            fifo,
+        },
+        accessed: metadata.accessed().map(system_time_nanos).unwrap_or(0),
+        created: metadata.created().map(system_time_nanos).unwrap_or(0),
+        modified: metadata.modified().map(system_time_nanos).unwrap_or(0),
+        len: metadata.len(),
+    }
+}
+
+fn system_time_nanos(time: SystemTime) -> u64 {
+    time.duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0)
+}
+
+fn nanos_to_file_time(nanos: u64) -> filetime::FileTime {
+    filetime::FileTime::from_unix_time(
+        (nanos / 1_000_000_000) as i64,
+        (nanos % 1_000_000_000) as u32,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "oliphaunt-sync-host-fs-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir(&root).unwrap();
+            Self(root)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn open_host(path: &Path) -> SyncHostFile {
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+        SyncHostFile::new(file, path.to_owned())
+    }
+
+    fn read_one(host: &mut SyncHostFile) -> u8 {
+        let mut byte = [0u8; 1];
+        let mut read_buf = ReadBuf::new(&mut byte);
+        let mut context = Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            Pin::new(host).poll_read(&mut context, &mut read_buf),
+            Poll::Ready(Ok(()))
+        ));
+        assert_eq!(read_buf.filled().len(), 1);
+        byte[0]
+    }
+
+    #[test]
+    fn seek_end_observes_external_growth_and_truncation() {
+        let root = TestDir::new();
+        let path = root.path().join("data");
+        fs::write(&path, b"abc").unwrap();
+        let mut host = open_host(&path);
+        Pin::new(&mut host)
+            .start_seek(io::SeekFrom::End(0))
+            .unwrap();
+        assert_eq!(host.position, 3);
+
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"defg")
+            .unwrap();
+        Pin::new(&mut host)
+            .start_seek(io::SeekFrom::End(0))
+            .unwrap();
+        assert_eq!(host.position, 7);
+
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(2)
+            .unwrap();
+        Pin::new(&mut host)
+            .start_seek(io::SeekFrom::End(0))
+            .unwrap();
+        assert_eq!(host.position, 2);
+    }
+
+    #[test]
+    fn seek_end_does_not_change_positional_io_for_cloned_handles() {
+        let root = TestDir::new();
+        let path = root.path().join("data");
+        fs::write(&path, b"0123456789").unwrap();
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let clone = file.try_clone().unwrap();
+        let mut first = SyncHostFile::new(file, path.clone());
+        let mut second = SyncHostFile::new(clone, path);
+
+        Pin::new(&mut first)
+            .start_seek(io::SeekFrom::Start(2))
+            .unwrap();
+        Pin::new(&mut second)
+            .start_seek(io::SeekFrom::Start(7))
+            .unwrap();
+        Pin::new(&mut first)
+            .start_seek(io::SeekFrom::End(0))
+            .unwrap();
+        assert_eq!(first.position, 10);
+        assert_eq!(second.position, 7);
+        assert_eq!(read_one(&mut second), b'7');
+
+        Pin::new(&mut first)
+            .start_seek(io::SeekFrom::Start(2))
+            .unwrap();
+        assert_eq!(read_one(&mut first), b'2');
+    }
+
+    #[test]
+    fn invalid_seek_keeps_the_virtual_position() {
+        let root = TestDir::new();
+        let path = root.path().join("data");
+        fs::write(&path, b"abc").unwrap();
+        let mut host = open_host(&path);
+
+        Pin::new(&mut host)
+            .start_seek(io::SeekFrom::Start(1))
+            .unwrap();
+        let error = Pin::new(&mut host)
+            .start_seek(io::SeekFrom::End(-4))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(host.position, 1);
+
+        host.position = u64::MAX;
+        let error = Pin::new(&mut host)
+            .start_seek(io::SeekFrom::Current(1))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(host.position, u64::MAX);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn seek_end_keeps_metadata_fallback_for_nonregular_files() {
+        let root = TestDir::new();
+        let directory = fs::File::open(root.path()).unwrap();
+        let is_regular_file = OnceLock::new();
+        let expected = directory.metadata().unwrap().len();
+
+        assert_eq!(
+            host_file_len(&directory, &is_regular_file).unwrap(),
+            expected
+        );
+        assert_eq!(is_regular_file.get(), Some(&false));
+        assert_eq!(
+            host_file_len(&directory, &is_regular_file).unwrap(),
+            expected
+        );
+
+        use std::os::fd::OwnedFd;
+        use std::os::unix::net::UnixStream;
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let socket = fs::File::from(OwnedFd::from(socket));
+        let socket_len = socket.metadata().unwrap().len();
+        let forced_regular = OnceLock::from(true);
+        assert_eq!(
+            host_file_len(&socket, &forced_regular).unwrap(),
+            socket_len,
+            "a failed cursor seek must retain metadata error/success semantics"
+        );
+    }
+}

@@ -1,7 +1,5 @@
 schema = "oliphaunt-extension-target-v1"
 artifact_family = "sql-only"
-status = "supported"
 build_kind = "pgxs-sql-only"
-dependencies = []
 module_files = []
 data_files = []

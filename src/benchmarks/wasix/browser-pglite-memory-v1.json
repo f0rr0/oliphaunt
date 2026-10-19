@@ -1,0 +1,111 @@
+{
+  "schema": "oliphaunt-wasix-browser-benchmark-plan-v1",
+  "id": "browser-pglite-memory-v1",
+  "description": "Matched direct/direct and worker/worker browser comparison between @oliphaunt/wasix-ts and exact PGlite using ephemeral memory storage.",
+  "engines": {
+    "candidate": {
+      "package": "@oliphaunt/wasix-ts",
+      "storage": "memory",
+      "directBoundary": "browser-caller-realm",
+      "workerBoundary": "package-owned-web-worker",
+      "dependencies": {
+        "fzstd": "0.1.1"
+      },
+      "runtimeBuild": {
+        "profile": "release",
+        "cflags": "-O2 -g0 -flto=thin",
+        "ldflags": "-flto=thin",
+        "configureWasmOpt": "no",
+        "buildWasmOpt": "yes",
+        "wasmOptFlags": "--converge:--strip-debug:--strip-producers",
+        "wasmOptSuppressDefault": "",
+        "wasmOptPreserveUnoptimized": "",
+        "compilerFlags": "",
+        "linkerFlags": "",
+        "backendTiming": "0"
+      }
+    },
+    "comparison": {
+      "package": "@electric-sql/pglite",
+      "version": "0.5.4",
+      "integrity": "sha512-yYZUyyXrHU7tPlCjwZQJ6hIG9DscdCCn7Uk0mYKwC1FeHX286AbcmFveMiRBEak8e9iPupjsoVImN3yJZVed2g==",
+      "homepage": "https://pglite.dev",
+      "sourceRepository": "https://github.com/electric-sql/pglite",
+      "sourceCommit": "25d0a55e1f1e4c59f26d9e125150dda88a33fd00",
+      "installedTreeHashSchema": "oliphaunt-path-size-content-sha256-v1",
+      "installedTreeSha256": "b3925de04c386f51859c1bf18c143b225e3850616718140dd32e8eb48e9a2c84",
+      "storage": "memory",
+      "directBoundary": "browser-caller-realm",
+      "workerBoundary": "official-pglite-web-worker"
+    }
+  },
+  "profiles": {
+    "quick": {
+      "startupRuns": 2,
+      "workloadRuns": 1,
+      "insertDiagnosticRuns": 1,
+      "pointSamples": 20,
+      "rangeSamples": 10,
+      "aggregateSamples": 5,
+      "transactionInserts": 20,
+      "qualificationEligible": false
+    },
+    "full": {
+      "startupRuns": 5,
+      "workloadRuns": 8,
+      "insertDiagnosticRuns": 5,
+      "pointSamples": 200,
+      "rangeSamples": 50,
+      "aggregateSamples": 30,
+      "transactionInserts": 100,
+      "qualificationEligible": true
+    }
+  },
+  "measurement": {
+    "rows": 10000,
+    "storage": "ephemeral-memory",
+    "order": "rotating-engines-with-same-run-pairing",
+    "warmup": "one-untimed-representative-workload-per-fresh-database",
+    "timingBoundary": "browser-caller-end-to-end-around-public-api",
+    "pairing": "same-run-oliphaunt-over-pglite",
+    "percentileMethod": "nearest-rank"
+  },
+  "gate": {
+    "maxGeomeanRatio": 0.8,
+    "requiresCorrectness": true,
+    "requiresBothTopologies": true,
+    "metric": "geometric-mean-of-median-paired-oliphaunt-over-pglite-ratios-lower-is-better",
+    "metrics": [
+      "startup.warmReadyMs",
+      "workload.createTableMs",
+      "workload.insert10kMs",
+      "workload.pointMedianMs",
+      "workload.pointP95Ms",
+      "workload.range100MedianMs",
+      "workload.range100P95Ms",
+      "workload.aggregateMedianMs",
+      "workload.aggregateP95Ms",
+      "workload.scanAndDecode10kMs",
+      "workload.transactionInsertBatchMs",
+      "workload.update1kMs",
+      "workload.delete1kMs"
+    ],
+    "excluded": {
+      "startup.firstReadyMs": "descriptive because the implementations use different compilation caches",
+      "workload.readyMs": "duplicates the independently sampled warm-start metric",
+      "workload.closeMs": "descriptive because the public close methods make different worker-reclamation guarantees",
+      "insertDiagnostic.*Ms": "diagnostic decomposition would otherwise overweight the primary insert workload",
+      "insertDiagnostic.indexedInsertWalBytes": "semantic parity constraint rather than a speed metric"
+    }
+  },
+  "postgres": {
+    "major": 18,
+    "settings": {
+      "fsync": "off",
+      "synchronousCommit": "on",
+      "fullPageWrites": "on",
+      "walLevel": "replica"
+    },
+    "indexedInsertWalTolerancePercent": 0.1
+  }
+}

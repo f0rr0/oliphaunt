@@ -1,0 +1,5 @@
+DO $$ DECLARE id uuid; BEGIN SELECT uuid_generate_v1() INTO id; IF length(id::text) <> 36 THEN RAISE EXCEPTION 'uuid-ossp v1 length failed'; END IF; SELECT uuid_generate_v4() INTO id; IF length(id::text) <> 36 THEN RAISE EXCEPTION 'uuid-ossp v4 length failed'; END IF; END $$;
+-- oliphaunt-statement
+DO $$ BEGIN IF uuid_generate_v3(uuid_ns_dns(), 'www.example.com')::text <> '5df41881-3aed-3515-88a7-2f4a814cf09e' THEN RAISE EXCEPTION 'uuid-ossp v3 failed'; END IF; IF uuid_generate_v5(uuid_ns_dns(), 'www.example.com')::text <> '2ed6657d-e927-568b-95e1-2665a8aea6a2' THEN RAISE EXCEPTION 'uuid-ossp v5 failed'; END IF; END $$;
+-- oliphaunt-statement
+DO $$ BEGIN IF uuid_nil()::text <> '00000000-0000-0000-0000-000000000000' THEN RAISE EXCEPTION 'uuid-ossp nil failed'; END IF; IF uuid_ns_dns()::text <> '6ba7b810-9dad-11d1-80b4-00c04fd430c8' THEN RAISE EXCEPTION 'uuid-ossp dns namespace failed'; END IF; IF uuid_ns_oid()::text <> '6ba7b812-9dad-11d1-80b4-00c04fd430c8' THEN RAISE EXCEPTION 'uuid-ossp oid namespace failed'; END IF; END $$;

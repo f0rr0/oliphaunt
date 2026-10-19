@@ -1,0 +1,61 @@
+---
+title: WASIX Rust SDK
+description: Host WebAssembly PostgreSQL from Rust with memory or persistent directory storage.
+---
+
+Use `oliphaunt-wasix` when a Rust application hosts the WASIX PostgreSQL runtime. For native desktop PostgreSQL, use the [native Rust SDK](/docs/sdk/rust).
+
+## Install
+
+```sh
+cargo add oliphaunt-wasix
+```
+
+The package resolves matching runtime assets for supported hosts. Use Rust 1.93 or later.
+
+## Run your first query
+
+Create a complete `src/main.rs`:
+
+<!-- oliphaunt-snippet: oliphaunt-wasix-rust -->
+
+```rust
+use oliphaunt_wasix::Oliphaunt;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut db = Oliphaunt::open()?;
+    let result = db.sql("SELECT $1::int4 AS answer").bind(42_i32).query()?;
+    let answer: i32 = result.rows()[0].try_get("answer")?;
+    println!("{answer}"); // 42
+    db.close()?;
+    Ok(())
+}
+```
+
+Run with `cargo run`. The default database uses a memory filesystem and is discarded on close.
+
+## Keep data between runs
+
+```rust
+use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
+
+let mut db = Oliphaunt::builder()
+    .storage(DatabaseStorage::Directory("./data/notes".into()))
+    .open()?;
+```
+
+Only one live owner can open a persistent root. Reopen the same path to access saved data.
+
+## Choose synchronous or async ownership
+
+The synchronous `Oliphaunt` is **not `Send` or `Sync`**. Create, use, close, and drop it on the same OS thread. Use `AsyncOliphaunt` for a cloneable `Send + Sync` handle:
+
+```rust
+use oliphaunt_wasix::AsyncOliphaunt;
+
+let db = AsyncOliphaunt::open().await?;
+let result = db.query("SELECT 42::int4 AS answer").await?;
+db.close().await?;
+```
+
+Async clones share one owner and session. Continue with the [WASIX Rust guide](/docs/sdk/wasix-rust/guide), [runtime behavior](/docs/sdk/wasix-rust/runtime), or [API reference](/docs/sdk/wasix-rust/api-reference).

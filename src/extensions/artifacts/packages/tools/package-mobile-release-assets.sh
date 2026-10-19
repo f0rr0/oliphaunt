@@ -27,7 +27,7 @@ if ((${#products[@]} > 0)); then
     product="$(printf '%s' "$product" | xargs)"
     [ -n "$product" ] || continue
     args+=("$product")
-    validation_args+=(--require-extension-product "$product")
+    validation_args+=("$product")
   done
 fi
 
@@ -65,5 +65,8 @@ case " ${args[*]} " in
     ;;
 esac
 
-tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs "${args[@]}"
-tools/dev/bun.sh tools/release/check-staged-artifacts.mjs "${validation_args[@]}"
+artifact_root=target/mobile-extension-artifacts
+tools/dev/bun.sh src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts \
+  --output-root "$artifact_root" --family native "${args[@]}"
+OLIPHAUNT_EXTENSION_ARTIFACT_ROOT="$artifact_root" \
+  tools/dev/bun.sh src/extensions/artifacts/packages/tools/check-carriers.mts --family native "${validation_args[@]}"

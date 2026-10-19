@@ -1,0 +1,7 @@
+{
+  "windowsVcRuntimeDlls": ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"],
+  "windowsVcRuntimeProfiles": {
+    "provider": ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
+  },
+  "windowsVcRuntimeReceipt": "windows-vc-runtime.sha256"
+}

@@ -1,0 +1,387 @@
+diff --git a/src/postgres_direct.rs b/src/postgres_direct.rs
+index b381faf5..87e202c5 100644
+--- a/src/postgres_direct.rs
++++ b/src/postgres_direct.rs
+@@ -2,15 +2,44 @@ use std::sync::Arc;
+ 
+ use anyhow::{ensure, Context};
+ use js_sys::{Uint8Array, WebAssembly};
+-use wasm_bindgen::prelude::wasm_bindgen;
++use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
+ use wasmer::{Instance as WasmerInstance, Store, TypedFunction, Value, WasmTypeList};
+-use wasmer_wasix::{Runtime as _, WasiEnvBuilder, WasiError, WasiFunctionEnv};
++use wasmer_wasix::{
++    oliphaunt_direct_memory, Runtime as _, WasiEnvBuilder, WasiError, WasiFunctionEnv,
++};
+ 
+ use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOptions};
+ 
+ const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
+ const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
+ 
++#[wasm_bindgen(inline_js = r#"
++export function oliphauntCopyToGuest(memory, pointer, input) {
++    new Uint8Array(memory.buffer, pointer, input.byteLength).set(input);
++}
++
++export function oliphauntCopyFromGuest(memory, pointer, length) {
++    // slice() deliberately returns owned protocol bytes. A view would become
++    // invalid or mutable as soon as PostgreSQL reuses or grows guest memory.
++    return new Uint8Array(memory.buffer, pointer, length).slice();
++}
++
++"#)]
++extern "C" {
++    #[wasm_bindgen(catch, js_name = oliphauntCopyToGuest)]
++    fn oliphaunt_copy_to_guest(
++        memory: &JsValue,
++        pointer: u32,
++        input: &Uint8Array,
++    ) -> Result<(), JsValue>;
++    #[wasm_bindgen(catch, js_name = oliphauntCopyFromGuest)]
++    fn oliphaunt_copy_from_guest(
++        memory: &JsValue,
++        pointer: u32,
++        length: u32,
++    ) -> Result<Uint8Array, JsValue>;
++}
++
+ /// Instantiate the integrated Oliphaunt/PostgreSQL guest in this JS realm.
+ ///
+ /// The returned driver is synchronous by design: every guest export runs on
+@@ -31,14 +60,15 @@ pub struct OliphauntDirectInstance {
+     store: Store,
+     _instance: WasmerInstance,
+-    env: WasiFunctionEnv,
++    _env: WasiFunctionEnv,
+-    malloc: TypedFunction<i32, i32>,
+-    free: TypedFunction<i32, ()>,
++    guest_memory: JsValue,
+     input_reset: TypedFunction<(), i32>,
+-    input_write: TypedFunction<(i32, i32), i32>,
++    input_reserve: TypedFunction<i32, i32>,
++    input_commit: TypedFunction<i32, i32>,
+     input_available: TypedFunction<(), i32>,
+     output_reset: TypedFunction<(), i32>,
+     output_len: TypedFunction<(), i32>,
+-    output_read: TypedFunction<(i32, i32), i32>,
++    output_data: TypedFunction<(), i32>,
++    output_contains_error: TypedFunction<(), i32>,
+     set_force_host_error_recovery: Option<TypedFunction<i32, i32>>,
+     set_active: TypedFunction<i32, i32>,
+     wasi_start: TypedFunction<(), ()>,
+@@ -62,8 +92,8 @@ impl OliphauntDirectInstance {
+     /// Start PostgreSQL and process one frontend startup packet.
+     #[wasm_bindgen(js_name = startup)]
+     pub fn startup(&mut self, packet: Uint8Array) -> Result<Uint8Array, Error> {
+-        match self.startup_inner(&packet.to_vec()) {
+-            Ok(output) => Ok(Uint8Array::from(output.as_slice())),
++        match self.startup_inner(&packet) {
++            Ok(output) => Ok(output),
+             Err(error) => Err(self.startup_error(error)),
+         }
+     }
+@@ -71,9 +101,7 @@ impl OliphauntDirectInstance {
+     /// Execute raw PostgreSQL frontend-protocol bytes synchronously.
+     #[wasm_bindgen(js_name = execProtocolRaw)]
+     pub fn exec_protocol_raw(&mut self, input: Uint8Array) -> Result<Uint8Array, Error> {
+-        self.exec_protocol_raw_inner(&input.to_vec())
+-            .map(|output| Uint8Array::from(output.as_slice()))
+-            .map_err(Error::from)
++        self.exec_protocol_raw_inner(&input).map_err(Error::from)
+     }
+ 
+     /// Shut down the embedded lifecycle. This does not consume the JS object.
+@@ -83,7 +111,7 @@ impl OliphauntDirectInstance {
+ }
+ 
+ impl OliphauntDirectInstance {
+-    fn startup_inner(&mut self, packet: &[u8]) -> anyhow::Result<Vec<u8>> {
++    fn startup_inner(&mut self, packet: &Uint8Array) -> anyhow::Result<Uint8Array> {
+         self.ensure_open()?;
+         ensure!(
+             !self.protocol_started,
+@@ -91,7 +119,7 @@ impl OliphauntDirectInstance {
+         );
+         self.start_backend()?;
+         self.reset_io()?;
+-        self.push_input(packet)?;
++        self.push_input_js(packet)?;
+ 
+         let port = self
+             .get_port
+@@ -112,22 +140,23 @@ impl OliphauntDirectInstance {
+                 .context("oliphaunt_wasix_pq_flush after startup")?;
+             self.protocol_started = true;
+         }
+-        self.take_output()
++        self.take_output_js()
+     }
+ 
+-    fn exec_protocol_raw_inner(&mut self, payload: &[u8]) -> anyhow::Result<Vec<u8>> {
++    fn exec_protocol_raw_inner(&mut self, payload: &Uint8Array) -> anyhow::Result<Uint8Array> {
+         self.ensure_open()?;
+         ensure!(
+             self.protocol_started,
+             "Oliphaunt direct startup has not completed"
+         );
+-        if payload.is_empty() {
+-            return Ok(Vec::new());
++        if payload.length() == 0 {
++            return Ok(Uint8Array::new_with_length(0));
+         }
+ 
+         self.reset_io()?;
+-        self.push_input(&payload)?;
+-        let max_attempts = (payload.len() / 5).saturating_add(2).max(1);
++        self.push_input_js(payload)?;
++        let payload_len = payload.length() as usize;
++        let max_attempts = (payload_len / 5).saturating_add(2).max(1);
+         let mut attempts = 0usize;
+         let mut recovered_protocol_error = false;
+         while self.protocol_input_remaining()? > 0 {
+@@ -140,7 +169,7 @@ impl OliphauntDirectInstance {
+                 // Match the native host: the exported recovery boundary is
+                 // authoritative even when a JS engine reports an unfamiliar
+                 // trap spelling.
+-                self.recover_protocol_error(payload.len())?;
++                self.recover_protocol_error(payload_len)?;
+                 recovered_protocol_error = true;
+             }
+         }
+@@ -150,8 +179,13 @@ impl OliphauntDirectInstance {
+         self.pq_flush
+             .call(&mut self.store)
+             .context("oliphaunt_wasix_pq_flush after protocol input")?;
+-        let output = self.take_output()?;
+-        if !recovered_protocol_error && protocol_response_contains_error(&output) {
++        let output_contains_error = self
++            .output_contains_error
++            .call(&mut self.store)
++            .context("oliphaunt_wasix_output_contains_error")?
++            != 0;
++        let output = self.take_output_js()?;
++        if !recovered_protocol_error && output_contains_error {
+             self.recover_non_trapping_protocol_error()?;
+         }
+         Ok(output)
+@@ -196,6 +230,8 @@ impl OliphauntDirectInstance {
+             .instantiate_async(module, &mut store)
+             .await
+             .context("instantiate Oliphaunt direct WASIX module")?;
++        let guest_memory = oliphaunt_direct_memory(&env, &store)
++            .context("get WASIX guest memory for direct PGWire")?;
+         seed_exported_c_string(
+             &mut store,
+             &instance,
+@@ -204,16 +240,19 @@ impl OliphauntDirectInstance {
+             DEFAULT_PROGRAM_NAME,
+         )?;
+ 
+-        let malloc = typed_export(&mut store, &instance, "malloc")?;
+-        let free = typed_export(&mut store, &instance, "pg_free")
+-            .or_else(|_| typed_export(&mut store, &instance, "free"))?;
+         let input_reset = typed_export(&mut store, &instance, "oliphaunt_wasix_input_reset")?;
+-        let input_write = typed_export(&mut store, &instance, "oliphaunt_wasix_input_write")?;
++        let input_reserve = typed_export(&mut store, &instance, "oliphaunt_wasix_input_reserve")?;
++        let input_commit = typed_export(&mut store, &instance, "oliphaunt_wasix_input_commit")?;
+         let input_available =
+             typed_export(&mut store, &instance, "oliphaunt_wasix_input_available")?;
+         let output_reset = typed_export(&mut store, &instance, "oliphaunt_wasix_output_reset")?;
+         let output_len = typed_export(&mut store, &instance, "oliphaunt_wasix_output_len")?;
+-        let output_read = typed_export(&mut store, &instance, "oliphaunt_wasix_output_read")?;
++        let output_data = typed_export(&mut store, &instance, "oliphaunt_wasix_output_data")?;
++        let output_contains_error = typed_export(
++            &mut store,
++            &instance,
++            "oliphaunt_wasix_output_contains_error",
++        )?;
+         let set_force_host_error_recovery = optional_typed_export(
+             &mut store,
+             &instance,
+@@ -243,14 +282,15 @@ impl OliphauntDirectInstance {
+             store,
+             _instance: instance,
+-            env,
++            _env: env,
+-            malloc,
+-            free,
++            guest_memory,
+             input_reset,
+-            input_write,
++            input_reserve,
++            input_commit,
+             input_available,
+             output_reset,
+             output_len,
+-            output_read,
++            output_data,
++            output_contains_error,
+             set_force_host_error_recovery,
+             set_active,
+             wasi_start,
+@@ -322,68 +362,42 @@ impl OliphauntDirectInstance {
+         Ok(())
+     }
+ 
+-    fn push_input(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+-        if bytes.is_empty() {
++    fn push_input_js(&mut self, bytes: &Uint8Array) -> anyhow::Result<()> {
++        let len = i32::try_from(bytes.length()).context("direct protocol input exceeds i32")?;
++        if len == 0 {
+             return Ok(());
+         }
+-        let ptr = self.allocate(bytes.len() as i32)?;
+-        let result = (|| {
+-            let view = self
+-                .env
+-                .data(&self.store)
+-                .try_memory_view(&self.store)
+-                .context("get WASIX memory view")?;
+-            view.write(ptr as u64, bytes)
+-                .context("write direct protocol input into guest")?;
+-            let written = self
+-                .input_write
+-                .call(&mut self.store, ptr, bytes.len() as i32)
+-                .context("oliphaunt_wasix_input_write")?;
+-            ensure!(
+-                written == bytes.len() as i32,
+-                "short direct protocol input write"
+-            );
+-            Ok(())
+-        })();
+-        self.free
+-            .call(&mut self.store, ptr)
+-            .context("free direct protocol input")?;
+-        result
++        let ptr = self
++            .input_reserve
++            .call(&mut self.store, len)
++            .context("oliphaunt_wasix_input_reserve")?;
++        ensure!(ptr > 0, "oliphaunt_wasix_input_reserve returned null");
++        oliphaunt_copy_to_guest(&self.guest_memory, ptr as u32, bytes)
++            .map_err(|error| anyhow::anyhow!("copy direct protocol input into guest: {error:?}"))?;
++        let committed = self
++            .input_commit
++            .call(&mut self.store, len)
++            .context("oliphaunt_wasix_input_commit")?;
++        ensure!(committed == len, "short direct protocol input commit");
++        Ok(())
+     }
+ 
+-    fn take_output(&mut self) -> anyhow::Result<Vec<u8>> {
++    fn take_output_js(&mut self) -> anyhow::Result<Uint8Array> {
+         let len = self
+             .output_len
+             .call(&mut self.store)
+             .context("oliphaunt_wasix_output_len")?;
+         ensure!(len >= 0, "negative direct protocol output length");
+         if len == 0 {
+-            return Ok(Vec::new());
++            return Ok(Uint8Array::new_with_length(0));
+         }
+-        let ptr = self.allocate(len)?;
+-        let result = (|| {
+-            let read = self
+-                .output_read
+-                .call(&mut self.store, ptr, len)
+-                .context("oliphaunt_wasix_output_read")?;
+-            ensure!(
+-                read >= 0 && read <= len,
+-                "invalid direct protocol output read"
+-            );
+-            let mut bytes = vec![0; read as usize];
+-            let view = self
+-                .env
+-                .data(&self.store)
+-                .try_memory_view(&self.store)
+-                .context("get WASIX memory view")?;
+-            view.read(ptr as u64, &mut bytes)
+-                .context("read direct protocol output from guest")?;
+-            Ok(bytes)
+-        })();
+-        self.free
+-            .call(&mut self.store, ptr)
+-            .context("free direct protocol output")?;
+-        let bytes = result?;
++        let ptr = self
++            .output_data
++            .call(&mut self.store)
++            .context("oliphaunt_wasix_output_data")?;
++        ensure!(ptr > 0, "oliphaunt_wasix_output_data returned null");
++        let output = oliphaunt_copy_from_guest(&self.guest_memory, ptr as u32, len as u32)
++            .map_err(|error| anyhow::anyhow!("copy direct protocol output from guest: {error:?}"));
+         ensure!(
+             self.output_reset
+                 .call(&mut self.store)
+@@ -391,16 +405,7 @@ impl OliphauntDirectInstance {
+                 == 0,
+             "oliphaunt_wasix_output_reset after read failed"
+         );
+-        Ok(bytes)
+-    }
+-
+-    fn allocate(&mut self, len: i32) -> anyhow::Result<i32> {
+-        let ptr = self
+-            .malloc
+-            .call(&mut self.store, len)
+-            .context("malloc direct guest buffer")?;
+-        ensure!(ptr > 0, "malloc returned null for direct guest buffer");
+-        Ok(ptr)
++        output
+     }
+ 
+     fn protocol_input_remaining(&mut self) -> anyhow::Result<i32> {
+@@ -448,14 +453,16 @@ impl OliphauntDirectInstance {
+         self.pq_flush
+             .call(&mut self.store)
+             .context("oliphaunt_wasix_pq_flush after backend ErrorResponse")?;
+-        let _ = self.take_output()?;
++        let _ = self.take_output_js()?;
+         Ok(())
+     }
+ 
+     fn startup_error(&mut self, error: anyhow::Error) -> Error {
+         let _ = self.pq_flush.call(&mut self.store);
+-        let protocol = self.take_output().unwrap_or_default();
+-        if protocol.is_empty() {
++        let protocol = self
++            .take_output_js()
++            .unwrap_or_else(|_| Uint8Array::new_with_length(0));
++        if protocol.length() == 0 {
+             return Error::from(error);
+         }
+ 
+@@ -463,7 +470,7 @@ impl OliphauntDirectInstance {
+         let _ = js_sys::Reflect::set(
+             &js_error,
+             &wasm_bindgen::JsValue::from_str("protocolResponse"),
+-            &Uint8Array::from(protocol.as_slice()),
++            &protocol,
+         );
+         let _ = js_sys::Reflect::set(
+             &js_error,
+@@ -545,23 +552,3 @@ fn runtime_exit_code(error: &wasmer::RuntimeError) -> Option<i32> {
+             _ => None,
+         })
+ }
+-
+-fn protocol_response_contains_error(response: &[u8]) -> bool {
+-    let mut cursor = 0usize;
+-    while cursor + 5 <= response.len() {
+-        let tag = response[cursor];
+-        let len = i32::from_be_bytes(response[cursor + 1..cursor + 5].try_into().unwrap());
+-        if len < 4 {
+-            return false;
+-        }
+-        let total = 1usize.saturating_add(len as usize);
+-        if cursor + total > response.len() {
+-            return false;
+-        }
+-        if tag == b'E' {
+-            return true;
+-        }
+-        cursor += total;
+-    }
+-    false
+-}

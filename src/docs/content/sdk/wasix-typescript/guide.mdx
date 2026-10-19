@@ -1,0 +1,143 @@
+---
+title: WASIX TypeScript guide
+description: Choose storage and execution placement, transact, back up, and use PostgreSQL tools.
+---
+
+These recipes build on the [WASIX TypeScript quickstart](/docs/sdk/wasix-typescript). An open `db` owns one PostgreSQL session.
+
+## Choose persistent storage
+
+Import only the adapter for your host:
+
+| Host | Import | Create storage |
+| --- | --- | --- |
+| Browser IndexedDB | `@oliphaunt/wasix-ts/storage/indexed-db` | `indexedDB('notes')` |
+| Browser OPFS | `@oliphaunt/wasix-ts/storage/opfs` | `opfs('notes')` |
+| Node.js / Electron | `@oliphaunt/wasix-ts/storage/node` | `directory('./data/notes')` |
+| Bun | `@oliphaunt/wasix-ts/storage/bun` | `directory('./data/notes')` |
+| Deno | `@oliphaunt/wasix-ts/storage/deno` | `directory('./data/notes')` |
+
+For example, a Node.js application opens a persistent root with:
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
+import { directory } from '@oliphaunt/wasix-ts/storage/node';
+
+const db = await Oliphaunt.open({ storage: directory('./data/notes') });
+```
+
+Only one live owner may use a persistent root or browser storage name. Close the current handle before opening it from another Worker, process, or binding.
+
+## Choose execution placement
+
+| Import | Browser | Desktop host |
+| --- | --- | --- |
+| `@oliphaunt/wasix-ts` | Executes in the importing realm | Dedicated Rust owner keeps the event loop responsive |
+| `@oliphaunt/wasix-ts/direct` | Unavailable | May block the calling JavaScript thread |
+| `@oliphaunt/wasix-ts/worker` | Package-owned Worker | Package-owned JavaScript Worker |
+
+The available placements return the same promise-based query API. An async signature alone does not mean that execution is off the calling thread. Use `/worker` in a browser UI that must remain responsive.
+
+OPFS uses synchronous file access where the browser provides it in a Dedicated Worker. In a Window or a host without those handles, the adapter uses its portable persistence path automatically.
+
+## Query and transact
+
+```ts
+await db.execute('CREATE TABLE IF NOT EXISTS notes (body text NOT NULL)');
+await db.transaction(async (tx) => {
+  await tx.execute('INSERT INTO notes (body) VALUES ($1)', ['First']);
+  await tx.execute('INSERT INTO notes (body) VALUES ($1)', ['Second']);
+});
+console.log((await db.query('SELECT body FROM notes')).rows);
+```
+
+Return to commit and throw to roll back. Use only the callback's `tx` for its statements. Do not manually begin, end, or replace the outer transaction; use `tx.rollback()` for explicit rollback. Savepoints are supported.
+
+Persistent operations publish their changes before their promises settle. A transaction publishes after confirmed commit or rollback. If publication fails, the handle becomes unusable: close it and reopen the last complete stored generation. The failed operation may have an uncertain outcome; inspect application state before retrying a write.
+
+## Select extensions
+
+Install a WASIX extension package and pass its descriptor, not a SQL-name string:
+
+```sh
+npm install @oliphaunt/extension-pgtap-wasix
+```
+
+```ts
+import pgtap from '@oliphaunt/extension-pgtap-wasix';
+
+const db = await Oliphaunt.open({ extensions: [pgtap] });
+await db.execute('CREATE EXTENSION IF NOT EXISTS pgtap');
+```
+
+Use the same selection when reopening extension-bearing data. The SDK does not run application migrations or `CREATE EXTENSION` automatically. Include the selected extension packages when deploying your app.
+
+## Back up and restore
+
+```ts
+const archive = await db.backup();
+await db.close();
+await Oliphaunt.restore(directory('./data/restored'), archive);
+const restored = await Oliphaunt.open({ storage: directory('./data/restored') });
+await restored.close();
+```
+
+This fragment uses the Node.js `directory` adapter imported above. In a browser, pass a fresh IndexedDB or OPFS storage descriptor instead. Restore requires new or empty persistent storage and a compatible WASIX physical archive. Reapply required extensions when opening restored data.
+
+## Use logical PostgreSQL tools
+
+Install the optional tools package:
+
+```sh
+npm install @oliphaunt/wasix-tools
+```
+
+```ts
+import OliphauntWorker from '@oliphaunt/wasix-ts/worker';
+import { pgDump, psql } from '@oliphaunt/wasix-tools';
+
+const sql = await pgDump(db);
+const target = await OliphauntWorker.open();
+try {
+  await psql(target, { script: sql });
+} finally {
+  await target.close();
+}
+```
+
+`pgDump` supports root, direct, and Worker handles. `psql` supports all desktop placements; in browsers it requires a Worker handle. A plain dump can contain COPY data and psql commands, so restore it with `psql`, not `execute`.
+
+Tools exclusively use and reset the session. Reapply session settings and prepared statements after a tool run. Interactive psql, custom archives, parallel jobs, and `pg_restore` are outside this tools API.
+
+## Open a local endpoint
+
+On Node.js, Bun, Deno, or Electron, use the `/server` entry point:
+
+```ts
+import { openServer } from '@oliphaunt/wasix-ts/server';
+
+const server = await openServer({
+  storage: directory('./data/server'),
+  listen: { transport: 'tcp' },
+});
+console.log(server.connectionString);
+// Close the PostgreSQL client before awaiting server.close().
+```
+
+The endpoint accepts **one connected client at a time**. Configure a client pool with a maximum of one connection. Browser apps cannot use this TCP endpoint. Choose a native server when independent sessions are required.
+
+## Desktop host setup
+
+Deno needs local npm module resolution. Set `"nodeModulesDir": "auto"` in `deno.json`, use `npm:` import prefixes, and grant native loading and storage permissions:
+
+```sh
+deno run --allow-ffi --allow-read --allow-write --allow-env main.ts
+```
+
+The Worker placement does not require process-spawn permission. Electron packaging must leave `**/prebuilds/**` unpacked and preserve native loader companions beside the addon in `app.asar.unpacked`.
+
+## Errors and shutdown
+
+Handle SQL failures using `PostgresError` and SQLSTATE. Transaction aggregates preserve callback and rollback/database failures. Await `close()` to observe cleanup; even a failed teardown makes the handle terminal. Close after a transaction callback settles, not from inside it.
+
+There is no public direct-query cancellation API. Keep transactions and queries bounded, and select an execution placement that preserves application responsiveness.

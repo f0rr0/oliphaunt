@@ -1,0 +1,21 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "benchmarks"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["benchmarks", "performance", "inputs"]
+
+project:
+  title: "Benchmark Inputs"
+  description: "Benchmark SQL fixtures, baselines, and report shape documentation."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/perf"
+  paths:
+    "**/*": ["@oliphaunt/perf"]
+
+fileGroups:
+  native-sql:
+    - "native/sql/*.sql"

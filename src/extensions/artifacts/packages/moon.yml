@@ -1,179 +1,165 @@
-$schema: "https://moonrepo.dev/schemas/project.json"
-
-id: "extension-packages"
-language: "javascript"
-layer: "tool"
-stack: "systems"
-tags: ["extensions", "artifacts", "release"]
+$schema: https://moonrepo.dev/schemas/project.json
+id: extension-packages
+language: typescript
+layer: tool
+stack: systems
+tags:
+  - javascript-quality
+  - extensions
+  - artifacts
+  - release
 dependsOn:
-  - id: "extension-artifacts-native"
-    scope: "build"
-  - id: "extension-artifacts-wasix"
-    scope: "build"
-  - id: "extensions"
-    scope: "build"
-
+  - id: extension-artifacts-native
+    scope: build
+  - id: extension-artifacts-wasix
+    scope: build
+  - id: extension-runtime-contract
+    scope: build
+  - id: extensions
+    scope: build
+  - id: liboliphaunt-native
+    scope: build
+  - id: liboliphaunt-wasix
+    scope: build
 project:
-  title: "Extension Packages"
-  description: "Publishable exact SQL extension artifacts staged per release product."
-  owner: "oliphaunt"
-
+  title: Extension Packages
+  description: Publishable exact SQL extension artifacts staged per release product.
+  owner: oliphaunt
 tasks:
-  assemble-mobile:
-    tags: ["release", "artifact-package", "ci-mobile-extension-packages"]
-    command: "bash src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh"
-    inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/.release-please-manifest.json"
-      - "/release-please-config.json"
-      - "/src/extensions/**/*"
-      - "!/src/extensions/generated/docs"
-      - "!/src/extensions/generated/docs/**"
-      - "!/src/extensions/evidence"
-      - "!/src/extensions/evidence/**"
-      - "/src/runtimes/liboliphaunt/native/moon.yml"
-      - "/src/runtimes/liboliphaunt/native/release.toml"
-      - "/src/runtimes/liboliphaunt/native/VERSION"
-      - "/src/runtimes/liboliphaunt/licenses/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/moon.yml"
-      - "/src/runtimes/liboliphaunt/wasix/release.toml"
-      - "/src/runtimes/liboliphaunt/wasix/VERSION"
-      - "/src/shared/extension-runtime-contract/**/*"
-      - "/src/sdks/react-native/tools/validate-mobile-runtime-files.mjs"
-      - "/tools/dev/bun.sh"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/release/build-extension-ci-artifacts.mjs"
-      - "/tools/release/cargo-source-package.mjs"
-      - "/tools/release/check-staged-artifacts.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/tools/release/extension-qualification-candidates.mjs"
-      - "/tools/release/extension-target-profiles.toml"
-      - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/ios-carrier-manifest.mjs"
-      - "/tools/release/tar-command.mjs"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/prepare-swift-release-consumer.mjs"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-semantic-inputs.mjs"
-      - "/tools/release/release-semantic-inputs.toml"
-      - "/tools/release/rust-native-targets.mjs"
-      - "/tools/release/source-only-sdk-package.mjs"
-      - "/tools/release/swift-source-carrier-contract.mjs"
-      - "/tools/release/wasix-aot-manifest.mjs"
-      - "/tools/release/wasix-cargo-toolchain-policy.mjs"
-      - "/tools/release/wasix-cargo-artifact-contract.mjs"
-      - "/tools/dev/moon-command.mjs"
-      - "/src/postgres/versions/18/source.toml"
-      - "/target/extensions/native/release-assets/**/*"
-    outputs:
-      - "/target/extension-artifacts/**/*"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: true
-
-  assemble-release:
-    tags: ["release", "artifact-package", "ci-extension-packages"]
-    command: "bash src/extensions/artifacts/packages/tools/package-release-assets.sh"
-    inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/.release-please-manifest.json"
-      - "/release-please-config.json"
-      - "/src/extensions/**/*"
-      - "!/src/extensions/generated/docs"
-      - "!/src/extensions/generated/docs/**"
-      - "!/src/extensions/evidence"
-      - "!/src/extensions/evidence/**"
-      - "/src/runtimes/liboliphaunt/native/moon.yml"
-      - "/src/runtimes/liboliphaunt/native/release.toml"
-      - "/src/runtimes/liboliphaunt/native/VERSION"
-      - "/src/runtimes/liboliphaunt/licenses/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/moon.yml"
-      - "/src/runtimes/liboliphaunt/wasix/release.toml"
-      - "/src/runtimes/liboliphaunt/wasix/VERSION"
-      - "/src/shared/extension-runtime-contract/**/*"
-      - "/src/sdks/react-native/tools/validate-mobile-runtime-files.mjs"
-      - "/tools/dev/bun.sh"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/release/build-extension-ci-artifacts.mjs"
-      - "/tools/release/cargo-source-package.mjs"
-      - "/tools/release/check-staged-artifacts.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/tools/release/extension-qualification-candidates.mjs"
-      - "/tools/release/extension-target-profiles.toml"
-      - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/ios-carrier-manifest.mjs"
-      - "/tools/release/tar-command.mjs"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/prepare-swift-release-consumer.mjs"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-semantic-inputs.mjs"
-      - "/tools/release/release-semantic-inputs.toml"
-      - "/tools/release/rust-native-targets.mjs"
-      - "/tools/release/source-only-sdk-package.mjs"
-      - "/tools/release/swift-source-carrier-contract.mjs"
-      - "/tools/release/wasix-aot-manifest.mjs"
-      - "/tools/release/wasix-cargo-toolchain-policy.mjs"
-      - "/tools/release/wasix-cargo-artifact-contract.mjs"
-      - "/tools/dev/moon-command.mjs"
-      - "/src/postgres/versions/18/source.toml"
-      - "/target/extensions/native/release-assets/**/*"
-      - "/target/extensions/wasix/release-assets/**/*"
-      - "/target/extensions/wasix/aot-artifacts/**/*"
-    outputs:
-      - "/target/extension-artifacts/**/*"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: true
-
-  registry-carrier-qualification:
-    tags: ["release", "artifact-package", "ci-extension-packages"]
+  package-mobile:
+    tags:
+      - release
+      - artifact-package
+      - ci-mobile-extension-packages
+    command: bash src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh
     deps:
-      - "extension-packages:assemble-release"
-    command: "tools/dev/bun.sh tools/release/offline-registry-carrier-qualification.mjs --scope extensions"
+      - extension-artifacts-native:build-target
     inputs:
-      - "/.release-please-manifest.json"
-      - "/release-please-config.json"
-      - "/src/extensions/**/*"
-      - "!/src/extensions/generated/docs"
-      - "!/src/extensions/generated/docs/**"
-      - "!/src/extensions/evidence"
-      - "!/src/extensions/evidence/**"
-      - "/src/runtimes/liboliphaunt/wasix/packages/**/*"
-      - "/tools/dev/capture-command-output.mjs"
-      - "/tools/release/archive_dir.mjs"
-      - "/tools/release/atomic-directory.mjs"
-      - "/tools/release/build_maven_artifact_manifest.mjs"
-      - "/tools/release/cargo-source-package.mjs"
-      - "/tools/release/check-staged-artifacts.mjs"
-      - "/tools/release/extension-registry-carrier-materializer.mjs"
-      - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/src/sdks/js/src/native/extension-contract.ts"
-      - "/tools/release/maven-artifact-staging.mjs"
-      - "/tools/release/maven-central-contract.mjs"
-      - "/tools/release/offline-registry-carrier-qualification.mjs"
-      - "/tools/release/package-extension-cargo-facades.mjs"
-      - "/tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-product-dry-run.mjs"
-      - "/tools/release/rust-build-script-sha256.mjs"
-      - "/target/liboliphaunt/release-assets/**/*"
-      - "/target/extension-artifacts/**/*"
+      - "@group(legal-files)"
+      - /release-please-config.json
+      - tools/package-mobile-release-assets.sh
+      - project: extensions
+        group: package
+      - /src/native/runtime/moon.yml
+      - /src/native/runtime/release.toml
+      - /src/native/runtime/VERSION
+      - "@group(upstream-licenses)"
+      - /src/wasix/runtime/moon.yml
+      - /src/wasix/runtime/release.toml
+      - /src/wasix/runtime/VERSION
+      - project: extension-runtime-contract
+        group: contract
+      - /src/native/sdks/react-native/tools/validate-mobile-runtime-files.mts
+      - /tools/dev/bun.sh
+      - /src/third-party/tools/source-fetch-core.mts
+      - /src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts
+      - "@group(packaging-source)"
+      - /tools/packaging/cargo-source-package.mts
+      - /src/extensions/artifacts/packages/tools/check-carriers.mts
+      - /src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts
+      - /src/extensions/tools/extension-upstream-licenses.mts
+      - /src/native/sdks/swift/tools/ios-carrier-manifest.mts
+      - "@group(release-target-contract)"
+      - /src/native/sdks/swift/tools/prepare-swift-release-consumer.mts
+      - /tools/release/release-graph.mts
+      - "@group(release-archive-contract)"
+      - /tools/packaging/rust-native-targets.mts
+      - /tools/packaging/source-only-sdk-package.mts
+      - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
+      - /src/wasix/runtime/tools/wasix-aot-manifest.mts
+      - /src/wasix/runtime/tools/wasix-cargo-toolchain-policy.mts
+      - /src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts
+      - /src/wasix/sdks/ts/tools/wasix-typescript-package.mts
+      - /src/third-party/postgres/source.toml
+      - /target/extensions/native/release-assets/**/*
     outputs:
-      - "/target/release/extension-dry-run/**/*"
-      - "/target/release/maven-staging/oliphaunt-extension-*-maven-dry-run/**/*"
-      - "/target/release-work/offline-registry-carrier-qualification/extensions.json"
+      - /target/mobile-extension-artifacts/**/*
     options:
       cache: false
       runFromWorkspaceRoot: true
       runInCI: true
+  package:
+    tags:
+      - release
+      - artifact-package
+      - ci-extension-packages
+    command: bash src/extensions/artifacts/packages/tools/package-release-assets.sh
+    deps:
+      - extension-artifacts-native:build-target
+      - extension-artifacts-wasix:build-target
+      - extension-artifacts-wasix:build-aot
+    inputs:
+      - "@group(legal-files)"
+      - /release-please-config.json
+      - tools/package-release-assets.sh
+      - project: extensions
+        group: package
+      - /src/native/runtime/moon.yml
+      - /src/native/runtime/release.toml
+      - /src/native/runtime/VERSION
+      - "@group(upstream-licenses)"
+      - /src/wasix/runtime/moon.yml
+      - /src/wasix/runtime/release.toml
+      - /src/wasix/runtime/VERSION
+      - project: extension-runtime-contract
+        group: contract
+      - /src/native/sdks/react-native/tools/validate-mobile-runtime-files.mts
+      - /tools/dev/bun.sh
+      - /src/third-party/tools/source-fetch-core.mts
+      - /src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts
+      - "@group(packaging-source)"
+      - /tools/packaging/cargo-source-package.mts
+      - /src/extensions/artifacts/packages/tools/check-carriers.mts
+      - /src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts
+      - /src/extensions/tools/extension-upstream-licenses.mts
+      - /src/native/sdks/swift/tools/ios-carrier-manifest.mts
+      - "@group(release-target-contract)"
+      - /src/native/sdks/swift/tools/prepare-swift-release-consumer.mts
+      - /tools/release/release-graph.mts
+      - "@group(release-archive-contract)"
+      - /tools/packaging/rust-native-targets.mts
+      - /tools/packaging/source-only-sdk-package.mts
+      - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
+      - /src/wasix/runtime/tools/wasix-aot-manifest.mts
+      - /src/wasix/runtime/tools/wasix-cargo-toolchain-policy.mts
+      - /src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts
+      - /src/wasix/sdks/ts/tools/wasix-typescript-package.mts
+      - /src/third-party/postgres/source.toml
+      - /target/extensions/native/release-assets/**/*
+      - /target/extensions/wasix/release-assets/**/*
+      - /target/extensions/wasix/aot-artifacts/**/*
+    outputs:
+      - /target/extension-artifacts/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+  packaging-unit:
+    tags:
+      - quality
+      - unit
+      - requires-rust
+    command: bash src/extensions/artifacts/packages/tools/test.sh
+    inputs:
+      - /src/native/sdks/swift/tools/ios-carrier-manifest.mts
+      - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
+      - /src/native/sdks/rust/crates/oliphaunt-build/src/**/*.rs
+      - /src/native/sdks/rust/crates/oliphaunt-build/Cargo.toml
+      - "@group(cargo-workspace)"
+      - /src/extensions/tools/extension-upstream-licenses.mts
+      - /src/extensions/contracts/*.mts
+      - /src/native/sdks/ts/src/native/extension-contract.ts
+      - /src/extensions/generated/**/*
+      - /src/extensions/external/**/upstream-license-data.json
+      - "@group(upstream-licenses)"
+      - "@group(legal-files)"
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mts,sh}"
+      - /tools/packaging/testdata/**/*
+      - /tools/dev/bun.sh
+      - "/tools/packaging/*.{mts,sh}"
+      - "/tools/release/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

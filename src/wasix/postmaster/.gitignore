@@ -1,0 +1,13 @@
+/build/
+/builds/
+/install/
+/reports/
+/run/
+/tools/sealed-export-closure/target/
+/work/
+*.a
+*.dylib
+*.log
+*.o
+*.so
+*.wasm

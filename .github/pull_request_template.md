@@ -8,9 +8,5 @@
 
 ## Verification
 
-- [ ] `pnpm doctor`
-- [ ] `pnpm fmt:check`
-- [ ] `pnpm check`
-- [ ] `pnpm test`
-- [ ] `pnpm release-check`
+- [ ] Moon affected checks and tests passed.
 - [ ] Product-specific smoke/package/perf checks when product behavior or artifacts changed.

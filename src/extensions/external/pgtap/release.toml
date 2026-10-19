@@ -1,6 +1,7 @@
 id = "oliphaunt-extension-pgtap"
 owner = "@oliphaunt/extensions"
 kind = "exact-extension-artifact"
+shared_source_paths = ["src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts", "src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts", "src/native/sdks/swift/tools/ios-carrier-manifest.mts", "src/wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts", "tools/packaging/build-maven-artifact-manifest.mts", "tools/packaging/maven-artifact-staging.mts"]
 publish_targets = [
   "github-release-assets",
   "npm",
@@ -18,6 +19,7 @@ registry_packages = [
   "npm:@oliphaunt/extension-pgtap-linux-arm64-gnu",
   "npm:@oliphaunt/extension-pgtap-linux-x64-gnu",
   "npm:@oliphaunt/extension-pgtap-macos-arm64",
+  "npm:@oliphaunt/extension-pgtap-wasix",
   "npm:@oliphaunt/extension-pgtap-windows-x64-msvc",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-pgtap-android-arm64-v8a",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-pgtap-android-x86_64",
@@ -35,17 +37,19 @@ path = "src/extensions/external/pgtap/source.toml"
 
 [extension.compatibility]
 postgres_major = "18"
-extension_runtime_contract = "src/shared/extension-runtime-contract/contract.toml"
+extension_runtime_contract = "src/extensions/contracts/contract.toml"
 native_runtime_product = "liboliphaunt-native"
-native_runtime_version = "0.1.1"
+native_runtime_version = "0.3.3"
 wasix_runtime_product = "liboliphaunt-wasix"
-wasix_runtime_version = "0.1.1"
+wasix_runtime_version = "0.3.2"
 [compatibility_versions.oliphaunt-extension-pgtap-liboliphaunt-native]
+public_support = true
 source_product = "liboliphaunt-native"
 path = "src/extensions/external/pgtap/release.toml"
 parser = "toml:extension.compatibility.native_runtime_version"
 
 [compatibility_versions.oliphaunt-extension-pgtap-liboliphaunt-wasix]
+public_support = true
 source_product = "liboliphaunt-wasix"
 path = "src/extensions/external/pgtap/release.toml"
 parser = "toml:extension.compatibility.wasix_runtime_version"

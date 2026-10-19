@@ -1,0 +1,951 @@
+import { test } from 'bun:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const require = createRequire(import.meta.url);
+const {
+  configureBroker,
+  addBrokerTarget,
+  guardBrokerApplication,
+  extensionPackageName,
+  ensureIosDeploymentTarget,
+  ensureIosConfigDeploymentTarget,
+  insertAppGradlePlugin,
+  insertIosPodfileBlock,
+  iosStageOptions,
+  normalizeOptions,
+  readCarrierSummary,
+  releaseOwnerForSqlName,
+  resolveInstalledExtensionOwners,
+  resolveInstalledResources,
+  resolveIosCarrierManifests,
+  selectedExtensionClosure,
+  serializeExtensionVersions,
+  stageIosAppPayload,
+} = require('../../app.plugin.cts');
+const packageJson = require('../../package.json');
+const sdkRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+const CARRIER_SCHEMA = 'oliphaunt-react-native-ios-carrier-v1';
+const CARRIER_FILENAME = 'oliphaunt-react-native-ios-carriers.json';
+
+function writeJson(file: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function writeCarrier(
+  file: string,
+  extensions: Array<{
+    dependencies: string[];
+    product?: string;
+    releaseProduct?: string;
+    sqlName: string;
+    tag?: string;
+    version?: string;
+  }>,
+  options: {
+    baseVersion?: string;
+    ownerVersions?: Record<string, string>;
+  } = {},
+): void {
+  const baseVersion = options.baseVersion ?? '1.2.3';
+  writeJson(file, {
+    schema: CARRIER_SCHEMA,
+    base: {
+      assets: [],
+      product: 'liboliphaunt-native',
+      tag: `liboliphaunt-native-v${baseVersion}`,
+      version: baseVersion,
+    },
+    carriers: [],
+    extensions: extensions.map((row) => {
+      const owner = releaseOwnerForSqlName(row.sqlName);
+      const product = row.product ?? owner.artifactProduct;
+      const releaseProduct = row.releaseProduct ?? owner.releaseProduct;
+      const version = row.version ?? options.ownerVersions?.[owner.releaseProduct] ?? baseVersion;
+      return {
+        ...row,
+        product,
+        releaseProduct,
+        tag: row.tag ?? `${releaseProduct}-v${version}`,
+        version,
+      };
+    }),
+  });
+}
+
+function writeCarrierPackage(
+  packageRoot: string,
+  packageName: string,
+  extensions: Array<{ sqlName: string; dependencies: string[] }>,
+  options: {
+    kind?: string;
+    liboliphauntVersion?: string;
+    members?: string[];
+    product?: string;
+    version?: string;
+  } = {},
+): string {
+  const carrier = path.join(packageRoot, CARRIER_FILENAME);
+  const packageVersion = options.version ?? '1.2.3';
+  const nativeVersion = options.liboliphauntVersion ?? packageVersion;
+  const [firstExtension] = extensions;
+  writeCarrier(carrier, extensions, {
+    baseVersion: nativeVersion,
+    ownerVersions:
+      firstExtension === undefined
+        ? {}
+        : {
+            [releaseOwnerForSqlName(firstExtension.sqlName).releaseProduct]: packageVersion,
+          },
+  });
+  writeJson(path.join(packageRoot, 'package.json'), {
+    name: packageName,
+    version: packageVersion,
+    exports: { './package.json': './package.json' },
+    oliphaunt: {
+      iosCarrierManifest: `./${CARRIER_FILENAME}`,
+      kind: options.kind,
+      liboliphauntVersion: options.liboliphauntVersion,
+      members: options.members,
+      product: options.product,
+      sqlName: options.members?.length === 1 ? options.members[0] : undefined,
+    },
+  });
+  return carrier;
+}
+
+function writeExpoApp(projectRoot: string, dependencies = {}, autolinking = {}): void {
+  writeJson(path.join(projectRoot, 'package.json'), {
+    name: 'resource-consumer',
+    dependencies,
+    expo: { autolinking },
+  });
+  const expo = path.join(projectRoot, 'node_modules/expo');
+  fs.mkdirSync(path.dirname(expo), { recursive: true });
+  if (!fs.existsSync(expo)) {
+    const manifest = require.resolve('expo/package.json', {
+      paths: [path.resolve(sdkRoot, '../../../examples/native/react-native-expo')],
+    });
+    fs.symlinkSync(path.dirname(manifest), expo, process.platform === 'win32' ? 'junction' : 'dir');
+  }
+}
+
+test('Expo discovery follows workspace dependencies and supplies the same resources to both platforms', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-expo-discovery-'));
+  try {
+    const app = path.join(root, 'app');
+    const library = path.join(root, 'workspace-library');
+    writeExpoApp(app, { 'workspace-library': 'file:../workspace-library' });
+    writeJson(path.join(library, 'package.json'), {
+      name: 'workspace-library',
+      dependencies: { '@oliphaunt/extension-vector': '1.2.3', '@oliphaunt/icu': '1.2.3' },
+    });
+    fs.symlinkSync(
+      library,
+      path.join(app, 'node_modules/workspace-library'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    const vector = path.join(library, 'node_modules/@oliphaunt/extension-vector');
+    const carrier = writeCarrierPackage(
+      vector,
+      '@oliphaunt/extension-vector',
+      [{ sqlName: 'vector', dependencies: [] }],
+      {
+        kind: 'exact-extension',
+        product: 'oliphaunt-extension-vector',
+        liboliphauntVersion: '1.2.3',
+        members: ['vector'],
+      },
+    );
+    const icu = path.join(library, 'node_modules/@oliphaunt/icu');
+    writeJson(path.join(icu, 'package.json'), { name: '@oliphaunt/icu', version: '1.2.3' });
+    fs.writeFileSync(path.join(icu, 'OliphauntICU.podspec'), 'Pod::Spec.new {}');
+    fs.writeFileSync(
+      path.join(icu, 'react-native.config.js'),
+      'module.exports = { dependency: { platforms: { ios: null, android: null } } };',
+    );
+    // A package merely present in node_modules is not an app dependency.
+    writeJson(path.join(app, 'node_modules/@oliphaunt/extension-pgtap/package.json'), {
+      name: '@oliphaunt/extension-pgtap',
+      version: '1.2.3',
+    });
+    const base = path.join(root, 'base');
+    const baseCarrier = writeCarrierPackage(base, '@oliphaunt/react-native', []);
+    for (const platform of ['ios', 'android']) {
+      const discovered = await resolveInstalledResources(app, platform);
+      assert.deepEqual(discovered.extensions, ['vector']);
+      assert.equal(discovered.icu, true);
+      assert.equal(discovered.databaseResourcesVersion, '1.2.3');
+      assert.equal(
+        discovered.packageJsonResolver('@oliphaunt/icu', [app]),
+        fs.realpathSync(path.join(icu, 'package.json')),
+      );
+      assert.throws(
+        () => discovered.packageJsonResolver('@oliphaunt/extension-pgtap', [app]),
+        /Install/,
+      );
+      const owners = resolveInstalledExtensionOwners(app, discovered.extensions, discovered);
+      assert.equal(owners.extensionVersions['oliphaunt-extension-vector'], '1.2.3');
+      assert.deepEqual(
+        resolveIosCarrierManifests(app, discovered.extensions, {
+          ...discovered,
+          basePackageRoot: base,
+          env: {},
+        }),
+        [fs.realpathSync(baseCarrier), fs.realpathSync(carrier)],
+      );
+      assert.ok(
+        insertIosPodfileBlock('use_expo_modules!\n', {
+          ...discovered,
+          projectRoot: app,
+        }).includes('../workspace-library/node_modules/@oliphaunt/icu'),
+      );
+    }
+    fs.mkdirSync(path.join(app, 'android/app'), { recursive: true });
+    fs.writeFileSync(path.join(app, 'android/app/build.gradle'), 'plugins {\n}\n');
+    const installedSdk = path.join(app, 'node_modules/@oliphaunt/react-native');
+    writeJson(path.join(installedSdk, 'package.json'), packageJson);
+    writeJson(
+      path.join(installedSdk, 'src/generated/extensions.json'),
+      require(path.resolve(sdkRoot, '../../../extensions/generated/sdk/extensions.json')),
+    );
+    fs.copyFileSync(
+      path.join(sdkRoot, 'app.plugin.cts'),
+      path.join(installedSdk, 'app.plugin.cts'),
+    );
+    const { withOliphaunt } = require(path.join(installedSdk, 'app.plugin.cts'));
+    const config = withOliphaunt({ name: 'consumer', slug: 'consumer' });
+    await config.mods.android.dangerous({ ...config, modRequest: { projectRoot: app } });
+    const output = fs.readFileSync(path.join(app, 'android/gradle.properties'), 'utf8');
+    assert.match(output, /^oliphauntTopology=direct$/m);
+    assert.match(output, /^oliphauntExtensions=vector$/m);
+    assert.match(output, /^oliphauntIcu=true$/m);
+    assert.match(output, /^oliphauntDatabaseResourcesVersion=1.2.3$/m);
+    assert.match(output, /^oliphauntExtensionVersions=oliphaunt-extension-vector=1.2.3$/m);
+
+    const limited = await resolveInstalledResources(app, 'android', { extensions: [], icu: false });
+    assert.deepEqual(limited.extensions, []);
+    assert.equal(limited.icu, false);
+    await assert.rejects(
+      resolveInstalledResources(app, 'android', { databaseResourcesVersion: '9.8.7' }),
+      /databaseResourcesVersion must match installed @oliphaunt\/icu 1\.2\.3/,
+    );
+    writeExpoApp(
+      app,
+      { 'workspace-library': '*' },
+      {
+        android: { exclude: ['@oliphaunt/extension-vector', '@oliphaunt/icu'] },
+      },
+    );
+    const excluded = await resolveInstalledResources(app, 'android');
+    assert.deepEqual(excluded.extensions, []);
+    assert.equal(excluded.icu, false);
+    assert.deepEqual((await resolveInstalledResources(app, 'ios')).extensions, ['vector']);
+    await assert.rejects(
+      resolveInstalledResources(app, 'android', { seedProfile: 'icu' }),
+      /Install @oliphaunt\/icu/,
+    );
+    // Re-prebuild removes stale resource selection after dependency changes.
+    await config.mods.android.dangerous({ ...config, modRequest: { projectRoot: app } });
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(app, 'android/gradle.properties'), 'utf8'),
+      /^oliphaunt(?:Extensions|ExtensionVersions|Icu|DatabaseResourcesVersion)=/m,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('Expo search paths use upstream precedence and reject conflicting resource versions', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-expo-duplicates-'));
+  try {
+    writeExpoApp(
+      root,
+      { '@oliphaunt/extension-vector': '1.2.3' },
+      { searchPaths: ['./resources'] },
+    );
+    const direct = path.join(root, 'node_modules/@oliphaunt/extension-vector/package.json');
+    const searched = path.join(root, 'resources/@oliphaunt/extension-vector/package.json');
+    for (const file of [direct, searched])
+      writeJson(file, { name: '@oliphaunt/extension-vector', version: '1.2.3' });
+    const discovered = await resolveInstalledResources(root, 'ios');
+    assert.deepEqual(discovered.extensions, ['vector']);
+    assert.equal(
+      discovered.packageJsonResolver('@oliphaunt/extension-vector', [root]),
+      fs.realpathSync(searched),
+    );
+    writeJson(direct, { name: '@oliphaunt/extension-vector', version: '9.8.7' });
+    await assert.rejects(
+      resolveInstalledResources(root, 'ios'),
+      /Conflicting versions of @oliphaunt\/extension-vector:.*1\.2\.3.*9\.8\.7.*Deduplicate/,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('normalizes exact extension selection', () => {
+  const normalized = normalizeOptions({
+    extensions: ['vector', 'pg_trgm', 'vector'],
+    icu: true,
+    liboliphauntVersion: '0.1.0',
+  });
+
+  assert.deepEqual(normalized, {
+    topology: 'direct',
+    seedProfile: undefined,
+    databaseResourcesVersion: undefined,
+    extensions: ['pg_trgm', 'vector'],
+    icu: true,
+    liboliphauntVersion: '0.1.0',
+    assetBaseUrl: undefined,
+    kotlinPluginVersion: packageJson.oliphaunt.kotlinSdkVersion,
+  });
+  assert.throws(
+    () => normalizeOptions({ extensions: ['core,vector'] }),
+    /exact PostgreSQL extension name/,
+  );
+  assert.throws(
+    () => normalizeOptions({ extensions: ['pg_search'] }),
+    /not in the generated exact-extension catalog/,
+  );
+  assert.deepEqual(normalizeOptions({ extensions: ['postgis'] }).extensions, ['postgis']);
+  assert.equal(normalizeOptions({ seedProfile: 'icu' }).icu, true);
+  assert.throws(() => normalizeOptions({ seedProfile: 'both' }), /seedProfile/);
+  assert.equal(extensionPackageName('uuid-ossp'), '@oliphaunt/extension-contrib-pg18');
+  assert.equal(extensionPackageName('vector'), '@oliphaunt/extension-vector');
+  assert.deepEqual(selectedExtensionClosure(['earthdistance']), ['cube', 'earthdistance']);
+  assert.deepEqual(releaseOwnerForSqlName('hstore'), {
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
+    members: releaseOwnerForSqlName('earthdistance').members,
+    mavenArtifact: 'oliphaunt-extension-contrib-pg18',
+    mavenGroup: 'dev.oliphaunt.extensions',
+    npmPackage: '@oliphaunt/extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
+    runtimeBound: true,
+  });
+});
+
+test('Podfile patch is app-owned, fail-closed, and idempotent', () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-pod-resources-'));
+  try {
+    for (const [name, pod] of [
+      ['@oliphaunt/icu', 'OliphauntICU'],
+      ['@oliphaunt/seed-native-ios-datum64-icu', 'OliphauntSeedNativeIOSICU'],
+      ['@oliphaunt/seed-native-ios-datum64-standard', 'OliphauntSeedNativeIOSStandard'],
+    ] as const) {
+      const packageRoot = path.join(projectRoot, 'node_modules', name);
+      writeJson(path.join(packageRoot, 'package.json'), { name, version: '1.2.3' });
+      fs.writeFileSync(path.join(packageRoot, `${pod}.podspec`), 'Pod::Spec.new {}');
+    }
+    const options = { icu: true, seedProfile: 'icu', projectRoot };
+    const podfile = [
+      "target 'OliphauntExample' do",
+      '  use_expo_modules!',
+      '  config = use_native_modules!',
+      'end',
+      '',
+    ].join('\n');
+
+    const patchedPodfile = insertIosPodfileBlock(podfile, options);
+    assert.match(patchedPodfile, /# @oliphaunt\/react-native begin/);
+    assert.match(
+      patchedPodfile,
+      /pod 'COliphaunt', :podspec => File\.join\(oliphaunt_podspecs_path, 'COliphaunt\.podspec'\), :modular_headers => true/,
+    );
+    assert.match(
+      patchedPodfile,
+      /pod 'OliphauntNativeBindings', :podspec => File\.join\(oliphaunt_podspecs_path, 'OliphauntNativeBindings\.podspec'\)/,
+    );
+    assert.match(
+      patchedPodfile,
+      /pod 'Oliphaunt', :podspec => File\.join\(oliphaunt_podspecs_path, 'Oliphaunt\.podspec'\)/,
+    );
+    assert.match(
+      patchedPodfile,
+      /oliphaunt_payload_path = File\.expand_path\('oliphaunt', __dir__\)/,
+    );
+    assert.match(
+      patchedPodfile,
+      /oliphaunt_payload_podspec = File\.join\(oliphaunt_payload_path, 'OliphauntReactNativePayload\.podspec'\)/,
+    );
+    assert.match(patchedPodfile, /raise 'Oliphaunt iOS payload is missing/);
+    assert.match(
+      patchedPodfile,
+      /pod 'OliphauntReactNativePayload', :path => oliphaunt_payload_path/,
+    );
+    assert.doesNotMatch(patchedPodfile, /pod 'OliphauntReactNativePayload', :podspec/);
+    assert.ok(
+      patchedPodfile.includes(
+        "pod 'OliphauntICU', :path => File.expand_path('../node_modules/@oliphaunt/icu', __dir__)",
+      ),
+    );
+    assert.ok(
+      patchedPodfile.includes(
+        "pod 'OliphauntSeedNativeIOSICU', :path => File.expand_path('../node_modules/@oliphaunt/seed-native-ios-datum64-icu', __dir__)",
+      ),
+    );
+    assert.equal(insertIosPodfileBlock(patchedPodfile, options), patchedPodfile);
+    const standard = insertIosPodfileBlock(patchedPodfile, {
+      icu: false,
+      seedProfile: 'standard',
+      projectRoot,
+    });
+    assert.match(standard, /pod 'OliphauntSeedNativeIOSStandard'/);
+    assert.doesNotMatch(standard, /OliphauntICU|OliphauntSeedNativeIOSICU/);
+    fs.unlinkSync(path.join(projectRoot, 'node_modules/@oliphaunt/icu/OliphauntICU.podspec'));
+    assert.throws(() => insertIosPodfileBlock(podfile, options), /missing OliphauntICU.podspec/);
+
+    assert.throws(
+      () => insertIosPodfileBlock("target 'App' do\nend\n"),
+      /use_native_modules! or use_expo_modules!/,
+    );
+    assert.throws(
+      () => insertIosPodfileBlock('# @oliphaunt/react-native begin\n'),
+      /partial @oliphaunt\/react-native managed block/,
+    );
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test('Expo iOS deployment target meets the packaged pod minimum without lowering newer apps', () => {
+  assert.deepEqual(ensureIosDeploymentTarget({}), {
+    'ios.deploymentTarget': '17.0',
+  });
+  assert.deepEqual(
+    ensureIosDeploymentTarget({
+      'ios.deploymentTarget': '16.4',
+      keep: 'value',
+    }),
+    {
+      'ios.deploymentTarget': '17.0',
+      keep: 'value',
+    },
+  );
+  assert.deepEqual(ensureIosDeploymentTarget({ 'ios.deploymentTarget': '17' }), {
+    'ios.deploymentTarget': '17',
+  });
+  assert.deepEqual(ensureIosDeploymentTarget({ 'ios.deploymentTarget': '18.1' }), {
+    'ios.deploymentTarget': '18.1',
+  });
+  assert.throws(
+    () => ensureIosDeploymentTarget({ 'ios.deploymentTarget': 'latest' }),
+    /numeric dotted version/,
+  );
+  assert.deepEqual(ensureIosConfigDeploymentTarget({ name: 'app' }), {
+    name: 'app',
+    ios: { deploymentTarget: '17.0' },
+  });
+  assert.deepEqual(
+    ensureIosConfigDeploymentTarget({
+      ios: { bundleIdentifier: 'dev.example', deploymentTarget: '18.0' },
+    }),
+    { ios: { bundleIdentifier: 'dev.example', deploymentTarget: '18.0' } },
+  );
+});
+
+test('base React Native pod is source-only', () => {
+  const podspec = fs.readFileSync(path.join(sdkRoot, 'OliphauntReactNative.podspec'), 'utf8');
+  assert.match(podspec, /s\.source_files = "ios\/\*\.\{h,m,mm,swift\}"/);
+  assert.doesNotMatch(podspec, /ios\/(?:generated|resources|frameworks|extension-frameworks)/);
+  assert.doesNotMatch(podspec, /vendored_frameworks|user_target_xcconfig|s\.resources/);
+});
+
+test('Android Gradle patch stays idempotent', () => {
+  const appGradle = "plugins {\n    id 'com.android.application'\n}\n";
+  const patchedAppGradle = insertAppGradlePlugin(appGradle, '0.1.0');
+  assert.match(patchedAppGradle, /id 'dev\.oliphaunt\.android' version '0\.1\.0'/);
+  assert.equal(insertAppGradlePlugin(patchedAppGradle, '0.1.0'), patchedAppGradle);
+});
+
+test('carrier discovery de-duplicates runtime-bound bundle dependencies', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-plugin-carriers-'));
+  try {
+    const projectRoot = path.join(root, 'app');
+    const baseRoot = path.join(root, 'react-native');
+    const contribRoot = path.join(
+      projectRoot,
+      'node_modules',
+      '@oliphaunt',
+      'extension-contrib-pg18',
+    );
+    const baseCarrier = writeCarrierPackage(baseRoot, '@oliphaunt/react-native', []);
+    const members = releaseOwnerForSqlName('earthdistance').members;
+    const contribCarrier = writeCarrierPackage(
+      contribRoot,
+      '@oliphaunt/extension-contrib-pg18',
+      members.map((sqlName: string) => ({
+        dependencies: sqlName === 'earthdistance' ? ['cube'] : [],
+        sqlName,
+      })),
+      {
+        kind: 'exact-extension-bundle',
+        liboliphauntVersion: '1.2.3',
+        members,
+        product: 'oliphaunt-extension-contrib-pg18',
+      },
+    );
+
+    const manifests = resolveIosCarrierManifests(projectRoot, ['earthdistance'], {
+      basePackageRoot: baseRoot,
+      env: {},
+    });
+    assert.deepEqual(manifests, [fs.realpathSync(baseCarrier), fs.realpathSync(contribCarrier)]);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('Android package discovery passes exact owner versions and rejects compatibility conflicts', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-plugin-android-owners-'));
+  try {
+    const projectRoot = path.join(root, 'app');
+    const scopeRoot = path.join(projectRoot, 'node_modules', '@oliphaunt');
+    const members = releaseOwnerForSqlName('earthdistance').members;
+    writeCarrierPackage(
+      path.join(scopeRoot, 'extension-contrib-pg18'),
+      '@oliphaunt/extension-contrib-pg18',
+      members.map((sqlName: string) => ({
+        dependencies: sqlName === 'earthdistance' ? ['cube'] : [],
+        sqlName,
+      })),
+      {
+        kind: 'exact-extension-bundle',
+        liboliphauntVersion: '1.2.3',
+        members,
+        product: 'oliphaunt-extension-contrib-pg18',
+      },
+    );
+    writeCarrierPackage(
+      path.join(scopeRoot, 'extension-vector'),
+      '@oliphaunt/extension-vector',
+      [{ dependencies: [], sqlName: 'vector' }],
+      {
+        kind: 'exact-extension',
+        liboliphauntVersion: '1.2.3',
+        members: ['vector'],
+        product: 'oliphaunt-extension-vector',
+        version: '0.8.1',
+      },
+    );
+
+    const resolution = resolveInstalledExtensionOwners(projectRoot, ['earthdistance', 'vector'], {
+      liboliphauntVersion: '1.2.3',
+    });
+    assert.deepEqual(resolution.closure, ['cube', 'earthdistance', 'vector']);
+    assert.equal(resolution.owners.length, 2);
+    assert.deepEqual(resolution.extensionVersions, {
+      'liboliphaunt-native': '1.2.3',
+      'oliphaunt-extension-vector': '0.8.1',
+    });
+    assert.equal(
+      serializeExtensionVersions(resolution.extensionVersions),
+      'liboliphaunt-native=1.2.3,oliphaunt-extension-vector=0.8.1',
+    );
+    assert.throws(
+      () =>
+        resolveInstalledExtensionOwners(projectRoot, ['earthdistance'], {
+          liboliphauntVersion: '1.2.4',
+        }),
+      /requires liboliphaunt 1\.2\.3, but the app selected 1\.2\.4/,
+    );
+
+    const vectorPackage = path.join(scopeRoot, 'extension-vector', 'package.json');
+    const vectorMetadata = JSON.parse(fs.readFileSync(vectorPackage, 'utf8'));
+    vectorMetadata.version = '01.2.3';
+    writeJson(vectorPackage, vectorMetadata);
+    assert.throws(
+      () => resolveInstalledExtensionOwners(projectRoot, ['vector']),
+      /package metadata has an invalid version/,
+    );
+
+    const contribPackage = path.join(scopeRoot, 'extension-contrib-pg18', 'package.json');
+    const metadata = JSON.parse(fs.readFileSync(contribPackage, 'utf8'));
+    metadata.version = '1.2.4';
+    writeJson(contribPackage, metadata);
+    assert.throws(
+      () => resolveInstalledExtensionOwners(projectRoot, ['earthdistance']),
+      /is runtime-bound but version 1\.2\.4 does not match liboliphauntVersion 1\.2\.3/,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('carrier env overrides are exact and stage only into the app ios tree', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-plugin-stage-'));
+  try {
+    const projectRoot = path.join(root, 'app');
+    const iosRoot = path.join(projectRoot, 'ios');
+    const manifestsRoot = path.join(root, 'manifests');
+    const baseCarrier = path.join(manifestsRoot, 'base.json');
+    const cubeCarrier = path.join(manifestsRoot, 'cube.json');
+    const earthdistanceCarrier = path.join(manifestsRoot, 'earthdistance.json');
+    writeCarrier(baseCarrier, []);
+    writeCarrier(cubeCarrier, [{ sqlName: 'cube', dependencies: [] }]);
+    writeCarrier(earthdistanceCarrier, [{ sqlName: 'earthdistance', dependencies: ['cube'] }]);
+    const env = {
+      OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER: baseCarrier,
+      OLIPHAUNT_REACT_NATIVE_IOS_EXTENSION_CARRIERS: JSON.stringify({
+        cube: cubeCarrier,
+        earthdistance: earthdistanceCarrier,
+      }),
+      OLIPHAUNT_REACT_NATIVE_IOS_ALLOW_FILE_URLS: 'true',
+      OLIPHAUNT_REACT_NATIVE_IOS_CACHE_DIR: './.oliphaunt-cache',
+    };
+    const normalized = {
+      extensions: ['earthdistance'],
+      icu: true,
+    };
+
+    const staging = iosStageOptions(projectRoot, iosRoot, normalized, { env });
+    assert.deepEqual(staging, {
+      carriers: [baseCarrier, cubeCarrier, earthdistanceCarrier].map((file) =>
+        fs.realpathSync(file),
+      ),
+      outputDir: path.join(iosRoot, 'oliphaunt'),
+      extensions: ['earthdistance'],
+      icu: true,
+      seedProfile: undefined,
+      cacheDir: path.join(projectRoot, '.oliphaunt-cache'),
+      allowFileUrls: true,
+    });
+    let staged = false;
+    await stageIosAppPayload(projectRoot, iosRoot, normalized, {
+      env,
+      stageIosAppImpl: async (options: typeof staging) => {
+        assert.deepEqual(options, staging);
+        await Promise.resolve();
+        fs.mkdirSync(options.outputDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(options.outputDir, 'OliphauntReactNativePayload.podspec'),
+          'Pod::Spec.new\n',
+        );
+        staged = true;
+      },
+    });
+    assert.equal(staged, true);
+    assert.equal(fs.existsSync(path.join(projectRoot, 'node_modules')), false);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('aggregate CI carrier override supplies base and dependency closure exactly once', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-plugin-aggregate-'));
+  try {
+    const projectRoot = path.join(root, 'app');
+    const aggregateCarrier = path.join(root, 'aggregate.json');
+    writeCarrier(aggregateCarrier, [
+      { sqlName: 'cube', dependencies: [] },
+      { sqlName: 'earthdistance', dependencies: ['cube'] },
+      { sqlName: 'vector', dependencies: [] },
+    ]);
+    const env = {
+      OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER: aggregateCarrier,
+    };
+    const packageJsonResolver = () => {
+      throw new Error('aggregate CI mode must not resolve extension packages');
+    };
+
+    assert.deepEqual(
+      resolveIosCarrierManifests(projectRoot, ['earthdistance'], {
+        env,
+        packageJsonResolver,
+      }),
+      [fs.realpathSync(aggregateCarrier)],
+    );
+    const command = iosStageOptions(
+      projectRoot,
+      path.join(projectRoot, 'ios'),
+      { extensions: ['earthdistance'], icu: false },
+      { env, packageJsonResolver },
+    );
+    assert.deepEqual(command.carriers, [fs.realpathSync(aggregateCarrier)]);
+    assert.throws(
+      () =>
+        resolveIosCarrierManifests(projectRoot, ['earthdistance'], {
+          env: {
+            ...env,
+            OLIPHAUNT_REACT_NATIVE_IOS_EXTENSION_CARRIERS: JSON.stringify({
+              cube: aggregateCarrier,
+            }),
+          },
+        }),
+      /cannot be combined with an aggregate/,
+    );
+
+    writeCarrier(aggregateCarrier, [{ sqlName: 'earthdistance', dependencies: ['cube'] }]);
+    assert.throws(
+      () => resolveIosCarrierManifests(projectRoot, ['earthdistance'], { env }),
+      /aggregate iOS carrier is missing cube required by earthdistance/,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('carrier discovery and staging fail closed', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-plugin-failure-'));
+  try {
+    const fakeOwner = path.join(root, 'fake-owner.json');
+    writeCarrier(fakeOwner, [
+      {
+        dependencies: [],
+        product: 'oliphaunt-extension-fake-cube',
+        sqlName: 'cube',
+        tag: 'oliphaunt-extension-fake-cube-v1.2.3',
+      },
+    ]);
+    assert.throws(
+      () => readCarrierSummary(fakeOwner),
+      /cube must belong to oliphaunt-extension-contrib-pg18/,
+    );
+
+    const leadingZero = path.join(root, 'leading-zero.json');
+    writeCarrier(leadingZero, [
+      {
+        dependencies: [],
+        sqlName: 'vector',
+        tag: 'oliphaunt-extension-vector-v01.2.3',
+        version: '01.2.3',
+      },
+    ]);
+    assert.throws(() => readCarrierSummary(leadingZero), /invalid stable SemVer version/);
+
+    const ownerConflict = path.join(root, 'owner-conflict.json');
+    writeCarrier(ownerConflict, [
+      { dependencies: [], sqlName: 'cube' },
+      {
+        dependencies: ['cube'],
+        sqlName: 'earthdistance',
+        tag: 'liboliphaunt-native-v1.2.4',
+        version: '1.2.4',
+      },
+    ]);
+    assert.throws(
+      () => readCarrierSummary(ownerConflict),
+      /conflicting releases for owner liboliphaunt-native/,
+    );
+
+    const invalid = path.join(root, 'invalid.json');
+    writeCarrier(invalid, [{ sqlName: 'earthdistance', dependencies: ['cube', 'cube'] }]);
+    assert.throws(() => readCarrierSummary(invalid), /repeats a dependency/);
+
+    const baseCarrier = path.join(root, 'base.json');
+    const earthdistanceCarrier = path.join(root, 'earthdistance.json');
+    writeCarrier(baseCarrier, []);
+    writeCarrier(earthdistanceCarrier, [{ sqlName: 'earthdistance', dependencies: ['cube'] }]);
+    const env = {
+      OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER: baseCarrier,
+      OLIPHAUNT_REACT_NATIVE_IOS_EXTENSION_CARRIERS: JSON.stringify({
+        earthdistance: earthdistanceCarrier,
+      }),
+    };
+    assert.throws(
+      () => resolveIosCarrierManifests(root, ['earthdistance'], { env }),
+      /missing @oliphaunt\/extension-contrib-pg18 required by earthdistance/,
+    );
+
+    const incompatibleVectorCarrier = path.join(root, 'incompatible-vector.json');
+    writeCarrier(
+      incompatibleVectorCarrier,
+      [{ dependencies: [], sqlName: 'vector', version: '0.8.1' }],
+      { baseVersion: '1.2.4' },
+    );
+    assert.throws(
+      () =>
+        resolveIosCarrierManifests(root, ['vector'], {
+          env: {
+            OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER: baseCarrier,
+            OLIPHAUNT_REACT_NATIVE_IOS_EXTENSION_CARRIERS: JSON.stringify({
+              vector: incompatibleVectorCarrier,
+            }),
+          },
+        }),
+      /pins liboliphaunt-native-v1\.2\.4, but the selected base carrier pins liboliphaunt-native-v1\.2\.3/,
+    );
+
+    const vectorCarrier = path.join(root, 'vector.json');
+    writeCarrier(vectorCarrier, [{ sqlName: 'vector', dependencies: [] }]);
+    const stageEnv = {
+      OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER: baseCarrier,
+      OLIPHAUNT_REACT_NATIVE_IOS_EXTENSION_CARRIERS: JSON.stringify({
+        vector: vectorCarrier,
+      }),
+    };
+    await assert.rejects(
+      () =>
+        stageIosAppPayload(
+          root,
+          path.join(root, 'ios'),
+          { extensions: ['vector'], icu: false },
+          {
+            env: stageEnv,
+            stageIosAppImpl: async () => {
+              throw new Error('checksum mismatch');
+            },
+          },
+        ),
+      /checksum mismatch/,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('broker Expo target, EAS identity and worker-only pods are idempotent on the upstream template', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-broker-project-'));
+  try {
+    const config = configureBroker({
+      ios: { bundleIdentifier: 'dev.example.app' },
+    });
+    assert.equal(config.ios.deploymentTarget, '26.0');
+    assert.equal(
+      configureBroker({ ios: { bundleIdentifier: 'dev.example.app', deploymentTarget: '27.0' } })
+        .ios.deploymentTarget,
+      '27.0',
+    );
+    assert.deepEqual(configureBroker(structuredClone(config)), config);
+    assert.throws(
+      () =>
+        configureBroker({ ios: { bundleIdentifier: 'dev.example.app', deploymentTarget: '17.0' } }),
+      /26.0/,
+    );
+    const expoManifest = require.resolve('expo/package.json', {
+      paths: [path.resolve(sdkRoot, '../../../examples/native/react-native-expo')],
+    });
+    const expoRequire = createRequire(expoManifest);
+    const pluginsRequire = createRequire(expoRequire.resolve('@expo/config-plugins/package.json'));
+    const xcode = pluginsRequire('xcode');
+    const projectFile = path.join(root, 'project.pbxproj');
+    fs.writeFileSync(
+      projectFile,
+      execFileSync('tar', [
+        '-xOf',
+        path.join(path.dirname(expoManifest), 'template.tgz'),
+        'package/ios/HelloWorld.xcodeproj/project.pbxproj',
+      ]),
+    );
+    const project = xcode.project(projectFile);
+    project.parseSync();
+    addBrokerTarget(project, root, config);
+    const first = project.writeSync();
+    addBrokerTarget(project, root, config);
+    assert.equal(project.writeSync(), first);
+    assert.match(first, /com.apple.product-type.extensionkit-extension/);
+    assert.match(first, /PRODUCT_MODULE_NAME = OliphauntBrokerWorker/);
+    assert.match(first, /EXTENSIONS_FOLDER_PATH/);
+    assert.match(first, /OliphauntBrokerHost.swift in Sources/);
+    const group = project.pbxGroupByName('OliphauntBroker');
+    const source = project.hash.project.objects.PBXFileReference[group.children[0].value];
+    assert.equal(
+      path.join(group.path.replaceAll('"', ''), source.path.replaceAll('"', '')),
+      'OliphauntBroker/OliphauntBroker.swift',
+    );
+    assert.match(
+      fs.readFileSync(path.join(root, 'OliphauntBrokerHost.swift'), 'utf8'),
+      /Name\("OliphauntBroker"\)/,
+    );
+    assert.match(
+      fs.readFileSync(path.join(root, 'OliphauntBroker/OliphauntBroker.swift'), 'utf8'),
+      /host: "dev.example.app"/,
+    );
+    const pods = insertIosPodfileBlock(
+      "target 'HelloWorld' do\n  config = use_native_modules!\nend\n",
+      { topology: 'broker' },
+    );
+    assert.equal(insertIosPodfileBlock(pods, { topology: 'broker' }), pods);
+    assert.ok(
+      pods.indexOf("ENV['OLIPHAUNT_REACT_NATIVE_TOPOLOGY']") < pods.indexOf('use_native_modules!'),
+    );
+    const [host, worker] = pods.split("target 'OliphauntBroker' do");
+    assert.match(host, /pod 'OliphauntBroker'/);
+    assert.doesNotMatch(host, /pod '(?:COliphaunt|Oliphaunt|OliphauntReactNativePayload)'/);
+    assert.doesNotMatch(worker, /inherit!/);
+    assert.match(host, /use_native_modules!\nend\n/);
+    assert.match(worker, /pod 'OliphauntBrokerExtension'/);
+    assert.match(worker, /pod 'OliphauntReactNativePayload'/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('broker process guard skips app initialization once in Kotlin and Java', () => {
+  for (const language of ['kt', 'java'] as const) {
+    const source =
+      'override fun onCreate() {\n    super.onCreate()\n    initializeReactNative()\n}';
+    const guarded = guardBrokerApplication(source, language);
+    assert.equal(guardBrokerApplication(guarded, language), guarded);
+    assert.ok(guarded.indexOf('isWorkerProcess') < guarded.indexOf('initializeReactNative()'));
+    assert.match(
+      guarded,
+      language === 'java'
+        ? /OliphauntBroker.INSTANCE.isWorkerProcess/
+        : /OliphauntBroker.isWorkerProcess/,
+    );
+  }
+});
+
+test('Expo discovers a single installed seed and binds its resource version on both platforms', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-seed-discovery-'));
+  const standard = '@oliphaunt/seed-native-ios-datum64-standard';
+  const icu = '@oliphaunt/seed-native-ios-datum64-icu';
+  try {
+    writeExpoApp(root, { [standard]: '1.2.3' });
+    writeJson(path.join(root, 'node_modules', standard, 'package.json'), {
+      name: standard,
+      version: '1.2.3',
+    });
+    fs.writeFileSync(
+      path.join(root, 'node_modules', standard, 'OliphauntSeedNativeIOSStandard.podspec'),
+      'Pod::Spec.new {}',
+    );
+    for (const platform of ['ios', 'android']) {
+      const discovered = await resolveInstalledResources(root, platform, { topology: 'broker' });
+      assert.equal(discovered.seedProfile, 'standard');
+      assert.equal(discovered.databaseResourcesVersion, '1.2.3');
+      assert.equal(discovered.topology, 'broker');
+      assert.match(
+        insertIosPodfileBlock('use_expo_modules!\n', { ...discovered, projectRoot: root }),
+        /OliphauntSeedNativeIOSStandard/,
+      );
+      await assert.rejects(
+        resolveInstalledResources(root, platform, { databaseResourcesVersion: '9.0.0' }),
+        /must match installed/,
+      );
+    }
+    writeExpoApp(root, { [standard]: '1.2.3', [icu]: '1.2.3', '@oliphaunt/icu': '1.2.3' });
+    writeJson(path.join(root, 'node_modules', icu, 'package.json'), {
+      name: icu,
+      version: '1.2.3',
+    });
+    writeJson(path.join(root, 'node_modules/@oliphaunt/icu/package.json'), {
+      name: '@oliphaunt/icu',
+      version: '1.2.3',
+    });
+    for (const platform of ['ios', 'android']) {
+      await assert.rejects(
+        resolveInstalledResources(root, platform),
+        /Multiple installed seed profiles/,
+      );
+      const selected = await resolveInstalledResources(root, platform, { seedProfile: 'icu' });
+      assert.equal(selected.seedProfile, 'icu');
+      assert.equal(selected.icu, true);
+      writeExpoApp(root, { [standard]: '1.2.3' }, { [platform]: { exclude: [standard] } });
+      assert.equal((await resolveInstalledResources(root, platform)).seedProfile, undefined);
+      writeExpoApp(root, { [standard]: '1.2.3', [icu]: '1.2.3', '@oliphaunt/icu': '1.2.3' });
+    }
+    assert.throws(() => normalizeOptions({ execution: 'broker' }), /use topology/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

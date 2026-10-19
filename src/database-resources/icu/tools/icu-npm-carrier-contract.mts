@@ -1,0 +1,295 @@
+#!/usr/bin/env bun
+
+import { createHash } from 'node:crypto';
+import { validateNativeIcuDataManifestRows } from '../../contracts/icu-data.mts';
+
+export const ICU_BUNDLE_DIRECTORY = 'OliphauntICU.bundle';
+export const ICU_DATA_RELATIVE_PATH = `${ICU_BUNDLE_DIRECTORY}/share/icu`;
+export const ICU_MANIFEST_RELATIVE_PATH = `${ICU_BUNDLE_DIRECTORY}/manifest.properties`;
+export const ICU_UNSTAGED_TREE_SHA256 = 'x-release-icu-data-tree-sha256';
+export const ICU_REACT_NATIVE_CONFIG = 'react-native.config.js';
+export const ICU_PODSPEC = 'OliphauntICU.podspec';
+
+const PACKED_ROOT = 'package';
+const PACKED_DATA_ROOT = `${PACKED_ROOT}/${ICU_DATA_RELATIVE_PATH}`;
+const LEGACY_PACKED_DATA_ROOT = `${PACKED_ROOT}/share/icu`;
+function contractError(label, message) {
+  throw new Error(label + ': ' + message);
+}
+
+export function assertIcuPackageManifest(
+  packageJson,
+  label = '@oliphaunt/icu package.json',
+  { allowUnstagedDigest = false } = {},
+) {
+  if (packageJson === null || typeof packageJson !== 'object' || Array.isArray(packageJson)) {
+    contractError(label, 'must be an object');
+  }
+  if (packageJson.type !== 'commonjs') {
+    contractError(label, `type must be "commonjs", got ${JSON.stringify(packageJson.type)}`);
+  }
+  const metadata = packageJson.oliphaunt;
+  if (
+    metadata?.product !== 'oliphaunt-icu' ||
+    metadata?.kind !== 'icu-data' ||
+    metadata?.target !== 'portable' ||
+    metadata?.dataRelativePath !== ICU_DATA_RELATIVE_PATH ||
+    metadata?.manifestRelativePath !== ICU_MANIFEST_RELATIVE_PATH ||
+    !(
+      /^[0-9a-f]{64}$/u.test(metadata?.icuDataTreeSha256 ?? '') ||
+      (allowUnstagedDigest && metadata?.icuDataTreeSha256 === ICU_UNSTAGED_TREE_SHA256)
+    )
+  ) {
+    contractError(
+      label,
+      'must declare portable oliphaunt-icu metadata with matching ICU data, manifest, and tree digest',
+    );
+  }
+  if (!Array.isArray(packageJson.files)) {
+    contractError(label, 'files must be an array');
+  }
+  if (new Set(packageJson.files).size !== packageJson.files.length) {
+    contractError(label, 'files must not contain duplicate entries');
+  }
+  for (const member of [ICU_BUNDLE_DIRECTORY, ICU_PODSPEC, ICU_REACT_NATIVE_CONFIG]) {
+    if (!packageJson.files.includes(member)) {
+      contractError(label, `files must include ${member}`);
+    }
+  }
+  const legacyEntries = packageJson.files.filter(
+    (member) => typeof member === 'string' && (member === 'share' || member.startsWith('share/')),
+  );
+  if (legacyEntries.length > 0) {
+    contractError(label, `files must not include the legacy ICU tree: ${legacyEntries.join(', ')}`);
+  }
+}
+
+function normalizeEntries(entries, label) {
+  const normalized = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    const name = typeof entry === 'string' ? entry : entry?.name;
+    const isFile = typeof entry === 'string' ? !entry.endsWith('/') : entry?.isFile === true;
+    if (typeof name !== 'string' || name.length === 0) {
+      contractError(label, 'archive inventory contains an invalid member name');
+    }
+    const normalizedName = name.replace(/\/$/u, '');
+    if (seen.has(normalizedName)) {
+      contractError(label, `archive inventory repeats member ${normalizedName}`);
+    }
+    seen.add(normalizedName);
+    normalized.push({ name: normalizedName, isFile });
+  }
+  return normalized;
+}
+
+function isAtOrBelow(member, root) {
+  return member === root || member.startsWith(`${root}/`);
+}
+
+function archiveFileManifest(entries, root, label) {
+  const rows =
+    entries instanceof Map
+      ? [...entries].map(([name, entry]) => ({ ...entry, name }))
+      : [...entries];
+  const manifest = [];
+  const seen = new Set();
+  for (const entry of rows) {
+    const name = entry?.name;
+    if (typeof name !== 'string' || !isAtOrBelow(name.replace(/\/$/u, ''), root)) {
+      continue;
+    }
+    const normalizedName = name.replace(/\/$/u, '');
+    if (normalizedName === root || entry?.isFile !== true) {
+      continue;
+    }
+    const relative = normalizedName.slice(`${root}/`.length);
+    if (!relative || seen.has(relative)) {
+      contractError(
+        label,
+        `contains an invalid or repeated ICU data file ${relative || normalizedName}`,
+      );
+    }
+    seen.add(relative);
+    const value = typeof entry.data === 'function' ? entry.data() : entry.data;
+    if (!(Buffer.isBuffer(value) || value instanceof Uint8Array)) {
+      contractError(label, `cannot read ICU data file ${normalizedName}`);
+    }
+    const bytes = Buffer.from(value);
+    if (entry.size !== undefined && entry.size !== bytes.length) {
+      contractError(
+        label,
+        `ICU data file ${normalizedName} declares ${entry.size} bytes but contains ${bytes.length}`,
+      );
+    }
+    manifest.push({
+      path: relative,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      size: bytes.length,
+      type: 'file',
+    });
+  }
+  if (manifest.length === 0) {
+    contractError(label, `contains no readable ICU data files below ${root}`);
+  }
+  return manifest.sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
+}
+
+export function assertIcuPackedDataMatchesSource({
+  packedEntries,
+  sourceEntries,
+  label = '@oliphaunt/icu npm tarball',
+  sourceLabel = 'liboliphaunt ICU data release asset',
+}) {
+  const packed = archiveFileManifest(packedEntries, PACKED_DATA_ROOT, label);
+  const source = archiveFileManifest(sourceEntries, 'share/icu', sourceLabel);
+  if (JSON.stringify(packed) === JSON.stringify(source)) {
+    return;
+  }
+
+  const packedByPath = new Map(packed.map((entry) => [entry.path, entry]));
+  const sourceByPath = new Map(source.map((entry) => [entry.path, entry]));
+  const missing = source
+    .filter((entry) => !packedByPath.has(entry.path))
+    .map((entry) => entry.path);
+  const unexpected = packed
+    .filter((entry) => !sourceByPath.has(entry.path))
+    .map((entry) => entry.path);
+  const changed = source
+    .filter((entry) => {
+      const candidate = packedByPath.get(entry.path);
+      return (
+        candidate !== undefined &&
+        (candidate.size !== entry.size || candidate.sha256 !== entry.sha256)
+      );
+    })
+    .map((entry) => entry.path);
+  contractError(
+    label,
+    `ICU data differs from ${sourceLabel}` +
+      ` (missing=${JSON.stringify(missing.slice(0, 5))}` +
+      `, unexpected=${JSON.stringify(unexpected.slice(0, 5))}` +
+      `, changed=${JSON.stringify(changed.slice(0, 5))})`,
+  );
+}
+
+export function assertIcuPackedClosureMatchesSource({
+  packedEntries,
+  sourceEntries,
+  packageJson,
+  label = '@oliphaunt/icu npm tarball',
+  sourceLabel = 'liboliphaunt ICU data release asset',
+}) {
+  assertIcuPackedDataMatchesSource({ packedEntries, sourceEntries, label, sourceLabel });
+  const packedManifest = packedEntries.get(`${PACKED_ROOT}/${ICU_MANIFEST_RELATIVE_PATH}`)?.data();
+  const sourceManifest = sourceEntries.get('manifest.properties')?.data();
+  if (packedManifest === undefined || sourceManifest === undefined) {
+    contractError(label, 'ICU data closure is missing its manifest');
+  }
+  if (!Buffer.from(packedManifest).equals(Buffer.from(sourceManifest))) {
+    contractError(label, `ICU data manifest differs from ${sourceLabel}`);
+  }
+  try {
+    const sourceDataRows = [...sourceEntries]
+      .filter(([name, entry]) => entry.isFile === true && name.startsWith('share/icu/'))
+      .map(([name, entry]) => ({
+        path: name.slice('share/icu/'.length),
+        bytes: entry.data(),
+      }));
+    const receipt = validateNativeIcuDataManifestRows(
+      packedManifest,
+      sourceDataRows,
+      `${label} ${ICU_MANIFEST_RELATIVE_PATH}`,
+    );
+    if (packageJson?.oliphaunt?.icuDataTreeSha256 !== receipt.icuDataTreeSha256) {
+      contractError(
+        label,
+        'package metadata and ICU data manifest identify different logical trees',
+      );
+    }
+  } catch (error) {
+    contractError(label, error instanceof Error ? error.message : String(error));
+  }
+}
+
+function icuTreeRoots(member) {
+  const segments = member.split('/').filter(Boolean);
+  const roots = [];
+  for (let index = 0; index + 1 < segments.length; index += 1) {
+    if (segments[index] === 'share' && segments[index + 1] === 'icu') {
+      roots.push(segments.slice(0, index + 2).join('/'));
+    }
+  }
+  return roots;
+}
+
+export function assertIcuPackedInventory(entries, label = '@oliphaunt/icu npm tarball') {
+  const inventory = normalizeEntries(entries, label);
+  const byName = new Map(inventory.map((entry) => [entry.name, entry]));
+  for (const member of [
+    `${PACKED_ROOT}/package.json`,
+    `${PACKED_ROOT}/${ICU_PODSPEC}`,
+    `${PACKED_ROOT}/${ICU_REACT_NATIVE_CONFIG}`,
+  ]) {
+    if (byName.get(member)?.isFile !== true) {
+      contractError(label, `is missing file ${member}`);
+    }
+  }
+
+  for (const { name } of inventory) {
+    if (isAtOrBelow(name, LEGACY_PACKED_DATA_ROOT)) {
+      contractError(label, `contains forbidden legacy ICU data member ${name}`);
+    }
+    for (const root of icuTreeRoots(name)) {
+      if (root !== PACKED_DATA_ROOT) {
+        contractError(label, `contains unexpected additional ICU data tree ${root}`);
+      }
+    }
+  }
+
+  const dataFiles = inventory.filter(
+    ({ name, isFile }) => isFile && name.startsWith(`${PACKED_DATA_ROOT}/`),
+  );
+  if (dataFiles.length === 0) {
+    contractError(label, `is missing ICU data files under ${PACKED_DATA_ROOT}`);
+  }
+  if (
+    !dataFiles.some(({ name }) => {
+      const relative = name.slice(`${PACKED_DATA_ROOT}/`.length).split('/').filter(Boolean);
+      return relative.length > 0 && relative[0].startsWith('icudt');
+    })
+  ) {
+    contractError(label, `is missing ${PACKED_DATA_ROOT}/icudt* data files`);
+  }
+  const manifest = `${PACKED_ROOT}/${ICU_MANIFEST_RELATIVE_PATH}`;
+  if (byName.get(manifest)?.isFile !== true) {
+    contractError(label, `is missing ICU data manifest ${manifest}`);
+  }
+  const seedMembers = inventory.filter(({ name }) => /(?:^|\/)cluster-seed(?:\/|$)/u.test(name));
+  if (seedMembers.length > 0) {
+    contractError(label, `must not contain a target-specific cluster seed: ${seedMembers[0].name}`);
+  }
+}
+
+function assertSameBytes(actual, expected, label) {
+  const actualBytes = Buffer.isBuffer(actual) ? actual : Buffer.from(actual);
+  const expectedBytes = Buffer.isBuffer(expected) ? expected : Buffer.from(expected);
+  if (!actualBytes.equals(expectedBytes)) {
+    contractError(label, 'packed bytes differ from the reviewed source descriptor');
+  }
+}
+
+export function assertPackedIcuCarrier({
+  entries,
+  packageJson,
+  packedConfig,
+  packedPodspec,
+  sourceConfig,
+  sourcePodspec,
+  label = '@oliphaunt/icu npm tarball',
+}) {
+  assertIcuPackageManifest(packageJson, `${label} package/package.json`);
+  assertIcuPackedInventory(entries, label);
+  assertSameBytes(packedConfig, sourceConfig, `${label} package/${ICU_REACT_NATIVE_CONFIG}`);
+  assertSameBytes(packedPodspec, sourcePodspec, `${label} package/${ICU_PODSPEC}`);
+}

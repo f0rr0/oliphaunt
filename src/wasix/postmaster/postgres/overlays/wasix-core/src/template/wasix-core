@@ -1,0 +1,11 @@
+# Minimal PostgreSQL configure template for the fresh WASIX core lane.
+#
+# This file should only encode platform facts that are true for WASIX. Runtime
+# gaps belong in reports/blockers, not in fake success shims.
+
+if test x"$PREFERRED_SEMAPHORES" = x"" ; then
+  PREFERRED_SEMAPHORES=UNNAMED_POSIX
+fi
+
+CPPFLAGS="$CPPFLAGS -D_GNU_SOURCE"
+CFLAGS_SL="-fPIC"

@@ -1,0 +1,417 @@
+diff --git a/src/options.rs b/src/options.rs
+index d074351f..967ac166 100644
+--- a/src/options.rs
++++ b/src/options.rs
+@@ -55,6 +55,8 @@ type CommonOptions = {
+ export type RunOptions = CommonOptions & {
+     /** The name of the program being run (passed in as arg 0) */
+     program?: string;
++    /** Original bytes for a precompiled WebAssembly.Module. */
++    moduleBytes?: Uint8Array;
+     /**
+      * The WASIX runtime to use.
+      *
+@@ -175,6 +177,9 @@ extern "C" {
+     #[wasm_bindgen(method, getter)]
+     pub(crate) fn program(this: &RunOptions) -> JsValue;
+
++    #[wasm_bindgen(method, getter, js_name = moduleBytes)]
++    pub(crate) fn module_bytes(this: &RunOptions) -> Option<js_sys::Uint8Array>;
++
+     #[wasm_bindgen(method, getter)]
+     pub(crate) fn runtime(this: &RunOptions) -> OptionalRuntime;
+
+diff --git a/src/run.rs b/src/run.rs
+index 99ee44ef..d4d485fd 100644
+--- a/src/run.rs
++++ b/src/run.rs
+@@ -1,15 +1,50 @@
+ use futures::channel::oneshot;
+-use std::sync::Arc;
++use std::sync::{Arc, Mutex};
+ use wasm_bindgen::{prelude::wasm_bindgen, JsCast};
+ use wasm_bindgen_futures::JsFuture;
++use wasmer_wasix::types::wasi::ExitCode;
+ use wasmer_wasix::Runtime as _;
+-use wasmer_wasix::runtime::task_manager::VirtualTaskManagerExt;
+ use wasmer_wasix::{WasiEnvBuilder, WasiError, WasiRuntimeError};
+
+-use crate::{instance::ExitCondition, utils::Error, Instance, RunOptions};
++use crate::{
++    instance::ExitCondition,
++    tasks::{ThreadPool, WorkerMessage},
++    utils::Error,
++    Instance, RunOptions,
++};
+
+ const DEFAULT_PROGRAM_NAME: &str = "wasm";
+
++type ExitSender = Arc<Mutex<Option<oneshot::Sender<ExitCondition>>>>;
++
++fn complete_when_pool_idle(
++    exit_code_tx: ExitSender,
++    thread_pool: Arc<ThreadPool>,
++    exit: ExitCondition,
++) {
++    // The scheduler may still be returning a nested WASM task to its worker.
++    // Transfer the completion callback to the scheduler and resolve wait()
++    // only after all blocking workers in this process-owned pool are idle.
++    let _ = WorkerMessage::RunWhenPoolIdle(Box::new(move || {
++        let Some(exit_code_tx) = exit_code_tx.lock().unwrap().take() else {
++            return;
++        };
++        let _ = exit_code_tx.send(exit);
++        thread_pool.close();
++    }))
++    .emit();
++}
++
++fn task_exit_condition(result: Result<ExitCode, Arc<WasiRuntimeError>>) -> ExitCondition {
++    let result = match result {
++        Ok(exit_code) if exit_code.raw() == 0 => Ok(()),
++        Ok(exit_code) => Err(WasiRuntimeError::Wasi(WasiError::Exit(exit_code)).into()),
++        Err(err) => Err(anyhow::anyhow!(err.to_string())),
++    };
++
++    ExitCondition::from_result(result)
++}
++
+ /// Run a WASIX program.
+ ///
+ /// # WASI Compatibility
+@@ -30,8 +65,11 @@ pub async fn run_wasix(wasm_module: WasmModule, config: RunOptions) -> Result<In
+ #[tracing::instrument(level = "debug", skip_all)]
+ async fn run_wasix_inner(wasm_module: WasmModule, config: RunOptions) -> Result<Instance, Error> {
+     let mut runtime = config.runtime().resolve()?.into_inner();
+-    // We set it up with the default pool
+-    runtime = Arc::new(runtime.with_default_pool());
++    // A process owns its scheduler and blocking workers. Isolating each run
++    // prevents completed workers and pending callbacks from leaking into the
++    // next process.
++    let thread_pool = Arc::new(ThreadPool::new());
++    runtime = Arc::new(runtime.with_task_manager(thread_pool.clone()));
+
+     let program_name = config
+         .program()
+@@ -42,38 +80,59 @@ async fn run_wasix_inner(wasm_module: WasmModule, config: RunOptions) -> Result<
+     let (stdin, stdout, stderr) = config.configure_builder(&mut builder)?;
+
+     let (exit_code_tx, exit_code_rx) = oneshot::channel();
++    let exit_code_tx = Arc::new(Mutex::new(Some(exit_code_tx)));
+
+-    let module: wasmer::Module = wasm_module.to_module(&*runtime).await?;
+-    let module_bytes = module.serialize().unwrap();
++    let (module, module_bytes) = wasm_module
++        .to_module(&*runtime, config.module_bytes().map(|bytes| bytes.to_vec()))
++        .await?;
+
+     // Note: The WasiEnvBuilder::run() method blocks, so we need to run it on
+     // the thread pool.
+     let tasks = runtime.task_manager().clone();
++    let completion_tasks = tasks.clone();
+     tasks.spawn_with_module(
+         module,
+         Box::new(move |module| {
+             let _span = tracing::debug_span!("run").entered();
+             let module: js_sys::WebAssembly::Module = module.into();
+             let module: wasmer::Module = (module, module_bytes).into();
+-            let result = (|| -> Result<(), anyhow::Error> {
++            let result = (|| -> Result<_, anyhow::Error> {
+                 let env = builder.build()?;
+                 let runtime = env.runtime.clone();
+-                let tasks = runtime.task_manager().clone();
+-                let mut task_handle =
+-                    wasmer_wasix::bin_factory::spawn_exec_module(module, env, &runtime)?;
+-                let result = tasks.spawn_and_block_on(async move {
+-                    task_handle.wait_finished().await
+-                })?;
+-
+-                match result {
+-                    Ok(exit_code) if exit_code.raw() == 0 => Ok(()),
+-                    Ok(exit_code) => {
+-                        Err(WasiRuntimeError::Wasi(WasiError::Exit(exit_code)).into())
++                Ok(wasmer_wasix::bin_factory::spawn_exec_module(
++                    module, env, &runtime,
++                )?)
++            })();
++
++            match result {
++                Ok(mut task_handle) => {
++                    let exit_code_tx_for_waiter = exit_code_tx.clone();
++                    let thread_pool_for_waiter = thread_pool.clone();
++                    let schedule_result = completion_tasks.task_shared(Box::new(move || {
++                        Box::pin(async move {
++                            let exit = task_exit_condition(task_handle.wait_finished().await);
++                            complete_when_pool_idle(
++                                exit_code_tx_for_waiter,
++                                thread_pool_for_waiter,
++                                exit,
++                            );
++                        })
++                    }));
++
++                    if let Err(error) = schedule_result {
++                        complete_when_pool_idle(
++                            exit_code_tx,
++                            thread_pool,
++                            ExitCondition::from_result(Err(error.into())),
++                        );
+                     }
+-                    Err(err) => Err(anyhow::anyhow!(err.to_string())),
+                 }
+-            })();
+-            let _ = exit_code_tx.send(ExitCondition::from_result(result));
++                Err(error) => complete_when_pool_idle(
++                    exit_code_tx,
++                    thread_pool,
++                    ExitCondition::from_result(Err(error)),
++                ),
++            }
+         }),
+     )?;
+
+@@ -95,9 +154,15 @@ impl WasmModule {
+     async fn to_module(
+         &self,
+         _runtime: &dyn wasmer_wasix::Runtime,
+-    ) -> Result<wasmer::Module, Error> {
++        original_bytes: Option<Vec<u8>>,
++    ) -> Result<(wasmer::Module, Vec<u8>), Error> {
+         if let Some(module) = self.dyn_ref::<js_sys::WebAssembly::Module>() {
+-            Ok(module.clone().into())
++            let bytes = original_bytes.ok_or_else(|| {
++                anyhow::anyhow!(
++                    "runWasix requires moduleBytes when passed a precompiled WebAssembly.Module"
++                )
++            })?;
++            Ok((module.clone().into(), bytes))
+         } else if let Some(buffer) = self.dyn_ref::<js_sys::Uint8Array>() {
+             let buffer = buffer.to_vec();
+             let bytes = js_sys::Uint8Array::from(buffer.as_slice());
+@@ -106,7 +171,7 @@ impl WasmModule {
+                 .map_err(Error::js)?
+                 .dyn_into::<js_sys::WebAssembly::Module>()
+                 .map_err(Error::js)?;
+-            Ok((module, buffer).into())
++            Ok(((module, buffer.clone()).into(), buffer))
+         } else {
+             unreachable!();
+         }
+diff --git a/src/tasks/mod.rs b/src/tasks/mod.rs
+index 6d185001..2e9b0eeb 100644
+--- a/src/tasks/mod.rs
++++ b/src/tasks/mod.rs
+@@ -53,5 +53,5 @@ pub(crate) use self::{
+ use std::{future::Future, pin::Pin};
+
+ type AsyncTask = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + 'static>> + Send + 'static>;
+-type BlockingTask = Box<dyn FnOnce() + Send + 'static>;
++pub(crate) type BlockingTask = Box<dyn FnOnce() + Send + 'static>;
+ type BlockingModuleTask = Box<dyn FnOnce(wasmer::Module) + Send + 'static>;
+diff --git a/src/tasks/scheduler.rs b/src/tasks/scheduler.rs
+index 95ed5d1e..800a5428 100644
+--- a/src/tasks/scheduler.rs
++++ b/src/tasks/scheduler.rs
+@@ -5,6 +5,7 @@ use std::{
+ };
+
+ use anyhow::{Context, Error};
++use derivative::Derivative;
+ use tokio::sync::mpsc::UnboundedSender;
+ use tokio::sync::mpsc::{self};
+ use tracing::Instrument;
+@@ -13,8 +14,8 @@ use wasmer::js::AsJs;
+ use wasmer_types::ModuleHash;
+
+ use crate::tasks::{
+-    AsyncJob, BlockingJob, Notification, PostMessagePayload, SchedulerMessage, WorkerHandle,
+-    WorkerMessage,
++    AsyncJob, BlockingJob, BlockingTask, Notification, PostMessagePayload, SchedulerMessage,
++    WorkerHandle, WorkerMessage,
+ };
+
+ /// A handle for interacting with the threadpool's scheduler.
+@@ -125,7 +126,8 @@ impl Drop for Scheduler {
+ }
+
+ /// The state for the actor in charge of the threadpool.
+-#[derive(Debug)]
++#[derive(Derivative)]
++#[derivative(Debug)]
+ struct SchedulerState {
+     /// Workers that are able to receive work.
+     idle: VecDeque<WorkerHandle>,
+@@ -135,6 +137,8 @@ struct SchedulerState {
+     /// A channel that can be used to send messages to this scheduler.
+     mailbox: Scheduler,
+     cached_modules: BTreeMap<ModuleHash, js_sys::WebAssembly::Module>,
++    #[derivative(Debug(format_with = "crate::utils::hidden"))]
++    run_when_pool_idle: VecDeque<BlockingTask>,
+ }
+
+ impl SchedulerState {
+@@ -144,6 +148,7 @@ impl SchedulerState {
+             busy: VecDeque::new(),
+             mailbox,
+             cached_modules: BTreeMap::new(),
++            run_when_pool_idle: VecDeque::new(),
+         }
+     }
+
+@@ -209,6 +214,11 @@ impl SchedulerState {
+                 );
+                 Ok(())
+             }
++            SchedulerMessage::RunWhenPoolIdle(task) => {
++                self.run_when_pool_idle.push_back(task);
++                self.run_pool_idle_callbacks();
++                Ok(())
++            }
+             SchedulerMessage::WorkerIdle { worker_id } => {
+                 move_worker(worker_id, &mut self.busy, &mut self.idle);
+                 tracing::trace!(
+@@ -217,12 +227,22 @@ impl SchedulerState {
+                     busy_workers=?self.busy.iter().map(|w| w.id()).collect::<Vec<_>>(),
+                     "Worker marked as idle",
+                 );
++                self.run_pool_idle_callbacks();
+                 Ok(())
+             }
+             SchedulerMessage::Markers { uninhabited, .. } => match uninhabited {},
+         }
+     }
+
++    fn run_pool_idle_callbacks(&mut self) {
++        if !self.busy.is_empty() {
++            return;
++        }
++        while let Some(task) = self.run_when_pool_idle.pop_front() {
++            task();
++        }
++    }
++
+     /// Send a task to one of the worker threads, preferring workers that aren't
+     /// running synchronous work.
+     fn post_message(&mut self, msg: PostMessagePayload) -> Result<(), Error> {
+diff --git a/src/tasks/scheduler_message.rs b/src/tasks/scheduler_message.rs
+index f142a0df..43af3233 100644
+--- a/src/tasks/scheduler_message.rs
++++ b/src/tasks/scheduler_message.rs
+@@ -31,6 +31,8 @@ pub(crate) enum SchedulerMessage {
+     WorkerIdle { worker_id: u32 },
+     /// Mark a worker as busy.
+     WorkerBusy { worker_id: u32 },
++    /// Run a callback after every blocking worker becomes idle.
++    RunWhenPoolIdle(#[derivative(Debug(format_with = "crate::utils::hidden"))] BlockingTask),
+     /// Tell all workers to cache a WebAssembly module.
+     #[allow(dead_code)]
+     CacheModule {
+@@ -82,6 +84,10 @@ impl SchedulerMessage {
+                 let worker_id = de.serde(consts::WORKER_ID)?;
+                 Ok(SchedulerMessage::WorkerBusy { worker_id })
+             }
++            consts::TYPE_RUN_WHEN_POOL_IDLE => {
++                let task = de.boxed(consts::PTR)?;
++                Ok(SchedulerMessage::RunWhenPoolIdle(task))
++            }
+             consts::TYPE_CACHE_MODULE => {
+                 let hash = de.string(consts::MODULE_HASH)?;
+                 let hash = if let Ok(hash) = ModuleHash::sha256_parse_hex(&hash) {
+@@ -146,6 +152,11 @@ impl SchedulerMessage {
+             SchedulerMessage::WorkerBusy { worker_id } => Serializer::new(consts::TYPE_WORKER_BUSY)
+                 .set(consts::WORKER_ID, worker_id)
+                 .finish(),
++            SchedulerMessage::RunWhenPoolIdle(task) => {
++                Serializer::new(consts::TYPE_RUN_WHEN_POOL_IDLE)
++                    .boxed(consts::PTR, task)
++                    .finish()
++            }
+             SchedulerMessage::CacheModule { hash, module } => {
+                 Serializer::new(consts::TYPE_CACHE_MODULE)
+                     .set(consts::MODULE_HASH, hash.to_string())
+@@ -185,6 +196,7 @@ mod consts {
+     pub const TYPE_SPAWN_BLOCKING: &str = "spawn-blocking";
+     pub const TYPE_WORKER_IDLE: &str = "worker-idle";
+     pub const TYPE_WORKER_BUSY: &str = "worker-busy";
++    pub const TYPE_RUN_WHEN_POOL_IDLE: &str = "run-when-pool-idle";
+     pub const TYPE_CACHE_MODULE: &str = "cache-module";
+     pub const TYPE_SPAWN_WITH_MODULE: &str = "spawn-with-module";
+     pub const TYPE_SPAWN_WITH_MODULE_AND_MEMORY: &str = "spawn-with-module-and-memory";
+diff --git a/src/tasks/worker_handle.rs b/src/tasks/worker_handle.rs
+index 6e2a6954..983e07e8 100644
+--- a/src/tasks/worker_handle.rs
++++ b/src/tasks/worker_handle.rs
+@@ -108,6 +108,7 @@ fn on_message(msg: web_sys::MessageEvent, sender: &Scheduler, worker_id: u32) {
+             let msg = match base_msg {
+                 WorkerMessage::MarkBusy => SchedulerMessage::WorkerBusy { worker_id },
+                 WorkerMessage::MarkIdle => SchedulerMessage::WorkerIdle { worker_id },
++                WorkerMessage::RunWhenPoolIdle(task) => SchedulerMessage::RunWhenPoolIdle(task),
+                 WorkerMessage::Scheduler(msg) => msg,
+             };
+             sender.send(msg).map_err(|_| Error::msg("Send failed"))
+diff --git a/src/tasks/worker_message.rs b/src/tasks/worker_message.rs
+index cfc54ba2..dd4b95d6 100644
+--- a/src/tasks/worker_message.rs
++++ b/src/tasks/worker_message.rs
+@@ -1,21 +1,25 @@
++use derivative::Derivative;
+ use wasm_bindgen::{JsCast, JsValue};
+ use web_sys::DedicatedWorkerGlobalScope;
+
+ use crate::{
+     tasks::{
+         interop::{Deserializer, Serializer},
+-        SchedulerMessage,
++        BlockingTask, SchedulerMessage,
+     },
+     utils::Error,
+ };
+
+ /// A message the worker sends back to the scheduler.
+-#[derive(Debug)]
++#[derive(Derivative)]
++#[derivative(Debug)]
+ pub(crate) enum WorkerMessage {
+     /// Mark this worker as busy.
+     MarkBusy,
+     /// Mark this worker as idle.
+     MarkIdle,
++    /// Run a callback after every blocking worker becomes idle.
++    RunWhenPoolIdle(#[derivative(Debug(format_with = "crate::utils::hidden"))] BlockingTask),
+     Scheduler(SchedulerMessage),
+ }
+
+@@ -26,6 +30,10 @@ impl WorkerMessage {
+         match de.ty()?.as_str() {
+             consts::TYPE_BUSY => Ok(WorkerMessage::MarkBusy),
+             consts::TYPE_IDLE => Ok(WorkerMessage::MarkIdle),
++            consts::TYPE_RUN_WHEN_POOL_IDLE => {
++                let task = de.boxed(consts::TASK)?;
++                Ok(WorkerMessage::RunWhenPoolIdle(task))
++            }
+             consts::TYPE_SCHEDULER => {
+                 let value: JsValue = de.js(consts::MESSAGE)?;
+                 let msg = SchedulerMessage::try_from_js(value)?;
+@@ -39,6 +47,11 @@ impl WorkerMessage {
+         match self {
+             WorkerMessage::MarkBusy => Serializer::new(consts::TYPE_BUSY).finish(),
+             WorkerMessage::MarkIdle => Serializer::new(consts::TYPE_IDLE).finish(),
++            WorkerMessage::RunWhenPoolIdle(task) => {
++                Serializer::new(consts::TYPE_RUN_WHEN_POOL_IDLE)
++                    .boxed(consts::TASK, task)
++                    .finish()
++            }
+             WorkerMessage::Scheduler(msg) => {
+                 let msg = msg.into_js()?;
+                 Serializer::new(consts::TYPE_SCHEDULER)
+@@ -72,8 +85,10 @@ impl WorkerMessage {
+ mod consts {
+     pub const TYPE_BUSY: &str = "busy";
+     pub const TYPE_IDLE: &str = "idle";
++    pub const TYPE_RUN_WHEN_POOL_IDLE: &str = "run-when-pool-idle";
+     pub const TYPE_SCHEDULER: &str = "scheduler";
+     pub const MESSAGE: &str = "msg";
++    pub const TASK: &str = "task";
+ }
+
+ #[cfg(test)]

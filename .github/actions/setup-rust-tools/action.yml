@@ -5,7 +5,7 @@ inputs:
   toolchain:
     description: Rust toolchain version.
     required: false
-    default: "1.93.1"
+    default: ""
   components:
     description: Comma-separated Rust components.
     required: false
@@ -21,7 +21,7 @@ inputs:
   cache-save-if:
     description: Expression string passed to Swatinem/rust-cache save-if.
     required: false
-    default: "false"
+    default: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
   tools:
     description: Comma-separated tools for taiki-e/install-action.
     required: false
@@ -30,10 +30,24 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Resolve Rust toolchain
+      id: toolchain
+      shell: bash
+      env:
+        TOOLCHAIN_INPUT: ${{ inputs.toolchain }}
+      run: |
+        set -euo pipefail
+        version="$TOOLCHAIN_INPUT"
+        if [[ -z "$version" ]]; then
+          version="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+        fi
+        [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'expected a pinned Rust version' >&2; exit 1; }
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
       with:
-        toolchain: ${{ inputs.toolchain }}
+        toolchain: ${{ steps.toolchain.outputs.version }}
         components: ${{ inputs.components }}
 
     - name: Cache Cargo output
@@ -43,16 +57,26 @@ runs:
         workspaces: ${{ inputs.cache-workspaces }}
         save-if: ${{ inputs.cache-save-if }}
 
-    - name: Install ripgrep
+    - name: Find ripgrep
+      id: ripgrep
       shell: bash
       run: |
         set -euo pipefail
         if command -v rg >/dev/null 2>&1; then
           rg --version
-          exit 0
+          echo 'installed=true' >> "$GITHUB_OUTPUT"
         fi
-        cargo install ripgrep --version 15.1.0 --locked
-        rg --version
+
+    - name: Prepare Linux apt sources
+      if: ${{ runner.os == 'Linux' && (inputs.tools != '' || steps.ripgrep.outputs.installed != 'true') }}
+      shell: bash
+      run: .github/scripts/prepare-linux-apt.sh
+
+    - name: Install prebuilt ripgrep
+      if: ${{ steps.ripgrep.outputs.installed != 'true' }}
+      uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853
+      with:
+        tool: ripgrep@15.1.0
 
     - name: Install Cargo tools
       if: ${{ inputs.tools != '' }}

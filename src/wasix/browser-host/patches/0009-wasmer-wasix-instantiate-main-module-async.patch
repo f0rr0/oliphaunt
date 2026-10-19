@@ -1,0 +1,265 @@
+diff --git a/src/state/builder.rs b/src/state/builder.rs
+--- a/src/state/builder.rs
++++ b/src/state/builder.rs
+@@ -6,6 +6,7 @@ use std::{
+     sync::Arc,
+ };
+
++use futures::FutureExt;
+ use rand::Rng;
+ use thiserror::Error;
+ use virtual_fs::{ArcFile, FileSystem, FsError, TmpFileSystem, VirtualFile};
+@@ -1046,6 +1047,43 @@ impl WasiEnvBuilder {
+         module_hash: ModuleHash,
+         store: &mut impl AsStoreMut,
+     ) -> Result<(Instance, WasiFunctionEnv), WasiRuntimeError> {
++        self.instantiate_ext_inner(module, module_hash, store, false)
++            .now_or_never()
++            .expect("synchronous WASI builder instantiation must not yield")
++    }
++
++    /// Instantiate a JavaScript-backed module through the browser's
++    /// asynchronous `WebAssembly.instantiate()` path.
++    #[cfg(all(feature = "js", target_arch = "wasm32"))]
++    #[allow(clippy::result_large_err)]
++    pub async fn instantiate_async(
++        self,
++        module: Module,
++        store: &mut impl AsStoreMut,
++    ) -> Result<(Instance, WasiFunctionEnv), WasiRuntimeError> {
++        self.instantiate_ext_async(module, ModuleHash::random(), store)
++            .await
++    }
++
++    #[cfg(all(feature = "js", target_arch = "wasm32"))]
++    #[allow(clippy::result_large_err)]
++    pub async fn instantiate_ext_async(
++        self,
++        module: Module,
++        module_hash: ModuleHash,
++        store: &mut impl AsStoreMut,
++    ) -> Result<(Instance, WasiFunctionEnv), WasiRuntimeError> {
++        self.instantiate_ext_inner(module, module_hash, store, true)
++            .await
++    }
++
++    async fn instantiate_ext_inner(
++        self,
++        module: Module,
++        module_hash: ModuleHash,
++        store: &mut impl AsStoreMut,
++        async_instantiation: bool,
++    ) -> Result<(Instance, WasiFunctionEnv), WasiRuntimeError> {
+         let init = self.build_init()?;
+         let call_init = init.call_initialize;
+         let env = WasiEnv::from_init(init, module_hash)?;
+@@ -1058,7 +1096,17 @@ impl WasiEnvBuilder {
+             .map(|ty| wasmer::Memory::new(store, ty))
+             .transpose()
+             .map_err(WasiThreadError::MemoryCreateFailed)?;
+-        Ok(env.instantiate(module, store, memory, true, call_init, None)?)
++        Ok(env
++            .instantiate_inner(
++                module,
++                store,
++                memory,
++                true,
++                call_init,
++                None,
++                async_instantiation,
++            )
++            .await?)
+     }
+ }
+
+diff --git a/src/state/env.rs b/src/state/env.rs
+--- a/src/state/env.rs
++++ b/src/state/env.rs
+@@ -7,7 +7,7 @@ use std::{
+     time::Duration,
+ };
+
+-use futures::future::BoxFuture;
++use futures::{future::BoxFuture, FutureExt};
+ use rand::Rng;
+ use virtual_fs::{FileSystem, FsError, VirtualFile};
+ use virtual_net::DynVirtualNetworking;
+@@ -416,7 +416,52 @@ impl WasiEnv {
+         memory: Option<Memory>,
+         update_layout: bool,
+         call_initialize: bool,
+-        parent_linker_and_ctx: Option<(Linker, &mut FunctionEnvMut<WasiEnv>)>,
++        parent_linker_and_ctx: Option<(Linker, &mut FunctionEnvMut<'_, WasiEnv>)>,
++    ) -> Result<(Instance, WasiFunctionEnv), WasiThreadError> {
++        self.instantiate_inner(
++            module,
++            store,
++            memory,
++            update_layout,
++            call_initialize,
++            parent_linker_and_ctx,
++            false,
++        )
++        .now_or_never()
++        .expect("synchronous WASI instantiation must not yield")
++    }
++
++    #[cfg(all(feature = "js", target_arch = "wasm32"))]
++    pub(crate) async fn instantiate_async(
++        self,
++        module: Module,
++        store: &mut impl AsStoreMut,
++        memory: Option<Memory>,
++        update_layout: bool,
++        call_initialize: bool,
++        parent_linker_and_ctx: Option<(Linker, &mut FunctionEnvMut<'_, WasiEnv>)>,
++    ) -> Result<(Instance, WasiFunctionEnv), WasiThreadError> {
++        self.instantiate_inner(
++            module,
++            store,
++            memory,
++            update_layout,
++            call_initialize,
++            parent_linker_and_ctx,
++            true,
++        )
++        .await
++    }
++
++    pub(crate) async fn instantiate_inner(
++        self,
++        module: Module,
++        store: &mut impl AsStoreMut,
++        memory: Option<Memory>,
++        update_layout: bool,
++        call_initialize: bool,
++        parent_linker_and_ctx: Option<(Linker, &mut FunctionEnvMut<'_, WasiEnv>)>,
++        async_instantiation: bool,
+     ) -> Result<(Instance, WasiFunctionEnv), WasiThreadError> {
+         let pid = self.process.pid();
+
+@@ -451,7 +496,7 @@ impl WasiEnv {
+                     };
+
+                     // TODO: make stack size configurable
+-                    Linker::new(
++                    Linker::new_inner(
+                         engine,
+                         &module,
+                         &mut store,
+@@ -459,7 +504,9 @@ impl WasiEnv {
+                         &mut func_env,
+                         8 * 1024 * 1024,
+                         &ld_library_path,
++                        async_instantiation,
+                     )
++                    .await
+                 }
+             };
+
+@@ -493,7 +540,19 @@ impl WasiEnv {
+         };
+
+         // Construct the instance.
+-        let instance = match Instance::new(&mut store, &module, &import_object) {
++        let instance_result = if async_instantiation {
++            #[cfg(all(feature = "js", target_arch = "wasm32"))]
++            {
++                Instance::new_async(&mut store, &module, &import_object).await
++            }
++            #[cfg(not(all(feature = "js", target_arch = "wasm32")))]
++            {
++                Instance::new(&mut store, &module, &import_object)
++            }
++        } else {
++            Instance::new(&mut store, &module, &import_object)
++        };
++        let instance = match instance_result {
+             Ok(a) => a,
+             Err(err) => {
+                 tracing::error!(
+diff --git a/src/state/linker.rs b/src/state/linker.rs
+--- a/src/state/linker.rs
++++ b/src/state/linker.rs
+@@ -272,6 +272,7 @@ use std::{
+
+ use bus::Bus;
+ use derive_more::Debug;
++use futures::FutureExt;
+ use shared_buffer::OwnedBuffer;
+ use tracing::trace;
+ use virtual_fs::{AsyncReadExt, FileSystem, FsError};
+@@ -957,6 +958,53 @@ impl Linker {
+         stack_size: u64,
+         ld_library_path: &[&Path],
+     ) -> Result<(Self, LinkedMainModule), LinkError> {
++        Self::new_inner(
++            engine,
++            main_module,
++            store,
++            memory,
++            func_env,
++            stack_size,
++            ld_library_path,
++            false,
++        )
++        .now_or_never()
++        .expect("synchronous linker construction must not yield")
++    }
++
++    #[cfg(all(feature = "js", target_arch = "wasm32"))]
++    pub async fn new_async(
++        engine: Engine,
++        main_module: &Module,
++        store: &mut StoreMut<'_>,
++        memory: Option<Memory>,
++        func_env: &mut WasiFunctionEnv,
++        stack_size: u64,
++        ld_library_path: &[&Path],
++    ) -> Result<(Self, LinkedMainModule), LinkError> {
++        Self::new_inner(
++            engine,
++            main_module,
++            store,
++            memory,
++            func_env,
++            stack_size,
++            ld_library_path,
++            true,
++        )
++        .await
++    }
++
++    pub(crate) async fn new_inner(
++        engine: Engine,
++        main_module: &Module,
++        store: &mut StoreMut<'_>,
++        memory: Option<Memory>,
++        func_env: &mut WasiFunctionEnv,
++        stack_size: u64,
++        ld_library_path: &[&Path],
++        async_instantiation: bool,
++    ) -> Result<(Self, LinkedMainModule), LinkError> {
+         let dylink_section = parse_dylink0_section(main_module)?;
+
+         trace!(?dylink_section, "Loading main module");
+@@ -1136,7 +1184,18 @@ impl Linker {
+         // use that ordering. My *guess* is that, since main exports all the libc
+         // functions and those are called frequently by basically any code, then giving
+         // stubs to main will be faster, but we need numbers before we decide this.
+-        let main_instance = Instance::new(store, main_module, &imports)?;
++        let main_instance = if async_instantiation {
++            #[cfg(all(feature = "js", target_arch = "wasm32"))]
++            {
++                Instance::new_async(store, main_module, &imports).await?
++            }
++            #[cfg(not(all(feature = "js", target_arch = "wasm32")))]
++            {
++                Instance::new(store, main_module, &imports)?
++            }
++        } else {
++            Instance::new(store, main_module, &imports)?
++        };
+         instance_group.main_instance = Some(main_instance.clone());
+
+         let runtime_path = linker_state.main_module_dylink_info.runtime_path.clone();

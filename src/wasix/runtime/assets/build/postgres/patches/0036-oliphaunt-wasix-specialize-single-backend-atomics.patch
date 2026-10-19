@@ -1,0 +1,290 @@
+From 0000000000000000000000000000000000000036 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Wed, 12 Aug 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: specialize single-backend atomics
+
+The embedded WASIX runtime executes one PostgreSQL backend thread per
+WebAssembly instance. Host workers own distinct instances and startup policy
+disables PostgreSQL workers, so atomic read-modify-write and fence instructions
+inside the backend add cost without protecting a concurrent observer.
+
+Select a dedicated implementation only while compiling PostgreSQL backend
+objects. Preserve the configured flag, uint32, and aligned uint64 layouts,
+compiler ordering, and compare-exchange contracts. Frontends, PGXS extensions,
+and every concurrent PostgreSQL build retain the normal atomic implementation.
+---
+ src/backend/common.mk                         |   5 +
+ src/backend/main/main.c                       |  14 ++
+ src/include/port/atomics.h                    |   6 +-
+ src/include/port/atomics/arch-wasix-single.h  | 185 +++++++++++++++++++
+ 4 files changed, 209 insertions(+), 3 deletions(-)
+ create mode 100644 src/include/port/atomics/arch-wasix-single.h
+
+diff --git a/src/backend/common.mk b/src/backend/common.mk
+index 3bdd017213..25a9ea2f04 100644
+--- a/src/backend/common.mk
++++ b/src/backend/common.mk
+@@ -7,7 +7,12 @@
+ # When including this file, set OBJS to the object files created in
+ # this directory and SUBDIRS to subdirectories containing more things
+ # to build.
+
++ifeq ($(PORTNAME), wasix-dl)
++# PGXS side modules deliberately retain PostgreSQL's normal atomic ABI.
++override CPPFLAGS += -DOLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS
++endif
++
+ subsysfilename = objfiles.txt
+
+ SUBDIROBJS = $(SUBDIRS:%=%/$(subsysfilename))
+diff --git a/src/backend/main/main.c b/src/backend/main/main.c
+index 625f573c88..f85272b9ef 100644
+--- a/src/backend/main/main.c
++++ b/src/backend/main/main.c
+@@ -210,7 +210,11 @@ main(int argc, char *argv[])
+ 			BootstrapModeMain(argc, argv, false);
+ 			break;
+ 		case DISPATCH_FORKCHILD:
+-#ifdef EXEC_BACKEND
++#if defined(OLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS)
++			write_stderr("%s: fork-child mode is unavailable in the single-backend WASIX runtime\n",
++						 progname);
++			exit(1);
++#elif defined(EXEC_BACKEND)
+ 			SubPostmasterMain(argc, argv);
+ #else
+ 			Assert(false);		/* should never happen */
+@@ -224,6 +229,14 @@ main(int argc, char *argv[])
+ 								   strdup(get_user_name_or_exit(progname)));
+ 			break;
+ 		case DISPATCH_POSTMASTER:
++#if defined(OLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS)
++			if (argc <= 2 || strcmp(argv[1], "-C") != 0)
++			{
++				write_stderr("%s: postmaster mode is unavailable in the single-backend WASIX runtime\n",
++							 progname);
++				exit(1);
++			}
++#endif
+ 			PostmasterMain(argc, argv);
+ 			break;
+ 	}
+diff --git a/src/include/port/atomics.h b/src/include/port/atomics.h
+index e849de7a4d..43d2f9e6a7 100644
+--- a/src/include/port/atomics.h
++++ b/src/include/port/atomics.h
+@@ -63,7 +63,9 @@
+  * compiler barrier.
+  *
+  */
+-#if defined(__arm__) || defined(__arm) || defined(__aarch64__)
++#if defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER) && defined(OLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS)
++#include "port/atomics/arch-wasix-single.h"
++#elif defined(__arm__) || defined(__arm) || defined(__aarch64__)
+ #include "port/atomics/arch-arm.h"
+ #elif defined(__i386__) || defined(__i386) || defined(__x86_64__)
+ #include "port/atomics/arch-x86.h"
+@@ -84,7 +86,9 @@
+ /*
+  * gcc or compatible, including clang and icc.
+  */
+-#if defined(__GNUC__) || defined(__INTEL_COMPILER)
++#if defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER) && defined(OLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS)
++/* The backend-only WASIX header supplies the complete implementation. */
++#elif defined(__GNUC__) || defined(__INTEL_COMPILER)
+ #include "port/atomics/generic-gcc.h"
+ #elif defined(_MSC_VER)
+ #include "port/atomics/generic-msvc.h"
+diff --git a/src/include/port/atomics/arch-wasix-single.h b/src/include/port/atomics/arch-wasix-single.h
+new file mode 100644
+index 0000000000..5548925c11
+--- /dev/null
++++ b/src/include/port/atomics/arch-wasix-single.h
+@@ -0,0 +1,185 @@
++/*-------------------------------------------------------------------------
++ *
++ * arch-wasix-single.h
++ *    PostgreSQL atomics for the single-backend WASIX runtime.
++ *
++ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
++ *
++ * src/include/port/atomics/arch-wasix-single.h
++ *
++ *-------------------------------------------------------------------------
++ */
++
++/* intentionally no include guards, should only be included by atomics.h */
++#ifndef INSIDE_ATOMICS_H
++#error "should be included via atomics.h"
++#endif
++
++/*
++ * One host worker owns one WebAssembly instance and PostgreSQL backend.
++ * Compiler barriers preserve the public ordering contracts; no hardware fence
++ * or read-modify-write instruction is needed without a concurrent observer.
++ * Keep these layouts byte-for-byte compatible with generic-gcc.h.
++ */
++#define pg_compiler_barrier_impl() __asm__ __volatile__("" ::: "memory")
++#define pg_memory_barrier_impl() pg_compiler_barrier_impl()
++#define pg_read_barrier_impl() pg_compiler_barrier_impl()
++#define pg_write_barrier_impl() pg_compiler_barrier_impl()
++
++#ifndef HAVE_GCC__SYNC_INT32_TAS
++#error "single-backend WASIX requires the configured int-sized flag ABI"
++#endif
++
++#define PG_HAVE_ATOMIC_FLAG_SUPPORT
++typedef struct pg_atomic_flag
++{
++	volatile int value;
++} pg_atomic_flag;
++
++#define PG_HAVE_ATOMIC_U32_SUPPORT
++typedef struct pg_atomic_uint32
++{
++	volatile uint32 value;
++} pg_atomic_uint32;
++
++#define PG_HAVE_ATOMIC_U64_SUPPORT
++#define PG_HAVE_8BYTE_SINGLE_COPY_ATOMICITY
++typedef struct pg_atomic_uint64
++{
++	volatile uint64 value pg_attribute_aligned(8);
++} pg_atomic_uint64;
++
++#define PG_HAVE_ATOMIC_INIT_FLAG
++static inline void
++pg_atomic_init_flag_impl(volatile pg_atomic_flag *ptr)
++{
++	ptr->value = 0;
++}
++
++#define PG_HAVE_ATOMIC_TEST_SET_FLAG
++static inline bool
++pg_atomic_test_set_flag_impl(volatile pg_atomic_flag *ptr)
++{
++	int			old = ptr->value;
++
++	ptr->value = 1;
++	pg_compiler_barrier_impl();
++	return old == 0;
++}
++
++#define PG_HAVE_ATOMIC_UNLOCKED_TEST_FLAG
++static inline bool
++pg_atomic_unlocked_test_flag_impl(volatile pg_atomic_flag *ptr)
++{
++	return ptr->value == 0;
++}
++
++#define PG_HAVE_ATOMIC_CLEAR_FLAG
++static inline void
++pg_atomic_clear_flag_impl(volatile pg_atomic_flag *ptr)
++{
++	pg_compiler_barrier_impl();
++	ptr->value = 0;
++}
++
++#define PG_HAVE_ATOMIC_COMPARE_EXCHANGE_U32
++#define PG_HAVE_ATOMIC_EXCHANGE_U32
++#define PG_HAVE_ATOMIC_FETCH_ADD_U32
++#define PG_HAVE_ATOMIC_FETCH_SUB_U32
++#define PG_HAVE_ATOMIC_FETCH_AND_U32
++#define PG_HAVE_ATOMIC_FETCH_OR_U32
++#define PG_HAVE_ATOMIC_COMPARE_EXCHANGE_U64
++#define PG_HAVE_ATOMIC_EXCHANGE_U64
++#define PG_HAVE_ATOMIC_FETCH_ADD_U64
++#define PG_HAVE_ATOMIC_FETCH_SUB_U64
++#define PG_HAVE_ATOMIC_FETCH_AND_U64
++#define PG_HAVE_ATOMIC_FETCH_OR_U64
++
++/*
++ * Generate the same scalar operations for PostgreSQL's two unsigned widths.
++ * Compare-exchange always returns the observed value through expected, as the
++ * public API requires on both success and failure.
++ */
++#define OLIPHAUNT_WASIX_SINGLE_BACKEND_UINT_IMPL(suffix, atomic_type, uint_type, int_type) \
++static inline bool \
++pg_atomic_compare_exchange_##suffix##_impl(volatile atomic_type *ptr, \
++											uint_type *expected, uint_type newval) \
++{ \
++	uint_type	current; \
++	bool		exchanged; \
++	\
++	AssertPointerAlignment(expected, sizeof(uint_type)); \
++	pg_compiler_barrier_impl(); \
++	current = ptr->value; \
++	exchanged = current == *expected; \
++	if (exchanged) \
++		ptr->value = newval; \
++	*expected = current; \
++	pg_compiler_barrier_impl(); \
++	return exchanged; \
++} \
++\
++static inline uint_type \
++pg_atomic_exchange_##suffix##_impl(volatile atomic_type *ptr, uint_type newval) \
++{ \
++	uint_type	old; \
++	\
++	pg_compiler_barrier_impl(); \
++	old = ptr->value; \
++	ptr->value = newval; \
++	pg_compiler_barrier_impl(); \
++	return old; \
++} \
++\
++static inline uint_type \
++pg_atomic_fetch_add_##suffix##_impl(volatile atomic_type *ptr, int_type add_) \
++{ \
++	uint_type	old; \
++	\
++	pg_compiler_barrier_impl(); \
++	old = ptr->value; \
++	ptr->value = old + add_; \
++	pg_compiler_barrier_impl(); \
++	return old; \
++} \
++\
++static inline uint_type \
++pg_atomic_fetch_sub_##suffix##_impl(volatile atomic_type *ptr, int_type sub_) \
++{ \
++	uint_type	old; \
++	\
++	pg_compiler_barrier_impl(); \
++	old = ptr->value; \
++	ptr->value = old - sub_; \
++	pg_compiler_barrier_impl(); \
++	return old; \
++} \
++\
++static inline uint_type \
++pg_atomic_fetch_and_##suffix##_impl(volatile atomic_type *ptr, uint_type and_) \
++{ \
++	uint_type	old; \
++	\
++	pg_compiler_barrier_impl(); \
++	old = ptr->value; \
++	ptr->value = old & and_; \
++	pg_compiler_barrier_impl(); \
++	return old; \
++} \
++\
++static inline uint_type \
++pg_atomic_fetch_or_##suffix##_impl(volatile atomic_type *ptr, uint_type or_) \
++{ \
++	uint_type	old; \
++	\
++	pg_compiler_barrier_impl(); \
++	old = ptr->value; \
++	ptr->value = old | or_; \
++	pg_compiler_barrier_impl(); \
++	return old; \
++}
++
++OLIPHAUNT_WASIX_SINGLE_BACKEND_UINT_IMPL(u32, pg_atomic_uint32, uint32, int32)
++OLIPHAUNT_WASIX_SINGLE_BACKEND_UINT_IMPL(u64, pg_atomic_uint64, uint64, int64)
++
++#undef OLIPHAUNT_WASIX_SINGLE_BACKEND_UINT_IMPL
+--
+2.49.0

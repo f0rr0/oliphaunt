@@ -1,46 +1,66 @@
 ---
-title: API Reference
-description: C ABI API map for native runtime initialization, protocol execution, response ownership, and lifecycle.
+title: C ABI reference
+description: Configuration structs, query functions, buffers, errors, and lifecycle in oliphaunt.h.
 ---
 
-# API Reference
+Compile against the `oliphaunt.h` shipped with your native library. Use the header's `OLIPHAUNT_ABI_VERSION` macro rather than copying a numeric ABI version into application code.
 
-Use the Doxygen reference for exact declarations. This page maps the C ABI by
-task.
+## Configuration and data types
 
-| Area | Public surface | Use it for |
-| --- | --- | --- |
-| Initialization | `oliphaunt_init`, `oliphaunt_init_ex`, `OliphauntConfig`, `OliphauntInitOptions` | Open a native direct backend with explicit root, durability, runtime resource, and extension settings |
-| Versioning | `oliphaunt_version` | Report the runtime and PostgreSQL build identity |
-| Capabilities | `oliphaunt_capabilities`, `OliphauntCapabilities` | Discover protocol, streaming, extension, backup, restore, lifecycle, and mode support |
-| Raw protocol | `oliphaunt_exec_protocol` | Send PostgreSQL frontend protocol bytes and receive backend messages |
-| Streaming | `oliphaunt_exec_protocol_stream`, response sink callbacks | Handle large protocol responses without forcing one contiguous response buffer |
-| Simple SQL | SQL helper entry points where exposed | Run smoke and embedding checks without requiring a higher-level SDK parser |
-| Response ownership | `OliphauntResponse`, `oliphaunt_free_response` | Free ABI-owned buffers exactly once |
-| Errors | `oliphaunt_last_error`, structured error fields where available | Read the last SDK or PostgreSQL error for a handle |
-| Data movement | backup and restore entry points where exposed | Move PostgreSQL roots through validated archives |
-| Lifecycle | `oliphaunt_detach`, `oliphaunt_logical_generation`, `oliphaunt_close_if_generation`, `oliphaunt_close` | Detach a logical lease, guard host cleanup against stale leases, or terminate the resident backend |
+| Type | Contract |
+| --- | --- |
+| `OliphauntHandle` | Opaque native handle; do not inspect or free it directly |
+| `OliphauntConfig` | ABI version, prepared `pgdata`, resource paths, identity, flags, startup arguments |
+| `OliphauntResponse` | Owned `data` pointer and `len`; release with `oliphaunt_free_response` |
+| `OliphauntErrorCapture` | Caller-owned bounded message buffer and length |
+| `OliphauntRestoreStreamOptions` | Destination and read callback for streaming an archive |
+| `OliphauntRestoreOptions` | ABI version, managed-root destination, archive bytes and length |
+| `OliphauntStaticExtension` | Statically linked module descriptor |
 
-Most app developers use a language SDK instead of calling the C ABI directly.
-The C ABI is primarily for binding authors and applications that need the native
-runtime boundary itself.
+`pgdata` names the child of an existing managed root. `runtime_dir` selects runtime resources. `module_dir` names an existing PostgreSQL module directory or uses discovery when null. `username` and `database` select existing identities.
 
-`oliphaunt_init` retains the ABI v6 behavior used by existing bindings. Its
-embedded module directory comes from a valid `OLIPHAUNT_EMBEDDED_MODULE_DIR`
-host override, then the packaged release-layout fallbacks. `oliphaunt_init_ex`
-accepts a separately versioned `OliphauntInitOptions`. A non-empty
-`options.module_dir` is copied into the handle and is authoritative over the
-process environment and release-layout discovery. A non-null options record
-requires ABI version 1, an existing non-empty `module_dir`, and zero reserved
-flags. Pass `NULL` options to preserve the legacy resolution contract.
+`startup_args` contains `-c`, `name=value` pairs; storage-routing settings are rejected. Leave `flags` zero unless your binding already owns the required external root lock.
 
-Direct-mode `oliphaunt_detach` leaves the same-root backend resident so a later
-init can acquire a new logical lease. Binding authors capture the nonzero
-`oliphaunt_logical_generation` immediately after every successful init and use
-`oliphaunt_close_if_generation` during host-environment teardown. It
-closes only the matching current lease; while a newer lease is active, a stale
-generation returns a positive no-op result and must not terminate that owner.
-Once terminal close has completed, cleanup returns zero because the terminal
-condition is already satisfied. Invalid arguments or lifecycle-state errors
-return a negative result. `oliphaunt_close` is the unconditional terminal
-operation for hosts that serialize the entire process lifetime themselves.
+## Open and execute
+
+| Function | Operation |
+| --- | --- |
+| `oliphaunt_init` | Open a direct logical lease |
+| `oliphaunt_exec_simple_query` | Send simple SQL and return protocol bytes |
+| `oliphaunt_exec_protocol` | Exchange buffered protocol bytes |
+| `oliphaunt_exec_protocol_raw_stream` | Deliver response chunks through a callback |
+| `oliphaunt_backup` | Create an owned native physical archive |
+| `oliphaunt_restore` | Restore into new or empty managed storage |
+| `oliphaunt_backup_stream_with_error` | Write an archive through a callback |
+| `oliphaunt_restore_stream_with_error` | Read an archive through a callback |
+| `oliphaunt_free_response` | Release response ownership |
+
+Async FFI hosts should use the corresponding `_with_error` functions for open, queries, streaming, backup, restore, and detach. These preserve return codes and response ownership while filling an error capture before returning.
+
+## Streaming
+
+`OliphauntStreamCallback` receives `(context, data, len)` and returns `int32_t`. Bytes are borrowed for the callback duration. Zero continues delivery; nonzero stops it and initiates protocol recovery. Ordinary same-handle operations are forbidden while streaming; cancellation is permitted.
+
+For incremental protocol input, capture `oliphaunt_protocol_stream_token(handle)` during an active stream and pass complete frontend frames to `oliphaunt_feed_protocol_stream`. A busy result accepts no bytes; retry after the backend consumes input. Stop feeding when the stream ends. The token is scoped to that stream, including across detach and reopen. See the header for frame and COPY sequencing rules.
+
+Archive read callbacks set `read_len` to zero at end of input. Archive read and write callbacks run synchronously and must not re-enter the database.
+
+## Lifecycle
+
+| Function | Operation |
+| --- | --- |
+| `oliphaunt_cancel` | Cross-thread interrupt request |
+| `oliphaunt_detach` | End a logical lease while retaining the resident backend |
+| `oliphaunt_logical_generation` | Read the current nonzero lease generation, or zero when unavailable |
+| `oliphaunt_close_if_generation` | Terminal close guarded by generation ownership |
+| `oliphaunt_close` | Unconditional process-terminal close of the resident handle |
+
+Guarded close returns zero for completed/already completed close, one for a stale active generation that does nothing, and minus one for invalid zero generation or an internal failure. Serialize other operations according to the header contract.
+
+## Errors and version
+
+`oliphaunt_copy_last_error(handle, out, capacity)` returns the full UTF-8 length excluding the NUL terminator. With nonzero capacity, `out` must be nonnull and the copied result is NUL-terminated. Copy immediately on the failing operation's thread, or use an operation-owned error capture.
+
+`oliphaunt_version()` returns the runtime version. `oliphaunt_register_static_extensions` registers descriptors before backend startup.
+
+Read [Build a binding](/docs/sdk/c-abi/guide) for ownership and recovery requirements before wrapping these functions.

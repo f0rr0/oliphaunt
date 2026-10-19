@@ -1,0 +1,264 @@
+{
+  "schemaVersion": 2,
+  "kind": "postgres-structured-sql-preflight",
+  "cases": [
+    {
+      "name": "empty_query",
+      "sql": "  ; -- nothing here\n /* still empty */ ; ",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "ordinary_select",
+      "sql": "SELECT 1",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_to_stdout",
+      "sql": "COPY public.items TO STDOUT",
+      "containsTopLevelCopy": true,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_from_stdin_case_insensitive",
+      "sql": "\n\tcopy public.items FROM STDIN",
+      "containsTopLevelCopy": true,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_after_comments",
+      "sql": "-- explain the operation\n/* outer /* nested */ comment */ COPY items TO STDOUT",
+      "containsTopLevelCopy": true,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_after_carriage_return_line_comment",
+      "sql": "-- old-style line ending\rCOPY items TO STDOUT",
+      "containsTopLevelCopy": true,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_second_statement",
+      "sql": "SELECT 1; /* boundary ; */ COPY items FROM STDIN; SELECT 2",
+      "containsTopLevelCopy": true,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_after_empty_statements",
+      "sql": "; ;\n-- boundary\n;COPY (SELECT ';') TO STDOUT",
+      "containsTopLevelCopy": true,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_prefix_is_not_keyword",
+      "sql": "COPYRIGHT notice_text",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_column_is_not_statement",
+      "sql": "SELECT copy, copy_text FROM records",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_in_single_quoted_text",
+      "sql": "SELECT 'before; COPY items TO STDOUT; after'",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_in_escape_string",
+      "sql": "SELECT E'escaped \\' quote; COPY items TO STDOUT'",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "ordinary_string_backslash_is_not_an_escape_by_default",
+      "sql": "SELECT '\\'; COPY items TO STDOUT",
+      "containsTopLevelCopy": true,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "ordinary_string_backslash_may_escape_when_guc_is_off",
+      "sql": "SELECT 'a\\'b'; COPY items TO STDOUT",
+      "containsTopLevelCopy": true,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_in_quoted_identifier",
+      "sql": "SELECT \"semi;COPY\" FROM \"COPY\"",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_in_dollar_quote",
+      "sql": "DO $body$ BEGIN PERFORM '; COPY items TO STDOUT'; END $body$",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_in_empty_tag_dollar_quote",
+      "sql": "SELECT $$ ; COPY items FROM STDIN; $$",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_in_line_comment",
+      "sql": "SELECT 1 -- ; COPY items TO STDOUT\n; SELECT 2",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_in_nested_block_comment",
+      "sql": "SELECT 1 /* ; COPY outer /* COPY nested */ TO STDOUT */; SELECT 2",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_inside_parenthesized_expression",
+      "sql": "SELECT ('COPY items TO STDOUT;')",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "quoted_copy_at_statement_start",
+      "sql": "\"COPY\" value",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_after_dollar_quoted_semicolon",
+      "sql": "SELECT $tag$not a boundary; COPY x TO STDOUT$tag$; COPY real_table TO STDOUT",
+      "containsTopLevelCopy": true,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "malformed_copy_still_rejected_before_wire",
+      "sql": "COPY 'unterminated",
+      "containsTopLevelCopy": true,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "unterminated_literal_is_server_error",
+      "sql": "SELECT 'unterminated; COPY items TO STDOUT",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "unterminated_comment_is_server_error",
+      "sql": "SELECT 1; /* COPY items TO STDOUT",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "rollback_and_chain",
+      "sql": "ROLLBACK AND CHAIN",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": true
+    },
+    {
+      "name": "abort_work_and_chain_case_insensitive",
+      "sql": "aBoRt WoRk aNd ChAiN",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": true
+    },
+    {
+      "name": "rollback_transaction_and_chain_after_comments",
+      "sql": "-- settle and replace\nROLLBACK /* qualifier */ TRANSACTION AND -- continue\n CHAIN",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": true
+    },
+    {
+      "name": "transaction_chain_in_second_statement",
+      "sql": "SELECT 1; /* statement boundary */ ABORT AND CHAIN",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": true
+    },
+    {
+      "name": "rollback_and_no_chain",
+      "sql": "ROLLBACK AND NO CHAIN",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "rollback_to_savepoint",
+      "sql": "ROLLBACK TO SAVEPOINT retained_work",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "rollback_to_quoted_savepoint_named_like_clause",
+      "sql": "ROLLBACK TO SAVEPOINT \"AND CHAIN\"",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "transaction_chain_words_in_line_comment",
+      "sql": "SELECT 1 -- ROLLBACK AND CHAIN\n; SELECT 2",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "transaction_chain_words_in_nested_block_comment",
+      "sql": "SELECT 1 /* ABORT /* ROLLBACK */ AND CHAIN */",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "transaction_chain_in_single_quoted_text",
+      "sql": "SELECT 'ROLLBACK AND CHAIN; ABORT WORK AND CHAIN'",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "transaction_chain_in_double_quoted_text",
+      "sql": "SELECT \"ROLLBACK AND CHAIN\" FROM \"ABORT AND CHAIN\"",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "transaction_chain_in_dollar_quoted_text",
+      "sql": "DO $body$ BEGIN RAISE NOTICE 'ROLLBACK AND CHAIN'; END $body$",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "parenthesized_transaction_words_are_not_statements",
+      "sql": "SELECT (ROLLBACK AND CHAIN)",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "copy_prefix_of_non_ascii_identifier",
+      "sql": "COPYé",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "rollback_prefix_of_non_ascii_identifier",
+      "sql": "ROLLBACKé AND CHAIN",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "keywords_inside_non_ascii_dollar_quote",
+      "sql": "SELECT $é$ COPY items TO STDOUT; ROLLBACK AND CHAIN $é$",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "non_ascii_identifier_prefix",
+      "sql": "éCOPY",
+      "containsTopLevelCopy": false,
+      "containsTransactionChain": false
+    },
+    {
+      "name": "digit_prefixed_pseudo_dollar_quote_does_not_hide_copy",
+      "sql": "SELECT $1$; COPY items TO STDOUT; $1$",
+      "containsTopLevelCopy": true,
+      "containsTransactionChain": false
+    }
+  ]
+}

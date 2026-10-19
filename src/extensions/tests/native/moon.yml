@@ -1,0 +1,54 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+id: "native-extension-lifecycle"
+language: "rust"
+layer: "tool"
+tags: ["javascript-quality"]
+dependsOn:
+  - id: "oliphaunt-rust"
+    scope: "development"
+  - id: "shared-test-fixtures"
+    scope: "development"
+tasks:
+  test:
+    tags: ["quality", "unit", "requires-rust"]
+    script: |
+      set -e
+      bash tools/dev/bun.sh test ./src/extensions/tests/native/tools
+      cargo test --locked -p oliphaunt-native-extension-proof
+    inputs:
+      - "/tools/dev/bun.sh"
+      - "Cargo.toml"
+      - "src/**/*.rs"
+      - "@group(cargo-workspace)"
+      - "/src/query/rust/src/lib.rs"
+      - project: "oliphaunt-rust"
+        group: "code"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "tools/**/*.mts"
+      - "/.github/scripts/{release-candidate-lib,write-release-candidate,verify-release-candidate}.mts"
+      - "/tools/release/**/*.mts"
+      - "/src/extensions/artifacts/native/tools/**/*.mts"
+      - "/src/extensions/artifacts/packages/tools/**/*.mts"
+      - "/src/native/runtime/tools/native-runtime-payload.mts"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  lifecycle:
+    tags: ["release", "integration", "ci-native-extension-lifecycle"]
+    command: "src/extensions/tests/native/tools/run-native-extension-lifecycle-proof.sh"
+    deps:
+      - "extension-artifacts-native:build-target"
+      - "liboliphaunt-native:build-runtime-desktop-target"
+      - "postgres-tools-native:package-assets"
+      - "oliphaunt-broker:build-release-assets"
+      - "oliphaunt-rust:package"
+    inputs:
+      - "/src/wasix/postmaster/lib/process-supervision.sh"
+      - "/src/extensions/tests/native/**/*"
+      - "/src/extensions/tests/native/tools/run-native-extension-lifecycle-proof.sh"
+      - "/src/native/postgres-tools/tools/smoke-packed-tools-npm.sh"
+      - "/src/native/postgres-tools/tools/smoke-packed-tools-npm.mts"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

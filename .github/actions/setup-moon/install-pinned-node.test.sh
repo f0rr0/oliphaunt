@@ -3,13 +3,12 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-moon/install-pinned-node.sh"
-action="$root/.github/actions/setup-node-runtime/action.yml"
-extractor="$root/.github/actions/setup-moon/toolchain-archive.py"
 work="$(mktemp -d)"
+mkdir -p "$work/no-delay"
+printf '#!/bin/sh\nexit 0\n' > "$work/no-delay/sleep"
+chmod +x "$work/no-delay/sleep"
+export PATH="$work/no-delay:$PATH"
 trap 'rm -rf "$work"' EXIT
-
-grep -Fq 'export_dir="$(cygpath -w "$export_dir")"' "$action"
-grep -Fq 'echo "$export_dir" >> "$GITHUB_PATH"' "$action"
 
 mkdir -p "$work/payload/node-v22.22.3-linux-x64/bin" "$work/bin"
 cat >"$work/payload/node-v22.22.3-linux-x64/bin/node" <<'EOF'
@@ -30,9 +29,6 @@ binary_bytes="$(wc -c <"$binary" | tr -d '[:space:]')"
 binary_sha256="$(sha256sum "$binary" | awk '{print $1}')"
 
 cat >"$work/node-runtime.toml" <<EOF
-[toolchain]
-version = "22.22.3"
-
 [assets.x86_64-unknown-linux-gnu]
 url = "https://nodejs.org/download/release/v22.22.3/node-v22.22.3-linux-x64.tar.xz"
 sha256 = "$archive_sha256"
@@ -50,7 +46,7 @@ set -euo pipefail
 output=""
 last=""
 joined=" $* "
-for required in "--fail" "--location" "--proto =https" "--proto-redir =https" "--tlsv1.2" "--retry-all-errors" "--retry-connrefused" "--remove-on-error" "--max-filesize"; do
+for required in "--fail" "--location" "--proto =https" "--proto-redir =https" "--tlsv1.2" "--retry 0" "--remove-on-error" "--max-filesize"; do
   [[ "$joined" == *" $required "* ]] || {
     echo "missing hardened curl argument: $required" >&2
     exit 91
@@ -75,7 +71,6 @@ common=(
   OLIPHAUNT_NODE_RUNTIME_ROOT="$root"
   OLIPHAUNT_NODE_RUNTIME_MANIFEST="$work/node-runtime.toml"
   OLIPHAUNT_NODE_RUNTIME_PROTO_FILE="$work/.prototools"
-  OLIPHAUNT_NODE_RUNTIME_ARCHIVE_EXTRACTOR="$extractor"
   OLIPHAUNT_NODE_RUNTIME_CACHE_ROOT="$work/cache"
   OLIPHAUNT_NODE_RUNTIME_TARGET=x86_64-unknown-linux-gnu
   OLIPHAUNT_NODE_RUNTIME_TESTING=1

@@ -1,0 +1,6 @@
+# Minimal shared-library rule for modules built by the WASIX core lane.
+
+%.so: %.o
+	$(CC) $(CFLAGS) $< $(LDFLAGS) $(LDFLAGS_SL) -shared -o $@
+
+LINK.shared = $(COMPILER) -shared

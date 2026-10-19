@@ -1,0 +1,33 @@
+diff --git a/src/backend/storage/ipc/dsm_impl.c b/src/backend/storage/ipc/dsm_impl.c
+index 2f6557adf8..81bd637f3d 100644
+--- a/src/backend/storage/ipc/dsm_impl.c
++++ b/src/backend/storage/ipc/dsm_impl.c
+@@ -53,8 +53,10 @@
+ #include <unistd.h>
+ #ifndef WIN32
+ #include <sys/mman.h>
++#ifndef __wasi__
+ #include <sys/ipc.h>
+ #include <sys/shm.h>
++#endif
+ #include <sys/stat.h>
+ #endif
+
+diff --git a/src/include/storage/dsm_impl.h b/src/include/storage/dsm_impl.h
+index ce02596feb..df64185d60 100644
+--- a/src/include/storage/dsm_impl.h
++++ b/src/include/storage/dsm_impl.h
+@@ -31,11 +31,13 @@
+ #define USE_DSM_POSIX
+ #define DEFAULT_DYNAMIC_SHARED_MEMORY_TYPE		DSM_IMPL_POSIX
+ #endif
++#ifndef __wasi__
+ #define USE_DSM_SYSV
+ #ifndef DEFAULT_DYNAMIC_SHARED_MEMORY_TYPE
+ #define DEFAULT_DYNAMIC_SHARED_MEMORY_TYPE		DSM_IMPL_SYSV
+ #endif
+ #define USE_DSM_MMAP
++#endif
+ #endif
+
+ /* GUC. */

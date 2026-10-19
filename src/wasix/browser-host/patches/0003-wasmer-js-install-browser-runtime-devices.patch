@@ -1,0 +1,33 @@
+diff --git a/src/options.rs b/src/options.rs
+index f44a05f..3233b8e 100644
+--- a/src/options.rs
++++ b/src/options.rs
+@@ -1,8 +1,12 @@
+-use std::{collections::BTreeMap, sync::Arc};
++use std::{
++    collections::BTreeMap,
++    path::{Path, PathBuf},
++    sync::Arc,
++};
+
+ use anyhow::Context;
+ use js_sys::Array;
+-use virtual_fs::TmpFileSystem;
++use virtual_fs::{random_file::RandomFile, TmpFileSystem};
+ use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue, UnwrapThrowExt};
+ use wasmer_wasix::WasiEnvBuilder;
+
+@@ -221,6 +225,13 @@ impl RunOptions {
+
+     pub(crate) fn filesystem(&self) -> Result<TmpFileSystem, Error> {
+         let root = TmpFileSystem::new();
++        for path in ["/dev", "/dev/shm"] {
++            virtual_fs::FileSystem::create_dir(&root, Path::new(path))
++                .with_context(|| format!("Unable to create \"{path}\""))?;
++        }
++        root.new_open_options_ext()
++            .insert_device_file(PathBuf::from("/dev/urandom"), Box::<RandomFile>::default())
++            .context("Unable to create /dev/urandom")?;
+
+         for (dest, fs) in self.mounted_directories()? {
+             tracing::trace!(%dest, ?fs, "Mounting directory");

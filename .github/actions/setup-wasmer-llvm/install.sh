@@ -19,6 +19,8 @@ if [ ! -f "$curl_platform_flags" ] || [ -L "$curl_platform_flags" ]; then
 fi
 # shellcheck source=tools/dev/curl-platform-flags.sh
 . "$curl_platform_flags"
+. "${curl_platform_flags%/*}/acquisition.sh"
+oliphaunt_acquisition_start "Wasmer LLVM" 1800
 
 if [[ ! "$LLVM_URL" =~ ^https://[^[:space:]]+$ ]]; then
   echo "Wasmer LLVM URL must be a single HTTPS URL" >&2
@@ -166,13 +168,13 @@ if [ -d "$install_dir" ]; then
   rm -rf "$install_dir"
 fi
 
-for command in curl tar mktemp python3; do
+for command in curl tar mktemp bun xz; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "Wasmer LLVM installation requires $command" >&2
     exit 127
   fi
 done
-if [ ! -f "$ACTION_PATH/validate-archive.py" ]; then
+if [ ! -f "$ACTION_PATH/validate-archive.mts" ]; then
   echo "Wasmer LLVM archive validator is missing from $ACTION_PATH" >&2
   exit 127
 fi
@@ -201,12 +203,7 @@ curl_args=(
   --location
   --fail
   --show-error
-  --retry 4
-  --retry-all-errors
-  --retry-delay 10
-  --retry-max-time 3600
   --connect-timeout 30
-  --max-time 1800
   --max-filesize "$LLVM_BYTES"
   --proto '=https'
   --proto-redir '=https'
@@ -217,7 +214,7 @@ if [ -n "$curl_platform_tls_flag" ]; then
   curl_args+=("$curl_platform_tls_flag")
 fi
 curl_args+=(--output "$archive" "$LLVM_URL")
-curl "${curl_args[@]}"
+oliphaunt_acquisition_curl 1800 5 10 curl "${curl_args[@]}"
 
 actual_bytes="$(wc -c < "$archive" | tr -d '[:space:]')"
 if [ "$actual_bytes" != "$LLVM_BYTES" ]; then
@@ -233,7 +230,7 @@ if [ "$actual_sha256" != "$LLVM_SHA256" ]; then
   exit 1
 fi
 
-python3 "$ACTION_PATH/validate-archive.py" "$archive" "$LLVM_BYTES"
+xz -dc "$archive" | bun "$ACTION_PATH/validate-archive.mts" "$LLVM_BYTES"
 
 staging_dir="$(mktemp -d "$cache_root/.llvm-stage.XXXXXX")"
 if ! tar -xJf "$archive" -C "$staging_dir"; then

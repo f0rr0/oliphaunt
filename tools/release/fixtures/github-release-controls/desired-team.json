@@ -24,7 +24,7 @@
         "users": []
       }
     },
-    "enforce_admins": { "enabled": true },
+    "enforce_admins": { "enabled": false },
     "required_linear_history": { "enabled": true },
     "allow_force_pushes": { "enabled": false },
     "allow_deletions": { "enabled": false },
@@ -59,7 +59,7 @@
         }
       },
       "branchPolicies": [{ "name": "main", "type": "branch" }],
-      "secretNames": ["RELEASE_PR_TOKEN"]
+      "secretNames": ["RELEASE_TAG_APP_CLIENT_ID", "RELEASE_TAG_APP_PRIVATE_KEY"]
     },
     "release-dry-run": {
       "environment": {
@@ -89,10 +89,9 @@
         }
       },
       "branchPolicies": [
-        { "name": "main", "type": "branch" },
-        { "name": "oliphaunt-release-transport/*", "type": "tag" }
+        { "name": "main", "type": "branch" }
       ],
-      "secretNames": ["CRATES_IO_BOOTSTRAP_TOKEN", "NPM_BOOTSTRAP_TOKEN"]
+      "secretNames": ["CRATES_IO_BOOTSTRAP_TOKEN", "NPM_BOOTSTRAP_TOKEN", "RELEASE_TAG_APP_CLIENT_ID", "RELEASE_TAG_APP_PRIVATE_KEY"]
     },
     "release-publish": {
       "environment": {
@@ -110,15 +109,16 @@
         }
       },
       "branchPolicies": [
-        { "name": "main", "type": "branch" },
-        { "name": "oliphaunt-release-transport/*", "type": "tag" }
+        { "name": "main", "type": "branch" }
       ],
       "secretNames": [
         "MAVEN_CENTRAL_PASSWORD",
         "MAVEN_CENTRAL_USERNAME",
         "MAVEN_GPG_KEY_ID",
         "MAVEN_GPG_PASSPHRASE",
-        "MAVEN_GPG_PRIVATE_KEY"
+        "MAVEN_GPG_PRIVATE_KEY",
+        "RELEASE_TAG_APP_CLIENT_ID",
+        "RELEASE_TAG_APP_PRIVATE_KEY"
       ]
     }
   }

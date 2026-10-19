@@ -1,0 +1,205 @@
+diff --git a/src/syscalls/mod.rs b/src/syscalls/mod.rs
+index 03e09d75..9decf21b 100644
+--- a/src/syscalls/mod.rs
++++ b/src/syscalls/mod.rs
+@@ -296,6 +296,56 @@ where
+     InlineWaker::block_on(work)
+ }
+ 
++// This poller processes signals while the main working function is idle.
++// The work is borrowed through its existing pin so a caller may poll it once
++// before entering the blocking path without moving or recreating the future.
++struct SignalPoller<'a, 'b, 'c, Fut, T>
++where
++    Fut: Future<Output = Result<T, Errno>>,
++{
++    ctx: &'a mut FunctionEnvMut<'b, WasiEnv>,
++    pinned_work: Pin<&'c mut Fut>,
++}
++impl<Fut, T> Future for SignalPoller<'_, '_, '_, Fut, T>
++where
++    Fut: Future<Output = Result<T, Errno>>,
++{
++    type Output = Result<Fut::Output, WasiError>;
++    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
++        if let Poll::Ready(res) = self.pinned_work.as_mut().poll(cx) {
++            return Poll::Ready(Ok(res));
++        }
++        if let Some(signals) = self.ctx.data().thread.pop_signals_or_subscribe(cx.waker()) {
++            if let Err(err) = WasiEnv::process_signals_internal(self.ctx, signals) {
++                return Poll::Ready(Err(err));
++            }
++            return Poll::Ready(Ok(Err(Errno::Intr)));
++        }
++        Poll::Pending
++    }
++}
++
++fn asyncify_continue<T, Fut>(
++    ctx: &mut FunctionEnvMut<'_, WasiEnv>,
++    timeout: Option<Duration>,
++    pinned_work: Pin<&mut Fut>,
++) -> WasiResult<T>
++where
++    T: 'static,
++    Fut: Future<Output = Result<T, Errno>>,
++{
++    let tasks = ctx.data().tasks().clone();
++    let poller = SignalPoller { ctx, pinned_work };
++    block_on_with_timeout(&tasks, timeout, poller)
++}
++
++fn poll_ready_once<Fut>(work: Pin<&mut Fut>, cx: &mut Context<'_>) -> Poll<Fut::Output>
++where
++    Fut: Future,
++{
++    work.poll(cx)
++}
++
+ /// Asyncify takes the current thread and blocks on the async runtime associated with it
+ /// thus allowed for asynchronous operations to execute. It has built in functionality
+ /// to (optionally) timeout the IO, force exit the process, callback signals and pump
+@@ -316,38 +366,102 @@ where
+         return Err(WasiError::Exit(exit_code));
+     }
+ 
+-    // This poller will process any signals when the main working function is idle
+-    struct SignalPoller<'a, 'b, Fut, T>
+-    where
+-        Fut: Future<Output = Result<T, Errno>>,
+-    {
+-        ctx: &'a mut FunctionEnvMut<'b, WasiEnv>,
+-        pinned_work: Pin<Box<Fut>>,
+-    }
+-    impl<Fut, T> Future for SignalPoller<'_, '_, Fut, T>
+-    where
+-        Fut: Future<Output = Result<T, Errno>>,
+-    {
+-        type Output = Result<Fut::Output, WasiError>;
+-        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+-            if let Poll::Ready(res) = Pin::new(&mut self.pinned_work).poll(cx) {
+-                return Poll::Ready(Ok(res));
+-            }
+-            if let Some(signals) = self.ctx.data().thread.pop_signals_or_subscribe(cx.waker()) {
+-                if let Err(err) = WasiEnv::process_signals_internal(self.ctx, signals) {
+-                    return Poll::Ready(Err(err));
+-                }
+-                return Poll::Ready(Ok(Err(Errno::Intr)));
++    // Block on the work
++    let mut pinned_work = Box::pin(work);
++    asyncify_continue(ctx, timeout, pinned_work.as_mut())
++}
++
++/// Asyncify work that commonly finishes on its first poll and never times out.
++///
++/// Ready work (including an error) wins over a queued signal, matching the
++/// existing signal poller's ordering. After Pending, queued signals are handled
++/// before the same pinned future can be polled a second time. The continuation
++/// deliberately skips the exit check already performed here.
++pub(crate) fn __asyncify_ready_no_timeout<T, Fut>(
++    ctx: &mut FunctionEnvMut<'_, WasiEnv>,
++    work: Fut,
++) -> WasiResult<T>
++where
++    T: 'static,
++    Fut: Future<Output = Result<T, Errno>>,
++{
++    let env = ctx.data();
++
++    // This must remain the only exit check on both the ready and pending paths.
++    if let Some(exit_code) = env.should_exit() {
++        return Err(WasiError::Exit(exit_code));
++    }
++
++    futures::pin_mut!(work);
++    let waker = WasiDummyWaker.into_waker();
++    let mut cx = Context::from_waker(&waker);
++    if let Poll::Ready(res) = poll_ready_once(work.as_mut(), &mut cx) {
++        return Ok(res);
++    }
++
++    // Preserve SignalPoller's work-then-signals ordering across the split poll.
++    // This check therefore happens after the first work poll but before the
++    // continuation is allowed to perform its second work poll.
++    let signals = ctx.data().thread.pop_signals();
++    if !signals.is_empty() {
++        if let Err(err) = WasiEnv::process_signals_internal(ctx, signals) {
++            return Err(err);
++        }
++        return Ok(Err(Errno::Intr));
++    }
++
++    asyncify_continue(ctx, None, work)
++}
++
++#[cfg(test)]
++mod ready_asyncify_tests {
++    use super::*;
++    use std::io::SeekFrom;
++    use virtual_fs::AsyncSeek;
++
++    #[derive(Default)]
++    struct StatefulSeek {
++        starts: usize,
++        completes: usize,
++        first_waker: Option<Waker>,
++        replaced_waker: bool,
++    }
++
++    impl AsyncSeek for StatefulSeek {
++        fn start_seek(mut self: Pin<&mut Self>, _: SeekFrom) -> io::Result<()> {
++            self.starts += 1;
++            Ok(())
++        }
++
++        fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
++            self.completes += 1;
++            if self.completes == 1 {
++                self.first_waker = Some(cx.waker().clone());
++                cx.waker().wake_by_ref();
++                return Poll::Pending;
+             }
+-            Poll::Pending
++            self.replaced_waker = !self.first_waker.as_ref().unwrap().will_wake(cx.waker());
++            Poll::Ready(Ok(41))
+         }
+     }
+ 
+-    // Block on the work
+-    let mut pinned_work = Box::pin(work);
+-    let tasks = env.tasks().clone();
+-    let poller = SignalPoller { ctx, pinned_work };
+-    block_on_with_timeout(&tasks, timeout, poller)
++    #[test]
++    fn pending_tokio_seek_starts_once_and_reuses_its_pin() {
++        let mut file = StatefulSeek::default();
++        {
++            let seek = file.seek(SeekFrom::End(-1));
++            futures::pin_mut!(seek);
++
++            let waker = WasiDummyWaker.into_waker();
++            let mut cx = Context::from_waker(&waker);
++            assert_eq!(poll_ready_once(seek.as_mut(), &mut cx), Poll::Pending);
++            assert_eq!(InlineWaker::block_on(seek.as_mut()), Ok(41));
++        }
++
++        assert_eq!(file.starts, 1);
++        assert_eq!(file.completes, 2);
++        assert!(file.replaced_waker);
++    }
+ }
+ 
+ /// Future that will be polled by asyncify methods
+diff --git a/src/syscalls/wasi/fd_seek.rs b/src/syscalls/wasi/fd_seek.rs
+index 2d93ae1c..3173325e 100644
+--- a/src/syscalls/wasi/fd_seek.rs
++++ b/src/syscalls/wasi/fd_seek.rs
+@@ -98,7 +98,7 @@ pub(crate) fn fd_seek_internal(
+                         let fd_offset = fd_entry.inner.offset.clone();
+                         drop(guard);
+ 
+-                        wasi_try_ok_ok!(__asyncify(ctx, None, async move {
++                        wasi_try_ok_ok!(__asyncify_ready_no_timeout(ctx, async move {
+                             let mut handle = handle.write().unwrap();
+                             let end = handle
+                                 .seek(SeekFrom::End(offset))

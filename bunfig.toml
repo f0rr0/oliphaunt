@@ -1,0 +1,5 @@
+[install]
+linker = "isolated"
+# Match the existing one-day resolution policy; Bun uses seconds.
+minimumReleaseAge = 86400
+peer = false

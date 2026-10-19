@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+owner="$(git rev-parse --show-toplevel)/tools/release"
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+mkdir "$scratch/repo"
+cd "$scratch/repo"
+git init -q
+git config user.name Fixture
+git config user.email fixture@example.invalid
+commit() { git add .; git commit -qm fixture; git rev-parse HEAD; }
+reject() {
+  local message="$1"; shift
+  if bash "$owner/publication-controller.sh" "$@" > "$scratch/result" 2>&1; then echo 'Invalid controller accepted' >&2; exit 1; fi
+  rg -q "$message" "$scratch/result"
+}
+printf original > product
+source="$(commit)"
+bash "$owner/publication-controller.sh" "$source" "$source"
+mkdir -p tools/release
+printf 'fixed publisher' > tools/release/crates-io-bootstrap-capacity.mts
+controller="$(commit)"
+bun "$owner/publication-controller.test.mts" proof "$source" "$controller"
+bash "$owner/publication-controller.sh" "$source" "$controller" \
+  bun "$owner/publication-controller.test.mts" inherited "$source" "$controller"
+mkdir -p .github/scripts
+printf 'newer publisher' > .github/scripts/download-completed-bootstrap.mts
+newer="$(commit)"
+bash "$owner/publication-controller.sh" "$source" "$newer"
+printf 'fixed checkout validation' > tools/release/qualified-release-replay.sh
+checkout_fix="$(commit)"
+bash "$owner/publication-controller.sh" "$source" "$checkout_fix"
+for file in .github/scripts/bootstrap-registry-identities.mts .github/scripts/bootstrap-registry-identities.sh .github/scripts/require-workflow-success.sh tools/release/check_release_versions.mts tools/release/check-release-versions.sh tools/release/release-check-registries.sh tools/release/bootstrap-registry-reconciliation.mts tools/release/release-publish.mts tools/release/publish-registries.sh tools/release/publish-frozen-npm.sh tools/release/trusted-publisher-config.sh tools/release/trusted-publisher-config.mts tools/release/frozen-npm-publish.mts tools/release/cargo-upload-reconciliation.mts tools/release/github-release-asset-upload-plan.mts tools/release/public-consumer-smoke.sh tools/release/public-consumer-smoke.mts tools/release/locked-attestation-subjects.mts; do
+  printf 'fixed bootstrap dependencies' > "$file"
+done
+bootstrap_fix="$(commit)"
+bash "$owner/publication-controller.sh" "$source" "$bootstrap_fix"
+mkdir -p tools/release/testdata
+printf 'workflow gate fixture' > tools/release/testdata/require-workflow-success-github.mts
+fixture_fix="$(commit)"
+bash "$owner/publication-controller.sh" "$source" "$fixture_fix"
+for file in tools/release/frozen-extension-consumer.mts src/native/sdks/ts/tools/frozen-consumer.mts src/query/ts/tools/frozen-consumer.mts src/wasix/sdks/ts/tools/frozen-consumer.mts src/wasix/sdks/ts/tools/frozen-browser-consumer.mts src/wasix/sdks/ts/tools/browser-cdp.mts; do
+  mkdir -p "$(dirname "$file")"
+  printf 'installed consumer fix' > "$file"
+done
+consumer_fix="$(commit)"
+bash "$owner/publication-controller.sh" "$source" "$consumer_fix"
+mkdir -p src/docs/maintainers
+printf 'release guidance' > src/docs/maintainers/release.md
+printf 'setup guidance' > src/docs/maintainers/release-setup.md
+documentation="$(commit)"
+bash "$owner/publication-controller.sh" "$source" "$documentation"
+bash "$owner/publication-controller.sh" --changes-only "$source" "$controller"
+reject 'checkout|HEAD' "$source" "$controller"
+for file in product src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts tools/release/package-release-carriers.mts tools/release/publication-lock.mts tools/release/bootstrap-publication-capsule.mts tools/release/testdata/unrelated.mts Cargo.lock .github/workflows/ci.yml tools/release/moon.yml; do
+  git checkout --quiet --detach "$controller"
+  mkdir -p "$(dirname "$file")"
+  printf changed > "$file"
+  reject 'clean source checkout' "$source" "$controller"
+  changed="$(commit)"
+  reject 'non-publication changes' "$source" "$changed"
+done
+git checkout --quiet --detach "$source"
+reject ancestor "$controller" "$source"
+echo 'Publication controller: clean descendant, explicit proof and publication-only changes passed'

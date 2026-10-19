@@ -1,82 +1,16 @@
 ---
 title: SDKs
-description: Choose the Oliphaunt SDK for Rust, Apple, Android, React Native, TypeScript, WASM, or C ABI binding.
+description: Choose the Oliphaunt package for your language and application runtime.
 ---
 
-# SDKs
-
-Choose the SDK by the app target and delivery path. Oliphaunt is a family of
-peer SDKs over the same embedded PostgreSQL runtime model: open an app-owned
-root, select the runtime mode, choose exact SQL extensions, run SQL, read
-capabilities, and use the SDK's lifecycle and backup APIs.
-
-Each SDK page starts with the package to install, the platform build step that
-matters, a first query, and the runtime behavior that affects real apps. Use
-the reference pages when you need exact capability or extension tables.
+Choose an SDK by where your application runs. Every quickstart shows how to install its package, run a query, and close the database.
 
 <SdkChooser />
 
-## How To Choose
+## Native or WASIX?
 
-Use the SDK that owns the app binary or helper process that carries the
-database runtime:
+Native SDKs run the native PostgreSQL runtime. Use them for mobile apps and desktop applications that can ship native libraries. Use broker mode to isolate database execution. Rust and desktop TypeScript also provide a local PostgreSQL server for drivers and ORMs.
 
-- choose Swift for iOS and macOS apps;
-- choose Kotlin for Android apps;
-- choose React Native when JavaScript owns the app surface and Swift/Kotlin
-  carry the native runtime underneath;
-- choose Rust for Tauri and native Rust desktop apps, and TypeScript for
-  Node.js, Bun, Deno, and local JavaScript helper processes;
-- choose WASM when the runtime host is WASIX;
-- choose C ABI only when building another language binding or integrating the
-  native runtime directly.
+WASIX SDKs run PostgreSQL compiled to WebAssembly. Use WASIX TypeScript in browsers, or either WASIX binding when you want that runtime in a desktop host. Select WASIX explicitly; the native packages do not switch to it automatically.
 
-React Native crosses two native platforms. Its public API is TypeScript, while
-packaging, lifecycle, and binary transport are handled through Swift on Apple
-platforms and Kotlin on Android.
-
-## Shared Contract
-
-All SDKs expose the same durable concepts where the platform supports them:
-
-- explicit runtime mode selection;
-- app-owned persistent or temporary roots;
-- exact SQL extension selection;
-- `capabilities()` before relying on advanced features;
-- SQL helpers plus raw protocol access for adapters;
-- lifecycle, backup, restore, and structured PostgreSQL errors.
-
-Each SDK reports platform-specific mode support through capabilities. Mobile
-SDKs expose direct mode first; broker and server support appear when a platform
-SDK advertises those runtimes. Direct mode uses one physical session with
-serialized work.
-
-<ModeMatrix />
-
-## What Each SDK Page Answers
-
-Use the landing page for the package you are adding to an app. It answers the
-questions that block the first useful integration:
-
-| Question | Why it matters |
-| --- | --- |
-| Which package do I install? | App users install your app; the SDK carries released runtime artifacts. |
-| What build step changes my app binary? | Native runtime assets and selected extensions are packaged at build time. |
-| Which runtime mode can I use? | Direct, broker, server, and WASM have different concurrency and process boundaries. |
-| How do I ship only selected extensions? | App artifacts include exact SQL extension names and declared dependencies only. |
-| What happens on close, backgrounding, relaunch, and backup? | Embedded database behavior has to match platform lifecycle expectations. |
-
-React Native covers the JavaScript boundary, config plugin, TurboModule, JSI
-transport, and installed-app wiring. Swift and Kotlin cover platform lifecycle
-and runtime resources. Rust and TypeScript cover their own desktop runtime
-ownership. WASM remains a separate runtime family.
-
-## Where To Go Next
-
-- Use [Start](/docs/start) for the shortest first-query path.
-- Use [Capability Matrix](/docs/reference/capabilities) before relying on a
-  mode or feature in a packaged app.
-- Use [Extensions](/docs/reference/extensions) to understand exact extension
-  selection and app artifact behavior.
-- Use [Native Runtime](/docs/learn/native-runtime) for direct, broker, and
-  server semantics.
+See [SDKs and platforms](/docs/reference/sdk-products) for package names and [runtime support](/docs/reference/capabilities) for storage, tools, and concurrency differences.

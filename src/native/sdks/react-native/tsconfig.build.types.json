@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": false,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "outDir": "lib/typescript",
+    "stripInternal": true
+  },
+  "exclude": ["src/__tests__/**", "lib", "node_modules"]
+}

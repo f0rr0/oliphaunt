@@ -1,0 +1,213 @@
+name: extension-artifacts-native
+on:
+  workflow_call:
+    inputs:
+      cache-save-if:
+        description: Resolved cache-save policy from the calling CI workflow.
+        required: true
+        type: boolean
+      phase:
+        description: all, android-static, or android-package
+        default: all
+        type: string
+      matrix:
+        required: true
+        type: string
+      job-targets:
+        required: true
+        type: string
+permissions:
+  contents: read
+env:
+  OLIPHAUNT_CI_JOB_TARGETS_JSON: ${{ inputs.job-targets }}
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    name: Builds / Native Extension Artifacts (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(inputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 135
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ci-cache/ccache/native-extension/${{ matrix.target }}
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_COMPRESS: "true"
+      OLIPHAUNT_CCACHE_MAX_SIZE: ${{ matrix.target == 'ios-xcframework' && '512M' || '2G' }}
+      OLIPHAUNT_CCACHE_ZERO_STATS: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          cache-partition: extensions-${{ matrix.target }}
+
+      - name: Set up Apple
+        if: ${{ runner.os == 'macOS' }}
+        uses: ./.github/actions/setup-apple
+
+      - name: Set up Android
+        if: ${{ startsWith(matrix.target, 'android-') && inputs.phase != 'android-package' }}
+        uses: ./.github/actions/setup-android
+        with:
+          gradle-cache: "false"
+
+      - name: Set up MSVC
+        if: ${{ runner.os == 'Windows' }}
+        uses: ./.github/actions/setup-msvc
+
+      - name: Verify Windows VC runtime atomic staging
+        if: ${{ runner.os == 'Windows' }}
+        run: bash tools/dev/bun.sh test ./tools/packaging/windows-vc-runtime-closure.test.mts
+
+      - name: Set up Rust
+        if: ${{ inputs.phase != 'android-package' }}
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ inputs.cache-save-if }}
+
+      - name: Prepare native compiler cache path
+        if: ${{ inputs.phase != 'android-package' && (matrix.target == 'ios-xcframework' || startsWith(matrix.target, 'android-')) }}
+        run: mkdir -p "$CCACHE_DIR"
+
+      - name: Restore native compiler cache
+        id: restore_extension_ccache
+        if: ${{ inputs.phase != 'android-package' && (matrix.target == 'ios-xcframework' || startsWith(matrix.target, 'android-')) }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: liboliphaunt-native-extension-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-android/**', 'tools/dev/android-sdk.toml', '.github/actions/setup-apple/**', '.github/scripts/setup-native-build-tools.sh', 'src/third-party/postgres/**', 'src/third-party/icu/**', 'src/third-party/openssl/**', 'src/native/runtime/sources/**', 'src/extensions/contracts/**', 'src/extensions/catalog/extensions.source.json', 'src/extensions/catalog/native-components.toml', 'src/extensions/external/postgis/tools/preprocess-sql.mts', 'src/extensions/contrib/postgres18.toml', 'src/extensions/external/*/source.toml', 'src/extensions/external/*/recipe.toml', 'src/extensions/external/*/dependencies/**/source.toml', 'src/extensions/external/*/dependencies/**/recipe.toml', 'src/extensions/external/*/patches/**', 'src/extensions/external/*/dependencies/**/patches/**', 'src/extensions/generated/extensions.catalog.json', 'src/extensions/generated/contrib-build.tsv', 'src/extensions/generated/pgxs-build.tsv', 'src/extensions/generated/mobile/static-extensions.tsv', 'src/extensions/generated/mobile/static-registry.json', 'src/native/runtime/bin/build-*.sh', '!src/native/runtime/bin/*.test.sh', 'src/extensions/artifacts/native/tools/build-windows-extensions.sh', 'src/extensions/artifacts/native/tools/windows-extension-sources.mts', 'src/extensions/external/postgis/tools/windows/**', 'src/native/runtime/bin/build-output.bash', 'src/native/runtime/bin/common.sh', 'src/native/runtime/bin/fetch-pinned-git-checkout.sh', 'src/third-party/icu/tools/build.sh', 'src/native/runtime/bin/mobile-*.sh', 'src/native/runtime/bin/postgis-dependency-cache.sh', 'src/native/runtime/bin/postgres-backend-objects.mk', 'src/native/postgres-tools/crates/tools/Cargo.toml', 'src/native/postgres-tools/crates/tools/build.rs', 'src/native/postgres-tools/crates/tools/src/**', 'src/native/runtime/include/**', 'src/native/runtime/patches/**', 'src/extensions/contrib/portable-uuid/**', 'src/native/runtime/postgres18/**', 'src/native/runtime/src/**') }}
+          restore-keys: |
+            liboliphaunt-native-extension-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Configure native compiler cache
+        if: ${{ inputs.phase != 'android-package' }}
+        run: .github/scripts/setup-native-build-tools.sh
+
+      - name: Download Android static archives
+        if: ${{ inputs.phase == 'android-package' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: extension-static-${{ matrix.target }}
+          path: target/extension-inputs/static
+
+      - name: Download Linux extension support
+        if: ${{ inputs.phase == 'android-package' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: extension-linux-support
+          path: target/extension-inputs/host
+
+      - name: Restore extension package inputs
+        if: ${{ inputs.phase == 'android-package' }}
+        run: |
+          tar -xzf target/extension-inputs/static/static.tar.gz
+          tar -xzf target/extension-inputs/host/support.tar.gz
+
+      - name: Build native exact-extension artifacts
+        timeout-minutes: 120
+        env:
+          OLIPHAUNT_EXTENSION_PHASE: ${{ inputs.phase }}
+          OLIPHAUNT_EXTENSION_PRODUCTS: ${{ matrix.extensions_csv }}
+          OLIPHAUNT_EXTENSION_TARGET: ${{ matrix.target }}
+          OLIPHAUNT_BISON: /opt/homebrew/opt/bison/bin/bison
+        run: |
+          if [[ "$OLIPHAUNT_EXTENSION_PHASE" == android-static ]]; then
+            OLIPHAUNT_RELEASE_FETCH_ASSETS=1 bash src/extensions/artifacts/native/tools/package-release-assets.sh
+          else
+            .github/scripts/run-planned-moon-job.sh extension-artifacts-native
+          fi
+
+      - name: Validate produced iOS extension carriers
+        id: validate_ios_extension_carriers
+        if: ${{ matrix.target == 'ios-xcframework' }}
+        run: bun src/native/runtime/tools/validate-ios-carrier-zips.mts --root target/extensions/native/release-assets/ios-xcframework
+
+      - name: Save native extension compiler cache
+        id: save_extension_ccache
+        if: ${{ (matrix.target == 'ios-xcframework' || startsWith(matrix.target, 'android-')) && inputs.phase != 'android-package' && inputs.cache-save-if && steps.restore_extension_ccache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.restore_extension_ccache.outputs.cache-primary-key }}
+
+      - name: Show native compiler cache stats
+        if: ${{ always() && runner.os != 'Windows' }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then
+            ccache --show-stats
+          else
+            echo "ccache was not installed before the build stopped"
+          fi
+
+      - name: Pack Android static archives
+        if: ${{ inputs.phase == 'android-static' }}
+        env:
+          EXTENSION_TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p target/extension-inputs
+          tar -czf target/extension-inputs/static.tar.gz target/liboliphaunt-mobile-extension-release/"$EXTENSION_TARGET"/android-*/out
+
+      - name: Upload Android static archives
+        if: ${{ inputs.phase == 'android-static' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: extension-static-${{ matrix.target }}
+          path: target/extension-inputs/static.tar.gz
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Pack Linux extension support
+        if: ${{ matrix.target == 'linux-x64-gnu' }}
+        run: |
+          mkdir -p target/extension-inputs
+          tar -czf target/extension-inputs/support.tar.gz target/liboliphaunt-pg18-linux-x64-gnu-extension-release/install
+
+      - name: Upload Linux extension support
+        if: ${{ matrix.target == 'linux-x64-gnu' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: extension-linux-support
+          path: target/extension-inputs/support.tar.gz
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload native exact-extension artifacts
+        if: ${{ inputs.phase != 'android-static' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-native-extension-artifacts-${{ matrix.target }}
+          path: target/extensions/native/release-assets
+          if-no-files-found: error
+
+      - name: Upload native exact-extension build logs
+        id: upload_native_extension_logs
+        if: ${{ failure() || cancelled() }}
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-native-extension-logs-${{ matrix.target }}
+          path: |
+            target/liboliphaunt-mobile-extension-ci/**/*.log
+            target/liboliphaunt-mobile-extension-release/**/*.log
+            target/liboliphaunt-mobile-extension-release/ios-xcframework/ios-simulator/*.log
+            target/liboliphaunt-mobile-extension-release/ios-xcframework/ios-device/*.log
+            target/liboliphaunt-pg18-extension-release/**/*.log
+            target/liboliphaunt-pg18-*-extension-release/**/*.log
+            /tmp/liboliphaunt-ci-*-extensions.log
+            /tmp/liboliphaunt-release-*-extensions.log
+            /tmp/liboliphaunt-ci-extension-assets-fetch.log
+            /tmp/liboliphaunt-release-extension-assets-fetch.log
+          if-no-files-found: warn

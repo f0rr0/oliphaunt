@@ -1,0 +1,102 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 00615d4..5f50af3 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -76,8 +76,8 @@
+ pub use wasmer_wasix_types;
+
+ use wasmer::{
+-    imports, namespace, AsStoreMut, Exports, FunctionEnv, Imports, Memory32, MemoryAccessError,
+-    MemorySize, RuntimeError,
++    imports, namespace, AsStoreMut, Exports, FunctionEnv, FunctionEnvMut, Imports, Memory32,
++    MemoryAccessError, MemorySize, RuntimeError, WasmPtr,
+ };
+
+ pub use virtual_fs;
+@@ -117,6 +117,34 @@ use crate::{
+     },
+ };
+
++// Compatibility imports added in WASIX 0.702. Current libc imports all five.
++// Normal termination calls proc_exit2, whose non-vfork behavior matches
++// proc_exit; setjmp-vfork and context switching remain unsupported.
++fn unsupported_proc_fork_env<M: MemorySize>(
++    mut ctx: FunctionEnvMut<'_, WasiEnv>,
++    _child_pid_ptr: WasmPtr<u32, M>,
++) -> Result<Errno, WasiError> {
++    WasiEnv::do_pending_operations(&mut ctx)?;
++    Ok(Errno::Notsup)
++}
++
++fn unsupported_context_create<M: MemorySize>(
++    mut ctx: FunctionEnvMut<'_, WasiEnv>,
++    _new_context_ptr: WasmPtr<u64, M>,
++    _entrypoint: u32,
++) -> Result<Errno, WasiError> {
++    WasiEnv::do_pending_operations(&mut ctx)?;
++    Ok(Errno::Notsup)
++}
++
++fn unsupported_context_operation(
++    mut ctx: FunctionEnvMut<'_, WasiEnv>,
++    _target_context_id: u64,
++) -> Result<Errno, WasiError> {
++    WasiEnv::do_pending_operations(&mut ctx)?;
++    Ok(Errno::Notsup)
++}
++
+ /// This is returned in `RuntimeError`.
+ /// Use `downcast` or `downcast_ref` to retrieve the `ExitCode`.
+ #[derive(Error, Debug)]
+@@ -563,6 +591,7 @@ pub fn wasix_exports_32(store: &mut impl AsStoreMut, env: &FunctionEnv<WasiEnv>)
+         "poll_oneoff" => Function::new_typed_with_env(&mut store, env, poll_oneoff::<Memory32>),
+         "proc_exit" => Function::new_typed_with_env(&mut store, env, proc_exit::<Memory32>),
+         "proc_fork" => Function::new_typed_with_env(&mut store, env, proc_fork::<Memory32>),
++        "proc_fork_env" => Function::new_typed_with_env(&mut store, env, unsupported_proc_fork_env::<Memory32>),
+         "proc_join" => Function::new_typed_with_env(&mut store, env, proc_join::<Memory32>),
+         "proc_signal" => Function::new_typed_with_env(&mut store, env, proc_signal),
+         "proc_signals_get" => Function::new_typed_with_env(&mut store, env, proc_signals_get::<Memory32>),
+@@ -570,6 +599,7 @@ pub fn wasix_exports_32(store: &mut impl AsStoreMut, env: &FunctionEnv<WasiEnv>)
+         "proc_exec" => Function::new_typed_with_env(&mut store, env, proc_exec::<Memory32>),
+         "proc_exec2" => Function::new_typed_with_env(&mut store, env, proc_exec2::<Memory32>),
+         "proc_exec3" => Function::new_typed_with_env(&mut store, env, proc_exec3::<Memory32>),
++        "proc_exit2" => Function::new_typed_with_env(&mut store, env, proc_exit::<Memory32>),
+         "proc_raise" => Function::new_typed_with_env(&mut store, env, proc_raise),
+         "proc_raise_interval" => Function::new_typed_with_env(&mut store, env, proc_raise_interval),
+         "proc_snapshot" => Function::new_typed_with_env(&mut store, env, proc_snapshot::<Memory32>),
+@@ -597,6 +627,9 @@ pub fn wasix_exports_32(store: &mut impl AsStoreMut, env: &FunctionEnv<WasiEnv>)
+         "sched_yield" => Function::new_typed_with_env(&mut store, env, sched_yield::<Memory32>),
+         "stack_checkpoint" => Function::new_typed_with_env(&mut store, env, stack_checkpoint::<Memory32>),
+         "stack_restore" => Function::new_typed_with_env(&mut store, env, stack_restore::<Memory32>),
++        "context_create" => Function::new_typed_with_env(&mut store, env, unsupported_context_create::<Memory32>),
++        "context_switch" => Function::new_typed_with_env(&mut store, env, unsupported_context_operation),
++        "context_destroy" => Function::new_typed_with_env(&mut store, env, unsupported_context_operation),
+         "futex_wait" => Function::new_typed_with_env(&mut store, env, futex_wait::<Memory32>),
+         "futex_wake" => Function::new_typed_with_env(&mut store, env, futex_wake::<Memory32>),
+         "futex_wake_all" => Function::new_typed_with_env(&mut store, env, futex_wake_all::<Memory32>),
+@@ -703,6 +736,7 @@ pub fn wasix_exports_64(store: &mut impl AsStoreMut, env: &FunctionEnv<WasiEnv>)
+         "poll_oneoff" => Function::new_typed_with_env(&mut store, env, poll_oneoff::<Memory64>),
+         "proc_exit" => Function::new_typed_with_env(&mut store, env, proc_exit::<Memory64>),
+         "proc_fork" => Function::new_typed_with_env(&mut store, env, proc_fork::<Memory64>),
++        "proc_fork_env" => Function::new_typed_with_env(&mut store, env, unsupported_proc_fork_env::<Memory64>),
+         "proc_join" => Function::new_typed_with_env(&mut store, env, proc_join::<Memory64>),
+         "proc_signal" => Function::new_typed_with_env(&mut store, env, proc_signal),
+         "proc_signals_get" => Function::new_typed_with_env(&mut store, env, proc_signals_get::<Memory64>),
+@@ -710,6 +744,7 @@ pub fn wasix_exports_64(store: &mut impl AsStoreMut, env: &FunctionEnv<WasiEnv>)
+         "proc_exec" => Function::new_typed_with_env(&mut store, env, proc_exec::<Memory64>),
+         "proc_exec2" => Function::new_typed_with_env(&mut store, env, proc_exec2::<Memory64>),
+         "proc_exec3" => Function::new_typed_with_env(&mut store, env, proc_exec3::<Memory64>),
++        "proc_exit2" => Function::new_typed_with_env(&mut store, env, proc_exit::<Memory64>),
+         "proc_raise" => Function::new_typed_with_env(&mut store, env, proc_raise),
+         "proc_raise_interval" => Function::new_typed_with_env(&mut store, env, proc_raise_interval),
+         "proc_snapshot" => Function::new_typed_with_env(&mut store, env, proc_snapshot::<Memory64>),
+@@ -737,6 +772,9 @@ pub fn wasix_exports_64(store: &mut impl AsStoreMut, env: &FunctionEnv<WasiEnv>)
+         "sched_yield" => Function::new_typed_with_env(&mut store, env, sched_yield::<Memory64>),
+         "stack_checkpoint" => Function::new_typed_with_env(&mut store, env, stack_checkpoint::<Memory64>),
+         "stack_restore" => Function::new_typed_with_env(&mut store, env, stack_restore::<Memory64>),
++        "context_create" => Function::new_typed_with_env(&mut store, env, unsupported_context_create::<Memory64>),
++        "context_switch" => Function::new_typed_with_env(&mut store, env, unsupported_context_operation),
++        "context_destroy" => Function::new_typed_with_env(&mut store, env, unsupported_context_operation),
+         "futex_wait" => Function::new_typed_with_env(&mut store, env, futex_wait::<Memory64>),
+         "futex_wake" => Function::new_typed_with_env(&mut store, env, futex_wake::<Memory64>),
+         "futex_wake_all" => Function::new_typed_with_env(&mut store, env, futex_wake_all::<Memory64>),
