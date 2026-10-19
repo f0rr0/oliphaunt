@@ -1177,13 +1177,29 @@ async function nodePostgisCompanionClosureInstall(
     );
   const legacy = fixtureExtensionContract(extension, {
     dependencies: [],
-    dataFiles: [],
+    // Main 5daf457e's core-only PostGIS contract, before raster/GDAL.
+    dataFiles: [
+      'contrib/postgis-3.6/legacy.sql',
+      'contrib/postgis-3.6/legacy_gist.sql',
+      'contrib/postgis-3.6/legacy_minimal.sql',
+      'contrib/postgis-3.6/postgis.sql',
+      'contrib/postgis-3.6/postgis_upgrade.sql',
+      'contrib/postgis-3.6/spatial_ref_sys.sql',
+      'contrib/postgis-3.6/uninstall_legacy.sql',
+      'contrib/postgis-3.6/uninstall_postgis.sql',
+      'proj/proj.db',
+    ],
     extensionSqlFileNames: [],
     extensionSqlFilePrefixes: [],
   });
   await mkdir(sqlRoot, { recursive: true });
   await writeFile(join(sqlRoot, 'postgis.control'), "default_version='3.6.2'\n");
   await writeFile(join(sqlRoot, 'postgis--3.6.2.sql'), 'install');
+  for (const file of legacy.dataFiles) {
+    const destination = join(runtime, 'share/postgresql', file);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, `legacy data:${file}`);
+  }
   for (const profile of ['postgresql', 'modules']) {
     await mkdir(join(runtime, 'lib', profile), { recursive: true });
     await writeFile(join(runtime, 'lib', profile, `postgis-3${suffix}`), 'legacy core');
@@ -1202,6 +1218,14 @@ async function nodePostgisCompanionClosureInstall(
     );
     await assert.rejects(
       readFile(join(oldInstall.moduleDirectory!, `fuzzystrmatch${suffix}`)),
+      /ENOENT/,
+    );
+    assert.equal(
+      await readFile(join(oldInstall.runtimeDirectory!, 'share/postgresql/proj/proj.db'), 'utf8'),
+      'legacy data:proj/proj.db',
+    );
+    await assert.rejects(
+      readFile(join(oldInstall.runtimeDirectory!, 'share/postgresql/gdal/gdalvrt.xsd')),
       /ENOENT/,
     );
     const complete = {

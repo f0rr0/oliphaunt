@@ -695,15 +695,30 @@ mod tests {
                 .join(Extension::POSTGIS.native_module_file().unwrap()),
             b"legacy primary module",
         );
-        for relative in crate::extension::extension_data_files(Extension::POSTGIS) {
+        // Frozen from main 5daf457e, before raster/GDAL joined the product.
+        let legacy_data = [
+            "contrib/postgis-3.6/legacy.sql",
+            "contrib/postgis-3.6/legacy_gist.sql",
+            "contrib/postgis-3.6/legacy_minimal.sql",
+            "contrib/postgis-3.6/postgis.sql",
+            "contrib/postgis-3.6/postgis_upgrade.sql",
+            "contrib/postgis-3.6/spatial_ref_sys.sql",
+            "contrib/postgis-3.6/uninstall_legacy.sql",
+            "contrib/postgis-3.6/uninstall_postgis.sql",
+            "proj/proj.db",
+        ];
+        for relative in legacy_data {
             write_file(
                 &artifact_dir.join("share/postgresql").join(relative),
                 b"legacy data",
             );
         }
         for preserved_manifest in [false, true] {
-            let manifest =
-                preserved_manifest.then_some("sqlName=postgis\ndependencies=\ndataFiles=\n");
+            let text = format!(
+                "sqlName=postgis\ndependencies=\ndataFiles={}\n",
+                legacy_data.join(",")
+            );
+            let manifest = preserved_manifest.then_some(text.as_str());
             let selected = Extension::POSTGIS
                 .with_package(crate::extension::package_tests::postgis_package(manifest));
             let extensions = resolve_extensions(&[selected]).unwrap();
@@ -733,6 +748,16 @@ mod tests {
             )
             .unwrap();
             assert_eq!(files.sql_members, ["postgis"]);
+            assert_eq!(files.data_files, legacy_data);
+            assert!(!runtime_dir.join("share/postgresql/gdal").exists());
+            for relative in legacy_data {
+                assert!(
+                    runtime_dir
+                        .join("share/postgresql")
+                        .join(relative)
+                        .is_file()
+                );
+            }
             assert_eq!(
                 files.module_files,
                 [Extension::POSTGIS.native_module_file().unwrap()]

@@ -43,16 +43,40 @@ pub(super) fn extension_files(
                 } else {
                     extension.native_module_file().into_iter().collect()
                 },
-                data_files: extension_data_files(extension)
-                    .iter()
-                    .map(|value| (*value).to_owned())
-                    .collect(),
+                data_files: if current {
+                    extension_data_files(extension)
+                } else {
+                    legacy_data_files(extension)
+                }
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
             })
         }
         Err(error) => Err(Error::Engine(format!(
             "read extension manifest {}: {error}",
             manifest.display()
         ))),
+    }
+}
+
+// Independent packages predating frozen manifests shipped core PostGIS and
+// PROJ only. Keep their data contract independent of newly added raster assets.
+fn legacy_data_files(extension: Extension) -> &'static [&'static str] {
+    if extension.sql_name() == "postgis" {
+        &[
+            "contrib/postgis-3.6/legacy.sql",
+            "contrib/postgis-3.6/legacy_gist.sql",
+            "contrib/postgis-3.6/legacy_minimal.sql",
+            "contrib/postgis-3.6/postgis.sql",
+            "contrib/postgis-3.6/postgis_upgrade.sql",
+            "contrib/postgis-3.6/spatial_ref_sys.sql",
+            "contrib/postgis-3.6/uninstall_legacy.sql",
+            "contrib/postgis-3.6/uninstall_postgis.sql",
+            "proj/proj.db",
+        ]
+    } else {
+        extension_data_files(extension)
     }
 }
 
@@ -126,10 +150,14 @@ fn parse(text: &str, extension: Extension) -> Result<ExtensionFiles> {
     }
     let data_files = csv(
         "dataFiles",
-        extension_data_files(extension)
-            .iter()
-            .map(|value| (*value).to_owned())
-            .collect(),
+        if fields.contains_key("sqlMembers") {
+            extension_data_files(extension)
+        } else {
+            legacy_data_files(extension)
+        }
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect(),
     )?;
     if data_files.iter().any(|file| {
         file.contains(['\\', ':'])
