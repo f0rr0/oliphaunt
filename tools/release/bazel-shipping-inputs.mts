@@ -267,8 +267,8 @@ function aqueryFileGraph(raw: unknown) {
       if (stack.has(key)) throw new Error('cycle in aquery input dep sets');
       if (visited.has(key)) return;
       const item = required(depSets, key);
-      const next = new Set(stack).add(key);
-      for (const child of array(item.transitiveDepSetIds ?? [])) visit(id(child), next);
+      stack.add(key);
+      for (const child of array(item.transitiveDepSetIds ?? [])) visit(id(child), stack);
       let direct = directInputs.get(key);
       if (direct === undefined) {
         direct = [];
@@ -280,12 +280,13 @@ function aqueryFileGraph(raw: unknown) {
         directInputs.set(key, direct);
       }
       for (const artifact of direct) result.add(artifact);
+      stack.delete(key);
       visited.add(key);
     };
     for (const key of array(action.inputDepSetIds ?? [])) visit(id(key), new Set());
     return result;
   };
-  return { graph, targets, configurations, artifactPaths, depSets, inputsOf };
+  return { graph, targets, configurations, artifactPaths, depSets, directInputs, inputsOf };
 }
 
 /** Actual TestRunner input closure and input-free FileWrite outputs of its configured target. */
@@ -359,12 +360,14 @@ export function buildShippingInputView(
     throw new Error('unsupported shipping export');
   if (exported.scope !== 'construction')
     throw new Error('shipping export must declare construction scope');
-  const { graph, targets, configurations, artifactPaths, depSets, inputsOf } =
+  const { graph, targets, configurations, artifactPaths, depSets, directInputs, inputsOf } =
     aqueryFileGraph(aqueryValue);
   const producers = new Map<string, Row>();
   const products: ShippingInputView['products'] = {};
   const identities = new Set<string>();
   const visitedByProduct = new Map<string, Set<string>>();
+  const visitedActionsByProduct = new Map<string, Set<Row>>();
+  const visitedDepSetsByProduct = new Map<string, Set<string>>();
   const actionDescriptions = new Map<Row, string>();
   const sharedDefinitions = new Map<Row, string>();
   const physicalInputs = new Set<string>();
@@ -529,6 +532,10 @@ export function buildShippingInputView(
     const descriptions = new Set(view.actions);
     const visited = visitedByProduct.get(product) ?? new Set<string>();
     visitedByProduct.set(product, visited);
+    const visitedActions = visitedActionsByProduct.get(product) ?? new Set<Row>();
+    visitedActionsByProduct.set(product, visitedActions);
+    const visitedDepSets = visitedDepSetsByProduct.get(product) ?? new Set<string>();
+    visitedDepSetsByProduct.set(product, visitedDepSets);
     const visit = (key: string, stack: Set<string>) => {
       if (stack.has(key)) throw new Error('cycle in aquery producers');
       if (visited.has(key)) return;
@@ -539,12 +546,28 @@ export function buildShippingInputView(
           throw new Error(`missing generated input producer: ${inputPath}`);
         leaves.add(inputPath);
         captureInputs.add(inputPath);
-      } else {
-        const inputs = inputsOf(action);
-        const next = new Set(stack).add(key);
-        for (const input of inputs) visit(input, next);
-        // ActionKey describes action declarations, not consumed content or a remote-cache key.
-        descriptions.add(actionDescription(action, inputs));
+      } else if (!visitedActions.has(action)) {
+        const cached = actionDescriptions.get(action);
+        if (cached === undefined) {
+          const inputs = inputsOf(action);
+          stack.add(key);
+          for (const input of inputs) visit(input, stack);
+          // ActionKey describes action declarations, not consumed content or a remote-cache key.
+          descriptions.add(actionDescription(action, inputs));
+        } else {
+          stack.add(key);
+          const visitDepSet = (input: string) => {
+            if (visitedDepSets.has(input)) return;
+            const item = required(depSets, input);
+            for (const child of array(item.transitiveDepSetIds ?? [])) visitDepSet(id(child));
+            for (const artifact of required(directInputs, input)) visit(artifact, stack);
+            visitedDepSets.add(input);
+          };
+          for (const input of array(action.inputDepSetIds ?? [])) visitDepSet(id(input));
+          descriptions.add(cached);
+        }
+        stack.delete(key);
+        visitedActions.add(action);
       }
       visited.add(key);
     };

@@ -132,7 +132,7 @@ printf 'gc done\\n' >> "$COMMAND_TRACE"
     RUNNER_OS: 'Linux',
     RUNNER_ARCH: 'X64',
     PHASE: 'restore',
-    COHORT: 'portable',
+    COHORT: 'react-native',
     SOURCE_COMMIT: 'a'.repeat(40),
     OUTPUT_BASE: '',
     JVM_ARGS: '',
@@ -245,7 +245,7 @@ test('action keys retain source, cohort and platform separation', () => {
       identities.push(readFileSync(env.GITHUB_OUTPUT, 'utf8'));
     }
     assert.equal(new Set(identities).size, identities.length);
-    assert.match(identities[0], /-portable-8\.8\.1\nsource=a{40}\n/u);
+    assert.match(identities[0], /-react-native-8\.8\.1\nsource=a{40}\n/u);
     assert.equal(
       new Set(identities.map((identity) => cacheKey('disk-restore', identity))).size,
       identities.length,
@@ -395,54 +395,67 @@ test('GC failures and logical-versus-allocated overage do not authorize transpor
   }
 });
 
-test('Apple ARM64 portable retains its observed cache population within a bounded archive', () => {
-  for (const scenario of [
-    { name: '3.4 GiB allocated snapshot', disk: '3565159', gc: false, saved: true },
-    { name: 'allocated boundary', disk: '5242880', gc: false, saved: true },
-    { name: 'completed collection', disk: '5242881', gc: true, collected: '4404019', saved: true },
-    {
-      name: 'allocated overage after collection',
-      disk: '5242881',
-      gc: true,
-      collected: '5242881',
-      saved: false,
-    },
-    { name: 'failed collection', disk: '5242881', gc: true, status: '1', saved: false },
+test('measured cohorts retain their observed cache population within a bounded archive', () => {
+  for (const cohort of [
+    { RUNNER_OS: 'macOS', RUNNER_ARCH: 'ARM64', COHORT: 'portable' },
+    { RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64', COHORT: 'portable' },
+    { RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64', COHORT: 'linux' },
   ]) {
-    fixture((directory, env) => {
-      const apple = { ...env, RUNNER_OS: 'macOS', RUNNER_ARCH: 'ARM64' };
-      execute(directory, apple, script('Configure standard hosted Bazel caches'));
-      const result = spawnSync('bash', ['-eu', '-c', script('ready')], {
-        cwd: directory,
-        env: selectedBudget(directory, {
-          ...apple,
-          DISK_KIB: scenario.disk,
-          GC_DISK_KIB: scenario.collected ?? scenario.disk,
-          GC_STATUS: scenario.status ?? '0',
-        }),
-      });
-      assert.equal(result.status, scenario.status ? 1 : 0, scenario.name);
-      assert.equal(
-        readFileSync(env.GITHUB_OUTPUT, 'utf8'),
-        scenario.saved ? 'disk=true\n' : '',
-        scenario.name,
-      );
-      const commands = readFileSync(env.COMMAND_TRACE, 'utf8');
-      if (scenario.gc) {
-        assert.ok(
-          commands.startsWith('shutdown\nbuild\ncquery\nshutdown\ngc begin\n'),
-          scenario.name,
+    for (const scenario of [
+      { name: '3.6 GiB allocated snapshot', disk: '3774874', gc: false, saved: true },
+      { name: 'allocated boundary', disk: '5242880', gc: false, saved: true },
+      {
+        name: 'completed collection',
+        disk: '5242881',
+        gc: true,
+        collected: '4404019',
+        saved: true,
+      },
+      {
+        name: 'allocated overage after collection',
+        disk: '5242881',
+        gc: true,
+        collected: '5242881',
+        saved: false,
+      },
+      { name: 'failed collection', disk: '5242881', gc: true, status: '1', saved: false },
+    ]) {
+      fixture((directory, env) => {
+        const label = `${cohort.COHORT} ${cohort.RUNNER_OS} ${scenario.name}`;
+        const measured = { ...env, ...cohort };
+        execute(directory, measured, script('Configure standard hosted Bazel caches'));
+        const result = spawnSync('bash', ['-eu', '-c', script('ready')], {
+          cwd: directory,
+          env: selectedBudget(directory, {
+            ...measured,
+            DISK_KIB: scenario.disk,
+            GC_DISK_KIB: scenario.collected ?? scenario.disk,
+            GC_STATUS: scenario.status ?? '0',
+          }),
+        });
+        assert.equal(result.status, scenario.status ? 1 : 0, label);
+        assert.equal(
+          readFileSync(env.GITHUB_OUTPUT, 'utf8'),
+          scenario.saved ? 'disk=true\n' : '',
+          label,
         );
-        assert.equal(readFileSync(env.GC_ARGS, 'utf8').trim().split('\n').at(-1), '--max_size=4G');
-      } else {
-        assert.equal(commands, 'shutdown\n', scenario.name);
-      }
-      assert.ok(
-        readFileSync(path.join(env.HOME, '.bazelrc'), 'utf8').includes(
-          'build --experimental_disk_cache_gc_max_size=4G\n',
-        ),
-      );
-    });
+        const commands = readFileSync(env.COMMAND_TRACE, 'utf8');
+        if (scenario.gc) {
+          assert.ok(commands.startsWith('shutdown\nbuild\ncquery\nshutdown\ngc begin\n'), label);
+          assert.equal(
+            readFileSync(env.GC_ARGS, 'utf8').trim().split('\n').at(-1),
+            '--max_size=4G',
+          );
+        } else {
+          assert.equal(commands, 'shutdown\n', label);
+        }
+        assert.ok(
+          readFileSync(path.join(env.HOME, '.bazelrc'), 'utf8').includes(
+            'build --experimental_disk_cache_gc_max_size=4G\n',
+          ),
+        );
+      });
+    }
   }
 });
 

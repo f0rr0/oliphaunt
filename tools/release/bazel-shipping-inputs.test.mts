@@ -666,6 +666,128 @@ test('reused compiler headers remain complete without multiplying retained descr
   expect(directIdReads).toBe(directIdCount);
 });
 
+test('multi-output actions expand a shared input DAG once per product and graph read', () => {
+  const { exported, graph } = fixture();
+  exported.packages[0].ecosystem = 'github';
+  for (let index = 0; index < 2048; index++) {
+    const id = 100 + index;
+    graph.pathFragments.push({ id, parentId: 1, label: `header-${index}.h` });
+    graph.artifacts.push({ id, pathFragmentId: id });
+    graph.depSetOfFiles[0].directArtifactIds.push(id);
+  }
+  for (let index = 0; index < 127; index++) {
+    const id = 10000 + index;
+    graph.pathFragments.push({ id, parentId: 5, label: `object-${index}.o` });
+    graph.artifacts.push({ id, pathFragmentId: id });
+    graph.actions[0].outputIds.push(id);
+    graph.depSetOfFiles[1].directArtifactIds.push(id);
+  }
+  const flatGraph = structuredClone(graph);
+  const singleProduct = buildShippingInputView(exported, flatGraph);
+  const sets = graph.depSetOfFiles as {
+    id: number;
+    directArtifactIds?: number[];
+    transitiveDepSetIds?: number[];
+  }[];
+  const headers = sets[0].directArtifactIds;
+  sets[0] = { id: 1, transitiveDepSetIds: [1000, 1001] };
+  sets.push(
+    { id: 1000, transitiveDepSetIds: [1002] },
+    { id: 1001, transitiveDepSetIds: [1002] },
+    { id: 1002, directArtifactIds: headers },
+  );
+  const original = JSON.stringify(graph);
+  let childIdReads = 0;
+  for (const set of sets)
+    set.transitiveDepSetIds?.forEach((value, index, ids) => {
+      Object.defineProperty(ids, index, {
+        get() {
+          childIdReads++;
+          return value;
+        },
+      });
+    });
+  const view = buildShippingInputView(exported, graph);
+  expect(childIdReads).toBe(4);
+  expect(view).toEqual(singleProduct);
+  expect(view.products.alpha.inputs).toHaveLength(2050);
+  expect(view.physicalInputs).toHaveLength(2178);
+  expect(view.products.alpha.actions).toHaveLength(2);
+  exported.packages.push({ ...exported.packages[0], product: 'beta', version: '2.3.4' });
+  const bothProducts = buildShippingInputView(exported, flatGraph);
+  childIdReads = 0;
+  expect(buildShippingInputView(exported, graph)).toEqual(bothProducts);
+  expect(childIdReads).toBe(8);
+  expect(bothProducts.products.beta.inputs).toEqual(view.products.alpha.inputs);
+  expect(bothProducts.products.beta.actions).toEqual(view.products.alpha.actions);
+  childIdReads = 0;
+  expect(buildShippingInputView(exported, graph)).toEqual(bothProducts);
+  expect(childIdReads).toBe(8);
+  expect(JSON.stringify(graph)).toBe(original);
+  const cyclic = structuredClone(graph);
+  cyclic.depSetOfFiles.find((set) => set.id === 1002)!.directArtifactIds!.push(10000);
+  expect(() => buildShippingInputView(exported, cyclic)).toThrow('cycle in aquery producers');
+});
+
+test('cached compiler actions share input DAG traversal within each later product', () => {
+  const { exported, graph } = fixture();
+  exported.packages[0].ecosystem = 'github';
+  exported.packages.push({ ...exported.packages[0], product: 'beta', version: '2.3.4' });
+  for (let index = 0; index < 256; index++) {
+    const id = 100 + index;
+    graph.pathFragments.push({ id, parentId: 1, label: `header-${index}.h` });
+    graph.artifacts.push({ id, pathFragmentId: id });
+    graph.depSetOfFiles[0].directArtifactIds.push(id);
+  }
+  for (let index = 0; index < 63; index++) {
+    const id = 10000 + index;
+    graph.pathFragments.push({ id, parentId: 5, label: `object-${index}.o` });
+    graph.artifacts.push({ id, pathFragmentId: id });
+    graph.actions.push({
+      ...graph.actions[0],
+      actionKey: `compile-${index}`,
+      outputIds: [id],
+      primaryOutputId: id,
+    });
+    graph.depSetOfFiles[1].directArtifactIds.push(id);
+  }
+  const flat = buildShippingInputView(exported, graph);
+  const sets = graph.depSetOfFiles as {
+    id: number;
+    directArtifactIds?: number[];
+    transitiveDepSetIds?: number[];
+  }[];
+  const headers = sets[0].directArtifactIds;
+  sets[0] = { id: 1, transitiveDepSetIds: [1000, 1001] };
+  sets.push(
+    { id: 1000, transitiveDepSetIds: [1002] },
+    { id: 1001, transitiveDepSetIds: [1002] },
+    { id: 1002, directArtifactIds: headers },
+  );
+  const original = JSON.stringify(graph);
+  let childIdReads = 0;
+  for (const set of sets)
+    set.transitiveDepSetIds?.forEach((value, index, ids) => {
+      Object.defineProperty(ids, index, {
+        get() {
+          childIdReads++;
+          return value;
+        },
+      });
+    });
+  const view = buildShippingInputView(exported, graph);
+  expect(childIdReads).toBe(260);
+  expect(view).toEqual(flat);
+  expect(view.products.beta.inputs).toEqual(view.products.alpha.inputs);
+  expect(view.products.beta.actions).toEqual(view.products.alpha.actions);
+  expect(view.products.beta.inputs).toHaveLength(258);
+  expect(view.products.beta.actions).toHaveLength(65);
+  childIdReads = 0;
+  expect(buildShippingInputView(exported, graph)).toEqual(view);
+  expect(childIdReads).toBe(260);
+  expect(JSON.stringify(graph)).toBe(original);
+});
+
 test('direct input validation remains lazy, ordered and isolated to each graph read', () => {
   const { exported, graph } = fixture();
   const before = buildShippingInputView(exported, graph);

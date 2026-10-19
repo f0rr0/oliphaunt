@@ -15,6 +15,7 @@ import {
   validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
 import {
+  nativeSwiftSourceTagPublication,
   nativeSwiftSourceTagRoots,
   validateNativeSwiftSourceTagFiles,
 } from './native-build-source-tag.mts';
@@ -360,8 +361,26 @@ export function readNativeBuildFinalFiles(
               'native reconstructed output members',
             );
         }
+        // First retain/verify the exact physical evidence above; publication modes apply only
+        // inside this owned reconstruction and never mutate authenticated cohort metadata.
+        const publication = cohorts.map((cohort, index) => ({
+          ...cohort,
+          outputs: nativeSwiftSourceTagPublication(selected[index]).outputs,
+        }));
+        for (const [index, cohort] of publication.entries())
+          for (const [outputIndex, output] of cohort.outputs.entries()) {
+            if (
+              output === cohorts[index].outputs[outputIndex] ||
+              !cohort.roots.some(({ package: pkg }) =>
+                pkg.outputs.some(({ path }) => path === output.path),
+              )
+            )
+              continue;
+            for (const member of output.members)
+              chmodSync(path.join(cohort.executionRoot, output.path, member.path), member.mode);
+          }
         assertUnchanged();
-        const staged = captureNativePublicationOutputs(cohorts, {
+        const staged = captureNativePublicationOutputs(publication, {
           sourceCommit: source.commit,
           stageDirectory: options.stageDirectory,
         }).stage();

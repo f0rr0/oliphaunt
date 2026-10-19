@@ -728,7 +728,7 @@ else {
   };
 }
 
-test('Mac capture CPU diagnostics preserve evidence, collector failures and source freeze', async () => {
+test('Mac capture CPU timing preserves evidence, collector failures and source freeze', async () => {
   const platform = process.platform;
   const originalSpawn = childProcess.spawnSync;
   const captures: string[][] = [];
@@ -768,23 +768,11 @@ test('Mac capture CPU diagnostics preserve evidence, collector failures and sour
           'bash',
           'tools/dev/bun.sh',
         ]);
-        expect(command?.slice(6, 11)).toEqual([
-          '--cpu-prof',
-          '--cpu-prof-interval=10000',
-          `--cpu-prof-dir=${path.join(f.outputDirectory, 'diagnostics')}`,
-          '--cpu-prof-name=capture.cpuprofile',
-          'tools/release/capture-native-build-evidence.mts',
-        ]);
-        const profile = JSON.parse(
-          readFileSync(path.join(f.outputDirectory, 'diagnostics/capture.cpuprofile'), 'utf8'),
+        expect(command?.[6]).toBe('tools/release/capture-native-build-evidence.mts');
+        expect(command?.some((argument) => argument.startsWith('--cpu-prof'))).toBe(false);
+        expect(existsSync(path.join(f.outputDirectory, 'diagnostics/capture.cpuprofile'))).toBe(
+          false,
         );
-        expect(Object.keys(profile).sort()).toEqual([
-          'endTime',
-          'nodes',
-          'samples',
-          'startTime',
-          'timeDeltas',
-        ]);
         expect(
           f
             .calls()
