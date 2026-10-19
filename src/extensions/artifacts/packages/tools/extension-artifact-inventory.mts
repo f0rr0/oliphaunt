@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   closeSync,
   constants,
+  existsSync,
   fstatSync,
   lstatSync,
   openSync,
@@ -11,14 +12,13 @@ import {
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
 import { strictGunzip } from '../../../../../tools/packaging/portable-archive.mts';
-
+import { releaseNoticeRows } from '../../../../../tools/packaging/release-notices.mts';
+import { extensionProductForSqlName } from '../../../../../tools/release/release-artifact-targets.mts';
 import { EXTENSION_ARTIFACT_ARCHIVE_POLICY } from '../../../tools/extension-artifact-archive-policy.mts';
 import {
   extensionCarrierLegalContract,
   extensionUpstreamLicenseRow,
 } from '../../../tools/extension-upstream-licenses.mts';
-import { extensionProductForSqlName } from '../../../../../tools/release/release-artifact-targets.mts';
-import { releaseNoticeRows } from '../../../../../tools/packaging/release-notices.mts';
 
 export const EXTENSION_ARTIFACT_PROPERTY_KEYS = Object.freeze([
   'packageLayout',
@@ -42,6 +42,8 @@ export const EXTENSION_ARTIFACT_PROPERTY_KEYS = Object.freeze([
   'staticSymbolAliases',
   'licenseFiles',
   'licenseProfile',
+  'sqlMembers',
+  'nativeModuleStems',
   'files',
 ]);
 
@@ -145,15 +147,16 @@ export function parseExtensionArtifactProperties(text, label) {
     }
     properties.set(key, rawLine.slice(separator + 1));
   }
+  const orderedKeys = EXTENSION_ARTIFACT_PROPERTY_KEYS;
   const actual = [...properties.keys()].sort(compareText);
-  const expected = [...EXTENSION_ARTIFACT_PROPERTY_KEYS].sort(compareText);
+  const expected = [...orderedKeys].sort(compareText);
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw inventoryError(
       label,
       `property fields must be exactly ${expected.join(',')}; got ${actual.join(',')}`,
     );
   }
-  if (JSON.stringify([...properties.keys()]) !== JSON.stringify(EXTENSION_ARTIFACT_PROPERTY_KEYS)) {
+  if (JSON.stringify([...properties.keys()]) !== JSON.stringify(orderedKeys)) {
     throw inventoryError(label, 'properties must use the canonical field order');
   }
   return properties;
@@ -439,6 +442,8 @@ function normalizeMetadata(row, label) {
     sqlName,
     createsExtension,
     nativeModuleStem,
+    sqlMembers: list('sqlMembers', 'sql-members'),
+    nativeModuleStems: list('nativeModuleStems', 'native-module-stems'),
     dependencies: (() => {
       const selected =
         row?.selectedExtensionDependencies ??
@@ -458,6 +463,8 @@ function normalizeMetadata(row, label) {
   for (const [field, values] of [
     ['selected-extension-dependencies', metadata.dependencies],
     ['shared-preload-libraries', metadata.sharedPreloadLibraries],
+    ['sql-members', metadata.sqlMembers],
+    ['native-module-stems', metadata.nativeModuleStems],
   ]) {
     if (values.some((item) => !PORTABLE_ID.test(item))) {
       throw inventoryError(label, `${field} contains a non-portable identifier`);
@@ -487,8 +494,80 @@ function moduleSuffix(target) {
   return '.so';
 }
 
+// The target recipe owns native modules; the common recipe also lists WASIX-only dependencies.
+export function extensionNativeArtifactClosure(sqlName, target) {
+  if (!PORTABLE_ID.test(sqlName)) throw inventoryError(sqlName, 'invalid extension SQL name');
+  const directory = path.resolve(import.meta.dir, '../../../external', sqlName);
+  const read = (file) => {
+    const full = path.join(directory, file);
+    return existsSync(full) ? Bun.TOML.parse(readFileSync(full, 'utf8')) : {};
+  };
+  const controls = (read('recipe.toml').artifacts?.control_files ?? []).map((file) => {
+    const normalized = safeRelativePath(file, `${sqlName} control file`);
+    const name = normalized.slice('share/postgresql/extension/'.length);
+    if (
+      normalized !== `share/postgresql/extension/${name}` ||
+      !name.endsWith('.control') ||
+      !PORTABLE_ID.test(name.slice(0, -'.control'.length))
+    ) {
+      throw inventoryError(sqlName, `invalid extension control file ${file}`);
+    }
+    return name;
+  });
+  const modules = (read('targets/native.toml').module_files ?? []).map((file) => {
+    const normalized = safeRelativePath(file, `${sqlName} native module`);
+    const name = normalized.slice('lib/postgresql/'.length);
+    if (normalized !== `lib/postgresql/${name}` || !PORTABLE_ID.test(name)) {
+      throw inventoryError(sqlName, `invalid native module ${file}`);
+    }
+    if (!/\.(so|dylib|dll)$/u.test(name)) {
+      throw inventoryError(sqlName, `invalid native module suffix ${file}`);
+    }
+    return name.replace(/\.(so|dylib|dll)$/u, moduleSuffix(target));
+  });
+  return {
+    controls: [...new Set(controls)].sort(compareText),
+    modules: [...new Set(modules)].sort(compareText),
+  };
+}
+
+export function assertExtensionArtifactClosure(metadata, target, label) {
+  const closure = extensionNativeArtifactClosure(metadata.sqlName, target);
+  const mobile = target === 'ios-xcframework' || target.startsWith('android-');
+  const expected = {
+    sqlMembers: [
+      ...new Set([
+        ...(metadata.createsExtension ? [metadata.sqlName] : []),
+        ...closure.controls.map((name) => name.slice(0, -'.control'.length)),
+      ]),
+    ].sort(compareText),
+    nativeModuleStems: [
+      ...new Set([
+        ...(metadata.nativeModuleStem === null ? [] : [metadata.nativeModuleStem]),
+        ...(mobile ? [] : closure.modules).map((name) =>
+          name.slice(0, -moduleSuffix(target).length),
+        ),
+      ]),
+    ].sort(compareText),
+  };
+  for (const [field, values] of Object.entries(expected)) {
+    if (JSON.stringify(metadata[field]) !== JSON.stringify(values)) {
+      throw inventoryError(
+        label,
+        `${field} must match the current source-owned closure ${JSON.stringify(values)}`,
+      );
+    }
+  }
+}
+
 function sqlFileOwned(fileName, metadata) {
   return (
+    metadata.companionControls?.includes(fileName) ||
+    metadata.companionControls?.some(
+      (control) =>
+        fileName.startsWith(`${control.slice(0, -'.control'.length)}--`) &&
+        fileName.endsWith('.sql'),
+    ) ||
     (metadata.createsExtension && fileName === `${metadata.sqlName}.control`) ||
     (metadata.createsExtension && fileName === `${metadata.sqlName}.sql`) ||
     (metadata.createsExtension &&
@@ -740,6 +819,20 @@ export function validateExtensionArtifactEntries({
     decodeUtf8(manifestEntry.data, `${label} manifest.properties`),
     `${label} manifest.properties`,
   );
+  assertExtensionArtifactClosure(metadata, target, `${label} canonical metadata`);
+  const sqlMembers = csv(properties.get('sqlMembers'), `${label} sqlMembers`);
+  const nativeModuleStems = csv(properties.get('nativeModuleStems'), `${label} nativeModuleStems`);
+  for (const [key, actual] of [
+    ['sqlMembers', sqlMembers],
+    ['nativeModuleStems', nativeModuleStems],
+  ]) {
+    if (JSON.stringify(metadata[key]) !== JSON.stringify(actual)) {
+      throw inventoryError(label, `manifest ${key} must match the frozen release inventory`);
+    }
+  }
+  metadata.companionControls = sqlMembers
+    .filter((name) => name !== metadata.sqlName)
+    .map((name) => `${name}.control`);
   const legal = canonicalLegalContract(metadata, target, label);
   const expectedProperties = new Map([
     ['packageLayout', 'oliphaunt-extension-artifact-v1'],
@@ -824,13 +917,26 @@ export function validateExtensionArtifactEntries({
       label,
     });
   }
+  for (const controlFile of metadata.companionControls) {
+    const controlName = `${extensionPrefix}${controlFile}`;
+    const control = entries.get(controlName);
+    if (control === undefined)
+      throw inventoryError(label, `missing companion control ${controlName}`);
+    validateExtensionInstallSqlReachability({
+      sqlName: controlFile.slice(0, -'.control'.length),
+      control: decodeUtf8(control.data, `${label} ${controlName}`),
+      fileNames: extensionFileNames,
+      label,
+    });
+  }
   for (const dataFile of metadata.dataFiles) {
     allowed.add(`files/share/postgresql/${dataFile}`);
   }
-  if (metadata.nativeModuleStem !== null) {
-    allowed.add(`files/lib/postgresql/${properties.get('nativeModuleFile')}`);
+  const modules = new Set(nativeModuleStems.map((stem) => `${stem}${moduleSuffix(target)}`));
+  for (const module of modules) {
+    allowed.add(`files/lib/postgresql/${module}`);
     if (DESKTOP_NATIVE_TARGETS.has(target)) {
-      allowed.add(`files/lib/modules/${properties.get('nativeModuleFile')}`);
+      allowed.add(`files/lib/modules/${module}`);
     }
   }
   const mobilePaths = declaredMobilePaths(properties, metadata, label);

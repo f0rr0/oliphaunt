@@ -4,6 +4,7 @@ build_kind = "autotools"
 module_files = [
   "lib/postgresql/postgis-3.so",
   "lib/postgresql/postgis_raster-3.so",
+  "lib/postgresql/postgis_topology-3.so",
 ]
 data_files = [
   "share/postgresql/gdal/GDALLogoBW.svg",
@@ -43,15 +44,12 @@ data_files = [
   "share/postgresql/proj/proj.db",
 ]
 configure_flags = [
-  "--without-topology",
   "--without-sfcgal",
   "--without-address-standardizer",
   "--without-protobuf",
 ]
 excluded_sql_extensions = [
-  "postgis_topology",
   "postgis_sfcgal",
-  "postgis_tiger_geocoder",
   "address_standardizer",
   "address_standardizer_data_us",
 ]

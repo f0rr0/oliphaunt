@@ -26,6 +26,8 @@ const PROPERTY_KEYS = Object.freeze([
   'staticSymbolAliases',
   'licenseFiles',
   'licenseProfile',
+  'sqlMembers',
+  'nativeModuleStems',
   'files',
 ]);
 const LEGAL_MEMBERS_BY_PROFILE = Object.freeze({
@@ -140,6 +142,7 @@ function normalizeCanonicalRow(row, label) {
   }
   return {
     sqlName,
+    sqlMembers: canonicalList(row?.['sql-members'], `${label}.sql-members`, portable),
     product,
     releaseProduct,
     createsExtension,
@@ -171,6 +174,22 @@ function normalizeFrozenRuntimeContract(row, label) {
   if (typeof row?.createsExtension !== 'boolean') fail(label, 'createsExtension must be boolean');
   const nativeModuleStem = row?.nativeModuleStem ?? null;
   if (nativeModuleStem !== null) portable(nativeModuleStem, `${label}.nativeModuleStem`);
+  const sqlMembers = canonicalList(row.sqlMembers, `${label}.sqlMembers`, portable);
+  const nativeModuleStems = canonicalList(
+    row.nativeModuleStems,
+    `${label}.nativeModuleStems`,
+    portable,
+  );
+  if (row.createsExtension ? !sqlMembers.includes(sqlName) : sqlMembers.length !== 0)
+    fail(
+      label,
+      'sqlMembers must contain the primary extension exactly when createsExtension is true',
+    );
+  if (
+    JSON.stringify(nativeModuleStems) !==
+    JSON.stringify(nativeModuleStem === null ? [] : [nativeModuleStem])
+  )
+    fail(label, 'mobile nativeModuleStems must contain only the merged primary module');
   const dependencies = canonicalList(row?.dependencies, `${label}.dependencies`, portable);
   if (dependencies.includes(sqlName))
     fail(label, 'dependencies must not include the extension itself');
@@ -190,6 +209,8 @@ function normalizeFrozenRuntimeContract(row, label) {
     fail(label, 'extensionSqlFilePrefixes must contain dot-free portable basename prefixes');
   }
   return {
+    sqlMembers,
+    nativeModuleStems,
     createsExtension: row.createsExtension,
     dataFiles: canonicalList(row?.dataFiles, `${label}.dataFiles`, canonicalRelativePath),
     dependencies,
@@ -596,11 +617,13 @@ export async function snapshotSafeFileTree(
 
 function sqlOwned(fileName, canonical) {
   return (
-    (canonical.createsExtension && fileName === `${canonical.sqlName}.control`) ||
-    (canonical.createsExtension && fileName === `${canonical.sqlName}.sql`) ||
     (canonical.createsExtension &&
-      fileName.startsWith(`${canonical.sqlName}--`) &&
-      fileName.endsWith('.sql')) ||
+      canonical.sqlMembers.some(
+        (member) =>
+          fileName === `${member}.control` ||
+          fileName === `${member}.sql` ||
+          (fileName.startsWith(`${member}--`) && fileName.endsWith('.sql')),
+      )) ||
     canonical.extensionSqlFileNames.includes(fileName) ||
     (fileName.endsWith('.sql') &&
       canonical.extensionSqlFilePrefixes.some((prefix) => fileName.startsWith(prefix)))
@@ -635,6 +658,12 @@ export async function validateSwiftExtensionResourceArtifact({
 }) {
   assertSwiftExtensionMatchesCanonical(extension, canonical, label);
   const contract = normalizeFrozenRuntimeContract(extension, `${label} frozen carrier contract`);
+  for (const field of canonical.sqlMembers.length > 1
+    ? ['sqlMembers', 'dependencies']
+    : ['sqlMembers']) {
+    if (JSON.stringify(contract[field]) !== JSON.stringify(canonical[field]))
+      fail(label, `${field} must match generated canonical metadata`);
+  }
   if (
     nativeRuntime?.product !== 'liboliphaunt-native' ||
     !STABLE_SEMVER.test(nativeRuntime?.version ?? '')
@@ -673,6 +702,8 @@ export async function validateSwiftExtensionResourceArtifact({
     ['mobilePrebuilt', contract.nativeModuleStem === null ? 'no' : 'yes'],
     ['files', 'files'],
   ]);
+  expected.set('sqlMembers', contract.sqlMembers.join(','));
+  expected.set('nativeModuleStems', contract.nativeModuleStems.join(','));
   for (const [key, value] of expected) {
     if (properties.get(key) !== value)
       fail(label, `manifest ${key} must be ${JSON.stringify(value)}`);
@@ -729,6 +760,17 @@ export async function validateSwiftExtensionResourceArtifact({
   }
   if (contract.createsExtension && (!hasControl || !hasSql)) {
     fail(label, `must contain ${contract.sqlName}.control and canonical base installation SQL`);
+  }
+  for (const member of contract.sqlMembers) {
+    if (
+      !byPath.has(`files/share/postgresql/extension/${member}.control`) ||
+      !files.some(
+        ({ relative }) =>
+          relative.startsWith('files/share/postgresql/extension/') &&
+          isCanonicalInstallSql(relative.slice('files/share/postgresql/extension/'.length), member),
+      )
+    )
+      fail(label, `must contain ${member}.control and canonical base installation SQL`);
   }
   for (const dataFile of contract.dataFiles) allowed.add(`files/share/postgresql/${dataFile}`);
   if (contract.nativeModuleStem !== null) {

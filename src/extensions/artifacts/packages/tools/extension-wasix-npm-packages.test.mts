@@ -23,6 +23,7 @@ import {
   extensionRegistryPackageTargetSets,
   extensionReleaseVersion,
 } from '../../../../../tools/release/release-artifact-targets.mts';
+import { canonicalWasixAotMetadata } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
 import {
   extensionNpmPackageForProduct,
   extensionNpmWasixPackageForProduct,
@@ -33,7 +34,6 @@ import {
   stageExtensionWasixNpmPackages,
   writeWasixExtensionAotNpmPackage,
 } from './package-extension-release-carriers.mts';
-import { canonicalWasixAotMetadata } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../../../../..');
 const directories = [];
@@ -119,6 +119,8 @@ function inventory(sqlName, dependencies = []) {
     sqlName,
     createsExtension: true,
     nativeModuleStem: null,
+    sqlMembers: [sqlName],
+    nativeModuleStems: [],
     dependencies,
     dataFiles: [],
     extensionSqlFileNames: [`${sqlName}.control`],

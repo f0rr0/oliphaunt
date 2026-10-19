@@ -646,6 +646,8 @@ function extensionCarrier(
     );
   }
   const sqlName = portableIdentifier(manifest.sqlName, `${manifestPath}.sqlName`);
+  const sqlMembers = canonicalStringList(manifest.sqlMembers, `${manifestPath}.sqlMembers`);
+  canonicalStringList(manifest.nativeModuleStems, `${manifestPath}.nativeModuleStems`);
   if (typeof manifest.createsExtension !== 'boolean') {
     throw error(`${manifestPath} ${sqlName}.createsExtension must be boolean`);
   }
@@ -844,6 +846,8 @@ function extensionCarrier(
       tag,
       sqlName,
       createsExtension: manifest.createsExtension,
+      sqlMembers,
+      nativeModuleStems: nativeModuleStem === null ? [] : [nativeModuleStem],
       dataFiles,
       dependencies,
       extensionSqlFileNames,

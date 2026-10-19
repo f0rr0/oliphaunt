@@ -100,6 +100,8 @@ type NpmExtensionMemberContract = {
   sqlName: string;
   createsExtension: boolean;
   nativeModuleStem: string | null;
+  nativeModuleStems: string[];
+  sqlMembers: string[];
   dependencies: string[];
   dataFiles: string[];
   extensionSqlFileNames: string[];
@@ -142,7 +144,9 @@ const NPM_EXTENSION_CONTRACT_MEMBER_FIELDS = [
   'extensionSqlFilePrefixes',
   'licenseFiles',
   'nativeModuleStem',
+  'nativeModuleStems',
   'sharedPreloadLibraries',
+  'sqlMembers',
   'sqlName',
 ] as const;
 
@@ -236,7 +240,6 @@ export async function materializeExtensionInstall(
     );
   }
   const installRuntimeDirectory = install.runtimeDirectory;
-
   const versions = await packageVersions();
   const target = liboliphauntPackageTarget(platform(), arch());
   const packages = await Promise.all(
@@ -257,6 +260,7 @@ export async function materializeExtensionInstall(
       name: entry.name,
       version: entry.version,
       contract: entry.contract,
+      payloadDigest: entry.payloadDigest,
       runtimeDirectories: entry.runtimeDirectories,
       moduleDirectories: entry.moduleDirectories,
     })),
@@ -275,6 +279,7 @@ export async function materializeExtensionInstall(
         version: entry.version,
         sqlName: entry.sqlName,
         contract: entry.contract,
+        payloadDigest: entry.payloadDigest,
       })),
     },
     null,
@@ -341,6 +346,7 @@ type ResolvedExtensionPackage = {
   version: string;
   sqlName: string;
   contract: NpmExtensionMemberContract;
+  payloadDigest: string;
   runtimeDirectories: string[];
   moduleDirectories: string[];
 };
@@ -474,6 +480,7 @@ async function resolveExtensionPackage(
     version: packageJson.version,
     sqlName,
     contract: selectedContract,
+    payloadDigest: await extensionPayloadDigest(runtimeDirectories),
     runtimeDirectories,
     moduleDirectories,
   };
@@ -621,6 +628,30 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
   ) {
     throw new Error(`${label}.nativeModuleStem must be null or a portable identifier`);
   }
+  const sqlMembers = parseExtensionContractStringList(row.sqlMembers, 'sqlMembers', label);
+  const nativeModuleStems = parseExtensionContractStringList(
+    row.nativeModuleStems,
+    'nativeModuleStems',
+    label,
+  );
+  for (const [field, values] of [
+    ['sqlMembers', sqlMembers],
+    ['nativeModuleStems', nativeModuleStems],
+  ] as const) {
+    if (values.some((value) => !/^[A-Za-z0-9._-]{1,128}$/u.test(value))) {
+      throw new Error(`${label}.${field} contains an invalid identifier`);
+    }
+  }
+  if (row.createsExtension ? !sqlMembers.includes(row.sqlName) : sqlMembers.length !== 0) {
+    throw new Error(`${label}.sqlMembers must preserve its primary extension identity`);
+  }
+  if (
+    row.nativeModuleStem === null
+      ? nativeModuleStems.length !== 0
+      : !nativeModuleStems.includes(row.nativeModuleStem as string)
+  ) {
+    throw new Error(`${label}.nativeModuleStems must preserve its primary module identity`);
+  }
   const dependencies = parseExtensionContractStringList(row.dependencies, 'dependencies', label);
   if (
     dependencies.includes(row.sqlName) ||
@@ -663,6 +694,8 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
     sqlName: row.sqlName,
     createsExtension: row.createsExtension,
     nativeModuleStem: row.nativeModuleStem as string | null,
+    nativeModuleStems,
+    sqlMembers,
     dependencies,
     dataFiles,
     extensionSqlFileNames,
@@ -742,10 +775,15 @@ async function loadExtensionPackageContract(config: {
     if (
       current === undefined ||
       current.artifactProduct !== config.extension.artifactProduct ||
-      JSON.stringify(current.selectedExtensionDependencies) !== JSON.stringify(member.dependencies)
+      member.createsExtension !== current.createsExtension ||
+      member.nativeModuleStem !== current.nativeModuleStem ||
+      JSON.stringify(member.dependencies) !==
+        JSON.stringify(current.selectedExtensionDependencies) ||
+      JSON.stringify(member.sqlMembers) !== JSON.stringify(current.sqlMembers) ||
+      JSON.stringify(member.nativeModuleStems) !== JSON.stringify(current.nativeModuleStems)
     ) {
       throw new Error(
-        `${config.packageName} extension contract member ${member.sqlName} is incompatible with the SDK dependency contract`,
+        `${config.packageName} extension contract member ${member.sqlName} is incompatible with the SDK extension contract`,
       );
     }
   }
@@ -1072,11 +1110,12 @@ function extensionRuntimeSqlFileOwned(
   fileName: string,
 ): boolean {
   return (
-    (extension.createsExtension && fileName === `${extension.sqlName}.control`) ||
-    (extension.createsExtension && fileName === `${extension.sqlName}.sql`) ||
-    (extension.createsExtension &&
-      fileName.startsWith(`${extension.sqlName}--`) &&
-      fileName.endsWith('.sql')) ||
+    extension.sqlMembers.some(
+      (sqlName) =>
+        fileName === `${sqlName}.control` ||
+        fileName === `${sqlName}.sql` ||
+        (fileName.startsWith(`${sqlName}--`) && fileName.endsWith('.sql')),
+    ) ||
     extension.extensionSqlFileNames.includes(fileName) ||
     (fileName.endsWith('.sql') &&
       extension.extensionSqlFilePrefixes.some((prefix) => fileName.startsWith(prefix)))
@@ -1144,6 +1183,18 @@ async function exactRuntimeLeafPaths(root: string, source: string): Promise<stri
   return rows;
 }
 
+async function extensionPayloadDigest(roots: readonly string[]): Promise<string> {
+  const digest = createHash('sha256');
+  for (const root of [...roots].sort(compareText)) {
+    const files = await exactRuntimeLeafPaths(root, 'extension cache inputs');
+    for (const file of files.sort(compareText)) {
+      const identity = await fileSha256AndBytes(join(root, file));
+      digest.update(JSON.stringify([file, identity.sha256, identity.bytes]));
+    }
+  }
+  return digest.digest('hex');
+}
+
 async function requireExactExtensionRuntimeInventory(config: {
   contract: NpmExtensionMemberContract;
   runtimeDirectory: string;
@@ -1153,16 +1204,14 @@ async function requireExactExtensionRuntimeInventory(config: {
   const files = await exactRuntimeLeafPaths(config.runtimeDirectory, config.source);
   const dataFiles = new Set(config.contract.dataFiles.map((file) => `share/postgresql/${file}`));
   const licenseFiles = new Map(config.contract.licenseFiles.map((file) => [file.path, file]));
-  const moduleFile =
-    config.contract.nativeModuleStem === null
-      ? undefined
-      : `lib/postgresql/${config.contract.nativeModuleStem}${nativeModuleSuffixForTarget(config.target)}`;
-  const embeddedModuleFile =
-    config.contract.nativeModuleStem === null
-      ? undefined
-      : `lib/modules/${config.contract.nativeModuleStem}${nativeModuleSuffixForTarget(config.target)}`;
-  let hasControl = false;
-  let hasSql = false;
+  const moduleFiles = config.contract.nativeModuleStems.map(
+    (stem) => `lib/postgresql/${stem}${nativeModuleSuffixForTarget(config.target)}`,
+  );
+  const embeddedModuleFiles = config.contract.nativeModuleStems.map(
+    (stem) => `lib/modules/${stem}${nativeModuleSuffixForTarget(config.target)}`,
+  );
+  const controls = new Set<string>();
+  const installs = new Set<string>();
   for (const file of files) {
     const extensionPrefix = 'share/postgresql/extension/';
     if (file.startsWith(extensionPrefix)) {
@@ -1170,15 +1219,37 @@ async function requireExactExtensionRuntimeInventory(config: {
       if (fileName.includes('/') || !extensionRuntimeSqlFileOwned(config.contract, fileName)) {
         throw new Error(`${config.source} contains undeclared extension SQL/control file ${file}`);
       }
-      if (fileName === `${config.contract.sqlName}.control`) hasControl = true;
-      if (isCanonicalExtensionInstallSql(fileName, config.contract.sqlName)) hasSql = true;
+      for (const sqlName of config.contract.sqlMembers) {
+        if (fileName === `${sqlName}.control`) {
+          controls.add(sqlName);
+          const control = await readFile(join(config.runtimeDirectory, file), 'utf8');
+          const requires =
+            /^\s*requires\s*=\s*'([^']*)'/mu
+              .exec(control)?.[1]
+              ?.split(',')
+              .map((value) => value.trim())
+              .filter(Boolean) ?? [];
+          for (const dependency of requires) {
+            if (
+              dependency !== 'plpgsql' &&
+              !config.contract.sqlMembers.includes(dependency) &&
+              !config.contract.dependencies.includes(dependency)
+            ) {
+              throw new Error(
+                `${config.source} ${sqlName}.control requires undeclared dependency ${dependency}`,
+              );
+            }
+          }
+        }
+        if (isCanonicalExtensionInstallSql(fileName, sqlName)) installs.add(sqlName);
+      }
       continue;
     }
     if (
       dataFiles.has(file) ||
       licenseFiles.has(file) ||
-      file === moduleFile ||
-      file === embeddedModuleFile
+      moduleFiles.includes(file) ||
+      embeddedModuleFiles.includes(file)
     ) {
       continue;
     }
@@ -1223,18 +1294,23 @@ async function requireExactExtensionRuntimeInventory(config: {
       );
     }
   }
-  if (moduleFile !== undefined && !files.includes(moduleFile)) {
-    throw new Error(`${config.source} is missing declared native module ${moduleFile}`);
+  for (const moduleFile of moduleFiles) {
+    if (!files.includes(moduleFile))
+      throw new Error(`${config.source} is missing declared native module ${moduleFile}`);
   }
-  if (embeddedModuleFile !== undefined && !files.includes(embeddedModuleFile)) {
-    throw new Error(
-      `${config.source} is missing declared embedded native module ${embeddedModuleFile}`,
-    );
+  for (const embeddedModuleFile of embeddedModuleFiles) {
+    if (!files.includes(embeddedModuleFile)) {
+      throw new Error(
+        `${config.source} is missing declared embedded native module ${embeddedModuleFile}`,
+      );
+    }
   }
-  if (config.contract.createsExtension && (!hasControl || !hasSql)) {
-    throw new Error(
-      `${config.source} must contain ${config.contract.sqlName}.control and canonical base installation SQL`,
-    );
+  for (const sqlName of config.contract.sqlMembers) {
+    if (!controls.has(sqlName) || !installs.has(sqlName)) {
+      throw new Error(
+        `${config.source} must contain ${sqlName}.control and canonical base installation SQL`,
+      );
+    }
   }
 }
 

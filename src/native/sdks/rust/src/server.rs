@@ -848,7 +848,6 @@ mod tests {
                 .map(PathBuf::from),
             Some(proj_data)
         );
-
         let mut unselected = Command::new("postgres");
         configure_extension_runtime_env(&mut unselected, &runtime_dir, &[]);
         assert_eq!(

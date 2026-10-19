@@ -81,6 +81,9 @@ function extensionContracts(document, label) {
     }
     contracts.push({
       createsExtension: row['creates-extension'],
+      sqlMembers: canonicalStringList(row['sql-members'], `${rowLabel}.sql-members`, (value) =>
+        PORTABLE_SQL_NAME.test(value),
+      ),
       dataFiles: canonicalStringList(
         row['data-files'],
         `${rowLabel}.data-files`,
@@ -149,11 +152,13 @@ function isBaselineExtensionAsset(fileName) {
 
 function ownsExtensionAsset(contract, fileName) {
   return (
-    (contract.createsExtension && fileName === `${contract.sqlName}.control`) ||
-    (contract.createsExtension && fileName === `${contract.sqlName}.sql`) ||
     (contract.createsExtension &&
-      fileName.startsWith(`${contract.sqlName}--`) &&
-      fileName.endsWith('.sql')) ||
+      contract.sqlMembers.some(
+        (member) =>
+          fileName === `${member}.control` ||
+          fileName === `${member}.sql` ||
+          (fileName.startsWith(`${member}--`) && fileName.endsWith('.sql')),
+      )) ||
     contract.extensionSqlFileNames.includes(fileName) ||
     (fileName.endsWith('.sql') &&
       contract.extensionSqlFilePrefixes.some((prefix) => fileName.startsWith(prefix)))

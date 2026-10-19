@@ -121,6 +121,8 @@ function writeManifest(root, product, body) {
         version: currentProductVersionSync(product, 'ios-carrier-manifest.test'),
         compatibility: compatibility(),
         createsExtension: true,
+        sqlMembers: [body.sqlName],
+        nativeModuleStems: body.nativeModuleStem === null ? [] : [body.nativeModuleStem],
         dataFiles: [],
         dependencies: [],
         extensionSqlFileNames: [],
@@ -274,6 +276,8 @@ test('produces exact local and GitHub carrier envelopes ', async () => {
     );
     const postgis = writeManifest(root, 'oliphaunt-extension-postgis', {
       sqlName: 'postgis',
+      sqlMembers: ['postgis', 'postgis_raster', 'postgis_tiger_geocoder', 'postgis_topology'],
+      nativeModuleStems: ['postgis-3', 'postgis_raster-3', 'postgis_topology-3'],
       nativeModuleStem: 'postgis-3',
       iosNativeDependencies: ['geos'],
       iosRegistration: {
@@ -296,6 +300,15 @@ test('produces exact local and GitHub carrier envelopes ', async () => {
       extensionManifests: [postgis, pgtap],
       localUrls: true,
     });
+    assert.deepEqual(local.extensions.find((row) => row.sqlName === 'postgis').sqlMembers, [
+      'postgis',
+      'postgis_raster',
+      'postgis_tiger_geocoder',
+      'postgis_topology',
+    ]);
+    assert.deepEqual(local.extensions.find((row) => row.sqlName === 'postgis').nativeModuleStems, [
+      'postgis-3',
+    ]);
     assert.deepEqual(
       local.base.assets.map(({ role }) => role),
       ['base-xcframework', 'runtime-resources'],
@@ -515,6 +528,8 @@ test('bundle carriers verify exact nested bytes ', async () => {
       extensions.push({
         sqlName,
         createsExtension: true,
+        sqlMembers: [sqlName],
+        nativeModuleStems: [],
         dataFiles: [],
         dependencies: [],
         extensionSqlFileNames: [],

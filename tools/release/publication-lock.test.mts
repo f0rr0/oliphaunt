@@ -17,12 +17,12 @@ import {
   extensionCarrierLegalContract,
   stageExtensionUpstreamLicenses,
 } from '../../src/extensions/tools/extension-upstream-licenses.mts';
-import { extensionDependencyRequirement } from '../../src/wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
 import {
   buildSwiftExtensionCarrierManifest,
   iosBaseLegalMetadata,
   swiftExtensionCarrierAssetName,
 } from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
+import { extensionDependencyRequirement } from '../../src/wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
 import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import { canonicalGzipSync } from '../packaging/portable-archive.mts';
@@ -512,6 +512,8 @@ function extensionGithubReleaseFixture(
       extensionSqlFileNames: [...extension['extension-sql-file-names']].sort(),
       extensionSqlFilePrefixes: [...extension['extension-sql-file-prefixes']].sort(),
       nativeModuleStem,
+      sqlMembers: [...extension['sql-members']],
+      nativeModuleStems: [...extension['native-module-stems']],
       iosNativeDependencies: stagesIos ? iosNativeDependencies : [],
       iosRegistration:
         nativeModuleStem === null || !stagesIos
@@ -720,6 +722,8 @@ function extensionGithubReleaseFixture(
               extensionSqlFileNames: extensions[0].extensionSqlFileNames,
               extensionSqlFilePrefixes: extensions[0].extensionSqlFilePrefixes,
               nativeModuleStem: extensions[0].nativeModuleStem,
+              sqlMembers: extensions[0].sqlMembers,
+              nativeModuleStems: extensions[0].nativeModuleStems,
               iosNativeDependencies: extensions[0].iosNativeDependencies,
               iosRegistration: extensions[0].iosRegistration,
               wasixInstall: extensions[0].wasixInstall,

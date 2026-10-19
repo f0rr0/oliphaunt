@@ -42,6 +42,19 @@ impl Extension {
             .map(|stem| format!("{}{}", stem, std::env::consts::DLL_SUFFIX))
     }
 
+    /// Every native PostgreSQL module shipped by this extension product.
+    pub fn native_module_files(self) -> Vec<String> {
+        generated_extensions::native_module_stems(self)
+            .iter()
+            .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX))
+            .collect()
+    }
+
+    /// SQL extensions installed from this product's shared artifact.
+    pub const fn sql_members(self) -> &'static [&'static str] {
+        generated_extensions::sql_members(self)
+    }
+
     pub const fn creates_extension(self) -> bool {
         generated_extensions::creates_extension(self)
     }
@@ -261,6 +274,16 @@ mod package_tests {
             version: "9.8.8",
             ..PACKAGE
         };
+        static POSTGIS_PACKAGE: ExtensionPackage = ExtensionPackage {
+            product: "oliphaunt-extension-postgis",
+            ..PACKAGE
+        };
+        let postgis = Extension::POSTGIS.with_package(&POSTGIS_PACKAGE);
+        assert_eq!(
+            resolve_extensions(&[postgis]).unwrap(),
+            [Extension::FUZZYSTRMATCH, postgis],
+            "independent packages use the current catalog dependency contract"
+        );
         let selected = Extension::EARTHDISTANCE.with_package(&PACKAGE);
         let resolved = resolve_extensions(&[selected]).unwrap();
         assert_eq!(

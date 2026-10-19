@@ -14,12 +14,14 @@ import {
   metadataZip,
 } from '../../../../../tools/packaging/testdata/zip-fixture.mts';
 import { renderExtensionProducts } from './render-extension-products.mts';
+import { loadSwiftExtensionInventoryCatalog } from './extension-resource-inventory.mts';
 import {
   extractVerifiedZipArchive,
   resolveSwiftCarrierSelection,
 } from './swift-carrier-resolver.mts';
 
 const sdk = path.resolve(import.meta.dirname, '..');
+const canonicalCatalog = await loadSwiftExtensionInventoryCatalog();
 const root = path.resolve(
   process.argv[2] ?? path.join(sdk, '../../../../target/liboliphaunt-sdk-check/swift-carrier-test'),
 );
@@ -295,6 +297,7 @@ async function productionExtensionResource(sqlName, stem, nativeDependencies) {
 }
 
 async function extension(sqlName, stem, dependencies = [], nativeDependencies = []) {
+  dependencies = canonicalCatalog.get(sqlName).dependencies;
   const resource = await productionExtensionResource(sqlName, stem, nativeDependencies);
   const runtime = path.join(root, 'archives', `${sqlName}-runtime.tar.gz`);
   await fs.mkdir(path.dirname(runtime), { recursive: true });
@@ -319,7 +322,7 @@ async function extension(sqlName, stem, dependencies = [], nativeDependencies = 
   }
   const prefix =
     stem === null ? null : `oliphaunt_static_${stem.replaceAll(/[^A-Za-z0-9_]/gu, '_')}`;
-  const product = new Set(['cube', 'earthdistance', 'pg_trgm']).has(sqlName)
+  const product = new Set(['cube', 'earthdistance', 'fuzzystrmatch', 'pg_trgm']).has(sqlName)
     ? 'oliphaunt-extension-contrib-pg18'
     : `oliphaunt-extension-${sqlName.replaceAll('_', '-')}`;
   const releaseProduct =
@@ -337,6 +340,8 @@ async function extension(sqlName, stem, dependencies = [], nativeDependencies = 
     tag: `${releaseProduct}-v${version}`,
     sqlName,
     createsExtension: true,
+    sqlMembers: canonicalCatalog.get(sqlName).sqlMembers,
+    nativeModuleStems: stem === null ? [] : [stem],
     dataFiles: content.dataFiles,
     dependencies,
     extensionSqlFileNames: content.extensionSqlFileNames,
@@ -484,6 +489,7 @@ async function main() {
   await fs.mkdir(root, { recursive: true });
   const carrierized = carrierize([
     await extension('cube', 'cube'),
+    await extension('fuzzystrmatch', 'fuzzystrmatch'),
     await extension('earthdistance', 'earthdistance', ['cube']),
     await extension('pgtap', null),
     await extension(
@@ -532,6 +538,7 @@ async function main() {
             'artifact-product': 'oliphaunt-extension-pgtap',
             'release-product': 'oliphaunt-extension-pgtap',
             'creates-extension': false,
+            'sql-members': ['pgtap'],
             'native-module-stem': 'future_pgtap',
             'selected-extension-dependencies': ['cube'],
             'runtime-share-data-files': ['future/data.dat'],
@@ -609,6 +616,19 @@ async function main() {
     '0.1.0',
   ];
   await render([...common, '--output-dir', output]);
+  const renderedFiles = await fs.readdir(output, { recursive: true });
+  for (const member of canonicalCatalog.get('postgis').sqlMembers) {
+    assert.ok(
+      renderedFiles.some((file) => file.endsWith(`/extension/${member}.control`)),
+      `clean Swift package must contain ${member}.control`,
+    );
+    assert.ok(
+      renderedFiles.some(
+        (file) => file.includes(`/extension/${member}--`) && file.endsWith('.sql'),
+      ),
+      `clean Swift package must contain ${member} install SQL`,
+    );
+  }
   assert.deepEqual(
     (await fs.readdir(output, { recursive: true })).filter((entry) => entry.endsWith('.a')),
     [],
@@ -623,7 +643,7 @@ async function main() {
   });
   assert.deepEqual(
     products.selected.map(({ sqlName }) => sqlName),
-    ['cube', 'earthdistance', 'pgtap', 'postgis'],
+    ['cube', 'earthdistance', 'fuzzystrmatch', 'pgtap', 'postgis'],
   );
   assert.equal(products.selected.find(({ sqlName }) => sqlName === 'pgtap').version, '1.1.0');
   const selectedPostgis = products.selected.find(({ sqlName }) => sqlName === 'postgis');
@@ -1310,7 +1330,7 @@ async function main() {
     'mismatched-creates-extension',
     mismatchedCreatesExtension,
     'pgtap',
-    /manifest createsExtension must be "no"/u,
+    /sqlMembers must contain the primary extension exactly when createsExtension is true/u,
   );
 
   const duplicateName = structuredClone(manifest);

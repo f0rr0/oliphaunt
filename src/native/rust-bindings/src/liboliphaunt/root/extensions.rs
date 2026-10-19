@@ -5,9 +5,9 @@ use std::path::Path;
 
 use super::files::copy_file_preserving_permissions;
 use crate::error::{Error, Result};
-#[cfg(test)]
-use crate::extension::extension_install_sql_file_belongs;
-use crate::extension::{Extension, extension_data_files, extension_sql_file_belongs};
+use crate::extension::{
+    Extension, extension_data_files, extension_install_sql_file_belongs, extension_sql_file_belongs,
+};
 
 pub(super) fn selected_extension_names(extensions: &[Extension]) -> Vec<&'static str> {
     let mut names = extensions
@@ -27,16 +27,16 @@ pub(super) fn core_share_file(relative: &Path) -> bool {
     {
         return false;
     }
-    !matches!(
-        relative.to_str(),
-        Some("tsearch_data/unaccent.rules" | "tsearch_data/xsyn_sample.rules")
-    )
+    !Extension::ALL
+        .iter()
+        .flat_map(|extension| extension_data_files(*extension))
+        .any(|file| relative == Path::new(file))
 }
 
 pub(super) fn packaged_extension_module_files() -> BTreeSet<String> {
     Extension::ALL
         .iter()
-        .filter_map(|extension| extension.native_module_file())
+        .flat_map(|extension| extension.native_module_files())
         .collect()
 }
 
@@ -45,10 +45,6 @@ pub(super) fn embedded_core_module_files() -> BTreeSet<String> {
         .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX))
         .into_iter()
         .collect()
-}
-
-pub(super) fn data_files(extension: Extension) -> &'static [&'static str] {
-    extension_data_files(extension)
 }
 
 pub(super) fn copy_extension_sql_files(
@@ -92,7 +88,7 @@ pub(super) fn copy_named_extension_sql_files(
         if extension_sql_file_belongs(sql_name, &file_name) {
             if extension_sql_file_is_control(sql_name, &file_name) {
                 copied_control = true;
-            } else if extension_sql_file_is_sql(&file_name) {
+            } else if extension_install_sql_file_belongs(sql_name, &file_name) {
                 copied_sql = true;
             }
             copy_file_preserving_permissions(&entry.path(), &target_dir.join(&file_name))?;
@@ -111,20 +107,6 @@ pub(super) fn copy_named_extension_sql_files(
                 source_dir.display()
             )));
         }
-    }
-    Ok(())
-}
-
-pub(super) fn copy_extension_data_files(
-    source_share: &Path,
-    target_share: &Path,
-    extension: Extension,
-) -> Result<()> {
-    for relative in extension_data_files(extension) {
-        copy_file_preserving_permissions(
-            &source_share.join(relative),
-            &target_share.join(relative),
-        )?;
     }
     Ok(())
 }

@@ -109,6 +109,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
           "staticSymbolAliases",
           "licenseFiles",
           "licenseProfile",
+          "sqlMembers",
+          "nativeModuleStems",
           "files");
   private static final List<String> TARGET_INVARIANT_EXTENSION_PROPERTY_KEYS =
       List.of(
@@ -130,6 +132,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
           "staticSymbolAliases",
           "licenseFiles",
           "licenseProfile",
+          "sqlMembers",
+          "nativeModuleStems",
           "files");
   private final ArchiveOperations archiveOperations;
   private final FileSystemOperations fileSystemOperations;
@@ -1440,6 +1444,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     String moduleFile = manifest.getProperty("nativeModuleFile");
     String mobilePrebuilt = manifest.getProperty("mobilePrebuilt");
     String symbolPrefix = manifest.getProperty("staticSymbolPrefix");
+    extensionSqlMembers(manifest, assetName);
     List<String> staticArchiveValues =
         strictManifestCsv(manifest, "mobileStaticArchives", assetName);
     List<String> dependencyArchiveValues =
@@ -1768,6 +1773,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     }
 
     String extensionDirectory = "files/share/postgresql/extension/";
+    List<String> sqlMembers = extensionSqlMembers(manifest, assetName);
     String controlFile = extensionDirectory + sqlName + ".control";
     boolean hasControl = actualFiles.contains(controlFile);
     boolean hasInstallSql = false;
@@ -1779,7 +1785,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
         continue;
       }
       if (isOwnedExtensionSqlOrControl(
-          actual, sqlName, extensionSqlFileNames, extensionSqlFilePrefixes)) {
+          actual, sqlMembers, extensionSqlFileNames, extensionSqlFilePrefixes)) {
         expectedFiles.add(actual);
         hasInstallSql |= isInstallSql(actual, sqlName);
         hasMainExtensionCreationFile |= isMainExtensionCreationFile(actual, sqlName);
@@ -1802,6 +1808,13 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
               + assetName
               + " declares createsExtension=no but contains extension creation files for "
               + sqlName);
+    }
+    for (String member : sqlMembers) {
+      if (!actualFiles.contains(extensionDirectory + member + ".control")
+          || actualFiles.stream().noneMatch(file -> file.startsWith(extensionDirectory) && isInstallSql(file, member))) {
+        throw new GradleException("Oliphaunt extension artifact " + assetName
+            + " must contain " + member + ".control and a canonical install SQL file for " + member);
+      }
     }
     TreeSet<String> missing = new TreeSet<>(declaredFiles);
     missing.removeAll(actualFiles);
@@ -1943,9 +1956,25 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     return normalized;
   }
 
+  private static List<String> extensionSqlMembers(Properties manifest, String source) {
+    String sqlName = manifest.getProperty("sqlName");
+    List<String> members = strictManifestCsv(manifest, "sqlMembers", source);
+    List<String> modules = strictManifestCsv(manifest, "nativeModuleStems", source);
+    requireSortedManifestList(members, source, "sqlMembers");
+    requireSortedManifestList(modules, source, "nativeModuleStems");
+    if (!OliphauntExtensionCatalog.require(sqlName).sqlMembers().equals(members)) {
+      throw new GradleException(source + " sqlMembers must identify the owned SQL closure");
+    }
+    String stem = manifest.getProperty("nativeModuleStem", "");
+    if (!modules.equals(stem.isEmpty() ? List.of() : List.of(stem))) {
+      throw new GradleException(source + " nativeModuleStems must contain only the merged primary mobile module");
+    }
+    return members;
+  }
+
   private static boolean isOwnedExtensionSqlOrControl(
       String path,
-      String sqlName,
+      List<String> sqlMembers,
       List<String> extensionSqlFileNames,
       List<String> extensionSqlFilePrefixes) {
     String prefix = "files/share/postgresql/extension/";
@@ -1956,14 +1985,13 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     if (name.indexOf('/') >= 0) {
       return false;
     }
-    if (name.equals(sqlName + ".control")) {
+    if (sqlMembers.stream().anyMatch(member -> name.equals(member + ".control"))) {
       return true;
     }
     if (!name.endsWith(".sql")) {
       return false;
     }
-    return name.equals(sqlName + ".sql")
-        || name.startsWith(sqlName + "--")
+    return sqlMembers.stream().anyMatch(member -> name.equals(member + ".sql") || name.startsWith(member + "--"))
         || extensionSqlFileNames.contains(name)
         || extensionSqlFilePrefixes.stream().anyMatch(name::startsWith);
   }
@@ -2187,7 +2215,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
                       : dashToNull(row.get("static_symbol_aliases")),
                   "selected " + sqlName + " Android artifact"),
               splitCsv(dashToNull(row.get("archive_targets"))),
-              splitCsv(dashToNull(row.get("dependency_archives")))));
+              splitCsv(dashToNull(row.get("dependency_archives"))),
+              extensionSqlMembers(artifactManifest, artifact.getName())));
     }
     validateSelectedExtensionRuntimeFiles(runtimeFiles, artifacts);
     List<ExtensionRuntimeArtifact> nativeArtifacts =
@@ -2268,12 +2297,14 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
       if (!artifact.createsExtension) {
         continue;
       }
-      File control = new File(extensionDir, artifact.sqlName + ".control");
-      if (!control.isFile()) {
-        throw new GradleException(
-            "selected extension " + artifact.sqlName + " is missing packaged control file " + control);
+      for (String member : artifact.sqlMembers) {
+        File control = new File(extensionDir, member + ".control");
+        if (!control.isFile()) {
+          throw new GradleException(
+              "selected extension " + artifact.sqlName + " is missing packaged control file " + control);
+        }
+        extensionSqlFiles(runtimeFiles, member, List.of(member));
       }
-      extensionSqlFiles(runtimeFiles, artifact.sqlName);
     }
   }
 
@@ -2767,7 +2798,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
               prefix,
               artifact.createsExtension
                   ? collectExtensionSqlSymbols(
-                      runtimeFiles, artifact.sqlName, artifact.nativeModuleStem)
+                      runtimeFiles, artifact.sqlName, artifact.nativeModuleStem, artifact.sqlMembers)
                   : List.of(),
               Collections.unmodifiableMap(aliases)));
     }
@@ -2890,7 +2921,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
             symbolPrefix,
             parseStaticSymbolAliases(symbolAliases, "contract-test " + sqlName),
             List.of(),
-            List.of());
+            List.of(),
+            OliphauntExtensionCatalog.require(sqlName).sqlMembers());
     return staticRegistrySourceText(staticRegistryModules(runtimeFiles, List.of(artifact)));
   }
 
@@ -2913,7 +2945,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
             symbolPrefix,
             parseStaticSymbolAliases(symbolAliases, "contract-test " + sqlName),
             archiveTargets,
-            dependencyArchives);
+            dependencyArchives,
+            OliphauntExtensionCatalog.require(sqlName).sqlMembers());
     List<StaticRegistryModule> modules =
         staticRegistryModules(runtimeFiles, List.of(artifact));
     return staticRegistryManifestText(List.of(artifact), modules);
@@ -2941,8 +2974,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
   }
 
   private static List<String> collectExtensionSqlSymbols(
-      File runtimeFiles, String sqlName, String moduleStem) {
-    List<File> sqlFiles = extensionSqlFiles(runtimeFiles, sqlName);
+      File runtimeFiles, String sqlName, String moduleStem, List<String> sqlMembers) {
+    List<File> sqlFiles = extensionSqlFiles(runtimeFiles, sqlName, sqlMembers);
     TreeSet<String> symbols = new TreeSet<>();
     for (File file : sqlFiles) {
       try {
@@ -2956,11 +2989,12 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     return new ArrayList<>(symbols);
   }
 
-  private static List<File> extensionSqlFiles(File runtimeFiles, String sqlName) {
+  private static List<File> extensionSqlFiles(File runtimeFiles, String sqlName, List<String> sqlMembers) {
     File extensionDir = new File(runtimeFiles, "share/postgresql/extension");
     File[] sqlFiles =
         extensionDir.listFiles(
-            file -> file.isFile() && file.getName().startsWith(sqlName + "--") && file.getName().endsWith(".sql"));
+            file -> file.isFile() && file.getName().endsWith(".sql")
+                && sqlMembers.stream().anyMatch(member -> file.getName().startsWith(member + "--")));
     if (sqlFiles == null || sqlFiles.length == 0) {
       throw new GradleException("selected extension " + sqlName + " has no packaged SQL files in " + extensionDir);
     }
@@ -3790,7 +3824,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
       String staticSymbolPrefix,
       List<StaticSymbolAlias> staticSymbolAliases,
       List<String> archiveTargets,
-      List<String> dependencyArchives) {}
+      List<String> dependencyArchives,
+      List<String> sqlMembers) {}
 
   private record StaticRegistryModule(
       String moduleStem,

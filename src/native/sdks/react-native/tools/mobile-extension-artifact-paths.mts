@@ -50,6 +50,8 @@ const EXTENSION_MEMBER_KEYS = new Set([
   'extensionSqlFileNames',
   'extensionSqlFilePrefixes',
   'nativeModuleStem',
+  'sqlMembers',
+  'nativeModuleStems',
   'iosNativeDependencies',
   'iosRegistration',
   'wasixInstall',
@@ -420,6 +422,8 @@ async function loadRepositoryContract(root) {
     }
     const canonical = {
       sqlName,
+      sqlMembers: row['sql-members'],
+      nativeModuleStems: row['native-module-stems'],
       createsExtension: row['creates-extension'],
       dependencies,
       dataFiles: canonicalStringList(
@@ -595,6 +599,8 @@ function validateExactMobileRoles(member, target, assets, context) {
 
 function validateMemberContract(member, expected, context) {
   for (const field of [
+    'sqlMembers',
+    'nativeModuleStems',
     'sqlName',
     'createsExtension',
     'dependencies',

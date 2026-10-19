@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use super::super::NativeRuntimeProfile;
 use super::super::extensions::{
-    core_share_file, data_files, embedded_core_module_files, extension_sql_file_is_control,
+    core_share_file, embedded_core_module_files, extension_sql_file_is_control,
     extension_sql_file_is_sql, packaged_extension_module_files, selected_extension_names,
 };
 use super::super::files::sorted_read_dir;
@@ -15,9 +15,9 @@ use super::super::fingerprint::{
 use super::super::{NATIVE_RUNTIME_TOOLS, existing_native_tool_path, native_tool_path};
 use super::extension_artifact_root_for;
 use crate::error::{Error, Result};
-use crate::extension::Extension;
+use crate::extension::{Extension, extension_data_files as data_files};
 
-const RUNTIME_CACHE_VERSION: &str = "pg18-runtime-cache-v7";
+const RUNTIME_CACHE_VERSION: &str = "pg18-runtime-cache-v8";
 
 #[cfg(test)]
 pub(super) fn runtime_cache_key(
@@ -91,6 +91,12 @@ pub(super) fn runtime_cache_key_with_icu(
             extension_artifact_root_for(install_dir, extension_artifact_dirs, *extension);
         let extension_share = extension_root.join("share/postgresql");
         fingerprint_named_extension_sql_files(&mut state, &extension_share, extension.sql_name())?;
+        for member in extension.sql_members() {
+            hash_str(&mut state, member);
+            if *member != extension.sql_name() {
+                fingerprint_named_extension_sql_files(&mut state, &extension_share, member)?;
+            }
+        }
         for relative in data_files(*extension) {
             fingerprint_optional_file(
                 &mut state,
@@ -139,14 +145,11 @@ pub(super) fn runtime_cache_key_with_icu(
                 )?;
             }
             for extension in extensions {
-                if let Some(module) = extension.native_module_file() {
-                    let extension_root = extension_artifact_root_for(
-                        install_dir,
-                        extension_artifact_dirs,
-                        *extension,
-                    );
+                let extension_root =
+                    extension_artifact_root_for(install_dir, extension_artifact_dirs, *extension);
+                for module in extension.native_module_files() {
                     let extension_lib = extension_root.join("lib/modules");
-                    if extension_lib.join(&module).is_file() {
+                    if extension_root != install_dir || extension_lib.join(&module).is_file() {
                         fingerprint_optional_file(
                             &mut state,
                             &extension_lib,
@@ -164,12 +167,9 @@ pub(super) fn runtime_cache_key_with_icu(
         }
         NativeRuntimeProfile::PostgresServer => {
             for extension in extensions {
-                if let Some(module) = extension.native_module_file() {
-                    let extension_root = extension_artifact_root_for(
-                        install_dir,
-                        extension_artifact_dirs,
-                        *extension,
-                    );
+                let extension_root =
+                    extension_artifact_root_for(install_dir, extension_artifact_dirs, *extension);
+                for module in extension.native_module_files() {
                     let extension_lib = extension_root.join("lib/postgresql");
                     fingerprint_optional_file(
                         &mut state,
@@ -244,19 +244,20 @@ pub(super) fn cached_runtime_is_valid_with_icu(
     }
 
     for extension in extensions {
-        if extension.creates_extension()
-            && (!cache_dir
+        for sql_name in extension.sql_members() {
+            if !cache_dir
                 .join("share/postgresql/extension")
-                .join(format!("{}.control", extension.sql_name()))
+                .join(format!("{sql_name}.control"))
                 .is_file()
-                || !cache_contains_extension_sql_file(cache_dir, *extension))
-        {
-            return false;
+                || !cache_contains_extension_sql_file(cache_dir, sql_name)
+            {
+                return false;
+            }
         }
-        if let Some(module) = extension.native_module_file()
-            && !cache_dir.join("lib/postgresql").join(module).is_file()
-        {
-            return false;
+        for module in extension.native_module_files() {
+            if !cache_dir.join("lib/postgresql").join(module).is_file() {
+                return false;
+            }
         }
         for relative in data_files(*extension) {
             if !cache_dir.join("share/postgresql").join(relative).is_file() {
@@ -267,16 +268,16 @@ pub(super) fn cached_runtime_is_valid_with_icu(
     true
 }
 
-fn cache_contains_extension_sql_file(cache_dir: &Path, extension: Extension) -> bool {
+fn cache_contains_extension_sql_file(cache_dir: &Path, sql_name: &str) -> bool {
     let extension_dir = cache_dir.join("share/postgresql/extension");
     let Ok(entries) = fs::read_dir(extension_dir) else {
         return false;
     };
     entries.filter_map(|entry| entry.ok()).any(|entry| {
         let file_name = entry.file_name().to_string_lossy().into_owned();
-        !extension_sql_file_is_control(extension.sql_name(), &file_name)
+        !extension_sql_file_is_control(sql_name, &file_name)
             && extension_sql_file_is_sql(&file_name)
-            && crate::extension::extension_sql_file_belongs(extension.sql_name(), &file_name)
+            && crate::extension::extension_install_sql_file_belongs(sql_name, &file_name)
             && entry.path().is_file()
     })
 }
@@ -551,6 +552,143 @@ mod tests {
     }
 
     #[test]
+    fn postgis_companion_profiles_and_runtime_files_invalidate_only_selected_caches() {
+        let temp = TempTree::new("postgis-companion-cache");
+        let install_dir = temp.path().join("install");
+        let artifact_dir = temp.path().join("extension/postgis");
+        let embedded_modules = temp.path().join("embedded-modules");
+        write_fake_install(&install_dir);
+        write_fake_postgis_extension(&artifact_dir);
+        write_fake_postgis_extension(&install_dir);
+        for module in embedded_core_module_files() {
+            write_file(&embedded_modules.join(module), b"embedded-core");
+        }
+        let key = |profile| {
+            runtime_cache_key(
+                profile,
+                &install_dir,
+                Some(&embedded_modules),
+                std::slice::from_ref(&artifact_dir),
+                &[Extension::POSTGIS],
+            )
+            .unwrap()
+        };
+        let server = key(NativeRuntimeProfile::PostgresServer);
+        let embedded = key(NativeRuntimeProfile::OliphauntEmbedded);
+        let companion = format!("postgis_raster-3{}", std::env::consts::DLL_SUFFIX);
+        write_file(
+            &artifact_dir.join("lib/postgresql").join(&companion),
+            b"changed server companion",
+        );
+        assert_ne!(server, key(NativeRuntimeProfile::PostgresServer));
+        assert_eq!(embedded, key(NativeRuntimeProfile::OliphauntEmbedded));
+        write_file(
+            &artifact_dir.join("lib/modules").join(&companion),
+            b"changed embedded companion",
+        );
+        let changed_module = key(NativeRuntimeProfile::OliphauntEmbedded);
+        assert_ne!(embedded, changed_module);
+        write_file(
+            &artifact_dir.join("share/postgresql/extension/postgis_topology.control"),
+            b"changed topology control",
+        );
+        let changed_control = key(NativeRuntimeProfile::OliphauntEmbedded);
+        assert_ne!(changed_module, changed_control);
+        write_file(
+            &artifact_dir.join("share/postgresql/extension/postgis_tiger_geocoder--1.0.sql"),
+            b"changed tiger install",
+        );
+        let changed_sql = key(NativeRuntimeProfile::OliphauntEmbedded);
+        assert_ne!(changed_control, changed_sql);
+        write_file(
+            &artifact_dir.join("share/postgresql/proj/proj.db"),
+            b"changed projection database",
+        );
+        assert_ne!(changed_sql, key(NativeRuntimeProfile::OliphauntEmbedded));
+
+        let unselected = runtime_cache_key(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            &[],
+            &[],
+        )
+        .unwrap();
+        for module in Extension::POSTGIS.native_module_files() {
+            write_file(
+                &install_dir.join("lib/postgresql").join(module),
+                b"unselected changed module",
+            );
+        }
+        for relative in data_files(Extension::POSTGIS) {
+            write_file(
+                &install_dir.join("share/postgresql").join(relative),
+                b"unselected changed data",
+            );
+        }
+        assert_eq!(
+            unselected,
+            runtime_cache_key(
+                NativeRuntimeProfile::PostgresServer,
+                &install_dir,
+                None,
+                &[],
+                &[]
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn cached_postgis_runtime_requires_every_companion_module_control_and_install_script() {
+        let temp = TempTree::new("postgis-cache-completeness");
+        let cache_dir = temp.path().join("cache");
+        write_minimal_cache_dir(&cache_dir, "cache-key");
+
+        write_fake_postgis_extension(&cache_dir);
+        let valid = || {
+            cached_runtime_is_valid(
+                NativeRuntimeProfile::PostgresServer,
+                &cache_dir,
+                "cache-key",
+                &[Extension::POSTGIS],
+            )
+        };
+        assert!(valid());
+        let mut required = Extension::POSTGIS
+            .native_module_files()
+            .into_iter()
+            .map(|module| cache_dir.join("lib/postgresql").join(module))
+            .collect::<Vec<_>>();
+        for member in Extension::POSTGIS.sql_members() {
+            required.push(
+                cache_dir
+                    .join("share/postgresql/extension")
+                    .join(format!("{member}.control")),
+            );
+            required.push(
+                cache_dir
+                    .join("share/postgresql/extension")
+                    .join(format!("{member}--1.0.sql")),
+            );
+            write_file(
+                &cache_dir
+                    .join("share/postgresql/extension")
+                    .join(format!("{member}--ANY--1.0.sql")),
+                b"upgrade alone is insufficient",
+            );
+        }
+        required.push(cache_dir.join("share/postgresql/proj/proj.db"));
+        for file in required {
+            let bytes = fs::read(&file).unwrap();
+            fs::remove_file(&file).unwrap();
+            assert!(!valid(), "cache accepted missing {}", file.display());
+            write_file(&file, &bytes);
+        }
+        assert!(valid());
+    }
+
+    #[test]
     fn icu_data_content_does_not_participate_in_base_runtime_cache_key() {
         let temp = TempTree::new("icu-data");
         let install_dir = temp.path().join("install");
@@ -678,7 +816,6 @@ mod tests {
         let temp = TempTree::new("validation");
         let cache_dir = temp.path().join("cache");
         write_minimal_cache_dir(&cache_dir, "cache-key");
-
         assert!(
             cached_runtime_is_valid(
                 NativeRuntimeProfile::PostgresServer,
@@ -857,6 +994,33 @@ mod tests {
                 .join(format!("hstore{}", std::env::consts::DLL_SUFFIX)),
             module,
         );
+    }
+
+    fn write_fake_postgis_extension(root: &Path) {
+        for member in Extension::POSTGIS.sql_members() {
+            write_file(
+                &root
+                    .join("share/postgresql/extension")
+                    .join(format!("{member}.control")),
+                b"default_version = '1.0'\n",
+            );
+            write_file(
+                &root
+                    .join("share/postgresql/extension")
+                    .join(format!("{member}--1.0.sql")),
+                b"select 1;\n",
+            );
+        }
+        for module in Extension::POSTGIS.native_module_files() {
+            write_file(&root.join("lib/postgresql").join(&module), b"server module");
+            write_file(&root.join("lib/modules").join(&module), b"embedded module");
+        }
+        for relative in data_files(Extension::POSTGIS) {
+            write_file(
+                &root.join("share/postgresql").join(relative),
+                b"runtime data",
+            );
+        }
     }
 
     fn write_minimal_cache_dir(cache_dir: &Path, key: &str) {

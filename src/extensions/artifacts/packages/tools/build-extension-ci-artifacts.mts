@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   copyFileSync,
   cpSync,
   existsSync,
@@ -10,25 +11,15 @@ import {
   rmSync,
   statSync,
   writeFileSync,
-  chmodSync,
 } from 'node:fs';
 import path from 'node:path';
-
+import { createDeterministicTar } from '../../../../../tools/packaging/cargo-source-package.mts';
+import { canonicalGzipSync } from '../../../../../tools/packaging/portable-archive.mts';
 import {
   assertReleaseNoticesInArchive,
   stageReleaseNotices,
 } from '../../../../../tools/packaging/release-notices.mts';
 import {
-  assertExtensionUpstreamLicensesInArchive,
-  extensionCarrierLegalContract,
-  stageExtensionUpstreamLicenses,
-} from '../../../tools/extension-upstream-licenses.mts';
-
-import { createDeterministicTar } from '../../../../../tools/packaging/cargo-source-package.mts';
-import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
-import { canonicalGzipSync } from '../../../../../tools/packaging/portable-archive.mts';
-import {
-  ROOT,
   compareText,
   currentProductVersionSync,
   exactExtensionProducts,
@@ -39,18 +30,25 @@ import {
   extensionReleaseVersion,
   extensionSourceIdentity,
   extensionSqlNames,
+  ROOT,
 } from '../../../../../tools/release/release-artifact-targets.mts';
 import {
   swiftExtensionCarrierAssetName,
   writeSwiftExtensionCarrierManifest,
 } from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
-import { AOT_TARGET_TRIPLES } from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { assertCanonicalWasixAotManifest } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
+import { AOT_TARGET_TRIPLES } from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import {
   assertWasixExtensionArchiveInstall,
   assertWasixExtensionInstallSidecar,
   projectWasixExtensionInstallSidecar,
 } from '../../../contracts/wasix-extension-install.mts';
+import {
+  assertExtensionUpstreamLicensesInArchive,
+  extensionCarrierLegalContract,
+  stageExtensionUpstreamLicenses,
+} from '../../../tools/extension-upstream-licenses.mts';
+import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
 
 const PREFIX = 'build-extension-ci-artifacts.mts';
 
@@ -700,6 +698,11 @@ function stageMember(
       `${sqlName}.extension-sql-file-prefixes`,
     ),
     nativeModuleStem: extensionRow['native-module-stem'],
+    sqlMembers: stringList(extensionRow['sql-members'], `${sqlName}.sql-members`),
+    nativeModuleStems: stringList(
+      extensionRow['native-module-stems'],
+      `${sqlName}.native-module-stems`,
+    ),
     iosNativeDependencies: assets
       .filter((asset) => asset.kind === 'ios-dependency-xcframework')
       .map((asset) => asset.identity)
@@ -878,6 +881,8 @@ export function extensionReleasePropertiesText({
       `extensionSqlFileNames=${propertiesCsv(manifest.extensionSqlFileNames)}\n`,
       `extensionSqlFilePrefixes=${propertiesCsv(manifest.extensionSqlFilePrefixes)}\n`,
       `nativeModuleStem=${manifest.nativeModuleStem || ''}\n`,
+      `sqlMembers=${propertiesCsv(manifest.sqlMembers)}\n`,
+      `nativeModuleStems=${propertiesCsv(manifest.nativeModuleStems)}\n`,
       `iosNativeDependencies=${propertiesCsv(manifest.iosNativeDependencies)}\n`,
       `sharedPreloadLibraries=${propertiesCsv(manifest.sharedPreloadLibraries)}\n`,
     );
@@ -904,6 +909,8 @@ export function extensionReleasePropertiesText({
         `${prefix}.extensionSqlFileNames=${propertiesCsv(member.extensionSqlFileNames)}\n`,
         `${prefix}.extensionSqlFilePrefixes=${propertiesCsv(member.extensionSqlFilePrefixes)}\n`,
         `${prefix}.nativeModuleStem=${member.nativeModuleStem || ''}\n`,
+        `${prefix}.sqlMembers=${propertiesCsv(member.sqlMembers)}\n`,
+        `${prefix}.nativeModuleStems=${propertiesCsv(member.nativeModuleStems)}\n`,
         `${prefix}.iosNativeDependencies=${propertiesCsv(member.iosNativeDependencies)}\n`,
         `${prefix}.sharedPreloadLibraries=${propertiesCsv(member.sharedPreloadLibraries)}\n`,
       );
@@ -1087,6 +1094,8 @@ function stageProductVariant(
       extensionSqlFilePrefixes: member.extensionSqlFilePrefixes,
       createsExtension: member.createsExtension,
       nativeModuleStem: member.nativeModuleStem,
+      sqlMembers: member.sqlMembers,
+      nativeModuleStems: member.nativeModuleStems,
       iosNativeDependencies: member.iosNativeDependencies,
       iosRegistration: member.iosRegistration,
       wasixInstall: member.wasixInstall,

@@ -9,6 +9,8 @@ const metadata = {
   sqlName: 'pgtap',
   createsExtension: true,
   nativeModuleStem: null,
+  sqlMembers: ['pgtap'],
+  nativeModuleStems: [],
   dependencies: [],
   dataFiles: [],
   extensionSqlFileNames: ['uninstall_pgtap.sql'],
@@ -46,6 +48,8 @@ if (phase === 'prepare-binaries') {
           sqlName: 'auto_explain',
           createsExtension: false,
           nativeModuleStem: 'auto_explain',
+          sqlMembers: [],
+          nativeModuleStems: ['auto_explain'],
           extensionSqlFileNames: [],
           extensionSqlFilePrefixes: [],
         }

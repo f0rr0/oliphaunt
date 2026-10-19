@@ -86,7 +86,7 @@ $dependency_stamp_block
 profile=$(oliphaunt_wasix_wasix_profile_signature)
 wasixcc=$wasixcc_version
 configure=$(oliphaunt_wasix_extension_configure_signature "$REPO_ROOT" postgis)
-link=postgis-raster-plus-selected-support-side-module-v3"
+link=postgis-raster-topology-plus-selected-support-side-module-v4"
 
 if [ -f "$POSTGIS_BUILD_DIR/.oliphaunt-wasix-postgis-build" ] &&
    oliphaunt_wasix_extension_build_outputs_exist "$REPO_ROOT" postgis "$POSTGIS_BUILD_DIR" --quiet &&
@@ -359,11 +359,33 @@ EOF
     -rpath '$ORIGIN' \
     -o "$POSTGIS_BUILD_DIR/raster/rt_pg/postgis_raster-3.so"
 
+  make -s -j"$JOBS" -C topology postgis_topology.o
+  make -s -j1 -C topology topology.sql topology_upgrade.sql uninstall_topology.sql
+  "$wasm_ld" \
+    --shared \
+    --shared-memory \
+    --experimental-pic \
+    --unresolved-symbols=import-dynamic \
+    --extra-features=atomics,bulk-memory,mutable-globals \
+    --export=__wasm_call_ctors \
+    --export-if-defined=__wasm_apply_data_relocs \
+    --export-all \
+    --no-gc-sections \
+    "$POSTGIS_BUILD_DIR/topology/postgis_topology.o" \
+    "$POSTGIS_BUILD_DIR/libpgcommon/libpgcommon.a" \
+    "$POSTGIS_BUILD_DIR/liblwgeom/.libs/liblwgeom.a" \
+    --Bdynamic \
+    -L"$POSTGIS_BUILD_DIR/postgis" \
+    -loliphaunt_postgis_deps \
+    -rpath '$ORIGIN' \
+    -o "$POSTGIS_BUILD_DIR/topology/postgis_topology-3.so"
+
   # Keep extension SQL generation serial: the PostGIS SQL Makefiles share
   # generated .tmp files and do not declare complete parallel dependency edges.
   oliphaunt_wasix_verify_side_module_sjlj "$postgis_deps_module"
   oliphaunt_wasix_verify_side_module_sjlj "$POSTGIS_BUILD_DIR/postgis/postgis-3.so"
   oliphaunt_wasix_verify_side_module_sjlj "$POSTGIS_BUILD_DIR/raster/rt_pg/postgis_raster-3.so"
+  oliphaunt_wasix_verify_side_module_sjlj "$POSTGIS_BUILD_DIR/topology/postgis_topology-3.so"
   make -s -j1 -C extensions postgis_extension_helper.sql
   make -s -j1 -C extensions all
   mkdir -p "$POSTGIS_BUILD_DIR/share"
@@ -371,12 +393,14 @@ EOF
   cp -R "$PROJ_PREFIX/share/proj" "$POSTGIS_BUILD_DIR/share/proj"
   rm -rf "$POSTGIS_BUILD_DIR/share/gdal"
   cp -R "$GDAL_PREFIX/share/gdal" "$POSTGIS_BUILD_DIR/share/gdal"
-  rm -rf "$POSTGIS_BUILD_DIR/share/extension-raster"
-  mkdir -p "$POSTGIS_BUILD_DIR/share/extension-raster"
-  cp "$POSTGIS_BUILD_DIR/extensions/postgis_raster/postgis_raster.control" \
-    "$POSTGIS_BUILD_DIR/share/extension-raster/"
-  cp "$POSTGIS_BUILD_DIR/extensions/postgis_raster/sql/"*.sql \
-    "$POSTGIS_BUILD_DIR/share/extension-raster/"
+  rm -rf "$POSTGIS_BUILD_DIR/share/extension-members"
+  mkdir -p "$POSTGIS_BUILD_DIR/share/extension-members"
+  for member in postgis_raster postgis_topology postgis_tiger_geocoder; do
+    cp "$POSTGIS_BUILD_DIR/extensions/$member/$member.control" \
+      "$POSTGIS_BUILD_DIR/share/extension-members/"
+    cp "$POSTGIS_BUILD_DIR/extensions/$member/sql/"*.sql \
+      "$POSTGIS_BUILD_DIR/share/extension-members/"
+  done
 ) >&2
 
 oliphaunt_wasix_extension_build_outputs_exist "$REPO_ROOT" postgis "$POSTGIS_BUILD_DIR"

@@ -44,6 +44,8 @@ oliphaunt_postgis_output_fingerprint() {
   local archive="$5"
   local control_file="$install_dir/share/postgresql/extension/postgis.control"
   local raster_control_file="$install_dir/share/postgresql/extension/postgis_raster.control"
+  local topology_control_file="$install_dir/share/postgresql/extension/postgis_topology.control"
+  local tiger_control_file="$install_dir/share/postgresql/extension/postgis_tiger_geocoder.control"
   local proj_database="$install_dir/share/postgresql/proj/proj.db"
   local gdal_schema="$install_dir/share/postgresql/gdal/gdalvrt.xsd"
   local sql_source_root
@@ -51,12 +53,12 @@ oliphaunt_postgis_output_fingerprint() {
   local sql_count=0
   local -a outputs
 
-  outputs=("$archive" "$objects_file" "$alias_file" "$control_file" "$raster_control_file" "$proj_database" "$gdal_schema")
+  outputs=("$archive" "$objects_file" "$alias_file" "$control_file" "$raster_control_file" "$topology_control_file" "$tiger_control_file" "$proj_database" "$gdal_schema")
   while IFS= read -r object; do
     [ -n "$object" ] || continue
     outputs+=("$object")
   done < "$objects_file"
-  for sql_source_root in "$postgis_build/extensions/postgis/sql" "$postgis_build/extensions/postgis_raster/sql"; do
+  for sql_source_root in "$postgis_build/extensions/postgis/sql" "$postgis_build/extensions/postgis_raster/sql" "$postgis_build/extensions/postgis_topology/sql" "$postgis_build/extensions/postgis_tiger_geocoder/sql"; do
     while IFS= read -r sql_source; do
       [ -n "$sql_source" ] || continue
       installed_sql="$install_dir/share/postgresql/extension/$(basename "$sql_source")"
@@ -653,17 +655,18 @@ oliphaunt_postgis_stage_runtime_sql() {
     "$install_dir/share/postgresql/extension" \
     "$install_dir/share/postgresql/proj" \
     "$install_dir/share/postgresql/gdal"
-  cp -p "$postgis_build/extensions/postgis/postgis.control" \
-    "$install_dir/share/postgresql/extension/postgis.control"
-  cp -p "$postgis_build/extensions/postgis/sql/"*.sql \
-    "$install_dir/share/postgresql/extension/"
-  cp -p "$postgis_build/extensions/postgis_raster/postgis_raster.control" \
-    "$install_dir/share/postgresql/extension/postgis_raster.control"
-  cp -p "$postgis_build/extensions/postgis_raster/sql/"*.sql \
-    "$install_dir/share/postgresql/extension/"
-  perl -0pi -e 's|\$libdir/postgis_raster-3(?:\.6)?|\$libdir/postgis-3|g' \
-    "$install_dir/share/postgresql/extension/postgis_raster.control" \
-    "$install_dir/share/postgresql/extension/postgis_raster--"*.sql
+  local member
+  for member in postgis postgis_raster postgis_topology postgis_tiger_geocoder; do
+    cp -p "$postgis_build/extensions/$member/$member.control" \
+      "$install_dir/share/postgresql/extension/"
+    cp -p "$postgis_build/extensions/$member/sql/"*.sql \
+      "$install_dir/share/postgresql/extension/"
+  done
+  for member in postgis_raster postgis_topology; do
+    perl -0pi -e 's#\$libdir/postgis_(?:raster|topology)-3(?:\.6)?#\$libdir/postgis-3#g' \
+      "$install_dir/share/postgresql/extension/$member.control" \
+      "$install_dir/share/postgresql/extension/$member--"*.sql
+  done
   cp -p "$mobile_static_dependency_root/proj/share/proj/proj.db" \
     "$install_dir/share/postgresql/proj/proj.db"
   cp -a "$gdal_data/." "$install_dir/share/postgresql/gdal/"
@@ -710,6 +713,30 @@ oliphaunt_postgis_patch_raster_makefile() {
     ' "$makefile"
 }
 
+oliphaunt_postgis_patch_topology_makefile() {
+  local postgis_build="$1"
+  local prefix="$2"
+  local makefile="$postgis_build/topology/Makefile"
+  [ -f "$makefile" ] || oliphaunt_postgis_fail "PostGIS topology Makefile is missing: $makefile"
+  OLIPHAUNT_POSTGIS_TOPOLOGY_PREFIX="$prefix" perl -0pi -e '
+    my $prefix = $ENV{OLIPHAUNT_POSTGIS_TOPOLOGY_PREFIX};
+    my $defs = " -DPg_magic_func=${prefix}_topology_Pg_magic_func" .
+      " -D_PG_init=${prefix}_topology_PG_init" .
+      " -D_PG_fini=${prefix}_topology_PG_fini";
+    my $updated = s|^(PG_CPPFLAGS \+= .*)$|$1$defs|m;
+    die "could not patch PostGIS topology PG_CPPFLAGS\n" unless $updated;
+  ' "$makefile"
+}
+
+oliphaunt_postgis_build_topology_objects() {
+  local postgis_build="$1"
+  if ! make -j"$jobs" -C "$postgis_build/topology" postgis_topology.o >> "$make_log" 2>&1; then
+    tail -n 200 "$make_log" >&2 || true
+    oliphaunt_postgis_fail "PostGIS topology object compilation failed"
+  fi
+  make -j1 -C "$postgis_build/topology" topology.sql topology_upgrade.sql uninstall_topology.sql >> "$make_log" 2>&1
+}
+
 oliphaunt_postgis_build_combined_init() {
   local postgis_build="$1"
   local prefix="$2"
@@ -719,9 +746,11 @@ oliphaunt_postgis_build_combined_init() {
   cat > "$source" <<EOF
 extern void ${prefix}_core_PG_init(void);
 extern void ${prefix}_raster_PG_init(void);
+extern void ${prefix}_topology_PG_init(void);
 void ${prefix}__PG_init(void) {
   ${prefix}_core_PG_init();
   ${prefix}_raster_PG_init();
+  ${prefix}_topology_PG_init();
 }
 EOF
   "${cc[@]}" $native_cflags -fPIC -c "$source" -o "$object" >> "$make_log" 2>&1
@@ -790,6 +819,8 @@ build_postgis_mobile_static_extension_objects() {
   if [ -f "$archive" ] && [ -s "$objects_file" ] && [ -s "$alias_file" ] &&
     [ -f "$install_dir/share/postgresql/extension/postgis.control" ] &&
     [ -f "$install_dir/share/postgresql/extension/postgis_raster.control" ] &&
+    [ -f "$install_dir/share/postgresql/extension/postgis_topology.control" ] &&
+    [ -f "$install_dir/share/postgresql/extension/postgis_tiger_geocoder.control" ] &&
     [ -s "$build_stamp" ] && [ "$(cat "$build_stamp")" = "$build_fingerprint" ] &&
     [ -s "$output_stamp" ] &&
     output_fingerprint="$(oliphaunt_postgis_output_fingerprint "$postgis_build" "$object_dir" "$objects_file" "$alias_file" "$archive")" &&
@@ -840,10 +871,8 @@ build_postgis_mobile_static_extension_objects() {
     --with-gdalconfig="$gdal_config"
     --with-xml2config="$mobile_static_dependency_root/libxml2/bin/xml2-config"
     --without-protobuf
-    --without-topology
     --without-sfcgal
     --without-address-standardizer
-    --without-tiger
     --disable-nls
   )
   case "$oliphaunt_mobile_target" in
@@ -882,12 +911,14 @@ build_postgis_mobile_static_extension_objects() {
     ./configure --build="$build_alias" "${configure_args[@]}" >> "$make_log" 2>&1
     oliphaunt_postgis_patch_extension_makefile "$postgis_build" "$prefix"
     oliphaunt_postgis_patch_raster_makefile "$postgis_build" "$prefix"
+    oliphaunt_postgis_patch_topology_makefile "$postgis_build" "$prefix"
     make -j"$jobs" -C liblwgeom liblwgeom.la >> "$make_log" 2>&1
     make -j"$jobs" -C libpgcommon libpgcommon.a >> "$make_log" 2>&1
     make -j"$jobs" -C deps/flatgeobuf all >> "$make_log" 2>&1
     make -j"$jobs" -C postgis all >> "$make_log" 2>&1 || true
     make -j"$jobs" -C raster/rt_core all >> "$make_log" 2>&1
     oliphaunt_postgis_build_raster_objects "$postgis_build"
+    oliphaunt_postgis_build_topology_objects "$postgis_build"
     make -j1 -C extensions postgis_extension_helper.sql >> "$make_log" 2>&1
     make -j1 -C extensions all >> "$make_log" 2>&1
   )
@@ -903,6 +934,7 @@ build_postgis_mobile_static_extension_objects() {
     [ -n "$object" ] || continue
     oliphaunt_postgis_stage_object "$object" raster "$object_dir" "$objects_file"
   done < <(find "$postgis_build/raster/rt_pg" -maxdepth 1 -type f -name '*.o' -print | LC_ALL=C sort)
+  oliphaunt_postgis_stage_object "$postgis_build/topology/postgis_topology.o" topology "$object_dir" "$objects_file"
   for object in \
     "$postgis_build/deps/flatgeobuf/flatgeobuf_c.o" \
     "$postgis_build/deps/flatgeobuf/geometrywriter.o" \

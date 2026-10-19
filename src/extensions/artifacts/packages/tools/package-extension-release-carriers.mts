@@ -4,7 +4,6 @@ import {
   chmodSync,
   closeSync,
   copyFileSync,
-  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -19,22 +18,11 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
-import { RUST_BUILD_SCRIPT_SHA256 } from '../../../../../tools/packaging/rust-build-script-sha256.mts';
-import {
-  AOT_TARGET_TRIPLES,
-  CORE_RUNTIME_ARCHIVE_FILES,
-} from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
-import { parseNpmExtensionLicenseFiles } from '../../../../native/sdks/ts/src/native/extension-contract.ts';
 import {
   fitCargoPayloadParts,
   packageGeneratedCargoSource,
   readCargoPackageNameVersion,
 } from '../../../../../tools/packaging/cargo-source-package.mts';
-import {
-  buildIosCarrierManifest,
-  IOS_CARRIER_FILENAME,
-} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { packGeneratedNpmCarrier } from '../../../../../tools/packaging/npm-package.mts';
 import { NPM_TRUSTED_PUBLISHING_REPOSITORY } from '../../../../../tools/packaging/npm-trusted-publishing.mts';
 import {
@@ -47,6 +35,22 @@ import {
   releaseNoticeRows,
   stageReleaseNotices,
 } from '../../../../../tools/packaging/release-notices.mts';
+import { RUST_BUILD_SCRIPT_SHA256 } from '../../../../../tools/packaging/rust-build-script-sha256.mts';
+import {
+  compareText,
+  extensionRegistryPackageTargetSets,
+} from '../../../../../tools/release/release-artifact-targets.mts';
+import {
+  buildIosCarrierManifest,
+  IOS_CARRIER_FILENAME,
+} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
+import { parseNpmExtensionLicenseFiles } from '../../../../native/sdks/ts/src/native/extension-contract.ts';
+import { assertWasixAotArtifactPayloads } from '../../../../wasix/runtime/tools/check-release-assets.mts';
+import { assertCanonicalWasixAotManifest } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
+import {
+  AOT_TARGET_TRIPLES,
+  CORE_RUNTIME_ARCHIVE_FILES,
+} from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import {
   assertWasixExtensionArchiveInstall,
   assertWasixExtensionInstall,
@@ -57,29 +61,26 @@ import {
   WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
 } from '../../../contracts/wasix-extension-install.mts';
 import {
-  compareText,
-  extensionRegistryPackageTargetSets,
-} from '../../../../../tools/release/release-artifact-targets.mts';
-import {
   assertExtensionUpstreamLicensesInArchive,
   assertExtensionUpstreamLicensesInDirectory,
   extensionCarrierLegalContract,
   extensionUpstreamLicenseFileInventory,
   stageExtensionUpstreamLicenses,
 } from '../../../tools/extension-upstream-licenses.mts';
-import { validateExtensionArtifactArchive } from './extension-artifact-inventory.mts';
+import {
+  assertExtensionArtifactClosure,
+  validateExtensionArtifactArchive,
+} from './extension-artifact-inventory.mts';
 import {
   extensionNpmPackageForProduct,
   extensionNpmTargetPackageForProduct,
-  extensionNpmWasixPackageForProduct,
   extensionNpmWasixAotTargets,
+  extensionNpmWasixPackageForProduct,
   nativeExtensionCargoLinksName,
   nativeExtensionCargoPackageName,
   nativeExtensionCargoPartPackageName,
 } from './extension-registry-packages.mts';
-
-import { assertCanonicalWasixAotManifest } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
-import { assertWasixAotArtifactPayloads } from '../../../../wasix/runtime/tools/check-release-assets.mts';
+import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
 
 const ROOT = path.resolve(import.meta.dirname, '../../../../..');
 const TOOL = 'package-extension-release-carriers.mts';
@@ -466,14 +467,14 @@ const FROZEN_EXTENSION_INVENTORY_LIST_FIELDS = Object.freeze([
   'extensionSqlFileNames',
   'extensionSqlFilePrefixes',
   'sharedPreloadLibraries',
+  'sqlMembers',
+  'nativeModuleStems',
 ]);
 
 /**
  * Return the exact desktop inventory frozen into one product/member release row.
  *
- * Registry materialization deliberately does not consult the repository-wide
- * generated SDK catalog: independently versioned external products must remain
- * bound to the metadata that was qualified and versioned with that product.
+ * The release must include the complete current source-owned companion closure.
  */
 export function frozenExtensionMemberInventory(member, { product, version } = {}) {
   const owner = [product, version].every((value) => typeof value === 'string' && value.length > 0)
@@ -516,6 +517,7 @@ export function frozenExtensionMemberInventory(member, { product, version } = {}
   if (inventory.dependencies.includes(sqlName)) {
     throw new Error(`${TOOL}: ${owner}/${sqlName} frozen dependencies must exclude itself`);
   }
+  assertExtensionArtifactClosure(inventory, 'linux-x64-gnu', `${owner}/${sqlName}`);
   return Object.freeze(inventory);
 }
 
@@ -1018,7 +1020,11 @@ function checkedArchiveMemberPath(name, archive) {
   return parts.join('/');
 }
 
-function extractExtensionRuntime(asset, runtimeDir, { metadata, target, nativeRuntimeVersion }) {
+export function extractExtensionRuntime(
+  asset,
+  runtimeDir,
+  { metadata, target, nativeRuntimeVersion },
+) {
   // Native release assets are stripped and platform-validated on their target
   // builders. Carrier assembly preserves those qualified bytes; host-side
   // binary rewriting would make output coordinator-dependent.

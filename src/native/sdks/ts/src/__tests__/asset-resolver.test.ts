@@ -36,6 +36,8 @@ type FixtureExtensionContract = {
   sqlName: string;
   createsExtension: boolean;
   nativeModuleStem: string | null;
+  sqlMembers: string[];
+  nativeModuleStems: string[];
   dependencies: string[];
   dataFiles: string[];
   extensionSqlFileNames: string[];
@@ -70,6 +72,8 @@ function fixtureExtensionContract(
     sqlName: extension.sqlName,
     createsExtension: extension.createsExtension,
     nativeModuleStem: extension.nativeModuleStem,
+    sqlMembers: [...extension.sqlMembers],
+    nativeModuleStems: [...extension.nativeModuleStems],
     dependencies: [...extension.selectedExtensionDependencies],
     dataFiles: [...extension.runtimeShareDataFiles],
     extensionSqlFileNames: [...extension.extensionSqlFileNames],
@@ -398,7 +402,7 @@ async function nodeExtensionMaterializationAcceptsBuiltInPostgresDependency(): P
         nodeAssets.materializeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
           'pgtap',
         ]),
-      /member pgtap is incompatible with the SDK dependency contract/,
+      /member pgtap is incompatible with the SDK extension contract/,
     );
   } finally {
     if (installedRuntime !== undefined) {
@@ -653,6 +657,10 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
     await mkdir(join(dirname(libraryPath), 'modules'), { recursive: true });
     await writeFile(join(installRuntime, 'base-runtime.txt'), 'base');
     await writeFile(join(dirname(libraryPath), 'modules/base-module.so'), 'base-module');
+    await nodePostgisCompanionClosureInstall(
+      { libraryPath, runtimeDirectory: installRuntime },
+      createdPackageRoots,
+    );
 
     await assert.rejects(
       () =>
@@ -792,7 +800,7 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
         nodeAssets.materializeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
           'hstore',
         ]),
-      /member hstore is incompatible with the SDK dependency contract/,
+      /member hstore is incompatible with the SDK extension contract/,
     );
     await writeFile(
       join(targetRoot, 'extension-contract.json'),
@@ -1120,6 +1128,156 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
     await removeEmptyParents(nativeResolverPackageScopeRoot(), [
       dirname(nativeResolverPackageScopeRoot()),
     ]);
+  }
+}
+
+async function nodePostgisCompanionClosureInstall(
+  install: ResolvedNativeInstall,
+  createdPackageRoots: string[],
+): Promise<void> {
+  const target = liboliphauntPackageTarget(platform(), arch());
+  const { liboliphauntVersion } = await readTypeScriptPackageVersions();
+  const extension = GENERATED_EXTENSION_METADATA.find((row) => row.sqlName === 'postgis')!;
+  const basePackageName = extension.npmPackage;
+  const targetPackageName = `${basePackageName}-${target.id}`;
+  const version = '9.9.7';
+  await writeFixturePackage(basePackageName, createdPackageRoots, {
+    name: basePackageName,
+    version,
+    oliphaunt: {
+      product: extension.artifactProduct,
+      kind: 'exact-extension',
+      sqlName: 'postgis',
+      targetPackageNames: { [target.id]: targetPackageName },
+    },
+  });
+  const targetRoot = await writeFixturePackage(targetPackageName, createdPackageRoots, {
+    name: targetPackageName,
+    version,
+    oliphaunt: {
+      product: extension.artifactProduct,
+      kind: 'exact-extension-target',
+      sqlName: 'postgis',
+      target: target.id,
+      liboliphauntVersion,
+      extensionContract: 'extension-contract.json',
+      runtimeRelativePath: 'runtime',
+      moduleRelativePath: 'runtime/lib/modules',
+    },
+  });
+  const runtime = join(targetRoot, 'runtime');
+  const sqlRoot = join(runtime, 'share/postgresql/extension');
+  const suffix = nativeModuleSuffixForTarget(target.id);
+  const contractPath = join(targetRoot, 'extension-contract.json');
+  const roots = new Set<string>();
+  const writeContract = async (contract: Partial<FixtureExtensionContract>) =>
+    writeFile(
+      contractPath,
+      JSON.stringify(
+        fixtureExtensionContractManifest(extension.artifactProduct, version, target.id, [
+          contract as FixtureExtensionContract,
+        ]),
+      ),
+    );
+  const complete = fixtureExtensionContract(extension);
+  await mkdir(sqlRoot, { recursive: true });
+  for (const file of complete.dataFiles) {
+    const destination = join(runtime, 'share/postgresql', file);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, `data:${file}`);
+  }
+  for (const profile of ['postgresql', 'modules']) {
+    await mkdir(join(runtime, 'lib', profile), { recursive: true });
+  }
+  const materialize = async () => {
+    const result = await nodeAssets.materializeExtensionInstall(install, ['postgis']);
+    roots.add(dirname(result.runtimeDirectory!));
+    return result;
+  };
+  try {
+    for (const omitted of [
+      ['sqlMembers'],
+      ['nativeModuleStems'],
+      ['sqlMembers', 'nativeModuleStems'],
+    ] as const) {
+      const incomplete: Partial<FixtureExtensionContract> = { ...complete };
+      for (const field of omitted) delete incomplete[field];
+      await writeContract(incomplete);
+      await assert.rejects(materialize, /fields must be exactly/);
+    }
+    for (const incomplete of [
+      { ...complete, dependencies: [] },
+      { ...complete, sqlMembers: ['postgis'] },
+      { ...complete, nativeModuleStems: ['postgis-3'] },
+    ]) {
+      await writeContract(incomplete);
+      await assert.rejects(materialize, /incompatible with the SDK extension contract/);
+    }
+    await writeContract(complete);
+    for (const member of extension.sqlMembers) {
+      await writeFile(
+        join(sqlRoot, `${member}.control`),
+        member === 'postgis_tiger_geocoder'
+          ? "default_version='3.6.4'\nrequires='postgis,fuzzystrmatch'\n"
+          : "default_version='3.6.4'\n",
+      );
+      await writeFile(join(sqlRoot, `${member}--3.6.4.sql`), 'install');
+    }
+    for (const stem of extension.nativeModuleStems) {
+      for (const profile of ['postgresql', 'modules']) {
+        await writeFile(join(runtime, 'lib', profile, `${stem}${suffix}`), `complete:${stem}`);
+      }
+    }
+    for (const [file, expected] of [
+      [join(sqlRoot, 'postgis_topology.control'), /postgis_topology\.control and canonical/],
+      [join(sqlRoot, 'postgis_topology--3.6.4.sql'), /postgis_topology\.control and canonical/],
+      [
+        join(runtime, 'lib/postgresql', `postgis_topology-3${suffix}`),
+        /missing declared native module/,
+      ],
+      [
+        join(runtime, 'lib/modules', `postgis_topology-3${suffix}`),
+        /missing declared embedded native module/,
+      ],
+    ] as const) {
+      const bytes = await readFile(file);
+      await rm(file);
+      await assert.rejects(materialize, expected);
+      await writeFile(file, bytes);
+    }
+    const tigerControl = join(sqlRoot, 'postgis_tiger_geocoder.control');
+    const controlBytes = await readFile(tigerControl);
+    await writeFile(tigerControl, "default_version='3.6.4'\nrequires='cube'\n");
+    await assert.rejects(materialize, /requires undeclared dependency cube/);
+    await writeFile(tigerControl, controlBytes);
+    const installed = await materialize();
+    assert.equal(
+      await readFile(join(installed.moduleDirectory!, `postgis_topology-3${suffix}`), 'utf8'),
+      'complete:postgis_topology-3',
+    );
+    assert.equal(
+      await readFile(join(installed.moduleDirectory!, `fuzzystrmatch${suffix}`), 'utf8'),
+      'embedded-module:fuzzystrmatch',
+    );
+    assert.equal(
+      await readFile(
+        join(installed.runtimeDirectory!, 'share/postgresql/extension/postgis_topology--3.6.4.sql'),
+        'utf8',
+      ),
+      'install',
+    );
+    await writeFile(
+      join(runtime, 'lib/modules', `postgis_topology-3${suffix}`),
+      'updated topology',
+    );
+    const updated = await materialize();
+    assert.notEqual(updated.runtimeDirectory, installed.runtimeDirectory);
+    assert.equal(
+      await readFile(join(updated.moduleDirectory!, `postgis_topology-3${suffix}`), 'utf8'),
+      'updated topology',
+    );
+  } finally {
+    for (const root of roots) await rm(root, { recursive: true, force: true });
   }
 }
 

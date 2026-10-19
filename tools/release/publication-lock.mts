@@ -24,12 +24,11 @@ import {
   validateSelectionNeutralSwiftSourceCarrier,
   validateSwiftSourceReleaseContract,
 } from '../../src/native/sdks/swift/tools/swift-source-carrier-contract.mts';
-import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import {
   assertWasixTypescriptManifest,
   assertWasixTypescriptNativeCarrier,
 } from '../../src/wasix/sdks/ts/tools/wasix-typescript-package.mts';
-import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
+import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import { parseMavenArtifactManifest } from '../packaging/maven-artifact-manifest.mts';
 import { validateMavenCentralPublication } from '../packaging/maven-central-contract.mts';
 import { validateNpmTrustedPublishingManifest } from '../packaging/npm-trusted-publishing.mts';
@@ -37,6 +36,7 @@ import {
   readFileOnlyTarGzipEntries,
   readPortableArchiveEntries,
 } from '../packaging/portable-archive.mts';
+import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
 import {
   loadPublicationCatalog,
   PUBLICATION_CATALOG_SCHEMA,
@@ -919,6 +919,10 @@ function validateExtensionManifestRow(product, manifestPath, member) {
   if (
     member.nativeModuleStem !== iosContract.nativeModuleStem ||
     member.createsExtension !== (iosContract.metadata['creates-extension'] !== false) ||
+    stableJson(sortedStrings(member.sqlMembers)) !==
+      stableJson(iosContract.metadata['sql-members']) ||
+    stableJson(sortedStrings(member.nativeModuleStems)) !==
+      stableJson(iosContract.metadata['native-module-stems']) ||
     stableJson(sortedStrings(member.dependencies)) !==
       stableJson(
         [...(iosContract.metadata['selected-extension-dependencies'] ?? [])].sort(compareText),
@@ -981,6 +985,8 @@ function publicExtensionMember(member) {
     extensionSqlFileNames: member.extensionSqlFileNames,
     extensionSqlFilePrefixes: member.extensionSqlFilePrefixes,
     nativeModuleStem: member.nativeModuleStem,
+    sqlMembers: member.sqlMembers,
+    nativeModuleStems: member.nativeModuleStems,
     iosNativeDependencies: member.iosNativeDependencies,
     iosRegistration: member.iosRegistration,
     wasixInstall,
@@ -1525,6 +1531,8 @@ function extensionGithubReleaseArtifacts(files, product) {
     extensionSqlFileNames: publicMember.extensionSqlFileNames,
     extensionSqlFilePrefixes: publicMember.extensionSqlFilePrefixes,
     nativeModuleStem: publicMember.nativeModuleStem,
+    sqlMembers: publicMember.sqlMembers,
+    nativeModuleStems: publicMember.nativeModuleStems,
     iosNativeDependencies: publicMember.iosNativeDependencies,
     iosRegistration: publicMember.iosRegistration,
     wasixInstall: publicMember.wasixInstall,

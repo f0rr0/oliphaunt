@@ -25,6 +25,10 @@ import {
   parseExtensionArtifactProperties,
   validateExtensionArtifactArchive,
 } from './extension-artifact-inventory.mts';
+import {
+  extractExtensionRuntime,
+  frozenExtensionMemberInventory,
+} from './package-extension-release-carriers.mts';
 
 function writeString(buffer, offset, length, value) {
   const bytes = Buffer.from(value);
@@ -134,10 +138,13 @@ function manifest(overrides = {}) {
     staticSymbolAliases: '',
     licenseFiles: legal.licenseFiles.join(','),
     licenseProfile: legal.profile,
+    sqlMembers: overrides.createsExtension === 'no' ? '' : sqlName,
+    nativeModuleStems: overrides.nativeModuleStem ?? '',
     files: 'files',
     ...overrides,
   };
-  return `${EXTENSION_ARTIFACT_PROPERTY_KEYS.map((key) => `${key}=${values[key]}`).join('\n')}\n`;
+  const keys = EXTENSION_ARTIFACT_PROPERTY_KEYS;
+  return `${keys.map((key) => `${key}=${values[key]}`).join('\n')}\n`;
 }
 
 async function canonicalLegalEntries(root, sqlName, target = 'linux-x64-gnu') {
@@ -174,6 +181,8 @@ const pgtapMetadata = {
   sqlName: 'pgtap',
   createsExtension: true,
   nativeModuleStem: null,
+  sqlMembers: ['pgtap'],
+  nativeModuleStems: [],
   dependencies: [],
   dataFiles: [],
   extensionSqlFileNames: ['uninstall_pgtap.sql'],
@@ -537,6 +546,8 @@ async function main() {
       sqlName: 'auto_explain',
       createsExtension: false,
       nativeModuleStem: 'auto_explain',
+      sqlMembers: [],
+      nativeModuleStems: ['auto_explain'],
       extensionSqlFileNames: [],
       extensionSqlFilePrefixes: [],
     };
@@ -567,6 +578,8 @@ async function main() {
       sqlName: 'postgis',
       createsExtension: true,
       nativeModuleStem: 'postgis-3',
+      sqlMembers: ['postgis', 'postgis_raster', 'postgis_tiger_geocoder', 'postgis_topology'],
+      nativeModuleStems: ['postgis-3', 'postgis_raster-3', 'postgis_topology-3'],
       dependencies: [],
       dataFiles: [
         'contrib/postgis-3.6/legacy.sql',
@@ -591,6 +604,8 @@ async function main() {
           sqlName: 'postgis',
           nativeModuleStem: 'postgis-3',
           nativeModuleFile: 'postgis-3.so',
+          sqlMembers: postgisMetadata.sqlMembers.join(','),
+          nativeModuleStems: postgisMetadata.nativeModuleStems.join(','),
           dataFiles: postgisMetadata.dataFiles.join(','),
           extensionSqlFileNames: postgisMetadata.extensionSqlFileNames.join(','),
           extensionSqlFilePrefixes: postgisMetadata.extensionSqlFilePrefixes.join(','),
@@ -598,6 +613,14 @@ async function main() {
       ],
       ['files/lib/postgresql/postgis-3.so', 'module'],
       ['files/lib/modules/postgis-3.so', 'embedded module'],
+      ...['postgis_raster-3', 'postgis_topology-3'].flatMap((stem) => [
+        [`files/lib/postgresql/${stem}.so`, 'module'],
+        [`files/lib/modules/${stem}.so`, 'embedded module'],
+      ]),
+      ...['postgis_raster', 'postgis_topology', 'postgis_tiger_geocoder'].flatMap((name) => [
+        [`files/share/postgresql/extension/${name}.control`, "default_version = '3.6.3'\n"],
+        [`files/share/postgresql/extension/${name}--3.6.3.sql`, 'install'],
+      ]),
       ['files/share/postgresql/extension/postgis--3.6.1--3.6.2.sql', 'upgrade'],
       ['files/share/postgresql/extension/postgis--3.6.2--3.6.3.sql', 'upgrade'],
       ['files/share/postgresql/extension/postgis--3.6.3.sql', 'install'],
@@ -609,6 +632,14 @@ async function main() {
       ...postgisLegal,
     ]);
     const postgisFile = await writeArchive(root, 'postgis-legitimate.tar.gz', postgis);
+    assert.throws(
+      () =>
+        parseExtensionArtifactProperties(
+          postgis.get('manifest.properties').replace(/^nativeModuleStems=.*\n/mu, ''),
+          'partial frozen closure',
+        ),
+      /property fields/u,
+    );
     const validatedPostgis = validateExtensionArtifactArchive({
       file: postgisFile,
       metadata: postgisMetadata,
@@ -616,6 +647,25 @@ async function main() {
       nativeRuntimeVersion: '1.2.3',
       label: 'postgis legitimate',
     });
+    const extracted = path.join(root, 'extracted-postgis');
+    extractExtensionRuntime(postgisFile, extracted, {
+      metadata: postgisMetadata,
+      target: 'linux-x64-gnu',
+      nativeRuntimeVersion: '1.2.3',
+    });
+    await assert.rejects(fs.access(path.join(extracted, '.oliphaunt')), { code: 'ENOENT' });
+    assert.equal(
+      await fs.readFile(path.join(extracted, 'lib/modules/postgis_topology-3.so'), 'utf8'),
+      'embedded module',
+    );
+    assert.deepEqual(
+      frozenExtensionMemberInventory(postgisMetadata).nativeModuleStems,
+      postgisMetadata.nativeModuleStems,
+    );
+    assert.throws(
+      () => frozenExtensionMemberInventory({ ...postgisMetadata, nativeModuleStems: undefined }),
+      /nativeModuleStems/u,
+    );
     assert.equal(
       validatedPostgis.runtimeFiles.length,
       [...postgis.keys()].filter((member) => member.startsWith('files/')).length,
@@ -623,6 +673,71 @@ async function main() {
     assert.deepEqual(
       validatedPostgis.legalFiles.map(({ path: member }) => member),
       [...postgisLegal.keys()].sort(),
+    );
+    const legacyPostgis = new Map(
+      [...postgis].filter(([name]) => !/postgis_(raster|topology|tiger_geocoder)/u.test(name)),
+    );
+    legacyPostgis.set(
+      'manifest.properties',
+      legacyPostgis
+        .get('manifest.properties')
+        .split('\n')
+        .filter((line) => !/^(sqlMembers|nativeModuleStems)=/u.test(line))
+        .join('\n'),
+    );
+    const legacyFile = await writeArchive(root, 'postgis-legacy-core-only.tar.gz', legacyPostgis);
+    assert.throws(
+      () =>
+        frozenExtensionMemberInventory({
+          ...postgisMetadata,
+          sqlMembers: undefined,
+          nativeModuleStems: undefined,
+        }),
+      /sqlMembers/u,
+    );
+    assert.throws(
+      () =>
+        validateExtensionArtifactArchive({
+          file: legacyFile,
+          metadata: postgisMetadata,
+          target: 'linux-x64-gnu',
+          nativeRuntimeVersion: '1.2.3',
+          label: 'new frozen PostGIS rejects incomplete legacy payload',
+        }),
+      /property fields/u,
+    );
+    const incompleteMetadata = {
+      ...postgisMetadata,
+      sqlMembers: ['postgis'],
+      nativeModuleStems: ['postgis-3'],
+    };
+    assert.throws(
+      () => frozenExtensionMemberInventory(incompleteMetadata),
+      /current source-owned closure/u,
+    );
+    assert.throws(
+      () =>
+        frozenExtensionMemberInventory({ ...postgisMetadata, nativeModuleStems: ['postgis-3'] }),
+      /nativeModuleStems must match the current source-owned closure/u,
+    );
+    const incompletePostgis = new Map(legacyPostgis);
+    incompletePostgis.set(
+      'manifest.properties',
+      manifest({
+        sqlName: 'postgis',
+        nativeModuleStem: 'postgis-3',
+        nativeModuleFile: 'postgis-3.so',
+        dataFiles: postgisMetadata.dataFiles.join(','),
+        extensionSqlFileNames: '',
+        extensionSqlFilePrefixes: postgisMetadata.extensionSqlFilePrefixes.join(','),
+      }),
+    );
+    await expectArchiveFailure(
+      root,
+      'postgis-incomplete-closure.tar.gz',
+      incompletePostgis,
+      incompleteMetadata,
+      /current source-owned closure/u,
     );
 
     const missingEmbeddedPostgis = new Map(postgis);

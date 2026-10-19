@@ -532,11 +532,23 @@ async function extensionRow(root, config) {
       `staticSymbolAliases=${staticSymbolAliases.join(',')}`,
       `licenseFiles=${licenseFiles.join(',')}`,
       `licenseProfile=${profile}`,
+      `sqlMembers=${config.sqlMembers.join(',')}`,
+      `nativeModuleStems=${config.nativeModuleStem ?? ''}`,
       'files=files',
       '',
     ].join('\n'),
   );
   if (createsExtension) {
+    for (const member of config.sqlMembers.filter((name) => name !== config.sqlName)) {
+      await write(
+        path.join(source, 'files/share/postgresql/extension', `${member}.control`),
+        "default_version = '1.0'\n",
+      );
+      await write(
+        path.join(source, 'files/share/postgresql/extension', `${member}--1.0.sql`),
+        'SELECT 1;\n',
+      );
+    }
     await write(
       path.join(source, 'files', 'share', 'postgresql', 'extension', `${config.sqlName}.control`),
       `comment = '${config.sqlName} fixture'\n`,
@@ -676,6 +688,8 @@ async function extensionRow(root, config) {
     extension: {
       assets: logicalAssets.map(({ locator }) => locator),
       createsExtension,
+      sqlMembers: config.sqlMembers,
+      nativeModuleStems: config.nativeModuleStem === null ? [] : [config.nativeModuleStem],
       dataFiles,
       dependencies: config.dependencies,
       extensionSqlFileNames: config.extensionSqlFileNames,
@@ -769,6 +783,7 @@ async function createFixture(root) {
     { sqlName: 'auto_explain' },
     { sqlName: 'cube' },
     { sqlName: 'earthdistance' },
+    { sqlName: 'fuzzystrmatch' },
     { sqlName: 'pgcrypto' },
     { sqlName: 'pgtap', includeUpdateSql: true },
     {
@@ -802,6 +817,7 @@ async function createFixture(root) {
     const config = {
       ...fixture,
       createsExtension: generated['creates-extension'],
+      sqlMembers: generated['sql-members'],
       dataFiles: generated['runtime-share-data-files'],
       dependencies: generated['selected-extension-dependencies'],
       extensionSqlFileNames: generated['extension-sql-file-names'],
@@ -905,11 +921,20 @@ async function main() {
       'auto_explain',
       'cube',
       'earthdistance',
+      'fuzzystrmatch',
       'pgcrypto',
       'pgtap',
       'postgis',
     ]);
     await validateStagedPackage(output, false);
+    for (const member of GENERATED_EXTENSION_BY_SQL_NAME.get('postgis')['sql-members']) {
+      const directory = path.join(
+        output,
+        'resources/OliphauntReactNativeResources.bundle/oliphaunt/runtime/files/share/postgresql/extension',
+      );
+      await fs.access(path.join(directory, `${member}.control`));
+      await fs.access(path.join(directory, `${member}--1.0.sql`));
+    }
 
     const payloadPodspec = await fs.readFile(
       path.join(output, 'OliphauntReactNativePayload.podspec'),
@@ -995,6 +1020,7 @@ async function main() {
       'liboliphaunt_extension_auto_explain.xcframework',
       'liboliphaunt_extension_cube.xcframework',
       'liboliphaunt_extension_earthdistance.xcframework',
+      'liboliphaunt_extension_fuzzystrmatch.xcframework',
       'liboliphaunt_extension_pgcrypto.xcframework',
       'liboliphaunt_extension_postgis-3.xcframework',
     ]);
@@ -1063,12 +1089,15 @@ async function main() {
     );
     assert.match(
       runtimeManifest,
-      /^selectedExtensions=auto_explain,cube,earthdistance,pgcrypto,pgtap,postgis$/mu,
+      /^selectedExtensions=auto_explain,cube,earthdistance,fuzzystrmatch,pgcrypto,pgtap,postgis$/mu,
     );
-    assert.match(runtimeManifest, /^extensions=cube,earthdistance,pgcrypto,pgtap,postgis$/mu);
     assert.match(
       runtimeManifest,
-      /^mobileStaticRegistryRegistered=auto_explain,cube,earthdistance,pgcrypto,postgis$/mu,
+      /^extensions=cube,earthdistance,fuzzystrmatch,pgcrypto,pgtap,postgis$/mu,
+    );
+    assert.match(
+      runtimeManifest,
+      /^mobileStaticRegistryRegistered=auto_explain,cube,earthdistance,fuzzystrmatch,pgcrypto,postgis$/mu,
     );
     const packageSize = await fs.readFile(
       path.join(
@@ -1083,7 +1112,7 @@ async function main() {
     assert.match(packageSize, /^extension\tauto_explain\t-\t0\t0$/mu);
     assert.match(
       packageSize,
-      /^extensions\tselected\tauto_explain,cube,earthdistance,pgcrypto,pgtap,postgis\t/mu,
+      /^extensions\tselected\tauto_explain,cube,earthdistance,fuzzystrmatch,pgcrypto,pgtap,postgis\t/mu,
     );
     const registry = await fs.readFile(
       path.join(output, 'generated', 'static-registry', 'oliphaunt_static_registry.c'),
@@ -1182,8 +1211,8 @@ async function main() {
     await fs.writeFile(
       missingCreateableManifest,
       (await fs.readFile(missingCreateableManifest, 'utf8')).replace(
-        /^extensions=cube,earthdistance,pgcrypto,pgtap,postgis$/mu,
-        'extensions=cube,earthdistance,pgcrypto,postgis',
+        /^extensions=cube,earthdistance,fuzzystrmatch,pgcrypto,pgtap,postgis$/mu,
+        'extensions=cube,earthdistance,fuzzystrmatch,pgcrypto,postgis',
       ),
     );
     await assert.rejects(
@@ -1204,8 +1233,8 @@ async function main() {
     await fs.writeFile(
       missingNativeRegistrationManifest,
       (await fs.readFile(missingNativeRegistrationManifest, 'utf8')).replace(
-        /^mobileStaticRegistryRegistered=auto_explain,cube,earthdistance,pgcrypto,postgis$/mu,
-        'mobileStaticRegistryRegistered=cube,earthdistance,pgcrypto,postgis',
+        /^mobileStaticRegistryRegistered=auto_explain,cube,earthdistance,fuzzystrmatch,pgcrypto,postgis$/mu,
+        'mobileStaticRegistryRegistered=cube,earthdistance,fuzzystrmatch,pgcrypto,postgis',
       ),
     );
     await assert.rejects(
@@ -1544,6 +1573,43 @@ async function main() {
       /fields must be exactly bytes,carrier,format,member,path,role,sha256; got bytes,carrier,format,path,role,sha256/u,
     );
 
+    for (const field of ['sqlMembers', 'nativeModuleStems']) {
+      const incomplete = structuredClone(carrier);
+      delete incomplete.extensions.find(({ sqlName }) => sqlName === 'postgis')[field];
+      await expectCarrierFailure(
+        `missing-${field}`,
+        incomplete,
+        ['postgis'],
+        /fields must be exactly/u,
+      );
+    }
+    for (const [field, value] of [
+      ['sqlMembers', ['postgis']],
+      ['dependencies', []],
+    ]) {
+      const incomplete = structuredClone(carrier);
+      incomplete.extensions.find(({ sqlName }) => sqlName === 'postgis')[field] = value;
+      await expectCarrierFailure(
+        `incomplete-postgis-${field}`,
+        incomplete,
+        ['postgis'],
+        /must match generated canonical metadata/u,
+      );
+    }
+
+    const unmergedPostgis = structuredClone(carrier);
+    unmergedPostgis.extensions.find(({ sqlName }) => sqlName === 'postgis').nativeModuleStems = [
+      'postgis-3',
+      'postgis_raster-3',
+      'postgis_topology-3',
+    ];
+    await expectCarrierFailure(
+      'unmerged-postgis-modules',
+      unmergedPostgis,
+      ['postgis'],
+      /nativeModuleStems must contain only the merged primary mobile module/u,
+    );
+
     const missingFrozenContentField = structuredClone(carrier);
     delete missingFrozenContentField.extensions.find(({ sqlName }) => sqlName === 'pgtap')
       .dataFiles;
@@ -1801,6 +1867,28 @@ async function main() {
       nonDigitVersion,
       ['pgtap'],
       /missing an install SQL file owned by pgtap/u,
+    );
+
+    const missingCompanion = structuredClone(carrier);
+    replaceExtensionRuntimeAsset(
+      missingCompanion,
+      'postgis',
+      await mutatedExtensionRuntime(
+        root,
+        'postgis',
+        'missing-topology-control.tar.gz',
+        async (stage) => {
+          await fs.rm(
+            path.join(stage, 'files/share/postgresql/extension/postgis_topology.control'),
+          );
+        },
+      ),
+    );
+    await expectCarrierFailure(
+      'missing-topology-control',
+      missingCompanion,
+      ['postgis'],
+      /missing canonical control file postgis_topology\.control/u,
     );
 
     const wrongDependencyArchive = structuredClone(carrier);
