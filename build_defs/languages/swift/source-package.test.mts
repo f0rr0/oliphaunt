@@ -366,6 +366,10 @@ test.skipIf(process.platform === 'win32')(
       const nativeTests = path.join(scratch, 'NativeRuntimeTests.swift');
       writeFileSync(nativeTests, 'import Testing\n');
       spec.sources['Tests/OliphauntTests/NativeRuntimeTests.swift'] = nativeTests;
+      const signalHelper = path.resolve(
+        'src/native/sdks/swift/Tests/OliphauntTests/AsyncStringSignal.swift',
+      );
+      spec.sources['Tests/OliphauntTests/AsyncStringSignal.swift'] = signalHelper;
       const packaged = path.join(scratch, 'packaged');
       await packageSwiftSource(packaged, spec);
       const sdk = path.join(scratch, 'declared-sdk');
@@ -478,6 +482,11 @@ if (args[0] === 'build') {
         { env: { TEST_TMPDIR: runRoot }, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
       );
       expect(result.status, result.stderr).toBe(0);
+      expect(
+        readFileSync(
+          path.join(runRoot, 'consumer/Tests/NativeRuntimeTests/AsyncStringSignal.swift'),
+        ),
+      ).toEqual(readFileSync(signalHelper));
       expect(readFileSync(trace, 'utf8')).toBe('build\ncreate\nreopen\ntest\n');
       const proof = JSON.parse(
         readFileSync(path.join(runRoot, 'swift-consumer-receipt.json'), 'utf8'),

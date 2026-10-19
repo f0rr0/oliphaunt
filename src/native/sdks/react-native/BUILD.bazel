@@ -9,6 +9,9 @@ load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_metadata", "sdk_extension_projections")
 load("//build_defs/languages/ts:defs.bzl", "workspace_dependency_package", "workspace_dependency_link")
+load("//build_defs/languages/jvm:robolectric.bzl", "robolectric_sdk")
+load("@rules_java//java:java_import.bzl", "java_import")
+load("@rules_kotlin//kotlin:jvm.bzl", "kt_jvm_test")
 load("//build_defs/query:defs.bzl", "query_envelope")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load(":native-package.bzl", "react_native_bundle", "react_native_consumer_test", "react_native_manifest", "react_native_npm", "react_native_package_test", "react_native_templates")
@@ -155,6 +158,32 @@ cc_test(
         "//conditions:default": ["-pthread"],
     }),
     size = "small",
+)
+
+java_import(
+    name = "android_test_api",
+    testonly = True,
+    jars = ["@rules_android//tools/android:android_jar"],
+)
+robolectric_sdk(name = "android_test_sdk", jar = "@robolectric_android_35//file", testonly = True)
+kt_jvm_test(
+    name = "android_temporary_root_test",
+    srcs = ["android/src/test/java/dev/oliphaunt/reactnative/AndroidTemporaryRootTest.kt"],
+    test_class = "dev.oliphaunt.reactnative.AndroidTemporaryRootTest",
+    deps = [
+        ":android_test_api", "//src/native/sdks/kotlin:android_classes",
+        "@rules_android_maven//:org_robolectric_robolectric", "@rules_android_maven//:org_robolectric_annotations",
+        "@oliphaunt_kotlin_maven//:junit_junit", "@oliphaunt_kotlin_maven//:org_json_json",
+        "@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core",
+    ],
+    data = [":android_test_sdk", "//src/test-fixtures:storage/database-root.json"],
+    jvm_flags = [
+        "-Drobolectric.offline=true",
+        "-Drobolectric-deps.properties=$(rootpath :android_test_sdk)",
+        "-Doliphaunt.storage.fixture=$(rootpath //src/test-fixtures:storage/database-root.json)",
+    ],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "medium",
 )
 
 source_quality_files(exclude = [_LIB_OUT_DIR + "/**", _TOOLS_OUT_DIR + "/**"] + _DELIVERED_HELPERS.values())

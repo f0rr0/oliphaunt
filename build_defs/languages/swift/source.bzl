@@ -153,9 +153,13 @@ def swift_source_package(name, sources, bindings_archive, bindings_release_asset
                              ecosystem = "internal", package_name = producer + "-swift-bindings", configuration = slot, role = "compiled-source", suppliers = ":" + supplier)
             compiled.append(":" + package)
         export = name + "_" + owner + "_compiled_shipping_export"
-        tests = {"core": "//src/native/rust-bindings:unit_test", "sdk": "//src/native/sdks/rust:mobile_unit_test", "broker": "//src/native/broker:unit_test"}
+        tests = {
+            "core": ["//src/native/rust-bindings:unit_test"],
+            "sdk": ["//src/native/sdks/rust:mobile_unit_test", "//src/native/mobile-bindings:unit_test"],
+            "broker": ["//src/native/broker:unit_test"],
+        }
         shipping_export(name = export, packages = compiled,
-                        qualification = [tests[owner]],
+                        qualification = tests[owner],
                         testonly = True)
         compiled_exports.append(":" + export)
     shipping_export(name = name + "_compiled_shipping_export", exports = compiled_exports, testonly = True)

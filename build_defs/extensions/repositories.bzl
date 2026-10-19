@@ -2,6 +2,7 @@
 
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@oliphaunt_metadata//:extension-sources.bzl", "EXTENSION_DEPENDENCIES", "EXTENSION_SOURCES")
+load("//build_defs/native:repositories.bzl", "source_string_values")
 
 _BUILD = """
 package(default_visibility = ["//visibility:public"])
@@ -12,6 +13,7 @@ filegroup(
 )
 filegroup(name = "headers", srcs = glob(["src/**/*.h"], allow_empty = True))
 filegroup(name = "sql_resources", srcs = glob(["*.control", "*--*.sql", "sql/*--*.sql"], allow_empty = True))
+filegroup(name = "test_inputs", srcs = glob(["Makefile", "test/sql/*.sql", "test/expected/*.out", "test/scripts/gen*_bm25vector.py"], allow_empty = True))
 """
 
 _DEPENDENCY_BUILD = """
@@ -74,3 +76,27 @@ def _extension_sources_impl(module_ctx):
                 fail("unsupported dependency source kind %s for %s/%s" % (kind, sql_name, directory))
 
 extension_sources = module_extension(implementation = _extension_sources_impl)
+
+def _extension_test_source_impl(ctx):
+    source = source_string_values(ctx.read(ctx.attr.source_manifest))
+    commit = source.get("commit", "")
+    digest = source.get("sha256", "")
+    remote = source.get("url", "")
+    parts = (remote[:-4] if remote.endswith(".git") else remote).split("/")
+    if len(commit) != 40 or len(digest) != 64 or any([character not in "0123456789abcdef" for character in (commit + digest).elems()]):
+        fail("extension test source requires exact commit and archive SHA256")
+    if len(parts) != 5 or parts[:3] != ["https:", "", "github.com"] or any([not part or part in [".", ".."] for part in parts[3:]]):
+        fail("extension test source requires its declared canonical GitHub origin")
+    ctx.download_and_extract(
+        url = "https://codeload.github.com/%s/%s/tar.gz/%s" % (parts[3], parts[4], commit),
+        sha256 = digest,
+        stripPrefix = parts[4] + "-" + commit,
+        type = "tar.gz",
+    )
+    ctx.file("BUILD.bazel", _BUILD.replace("package(default_visibility", "package(default_testonly = True, default_visibility"), executable = False)
+
+# An old upgrade input is source-only test material, never another release product.
+extension_test_source = repository_rule(
+    implementation = _extension_test_source_impl,
+    attrs = {"source_manifest": attr.label(mandatory = True, allow_single_file = True)},
+)

@@ -52,76 +52,68 @@ internal class AndroidNativeDirectEngine(
                 resourceRoot = resourceRoot,
             )
         val storageDirectory = resolveAndroidStorage(appContext, config.storage)
-        try {
-            if (isAndroidSymbolicLink(storageDirectory)) {
-                throw OliphauntException(
-                    "database storage directory must be a real directory: ${storageDirectory.absolutePath}",
-                )
-            }
-            if (!storageDirectory.mkdirs() && !storageDirectory.isDirectory) {
-                throw OliphauntException(
-                    "failed to create database storage directory at ${storageDirectory.absolutePath}",
-                )
-            }
-            val pgdata = File(storageDirectory, "pgdata")
-            val rootState = classifyAndroidManagedRoot(storageDirectory)
-            val effectiveUsername = config.username ?: "postgres"
-            val effectiveDatabase = config.database ?: "postgres"
-            when (rootState) {
-                AndroidManagedRootState.Managed -> {
-                    validateCompleteAndroidPgdata(pgdata)
-                }
-
-                AndroidManagedRootState.Empty -> {
-                    requireAndroidFreshRootRole(effectiveUsername)
-                    // Publish PGDATA and its descriptor together. A killed initializer
-                    // may leave a sibling staging tree, but never poisons the live root.
-                    val stagingRoot = File(storageDirectory.parentFile, ".oliphaunt-root-${UUID.randomUUID()}")
-                    check(stagingRoot.mkdir()) { "failed to create database root staging directory" }
-                    val result = runCatching {
-                        Os.chmod(stagingRoot.absolutePath, 448) // 0700
-                        val stagedPgdata = File(stagingRoot, "pgdata")
-                        OliphauntAndroidRuntimeAssets.preparePgdata(
-                            assetManager = appContext.assets,
-                            pgdata = stagedPgdata,
-                            clusterSeed = runtime.clusterSeed,
-                        )
-                        validateCompleteAndroidPgdata(stagedPgdata)
-                        writeAndroidManagedRootDescriptor(stagingRoot)
-                        // POSIX rename replaces an empty directory, never a nonempty root.
-                        Os.rename(stagingRoot.absolutePath, storageDirectory.absolutePath)
-                        OliphauntAndroidRuntimeAssets.syncAndroidDirectory(storageDirectory.parentFile!!)
-                    }
-                    finishAndroidStaging(result, operation = "database root publication") {
-                        removeAndroidStagingIfPresent(stagingRoot)
-                    }
-                }
-            }
-            val effectiveLibraryPath =
-                resolveAndroidLiboliphauntLibraryPath(
-                    explicitLibraryPath = libraryPath,
-                    nativeLibraryDirectory = appContext.applicationInfo.nativeLibraryDir,
-                    sourceArchivePaths = appContext.applicationInfo.liboliphauntSourceArchivePaths(),
-                    supportedAbis = Build.SUPPORTED_ABIS.asList(),
-                )
-            return OpenOptions(
-                libraryPath = effectiveLibraryPath,
-                pgdata = pgdata.absolutePath,
-                runtimeDirectory = runtime.runtimeDirectory,
-                moduleDirectory = null,
-                icuDataDirectory = File(runtime.runtimeDirectory, "share/icu")
-                    .takeIf { it.isDirectory }?.absolutePath,
-                username = effectiveUsername,
-                database = effectiveDatabase,
-                startupArgs = config.postgresStartupArgs(runtime.sharedPreloadLibraries),
+        if (isAndroidSymbolicLink(storageDirectory)) {
+            throw OliphauntException(
+                "database storage directory must be a real directory: ${storageDirectory.absolutePath}",
             )
-        } catch (error: Throwable) {
-            // No process-resident session has been opened by preparation.
-            if (config.storage == EngineStorage.TemporaryDirectory) {
-                storageDirectory.deleteRecursively()
-            }
-            throw if (error is NativeException.Database) OliphauntException(error.detail) else error
         }
+        if (!storageDirectory.mkdirs() && !storageDirectory.isDirectory) {
+            throw OliphauntException(
+                "failed to create database storage directory at ${storageDirectory.absolutePath}",
+            )
+        }
+        val pgdata = File(storageDirectory, "pgdata")
+        val rootState = classifyAndroidManagedRoot(storageDirectory)
+        val effectiveUsername = config.username ?: "postgres"
+        val effectiveDatabase = config.database ?: "postgres"
+        when (rootState) {
+            AndroidManagedRootState.Managed -> {
+                validateCompleteAndroidPgdata(pgdata)
+            }
+
+            AndroidManagedRootState.Empty -> {
+                requireAndroidFreshRootRole(effectiveUsername)
+                // Publish PGDATA and its descriptor together. A killed initializer
+                // may leave a sibling staging tree, but never poisons the live root.
+                val stagingRoot = File(storageDirectory.parentFile, ".oliphaunt-root-${UUID.randomUUID()}")
+                check(stagingRoot.mkdir()) { "failed to create database root staging directory" }
+                val result = runCatching {
+                    Os.chmod(stagingRoot.absolutePath, 448) // 0700
+                    val stagedPgdata = File(stagingRoot, "pgdata")
+                    OliphauntAndroidRuntimeAssets.preparePgdata(
+                        assetManager = appContext.assets,
+                        pgdata = stagedPgdata,
+                        clusterSeed = runtime.clusterSeed,
+                    )
+                    validateCompleteAndroidPgdata(stagedPgdata)
+                    writeAndroidManagedRootDescriptor(stagingRoot)
+                    // POSIX rename replaces an empty directory, never a nonempty root.
+                    Os.rename(stagingRoot.absolutePath, storageDirectory.absolutePath)
+                    OliphauntAndroidRuntimeAssets.syncAndroidDirectory(storageDirectory.parentFile!!)
+                }
+                finishAndroidStaging(result, operation = "database root publication") {
+                    removeAndroidStagingIfPresent(stagingRoot)
+                }
+            }
+        }
+        val effectiveLibraryPath =
+            resolveAndroidLiboliphauntLibraryPath(
+                explicitLibraryPath = libraryPath,
+                nativeLibraryDirectory = appContext.applicationInfo.nativeLibraryDir,
+                sourceArchivePaths = appContext.applicationInfo.liboliphauntSourceArchivePaths(),
+                supportedAbis = Build.SUPPORTED_ABIS.asList(),
+            )
+        return OpenOptions(
+            libraryPath = effectiveLibraryPath,
+            pgdata = pgdata.absolutePath,
+            runtimeDirectory = runtime.runtimeDirectory,
+            moduleDirectory = null,
+            icuDataDirectory = File(runtime.runtimeDirectory, "share/icu")
+                .takeIf { it.isDirectory }?.absolutePath,
+            username = effectiveUsername,
+            database = effectiveDatabase,
+            startupArgs = config.postgresStartupArgs(runtime.sharedPreloadLibraries),
+        )
     }
 
     override suspend fun restore(
@@ -545,6 +537,8 @@ internal class AndroidNativeDirectSession(
         }
     }
     override suspend fun cancel() = nativeOperation { database.cancel() }
+    override fun isUsable(): Boolean = !database.isClosed()
+
     override suspend fun close() = nativeOperation { database.detach() }
 }
 

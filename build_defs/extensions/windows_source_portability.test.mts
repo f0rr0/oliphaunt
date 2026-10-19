@@ -2,67 +2,24 @@ import { test } from 'bun:test';
 import assert from 'node:assert/strict';
 import { windowsExtensionHeaders, windowsExtensionSource } from './windows_source_portability.mts';
 
-const structs = [
-  ['TpDictEntryV3', 'aligned(4)', 4, 12, 4],
-  ['TpDictEntry', 'aligned(8)', 8, 16, 8],
-  ['TpSegmentPosting', 'packed', 1, 14, 1],
-  ['TpSkipEntryV3', 'packed', 1, 16, 1],
-  ['TpSkipEntry', 'packed', 1, 20, 1],
-  ['TpCtidMapEntry', 'packed', 1, 6, 1],
-  ['TpExpullEntry', 'packed', 1, 7, 1],
-] as const;
-const header = (name: string) =>
-  name === 'TpExpullEntry' ? 'src/memtable/expull.h' : 'src/segment/segment.h';
-const source = (file: string) =>
-  structs
-    .filter(([name]) => header(name) === file)
-    .map(
-      ([name, attribute]) =>
-        `typedef struct ${name}\n{ int value; } __attribute__((${attribute})) ${name};\n`,
-    )
-    .join('');
 const epoch =
   '#define EPOCH_DIFF_USECS ((POSTGRES_EPOCH_JDATE - UNIX_EPOCH_JDATE) * USECS_PER_DAY)';
 
-test('every persisted textsearch layout retains its individual packing and size/alignment guards', () => {
-  for (const file of ['src/segment/segment.h', 'src/memtable/expull.h']) {
-    const before = `/* unrelated π 😀 */\r\n${source(file)}typedef struct Unchanged { int value; } Unchanged;\r\n`;
-    const after = windowsExtensionSource('pg_textsearch', file, before);
-    for (const [name, , pack, size, alignment] of structs.filter(
-      ([name]) => header(name) === file,
-    )) {
-      assert(
-        after.includes(
-          `#ifdef _MSC_VER\n#pragma pack(push, ${pack})\n#endif\ntypedef struct ${name}\n`,
-        ),
-      );
-      assert(
-        after.includes(
-          `} ${name};\n#ifdef _MSC_VER\n#pragma pack(pop)\nStaticAssertDecl(sizeof(${name}) == ${size}, "${name} size");\nStaticAssertDecl(__alignof(${name}) == ${alignment}, "${name} alignment");\n#endif`,
-        ),
-      );
-    }
-    assert.equal(
-      [...after.matchAll(/#pragma pack\(push,/gu)].length,
-      file.includes('segment') ? 6 : 1,
-    );
-    assert.equal(
-      [...after.matchAll(/#pragma pack\(pop\)/gu)].length,
-      file.includes('segment') ? 6 : 1,
-    );
-    assert(after.startsWith('/* unrelated π 😀 */\r\n'));
-    assert(after.endsWith('typedef struct Unchanged { int value; } Unchanged;\r\n'));
-  }
-});
-
-test('textsearch export annotations preserve distinct prototypes and surrounding CRLF bytes', () => {
-  for (const file of ['src/am/am.h', 'src/types/vector.h', 'src/types/query.h']) {
-    const before =
-      '/* λ */\r\nDatum one(PG_FUNCTION_ARGS);\r\nDatum two(PG_FUNCTION_ARGS);\r\nextern Datum untouched(void);\r\n';
-    assert.equal(
-      windowsExtensionSource('pg_textsearch', file, before),
-      '/* λ */\r\nextern PGDLLEXPORT Datum one(PG_FUNCTION_ARGS);\r\nextern PGDLLEXPORT Datum two(PG_FUNCTION_ARGS);\r\nextern Datum untouched(void);\r\n',
-    );
+test('textsearch 1.5.1 retains upstream MSVC layouts and exports without source patches', () => {
+  const sources = {
+    'src/segment/segment.h':
+      '#ifdef _MSC_VER\n#pragma pack(push, 1)\n#endif\ntypedef struct TpSegmentPosting\n{ ItemPointerData ctid; } TP_PACKED TpSegmentPosting;\n#ifdef _MSC_VER\n#pragma pack(pop)\n#endif\n',
+    'src/memtable/expull.h':
+      '#ifdef _MSC_VER\n#pragma pack(push, 1)\n#endif\ntypedef struct TpExpullEntry\n{ uint32 doc_id; uint16 frequency; uint8 fieldnorm; } TP_PACKED TpExpullEntry;\n#ifdef _MSC_VER\n#pragma pack(pop)\n#endif\n',
+    'src/segment/format.h':
+      'typedef struct TpDictEntryV3\n{ uint32 skip_index_offset; } pg_attribute_aligned(4) TpDictEntryV3;\n',
+    'src/layout_check.c': 'StaticAssertDecl(sizeof(TpExpullEntry) == 7, "TpExpullEntry size");\n',
+    'src/types/vector.h': 'PGDLLEXPORT Datum tpvector_in(PG_FUNCTION_ARGS);\n',
+    'src/types/query.h': 'PGDLLEXPORT Datum tpquery_in(PG_FUNCTION_ARGS);\n',
+  };
+  for (const [file, text] of Object.entries(sources)) {
+    const before = `/* upstream π 😀 */\r\n${text.replaceAll('\n', '\r\n')}`;
+    assert.equal(windowsExtensionSource('pg_textsearch', file, before), before);
   }
 });
 
@@ -100,31 +57,6 @@ test('the UUID clock adaptation retains the previous PostgreSQL epoch conversion
     );
 });
 
-test('absent or ambiguous textsearch anchors fail instead of silently applying a partial port', () => {
-  const file = 'src/segment/segment.h';
-  for (const before of [
-    '',
-    source(file).replace('typedef struct TpDictEntryV3', 'typedef struct Renamed'),
-    source(file).replace(
-      'typedef struct TpDictEntryV3',
-      'typedef struct TpDictEntryV3;\ntypedef struct TpDictEntryV3',
-    ),
-    source(file).replace('} __attribute__((aligned(4))) TpDictEntryV3;', '} TpDictEntryV3;'),
-    source(file) + '} __attribute__((aligned(4))) TpDictEntryV3;',
-  ])
-    assert.throws(() => windowsExtensionSource('pg_textsearch', file, before), /anchor/u);
-  for (const before of [
-    '',
-    'Datum repeated(PG_FUNCTION_ARGS);\nDatum repeated(PG_FUNCTION_ARGS);\n',
-  ])
-    assert.throws(
-      () => windowsExtensionSource('pg_textsearch', 'src/am/am.h', before),
-      /anchor|ambiguous/u,
-    );
-  const adapted = windowsExtensionSource('pg_textsearch', file, source(file));
-  assert.throws(() => windowsExtensionSource('pg_textsearch', file, adapted), /anchor/u);
-});
-
 test('other named inputs retain Unicode, CRLF and source text without filename guessing', () => {
   const text = `/* π 😀 */\r\n${epoch}\r\nDatum untouched(PG_FUNCTION_ARGS);\r\n`;
   for (const [extension, file] of [
@@ -137,12 +69,9 @@ test('other named inputs retain Unicode, CRLF and source text without filename g
     assert.equal(windowsExtensionSource(extension, file, text), text);
 });
 
-test('only textsearch declares the exact legacy compatibility companions', () => {
+test('textsearch only declares the PostgreSQL unistd companion', () => {
   assert.deepEqual(windowsExtensionHeaders('pg_textsearch'), {
-    'src/oliphaunt_windows_compat.h':
-      '#ifdef _MSC_VER\n#ifndef __attribute__\n#define __attribute__(x)\n#endif\n#endif\n',
-    'src/unistd.h':
-      '#ifndef OLIPHAUNT_WINDOWS_UNISTD_H\n#define OLIPHAUNT_WINDOWS_UNISTD_H\n#endif\n',
+    'src/unistd.h': '/* Provided by PostgreSQL on Windows. */\n',
   });
   assert.deepEqual(windowsExtensionHeaders('pg_uuidv7'), {});
   assert.deepEqual(windowsExtensionHeaders('vector'), {});

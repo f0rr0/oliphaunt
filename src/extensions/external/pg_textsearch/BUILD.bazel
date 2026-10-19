@@ -8,7 +8,13 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["upstream-license-data.json", "release.toml", "source.toml", "recipe.toml"])
 
-native_external_extension_carriers(sql_name = "pg_textsearch")
+native_external_extension_carriers(
+    sql_name = "pg_textsearch",
+    additional_qualification = select({
+        "//build_defs/native:linux_x86_64": ["//src/extensions/external/pg_textsearch/tests:native_upstream_test"],
+        "//conditions:default": [],
+    }),
+)
 
 native_external_extension_modules(name = "pg_textsearch")
 
@@ -20,6 +26,13 @@ extension_member_payload(
     resources = ["@pg_textsearch//:sql_resources"],
     server_module = ":pg_textsearch_server_module",
     embedded_module = ":pg_textsearch_embedded_module",
+    construction_licenses = select({
+        "//build_defs/native:linux_x86_64_gnu_2_28": {
+            "@pgvector_compiler_rt//:LICENSE.TXT": "share/licenses/llvm-compiler-rt/LICENSE.TXT",
+            "@pgvector_compiler_rt//:SOURCE.json": "share/licenses/llvm-compiler-rt/SOURCE.json",
+        },
+        "//conditions:default": {},
+    }),
 )
 
 shipping_package(name = "native_member", owner = extension_identity("pg_textsearch"), artifacts = [":native_payload"], ecosystem = "internal", package_name = "pg_textsearch", configuration = NATIVE_EXTENSION_CONFIGURATION, role = "extension-member")

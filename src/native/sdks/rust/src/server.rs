@@ -13,7 +13,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::child_process::reap_child_process;
 #[cfg(unix)]
 use crate::config::server_unix_socket_directory_str;
-use crate::config::{EngineMode, NativeServerConfig, OpenConfig, ServerListen};
+use crate::config::{
+    CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT, DEFAULT_STARTUP_TIMEOUT, EngineMode,
+    NativeServerConfig, OpenConfig, ServerListen, lifecycle_timeout,
+};
 use crate::engine::{EngineSession, NativeRuntime};
 use crate::error::{Error, Result};
 use crate::extension::{Extension, extension_runtime_environment};
@@ -24,8 +27,7 @@ use crate::protocol::{ProtocolRequest, ProtocolResponse};
 const SERVER_HOST: &str = "127.0.0.1";
 #[cfg(unix)]
 const ENV_SERVER_SDK_TRANSPORT: &str = "OLIPHAUNT_SERVER_SDK_TRANSPORT";
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
-const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const STARTUP_TIMEOUT_ENV: &str = "OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS";
 const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
 const AUTO_PORT_START_ATTEMPTS: usize = 16;
 
@@ -54,6 +56,8 @@ impl NativeRuntime for NativeServerRuntime {
     fn open(&self, config: OpenConfig) -> Result<Box<dyn EngineSession>> {
         debug_assert_eq!(config.mode, EngineMode::Server);
         config.validate()?;
+        let startup_timeout = lifecycle_timeout(STARTUP_TIMEOUT_ENV, DEFAULT_STARTUP_TIMEOUT)?;
+        let control_timeout = lifecycle_timeout(CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT)?;
         let extensions = config.resolved_extensions()?;
         let explicit_executable = self
             .executable
@@ -97,9 +101,10 @@ impl NativeRuntime for NativeServerRuntime {
                         return Err(failed_start_error(error, cleanup_failures));
                     }
                 };
-            match wait_for_server(sdk_endpoint, &mut child, &config) {
+            match wait_for_server(sdk_endpoint, &mut child, &config, startup_timeout) {
                 Ok(()) => {
                     return Ok(Box::new(NativeServerSession {
+                        control_timeout,
                         root: Some(root),
                         child: Some(child),
                         connection_string,
@@ -110,7 +115,7 @@ impl NativeRuntime for NativeServerRuntime {
                 }
                 Err(error) => {
                     let (reaped, cleanup_failures) =
-                        cleanup_failed_start(&mut child, &mut owned_socket_dir);
+                        cleanup_failed_start(&mut child, &mut owned_socket_dir, control_timeout);
                     if !reaped {
                         // The process may still be using PGDATA and its socket.
                         // Retain resources with ownership-bearing destructors
@@ -143,6 +148,7 @@ impl NativeRuntime for NativeServerRuntime {
 }
 
 struct NativeServerSession {
+    control_timeout: Duration,
     root: Option<PreparedNativeRoot>,
     child: Option<Child>,
     connection_string: String,
@@ -188,6 +194,8 @@ impl NativeServerSession {
                     .arg("-m")
                     .arg("fast")
                     .arg("-w")
+                    .arg("-t")
+                    .arg(self.control_timeout.as_millis().div_ceil(1000).to_string())
                     .arg("stop")
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
@@ -196,8 +204,8 @@ impl NativeServerSession {
                     Ok(mut child) => {
                         let outcome = reap_child_process(
                             &mut child,
-                            SHUTDOWN_TIMEOUT,
-                            SHUTDOWN_TIMEOUT,
+                            self.control_timeout,
+                            self.control_timeout,
                             "pg_ctl stop",
                         );
                         cleanup_failures.extend(outcome.failures);
@@ -226,8 +234,8 @@ impl NativeServerSession {
         if let Some(child) = self.child.as_mut() {
             let outcome = reap_child_process(
                 child,
-                SHUTDOWN_TIMEOUT,
-                SHUTDOWN_TIMEOUT,
+                self.control_timeout,
+                self.control_timeout,
                 "native server process",
             );
             cleanup_failures.extend(outcome.failures);
@@ -404,8 +412,9 @@ fn wait_for_server(
     endpoint: PostgresEndpoint,
     child: &mut Child,
     config: &OpenConfig,
+    startup_timeout: Duration,
 ) -> Result<()> {
-    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    let deadline = Instant::now() + startup_timeout;
     let mut last_error = None;
     while Instant::now() < deadline {
         if let Some(status) = child
@@ -420,11 +429,11 @@ fn wait_for_server(
             endpoint.clone(),
             &config.username,
             &config.database,
-            CONNECT_ATTEMPT_TIMEOUT,
-            STARTUP_TIMEOUT,
+            CONNECT_ATTEMPT_TIMEOUT.min(deadline.saturating_duration_since(Instant::now())),
+            deadline.saturating_duration_since(Instant::now()),
         ) {
             Ok(mut connection) => {
-                connection.terminate()?;
+                connection.terminate(deadline)?;
                 return Ok(());
             }
             Err(err) => last_error = Some(err),
@@ -434,7 +443,7 @@ fn wait_for_server(
     Err(last_error.unwrap_or_else(|| {
         Error::Engine(format!(
             "native server did not accept SDK connections on {:?} within {:?}",
-            endpoint, STARTUP_TIMEOUT
+            endpoint, startup_timeout
         ))
     }))
 }
@@ -685,11 +694,12 @@ fn create_server_socket_dir(_port: u16) -> Result<Option<PathBuf>> {
 fn cleanup_failed_start(
     child: &mut Child,
     owned_socket_dir: &mut Option<PathBuf>,
+    control_timeout: Duration,
 ) -> (bool, Vec<String>) {
     let outcome = reap_child_process(
         child,
         Duration::ZERO,
-        SHUTDOWN_TIMEOUT,
+        control_timeout,
         "failed native server startup",
     );
     let mut failures = outcome.failures;

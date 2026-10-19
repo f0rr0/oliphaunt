@@ -27,6 +27,7 @@ bun_test(
     data = [
         "source-package.fixture.mts",
         "consumer-test.mts",
+        "//src/native/sdks/swift:Tests/OliphauntTests/AsyncStringSignal.swift",
         "//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts",
         "//build_defs/native/apple:swift-candidate-contract.mts",
         "source-package.mts",

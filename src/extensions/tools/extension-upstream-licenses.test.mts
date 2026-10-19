@@ -46,65 +46,79 @@ import {
 
 const ROOT = path.resolve(import.meta.dirname, '../../..');
 
-test('native carrier SPDX follows actual compiler-runtime receipts and rejects altered receipts', () => {
-  const product = 'oliphaunt-extension-vector';
-  const target = 'android-arm64-v8a';
-  const files = nativeExtensionConstructionLicenseInventory('vector', target);
-  const legal = nativeExtensionCarrierLegal(product, ['vector'], {
-    target,
-    carriesPayload: true,
-    memberContracts: [{ sqlName: 'vector', nativeConstructionLicenseFiles: files }],
+for (const [sqlName, product] of [
+  ['vector', 'oliphaunt-extension-vector'],
+  ['pg_textsearch', 'oliphaunt-extension-pg-textsearch'],
+]) {
+  test(`${sqlName} native carrier SPDX follows actual compiler-runtime receipts and rejects altered receipts`, () => {
+    const target = 'android-arm64-v8a';
+    const files = nativeExtensionConstructionLicenseInventory(sqlName, target);
+    const legal = nativeExtensionCarrierLegal(product, [sqlName], {
+      target,
+      carriesPayload: true,
+      memberContracts: [{ sqlName, nativeConstructionLicenseFiles: files }],
+    });
+    assert.equal(
+      legal.packageSpdx,
+      `${extensionCarrierLegalContract(product, [sqlName], { family: 'native', target }).packageSpdx} AND Apache-2.0 WITH LLVM-exception`,
+    );
+    assert.equal(Object.isFrozen(legal), true);
+    assert.equal(
+      nativeExtensionCarrierLegal(product, [sqlName], { carriesPayload: false }).profile,
+      'code-facade',
+    );
+    for (const changedIndex of [0, 1]) {
+      assert.throws(
+        () =>
+          nativeExtensionCarrierLegal(product, [sqlName], {
+            target,
+            carriesPayload: true,
+            memberContracts: [
+              {
+                sqlName,
+                nativeConstructionLicenseFiles: files.map((file, index) =>
+                  index === changedIndex ? { ...file, sha256: '0'.repeat(64) } : file,
+                ),
+              },
+            ],
+          }),
+        /differs from the immutable construction source/u,
+      );
+    }
   });
-  assert.equal(
-    legal.packageSpdx,
-    `${extensionCarrierLegalContract(product, ['vector'], { family: 'native', target }).packageSpdx} AND Apache-2.0 WITH LLVM-exception`,
-  );
-  assert.equal(Object.isFrozen(legal), true);
-  assert.equal(
-    nativeExtensionCarrierLegal(product, ['vector'], { carriesPayload: false }).profile,
-    'code-facade',
-  );
-  assert.throws(
-    () =>
-      nativeExtensionCarrierLegal(product, ['vector'], {
-        target,
-        carriesPayload: true,
-        memberContracts: [
-          {
-            sqlName: 'vector',
-            nativeConstructionLicenseFiles: files.map((file, index) =>
-              index === 0 ? { ...file, sha256: '0'.repeat(64) } : file,
-            ),
-          },
-        ],
-      }),
-    /differs from the immutable construction source/u,
-  );
-});
 
-test('Maven compiler-runtime entries follow validated canonical receipts', () => {
-  const receipts = nativeExtensionConstructionLicenseInventory('vector', 'android-arm64-v8a');
-  const source = JSON.parse(
-    readFileSync(path.join(ROOT, 'build_defs/extensions/compiler_rt/source.json'), 'utf8'),
-  );
-  assert.deepEqual(
-    nativeExtensionConstructionMavenLicenses('vector', 'android-arm64-v8a', receipts),
-    [
-      {
-        name: `${source.license} (${source.project})`,
-        url: `https://github.com/llvm/llvm-project/blob/${source.commit}/${source.files.find((file) => file.destination === 'LICENSE.TXT').path}`,
-        distribution: 'repo',
-      },
-    ],
-  );
-  assert.deepEqual(nativeExtensionConstructionMavenLicenses('vector', 'android-arm64-v8a', []), []);
-  assert.throws(() =>
-    nativeExtensionConstructionMavenLicenses('vector', 'android-arm64-v8a', [
-      { ...receipts[0], sha256: '0'.repeat(64) },
-      receipts[1],
-    ]),
-  );
-});
+  test(`${sqlName} Maven compiler-runtime entries follow validated canonical receipts`, () => {
+    const receipts = nativeExtensionConstructionLicenseInventory(sqlName, 'android-arm64-v8a');
+    const source = JSON.parse(
+      readFileSync(path.join(ROOT, 'build_defs/extensions/compiler_rt/source.json'), 'utf8'),
+    );
+    assert.deepEqual(
+      nativeExtensionConstructionMavenLicenses(sqlName, 'android-arm64-v8a', receipts),
+      [
+        {
+          name: `${source.license} (${source.project})`,
+          url: `https://github.com/llvm/llvm-project/blob/${source.commit}/${source.files.find((file) => file.destination === 'LICENSE.TXT').path}`,
+          distribution: 'repo',
+        },
+      ],
+    );
+    assert.deepEqual(
+      nativeExtensionConstructionMavenLicenses(sqlName, 'android-arm64-v8a', []),
+      [],
+    );
+    for (const changedIndex of [0, 1]) {
+      assert.throws(() =>
+        nativeExtensionConstructionMavenLicenses(
+          sqlName,
+          'android-arm64-v8a',
+          receipts.map((file, index) =>
+            index === changedIndex ? { ...file, sha256: '0'.repeat(64) } : file,
+          ),
+        ),
+      );
+    }
+  });
+}
 
 test('every active external release has an exact upstream license contract', () => {
   const rows = validateExtensionUpstreamLicenseContract();
@@ -228,20 +242,24 @@ test('pgcrypto construction receipts reject unsupported targets and changed sour
   }
 });
 
-test('Android vector host receipts retain the actual Linux compiler runtime without admitting Apple receipts', () => {
-  const files = nativeExtensionConstructionLicenseInventory('vector', 'linux-x64-gnu');
-  for (const target of ['android-arm64-v8a', 'android-x86_64']) {
-    assert.deepEqual(nativeExtensionConstructionLicenseInventory('vector', target), files);
-    assert.deepEqual(
-      validateNativeExtensionConstructionLicenseInventory('vector', target, files),
-      files,
-    );
-  }
-  assert.throws(
-    () => validateNativeExtensionConstructionLicenseInventory('vector', 'ios-xcframework', files),
-    /no declared source/u,
-  );
-});
+for (const sqlName of ['vector', 'pg_textsearch']) {
+  test(`Android ${sqlName} host receipts retain the actual Linux compiler runtime without admitting Apple receipts`, () => {
+    const files = nativeExtensionConstructionLicenseInventory(sqlName, 'linux-x64-gnu');
+    for (const target of ['android-arm64-v8a', 'android-x86_64']) {
+      assert.deepEqual(nativeExtensionConstructionLicenseInventory(sqlName, target), files);
+      assert.deepEqual(
+        validateNativeExtensionConstructionLicenseInventory(sqlName, target, files),
+        files,
+      );
+    }
+    for (const target of ['ios-xcframework', 'macos-arm64', 'linux-arm64-gnu']) {
+      assert.throws(
+        () => validateNativeExtensionConstructionLicenseInventory(sqlName, target, files),
+        /no declared source/u,
+      );
+    }
+  });
+}
 
 test('carrier legal inventory binds release notices and PostGIS upstream bytes', () => {
   const legal = extensionCarrierLegalContract('oliphaunt-extension-postgis', ['postgis'], {

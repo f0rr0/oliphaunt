@@ -115,7 +115,7 @@ _native_extension_carriers = rule(implementation = _carriers_impl, toolchains = 
              "_tool": attr.label(default = "//build_defs/extensions:native_carriers.mts", allow_single_file = True),
              "_helpers": attr.label_list(default = native_extension_carrier_helpers(), allow_files = True)})
 
-def native_external_extension_carriers(sql_name, member = ":native_payload"):
+def native_external_extension_carriers(sql_name, member = ":native_payload", additional_qualification = []):
     # PostGIS's foreign dependency recipes are not inherited from generic desktop modules.
     targets = _TARGETS
     compatible = NATIVE_EXTENSION_COMPATIBLE
@@ -149,7 +149,7 @@ def native_external_extension_carriers(sql_name, member = ":native_payload"):
             "//build_defs/extensions:desktop_all_final_contract_test",
             "//build_defs/extensions:desktop_all_members_frozen_sql_test",
         ] for condition, target in targets.items()
-    }), testonly = True, target_compatible_with = compatible)
+    }) + additional_qualification, testonly = True, target_compatible_with = compatible)
     native.filegroup(name = "native_carrier_spec", srcs = [":native_carriers"], output_group = "spec")
     extension_smoke_plan(name = "native_final_plan", members = [member], fixtures = ["//src/test-fixtures/extensions:sql"])
     plans = []

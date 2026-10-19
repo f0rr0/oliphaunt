@@ -63,9 +63,7 @@ function assertOk(name, expected, actual) {
     assert.ok(actualField, `${name} missing field ${index}`);
     assert.equal(actualField.name, expectedField.name, `${name} field name`);
     assert.equal(actualField.typeOid, expectedField.typeOid, `${name} type OID`);
-    if (expectedField.format === 'text') {
-      assert.equal(actualField.format, 'text', `${name} field format`);
-    }
+    assert.equal(actualField.format, expectedField.format, `${name} field format`);
   }
 
   for (const [rowIndex, expectedRow] of expected.rows.entries()) {
@@ -74,7 +72,7 @@ function assertOk(name, expected, actual) {
       const field = expected.fields[columnIndex];
       assert.ok(field, `${name} missing expected field ${columnIndex}`);
       assert.equal(
-        actual.getText(rowIndex, field.name),
+        actual.rows[rowIndex].text(columnIndex),
         expectedValue,
         `${name} row ${rowIndex} column ${field.name}`,
       );

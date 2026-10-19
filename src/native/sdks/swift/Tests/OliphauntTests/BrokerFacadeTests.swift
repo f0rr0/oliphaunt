@@ -38,6 +38,7 @@ private actor BrokerTestSession: OliphauntSession {
     init(failClose: Bool = false) { self.failClose = failClose }
     nonisolated func isUsable() -> Bool { !failClose }
     private(set) var calls = 0
+    private(set) var closeCalls = 0
     func execProtocolRaw(_ bytes: Data) async throws -> Data {
         calls += 1
         if bytes.first == 1 {
@@ -56,6 +57,7 @@ private actor BrokerTestSession: OliphauntSession {
     func backup() async throws -> Data { fatalError("unused") }
     func cancel() async throws {}
     func close() async throws {
+        closeCalls += 1
         if failClose {
             throw OliphauntBrokerError(
                 reason: .workerInterrupted, execution: .unknown,
@@ -65,9 +67,11 @@ private actor BrokerTestSession: OliphauntSession {
 }
 
 @Test func brokerTerminalCloseReleasesFacadeEvenWhenReceiptIsLost() async throws {
+    let session = BrokerTestSession(failClose: true)
     let database = try await OliphauntDatabase.open(
-        engine: BrokerTestEngine(session: BrokerTestSession(failClose: true)))
+        engine: BrokerTestEngine(session: session))
     await #expect(throws: OliphauntBrokerError.self) { try await database.close() }
     #expect(await database.isClosed)
-    try await database.close()
+    await #expect(throws: OliphauntBrokerError.self) { try await database.close() }
+    #expect(await session.closeCalls == 1)
 }

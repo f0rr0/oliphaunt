@@ -10,10 +10,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import {
-  windowsExtensionHeaders,
-  windowsExtensionSource,
-} from '../../../../../build_defs/extensions/windows_source_portability.mts';
+import { windowsExtensionSource } from '../../../../../build_defs/extensions/windows_source_portability.mts';
 import { preprocessSql } from '../../../external/postgis/tools/preprocess-sql.mts';
 
 const read = (file: string) => readFileSync(file, 'utf8');
@@ -63,21 +60,6 @@ export function pgxsSources(root: string) {
     'unsupported PGXS object expression',
   );
   return values.map((value) => value.slice(0, -2) + '.c');
-}
-
-export function patchTextsearch(root: string) {
-  for (const [file, text] of Object.entries(windowsExtensionHeaders('pg_textsearch')))
-    write(path.join(root, file), text);
-  for (const file of [
-    'src/segment/segment.h',
-    'src/memtable/expull.h',
-    'src/am/am.h',
-    'src/types/vector.h',
-    'src/types/query.h',
-  ]) {
-    const target = path.join(root, file);
-    write(target, windowsExtensionSource('pg_textsearch', file, read(target)));
-  }
 }
 
 type Config = { repo: string; work: string; postgres: string; install: string };
@@ -159,11 +141,11 @@ export function prepareSimple(config: Config, extension: string) {
       `${extension}.control`,
     ];
     if (extension === 'pg_textsearch') {
-      patchTextsearch(destination);
+      // PostgreSQL supplies the Windows APIs; upstream still includes unistd.h.
+      write(path.join(destination, 'src/unistd.h'), '/* Provided by PostgreSQL on Windows. */\n');
       cArgs.push(
         '/D_CRT_SECURE_NO_WARNINGS',
         `/DPG_TEXTSEARCH_VERSION="${version(destination, extension)}"`,
-        `/FI${path.join(destination, 'src/oliphaunt_windows_compat.h')}`,
       );
       includes.push('src');
     }

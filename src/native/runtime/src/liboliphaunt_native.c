@@ -630,6 +630,25 @@ int32_t oliphaunt_init_with_error(
     return run_init_operation(config, out, error, true);
 }
 
+static int32_t reset_session_command(OliphauntHandle *handle, const char *sql) {
+    OliphauntResponse response = {0};
+    int32_t rc = oliphaunt_exec_simple_query(handle, sql, strlen(sql), &response);
+    if (rc == 0) {
+        bool tag_matches = false;
+        if (!oliphaunt_response_confirms_command(response.data, response.len, sql, &tag_matches) ||
+            !tag_matches || response.data[response.len - 1] != 'I') {
+            char message[OLIPHAUNT_ERROR_CAPACITY];
+            if (!oliphaunt_response_error_message(response.data, response.len, message, sizeof(message))) {
+                snprintf(message, sizeof(message), "native session reset was not confirmed; logical handle remains active");
+            }
+            set_error(handle, message);
+            rc = -1;
+        }
+    }
+    oliphaunt_free_response(&response);
+    return rc;
+}
+
 static int32_t oliphaunt_detach_impl(OliphauntHandle *handle) {
     if (handle == NULL) {
         return 0;
@@ -658,19 +677,13 @@ static int32_t oliphaunt_detach_impl(OliphauntHandle *handle) {
 
     if (can_reset) {
         if (in_transaction) {
-            OliphauntResponse response = {0};
-            static const char rollback_sql[] = "ROLLBACK";
-            int32_t rc = oliphaunt_exec_simple_query(handle, rollback_sql, sizeof(rollback_sql) - 1, &response);
-            oliphaunt_free_response(&response);
+            int32_t rc = reset_session_command(handle, "ROLLBACK");
             if (rc != 0) {
                 return rc;
             }
         }
 
-        OliphauntResponse response = {0};
-        static const char discard_sql[] = "DISCARD ALL";
-        int32_t rc = oliphaunt_exec_simple_query(handle, discard_sql, sizeof(discard_sql) - 1, &response);
-        oliphaunt_free_response(&response);
+        int32_t rc = reset_session_command(handle, "DISCARD ALL");
         if (rc != 0) {
             return rc;
         }

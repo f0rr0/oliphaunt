@@ -223,6 +223,87 @@
       "queryExpectation": {
         "engineErrorContains": "unexpected backend message tag 0x52"
       }
+    },
+    {
+      "name": "typed_null_and_custom_oid",
+      "description": "Preserves column order, raw nullable values, type OIDs, and format metadata.",
+      "responseHex": "540000003600026e756c6c0000000000000000000b86ffffffffffff0000637573746f6d0000000000000000015f91ffffffffffff0000440000001a0002ffffffff0000000c637573746f6d2d76616c7565430000000d53454c4543542031005a0000000549",
+      "queryExpectation": {
+        "ok": {
+          "fields": [
+            {
+              "name": "null",
+              "typeOid": 2950,
+              "format": "text"
+            },
+            {
+              "name": "custom",
+              "typeOid": 90001,
+              "format": "text"
+            }
+          ],
+          "rows": [[null, "custom-value"]],
+          "commandTag": "SELECT 1",
+          "rowCount": 1
+        }
+      },
+      "wireExpectation": {
+        "messageNames": ["rowDescription", "dataRow", "commandComplete", "readyForQuery"]
+      }
+    },
+    {
+      "name": "duplicate_column_names",
+      "description": "Preserves column order, raw nullable values, type OIDs, and format metadata.",
+      "responseHex": "5400000034000273616d650000000000000000000017ffffffffffff000073616d650000000000000000000019ffffffffffff000044000000160002000000023432000000067365636f6e64430000000d53454c4543542031005a0000000549",
+      "queryExpectation": {
+        "ok": {
+          "fields": [
+            {
+              "name": "same",
+              "typeOid": 23,
+              "format": "text"
+            },
+            {
+              "name": "same",
+              "typeOid": 25,
+              "format": "text"
+            }
+          ],
+          "rows": [["42", "second"]],
+          "commandTag": "SELECT 1",
+          "rowCount": 1
+        }
+      },
+      "wireExpectation": {
+        "messageNames": ["rowDescription", "dataRow", "commandComplete", "readyForQuery"]
+      }
+    },
+    {
+      "name": "binary_field_metadata_and_raw_values",
+      "description": "Preserves column order, raw nullable values, type OIDs, and format metadata.",
+      "responseHex": "54000000380002696e74656765720000000000000000000017ffffffffffff000162797465730000000000000000000011ffffffffffff000144000000160002000000040000002a0000000400010203430000000d53454c4543542031005a0000000549",
+      "queryExpectation": {
+        "ok": {
+          "fields": [
+            {
+              "name": "integer",
+              "typeOid": 23,
+              "format": "binary"
+            },
+            {
+              "name": "bytes",
+              "typeOid": 17,
+              "format": "binary"
+            }
+          ],
+          "rows": [["\u0000\u0000\u0000*", "\u0000\u0001\u0002\u0003"]],
+          "commandTag": "SELECT 1",
+          "rowCount": 1
+        }
+      },
+      "wireExpectation": {
+        "messageNames": ["rowDescription", "dataRow", "commandComplete", "readyForQuery"]
+      }
     }
   ]
 }

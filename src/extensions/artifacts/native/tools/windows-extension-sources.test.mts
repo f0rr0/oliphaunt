@@ -3,46 +3,41 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { patchTextsearch } from './windows-extension-sources.mts';
+import { pgxsSources, prepareSimple } from './windows-extension-sources.mts';
 
-test('Windows packing applies to each exact textsearch struct, including V3 predecessors', () => {
+test('Windows textsearch compiles upstream layout checks and installs the upgrade chain', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'textsearch-windows-'));
-  const structs = [
-    ['segment/segment.h', 'TpDictEntryV3', 'aligned(4)', 4],
-    ['segment/segment.h', 'TpDictEntry', 'aligned(8)', 8],
-    ['segment/segment.h', 'TpSegmentPosting', 'packed', 1],
-    ['segment/segment.h', 'TpSkipEntryV3', 'packed', 1],
-    ['segment/segment.h', 'TpSkipEntry', 'packed', 1],
-    ['segment/segment.h', 'TpCtidMapEntry', 'packed', 1],
-    ['memtable/expull.h', 'TpExpullEntry', 'packed', 1],
-  ] as const;
+  const postgres = path.join(root, 'postgres');
+  const checkout = path.join(root, 'target/oliphaunt-sources/checkouts/pg_textsearch');
+  const files = {
+    Makefile: 'OBJS = src/mod.o src/layout_check.o\n',
+    'pg_textsearch.control': "default_version = '1.5.1'\n",
+    'sql/pg_textsearch--1.5.1.sql': 'SELECT 1;\n',
+    'sql/pg_textsearch--0.6.1--1.0.0.sql': 'SELECT 2;\n',
+    'sql/pg_textsearch--1.5.0--1.5.1.sql': 'SELECT 3;\n',
+    'src/mod.c': '#include <unistd.h>\n',
+    'src/layout_check.c': 'StaticAssertDecl(sizeof(TpExpullEntry) == 7, "layout");\n',
+  };
   try {
-    for (const file of [
-      'segment/segment.h',
-      'memtable/expull.h',
-      'am/am.h',
-      'types/vector.h',
-      'types/query.h',
-    ]) {
-      const target = path.join(root, 'src', file);
-      mkdirSync(path.dirname(target), { recursive: true });
-      writeFileSync(
-        target,
-        structs
-          .filter(([header]) => header === file)
-          .map(
-            ([, name, attribute]) =>
-              `typedef struct ${name}\n{ int value; } __attribute__((${attribute})) ${name};\n`,
-          )
-          .join('') || 'Datum example(PG_FUNCTION_ARGS);\n',
-      );
+    for (const [file, text] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(checkout, file)), { recursive: true });
+      writeFileSync(path.join(checkout, file), text);
     }
-    patchTextsearch(root);
-    for (const [file, name, , pack] of structs) {
-      const text = readFileSync(path.join(root, 'src', file), 'utf8');
-      assert(text.includes(`#pragma pack(push, ${pack})\n#endif\ntypedef struct ${name}\n`), name);
-      assert(text.includes(`} ${name};\n#ifdef _MSC_VER\n#pragma pack(pop)\n`), name);
+    mkdirSync(path.join(postgres, 'contrib'), { recursive: true });
+    writeFileSync(path.join(postgres, 'contrib/meson.build'), '');
+    prepareSimple({ repo: root, work: root, postgres, install: root }, 'pg_textsearch');
+    const output = path.join(postgres, 'contrib/oliphaunt_external/pg_textsearch');
+    for (const [file, text] of Object.entries(files)) {
+      assert.equal(readFileSync(path.join(output, file), 'utf8'), text);
     }
+    const meson = readFileSync(path.join(output, 'meson.build'), 'utf8');
+    for (const file of Object.keys(files).filter((file) => file !== 'Makefile'))
+      assert(meson.includes(`'${file}'`), `${file} must be built or installed`);
+    assert(meson.includes('/DPG_TEXTSEARCH_VERSION="1.5.1"'));
+    assert(!meson.includes('/FI'));
+    assert(readFileSync(path.join(output, 'src/unistd.h'), 'utf8').includes('PostgreSQL'));
+    writeFileSync(path.join(checkout, 'Makefile'), 'OBJS = $(shell echo untracked.o)\n');
+    assert.throws(() => pgxsSources(checkout), /unsupported PGXS object expression/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

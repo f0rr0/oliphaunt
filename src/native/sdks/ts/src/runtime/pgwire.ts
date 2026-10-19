@@ -1,6 +1,7 @@
-import type { ByteStream } from './byte-stream.js';
+import { type ByteStream, withStreamDeadline } from './byte-stream.js';
 import { connectEndpoint, type LocalEndpoint } from './node-adapter.js';
 import { throwCollectedCloseFailures } from './close.js';
+import { DEFAULT_CONTROL_TIMEOUT_MS } from './timeouts.js';
 
 const PROTOCOL_VERSION_3 = 196_608;
 const MAX_FRAME_LEN = 128 * 1024 * 1024;
@@ -73,10 +74,19 @@ export class PostgresWireClient {
     }
   }
 
-  async cancel(): Promise<void> {
+  async cancel(timeoutMs = DEFAULT_CONTROL_TIMEOUT_MS): Promise<void> {
     if (!this.endpoint || !this.cancelKey)
       throw new Error('PostgreSQL cancellation key is unavailable');
-    await cancelPostgresStream(await connectEndpoint(this.endpoint), this.cancelKey);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      await cancelPostgresStream(
+        await connectEndpoint(this.endpoint, controller.signal),
+        this.cancelKey,
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async close(): Promise<void> {
@@ -86,12 +96,17 @@ export class PostgresWireClient {
     }
   }
 
-  async terminate(): Promise<void> {
+  async terminate(timeoutMs = DEFAULT_CONTROL_TIMEOUT_MS): Promise<void> {
     const failures: unknown[] = [];
     if (!this.#terminateRequested) {
       this.#terminateRequested = true;
       try {
-        await this.#stream.writeAll(new Uint8Array([0x58, 0, 0, 0, 4]));
+        await withStreamDeadline(
+          this.#stream,
+          performance.now() + timeoutMs,
+          () => this.#stream.writeAll(new Uint8Array([0x58, 0, 0, 0, 4])),
+          'PostgreSQL termination',
+        );
       } catch (error) {
         failures.push(error);
       }

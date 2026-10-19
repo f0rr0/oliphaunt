@@ -128,7 +128,7 @@ export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<strin
     'native dependency modules differ from the canonical recipe',
   );
   const nativeConstructionLicenseFiles =
-    (spec.sqlName === 'vector' && spec.target === 'linux-x64-gnu') ||
+    (['vector', 'pg_textsearch'].includes(spec.sqlName) && spec.target === 'linux-x64-gnu') ||
     (spec.contrib && spec.sqlName === 'pgcrypto')
       ? nativeExtensionConstructionLicenseInventory(spec.sqlName, spec.target)
       : [];

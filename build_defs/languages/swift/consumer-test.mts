@@ -83,10 +83,8 @@ writeFileSync(
 );
 const nativeTests = path.join(consumerRoot, 'Tests/NativeRuntimeTests');
 mkdirSync(nativeTests, { recursive: true });
-copyFileSync(
-  path.join(packageRoot, 'Tests/OliphauntTests/NativeRuntimeTests.swift'),
-  path.join(nativeTests, 'NativeRuntimeTests.swift'),
-);
+for (const file of ['NativeRuntimeTests.swift', 'AsyncStringSignal.swift'])
+  copyFileSync(path.join(packageRoot, 'Tests/OliphauntTests', file), path.join(nativeTests, file));
 const facts = JSON.parse(readFileSync(receipt, 'utf8'));
 assert.equal(
   triple,
