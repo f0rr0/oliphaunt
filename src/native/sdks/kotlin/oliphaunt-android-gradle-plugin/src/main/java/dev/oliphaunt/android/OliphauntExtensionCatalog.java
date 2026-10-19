@@ -211,7 +211,8 @@ final class OliphauntExtensionCatalog {
               mavenGroup,
               mavenArtifact,
               runtimeBound,
-              dependencies));
+              dependencies,
+              portableList(properties.getProperty(prefix + "sqlMembers", sqlName))));
     }
     for (Entry entry : entries.values()) {
       for (String dependency : entry.dependencies()) {
@@ -292,7 +293,8 @@ final class OliphauntExtensionCatalog {
       String mavenGroup,
       String mavenArtifact,
       boolean runtimeBound,
-      List<String> dependencies) {
+      List<String> dependencies,
+      List<String> sqlMembers) {
     String mavenCoordinate() {
       return mavenGroup + ":" + mavenArtifact;
     }

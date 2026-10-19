@@ -68,6 +68,24 @@ export function pgxsSources(root: string) {
   return values.map((value) => value.slice(0, -2) + '.c');
 }
 
+// Preserve the pinned tiger SQL recipe's order (and Make's $^ deduplication).
+// Only literal SQL prerequisites are supported; upstream expressions need review.
+export function postgisSqlInputs(root: string, target: string) {
+  const makefile = read(path.join(root, 'Makefile.in')).replace(/\\\r?\n/g, ' ');
+  const rule = makefile.split(/\r?\n/).find((line) => line.startsWith(`${target}:`));
+  assert(rule, `missing PostGIS SQL rule ${target}`);
+  const inputs = rule
+    .slice(target.length + 1)
+    .split('|')[0]
+    .trim()
+    .split(/\s+/);
+  assert(
+    inputs.length && inputs.every((input) => /^[\w./-]+\.sql(?:\.in)?$/.test(input)),
+    `unsupported PostGIS SQL prerequisites for ${target}`,
+  );
+  return [...new Set(inputs)].map((input) => path.resolve(root, input));
+}
+
 export function patchTextsearch(root: string) {
   write(
     path.join(root, 'src/oliphaunt_windows_compat.h'),
@@ -232,6 +250,24 @@ function postgisDirectory(config: Config) {
 function postgisTemplates(config: Config) {
   return path.join(config.repo, 'src/extensions/external/postgis/tools/windows');
 }
+export function postgisModuleStems(config: Pick<Config, 'repo'>) {
+  const target = Bun.TOML.parse(
+    read(path.join(config.repo, 'src/extensions/external/postgis/targets/native.toml')),
+  );
+  assert(
+    Array.isArray(target.module_files) && target.module_files.length,
+    'missing PostGIS native modules',
+  );
+  const stems = target.module_files.map((file: unknown) => {
+    assert(typeof file === 'string', 'invalid PostGIS native module');
+    const stem = /^lib\/postgresql\/([\w-]+)\.so$/.exec(file)?.[1];
+    assert(stem, `invalid PostGIS native module ${file}`);
+    return stem;
+  });
+  assert.equal(new Set(stems).size, stems.length, 'duplicate PostGIS native modules');
+  assert(stems.includes('postgis-3'), 'missing primary PostGIS native module');
+  return stems;
+}
 function expand(input: string, output: string, values: Record<string, string>) {
   let text = read(input);
   for (const [key, value] of Object.entries(values)) text = text.replaceAll(`@${key}@`, value);
@@ -342,7 +378,18 @@ export function preparePostgis(config: Config) {
       MODULEPATH: '$libdir/postgis_raster-3',
     },
   );
-  for (const file of ['raster/rt_core/librtcore.h', 'raster/rt_pg/rtpostgis.c']) {
+  for (const name of ['postgis_topology', 'postgis_tiger_geocoder']) {
+    expand(
+      path.join(directory, `extensions/${name}/${name}.control.in`),
+      path.join(directory, `extensions/${name}/${name}.control`),
+      { EXTVERSION: pgis.version },
+    );
+  }
+  for (const file of [
+    'raster/rt_core/librtcore.h',
+    'raster/rt_pg/rtpostgis.c',
+    'topology/postgis_topology.c',
+  ]) {
     replace(
       path.join(directory, file),
       '# define __attribute__ (x)',
@@ -357,7 +404,14 @@ export function preparePostgis(config: Config) {
     path.join(postgisTemplates(config), 'flatgeobuf-compat.h'),
     path.join(directory, 'oliphaunt_flatgeobuf_windows_compat.h'),
   );
-  for (const folder of ['postgis', 'libpgcommon', 'liblwgeom', 'raster/rt_core', 'raster/rt_pg']) {
+  for (const folder of [
+    'postgis',
+    'libpgcommon',
+    'liblwgeom',
+    'raster/rt_core',
+    'raster/rt_pg',
+    'topology',
+  ]) {
     for (const file of glob(path.join(directory, folder), '**/*.{c,h}')) {
       const target = path.join(directory, folder, file),
         text = read(target);
@@ -367,6 +421,13 @@ export function preparePostgis(config: Config) {
       );
       if (updated !== text) write(target, updated);
     }
+  }
+  for (const hook of ['_PG_init', '_PG_fini']) {
+    replace(
+      path.join(directory, 'topology/postgis_topology.c'),
+      `void ${hook}(void);`,
+      `PGDLLEXPORT void ${hook}(void);`,
+    );
   }
   replace(
     path.join(directory, 'postgis/postgis_legacy.c'),
@@ -456,6 +517,10 @@ export function postgisMeson(config: Config) {
     ...glob(directory, 'extensions/postgis/sql/postgis--*.sql'),
     'extensions/postgis_raster/postgis_raster.control',
     ...glob(directory, 'extensions/postgis_raster/sql/postgis_raster--*.sql'),
+    'extensions/postgis_topology/postgis_topology.control',
+    ...glob(directory, 'extensions/postgis_topology/sql/postgis_topology--*.sql'),
+    'extensions/postgis_tiger_geocoder/postgis_tiger_geocoder.control',
+    ...glob(directory, 'extensions/postgis_tiger_geocoder/sql/postgis_tiger_geocoder--*.sql'),
   ];
   const contrib = [
     'postgis/legacy.sql',
@@ -467,6 +532,9 @@ export function postgisMeson(config: Config) {
     'postgis/uninstall_legacy.sql',
     'postgis/uninstall_postgis.sql',
     'doc/postgis_comments.sql',
+    'topology/topology.sql',
+    'topology/topology_upgrade.sql',
+    'topology/uninstall_topology.sql',
   ];
   expand(
     path.join(postgisTemplates(config), 'meson.build.in'),
@@ -515,8 +583,17 @@ export function postgisSql(config: Config, phase: string) {
     sql = path.join(directory, 'extensions/postgis/sql');
   const raster = path.join(directory, 'raster/rt_pg');
   const rasterSql = path.join(directory, 'extensions/postgis_raster/sql');
-  mkdirSync(sql, { recursive: true });
-  mkdirSync(rasterSql, { recursive: true });
+  const topology = path.join(directory, 'topology');
+  const topologyExtension = path.join(directory, 'extensions/postgis_topology');
+  const topologySql = path.join(topologyExtension, 'sql');
+  const tigerExtension = path.join(directory, 'extensions/postgis_tiger_geocoder');
+  const tigerSql = path.join(tigerExtension, 'sql');
+  const topologyBody = (text: string) =>
+    withoutTransactions(text).replace(/^CREATE SCHEMA[^\r\n]*(?:\r?\n|$)/gm, '');
+  const tigerDropSchema =
+    "SELECT postgis_extension_drop_if_exists('postgis_tiger_geocoder', 'DROP SCHEMA tiger_data');";
+  for (const folder of [sql, rasterSql, topologySql, tigerSql])
+    mkdirSync(folder, { recursive: true });
   if (phase === 'postgis-sql-preprocess') {
     const template = (
       input: string,
@@ -579,6 +656,45 @@ export function postgisSql(config: Config, phase: string) {
       true,
       false,
     );
+    for (const name of ['topology', 'topology_before_upgrade', 'topology_after_upgrade']) {
+      template(
+        path.join(topology, name + '.sql.in'),
+        path.join(topology, name + '.sql'),
+        [pg, directory],
+        '$libdir/postgis_topology-3',
+        false,
+        false,
+      );
+    }
+    write(
+      path.join(topologySql, 'topology.sql'),
+      topologyBody(read(path.join(topology, 'topology.sql'))),
+    );
+    copyFileSync(
+      path.join(tigerExtension, 'sql_bits/add_search_path.sql.in'),
+      path.join(tigerSql, 'add_search_path.sql'),
+    );
+    for (const name of ['tiger_geocoder', 'tiger_geocoder_minor']) {
+      const inputs = postgisSqlInputs(tigerExtension, `sql/${name}.sql.in`);
+      const tail =
+        name === 'tiger_geocoder'
+          ? [
+              tigerDropSchema,
+              read(path.join(directory, 'extensions/postgis_extension_helper_uninstall.sql')),
+            ]
+          : [];
+      write(
+        path.join(tigerSql, `${name}.sql`),
+        withoutTransactions(joined(inputs.map(read).join(''), ...tail)),
+      );
+    }
+    write(
+      path.join(tigerSql, 'postgis_tiger_geocoder_pre.sql'),
+      joined(
+        read(path.join(tigerSql, 'tiger_geocoder.sql')),
+        read(path.join(tigerExtension, 'sql_bits/mark_editable_objects.sql.in')),
+      ),
+    );
   } else if (phase === 'postgis-sql-upgrade') {
     const upgrade = (body: string) =>
       joined(
@@ -624,6 +740,20 @@ export function postgisSql(config: Config, phase: string) {
         ),
       ),
     );
+    const topologyUpgrade = joined(
+      ...[
+        path.join(pg, 'common_before_upgrade.sql'),
+        path.join(topology, 'topology_before_upgrade.sql'),
+        path.join(topology, 'topology_upgrade.sql.in'),
+        path.join(topology, 'topology_after_upgrade.sql'),
+        path.join(pg, 'common_after_upgrade.sql'),
+      ].map(read),
+    );
+    write(
+      path.join(topology, 'topology_upgrade.sql'),
+      joined('BEGIN;', topologyUpgrade, 'COMMIT;'),
+    );
+    write(path.join(topologySql, 'topology_upgrade.sql'), topologyBody(topologyUpgrade));
   } else if (phase === 'postgis-sql-install') {
     const template = read(
       path.join(directory, 'extensions/postgis/unpackage_raster_if_needed.sql'),
@@ -682,6 +812,55 @@ export function postgisSql(config: Config, phase: string) {
     write(path.join(rasterSql, 'postgis_raster--TEMPLATED--TO--ANY.sql'), rasterTag);
     write(path.join(rasterSql, `postgis_raster--${pgis.version}--ANY.sql`), rasterTag);
     write(path.join(rasterSql, 'postgis_raster--unpackaged.sql'), '-- Nothing to do here\n');
+    write(
+      path.join(topologySql, `postgis_topology--${pgis.version}.sql`),
+      joined(
+        ...[
+          path.join(topologyExtension, 'extlock.sql'),
+          path.join(topologySql, 'topology.sql'),
+          path.join(topologyExtension, 'sql_bits/mark_editable_objects.sql.in'),
+        ].map(read),
+      ),
+    );
+    write(
+      path.join(topologySql, `postgis_topology--ANY--${pgis.version}.sql`),
+      joined(
+        ...[
+          path.join(topologyExtension, 'extlock.sql'),
+          path.join(directory, 'extensions/postgis_extension_helper.sql'),
+          path.join(topologySql, 'topology_upgrade.sql'),
+          path.join(topologyExtension, 'sql_bits/mark_editable_objects.sql.in'),
+          path.join(directory, 'extensions/postgis_extension_helper_uninstall.sql'),
+        ].map(read),
+      ),
+    );
+    write(path.join(topologySql, 'postgis_topology--unpackaged.sql'), '-- Nothing to do here\n');
+    copyFileSync(
+      path.join(tigerSql, 'postgis_tiger_geocoder.sql'),
+      path.join(tigerSql, `postgis_tiger_geocoder--${pgis.version}.sql`),
+    );
+    write(
+      path.join(tigerSql, `postgis_tiger_geocoder--ANY--${pgis.version}.sql`),
+      joined(
+        read(path.join(directory, 'extensions/postgis_extension_helper.sql')),
+        read(path.join(tigerSql, 'tiger_geocoder_minor.sql')),
+        read(path.join(tigerExtension, 'sql_bits/mark_editable_objects.sql.in')),
+        tigerDropSchema,
+        read(path.join(directory, 'extensions/postgis_extension_helper_uninstall.sql')),
+      ),
+    );
+    copyFileSync(
+      path.join(tigerExtension, 'sql_bits/tiger_geocoder--unpackaged.sql.in'),
+      path.join(tigerSql, `postgis_tiger_geocoder--unpackaged--${pgis.version}.sql`),
+    );
+    for (const [name, folder] of [
+      ['postgis_topology', topologySql],
+      ['postgis_tiger_geocoder', tigerSql],
+    ]) {
+      const extensionTag = tag.replaceAll('extension postgis ', `extension ${name} `);
+      write(path.join(folder, `${name}--TEMPLATED--TO--ANY.sql`), extensionTag);
+      write(path.join(folder, `${name}--${pgis.version}--ANY.sql`), extensionTag);
+    }
   } else if (phase === 'postgis-sql-unpackaged') {
     for (const [name, folder] of [
       ['postgis', sql],
@@ -690,6 +869,14 @@ export function postgisSql(config: Config, phase: string) {
       const file = path.join(folder, `${name}--unpackaged--${pgis.version}.sql`);
       write(file, joined(read(file), read(path.join(folder, `${name}--ANY--${pgis.version}.sql`))));
     }
+    const topologyUnpackaged = path.join(
+      topologySql,
+      `postgis_topology--unpackaged--${pgis.version}.sql`,
+    );
+    write(
+      topologyUnpackaged,
+      joined(read(topologyUnpackaged), read(path.join(topologySql, 'topology_upgrade.sql'))),
+    );
   } else throw new Error(`unknown SQL phase ${phase}`);
 }
 
@@ -742,6 +929,9 @@ if (import.meta.main) {
       break;
     case 'postgis-meson':
       postgisMeson(config);
+      break;
+    case 'postgis-module-stems':
+      console.log(postgisModuleStems(config).join('\n'));
       break;
     case 'postgis-version':
       console.log(postgisVersion(postgisDirectory(config)).version);

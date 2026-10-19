@@ -19,22 +19,11 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
-import { RUST_BUILD_SCRIPT_SHA256 } from '../../../../../tools/packaging/rust-build-script-sha256.mts';
-import {
-  AOT_TARGET_TRIPLES,
-  CORE_RUNTIME_ARCHIVE_FILES,
-} from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
-import { parseNpmExtensionLicenseFiles } from '../../../../native/sdks/ts/src/native/extension-contract.ts';
 import {
   fitCargoPayloadParts,
   packageGeneratedCargoSource,
   readCargoPackageNameVersion,
 } from '../../../../../tools/packaging/cargo-source-package.mts';
-import {
-  buildIosCarrierManifest,
-  IOS_CARRIER_FILENAME,
-} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { packGeneratedNpmCarrier } from '../../../../../tools/packaging/npm-package.mts';
 import { NPM_TRUSTED_PUBLISHING_REPOSITORY } from '../../../../../tools/packaging/npm-trusted-publishing.mts';
 import {
@@ -47,6 +36,22 @@ import {
   releaseNoticeRows,
   stageReleaseNotices,
 } from '../../../../../tools/packaging/release-notices.mts';
+import { RUST_BUILD_SCRIPT_SHA256 } from '../../../../../tools/packaging/rust-build-script-sha256.mts';
+import {
+  compareText,
+  extensionRegistryPackageTargetSets,
+} from '../../../../../tools/release/release-artifact-targets.mts';
+import {
+  buildIosCarrierManifest,
+  IOS_CARRIER_FILENAME,
+} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
+import { parseNpmExtensionLicenseFiles } from '../../../../native/sdks/ts/src/native/extension-contract.ts';
+import { assertWasixAotArtifactPayloads } from '../../../../wasix/runtime/tools/check-release-assets.mts';
+import { assertCanonicalWasixAotManifest } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
+import {
+  AOT_TARGET_TRIPLES,
+  CORE_RUNTIME_ARCHIVE_FILES,
+} from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import {
   assertWasixExtensionArchiveInstall,
   assertWasixExtensionInstall,
@@ -56,10 +61,6 @@ import {
   WASIX_EXTENSION_INSTALL_SCHEMA,
   WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
 } from '../../../contracts/wasix-extension-install.mts';
-import {
-  compareText,
-  extensionRegistryPackageTargetSets,
-} from '../../../../../tools/release/release-artifact-targets.mts';
 import {
   assertExtensionUpstreamLicensesInArchive,
   assertExtensionUpstreamLicensesInDirectory,
@@ -71,15 +72,13 @@ import { validateExtensionArtifactArchive } from './extension-artifact-inventory
 import {
   extensionNpmPackageForProduct,
   extensionNpmTargetPackageForProduct,
-  extensionNpmWasixPackageForProduct,
   extensionNpmWasixAotTargets,
+  extensionNpmWasixPackageForProduct,
   nativeExtensionCargoLinksName,
   nativeExtensionCargoPackageName,
   nativeExtensionCargoPartPackageName,
 } from './extension-registry-packages.mts';
-
-import { assertCanonicalWasixAotManifest } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
-import { assertWasixAotArtifactPayloads } from '../../../../wasix/runtime/tools/check-release-assets.mts';
+import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
 
 const ROOT = path.resolve(import.meta.dirname, '../../../../..');
 const TOOL = 'package-extension-release-carriers.mts';
@@ -499,7 +498,11 @@ export function frozenExtensionMemberInventory(member, { product, version } = {}
     createsExtension: member.createsExtension,
     nativeModuleStem: member.nativeModuleStem,
   };
-  for (const field of FROZEN_EXTENSION_INVENTORY_LIST_FIELDS) {
+  const closureFields =
+    member.sqlMembers === undefined && member.nativeModuleStems === undefined
+      ? []
+      : ['sqlMembers', 'nativeModuleStems'];
+  for (const field of [...FROZEN_EXTENSION_INVENTORY_LIST_FIELDS, ...closureFields]) {
     const values = member[field];
     if (
       !Array.isArray(values) ||
@@ -1018,7 +1021,11 @@ function checkedArchiveMemberPath(name, archive) {
   return parts.join('/');
 }
 
-function extractExtensionRuntime(asset, runtimeDir, { metadata, target, nativeRuntimeVersion }) {
+export function extractExtensionRuntime(
+  asset,
+  runtimeDir,
+  { metadata, target, nativeRuntimeVersion },
+) {
   // Native release assets are stripped and platform-validated on their target
   // builders. Carrier assembly preserves those qualified bytes; host-side
   // binary rewriting would make output coordinator-dependent.
@@ -1048,6 +1055,16 @@ function extractExtensionRuntime(asset, runtimeDir, { metadata, target, nativeRu
     writeFileSync(destination, entry.data, { flag: 'wx', mode: entry.mode });
     chmodSync(destination, entry.mode);
   }
+  const manifestPath = path.join(
+    runtimeDir,
+    '.oliphaunt/extensions',
+    `${metadata.sqlName}.properties`,
+  );
+  mkdirSync(path.dirname(manifestPath), { recursive: true });
+  writeFileSync(manifestPath, validated.entries.get('manifest.properties').data, {
+    flag: 'wx',
+    mode: 0o644,
+  });
   return validated.runtimeFiles;
 }
 

@@ -117,4 +117,71 @@ if (oliphaunt_postgis_build_raster_objects "$postgis_build") > "$test_root/failu
   exit 1
 fi
 
+mkdir -p "$postgis_build/topology"
+cat > "$postgis_build/topology/Makefile" <<'MAKEFILE'
+PG_CPPFLAGS += -Ifixture
+.PHONY: all print-flags
+all:
+	@exit 1
+postgis_topology.o topology.sql topology_upgrade.sql uninstall_topology.sql:
+	@: > $@
+print-flags:
+	@printf '%s\n' '$(PG_CPPFLAGS)'
+MAKEFILE
+oliphaunt_postgis_patch_topology_makefile "$postgis_build" "$prefix"
+topology_flags="$(make -s -f "$postgis_build/topology/Makefile" print-flags)"
+for expected in \
+  "-DPg_magic_func=${prefix}_topology_Pg_magic_func" \
+  "-D_PG_init=${prefix}_topology_PG_init" \
+  "-D_PG_fini=${prefix}_topology_PG_fini"; do
+  case " $topology_flags " in
+    *" $expected "*) ;;
+    *) echo "missing topology compile definition: $expected" >&2; exit 1 ;;
+  esac
+done
+oliphaunt_postgis_build_topology_objects "$postgis_build"
+for output in postgis_topology.o topology.sql topology_upgrade.sql uninstall_topology.sql; do
+  [ -f "$postgis_build/topology/$output" ]
+done
+
+# The merged carrier must initialize all three C modules in dependency order.
+cc=("${CC:-cc}")
+native_cflags=""
+object_dir="$test_root/objects"
+mkdir -p "$object_dir"
+combined_object="$(oliphaunt_postgis_build_combined_init "$postgis_build" "$prefix" "$object_dir")"
+cat > "$test_root/init-test.c" <<EOF
+#include <assert.h>
+static int initialized;
+void ${prefix}_core_PG_init(void) { assert(initialized++ == 0); }
+void ${prefix}_raster_PG_init(void) { assert(initialized++ == 1); }
+void ${prefix}_topology_PG_init(void) { assert(initialized++ == 2); }
+extern void ${prefix}__PG_init(void);
+int main(void) { ${prefix}__PG_init(); assert(initialized == 3); }
+EOF
+"${cc[@]}" "$test_root/init-test.c" "$combined_object" -o "$test_root/init-test"
+"$test_root/init-test"
+
+install_dir="$test_root/install"
+mkdir -p "$mobile_static_dependency_root/proj/share/proj"
+printf 'database\n' > "$mobile_static_dependency_root/proj/share/proj/proj.db"
+for member in postgis postgis_raster postgis_topology postgis_tiger_geocoder; do
+  mkdir -p "$postgis_build/extensions/$member/sql"
+  printf 'module_pathname = '\''$libdir/%s-3'\''\n' "$member" > "$postgis_build/extensions/$member/$member.control"
+  printf 'SELECT '\''$libdir/%s-3.6'\'';\n' "$member" > "$postgis_build/extensions/$member/sql/$member--3.6.4.sql"
+done
+oliphaunt_postgis_stage_runtime_sql "$postgis_build"
+for member in postgis postgis_raster postgis_topology postgis_tiger_geocoder; do
+  [ -s "$install_dir/share/postgresql/extension/$member.control" ]
+  [ -s "$install_dir/share/postgresql/extension/$member--3.6.4.sql" ]
+done
+for member in postgis_raster postgis_topology; do
+  grep -F '$libdir/postgis-3' "$install_dir/share/postgresql/extension/$member.control" >/dev/null
+  grep -F '$libdir/postgis-3' "$install_dir/share/postgresql/extension/$member--3.6.4.sql" >/dev/null
+  if grep -F "$member-3" "$install_dir/share/postgresql/extension/$member--3.6.4.sql"; then
+    echo "mobile SQL retained a separate module identity" >&2
+    exit 1
+  fi
+done
+
 echo "mobile PostGIS build contracts passed"

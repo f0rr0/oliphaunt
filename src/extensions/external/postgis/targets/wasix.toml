@@ -5,6 +5,7 @@ build_script = "src/extensions/external/postgis/tools/build_wasix.sh"
 module_files = [
   "lib/postgresql/postgis-3.so",
   "lib/postgresql/postgis_raster-3.so",
+  "lib/postgresql/postgis_topology-3.so",
   "lib/postgresql/liboliphaunt_postgis_deps.so",
 ]
 data_files = [
@@ -45,10 +46,8 @@ data_files = [
   "share/postgresql/proj/proj.db",
 ]
 configure_flags = [
-  "--without-topology",
   "--without-sfcgal",
   "--without-address-standardizer",
-  "--without-tiger",
   "--without-protobuf",
   "--disable-nls",
 ]
@@ -56,19 +55,22 @@ required_build_files = [
   "postgis/postgis-3.so",
   "postgis/liboliphaunt_postgis_deps.so",
   "raster/rt_pg/postgis_raster-3.so",
+  "topology/postgis_topology-3.so",
   "extensions/postgis/postgis.control",
   "extensions/postgis_raster/postgis_raster.control",
+  "extensions/postgis_topology/postgis_topology.control",
+  "extensions/postgis_tiger_geocoder/postgis_tiger_geocoder.control",
   "share/gdal/gdalvrt.xsd",
   "share/proj/proj.db",
 ]
 required_build_globs = [
   "extensions/postgis/sql/postgis--*.sql",
   "extensions/postgis_raster/sql/postgis_raster--*.sql",
+  "extensions/postgis_topology/sql/postgis_topology--*.sql",
+  "extensions/postgis_tiger_geocoder/sql/postgis_tiger_geocoder--*.sql",
 ]
 excluded_sql_extensions = [
-  "postgis_topology",
   "postgis_sfcgal",
-  "postgis_tiger_geocoder",
   "address_standardizer",
   "address_standardizer_data_us",
 ]
@@ -85,6 +87,12 @@ runtime_path = "lib/postgresql/postgis_raster-3.so"
 build_path = "postgis/raster/rt_pg/postgis_raster-3.so"
 aot_file = "postgis_raster-llvm-opta.bin.zst"
 
+[[native_support_modules]]
+name = "postgis_topology"
+runtime_path = "lib/postgresql/postgis_topology-3.so"
+build_path = "postgis/topology/postgis_topology-3.so"
+aot_file = "postgis_topology-llvm-opta.bin.zst"
+
 [staging]
 module_source_dir = "postgis/postgis"
 control_source = "postgis/extensions/postgis/postgis.control"
@@ -99,5 +107,5 @@ source = "postgis/share/gdal"
 destination = "share/postgresql/gdal"
 
 [[staging.data_dirs]]
-source = "postgis/share/extension-raster"
+source = "postgis/share/extension-members"
 destination = "share/postgresql/extension"

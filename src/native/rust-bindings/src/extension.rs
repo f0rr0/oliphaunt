@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use sha2::{Digest, Sha256};
+
 use crate::error::{Error, Result};
 
 #[path = "generated/extensions.rs"]
@@ -40,6 +42,19 @@ impl Extension {
     pub fn native_module_file(self) -> Option<String> {
         self.native_module_stem()
             .map(|stem| format!("{}{}", stem, std::env::consts::DLL_SUFFIX))
+    }
+
+    /// Every native PostgreSQL module shipped by this extension product.
+    pub fn native_module_files(self) -> Vec<String> {
+        generated_extensions::native_module_stems(self)
+            .iter()
+            .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX))
+            .collect()
+    }
+
+    /// SQL extensions installed from this product's shared artifact.
+    pub const fn sql_members(self) -> &'static [&'static str] {
+        generated_extensions::sql_members(self)
     }
 
     pub const fn creates_extension(self) -> bool {
@@ -155,17 +170,17 @@ fn visit_extension(
             extension.sql_name()
         )));
     }
-    for dependency in extension.dependencies() {
-        let inherited = if generated_extensions::artifact_product(*dependency)
+    for dependency in package_dependencies(extension)? {
+        let inherited = if generated_extensions::artifact_product(dependency)
             == generated_extensions::artifact_product(extension)
         {
             {
-                let mut inherited = *dependency;
+                let mut inherited = dependency;
                 inherited.package = extension.package;
                 inherited
             }
         } else {
-            *dependency
+            dependency
         };
         let selected = requested
             .get(dependency.sql_name())
@@ -183,6 +198,83 @@ fn visit_extension(
     visited.insert(extension.sql_name());
     resolved.push(extension);
     Ok(())
+}
+
+// Independent packages retain the dependency contract of the artifact that
+// produced them, even when the current catalog adds a bundled SQL companion.
+fn package_dependencies(extension: Extension) -> Result<Vec<Extension>> {
+    let Some(package) = extension.package else {
+        return Ok(extension.dependencies().to_vec());
+    };
+    let path = format!(
+        "extension/{}/.oliphaunt/extensions/{}.properties",
+        package.product,
+        extension.sql_name()
+    );
+    let mut manifests = package
+        .resources
+        .iter()
+        .filter(|resource| resource.0 == path);
+    let Some((_, bytes, checksum, _)) = manifests.next() else {
+        // Historical PostGIS artifacts supplied core SQL only, before tiger's
+        // fuzzystrmatch prerequisite became part of the current product.
+        return Ok(if extension.sql_name() == "postgis" {
+            Vec::new()
+        } else {
+            extension.dependencies().to_vec()
+        });
+    };
+    let invalid = || {
+        Error::InvalidConfig(format!(
+            "invalid native extension dependency manifest for {}",
+            extension.sql_name()
+        ))
+    };
+    if manifests.next().is_some() || format!("{:x}", Sha256::digest(bytes)) != *checksum {
+        return Err(invalid());
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| invalid())?;
+    let mut fields = BTreeMap::new();
+    for line in text.lines().filter(|line| !line.is_empty()) {
+        let (key, value) = line.split_once('=').ok_or_else(invalid)?;
+        if fields.insert(key, value).is_some() {
+            return Err(invalid());
+        }
+    }
+    if fields.get("sqlName") != Some(&extension.sql_name()) {
+        return Err(invalid());
+    }
+    let dependencies = fields.get("dependencies").ok_or_else(invalid)?;
+    if extension.sql_name() == "postgis"
+        && fields.get("sqlMembers").is_some_and(|members| {
+            members
+                .split(',')
+                .any(|member| member == "postgis_tiger_geocoder")
+        })
+        && !dependencies
+            .split(',')
+            .any(|dependency| dependency == "fuzzystrmatch")
+    {
+        return Err(invalid());
+    }
+    if dependencies.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut seen = BTreeSet::new();
+    dependencies
+        .split(',')
+        .map(|name| {
+            if !seen.insert(name) || name == extension.sql_name() {
+                return Err(invalid());
+            }
+            extension
+                .dependencies()
+                .iter()
+                .copied()
+                .find(|dependency| dependency.sql_name() == name)
+                .ok_or_else(invalid)
+        })
+        .collect()
 }
 
 pub fn extension_sql_file_belongs(sql_name: &str, file_name: &str) -> bool {
@@ -241,8 +333,82 @@ pub const fn extension_data_files(extension: Extension) -> &'static [&'static st
 }
 
 #[cfg(test)]
-mod package_tests {
+pub(crate) mod package_tests {
     use super::*;
+
+    pub(crate) fn postgis_package(manifest: Option<&str>) -> &'static ExtensionPackage {
+        let (path, bytes) = match manifest {
+            Some(text) => (
+                "extension/oliphaunt-extension-postgis/.oliphaunt/extensions/postgis.properties",
+                text.as_bytes().to_vec(),
+            ),
+            None => (
+                "extension/oliphaunt-extension-postgis/legacy-fixture",
+                Vec::new(),
+            ),
+        };
+        let checksum = Box::leak(format!("{:x}", Sha256::digest(&bytes)).into_boxed_str());
+        let resources = Box::leak(
+            vec![(
+                path,
+                Box::leak(bytes.into_boxed_slice()) as &'static [u8],
+                checksum as &'static str,
+                false,
+            )]
+            .into_boxed_slice(),
+        );
+        Box::leak(Box::new(ExtensionPackage {
+            product: "oliphaunt-extension-postgis",
+            version: "3.6.4",
+            runtime_version: "0.2.0",
+            resources,
+        }))
+    }
+
+    #[test]
+    fn separately_packaged_postgis_resolves_its_frozen_dependencies() {
+        for manifest in [None, Some("sqlName=postgis\ndependencies=\n")] {
+            let selected = Extension::POSTGIS.with_package(postgis_package(manifest));
+            assert_eq!(resolve_extensions(&[selected]).unwrap(), [selected]);
+        }
+        let selected = Extension::POSTGIS.with_package(postgis_package(Some(
+            "sqlName=postgis\ndependencies=fuzzystrmatch\nsqlMembers=postgis,postgis_tiger_geocoder\nnativeModuleStems=postgis-3\n",
+        )));
+        assert_eq!(
+            resolve_extensions(&[selected]).unwrap(),
+            [Extension::FUZZYSTRMATCH, selected]
+        );
+        assert_eq!(
+            resolve_extensions(&[Extension::POSTGIS]).unwrap(),
+            [Extension::FUZZYSTRMATCH, Extension::POSTGIS]
+        );
+        for manifest in [
+            "sqlName=postgis\n",
+            "sqlName=hstore\ndependencies=\n",
+            "sqlName=postgis\ndependencies=unknown\n",
+            "sqlName=postgis\ndependencies=hstore\n",
+            "sqlName=postgis\ndependencies=postgis\n",
+            "sqlName=postgis\ndependencies=\nsqlMembers=postgis,postgis_tiger_geocoder\nnativeModuleStems=postgis-3\n",
+            "sqlName=postgis\ndependencies=fuzzystrmatch,fuzzystrmatch\n",
+            "sqlName=postgis\ndependencies=\ndependencies=fuzzystrmatch\n",
+        ] {
+            assert!(
+                resolve_extensions(&[
+                    Extension::POSTGIS.with_package(postgis_package(Some(manifest)))
+                ])
+                .is_err(),
+                "accepted {manifest}"
+            );
+        }
+        let package = postgis_package(Some("sqlName=postgis\ndependencies=\n"));
+        let mut resource = package.resources[0];
+        resource.2 = "invalid-checksum";
+        let corrupted = Box::leak(Box::new(ExtensionPackage {
+            resources: Box::leak(vec![resource].into_boxed_slice()),
+            ..*package
+        }));
+        assert!(resolve_extensions(&[Extension::POSTGIS.with_package(corrupted)]).is_err());
+    }
 
     #[test]
     fn selected_packages_follow_dependencies_and_reject_identity_conflicts() {

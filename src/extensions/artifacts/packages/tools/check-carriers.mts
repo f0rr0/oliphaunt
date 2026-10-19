@@ -2,10 +2,6 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import {
-  buildSwiftExtensionCarrierManifest,
-  swiftExtensionCarrierAssetName,
-} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
-import {
   portableMemberName,
   readFileOnlyTarGzipEntries,
 } from '../../../../../tools/packaging/portable-archive.mts';
@@ -36,6 +32,10 @@ import {
   extensionSqlNames,
   ROOT,
 } from '../../../../../tools/release/release-artifact-targets.mts';
+import {
+  buildSwiftExtensionCarrierManifest,
+  swiftExtensionCarrierAssetName,
+} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { assertWasixExtensionMemberInstall } from '../../../contracts/wasix-extension-install.mts';
 import {
   assertExtensionUpstreamLicensesInArchive,
@@ -242,12 +242,33 @@ function requireExactKeys(value, expected, context) {
   if (value === null || Array.isArray(value) || typeof value !== 'object') {
     fail(`${context} must be an object`);
   }
+  if (expected.has('nativeModuleStem') && expected.has('sqlName')) {
+    expected = new Set([...expected, ...Object.keys(optionalFrozenClosure(value, context))]);
+  }
   const actual = new Set(Object.keys(value));
   if (!setEquals(actual, expected)) {
     fail(
       `${context} keys must be ${JSON.stringify([...expected].sort(compareText))}, got ${JSON.stringify([...actual].sort(compareText))}`,
     );
   }
+}
+
+function optionalFrozenClosure(member, context) {
+  if (member.sqlMembers === undefined && member.nativeModuleStems === undefined) return {};
+  for (const key of ['sqlMembers', 'nativeModuleStems']) {
+    requireSortedUniqueStrings(member[key], `${context}.${key}`);
+    if (member[key].some((name) => !/^[A-Za-z0-9._-]{1,128}$/u.test(name)))
+      fail(`${context}.${key} must contain portable identifiers`);
+  }
+  if (member.createsExtension && !member.sqlMembers.includes(member.sqlName))
+    fail(`${context}.sqlMembers must include its primary SQL extension`);
+  if (
+    member.nativeModuleStem === null
+      ? member.nativeModuleStems.length > 0
+      : !member.nativeModuleStems.includes(member.nativeModuleStem)
+  )
+    fail(`${context}.nativeModuleStems must include its primary native module`);
+  return { sqlMembers: member.sqlMembers, nativeModuleStems: member.nativeModuleStems };
 }
 
 function requireSortedUniqueStrings(value, context) {
@@ -854,6 +875,8 @@ async function checkExtensionBundleProduct(
     expectedProperties[`${prefix}.extensionSqlFilePrefixes`] =
       member.extensionSqlFilePrefixes.join(',');
     expectedProperties[`${prefix}.nativeModuleStem`] = member.nativeModuleStem ?? '';
+    for (const [key, values] of Object.entries(optionalFrozenClosure(member, prefix)))
+      expectedProperties[`${prefix}.${key}`] = values.join(',');
     expectedProperties[`${prefix}.iosNativeDependencies`] = member.iosNativeDependencies.join(',');
     expectedProperties[`${prefix}.sharedPreloadLibraries`] =
       member.sharedPreloadLibraries.join(',');
@@ -1115,6 +1138,7 @@ async function checkExtensionProductVariant(
     extensionSqlFileNames: data.extensionSqlFileNames,
     extensionSqlFilePrefixes: data.extensionSqlFilePrefixes,
     nativeModuleStem: data.nativeModuleStem,
+    ...optionalFrozenClosure(data, rel(manifest)),
     iosNativeDependencies: data.iosNativeDependencies,
     iosRegistration: data.iosRegistration,
     wasixInstall: data.wasixInstall,
@@ -1186,6 +1210,12 @@ async function checkExtensionProductVariant(
     extensionSqlFileNames: data.extensionSqlFileNames.join(','),
     extensionSqlFilePrefixes: data.extensionSqlFilePrefixes.join(','),
     nativeModuleStem: data.nativeModuleStem ?? '',
+    ...Object.fromEntries(
+      Object.entries(optionalFrozenClosure(data, rel(manifest))).map(([key, values]) => [
+        key,
+        values.join(','),
+      ]),
+    ),
     iosNativeDependencies: data.iosNativeDependencies.join(','),
     sharedPreloadLibraries: data.sharedPreloadLibraries.join(','),
   };

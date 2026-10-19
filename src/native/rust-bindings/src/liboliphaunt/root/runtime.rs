@@ -1,4 +1,5 @@
 mod cache_key;
+mod extension_files;
 mod install;
 mod locate;
 

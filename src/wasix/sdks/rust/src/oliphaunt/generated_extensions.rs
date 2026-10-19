@@ -313,10 +313,14 @@ const DEFINITION_POSTGIS: Extension = Extension {
             runtime_path: "lib/postgresql/postgis_raster-3.so",
             aot_name: Some("extension:postgis:postgis_raster"),
         },
+        super::ExtensionNativeModule {
+            runtime_path: "lib/postgresql/postgis_topology-3.so",
+            aot_name: Some("extension:postgis:postgis_topology"),
+        },
     ],
     native_module_file: Some("postgis-3.so"),
     aot_name: Some("extension:postgis"),
-    dependencies: &[],
+    dependencies: &["fuzzystrmatch"],
     startup_config: &[],
     package: None,
 };

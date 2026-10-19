@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { patchTextsearch, postgisSql } from './windows-extension-sources.mts';
+import {
+  patchTextsearch,
+  postgisModuleStems,
+  postgisSql,
+  postgisSqlInputs,
+} from './windows-extension-sources.mts';
 
 test('Windows packing applies to each exact textsearch struct, including V3 predecessors', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'textsearch-windows-'));
@@ -48,11 +53,13 @@ test('Windows packing applies to each exact textsearch struct, including V3 pred
   }
 });
 
-test('Windows raster SQL installs and upgrades the raster module under its own extension identity', () => {
+test('Windows PostGIS SQL keeps companion extension identities and upgrade paths', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'postgis-windows-'));
   const directory = path.join(root, 'postgres/contrib/oliphaunt_external/postgis');
   const sql = 'extensions/postgis/sql/';
   const rasterSql = 'extensions/postgis_raster/sql/';
+  const topologySql = 'extensions/postgis_topology/sql/';
+  const tigerSql = 'extensions/postgis_tiger_geocoder/sql/';
   const write = (file: string, text: string) => {
     const target = path.join(directory, file);
     mkdirSync(path.dirname(target), { recursive: true });
@@ -84,6 +91,10 @@ test('Windows raster SQL installs and upgrades the raster module under its own e
       sql + 'spatial_ref_sys.sql',
       'extensions/postgis_extension_helper.sql',
       'extensions/postgis_extension_helper_uninstall.sql',
+      'topology/topology_before_upgrade.sql',
+      'topology/topology_after_upgrade.sql',
+      'extensions/postgis_topology/sql_bits/mark_editable_objects.sql.in',
+      'extensions/postgis_tiger_geocoder/sql_bits/mark_editable_objects.sql.in',
     ])
       write(file, '-- fixture\n');
     write(
@@ -91,6 +102,30 @@ test('Windows raster SQL installs and upgrades the raster module under its own e
       "CREATE FUNCTION raster_fixture() RETURNS text AS '$libdir/postgis_raster-3', 'raster_fixture' LANGUAGE C;\n",
     );
     write(rasterSql + 'rtpostgis_upgrade.sql.in', 'DROP FUNCTION raster_fixture();\n');
+    write(
+      'topology/topology_upgrade.sql.in',
+      'CREATE SCHEMA topology;\nSELECT topology_fixture();\n',
+    );
+    write(
+      topologySql + 'topology.sql',
+      "CREATE FUNCTION topology_fixture() RETURNS text AS '$libdir/postgis_topology-3', 'topology_fixture' LANGUAGE C;\n",
+    );
+    write(
+      'extensions/postgis_topology/extlock.sql',
+      '\\echo Use "CREATE EXTENSION postgis_topology" to load this file. \\quit\n',
+    );
+    write(
+      tigerSql + 'postgis_tiger_geocoder.sql',
+      "CREATE FUNCTION tiger.fixture() RETURNS text AS $$ SELECT @extschema:fuzzystrmatch@.soundex('value') $$ LANGUAGE SQL;\n",
+    );
+    write(
+      tigerSql + 'tiger_geocoder_minor.sql',
+      "CREATE OR REPLACE FUNCTION tiger.fixture() RETURNS text AS $$ SELECT @extschema:fuzzystrmatch@.soundex('value') $$ LANGUAGE SQL;\n",
+    );
+    write(
+      'extensions/postgis_tiger_geocoder/sql_bits/tiger_geocoder--unpackaged.sql.in',
+      'ALTER EXTENSION postgis_tiger_geocoder ADD SCHEMA tiger;\n',
+    );
     write('extensions/postgis/unpackage_raster_if_needed.sql', '-- UNPACKAGE_CODE\n-- end\n');
     const config = {
       repo: root,
@@ -111,6 +146,23 @@ test('Windows raster SQL installs and upgrades the raster module under its own e
       ),
     );
     assert(!upgrade.includes('BEGIN;'));
+    const topologyInstall = read(topologySql + 'postgis_topology--3.6.4.sql');
+    assert(topologyInstall.includes('CREATE EXTENSION postgis_topology'));
+    assert(topologyInstall.includes('$libdir/postgis_topology-3'));
+    const topologyUpgrade = read(topologySql + 'postgis_topology--ANY--3.6.4.sql');
+    assert(topologyUpgrade.includes('SELECT topology_fixture();'));
+    assert(!topologyUpgrade.includes('CREATE SCHEMA'));
+    assert(!topologyUpgrade.includes('BEGIN;'));
+    const tigerInstall = read(tigerSql + 'postgis_tiger_geocoder--3.6.4.sql');
+    assert(tigerInstall.includes('CREATE FUNCTION tiger.fixture()'));
+    assert(tigerInstall.includes('@extschema:fuzzystrmatch@.soundex'));
+    const tigerUpgrade = read(tigerSql + 'postgis_tiger_geocoder--ANY--3.6.4.sql');
+    assert(tigerUpgrade.includes('CREATE OR REPLACE FUNCTION tiger.fixture()'));
+    assert(
+      tigerUpgrade.includes(
+        "postgis_extension_drop_if_exists('postgis_tiger_geocoder', 'DROP SCHEMA tiger_data')",
+      ),
+    );
     assert(
       read(rasterSql + 'postgis_raster--3.6.4--ANY.sql').includes(
         'extension postgis_raster version',
@@ -119,14 +171,72 @@ test('Windows raster SQL installs and upgrades the raster module under its own e
     for (const [folder, name] of [
       [sql, 'postgis'],
       [rasterSql, 'postgis_raster'],
+      [topologySql, 'postgis_topology'],
     ]) {
       write(folder + name + '--unpackaged--3.6.4.sql', '-- unpackaged objects\n');
     }
     postgisSql(config, 'postgis-sql-unpackaged');
     assert(read(rasterSql + 'postgis_raster--unpackaged--3.6.4.sql').endsWith(upgrade));
+    assert(
+      read(topologySql + 'postgis_topology--unpackaged--3.6.4.sql').endsWith(
+        read(topologySql + 'topology_upgrade.sql'),
+      ),
+    );
+    assert.equal(
+      read(tigerSql + 'postgis_tiger_geocoder--unpackaged--3.6.4.sql'),
+      'ALTER EXTENSION postgis_tiger_geocoder ADD SCHEMA tiger;\n',
+    );
   } finally {
     if (originalEpoch === undefined) delete process.env.SOURCE_DATE_EPOCH;
     else process.env.SOURCE_DATE_EPOCH = originalEpoch;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Windows tiger SQL follows literal upstream prerequisite order and rejects Make expressions', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'postgis-tiger-windows-'));
+  try {
+    const makefile = path.join(root, 'Makefile.in');
+    writeFileSync(
+      makefile,
+      'sql/tiger_geocoder.sql.in: sql_bits/types.sql.in \\\n  ../../extras/functions.sql sql_bits/types.sql.in | sql\n\tcat $^ > $@\n',
+    );
+    assert.deepEqual(postgisSqlInputs(root, 'sql/tiger_geocoder.sql.in'), [
+      path.resolve(root, 'sql_bits/types.sql.in'),
+      path.resolve(root, '../../extras/functions.sql'),
+    ]);
+    writeFileSync(makefile, 'sql/tiger_geocoder.sql.in: $(SQL_INPUTS) | sql\n');
+    assert.throws(
+      () => postgisSqlInputs(root, 'sql/tiger_geocoder.sql.in'),
+      /unsupported PostGIS SQL prerequisites/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Windows embedded PostGIS builds every declared native module and rejects invalid paths', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'postgis-modules-windows-'));
+  try {
+    const manifest = path.join(root, 'src/extensions/external/postgis/targets/native.toml');
+    mkdirSync(path.dirname(manifest), { recursive: true });
+    writeFileSync(
+      manifest,
+      'module_files = ["lib/postgresql/postgis-3.so", "lib/postgresql/postgis_raster-3.so", "lib/postgresql/postgis_topology-3.so"]\n',
+    );
+    assert.deepEqual(postgisModuleStems({ repo: root }), [
+      'postgis-3',
+      'postgis_raster-3',
+      'postgis_topology-3',
+    ]);
+    writeFileSync(manifest, 'module_files = ["../postgis-3.so"]\n');
+    assert.throws(() => postgisModuleStems({ repo: root }), /invalid PostGIS native module/);
+    writeFileSync(
+      manifest,
+      'module_files = ["lib/postgresql/postgis-3.so", "lib/postgresql/postgis-3.so"]\n',
+    );
+    assert.throws(() => postgisModuleStems({ repo: root }), /duplicate PostGIS native modules/);
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

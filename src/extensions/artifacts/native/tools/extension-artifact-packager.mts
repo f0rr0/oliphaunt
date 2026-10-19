@@ -1,31 +1,31 @@
 #!/usr/bin/env bun
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-import { tarHeader } from '../../../../../tools/packaging/archive-directory.mts';
 import { promises as fs } from 'node:fs';
-
-import { validateWindowsExtensionArtifactBinaryContract } from './stage-windows-binary-contract.mts';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { tarHeader } from '../../../../../tools/packaging/archive-directory.mts';
 import { inspectPlatformBinaryTree } from '../../../../../tools/packaging/platform-binary-contract.mts';
-import {
-  validateExtensionArtifactArchivePlan,
-  validateExtensionArtifactCompressedBytes,
-} from '../../../tools/extension-artifact-archive-policy.mts';
-import {
-  extensionControlDefaultVersion,
-  isCanonicalExtensionInstallSql,
-  validateExtensionInstallSqlReachability,
-} from '../../packages/tools/extension-artifact-inventory.mts';
+import { canonicalGzipSync } from '../../../../../tools/packaging/portable-archive.mts';
 import {
   assertReleaseNoticesInArchive,
   stageReleaseNotices,
 } from '../../../../../tools/packaging/release-notices.mts';
-import { stageExtensionUpstreamLicenses } from '../../../tools/extension-upstream-licenses.mts';
-import { canonicalGzipSync } from '../../../../../tools/packaging/portable-archive.mts';
 import { extensionSqlNames } from '../../../../../tools/release/release-artifact-targets.mts';
+import {
+  validateExtensionArtifactArchivePlan,
+  validateExtensionArtifactCompressedBytes,
+} from '../../../tools/extension-artifact-archive-policy.mts';
+import { stageExtensionUpstreamLicenses } from '../../../tools/extension-upstream-licenses.mts';
 import {
   loadNativeComponentContract,
   resolveNativeComponentClosure,
 } from '../../../tools/native-component-contract.mts';
+import {
+  extensionControlDefaultVersion,
+  extensionNativeArtifactClosure,
+  isCanonicalExtensionInstallSql,
+  validateExtensionInstallSqlReachability,
+} from '../../packages/tools/extension-artifact-inventory.mts';
+import { validateWindowsExtensionArtifactBinaryContract } from './stage-windows-binary-contract.mts';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, '../../../../..');
@@ -785,6 +785,12 @@ function artifactMobilePrebuilt(args) {
 
 function extensionSqlFileBelongs(sqlName, fileName, extraSql, createsExtension) {
   return (
+    extraSql.controls.includes(fileName) ||
+    extraSql.controls.some(
+      (control) =>
+        fileName.startsWith(`${control.slice(0, -'.control'.length)}--`) &&
+        fileName.endsWith('.sql'),
+    ) ||
     (createsExtension && fileName === `${sqlName}.control`) ||
     (createsExtension && fileName === `${sqlName}.sql`) ||
     (createsExtension && fileName.startsWith(`${sqlName}--`) && fileName.endsWith('.sql')) ||
@@ -793,7 +799,7 @@ function extensionSqlFileBelongs(sqlName, fileName, extraSql, createsExtension) 
   );
 }
 
-async function extensionSqlMetadata(sqlName) {
+async function extensionSqlMetadata(sqlName, target) {
   const prefixes = await extensionArtifactList(sqlName, 'extension_sql_file_prefixes');
   const names = await extensionArtifactList(sqlName, 'extension_sql_file_names');
   if (new Set(prefixes).size !== prefixes.length || new Set(names).size !== names.length) {
@@ -810,7 +816,10 @@ async function extensionSqlMetadata(sqlName) {
       fail(`prebuilt extension '${sqlName}' SQL file prefix '${prefix}' must not contain '.'`);
     }
   }
-  return { names, prefixes };
+  const closure = extensionNativeArtifactClosure(sqlName, target);
+  // Mobile combines companion objects into its primary static module.
+  if (!DESKTOP_NATIVE_TARGETS.has(target)) closure.modules = [];
+  return { names, prefixes, ...closure };
 }
 
 async function ensureParent(file) {
@@ -898,6 +907,21 @@ async function copySqlFiles(args, artifactRoot, artifactFiles, extraSql) {
       label: `prebuilt extension artifact ${artifactRoot}`,
     });
   }
+  for (const controlFile of extraSql.controls) {
+    if (controlFile === `${args.sqlName}.control`) continue;
+    const controlPath = path.join(targetDir, controlFile);
+    if (!copiedFileNames.includes(controlFile)) {
+      fail(
+        `prebuilt extension artifact ${artifactRoot} is missing companion control ${controlFile}`,
+      );
+    }
+    validateExtensionInstallSqlReachability({
+      sqlName: controlFile.slice(0, -'.control'.length),
+      control: await fs.readFile(controlPath, 'utf8'),
+      fileNames: copiedFileNames,
+      label: `prebuilt extension artifact ${artifactRoot}`,
+    });
+  }
   if (!args.createsExtension && copied === 0) {
     return;
   }
@@ -969,25 +993,27 @@ function extensionMetadata(args, extraSql) {
   };
 }
 
-async function writeArtifactDirectory(artifactRoot, args) {
+export async function writeArtifactDirectory(artifactRoot, args) {
   const filesRoot = path.join(artifactRoot, 'files');
-  const extraSql = await extensionSqlMetadata(args.sqlName);
+  const extraSql = await extensionSqlMetadata(args.sqlName, args.nativeTarget);
   const metadata = extensionMetadata(args, extraSql);
+  const sqlMembers = sortedDeduped([
+    ...(args.createsExtension ? [args.sqlName] : []),
+    ...extraSql.controls.map((control) => control.slice(0, -'.control'.length)),
+  ]);
   await copySqlFiles(args, artifactRoot, filesRoot, extraSql);
   for (const dataFile of metadata.dataFiles) {
     await copyRuntimeRelativeFile(args.runtime, filesRoot, `share/postgresql/${dataFile}`);
   }
-  if (metadata.nativeModuleFile.length > 0) {
-    await copyRuntimeRelativeFile(
-      args.runtime,
-      filesRoot,
-      `lib/postgresql/${metadata.nativeModuleFile}`,
-    );
+  const modules = new Set(extraSql.modules);
+  if (metadata.nativeModuleFile.length > 0) modules.add(metadata.nativeModuleFile);
+  for (const module of modules) {
+    await copyRuntimeRelativeFile(args.runtime, filesRoot, `lib/postgresql/${module}`);
     if (DESKTOP_NATIVE_TARGETS.has(args.nativeTarget)) {
       await copyFileChecked(
         args.embeddedModuleRoot,
-        path.join(args.embeddedModuleRoot, metadata.nativeModuleFile),
-        path.join(filesRoot, 'lib/modules', metadata.nativeModuleFile),
+        path.join(args.embeddedModuleRoot, module),
+        path.join(filesRoot, 'lib/modules', module),
       );
     }
   }
@@ -1031,6 +1057,8 @@ async function writeArtifactDirectory(artifactRoot, args) {
     `staticSymbolAliases=${metadata.staticSymbolAliases.map((alias) => `${alias.sqlSymbol}:${alias.linkedSymbol}`).join(',')}`,
     `licenseFiles=${licenseFiles.join(',')}`,
     `licenseProfile=${licenseProfile}`,
+    `sqlMembers=${sqlMembers.join(',')}`,
+    `nativeModuleStems=${sortedDeduped([...modules].map((module) => module.replace(/\.(so|dylib|dll)$/u, ''))).join(',')}`,
     'files=files',
     '',
   ].join('\n');

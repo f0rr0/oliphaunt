@@ -14,12 +14,14 @@ import {
   metadataZip,
 } from '../../../../../tools/packaging/testdata/zip-fixture.mts';
 import { renderExtensionProducts } from './render-extension-products.mts';
+import { loadSwiftExtensionInventoryCatalog } from './extension-resource-inventory.mts';
 import {
   extractVerifiedZipArchive,
   resolveSwiftCarrierSelection,
 } from './swift-carrier-resolver.mts';
 
 const sdk = path.resolve(import.meta.dirname, '..');
+const canonicalCatalog = await loadSwiftExtensionInventoryCatalog();
 const root = path.resolve(
   process.argv[2] ?? path.join(sdk, '../../../../target/liboliphaunt-sdk-check/swift-carrier-test'),
 );
@@ -284,6 +286,20 @@ async function productionExtensionResource(sqlName, stem, nativeDependencies) {
       'mobileStaticDependencyArchives=\n',
       `mobileStaticDependencyArchives=${mobileStaticDependencyArchives.join(',')}\n`,
     );
+  if (sqlName === 'postgis') {
+    const sqlMembers = canonicalCatalog.get(sqlName).sqlMembers;
+    manifest = manifest.replace(
+      'files=files\n',
+      `sqlMembers=${sqlMembers.join(',')}\nnativeModuleStems=${stem}\nfiles=files\n`,
+    );
+    for (const member of sqlMembers.filter((name) => name !== sqlName)) {
+      for (const name of [`${member}.control`, `${member}--1.0.sql`])
+        await fs.writeFile(
+          path.join(stage, 'files/share/postgresql/extension', name),
+          '-- companion fixture\n',
+        );
+    }
+  }
   await fs.writeFile(manifestFile, manifest);
   for (const row of [...mobileStaticArchives, ...mobileStaticDependencyArchives]) {
     const relative = row.slice(row.lastIndexOf(':') + 1);
@@ -337,6 +353,9 @@ async function extension(sqlName, stem, dependencies = [], nativeDependencies = 
     tag: `${releaseProduct}-v${version}`,
     sqlName,
     createsExtension: true,
+    ...(sqlName === 'postgis'
+      ? { sqlMembers: canonicalCatalog.get(sqlName).sqlMembers, nativeModuleStems: [stem] }
+      : {}),
     dataFiles: content.dataFiles,
     dependencies,
     extensionSqlFileNames: content.extensionSqlFileNames,
@@ -609,6 +628,19 @@ async function main() {
     '0.1.0',
   ];
   await render([...common, '--output-dir', output]);
+  const renderedFiles = await fs.readdir(output, { recursive: true });
+  for (const member of canonicalCatalog.get('postgis').sqlMembers) {
+    assert.ok(
+      renderedFiles.some((file) => file.endsWith(`/extension/${member}.control`)),
+      `clean Swift package must contain ${member}.control`,
+    );
+    assert.ok(
+      renderedFiles.some(
+        (file) => file.includes(`/extension/${member}--`) && file.endsWith('.sql'),
+      ),
+      `clean Swift package must contain ${member} install SQL`,
+    );
+  }
   assert.deepEqual(
     (await fs.readdir(output, { recursive: true })).filter((entry) => entry.endsWith('.a')),
     [],

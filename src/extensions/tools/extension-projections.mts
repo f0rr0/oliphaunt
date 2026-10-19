@@ -72,6 +72,22 @@ export function extensionProjections(catalog: Row, releases: Row[]): Map<string,
     const recipe = recipes.get(sql)!;
     const contribRow = contrib.find((row: Row) => row['sql-name'] === sql);
     const files = [...(recipe.artifacts?.data_files ?? contribRow?.['data-files'] ?? [])].sort();
+    const nativeTargetPath = `${externalRoot}/${sql}/targets/native.toml`;
+    const nativeTarget = existsSync(nativeTargetPath) ? readToml(nativeTargetPath) : {};
+    const primaryModule = moduleStem(extension);
+    const nativeModuleStems = unique(
+      (nativeTarget.module_files ?? (primaryModule === null ? [] : [primaryModule])).map(
+        (file: string) => file.replace(/^lib\/postgresql\//, '').replace(/\.(so|dylib|dll)$/, ''),
+      ),
+    );
+    const sqlMembers = unique(
+      (
+        recipe.artifacts?.control_files ??
+        (extension.lifecycle?.['create-extension'] ? [`${sql}.control`] : [])
+      ).map((file: string) =>
+        file.replace(/^share\/postgresql\/extension\//, '').replace(/\.control$/, ''),
+      ),
+    );
     const requirements = resolutions(sql);
     const preload = unique(
       (extension.lifecycle?.['startup-config'] ?? []).flatMap((assignment: string) =>
@@ -122,7 +138,9 @@ export function extensionProjections(catalog: Row, releases: Row[]): Map<string,
       'maven-artifact': release.mavenArtifact,
       'runtime-bound': release.versioning === 'runtime-bound',
       'creates-extension': Boolean(extension.lifecycle?.['create-extension']),
-      'native-module-stem': moduleStem(extension),
+      'native-module-stem': primaryModule,
+      'native-module-stems': nativeModuleStems,
+      'sql-members': sqlMembers,
       dependencies: extension.dependencies ?? [],
       'selected-extension-dependencies': (extension.dependencies ?? [])
         .filter((name: string) => names.has(name))
@@ -198,6 +216,8 @@ export function extensionProjections(catalog: Row, releases: Row[]): Map<string,
     'runtime-bound',
     'creates-extension',
     'native-module-stem',
+    'native-module-stems',
+    'sql-members',
     'dependencies',
     'selected-extension-dependencies',
     'shared-preload-libraries',
@@ -331,6 +351,7 @@ ${metadataRows.map((row) => `    public static let ${row.id.replace(/[-_]([a-z])
           mavenArtifact: row['maven-artifact'],
           runtimeBound: row['runtime-bound'],
           dependencies: row['selected-extension-dependencies'].join(','),
+          sqlMembers: row['sql-members'].join(','),
         }).map(([key, value]) => `extension.${row['sql-name']}.${key}=${value}`),
       ),
       '',
@@ -521,6 +542,8 @@ function rustModule(rows: Row[]): string {
       option(row['shared-preload-libraries'][0] ?? null),
     ),
     ...[
+      ['native_module_stems', 'native-module-stems'],
+      ['sql_members', 'sql-members'],
       ['extension_data_files', 'runtime-share-data-files'],
       ['extension_sql_file_prefixes', 'extension-sql-file-prefixes'],
       ['extension_sql_file_names', 'extension-sql-file-names'],

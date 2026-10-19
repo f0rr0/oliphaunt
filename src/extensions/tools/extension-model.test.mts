@@ -141,6 +141,21 @@ test('extension projections retain dependency and runtime data while deriving mo
     JSON.parse(outputs.get('src/extensions/generated/sdk/extensions.json')!),
     metadata,
   );
+  const postgis = metadata.extensions.find((row: any) => row['sql-name'] === 'postgis');
+  assert.deepEqual(postgis['native-module-stems'], [
+    'postgis-3',
+    'postgis_raster-3',
+    'postgis_topology-3',
+  ]);
+  assert.deepEqual(postgis['sql-members'], [
+    'postgis',
+    'postgis_raster',
+    'postgis_tiger_geocoder',
+    'postgis_topology',
+  ]);
+  const loadOnly = metadata.extensions.find((row: any) => row['sql-name'] === 'auto_explain');
+  assert.deepEqual(loadOnly['sql-members'], []);
+  assert.deepEqual(loadOnly['native-module-stems'], ['auto_explain']);
   const extension = source.extensions.find((row: any) => row.id === 'pg_textsearch');
   extension.control['default-version'] = '9.8.7';
   const updated = extensionProjections(source, releases).get(

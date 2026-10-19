@@ -206,6 +206,14 @@ postgis_raster = shared_module(
 )
 contrib_targets += postgis_raster
 
+postgis_topology = shared_module(
+  'postgis_topology-3',
+  files('topology/postgis_topology.c') + postgis_common_sources,
+  c_pch: pch_postgres_h,
+  kwargs: postgis_module_args,
+)
+contrib_targets += postgis_topology
+
 install_data(
 @EXTENSION_DATA@,
   kwargs: contrib_data_args,

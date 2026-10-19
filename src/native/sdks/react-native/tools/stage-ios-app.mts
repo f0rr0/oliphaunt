@@ -65,6 +65,8 @@ const EXTENSION_ARTIFACT_PROPERTY_KEYS = new Set([
   'staticSymbolAliases',
   'licenseFiles',
   'licenseProfile',
+  'sqlMembers',
+  'nativeModuleStems',
   'files',
 ]);
 const GENERATED_EXTENSION_CATALOG = JSON.parse(
@@ -696,6 +698,7 @@ function validateExtension(value, label, carriers) {
       'sqlName',
       'tag',
       'version',
+      ...['sqlMembers', 'nativeModuleStems'].filter((key) => Object.hasOwn(root, key)),
     ],
     label,
   );
@@ -740,6 +743,25 @@ function validateExtension(value, label, carriers) {
     root.nativeModuleStem === null
       ? null
       : portable(root.nativeModuleStem, `${label}.nativeModuleStem`);
+  if (Object.hasOwn(root, 'sqlMembers') !== Object.hasOwn(root, 'nativeModuleStems'))
+    fail(`${label} sqlMembers and nativeModuleStems must be declared together`);
+  const sqlMembers = canonicalPortableList(
+    root.sqlMembers ?? (root.createsExtension ? [sqlName] : []),
+    `${label}.sqlMembers`,
+  );
+  const nativeModuleStems = canonicalPortableList(
+    root.nativeModuleStems ?? (nativeModuleStem === null ? [] : [nativeModuleStem]),
+    `${label}.nativeModuleStems`,
+  );
+  if (root.createsExtension ? !sqlMembers.includes(sqlName) : sqlMembers.length !== 0)
+    fail(
+      `${label}.sqlMembers must contain the primary extension exactly when createsExtension is true`,
+    );
+  if (
+    JSON.stringify(nativeModuleStems) !==
+    JSON.stringify(nativeModuleStem === null ? [] : [nativeModuleStem])
+  )
+    fail(`${label}.nativeModuleStems must contain only the merged primary mobile module`);
   const sharedPreloadLibraries = canonicalPortableList(
     root.sharedPreloadLibraries,
     `${label}.sharedPreloadLibraries`,
@@ -806,6 +828,9 @@ function validateExtension(value, label, carriers) {
   return {
     assets: { dependencyFrameworks, extension, runtime },
     createsExtension: root.createsExtension,
+    closureDeclared: Object.hasOwn(root, 'sqlMembers'),
+    sqlMembers,
+    nativeModuleStems,
     dataFiles,
     dependencies,
     extensionSqlFileNames,
@@ -1797,17 +1822,20 @@ async function validateExactExtensionArtifactInventory(
   for (const legalFile of carrier.legal.files) expectedFiles.add(legalFile.member);
   if (carrier.createsExtension) {
     const extensionRoot = 'files/share/postgresql/extension';
+    const sqlMembers = carrier.sqlMembers;
     const control = `${extensionRoot}/${carrier.sqlName}.control`;
     if (!actualFiles.has(control)) fail(`${source} is missing canonical control file ${control}`);
     expectedFiles.add(control);
     const ownedSqlFiles = [...actualFiles].filter((file) => {
       if (path.posix.dirname(file) !== extensionRoot) return false;
       const name = path.posix.basename(file);
-      if (name === `${carrier.sqlName}.sql`) return true;
-      const prefix = `${carrier.sqlName}--`;
-      if (!name.startsWith(prefix) || !name.endsWith('.sql')) return false;
-      const versionPath = name.slice(prefix.length, -'.sql'.length);
-      return /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(versionPath);
+      return sqlMembers.some((member) => {
+        if (name === `${member}.control` || name === `${member}.sql`) return true;
+        const prefix = `${member}--`;
+        if (!name.startsWith(prefix) || !name.endsWith('.sql')) return false;
+        const versionPath = name.slice(prefix.length, -'.sql'.length);
+        return /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(versionPath);
+      });
     });
     const installSqlFiles = ownedSqlFiles.filter((file) => {
       const name = path.posix.basename(file);
@@ -1828,6 +1856,22 @@ async function validateExactExtensionArtifactInventory(
       );
     });
     for (const file of [...ownedSqlFiles, ...ancillarySqlFiles]) expectedFiles.add(file);
+    for (const member of sqlMembers) {
+      if (!actualFiles.has(`${extensionRoot}/${member}.control`))
+        fail(`${source} is missing canonical control file ${member}.control`);
+      if (
+        ![...actualFiles].some((file) => {
+          if (path.posix.dirname(file) !== extensionRoot) return false;
+          const name = path.posix.basename(file);
+          if (name === `${member}.sql`) return true;
+          const prefix = `${member}--`;
+          if (!name.startsWith(prefix) || !name.endsWith('.sql')) return false;
+          const version = name.slice(prefix.length, -'.sql'.length);
+          return !version.includes('--') && /^[0-9][A-Za-z0-9._-]*$/u.test(version);
+        })
+      )
+        fail(`${source} is missing an install SQL file owned by ${member}`);
+    }
   }
   for (const dataFile of dataFiles) {
     expectedFiles.add(`files/share/postgresql/${dataFile}`);
@@ -1880,6 +1924,22 @@ async function extensionResourceRoot(carrier, base, cacheDir) {
   const manifestFile = path.join(root, 'manifest.properties');
   const manifest = parseProperties(await fs.readFile(manifestFile, 'utf8'), manifestFile);
   rejectUnsupportedProperties(manifest, EXTENSION_ARTIFACT_PROPERTY_KEYS, manifestFile);
+  if (
+    manifest.has('sqlMembers') !== manifest.has('nativeModuleStems') ||
+    manifest.has('sqlMembers') !== carrier.closureDeclared
+  )
+    fail(
+      `${manifestFile} sqlMembers and nativeModuleStems must match the frozen carrier declaration`,
+    );
+  if (carrier.closureDeclared) {
+    requireProperty(manifest, 'sqlMembers', carrier.sqlMembers.join(','), manifestFile);
+    requireProperty(
+      manifest,
+      'nativeModuleStems',
+      carrier.nativeModuleStems.join(','),
+      manifestFile,
+    );
+  }
   requireProperty(manifest, 'packageLayout', 'oliphaunt-extension-artifact-v1', manifestFile);
   requireProperty(manifest, 'pgMajor', '18', manifestFile);
   requireProperty(manifest, 'sqlName', carrier.sqlName, manifestFile);
@@ -1971,7 +2031,13 @@ async function extensionResourceRoot(carrier, base, cacheDir) {
       `${manifestFile} dataFiles must exactly match the frozen carrier contract for ${carrier.sqlName}`,
     );
   }
-  requireExactPropertySet(manifest, EXTENSION_ARTIFACT_PROPERTY_KEYS, manifestFile);
+  requireExactPropertySet(
+    manifest,
+    [...EXTENSION_ARTIFACT_PROPERTY_KEYS].filter(
+      (key) => carrier.closureDeclared || !['sqlMembers', 'nativeModuleStems'].includes(key),
+    ),
+    manifestFile,
+  );
   const mobileStaticArchives = mobileStaticArchivePaths(manifest, carrier, manifestFile);
   const mobileStaticDependencyArchives = mobileStaticDependencyArchivePaths(
     manifest,
@@ -2321,17 +2387,19 @@ async function stage(args, base, selected) {
     const frozen = {
       base: { product: base.product, version: base.version, assets: base.assets },
       cacheKey: `react-native-ios-${selectionHash.slice(0, 32)}`,
-      extensions: selected.map((carrier) => ({
-        assets: carrier.assets,
-        createsExtension: carrier.createsExtension,
-        dependencies: carrier.dependencies,
-        nativeDependencies: carrier.nativeDependencies,
-        nativeModuleStem: carrier.nativeModuleStem,
-        product: carrier.product,
-        releaseProduct: carrier.releaseProduct,
-        sqlName: carrier.sqlName,
-        version: carrier.version,
-      })),
+      extensions: selected
+        .map((carrier) => ({
+          assets: carrier.assets,
+          createsExtension: carrier.createsExtension,
+          dependencies: carrier.dependencies,
+          nativeDependencies: carrier.nativeDependencies,
+          nativeModuleStem: carrier.nativeModuleStem,
+          product: carrier.product,
+          releaseProduct: carrier.releaseProduct,
+          sqlName: carrier.sqlName,
+          version: carrier.version,
+        }))
+        .sort((left, right) => compareText(left.sqlName, right.sqlName)),
       requestedExtensions: args.extensions,
       icu: args.icu,
       seedProfile: args.seedProfile,
@@ -2427,7 +2495,9 @@ export async function stageIosApp(options) {
       );
     }
   }
-  const selected = selectedClosure(args.extensions, bySqlName);
+  const selected = selectedClosure(args.extensions, bySqlName).sort((left, right) =>
+    compareText(left.sqlName, right.sqlName),
+  );
   await stage(args, base, selected);
   return { outputDir: args.outputDir, selected: selected.map(({ sqlName }) => sqlName) };
 }

@@ -119,6 +119,66 @@ async function main() {
   const postgis = extensions.get('postgis');
   const postgisManifest = path.join(postgis.resourceRoot, 'manifest.properties');
   const postgisManifestText = await fs.readFile(postgisManifest, 'utf8');
+  const sqlMembers = catalog.get('postgis').sqlMembers;
+  assert.ok(
+    sqlMembers.includes('postgis_topology') && sqlMembers.includes('postgis_tiger_geocoder'),
+  );
+  const expandedPostgis = { ...postgis, sqlMembers, nativeModuleStems: ['postgis-3'] };
+  await fs.writeFile(
+    postgisManifest,
+    postgisManifestText.replace(
+      'files=files\n',
+      `sqlMembers=${sqlMembers.join(',')}\nnativeModuleStems=postgis-3\nfiles=files\n`,
+    ),
+  );
+  const companionFiles = [];
+  for (const member of sqlMembers.filter((name) => name !== 'postgis')) {
+    for (const name of [`${member}.control`, `${member}--1.0.sql`]) {
+      const file = path.join(postgis.resourceRoot, 'files/share/postgresql/extension', name);
+      await fs.writeFile(file, '-- companion fixture\n');
+      companionFiles.push(file);
+    }
+  }
+  const expandedResources = await validateSwiftExtensionResourceArtifact({
+    extension: expandedPostgis,
+    canonical: catalog.get('postgis'),
+    nativeRuntime: document.nativeRuntime,
+  });
+  assert.ok(
+    expandedResources.files.some(
+      ({ relative }) => relative === 'extension/postgis_topology.control',
+    ),
+  );
+  const missingCompanion = companionFiles.find((file) =>
+    file.endsWith('/postgis_topology.control'),
+  );
+  await fs.rm(missingCompanion);
+  await assert.rejects(
+    () =>
+      validateSwiftExtensionResourceArtifact({
+        extension: expandedPostgis,
+        canonical: catalog.get('postgis'),
+        nativeRuntime: document.nativeRuntime,
+      }),
+    /postgis_topology\.control and canonical base installation SQL/u,
+  );
+  await fs.writeFile(missingCompanion, '-- companion fixture\n');
+  const foreignControl = path.join(
+    postgis.resourceRoot,
+    'files/share/postgresql/extension/postgis_topology_extra.control',
+  );
+  await fs.writeFile(foreignControl, '-- unowned lookalike\n');
+  await assert.rejects(
+    () =>
+      validateSwiftExtensionResourceArtifact({
+        extension: expandedPostgis,
+        canonical: catalog.get('postgis'),
+        nativeRuntime: document.nativeRuntime,
+      }),
+    /undeclared extension SQL\/control file/u,
+  );
+  await Promise.all([...companionFiles, foreignControl].map((file) => fs.rm(file)));
+  await fs.writeFile(postgisManifest, postgisManifestText);
   await assert.rejects(
     () =>
       validateSwiftExtensionResourceArtifact({

@@ -860,6 +860,29 @@ public final class OliphauntExtensionCatalogContractTest {
           "1.2.3");
       ResolveOliphauntAndroidAssetsTask.validateExtensionArtifactInventoryForContractTest(
           postgisRoot.toFile(), postgis);
+      List<String> postgisMembers = OliphauntExtensionCatalog.require("postgis").sqlMembers();
+      if (!postgisMembers.contains("postgis_topology") || !postgisMembers.contains("postgis_tiger_geocoder")) {
+        throw new AssertionError("generated PostGIS SQL closure must include topology and tiger");
+      }
+      postgis.setProperty("sqlMembers", String.join(",", postgisMembers));
+      postgis.setProperty("nativeModuleStems", "postgis-3");
+      postgis.setProperty("dependencies", String.join(",", OliphauntExtensionCatalog.require("postgis").dependencies()));
+      for (String member : postgisMembers) {
+        if (member.equals("postgis")) continue;
+        writeInventoryFile(postgisRoot, "files/share/postgresql/extension/" + member + ".control", "default_version='3.6.3'\n");
+        writeInventoryFile(postgisRoot, "files/share/postgresql/extension/" + member + "--3.6.3.sql", "SELECT 1;\n");
+      }
+      writeInventoryFile(postgisRoot, "manifest.properties", artifactManifestText(postgis));
+      ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
+          "oliphaunt-extension-postgis", "postgis", "android-arm64-v8a", postgis, "1.2.3");
+      ResolveOliphauntAndroidAssetsTask.validateExtensionArtifactInventoryForContractTest(postgisRoot.toFile(), postgis);
+      Path topologyControl = postgisRoot.resolve("files/share/postgresql/extension/postgis_topology.control");
+      Files.delete(topologyControl);
+      expectFailure(() -> ResolveOliphauntAndroidAssetsTask.validateExtensionArtifactInventoryForContractTest(postgisRoot.toFile(), postgis), "postgis_topology.control and a canonical install SQL file");
+      Files.writeString(topologyControl, "default_version='3.6.3'\n");
+      Path foreignControl = writeInventoryFile(postgisRoot, "files/share/postgresql/extension/postgis_topology_extra.control", "foreign\n");
+      expectFailure(() -> ResolveOliphauntAndroidAssetsTask.validateExtensionArtifactInventoryForContractTest(postgisRoot.toFile(), postgis), "unexpected=[files/share/postgresql/extension/postgis_topology_extra.control]");
+      Files.delete(foreignControl);
       long upstreamFiles;
       try (var files = Files.walk(postgisRoot.resolve("files/share/licenses"))) {
         upstreamFiles = files.filter(Files::isRegularFile).count();
@@ -2089,6 +2112,8 @@ public final class OliphauntExtensionCatalogContractTest {
           root,
           "share/postgresql/extension/postgis--3.6.3.sql",
           "CREATE FUNCTION public.difference() RETURNS integer AS 'MODULE_PATHNAME', 'difference' LANGUAGE C;\n");
+      writeInventoryFile(root, "share/postgresql/extension/postgis_topology--3.6.3.sql",
+          "CREATE FUNCTION topology.fixture() RETURNS integer AS '$libdir/postgis-3', 'topology_fixture' LANGUAGE C;\n");
       String source =
           ResolveOliphauntAndroidAssetsTask.staticRegistrySourceForContractTest(
               root.toFile(),
@@ -2101,6 +2126,7 @@ public final class OliphauntExtensionCatalogContractTest {
           source,
           "extern void oliphaunt_static_postgis_3_difference(void);",
           "aliased SQL symbol declaration");
+      requireContains(source, ".name = \"topology_fixture\"", "companion SQL symbols enter the merged PostGIS registry");
       requireContains(
           source,
           ".name = \"difference\", .address = (void *)oliphaunt_static_postgis_3_difference",

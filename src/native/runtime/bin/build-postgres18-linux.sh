@@ -155,6 +155,8 @@ required_extension_controls=(
   pgcrypto
   postgis
   postgis_raster
+  postgis_topology
+  postgis_tiger_geocoder
   pg_surgery
   pg_textsearch
   pg_trgm
@@ -198,6 +200,7 @@ required_extension_modules=(
   pgcrypto
   postgis-3
   postgis_raster-3
+  postgis_topology-3
   pg_surgery
   pg_textsearch
   pg_trgm
@@ -262,8 +265,8 @@ filter_native_extension_selection() {
         postgis)
           selected_external+=(postgis)
           module_file="postgis-3.so"
-          selected_controls+=(postgis_raster)
-          selected_modules+=(postgis_raster-3)
+          selected_controls+=(postgis_raster postgis_topology postgis_tiger_geocoder)
+          selected_modules+=(postgis_raster-3 postgis_topology-3)
           ;;
         *)
           external_id="$(awk -F '\t' -v sql="$sql" 'NR > 1 && $2 == sql { print $1; found = 1; exit } END { exit found ? 0 : 1 }' "$pgxs_plan" || true)"
@@ -1645,10 +1648,8 @@ build_postgis_extension() {
       --with-pgconfig="$install_dir/bin/pg_config" \
       "${postgis_configure_args[@]}" \
       --without-protobuf \
-      --without-topology \
       --without-sfcgal \
       --without-address-standardizer \
-      --without-tiger \
       --disable-nls >> "$make_log" 2>&1
     patch_postgis_generated_makefiles "$postgis_build_dir"
     make postgis_revision.h >> "$make_log" 2>&1
@@ -1658,16 +1659,20 @@ build_postgis_extension() {
     make -j"$jobs" -C postgis CC="$cc_string" "${postgis_make_args[@]}" install >> "$make_log" 2>&1
     make -j"$jobs" -C raster/rt_core CC="$cc_string" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
     make -j"$jobs" -C raster/rt_pg CC="$cc_string" BE_DLLLIBS="$normal_module_be_dllibs" "${postgis_make_args[@]}" install >> "$make_log" 2>&1
+    make -j"$jobs" -C topology CC="$cc_string" BE_DLLLIBS="$normal_module_be_dllibs" "${postgis_make_args[@]}" install >> "$make_log" 2>&1
     make -j1 -C extensions CC="$cc_string" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
     make -j1 -C extensions CC="$cc_string" "${postgis_make_args[@]}" install >> "$make_log" 2>&1
     make -C postgis clean >> "$make_log" 2>&1 || true
     make postgis_revision.h >> "$make_log" 2>&1
     make -j"$jobs" -C postgis CC="$cc_string" CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
     make -C raster/rt_pg clean >> "$make_log" 2>&1 || true
+    make -C topology clean >> "$make_log" 2>&1 || true
     make -j"$jobs" -C raster/rt_pg CC="$cc_string" CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
+    make -j"$jobs" -C topology CC="$cc_string" CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
   )
   copy_embedded_postgis_module "$postgis_build_dir/postgis" postgis-3
   copy_embedded_postgis_module "$postgis_build_dir/raster/rt_pg" postgis_raster-3
+  copy_embedded_postgis_module "$postgis_build_dir/topology" postgis_topology-3
   stage_postgis_data_files "$postgis_build_dir"
 }
 

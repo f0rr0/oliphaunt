@@ -24,21 +24,28 @@ trusted = false
 control_files = [
   "share/postgresql/extension/postgis.control",
   "share/postgresql/extension/postgis_raster.control",
+  "share/postgresql/extension/postgis_topology.control",
+  "share/postgresql/extension/postgis_tiger_geocoder.control",
 ]
 sql_globs = [
   "share/postgresql/extension/postgis--*.sql",
   "share/postgresql/extension/postgis_raster--*.sql",
+  "share/postgresql/extension/postgis_topology--*.sql",
+  "share/postgresql/extension/postgis_tiger_geocoder--*.sql",
 ]
 extension_sql_file_prefixes = [
   "postgis_comments",
   "postgis_proc_set_search_path",
   "postgis_raster",
+  "postgis_topology",
+  "postgis_tiger_geocoder",
   "rtpostgis",
 ]
 extension_sql_file_names = ["uninstall_postgis.sql"]
 native_modules = ["lib/postgresql/postgis-3.so"]
 native_dependency_modules = [
   "lib/postgresql/postgis_raster-3.so",
+  "lib/postgresql/postgis_topology-3.so",
   "lib/postgresql/liboliphaunt_postgis_deps.so",
 ]
 data_files = [
