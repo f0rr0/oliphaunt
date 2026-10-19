@@ -1662,6 +1662,10 @@ build_native_postgis_gdal_dependency() {
   [ -f "$source_dir/CMakeLists.txt" ] || native_postgis_fail "missing GDAL checkout: $source_dir"
   [ -f "$proj_dir/lib/libproj.a" ] || native_postgis_fail "GDAL dependency requires PROJ first"
   rm -rf "$build_root" "$dependency_dir"
+  # Preserve the release date in the pinned header instead of probing the enclosing checkout.
+  local gdal_source_commit
+  gdal_source_commit="$(git -C "$source_dir" rev-parse HEAD)"
+  GDAL_SHA1SUM="$gdal_source_commit" \
   native_postgis_cmake_install "$source_dir" "$build_root" "$dependency_dir" \
     -DCMAKE_BUILD_TYPE=Release \
     -DBASH_COMPLETIONS_DIR= \

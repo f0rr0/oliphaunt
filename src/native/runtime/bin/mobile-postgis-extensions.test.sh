@@ -20,6 +20,11 @@ mkdir -p \
   "$repo_root/target/oliphaunt-sources/checkouts/gdal" \
   "$mobile_static_dependency_root/proj/lib"
 : > "$repo_root/target/oliphaunt-sources/checkouts/gdal/CMakeLists.txt"
+gdal_checkout="$repo_root/target/oliphaunt-sources/checkouts/gdal"
+git init --quiet "$gdal_checkout"
+git -C "$gdal_checkout" -c user.name=Fixture -c user.email=fixture@example.invalid \
+  commit --quiet --allow-empty -m fixture
+gdal_fixture_commit="$(git -C "$gdal_checkout" rev-parse HEAD)"
 : > "$mobile_static_dependency_root/proj/lib/libproj.a"
 
 oliphaunt_postgis_selected() {
@@ -31,6 +36,10 @@ dependency_builds=0
 oliphaunt_postgis_cmake_install() {
   local dependency_dir="$3"
   shift 3
+  [ "${GDAL_SHA1SUM:-}" = "$gdal_fixture_commit" ] || {
+    echo "GDAL version metadata did not use its pinned source revision" >&2
+    return 1
+  }
   printf '%s\n' "$@" > "$cmake_args_file"
   dependency_builds=$((dependency_builds + 1))
   mkdir -p "$dependency_dir/lib" "$dependency_dir/include" "$dependency_dir/bin" "$dependency_dir/share/gdal"

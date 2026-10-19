@@ -89,6 +89,10 @@ windows_extension_postgis_dependencies() {
   fi
   prefix="$dependency_root/gdal"
   if ! (first_file "$prefix" gdal.lib) >/dev/null 2>&1 || [ ! -f "$prefix/share/gdal/gdalvrt.xsd" ]; then
+    # Preserve the release date in the pinned header instead of probing the enclosing checkout.
+    local gdal_source_commit
+    gdal_source_commit="$(git -C "$external_checkout_root/gdal" rev-parse HEAD)"
+    GDAL_SHA1SUM="$gdal_source_commit" \
     windows_extension_cmake gdal "$external_checkout_root/gdal" "$prefix" \
       -DBUILD_SHARED_LIBS=OFF -DBUILD_APPS=OFF -DBUILD_TESTING=OFF \
       -DBUILD_CSHARP_BINDINGS=OFF -DBUILD_JAVA_BINDINGS=OFF -DBUILD_PYTHON_BINDINGS=OFF \

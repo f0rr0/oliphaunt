@@ -377,6 +377,10 @@ build_postgis_gdal_dependency() {
       ;;
   esac
   rm -rf "$build_root" "$dependency_dir"
+  # Preserve the release date in the pinned header instead of probing the enclosing checkout.
+  local gdal_source_commit
+  gdal_source_commit="$(git -C "$source_dir" rev-parse HEAD)"
+  GDAL_SHA1SUM="$gdal_source_commit" \
   oliphaunt_postgis_cmake_install "$source_dir" "$build_root" "$dependency_dir" \
     "${cmake_args[@]}"
   [ -f "$archive" ] || oliphaunt_postgis_fail "GDAL build did not produce $archive"

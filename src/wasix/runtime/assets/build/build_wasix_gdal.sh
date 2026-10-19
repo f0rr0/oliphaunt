@@ -67,6 +67,8 @@ fi
 {
   rm -rf "$GDAL_BUILD_DIR" "$GDAL_PREFIX"
   mkdir -p "$GDAL_BUILD_DIR" "$(dirname "$GDAL_PREFIX")"
+  # Preserve the release date in the pinned header instead of probing the enclosing checkout.
+  GDAL_SHA1SUM="$source_commit" \
   OLIPHAUNT_WASIX_CMAKE_C_FLAGS_EXTRA="-include $compat_header" \
   OLIPHAUNT_WASIX_CMAKE_CXX_FLAGS_EXTRA="-include $compat_header" \
   oliphaunt_wasix_static_cmake_build \
