@@ -95,7 +95,7 @@ if [ -f "$POSTGIS_BUILD_DIR/.oliphaunt-wasix-postgis-build" ] &&
   exit 0
 fi
 
-{
+(
   rm -rf "$POSTGIS_BUILD_DIR"
   mkdir -p "$(dirname "$POSTGIS_BUILD_DIR")"
   oliphaunt_wasix_copy_source_clean "$POSTGIS_SOURCE_DIR" "$POSTGIS_BUILD_DIR"
@@ -204,7 +204,7 @@ EOF
   export CXX=wasixcc++
   export AR=wasixar
   export RANLIB=wasixranlib
-export CPPFLAGS="$("$ROOT/pg_config_wasix.sh" --cppflags) -I$LIBICONV_PREFIX/include"
+  export CPPFLAGS="$("$ROOT/pg_config_wasix.sh" --cppflags) -I$LIBICONV_PREFIX/include"
   export CFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -Wno-unused-command-line-argument"
   export CXXFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -fvisibility-inlines-hidden -Wno-unused-command-line-argument"
   export LDFLAGS="-L$LIBICONV_PREFIX/lib -L$SQLITE_PREFIX/lib -liconv -lsqlite3 -lc++ -lc++abi -lunwind"
@@ -401,7 +401,7 @@ EOF
     cp "$POSTGIS_BUILD_DIR/extensions/$member/sql/"*.sql \
       "$POSTGIS_BUILD_DIR/share/extension-members/"
   done
-} >&2
+) >&2
 
 oliphaunt_wasix_extension_build_outputs_exist "$REPO_ROOT" postgis "$POSTGIS_BUILD_DIR"
 printf '%s\n' "$stamp" > "$POSTGIS_BUILD_DIR/.oliphaunt-wasix-postgis-build"
