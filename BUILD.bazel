@@ -306,6 +306,7 @@ test_suite(
         "//build_defs/foundation:toolchain_metadata_test",
         "//build_defs/host:host_sdk_test",
         "//build_defs/host:profile_analysis_test",
+        "//build_defs/host:apple_sdk_inputs_test",
         "//build_defs/native:host_runtime_test_helpers_test",
         "//build_defs/native:windows_exports_test",
         "//build_defs/native:host_config_policy_test",

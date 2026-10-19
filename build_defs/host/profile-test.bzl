@@ -209,6 +209,26 @@ def _profile_test(ctx):
 
 _profile_rule_test = analysistest.make(_profile_test, fragments = ["cpp"], attrs = {"source": attr.label(default = ":sdk-smoke.c", allow_single_file = True), "libtool": attr.label(default = "@apple_support//crosstool:libtool.cc", allow_single_file = True), "cc_profiles": attr.label_list(providers = [cc_common.CcToolchainInfo]), "archive_profiles": attr.label_list(providers = [cc_common.CcToolchainInfo], cfg = _archive_fixture), "xcode_configuration": attr.label(providers = [apple_common.XcodeVersionConfig]), "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist")})
 
+def _apple_sdk_inputs_test(ctx):
+    env = analysistest.begin(ctx)
+    for role, profiles in [("compile", ctx.attr.compiler_inputs), ("link", ctx.attr.linker_inputs)]:
+        expected = None
+        for profile in profiles:
+            paths = sorted([source.short_path for source in profile[DefaultInfo].files.to_list() if "/sdk_" in source.short_path or "/platform_" in source.short_path])
+            asserts.true(env, bool(paths), "%s has no SDK inputs" % profile.label)
+            if expected == None:
+                expected = paths
+            asserts.true(env, paths == expected, "%s SDK inputs differ for %s; switching profiles would rebuild the sandbox SDK tree" % (role, profile.label))
+    return analysistest.end(env)
+
+apple_sdk_inputs_test = analysistest.make(
+    _apple_sdk_inputs_test,
+    attrs = {
+        "compiler_inputs": attr.label_list(default = [Label("@native_apple_sdk//:cc_" + profile + "_compile_files") for profile in ["native", "package", "ios", "ios_simulator"]]),
+        "linker_inputs": attr.label_list(default = [Label("@native_apple_sdk//:cc_" + profile + "_link_files") for profile in ["native", "package", "ios", "ios_simulator"]]),
+    },
+)
+
 def profile_test(name, **kwargs):
     """Exercise builtin path interpretation without acquiring a licensed SDK."""
     xcode_version(name = name + "_xcode_version", version = "26.5.0.17f42", default_macos_sdk_version = "26.5", default_ios_sdk_version = "26.5")

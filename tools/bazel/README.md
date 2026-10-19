@@ -45,6 +45,20 @@ extension modules. Linux ARM64 and Android have separate configured targets.
 Cross-compilation proves construction and binary contracts; runtime behavior
 still requires the actual host or device.
 
+Apple C/C++ profiles share the declared macOS, device and simulator SDK inputs.
+This lets sandbox reuse retain the SDK symlinks when a build switches profiles;
+the compiler flags still select each profile's own SDK and deployment target.
+An SDK file change consequently invalidates all Apple C/C++ profiles. Check the
+input closure and actual native compiler with the pinned Xcode selected:
+
+```sh
+export DEVELOPER_DIR="$(plutil -extract apple.developer_dir raw -o - tools/dev/native-host-toolchains.json)"
+profile=//build_defs/host:native_macos_arm64
+bash tools/dev/bazel.sh test -c opt --config=macos-sandbox \
+  //build_defs/host:apple_sdk_inputs_test //build_defs/host:host_c_smoke \
+  --platforms="$profile" --host_platform="$profile" --jobs=2
+```
+
 Installed SDK checks also consume the completed dependencies declared by their
 manifests. With an existing GitHub CLI login, acquire their source-bound public
 input snapshot once:
