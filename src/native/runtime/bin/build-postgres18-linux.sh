@@ -121,6 +121,7 @@ contrib_extensions=(
 )
 
 external_extensions=(
+  age
   pg_ivm
   pg_hashids
   pg_uuidv7
@@ -131,6 +132,7 @@ external_extensions=(
 )
 
 required_extension_controls=(
+  age
   amcheck
   bloom
   btree_gin
@@ -172,6 +174,7 @@ required_extension_controls=(
 )
 
 required_extension_modules=(
+  age
   _int
   amcheck
   auto_explain

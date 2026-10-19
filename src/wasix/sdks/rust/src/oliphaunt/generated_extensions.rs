@@ -2,6 +2,16 @@
 
 use super::Extension;
 
+const DEFINITION_AGE: Extension = Extension {
+    sql_name: "age",
+    native_support_modules: &[],
+    native_module_file: Some("age.so"),
+    aot_name: Some("extension:age"),
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
 const DEFINITION_AMCHECK: Extension = Extension {
     sql_name: "amcheck",
     native_support_modules: &[],
@@ -396,6 +406,9 @@ const DEFINITION_VECTOR: Extension = Extension {
 };
 
 impl Extension {
+    /// Select the `age` artifact.
+
+    pub const AGE: Self = DEFINITION_AGE;
     /// Select the `amcheck` artifact.
 
     pub const AMCHECK: Self = DEFINITION_AMCHECK;
@@ -516,6 +529,7 @@ impl Extension {
 
     /// Supported extension metadata; payloads are selected independently.
     pub const ALL: &'static [Self] = &[
+        Self::AGE,
         Self::AMCHECK,
         Self::AUTO_EXPLAIN,
         Self::BLOOM,
@@ -561,6 +575,8 @@ impl Extension {
 #[cfg(test)]
 pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
     match extension.sql_name() {
+        "age" => true,
+
         "amcheck" => true,
 
         "auto_explain" => false,
@@ -645,6 +661,12 @@ pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
 #[cfg(test)]
 pub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'static str] {
     match extension.sql_name() {
+        "age" => &[
+            "CREATE EXTENSION IF NOT EXISTS \"age\";",
+            "LOAD 'age';",
+            "SET search_path = ag_catalog, \"$user\", public;",
+        ],
+
         "amcheck" => &["CREATE EXTENSION IF NOT EXISTS \"amcheck\" WITH SCHEMA \"pg_catalog\";"],
 
         "auto_explain" => &[

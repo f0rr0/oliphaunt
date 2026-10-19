@@ -103,9 +103,12 @@ windows_extension_prepare() {
     windows_extension_openssl
     windows_extension_generate simple --extension pgcrypto
   fi
-  for name in uuid-ossp pg_hashids pg_ivm pg_uuidv7 pg_textsearch vector; do
+  for name in uuid-ossp age pg_hashids pg_ivm pg_uuidv7 pg_textsearch vector; do
     if selected "$name"; then windows_extension_generate simple --extension "$name"; fi
   done
+  if selected age; then
+    logged age-windows-path-test.log bun test "$repo_root/src/extensions/external/age/tools/windows/path-compat.test.mts"
+  fi
   if selected postgis; then
     (
       export SOURCE_DATE_EPOCH

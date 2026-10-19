@@ -16,6 +16,7 @@ wasix = ["dep:oliphaunt-wasix", "dep:tokio", "dep:tracing", "dep:tempfile"]
 extensions = ["wasix", "oliphaunt-wasix/extensions"]
 icu = ["wasix", "oliphaunt-wasix/icu"]
 
+extension-age = ["extensions", "oliphaunt-wasix/extension-age"]
 extension-amcheck = ["extensions", "oliphaunt-wasix/extension-amcheck"]
 extension-auto-explain = ["extensions", "oliphaunt-wasix/extension-auto-explain"]
 extension-bloom = ["extensions", "oliphaunt-wasix/extension-bloom"]

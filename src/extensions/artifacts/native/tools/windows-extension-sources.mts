@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { generateAgeSources } from '../../../external/age/tools/prepare-source.mts';
 import { preprocessSql } from '../../../external/postgis/tools/preprocess-sql.mts';
 
 const read = (file: string) => readFileSync(file, 'utf8');
@@ -107,6 +108,45 @@ export function patchTextsearch(root: string) {
   }
 }
 
+export function patchAgeWindows(root: string, repo: string) {
+  replace(
+    path.join(root, 'src/backend/age.c'),
+    /^void (_PG_(?:init|fini)\(void\));$/gm,
+    'PGDLLEXPORT void $1;',
+  );
+  replace(
+    path.join(root, 'src/backend/utils/adt/age_session_info.c'),
+    '#include <unistd.h>',
+    '/* PostgreSQL supplies the Windows getpid declaration. */',
+  );
+  const loader = path.join(root, 'src/backend/utils/load/age_load.c');
+  copyFileSync(
+    path.join(repo, 'src/extensions/external/age/tools/windows/path-compat.h'),
+    path.join(root, 'src/include/oliphaunt_age_windows_path.h'),
+  );
+  replace(
+    loader,
+    '#include "postgres.h"',
+    '#include "postgres.h"\n#include "oliphaunt_age_windows_path.h"',
+  );
+  replace(loader, 'char path[PATH_MAX];', 'char *path;');
+  replace(
+    loader,
+    'snprintf(path, sizeof(path), "%s%s", AGE_BASE_CSV_DIRECTORY, name);',
+    'path = psprintf("%s%s", AGE_BASE_CSV_DIRECTORY, name);',
+  );
+  replace(
+    loader,
+    'resolved = realpath(path, NULL);',
+    'resolved = oliphaunt_age_windows_realpath(path);',
+  );
+  replace(
+    loader,
+    /strncmp\(resolved, AGE_BASE_CSV_DIRECTORY,\s*strlen\(AGE_BASE_CSV_DIRECTORY\)\) != 0/,
+    '!oliphaunt_age_windows_path_below(resolved, AGE_BASE_CSV_DIRECTORY)',
+  );
+}
+
 type Config = { repo: string; work: string; postgres: string; install: string };
 function moduleRecipe(
   config: Config,
@@ -172,6 +212,12 @@ export function prepareSimple(config: Config, extension: string) {
   } else {
     const checkout = extension === 'vector' ? 'pgvector' : extension;
     copy(path.join(config.repo, 'target/oliphaunt-sources/checkouts', checkout), destination);
+    if (extension === 'age') {
+      generateAgeSources(destination);
+      patchAgeWindows(destination, config.repo);
+      includes.push('src/include', 'src/include/parser');
+      cArgs.push('/Dstrcasecmp=pg_strcasecmp');
+    }
     sources = pgxsSources(destination);
     if (extension === 'vector') {
       copyFileSync(
@@ -184,7 +230,7 @@ export function prepareSimple(config: Config, extension: string) {
       ...glob(destination, `${extension}--*.sql`),
       ...glob(destination, `sql/${extension}--*.sql`),
       `${extension}.control`,
-    ];
+    ].filter((file) => extension !== 'age' || !file.includes('--y.y.y.sql'));
     if (extension === 'pg_textsearch') {
       patchTextsearch(destination);
       cArgs.push(

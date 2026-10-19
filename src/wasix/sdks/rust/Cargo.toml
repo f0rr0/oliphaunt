@@ -36,6 +36,7 @@ tools = [
   "dep:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
   "dep:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
 ]
+extension-age = ["extensions", "liboliphaunt-wasix-portable/extension-age"]
 extension-amcheck = ["extensions", "liboliphaunt-wasix-portable/extension-amcheck"]
 extension-auto-explain = ["extensions", "liboliphaunt-wasix-portable/extension-auto-explain"]
 extension-bloom = ["extensions", "liboliphaunt-wasix-portable/extension-bloom"]

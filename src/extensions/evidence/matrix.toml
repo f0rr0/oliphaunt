@@ -8,6 +8,7 @@ source-digest-inputs = [
   "src/extensions/generated/contrib-build.tsv",
   "src/extensions/generated/pgxs-build.tsv",
   "src/database-resources/icu/source.toml",
+  "src/extensions/external/age/source.toml",
   "src/extensions/external/pg_hashids/source.toml",
   "src/extensions/external/pg_ivm/source.toml",
   "src/extensions/external/pg_textsearch/source.toml",
@@ -25,6 +26,10 @@ source-digest-inputs = [
   "src/third-party/icu/source.toml",
   "src/third-party/openssl/source.toml",
   "src/extensions/external/README.md",
+  "src/extensions/external/age/targets/native-static-registry.toml",
+  "src/extensions/external/age/tools/prepare-source.mts",
+  "src/extensions/external/age/tools/windows/path-compat.h",
+  "src/extensions/external/age/upstream-license-data.json",
   "src/extensions/external/pg_hashids/upstream-license-data.json",
   "src/extensions/external/pg_ivm/targets/native-static-registry.toml",
   "src/extensions/external/pg_ivm/upstream-license-data.json",
@@ -54,6 +59,7 @@ source-digest-inputs = [
   "src/extensions/external/postgis/upstream-license-data.json",
   "src/extensions/external/vector/upstream-license-data.json",
   "src/test-fixtures/extensions/manifest.json",
+  "src/test-fixtures/extensions/age.sql",
   "src/test-fixtures/extensions/amcheck.sql",
   "src/test-fixtures/extensions/auto_explain.sql",
   "src/test-fixtures/extensions/bloom.sql",
@@ -94,6 +100,14 @@ source-digest-inputs = [
   "src/test-fixtures/extensions/uuid-ossp.sql",
   "src/test-fixtures/extensions/vector.sql",
 ]
+
+[[claims]]
+extension = "age"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
 extension = "amcheck"

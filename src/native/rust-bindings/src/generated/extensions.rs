@@ -12,6 +12,8 @@ pub struct Extension {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum ExtensionId {
+    /// PostgreSQL `age`.
+    Age,
     /// PostgreSQL `amcheck`.
     Amcheck,
     /// PostgreSQL `auto_explain`.
@@ -93,6 +95,11 @@ enum ExtensionId {
 }
 
 impl Extension {
+    /// Select the `age` artifact.
+    pub const AGE: Self = Self {
+        id: ExtensionId::Age,
+        package: None,
+    };
     /// Select the `amcheck` artifact.
     pub const AMCHECK: Self = Self {
         id: ExtensionId::Amcheck,
@@ -291,6 +298,7 @@ impl Extension {
 
     /// All PostgreSQL 18 extension artifacts known to the native SDK.
     pub const ALL: &'static [Self] = &[
+        Extension::AGE,
         Extension::AMCHECK,
         Extension::AUTO_EXPLAIN,
         Extension::BLOOM,
@@ -336,6 +344,7 @@ impl Extension {
 /// Generated extension metadata accessor.
 pub(super) const fn sql_name(extension: Extension) -> &'static str {
     match extension.id {
+        ExtensionId::Age => "age",
         ExtensionId::Amcheck => "amcheck",
         ExtensionId::AutoExplain => "auto_explain",
         ExtensionId::Bloom => "bloom",
@@ -381,6 +390,7 @@ pub(super) const fn sql_name(extension: Extension) -> &'static str {
 /// Generated extension metadata accessor.
 pub(super) const fn artifact_product(extension: Extension) -> &'static str {
     match extension.id {
+        ExtensionId::Age => "oliphaunt-extension-age",
         ExtensionId::Amcheck => "oliphaunt-extension-contrib-pg18",
         ExtensionId::AutoExplain => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Bloom => "oliphaunt-extension-contrib-pg18",
@@ -426,6 +436,7 @@ pub(super) const fn artifact_product(extension: Extension) -> &'static str {
 /// Generated extension metadata accessor.
 pub(super) const fn native_module_stem(extension: Extension) -> Option<&'static str> {
     match extension.id {
+        ExtensionId::Age => Some("age"),
         ExtensionId::Amcheck => Some("amcheck"),
         ExtensionId::AutoExplain => Some("auto_explain"),
         ExtensionId::Bloom => Some("bloom"),
@@ -471,6 +482,7 @@ pub(super) const fn native_module_stem(extension: Extension) -> Option<&'static 
 /// Generated extension metadata accessor.
 pub(super) const fn creates_extension(extension: Extension) -> bool {
     match extension.id {
+        ExtensionId::Age => true,
         ExtensionId::Amcheck => true,
         ExtensionId::AutoExplain => false,
         ExtensionId::Bloom => true,
@@ -516,6 +528,7 @@ pub(super) const fn creates_extension(extension: Extension) -> bool {
 /// Generated extension metadata accessor.
 pub(super) const fn dependencies(extension: Extension) -> &'static [Extension] {
     match extension.id {
+        ExtensionId::Age => &[],
         ExtensionId::Amcheck => &[],
         ExtensionId::AutoExplain => &[],
         ExtensionId::Bloom => &[],
@@ -561,6 +574,7 @@ pub(super) const fn dependencies(extension: Extension) -> &'static [Extension] {
 /// Generated extension metadata accessor.
 pub(super) const fn required_shared_preload_library(extension: Extension) -> Option<&'static str> {
     match extension.id {
+        ExtensionId::Age => None,
         ExtensionId::Amcheck => None,
         ExtensionId::AutoExplain => None,
         ExtensionId::Bloom => None,
@@ -606,6 +620,7 @@ pub(super) const fn required_shared_preload_library(extension: Extension) -> Opt
 /// Generated extension metadata accessor.
 pub(super) const fn extension_data_files(extension: Extension) -> &'static [&'static str] {
     match extension.id {
+        ExtensionId::Age => &[],
         ExtensionId::Amcheck => &[],
         ExtensionId::AutoExplain => &[],
         ExtensionId::Bloom => &[],
@@ -661,6 +676,7 @@ pub(super) const fn extension_data_files(extension: Extension) -> &'static [&'st
 /// Generated extension metadata accessor.
 pub(super) const fn extension_sql_file_prefixes(extension: Extension) -> &'static [&'static str] {
     match extension.id {
+        ExtensionId::Age => &[],
         ExtensionId::Amcheck => &[],
         ExtensionId::AutoExplain => &[],
         ExtensionId::Bloom => &[],
@@ -710,6 +726,7 @@ pub(super) const fn extension_sql_file_prefixes(extension: Extension) -> &'stati
 /// Generated extension metadata accessor.
 pub(super) const fn extension_sql_file_names(extension: Extension) -> &'static [&'static str] {
     match extension.id {
+        ExtensionId::Age => &[],
         ExtensionId::Amcheck => &[],
         ExtensionId::AutoExplain => &[],
         ExtensionId::Bloom => &[],
@@ -757,6 +774,7 @@ pub(super) const fn runtime_environment(
     extension: Extension,
 ) -> &'static [ExtensionRuntimeEnvironment] {
     match extension.id {
+        ExtensionId::Age => &[],
         ExtensionId::Amcheck => &[],
         ExtensionId::AutoExplain => &[],
         ExtensionId::Bloom => &[],

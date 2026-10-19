@@ -33,6 +33,7 @@ public struct OliphauntExtension: Sendable, Equatable {
 
     package func prepare() throws { try registration() }
 
+    public static let age = OliphauntExtension(sqlName: "age", registration: {})
     public static let amcheck = OliphauntExtension(sqlName: "amcheck", registration: {})
     public static let autoExplain = OliphauntExtension(sqlName: "auto_explain", registration: {})
     public static let bloom = OliphauntExtension(sqlName: "bloom", registration: {})

@@ -24,6 +24,7 @@ include = [
 ]
 
 [features]
+extension-age = []
 extension-amcheck = []
 extension-auto-explain = []
 extension-bloom = []

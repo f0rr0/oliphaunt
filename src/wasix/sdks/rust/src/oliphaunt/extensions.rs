@@ -369,7 +369,7 @@ mod extension_tests {
     use crate::DatabaseStorage;
     use crate::Oliphaunt;
     use anyhow::{Context, Result, ensure};
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -380,6 +380,18 @@ mod extension_tests {
     #[test]
     fn public_extensions_materialize_only_requested_libraries() -> Result<()> {
         run_lifecycle_materialization_set(Extension::ALL)
+    }
+
+    #[test]
+    #[cfg(feature = "extension-age")]
+    fn age_aot_direct_and_restart_smoke() -> Result<()> {
+        run_direct_and_restart_smoke_set(&[Extension::AGE])
+    }
+
+    #[test]
+    #[cfg(feature = "extension-age")]
+    fn age_aot_materialization_smoke() -> Result<()> {
+        run_lifecycle_materialization_set(&[Extension::AGE])
     }
 
     #[test]

@@ -26,9 +26,33 @@ export type GeneratedExtensionMetadata = {
   readonly sourceKind: string;
 };
 
-export const GENERATED_EXTENSION_METADATA_SHA256 = "c1d2e09905d7ecc0172173b34b9e4104dad58987503dd3dab7af4ae78890d9f3" as const;
+export const GENERATED_EXTENSION_METADATA_SHA256 = "5dca41d60b9cfb94c2b1c8aec77a83753dab7311f5ca4dc2926de030f2b2737f" as const;
 
 export const GENERATED_EXTENSION_METADATA = [
+  {
+    "artifactProduct": "oliphaunt-extension-age",
+    "cargoPackage": "oliphaunt-extension-age",
+    "createsExtension": true,
+    "dataFiles": [],
+    "dependencies": [],
+    "displayName": "Apache AGE",
+    "extensionSqlFileNames": [],
+    "extensionSqlFilePrefixes": [],
+    "id": "age",
+    "iosStaticDependencies": [],
+    "mavenArtifact": "oliphaunt-extension-age",
+    "mavenGroup": "dev.oliphaunt.extensions",
+    "nativeModuleStem": "age",
+    "npmPackage": "@oliphaunt/extension-age",
+    "postgresMajor": 18,
+    "releaseProduct": "oliphaunt-extension-age",
+    "runtimeBound": false,
+    "runtimeShareDataFiles": [],
+    "selectedExtensionDependencies": [],
+    "sharedPreloadLibraries": [],
+    "sourceKind": "oliphaunt-other-extension",
+    "sqlName": "age"
+  },
   {
     "artifactProduct": "oliphaunt-extension-contrib-pg18",
     "cargoPackage": "oliphaunt-extension-contrib-pg18",

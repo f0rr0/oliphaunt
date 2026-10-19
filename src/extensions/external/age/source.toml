@@ -1,0 +1,10 @@
+name = "age"
+url = "https://github.com/apache/age.git"
+mirror_url = "https://gitbox.apache.org/repos/asf/age.git"
+branch = "PG18/v1.8.0-rc0"
+commit = "e43dc1a12b78fba4acef9835b2b10379b8d243b4"
+
+[extension-control]
+sql-name = "age"
+source-path = "age.control"
+default-version = "1.8.0"

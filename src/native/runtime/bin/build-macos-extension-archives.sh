@@ -292,6 +292,7 @@ build_static_extension_objects() {
     fi
     stem="$(oliphaunt_mobile_static_extension_module_stem "$extension")"
     prefix="$(oliphaunt_static_symbol_prefix "$stem")"
+    oliphaunt_mobile_prepare_static_extension "$repo_root" "$build_dir" "$extension"
     source_dir="$(oliphaunt_mobile_static_extension_source_dir "$repo_root" "$build_dir" "$extension")"
     extension_include_args=()
     while IFS= read -r include_dir; do

@@ -7,9 +7,14 @@ export type GeneratedMobileExtensionProof = {
   readonly selectedExtensionDependencies: readonly string[];
 };
 
-export const GENERATED_MOBILE_EXTENSION_METADATA_SHA256 = "c1d2e09905d7ecc0172173b34b9e4104dad58987503dd3dab7af4ae78890d9f3" as const;
+export const GENERATED_MOBILE_EXTENSION_METADATA_SHA256 = "5dca41d60b9cfb94c2b1c8aec77a83753dab7311f5ca4dc2926de030f2b2737f" as const;
 
 export const GENERATED_MOBILE_EXTENSION_PLAN = [
+  {
+    "sqlName": "age",
+    "createsExtension": true,
+    "selectedExtensionDependencies": []
+  },
   {
     "sqlName": "amcheck",
     "createsExtension": true,
@@ -210,6 +215,14 @@ export const GENERATED_MOBILE_EXTENSION_PLAN = [
 ] as const satisfies readonly GeneratedMobileExtensionProof[];
 
 export const GENERATED_MOBILE_EXTENSION_SMOKE = {
+  "age": [
+    "LOAD 'age';",
+    "SET search_path = ag_catalog, public;",
+    "DO $oliphaunt$\nBEGIN\n  IF EXISTS (SELECT FROM ag_catalog.ag_graph WHERE name = 'oliphaunt_age') THEN\n    PERFORM ag_catalog.drop_graph('oliphaunt_age', true);\n  END IF;\nEND\n$oliphaunt$;",
+    "SELECT ag_catalog.create_graph('oliphaunt_age');",
+    "SELECT * FROM ag_catalog.cypher('oliphaunt_age', $$\n  CREATE (:Person {name: 'Alice'})-[:KNOWS]->(:Person {name: 'Bob'})\n$$) AS (v ag_catalog.agtype);",
+    "-- oliphaunt-verify\nDO $oliphaunt$\nDECLARE\n  names text[];\nBEGIN\n  -- LOAD and search_path are session state: repeat them after restart/restore.\n  LOAD 'age';\n  SET LOCAL search_path = ag_catalog, public;\n  SELECT array_agg(a::text || '->' || b::text ORDER BY a::text, b::text)\n  INTO names\n  FROM ag_catalog.cypher('oliphaunt_age', $$\n    MATCH (a)-[:KNOWS*1..2]->(b) RETURN a.name, b.name\n  $$) AS (a ag_catalog.agtype, b ag_catalog.agtype);\n  IF names IS DISTINCT FROM ARRAY['Alice->Bob'] THEN\n    RAISE EXCEPTION 'AGE variable-length traversal failed: %', names;\n  END IF;\nEND\n$oliphaunt$;"
+  ],
   "amcheck": [
     "CREATE TEMP TABLE oliphaunt_amcheck (id int PRIMARY KEY, value text);",
     "INSERT INTO oliphaunt_amcheck SELECT i, 'v' || i::text FROM generate_series(1, 8) AS i;",

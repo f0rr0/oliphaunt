@@ -1,6 +1,32 @@
 {
-  "extension-catalog-sha256": "c1d2e09905d7ecc0172173b34b9e4104dad58987503dd3dab7af4ae78890d9f3",
+  "extension-catalog-sha256": "5dca41d60b9cfb94c2b1c8aec77a83753dab7311f5ca4dc2926de030f2b2737f",
   "extensions": [
+    {
+      "artifact-product": "oliphaunt-extension-age",
+      "cargo-package": "oliphaunt-extension-age",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "Apache AGE",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "age",
+      "maven-artifact": "oliphaunt-extension-age",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "age",
+      "npm-package": "@oliphaunt/extension-age",
+      "postgres-major": 18,
+      "release-product": "oliphaunt-extension-age",
+      "runtime-bound": false,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "oliphaunt-other-extension",
+      "sql-name": "age"
+    },
     {
       "artifact-product": "oliphaunt-extension-contrib-pg18",
       "cargo-package": "oliphaunt-extension-contrib-pg18",
