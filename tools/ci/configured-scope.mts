@@ -453,6 +453,7 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
         );
         assert.equal(completed.length, 1, 'CI original native root did not complete successfully');
         const completedFiles = bep.filesOf(completed[0].value, 'default');
+        let completedFileCount = 0;
         for (const output of producingRoot.package.outputs) {
           assert(
             roots.some((value) => value.label === label && value.configuration === configuration),
@@ -474,7 +475,7 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
             'CI original native output capture is missing or ambiguous',
           );
           const members = captures[0].members.filter((member) => member.type === 'file');
-          assert(members.length, 'CI original native output has no completed File');
+          if (!members.length) continue;
           for (const member of members) {
             const file = member.path ? `${output.path}/${sourcePath(member.path)}` : output.path;
             assert(
@@ -489,6 +490,7 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
               'CI original native output File is absent from its completion',
             );
           }
+          completedFileCount += members.length;
           const imports = importsOf(scopes[0].labels);
           nativeOutputs.push({
             root: label,
@@ -506,6 +508,10 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
             ...(imports.length ? { importedRoots: imports } : {}),
           });
         }
+        assert(
+          completedFileCount,
+          `CI original native root ${label} (${configuration}) has no completed File: ${producingRoot.package.outputs.map((output) => output.path).join(', ')}`,
+        );
       }
     }
   }

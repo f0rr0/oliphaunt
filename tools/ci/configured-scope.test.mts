@@ -689,8 +689,10 @@ test('native capture binds original packet bytes to root-local source Files and 
   await gitFixture(async (root, outputBase, actualSource) => {
     const executionRoot = path.join(outputBase, 'execroot/_main');
     const output = 'bazel-out/wasix/bin/one/fixture-runtime-1.0.0.tar.gz';
+    const partsOutput = 'bazel-out/wasix/bin/one/cargo-parts/fixture-runtime';
     const original = path.join(executionRoot, output);
     mkdirSync(path.dirname(original), { recursive: true });
+    mkdirSync(path.join(executionRoot, partsOutput, 'nested'), { recursive: true });
     const bytes = Buffer.from('controlled original public runtime');
     writeFileSync(original, bytes);
     const sha256 = createHash('sha256').update(bytes).digest('hex');
@@ -703,7 +705,10 @@ test('native capture binds original packet bytes to root-local source Files and 
         name: 'fixture-runtime-1.0.0.tar.gz',
         configuration: 'portable',
         role: 'github-release-asset',
-        outputs: [{ path: output, owner: '//one:archive' }],
+        outputs: [
+          { path: output, owner: '//one:archive' },
+          { path: partsOutput, owner: '//one:archive' },
+        ],
       },
     };
     const evidence = {
@@ -777,6 +782,13 @@ test('native capture binds original packet bytes to root-local source Files and 
               path: output,
               members: [{ path: '', type: 'file', mode: 0o644, size: bytes.length, sha256 }],
             },
+            {
+              path: partsOutput,
+              members: [
+                { path: '', type: 'directory', mode: 0o755 },
+                { path: 'nested', type: 'directory', mode: 0o755 },
+              ],
+            },
           ],
         },
       ],
@@ -843,7 +855,9 @@ test('native capture binds original packet bytes to root-local source Files and 
       undefined,
       'reached rule aliases are not imported Files',
     );
+    assert.equal(producer.projection.nativeOutputs.length, 1);
     const retained = producer.projection.nativeOutputs[0];
+    assert.equal(retained.output, output, 'empty companion trees have no imported File lineage');
     assert.deepEqual(retained.files, ['one/core.rs']);
     assert.equal(
       retained.evidenceDigest,
@@ -896,6 +910,72 @@ test('native capture binds original packet bytes to root-local source Files and 
     assert.equal(joinConfiguredCiProjections([producer, consumer], actualSource).length, 2);
     delete process.env.OLIPHAUNT_NATIVE_PUBLICATION_INPUTS;
     await assert.rejects(capture('consumer/missing-snapshot', consumerGraph), /original producer/u);
+    const populatedParts = structuredClone(evidence);
+    const partBytes = Buffer.from('controlled Cargo payload part');
+    const partSha256 = createHash('sha256').update(partBytes).digest('hex');
+    const partPath = 'nested/fixture-runtime-part-001-1.0.0.crate';
+    writeFileSync(path.join(executionRoot, partsOutput, partPath), partBytes);
+    populatedParts.cohorts[0].outputs[1].members.push({
+      path: partPath,
+      type: 'file',
+      mode: 0o644,
+      size: partBytes.length,
+      sha256: partSha256,
+    });
+    const populatedNamedOutput = populatedParts.cohorts[0].buildEvents.find(
+      (event) => 'namedSetOfFiles' in event,
+    ) as { namedSetOfFiles: { files: unknown[] } } | undefined;
+    assert(populatedNamedOutput);
+    writeFileSync(nativeEvidence, JSON.stringify(populatedParts));
+    await assert.rejects(
+      capture('producer/missing-completed-part', raw, { nativeEvidence }),
+      /absent from its completion/u,
+    );
+    populatedNamedOutput.namedSetOfFiles.files.push({
+      name: `${partsOutput}/${partPath}`,
+      digest: partSha256,
+      length: String(partBytes.length),
+    });
+    writeFileSync(nativeEvidence, JSON.stringify(populatedParts));
+    const populatedProducer = JSON.parse(
+      readFileSync(await capture('producer/populated-parts', raw, { nativeEvidence }), 'utf8'),
+    );
+    assert.deepEqual(
+      populatedProducer.projection.nativeOutputs.map((value: { output: string }) => value.output),
+      [partsOutput, output],
+    );
+    rmSync(path.join(executionRoot, partsOutput, partPath));
+    const noFiles = structuredClone(evidence);
+    noFiles.cohorts[0].roots[0].package.outputs = [shipping.package.outputs[1]];
+    noFiles.cohorts[0].outputs = [evidence.cohorts[0].outputs[1]];
+    writeFileSync(nativeEvidence, JSON.stringify(noFiles));
+    await assert.rejects(
+      capture('producer/no-delivered-files', raw, { nativeEvidence }),
+      /CI original native root .*one:root.* has no completed File.*cargo-parts\/fixture-runtime/u,
+    );
+    noFiles.cohorts[0].roots[0].label = '//two:root';
+    noFiles.cohorts[0].roots.unshift(shipping);
+    noFiles.cohorts[0].rootConfigurations.push({ label: '//two:root', configuration });
+    noFiles.cohorts[0].outputs = evidence.cohorts[0].outputs;
+    noFiles.cohorts[0].buildEvents.splice(5, 0, {
+      id: { targetCompleted: { label: '//two:root', configuration: { id: configuration } } },
+      completed: {
+        success: true,
+        outputGroup: [{ name: 'default', fileSets: [{ id: 'output' }] }],
+      },
+    });
+    writeFileSync(nativeEvidence, JSON.stringify(noFiles));
+    await assert.rejects(
+      capture('producer/empty-root-with-valid-sibling', raw, { nativeEvidence }),
+      /CI original native root .*two:root.* has no completed File.*cargo-parts\/fixture-runtime/u,
+    );
+    const missingCapture = structuredClone(evidence);
+    missingCapture.cohorts[0].outputs = [evidence.cohorts[0].outputs[0]];
+    writeFileSync(nativeEvidence, JSON.stringify(missingCapture));
+    await assert.rejects(
+      capture('producer/missing-companion-capture', raw, { nativeEvidence }),
+      /capture is missing or ambiguous/u,
+    );
     const missingOutput = structuredClone(evidence);
     const namedOutput = missingOutput.cohorts[0].buildEvents.find(
       (event) => 'namedSetOfFiles' in event,
