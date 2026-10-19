@@ -11,7 +11,7 @@ load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRY
 load("//build_defs/extensions:mobile.bzl", "MobileExtensionInfo")
 load("//build_defs/extensions:final_leaf.bzl", "ExtensionFinalLeafInfo")
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS")
-load(":configuration.bzl", "android_native_inputs", "android_product_inputs")
+load(":configuration.bzl", "ANDROID_TARGET_PLATFORMS", "android_native_inputs", "android_product_inputs")
 
 _DESCRIPTORS = {row["sql-name"]: row for row in EXTENSIONS.values()}
 
@@ -425,7 +425,7 @@ android_jni_aar = rule(implementation = _jni_aar_impl, toolchains = BUN_SOURCE_T
 _ANDROID_MIN_SDK = str(Label("@rules_android//rules:min_sdk_version"))
 
 def _apk_abi_impl(settings, attr):
-    platform = "//build_defs/android:android_" + ("arm64" if attr.abi == "arm64-v8a" else "x86_64")
+    platform = str(ANDROID_TARGET_PLATFORMS["android-" + attr.abi])
     return {"//command_line_option:android_platforms": [platform], "//command_line_option:compilation_mode": "opt",
             _ANDROID_MIN_SDK: attr.min_sdk_version}
 

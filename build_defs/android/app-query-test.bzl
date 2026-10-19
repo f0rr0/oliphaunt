@@ -66,7 +66,7 @@ def _android_min_sdk_test_impl(ctx):
         for minimum in [24, 26]:
             configuration = android_app_configuration({}, struct(abi = abi, min_sdk_version = minimum))
             asserts.equals(env, minimum, configuration[str(Label("@rules_android//rules:min_sdk_version"))])
-            asserts.equals(env, ["//build_defs/android:android_" + platform], configuration["//command_line_option:android_platforms"])
+            asserts.equals(env, [str(Label("//build_defs/android:android_" + platform))], configuration["//command_line_option:android_platforms"])
             asserts.equals(env, "opt", configuration["//command_line_option:compilation_mode"])
             # The maintained dependency transition preserves an incoming SDK
             # rather than invoking its dormant clamp or lowering the setting.
