@@ -171,11 +171,19 @@ for (const phase of ['create', 'reopen']) {
   assert.equal(run.status, 0, `Installed Swift ${phase} failed: ${run.stderr}`);
   assert.equal(run.stdout.trim(), `installed-swift-${phase}-42`);
 }
+// Swift Testing can host tests outside the installed executable's bundle directory.
+const installedRuntime = realpathSync(
+  path.join(path.dirname(executable), 'liboliphaunt.framework/Resources/oliphaunt/runtime/files'),
+);
 const native = spawnSync(
   swift,
   ['test', ...swiftOptions, '--disable-xctest', '--filter', 'NativeRuntimeTests'],
   {
-    env: { ...environment, OLIPHAUNT_SWIFT_REQUIRE_NATIVE: '1' },
+    env: {
+      ...environment,
+      OLIPHAUNT_SWIFT_REQUIRE_NATIVE: '1',
+      OLIPHAUNT_INSTALL_DIR: installedRuntime,
+    },
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
   },

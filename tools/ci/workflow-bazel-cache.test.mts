@@ -159,8 +159,33 @@ printf 'gc done\\n' >> "$COMMAND_TRACE"
   }
 }
 
+// Supply the same internal outputs that Actions passes between the real Shell steps.
+function selectedBudget(directory: string, env: NodeJS.ProcessEnv) {
+  const output = path.join(directory, 'budget-outputs');
+  writeFileSync(output, '');
+  execFileSync('bash', ['-eu', '-c', script('identity')], {
+    cwd: directory,
+    env: { ...env, GITHUB_OUTPUT: output },
+  });
+  const selected = Object.fromEntries(
+    readFileSync(output, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => line.split('=')),
+  );
+  return {
+    ...env,
+    GC_MAX_SIZE: selected.gc_max_size,
+    CACHE_LIMIT_KIB: selected.cache_limit_kib,
+  };
+}
+
 const execute = (directory: string, env: NodeJS.ProcessEnv, source: string) =>
-  execFileSync('bash', ['-eu', '-c', source], { cwd: directory, env, encoding: 'utf8' });
+  execFileSync('bash', ['-eu', '-c', source], {
+    cwd: directory,
+    env: source === script('identity') ? env : selectedBudget(directory, env),
+    encoding: 'utf8',
+  });
 
 test('optional terminal cache saves preserve restore policy, writer bounds and source identity', () => {
   const workflow = Bun.YAML.parse(
@@ -220,7 +245,7 @@ test('action keys retain source, cohort and platform separation', () => {
       identities.push(readFileSync(env.GITHUB_OUTPUT, 'utf8'));
     }
     assert.equal(new Set(identities).size, identities.length);
-    assert.match(identities[0], /-portable-8\.8\.1\nsource=a{40}\n$/u);
+    assert.match(identities[0], /-portable-8\.8\.1\nsource=a{40}\n/u);
     assert.equal(
       new Set(identities.map((identity) => cacheKey('disk-restore', identity))).size,
       identities.length,
@@ -361,11 +386,82 @@ test('GC failures and logical-versus-allocated overage do not authorize transpor
       execute(directory, env, script('Configure standard hosted Bazel caches'));
       const result = spawnSync('bash', ['-eu', '-c', script('ready')], {
         cwd: directory,
-        env: { ...env, DISK_KIB: '5865772', ...scenario },
+        env: selectedBudget(directory, { ...env, DISK_KIB: '5865772', ...scenario }),
       });
       if (scenario.BUILD_STATUS || scenario.QUERY_STATUS || scenario.GC_STATUS)
         assert.notEqual(result.status, 0);
       assert.equal(readFileSync(env.GITHUB_OUTPUT, 'utf8'), '');
     });
   }
+});
+
+test('Apple ARM64 portable retains its observed cache population within a bounded archive', () => {
+  for (const scenario of [
+    { name: '3.4 GiB allocated snapshot', disk: '3565159', gc: false, saved: true },
+    { name: 'allocated boundary', disk: '5242880', gc: false, saved: true },
+    { name: 'completed collection', disk: '5242881', gc: true, collected: '4404019', saved: true },
+    {
+      name: 'allocated overage after collection',
+      disk: '5242881',
+      gc: true,
+      collected: '5242881',
+      saved: false,
+    },
+    { name: 'failed collection', disk: '5242881', gc: true, status: '1', saved: false },
+  ]) {
+    fixture((directory, env) => {
+      const apple = { ...env, RUNNER_OS: 'macOS', RUNNER_ARCH: 'ARM64' };
+      execute(directory, apple, script('Configure standard hosted Bazel caches'));
+      const result = spawnSync('bash', ['-eu', '-c', script('ready')], {
+        cwd: directory,
+        env: selectedBudget(directory, {
+          ...apple,
+          DISK_KIB: scenario.disk,
+          GC_DISK_KIB: scenario.collected ?? scenario.disk,
+          GC_STATUS: scenario.status ?? '0',
+        }),
+      });
+      assert.equal(result.status, scenario.status ? 1 : 0, scenario.name);
+      assert.equal(
+        readFileSync(env.GITHUB_OUTPUT, 'utf8'),
+        scenario.saved ? 'disk=true\n' : '',
+        scenario.name,
+      );
+      const commands = readFileSync(env.COMMAND_TRACE, 'utf8');
+      if (scenario.gc) {
+        assert.ok(
+          commands.startsWith('shutdown\nbuild\ncquery\nshutdown\ngc begin\n'),
+          scenario.name,
+        );
+        assert.equal(readFileSync(env.GC_ARGS, 'utf8').trim().split('\n').at(-1), '--max_size=4G');
+      } else {
+        assert.equal(commands, 'shutdown\n', scenario.name);
+      }
+      assert.ok(
+        readFileSync(path.join(env.HOME, '.bazelrc'), 'utf8').includes(
+          'build --experimental_disk_cache_gc_max_size=4G\n',
+        ),
+      );
+    });
+  }
+});
+
+test('other Apple cohorts keep the standard hosted cache budget', () => {
+  fixture((directory, env) => {
+    const other = {
+      ...env,
+      RUNNER_OS: 'macOS',
+      RUNNER_ARCH: 'ARM64',
+      COHORT: 'react-native',
+    };
+    execute(directory, other, script('Configure standard hosted Bazel caches'));
+    assert.ok(
+      readFileSync(path.join(env.HOME, '.bazelrc'), 'utf8').includes(
+        'build --experimental_disk_cache_gc_max_size=2G\n',
+      ),
+    );
+    execute(directory, { ...other, DISK_KIB: '3565159', GC_DISK_KIB: '2118144' }, script('ready'));
+    assert.equal(readFileSync(env.GC_ARGS, 'utf8').trim().split('\n').at(-1), '--max_size=2G');
+    assert.equal(readFileSync(env.GITHUB_OUTPUT, 'utf8'), 'disk=true\n');
+  });
 });

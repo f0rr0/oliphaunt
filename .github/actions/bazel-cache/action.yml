@@ -44,8 +44,16 @@ runs:
         [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
         source_commit="$(git rev-parse HEAD)"
         [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
+        gc_max_size=2G
+        cache_limit_kib=3145728
+        # Both observed Apple portable snapshots grew to 3.4 GiB before collection.
+        case "$RUNNER_OS/$RUNNER_ARCH/$COHORT" in
+          macOS/ARM64/portable) gc_max_size=4G; cache_limit_kib=5242880 ;;
+        esac
         printf 'prefix=bazel-ci-v1-%s-%s-%s-%s\nsource=%s\n' \
           "$RUNNER_OS" "$RUNNER_ARCH" "$COHORT" "$version" "$source_commit" >> "$GITHUB_OUTPUT"
+        printf 'gc_max_size=%s\ncache_limit_kib=%s\n' \
+          "$gc_max_size" "$cache_limit_kib" >> "$GITHUB_OUTPUT"
 
     - name: Restore Bazel action cache
       id: disk-restore
@@ -61,6 +69,8 @@ runs:
     - name: Configure standard hosted Bazel caches
       if: inputs.phase == 'restore'
       shell: bash
+      env:
+        GC_MAX_SIZE: ${{ steps.identity.outputs.gc_max_size }}
       run: |
         set -euo pipefail
         cache_root="$HOME/.cache/oliphaunt/bazel-ci"
@@ -70,8 +80,8 @@ runs:
           cache_root="$(cygpath -m "$cache_root")"
         fi
         # Hosted user configuration stays outside source and cache transport.
-        printf '\nbuild --config=ci-cache\nbuild --disk_cache="%s/disk"\ncommon --repository_cache="%s/repositories"\n' \
-          "$cache_root" "$cache_root" >> "$HOME/.bazelrc"
+        printf '\nbuild --config=ci-cache\nbuild --disk_cache="%s/disk"\ncommon --repository_cache="%s/repositories"\nbuild --experimental_disk_cache_gc_max_size=%s\n' \
+          "$cache_root" "$cache_root" "$GC_MAX_SIZE" >> "$HOME/.bazelrc"
 
     - name: Freeze, collect and bound cache transport
       id: ready
@@ -82,6 +92,8 @@ runs:
         OUTPUT_BASE: ${{ inputs.output-base }}
         JVM_ARGS: ${{ inputs.jvm-args }}
         SERVER_LOG: ${{ inputs.server-log }}
+        GC_MAX_SIZE: ${{ steps.identity.outputs.gc_max_size }}
+        CACHE_LIMIT_KIB: ${{ steps.identity.outputs.cache_limit_kib }}
       run: |
         set -euo pipefail
         startup=(bash tools/dev/bazel.sh)
@@ -98,7 +110,7 @@ runs:
         # Shutdown can interrupt idle GC. A frozen snapshot already within the
         # allocated budget needs no additional tool construction or collection.
         freeze_writer || exit 0
-        cache_limit_kib=3145728
+        cache_limit_kib="$CACHE_LIMIT_KIB"
         cache_root="$HOME/.cache/oliphaunt/bazel-ci/disk"
         if [[ -d "$cache_root" ]]; then
           printf 'Bazel cache disk: present=true\n'
@@ -115,7 +127,7 @@ runs:
             fi
             # The stock collector returns after collection completes. Its
             # logical-byte target does not replace the allocated archive bound.
-            JAVABIN= "$gc_tool" "--disk_cache=$gc_root" --max_size=2G
+            JAVABIN= "$gc_tool" "--disk_cache=$gc_root" "--max_size=$GC_MAX_SIZE"
             cache_kib="$(du -sk "$cache_root" | cut -f1)"
           fi
           printf 'Bazel cache disk: allocated_kib=%s limit_kib=%s\n' \

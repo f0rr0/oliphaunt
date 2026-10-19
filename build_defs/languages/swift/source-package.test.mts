@@ -358,7 +358,7 @@ test('final source envelope preserves held native version, exact source-tag path
 });
 
 test.skipIf(process.platform === 'win32')(
-  'installed Swift consumer isolates its home and supplies captured signing tools',
+  'installed Swift consumer isolates its home and supplies the native suite its installed runtime',
   async () => {
     const scratch = mkdtempSync(path.join(tmpdir(), 'swift-consumer-signing-'));
     try {
@@ -389,12 +389,20 @@ test.skipIf(process.platform === 'win32')(
       const trace = path.join(scratch, 'swiftpm-phases');
       const runRoot = path.join(scratch, 'test-root');
       mkdirSync(runRoot);
+      const installedRuntime = path.join(
+        runRoot,
+        'build/debug/liboliphaunt.framework/Resources/oliphaunt/runtime/files',
+      );
       const checkHome = `assert.equal(process.env.HOME, ${JSON.stringify(path.join(runRoot, 'home'))});
 assert.equal(process.env.CFFIXED_USER_HOME, process.env.HOME, 'Foundation must use the private test home');`;
+      const checkDefaultRuntime = `assert.equal(process.env.OLIPHAUNT_INSTALL_DIR, undefined, 'default resource discovery must remain under test');
+assert.equal(process.env.OLIPHAUNT_RUNTIME_DIR, undefined);
+assert.equal(process.env.OLIPHAUNT_INITDB, undefined);`;
       const installedConsumer = `#!${process.execPath}
 import assert from 'node:assert/strict';
 import { appendFileSync } from 'node:fs';
 ${checkHome}
+${checkDefaultRuntime}
 appendFileSync(${JSON.stringify(trace)}, process.argv[2] + '\\n');
 console.log('installed-swift-' + process.argv[2] + '-42');
 `;
@@ -409,7 +417,7 @@ console.log('installed-swift-' + process.argv[2] + '-42');
           `
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 ${checkHome}
 const args = process.argv.slice(2);
@@ -421,12 +429,19 @@ assert.equal(spawnSync(process.env.CODESIGN_ALLOCATE, ['--version'], { env: proc
 assert.equal(process.env.SWIFTPM_CUSTOM_BIN_DIR, ${JSON.stringify(bin)});
 appendFileSync(${JSON.stringify(trace)}, args[0] + '\\n');
 if (args[0] === 'build') {
+  ${checkDefaultRuntime}
   const build = args[args.indexOf('--scratch-path') + 1];
   mkdirSync(path.join(build, 'debug'), { recursive: true });
   writeFileSync(path.join(build, 'debug/InstalledConsumer'), ${JSON.stringify(installedConsumer)}, { mode: 0o755 });
+  mkdirSync(${JSON.stringify(installedRuntime)}, { recursive: true });
+  writeFileSync(path.join(${JSON.stringify(installedRuntime)}, '../manifest.properties'), 'installed framework runtime fixture');
 } else {
   assert.equal(args[0], 'test');
   assert(args.includes('--disable-xctest'));
+  assert.equal(args[args.indexOf('--filter') + 1], 'NativeRuntimeTests');
+  assert.equal(process.env.OLIPHAUNT_SWIFT_REQUIRE_NATIVE, '1');
+  assert.equal(process.env.OLIPHAUNT_INSTALL_DIR, ${JSON.stringify(installedRuntime)}, 'the native suite must use its installed framework runtime');
+  assert.equal(readFileSync(path.join(process.env.OLIPHAUNT_INSTALL_DIR, '../manifest.properties'), 'utf8'), 'installed framework runtime fixture');
   console.log('Test run with 1 test passed');
 }
 `,
