@@ -326,17 +326,26 @@ export class DirectOpfsPool {
 
   #namespaceBarrier(): void {
     if (!this.#namespaceDirty && this.#stagedDirty.size === 0) return;
-    const state = serializePoolState(
-      this.#name,
-      this.#physicalIdentity,
-      this.#entries,
-      this.#initializationComplete ? 'ready' : 'initializing',
-    );
-    const current = new Map(state.entries.map((entry) => [entry.path, entry]));
-    const upsert = state.entries.filter(
-      (entry) => !sameStoredEntry(entry, this.#journalEntries.get(entry.path)),
-    );
-    const deleted = [...this.#journalEntries.keys()].filter((path) => !current.has(path));
+    const state = this.#namespaceDirty
+      ? serializePoolState(
+          this.#name,
+          this.#physicalIdentity,
+          this.#entries,
+          this.#initializationComplete ? 'ready' : 'initializing',
+        )
+      : undefined;
+    const current =
+      state === undefined
+        ? this.#journalEntries
+        : new Map(state.entries.map((entry) => [entry.path, entry]));
+    const upsert =
+      state?.entries.filter(
+        (entry) => !sameStoredEntry(entry, this.#journalEntries.get(entry.path)),
+      ) ?? [];
+    const deleted =
+      state === undefined
+        ? []
+        : [...this.#journalEntries.keys()].filter((path) => !current.has(path));
     const staged = [...this.#stagedDirty].filter((record) => record.path !== undefined);
     const parts: Uint8Array[] = [];
     // Preallocated WAL segments can be large. Persist changed ranges and size
@@ -376,9 +385,11 @@ export class DirectOpfsPool {
       }
       this.#journal.append({ upsert, deleted, images }, parts);
       this.#journalEntries = current;
-      this.#journalBackings = new Set(
-        state.entries.flatMap((entry) => (entry.type === 'file' ? [entry.backing] : [])),
-      );
+      if (state !== undefined) {
+        this.#journalBackings = new Set(
+          state.entries.flatMap((entry) => (entry.type === 'file' ? [entry.backing] : [])),
+        );
+      }
     }
     for (const record of this.#stagedDirty) {
       record.stagedRanges = undefined;

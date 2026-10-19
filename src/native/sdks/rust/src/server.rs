@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::child_process::reap_child_process;
+use crate::child_process::{reap_child_process, reap_child_process_until};
 #[cfg(unix)]
 use crate::config::server_unix_socket_directory_str;
 use crate::config::{
@@ -184,6 +184,12 @@ impl NativeServerSession {
     fn close_server(&mut self) -> Result<()> {
         let first_attempt = !self.closed;
         self.closed = true;
+        let deadline = Instant::now()
+            + if first_attempt {
+                self.control_timeout
+            } else {
+                Duration::ZERO
+            };
         let mut cleanup_failures = Vec::new();
         if first_attempt {
             let root = self
@@ -201,16 +207,22 @@ impl NativeServerSession {
                     .arg("fast")
                     .arg("-w")
                     .arg("-t")
-                    .arg(self.control_timeout.as_millis().div_ceil(1000).to_string())
+                    .arg(
+                        deadline
+                            .saturating_duration_since(Instant::now())
+                            .as_millis()
+                            .div_ceil(1000)
+                            .to_string(),
+                    )
                     .arg("stop")
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .spawn();
                 match stop {
                     Ok(mut child) => {
-                        let outcome = reap_child_process(
+                        let outcome = reap_child_process_until(
                             &mut child,
-                            self.control_timeout,
+                            deadline,
                             self.control_timeout,
                             "pg_ctl stop",
                         );
@@ -238,9 +250,9 @@ impl NativeServerSession {
         }
 
         if let Some(child) = self.child.as_mut() {
-            let outcome = reap_child_process(
+            let outcome = reap_child_process_until(
                 child,
-                self.control_timeout,
+                deadline,
                 self.control_timeout,
                 "native server process",
             );

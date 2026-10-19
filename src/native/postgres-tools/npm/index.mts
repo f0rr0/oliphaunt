@@ -337,6 +337,7 @@ async function runToolOwned(tool, args, stdin, stdoutWriter, stderrWriter, abort
     let stdinFailure;
     let processFailure;
     let killTimer;
+    let childClosed = false;
     const outputFailure = new AbortController();
     const rejectOnce = (error) => {
       if (settled) return;
@@ -355,8 +356,9 @@ async function runToolOwned(tool, args, stdin, stdoutWriter, stderrWriter, abort
       return;
     }
     const cancel = () => {
-      processFailure = { cause: abortSignal.reason };
       outputFailure.abort(abortSignal.reason);
+      if (childClosed) return;
+      processFailure = { cause: abortSignal.reason };
       child.kill();
       killTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
       killTimer.unref?.();
@@ -390,11 +392,11 @@ async function runToolOwned(tool, args, stdin, stdoutWriter, stderrWriter, abort
       else processFailure = { cause };
     });
     child.once('close', async (exitCode, signal) => {
+      childClosed = true;
       clearTimeout(killTimer);
-      abortSignal?.removeEventListener('abort', cancel);
-      if (settled) return;
-      settled = true;
       try {
+        if (settled) return;
+        settled = true;
         const drained = await drains;
         const { stdout: stdoutBytes, stderr: stderrBytes } = finishCapture(captured);
         if (stdoutWriter !== undefined) {
@@ -478,6 +480,8 @@ async function runToolOwned(tool, args, stdin, stdoutWriter, stderrWriter, abort
             cause,
           }),
         );
+      } finally {
+        abortSignal?.removeEventListener('abort', cancel);
       }
     });
     child.stdin.once('error', (cause) => {

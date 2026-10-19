@@ -766,11 +766,13 @@ public class OliphauntDatabase private constructor(
     }
 
     internal suspend fun <T> runTypedOperation(
-        prepare: ((Long) -> Unit) -> ByteArray,
+        prepare: ((Long) -> Unit, Boolean) -> ByteArray,
         transactionToken: Long?,
         parser: (ByteArray) -> Pair<T, ReadyStatus>,
     ): T {
-        val (admission, request) = admitPreparedOperation(transactionToken, prepare)
+        val (admission, request) = admitPreparedOperation(transactionToken) { retain ->
+            prepare(retain, admissionLimits != null)
+        }
         return runAdmitted(admission) {
             ensureAdmittedOperationUsable()
             val response =
@@ -1277,7 +1279,7 @@ public class OliphauntTransaction internal constructor(
     }
 
     internal suspend fun <T> runTypedOperation(
-        prepare: ((Long) -> Unit) -> ByteArray,
+        prepare: ((Long) -> Unit, Boolean) -> ByteArray,
         parser: (ByteArray) -> Pair<T, ReadyStatus>,
     ): T {
         ensureActiveHandle()

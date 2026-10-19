@@ -30,8 +30,22 @@ pub(crate) fn reap_child_process(
     forced_timeout: Duration,
     label: &str,
 ) -> ChildReapOutcome {
+    reap_child_process_until(
+        child,
+        Instant::now() + graceful_timeout,
+        forced_timeout,
+        label,
+    )
+}
+
+pub(crate) fn reap_child_process_until(
+    child: &mut impl ChildProcessReaper,
+    graceful_deadline: Instant,
+    forced_timeout: Duration,
+    label: &str,
+) -> ChildReapOutcome {
     let mut failures = Vec::new();
-    match wait_for_child_exit(child, graceful_timeout) {
+    match wait_for_child_exit(child, graceful_deadline) {
         Ok(Some(exit_success)) => {
             return ChildReapOutcome {
                 reaped: true,
@@ -39,10 +53,7 @@ pub(crate) fn reap_child_process(
                 failures,
             };
         }
-        Ok(None) => failures.push(format!(
-            "{label} did not stop within {}ms",
-            graceful_timeout.as_millis()
-        )),
+        Ok(None) => failures.push(format!("{label} did not stop before the shutdown deadline")),
         Err(error) => failures.push(format!("wait for {label}: {error}")),
     }
 
@@ -51,7 +62,7 @@ pub(crate) fn reap_child_process(
             "kill {label} after failed graceful shutdown: {error}"
         ));
     }
-    match wait_for_child_exit(child, forced_timeout) {
+    match wait_for_child_exit(child, Instant::now() + forced_timeout) {
         Ok(Some(exit_success)) => ChildReapOutcome {
             reaped: true,
             exit_success: Some(exit_success),
@@ -81,9 +92,8 @@ pub(crate) fn reap_child_process(
 
 fn wait_for_child_exit(
     child: &mut impl ChildProcessReaper,
-    timeout: Duration,
+    deadline: Instant,
 ) -> std::io::Result<Option<bool>> {
-    let deadline = Instant::now() + timeout;
     loop {
         if let Some(success) = child.try_exit_status()? {
             return Ok(Some(success));
@@ -91,7 +101,11 @@ fn wait_for_child_exit(
         if Instant::now() >= deadline {
             return Ok(None);
         }
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(10)),
+        );
     }
 }
 

@@ -3,6 +3,8 @@ pub(crate) mod assets;
 pub(crate) mod backend;
 pub(crate) mod base;
 pub(crate) mod builder;
+#[cfg(test)]
+mod checkpoint_tests;
 pub(crate) mod client;
 pub(crate) mod config;
 pub(crate) mod data_dir;

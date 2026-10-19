@@ -8,7 +8,7 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::child_process::reap_child_process;
+use crate::child_process::{reap_child_process, reap_child_process_until};
 use crate::config::{
     CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT, DEFAULT_STARTUP_TIMEOUT, EngineMode,
     NativeBrokerConfig, OpenConfig, lifecycle_timeout,
@@ -383,9 +383,14 @@ impl NativeBrokerSession {
     fn close_broker(&mut self) -> Result<()> {
         let first_attempt = !self.closed;
         self.closed = true;
+        let deadline = Instant::now()
+            + if first_attempt {
+                self.control_timeout
+            } else {
+                Duration::ZERO
+            };
         let mut cleanup_failures = Vec::new();
         if first_attempt {
-            let deadline = Instant::now() + self.control_timeout;
             if let Some(mut transport) = self.transport.take() {
                 let result = transport
                     .set_deadline(Some(deadline))
@@ -412,12 +417,8 @@ impl NativeBrokerSession {
             }
         }
         if let Some(child) = self.child.as_mut() {
-            let outcome = reap_child_process(
-                child,
-                self.control_timeout,
-                self.control_timeout,
-                "native broker",
-            );
+            let outcome =
+                reap_child_process_until(child, deadline, self.control_timeout, "native broker");
             cleanup_failures.extend(outcome.failures);
             if outcome.reaped {
                 self.child = None;
@@ -1073,6 +1074,43 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(1));
         assert!(session.closed);
         assert!(!temporary_root.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn close_does_not_restart_child_grace_after_a_silent_control_peer() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let control = LocalSocket::tcp(
+            listener.local_addr().unwrap(),
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap();
+        let (_peer, _) = listener.accept().unwrap();
+        let child = Command::new("sh")
+            .args(["-c", "exec sleep 60"])
+            .spawn()
+            .unwrap();
+        let control_timeout = Duration::from_millis(200);
+        let mut session = NativeBrokerSession {
+            control_timeout,
+            child: Some(child),
+            transport: None,
+            control: Some(control),
+            cancel: Arc::new(BrokerCancel::new(
+                "tcp:127.0.0.1:1".to_owned(),
+                [0; 8],
+                control_timeout,
+            )),
+            temporary_root: None,
+            ipc_cleanup: None,
+            failure: None,
+            closed: false,
+        };
+        let start = Instant::now();
+        let error = session.close_broker().unwrap_err();
+        assert!(error.to_string().contains("close acknowledgement"));
+        assert!(start.elapsed() < Duration::from_millis(350));
+        assert!(session.child.is_none(), "forced reap must still complete");
     }
 
     #[test]

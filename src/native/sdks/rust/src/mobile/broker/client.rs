@@ -42,11 +42,7 @@ impl Connection {
         state.failed = true;
         state.reason = Some(Reason::WorkerInterrupted);
         if state.active != 0 {
-            self.watchdog.get().unwrap().arm(
-                state.active,
-                self.timeouts.recovery_timeout,
-                Expiry::Retire,
-            );
+            self.arm_recovery(&state);
         } else {
             let _ = self.socket.shutdown(Shutdown::Both);
         }
@@ -64,12 +60,21 @@ impl Connection {
         }
         state.cancellation_sent = true;
         state.reason = Some(reason);
+        self.arm_recovery(&state);
+        drop(state);
+        self.control.cancel(self.epoch, request)
+    }
+
+    fn arm_recovery(&self, state: &State) {
+        let deadline =
+            super::watchdog::continuous_time().saturating_add(self.timeouts.recovery_timeout);
+        let deadline = state
+            .close_deadline
+            .map_or(deadline, |close| close.min(deadline));
         self.watchdog
             .get()
             .unwrap()
-            .arm(request, self.timeouts.recovery_timeout, Expiry::Retire);
-        drop(state);
-        self.control.cancel(self.epoch, request)
+            .arm_until(state.active, deadline, Expiry::Retire);
     }
 
     fn expired(&self, request: u64, action: Expiry) {
@@ -105,13 +110,13 @@ impl Connection {
             return;
         }
         state.closing = true;
-        state.close_deadline =
-            Some(super::watchdog::continuous_time().saturating_add(self.timeouts.shutdown_timeout));
-        self.watchdog.get().unwrap().arm(
-            state.active,
-            self.timeouts.shutdown_timeout,
-            Expiry::Retire,
-        );
+        let deadline =
+            super::watchdog::continuous_time().saturating_add(self.timeouts.shutdown_timeout);
+        state.close_deadline = Some(deadline);
+        self.watchdog
+            .get()
+            .unwrap()
+            .arm_until(state.active, deadline, Expiry::Retire);
         drop(state);
         let _ = self.control.close(self.epoch);
     }
@@ -171,11 +176,10 @@ impl Connection {
         state.failed |= requires_reopen;
         self.watchdog.get().unwrap().clear(request);
         if let Some(deadline) = state.close_deadline {
-            self.watchdog.get().unwrap().arm(
-                0,
-                deadline.saturating_sub(super::watchdog::continuous_time()),
-                Expiry::Retire,
-            );
+            self.watchdog
+                .get()
+                .unwrap()
+                .arm_until(0, deadline, Expiry::Retire);
         }
         state.operation_deadline = None;
     }
@@ -518,6 +522,39 @@ mod tests {
         fn close(&self, _: Epoch) -> Result<()> {
             let _ = self.0.send(());
             Ok(())
+        }
+    }
+
+    #[test]
+    fn recovery_during_close_keeps_the_original_shutdown_deadline() {
+        for interrupted in [false, true] {
+            let (socket, mut worker) = UnixStream::pair().unwrap();
+            worker
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let (closed, _receive) = std::sync::mpsc::channel();
+            let session = Session::new(
+                socket,
+                [5; 16],
+                Arc::new(Platform(closed)),
+                None,
+                BrokerTimeouts {
+                    recovery_timeout: Duration::from_secs(5),
+                    shutdown_timeout: Duration::from_millis(30),
+                },
+            )
+            .unwrap();
+            let request = session.connection.start(None).unwrap();
+            session.connection.begin_close();
+            if interrupted {
+                session.connection.interrupted();
+            } else {
+                session
+                    .connection
+                    .cancel_request(request, Reason::Cancelled)
+                    .unwrap();
+            }
+            assert_eq!(worker.read(&mut [0]).unwrap(), 0);
         }
     }
 

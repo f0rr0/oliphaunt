@@ -87,6 +87,10 @@ oliphaunt_wasix_cargo_test \
   --test extensions_smoke \
   --test postgres_regression \
   -- --nocapture --test-threads=1
+checkpoint_filter="oliphaunt::checkpoint_tests::deferred_checkpoint_write_error_recovers_and_retries_before_ready"
+checkpoint_command=(oliphaunt_wasix_cargo_test --lib "$checkpoint_filter")
+oliphaunt_require_cargo_test_filter "$checkpoint_filter" "${checkpoint_command[@]}"
+"${checkpoint_command[@]}" -- --ignored --exact --nocapture --test-threads=1
 if [ "$asset_mode" = "full" ]; then
   # Each extension must pass direct execution, restart, physical backup/restore,
   # server execution and materialization. Tests record only completed modes.

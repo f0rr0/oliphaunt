@@ -832,18 +832,7 @@ export function parseDescribeResponse(bytes: Uint8Array): DescribeResult {
           break;
         case 0x45: {
           const postgresFailure = parseErrorResponse(body, notices);
-          if (
-            sawParseComplete &&
-            parameterTypeOids !== undefined &&
-            (fields !== undefined || sawNoData)
-          ) {
-            failure ??= withCause(
-              new Error('ErrorResponse arrived after describe completion'),
-              postgresFailure,
-            );
-          } else {
-            failure ??= postgresFailure;
-          }
+          failure ??= postgresFailure;
           sawErrorResponse = true;
           break;
         }
@@ -997,14 +986,7 @@ function parseOperation<Statement>(
         }
         case 0x45: {
           const postgresFailure = parseErrorResponse(body, notices);
-          if (mode !== 'simple-exec' && completionCount > 0) {
-            failure ??= withCause(
-              new Error('ErrorResponse arrived after statement completion'),
-              postgresFailure,
-            );
-          } else {
-            failure ??= postgresFailure;
-          }
+          failure ??= postgresFailure;
           sawErrorResponse = true;
           break;
         }

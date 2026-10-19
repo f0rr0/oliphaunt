@@ -97,6 +97,20 @@ int main(void) {
     assert(validate_frontend_protocol_frames(&handle, sync, sizeof(sync),
                                             false, &extended_pending, &boundaries) == 0);
     assert(!extended_pending && boundaries == 1);
+    const unsigned char sync_query[] = {'S',0,0,0,4,'Q',0,0,0,5,0};
+    handle.ready_remaining = 2;
+    handle.output_ready = false;
+    handle.stream_copy_ignored_sync = 0;
+    oliphaunt_embedded_ignore_sync(&handle);
+    assert(handle.ready_remaining == 1 && !handle.output_ready);
+    assert(handle.stream_copy_ignored_sync == 1);
+    assert(stream_copy_is_extended(&handle, sync_query, sizeof(sync_query), 2));
+    handle.ready_remaining = 1;
+    handle.stream_copy_ignored_sync = 0;
+    assert(!stream_copy_is_extended(&handle, sync_query, sizeof(sync_query), 2));
+    handle.stream_ready_implicit = true;
+    oliphaunt_embedded_ignore_sync(&handle);
+    assert(handle.ready_remaining == 1 && !handle.output_ready);
     pthread_cond_destroy(&handle.output_cond);
     pthread_mutex_destroy(&handle.mutex);
     return 0;

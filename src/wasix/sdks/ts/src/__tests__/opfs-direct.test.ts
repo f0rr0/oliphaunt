@@ -509,6 +509,52 @@ it('journals overflow ranges without copying a preallocated WAL file on every ba
   reopened.close();
 });
 
+it('reuses an unchanged namespace across overflow WAL barriers and recovers every range', async () => {
+  worker();
+  const seed = await clusterSeed()();
+  for (let index = 0; index < 1_000; index++) {
+    seed.files[`base/unchanged-${index}`] = Uint8Array.of(7);
+  }
+  const pool = await DirectOpfsPool.open(
+    'overflow-namespace',
+    async () => seed,
+    compatible(),
+    2,
+    0,
+  );
+  await pool.sync('full');
+  const wal = open(pool, 'pg_wal/new', FLAG_READ | FLAG_WRITE | FLAG_CREATE);
+  const control = open(pool, 'global/pg_control', FLAG_WRITE);
+  write(pool, wal, Uint8Array.of(0));
+  write(pool, control, Uint8Array.of(0));
+
+  let namespaceScans = 0;
+  const iterate = Map.prototype[Symbol.iterator];
+  const iterator = vi.spyOn(Map.prototype, Symbol.iterator).mockImplementation(function (
+    this: Map<unknown, unknown>,
+  ) {
+    if (this.has('base/unchanged-0')) namespaceScans++;
+    return iterate.call(this);
+  });
+  try {
+    for (let index = 1; index <= 10; index++) {
+      write(pool, wal, Uint8Array.of(index), index);
+      write(pool, control, Uint8Array.of(index));
+    }
+  } finally {
+    iterator.mockRestore();
+  }
+  expect(namespaceScans).toBe(0);
+  pool.close();
+
+  const reopened = await DirectOpfsPool.open('overflow-namespace', clusterSeed(), compatible());
+  expect([...read(reopened, open(reopened, 'pg_wal/new', FLAG_READ), 11)]).toEqual([
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+  ]);
+  expect([...read(reopened, open(reopened, 'base/unchanged-999', FLAG_READ), 1)]).toEqual([7]);
+  reopened.close();
+});
+
 it('returns unused handles to the configured reserve after deleting files', async () => {
   const root = worker();
   const pool = await DirectOpfsPool.open('trim-reserve', clusterSeed(), compatible(), 2, 2);

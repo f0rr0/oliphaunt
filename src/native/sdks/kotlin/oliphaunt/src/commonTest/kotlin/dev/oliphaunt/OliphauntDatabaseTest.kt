@@ -240,6 +240,28 @@ class OliphauntDatabaseTest {
     }
 
     @Test
+    fun latePostgresErrorAfterCommandCompleteKeepsDatabaseUsable() = runTest {
+        val response = commandResponse("INSERT 0 1").dropLast(6).toByteArray() +
+            noticeResponse("NOTICE", "before commit") +
+            errorResponse("23503", "deferred constraint violation") +
+            backendMessage('Z', byteArrayOf('I'.code.toByte()))
+        val session = TestSession(response)
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        val errors = listOf(
+            assertFailsWith<PostgresException> { database.execute("INSERT INTO things VALUES (1)") }.postgresError,
+            assertFailsWith<PostgresException> { database.query("INSERT INTO things VALUES (1)") }.postgresError,
+        )
+        for (error in errors) {
+            assertEquals("23503", error.sqlstate)
+            assertEquals("deferred constraint violation", error.message)
+            assertEquals(listOf("before commit"), error.notices.map(PostgresNotice::message))
+        }
+        assertEquals(2, session.requests.size)
+        assertContentEquals(ByteArray(0), database.backup())
+        database.close()
+    }
+
+    @Test
     fun execAndDescribePreserveStatementShapeAndMetadata() {
         val rowMessages = rowResultMessages("1".encodeToByteArray(), PostgresOid.text)
         val exec =
@@ -1839,12 +1861,6 @@ class OliphauntDatabaseTest {
                     backendMessage('C', cstrings("UPDATE 2")) +
                     backendMessage('1', ByteArray(0)) +
                     backendMessage('Z', byteArrayOf('I'.code.toByte())),
-                backendMessage('1', ByteArray(0)) +
-                    backendMessage('2', ByteArray(0)) +
-                    backendMessage('n', ByteArray(0)) +
-                    backendMessage('C', cstrings("UPDATE 1")) +
-                    errorResponse("22000", "late") +
-                    backendMessage('Z', byteArrayOf('I'.code.toByte())),
             )
         cases.forEach { bytes -> assertFailsWith<OliphauntException> { parseCommandResponse(bytes) } }
         val postgres =
@@ -1917,9 +1933,6 @@ class OliphauntDatabaseTest {
                     backendMessage('n', ByteArray(0)) +
                     backendMessage('3', ByteArray(0)) +
                     simpleCommandResponse("SELECT 0"),
-                commandResponse("SELECT 0").dropLast(6).toByteArray() +
-                    errorResponse("22000", "late") +
-                    backendMessage('Z', byteArrayOf('I'.code.toByte())),
             )
         adversarial.forEach { response ->
             assertFailsWith<OliphauntException> { parseQueryResponse(response) }
@@ -1949,7 +1962,9 @@ class OliphauntDatabaseTest {
             completeDescription +
                 errorResponse("22000", "late") +
                 backendMessage('Z', byteArrayOf('I'.code.toByte()))
-        assertFailsWith<OliphauntException> { parseDescribeResponse(lateError) }
+        val error = assertFailsWith<PostgresException> { parseDescribeResponse(lateError) }.postgresError
+        assertEquals("22000", error.sqlstate)
+        assertEquals("late", error.message)
 
         val unsolicitedClose =
             backendMessage('1', ByteArray(0)) +
@@ -2015,7 +2030,7 @@ class OliphauntDatabaseTest {
     }
 }
 
-private class TestEngine(
+internal class TestEngine(
     private val session: OliphauntSession,
 ) : OliphauntEngine {
     var openedConfig: EngineConfig? = null
@@ -2147,7 +2162,7 @@ private class TestSession(
     }
 }
 
-private class AdmissionOrderSession(
+internal class AdmissionOrderSession(
     private val blockClose: Boolean = false,
     private val blockCancel: Boolean = false,
     private val failFirstRaw: Boolean = false,

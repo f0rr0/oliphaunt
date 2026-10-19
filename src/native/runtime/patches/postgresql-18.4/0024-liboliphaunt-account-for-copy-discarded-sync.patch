@@ -1,0 +1,68 @@
+From: Sid Jain <sid_26@outlook.com>
+Subject: [PATCH] Account for frontend Sync discarded inside embedded COPY
+
+A Sync consumed by COPY FROM does not produce ReadyForQuery. Report that
+actual backend event through the private host IO boundary rather than trying
+to predict COPY behavior from the frontend message tags.
+
+diff --git a/src/include/libpq/libpq-be.h b/src/include/libpq/libpq-be.h
+--- a/src/include/libpq/libpq-be.h
++++ b/src/include/libpq/libpq-be.h
+@@ -106,7 +106,7 @@
+ } ClientConnectionInfo;
+ 
+ #ifdef OLIPHAUNT_EMBEDDED
+-#define OLIPHAUNT_EMBEDDED_IO_ABI_VERSION 1U
++#define OLIPHAUNT_EMBEDDED_IO_ABI_VERSION 2U
+ 
+ #define OLIPHAUNT_EMBEDDED_WAKE_NONE 0U
+ #define OLIPHAUNT_EMBEDDED_WAKE_POSIX_FD 1U
+@@ -123,6 +123,7 @@
+ 	int			(*set_timeout) (void *context, long timeout_ms);
+ 	int			(*set_interrupt_wakeup) (void *context, uint32 kind,
+ 											 uintptr_t token);
++	void		(*ignore_sync) (void *context);
+ } OliphauntEmbeddedIO;
+ #endif
+ 
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -4397,7 +4397,7 @@
+ 		io->abi_version != OLIPHAUNT_EMBEDDED_IO_ABI_VERSION ||
+ 		io->struct_size < sizeof(*io) || io->context == NULL ||
+ 		io->read == NULL || io->write == NULL || io->set_timeout == NULL ||
+-		io->set_interrupt_wakeup == NULL)
++		io->set_interrupt_wakeup == NULL || io->ignore_sync == NULL)
+ 		return -1;
+ 
+ 	*cwd_capture_errno = 0;
+diff --git a/src/backend/commands/copyfromparse.c b/src/backend/commands/copyfromparse.c
+--- a/src/backend/commands/copyfromparse.c
++++ b/src/backend/commands/copyfromparse.c
+@@ -67,6 +67,9 @@
+ #include "commands/progress.h"
+ #include "executor/executor.h"
+ #include "libpq/libpq.h"
++#ifdef OLIPHAUNT_EMBEDDED
++#include "libpq/libpq-be.h"
++#endif
+ #include "libpq/pqformat.h"
+ #include "mb/pg_wchar.h"
+ #include "miscadmin.h"
+@@ -331,8 +334,14 @@
+ 									 errmsg("COPY from stdin failed: %s",
+ 											pq_getmsgstring(cstate->fe_msgbuf))));
+ 							break;
++						case PqMsg_Sync:
++#ifdef OLIPHAUNT_EMBEDDED
++							if (IsTrustedEmbeddedProcess())
++								MyProcPort->oliphaunt_io->ignore_sync(
++									MyProcPort->oliphaunt_io->context);
++#endif
++							/* FALLTHROUGH */
+ 						case PqMsg_Flush:
+-						case PqMsg_Sync:
+ 
+ 							/*
+ 							 * Ignore Flush/Sync for the convenience of client

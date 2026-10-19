@@ -96,6 +96,18 @@ static bool record_ready_locked(OliphauntHandle *handle, unsigned char status) {
     return handle->ready_remaining == 0;
 }
 
+void oliphaunt_embedded_ignore_sync(void *context) {
+    OliphauntHandle *handle = context;
+    pthread_mutex_lock(&handle->mutex);
+    /* Incremental input reserves its final readiness before Sync is supplied. */
+    if (handle->ready_remaining > 0 &&
+        !(handle->streaming && handle->stream_ready_implicit)) {
+        handle->ready_remaining--;
+    }
+    if (handle->streaming) handle->stream_copy_ignored_sync++;
+    pthread_mutex_unlock(&handle->mutex);
+}
+
 static int append_output_locked(OliphauntHandle *handle, const void *buf, size_t len) {
     if (len == 0) {
         return 0;
@@ -157,7 +169,10 @@ static bool scan_stream_ready_locked(OliphauntHandle *handle, const unsigned cha
             scanner->payload_remaining = (size_t)msg_len - 4;
             if (scanner->payload_remaining == 0) {
                 bool ready = scanner->tag == 'Z';
-                if (scanner->tag == 'G') handle->stream_copy_input = true;
+                if (scanner->tag == 'G') {
+                    handle->stream_copy_input = true;
+                    handle->stream_copy_ignored_sync = 0;
+                }
                 if (scanner->tag == 'E' || ready) handle->stream_copy_input = false;
                 if (ready) {
                     ready = record_ready_locked(handle, 'I');
@@ -180,7 +195,10 @@ static bool scan_stream_ready_locked(OliphauntHandle *handle, const unsigned cha
             scanner->payload_remaining -= take;
             if (scanner->payload_remaining == 0) {
                 bool ready = scanner->tag == 'Z';
-                if (scanner->tag == 'G') handle->stream_copy_input = true;
+                if (scanner->tag == 'G') {
+                    handle->stream_copy_input = true;
+                    handle->stream_copy_ignored_sync = 0;
+                }
                 if (scanner->tag == 'E' || ready) handle->stream_copy_input = false;
                 if (ready) {
                     ready = record_ready_locked(handle, scanner->ready_status_set ? scanner->ready_status : 'I');
@@ -1112,6 +1130,23 @@ static bool request_closes_stream_input(const uint8_t *request, size_t len) {
     return false;
 }
 
+static bool stream_copy_is_extended(
+    OliphauntHandle *handle, const uint8_t *request, size_t len, size_t boundaries) {
+    size_t completed = boundaries > handle->ready_remaining
+        ? boundaries - handle->ready_remaining : 0;
+    /* The current COPY's discarded Sync still identifies its active exchange. */
+    completed = completed > handle->stream_copy_ignored_sync
+        ? completed - handle->stream_copy_ignored_sync : 0;
+    for (size_t off = 0; off < len;
+         off += (size_t)read_be32(request + off + 1) + 1) {
+        uint8_t tag = request[off];
+        if (tag != 'Q' && tag != 'F' && tag != 'S') continue;
+        if (completed == 0) return tag == 'S';
+        completed--;
+    }
+    return true;
+}
+
 uint64_t oliphaunt_protocol_stream_token(OliphauntHandle *handle) {
     if (oliphaunt_begin_handle_call(handle) != 0) {
         return 0;
@@ -1250,6 +1285,8 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
     handle->stream_input_closed = request_closes_stream_input(request, request_len);
     handle->stream_extended_pending = extended_pending;
     handle->stream_copy_input = false;
+    handle->stream_ready_implicit = boundaries == 0;
+    handle->stream_copy_ignored_sync = 0;
 
     handle->output_len = 0;
     handle->output_scan_off = 0;
@@ -1302,19 +1339,8 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
                  * COPY consumes the original Sync, so supply its recovery Sync. */
                 static const uint8_t copy_fail[] = {'f', 0, 0, 0, 5, 0,
                                                    'S', 0, 0, 0, 4};
-                bool extended_copy = true;
-                size_t completed = boundaries > handle->ready_remaining
-                    ? boundaries - handle->ready_remaining : 0;
-                for (size_t off = 0; off < request_len;
-                     off += (size_t)read_be32(request + off + 1) + 1) {
-                    uint8_t tag = request[off];
-                    if (tag != 'Q' && tag != 'F' && tag != 'S') continue;
-                    if (completed == 0) {
-                        extended_copy = tag == 'S';
-                        break;
-                    }
-                    completed--;
-                }
+                bool extended_copy = stream_copy_is_extended(
+                    handle, request, request_len, boundaries);
                 size_t length = extended_copy ? sizeof(copy_fail) : 6;
                 if (oliphaunt_set_input_locked(handle, copy_fail, length) != 0) {
                     status = -1;

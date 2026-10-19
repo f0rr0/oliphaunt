@@ -1937,14 +1937,7 @@ pub fn parse_command_response(
             )));
         }
         match tag {
-            b'E' => {
-                if completion.is_some() {
-                    return Err(protocol(
-                        "execute() received ErrorResponse after statement completion",
-                    ));
-                }
-                postgres_error = Some(parse_error_response(body)?);
-            }
+            b'E' => postgres_error = Some(parse_error_response(body)?),
             b'C' => {
                 match completion {
                     Some(SingleStatementCompletion::Command) => {
@@ -2161,14 +2154,7 @@ pub fn parse_query_response(
                 command_tag = Some(parse_command_complete(body)?);
                 completion = Some(SingleStatementCompletion::Command);
             }
-            b'E' => {
-                if completion.is_some() {
-                    return Err(protocol(
-                        "query() received ErrorResponse after statement completion",
-                    ));
-                }
-                postgres_error = Some(parse_error_response(body)?);
-            }
+            b'E' => postgres_error = Some(parse_error_response(body)?),
             b'G' | b'H' | b'W' | b'd' | b'c' => {
                 return Err(protocol(
                     "query() does not support COPY protocol responses; use exec_protocol_raw or exec_protocol_raw_stream",
@@ -2480,14 +2466,7 @@ pub fn parse_statement_description(bytes: &[u8]) -> Result<StatementDescription>
                 }
                 saw_no_data = true;
             }
-            b'E' => {
-                if fields.is_some() || saw_no_data {
-                    return Err(protocol(
-                        "describe() received ErrorResponse after result description",
-                    ));
-                }
-                postgres_error = Some(parse_error_response(body)?);
-            }
+            b'E' => postgres_error = Some(parse_error_response(body)?),
             b'N' => notices.push(parse_notice_response(body)?),
             b'S' => validate_parameter_status(body)?,
             b'A' => validate_notification_response(body)?,
@@ -3439,24 +3418,6 @@ mod protocol_tests {
             "BindComplete out of order",
         );
 
-        let mut error_after_command = Vec::new();
-        push_command_complete(&mut error_after_command, "UPDATE 1");
-        push_error_response(&mut error_after_command, "ERROR", "XX000", "too late");
-        push_ready_for_query(&mut error_after_command);
-        assert_other_error_contains(
-            parse_query_response_bytes(&error_after_command),
-            "ErrorResponse after statement completion",
-        );
-
-        let mut error_after_empty = Vec::new();
-        push_backend_message(&mut error_after_empty, b'I', &[]);
-        push_error_response(&mut error_after_empty, "ERROR", "XX000", "too late");
-        push_ready_for_query(&mut error_after_empty);
-        assert_other_error_contains(
-            parse_any_command_response(&error_after_empty),
-            "ErrorResponse after statement completion",
-        );
-
         let mut close_complete = Vec::new();
         push_backend_message(&mut close_complete, b'3', &[]);
         push_command_complete(&mut close_complete, "UPDATE 1");
@@ -3469,6 +3430,78 @@ mod protocol_tests {
             parse_any_command_response(&close_complete),
             "unexpected backend message tag 0x33",
         );
+    }
+
+    #[test]
+    fn single_statement_parsers_preserve_errors_reported_during_sync() {
+        for expected in [ExpectedProtocol::Simple, ExpectedProtocol::Extended] {
+            for empty in [false, true] {
+                let mut bytes = Vec::new();
+                if expected == ExpectedProtocol::Extended {
+                    push_backend_message(&mut bytes, b'1', &[]);
+                    push_backend_message(&mut bytes, b'2', &[]);
+                    push_backend_message(&mut bytes, b'n', &[]);
+                }
+                if empty {
+                    push_backend_message(&mut bytes, b'I', &[]);
+                } else {
+                    push_command_complete(&mut bytes, "INSERT 0 1");
+                }
+                // Execute can complete before Sync commits and checks deferred constraints.
+                push_error_response(&mut bytes, "ERROR", "23503", "deferred constraint failed");
+                push_notice_response(&mut bytes, "NOTICE", "after completion");
+                push_ready_for_query(&mut bytes);
+                for result in [
+                    parse_command_response(&bytes, expected).map(|_| ()),
+                    parse_query_response(&bytes, expected).map(|_| ()),
+                ] {
+                    let Error::Postgres {
+                        diagnostic,
+                        notices,
+                    } = result.unwrap_err()
+                    else {
+                        panic!("expected the PostgreSQL error reported at Sync");
+                    };
+                    assert_eq!(diagnostic.sqlstate.as_deref(), Some("23503"));
+                    assert_eq!(diagnostic.message, "deferred constraint failed");
+                    assert_eq!(notices[0].message, "after completion");
+                }
+            }
+        }
+
+        let mut rows = Vec::new();
+        push_row_description(&mut rows, &[("answer", TypeOid::INT4.get())]);
+        push_data_row(&mut rows, &[Some("42")]);
+        push_command_complete(&mut rows, "SELECT 1");
+        push_error_response(&mut rows, "ERROR", "58030", "checkpoint failed");
+        push_ready_for_query(&mut rows);
+        assert!(matches!(
+            parse_query_response_bytes(&rows),
+            Err(Error::Postgres { diagnostic, .. }) if diagnostic.sqlstate.as_deref() == Some("58030")
+        ));
+    }
+
+    #[test]
+    fn a_late_server_error_does_not_hide_duplicate_completions() {
+        for error_before_duplicate in [false, true] {
+            let mut bytes = Vec::new();
+            push_command_complete(&mut bytes, "INSERT 0 1");
+            if error_before_duplicate {
+                push_error_response(&mut bytes, "ERROR", "23503", "deferred constraint failed");
+            }
+            push_command_complete(&mut bytes, "INSERT 0 1");
+            if !error_before_duplicate {
+                push_error_response(&mut bytes, "ERROR", "23503", "deferred constraint failed");
+            }
+            push_ready_for_query(&mut bytes);
+            let expected = if error_before_duplicate {
+                "after ErrorResponse"
+            } else {
+                "multiple CommandComplete"
+            };
+            assert_other_error_contains(parse_any_command_response(&bytes), expected);
+            assert_other_error_contains(parse_query_response_bytes(&bytes), expected);
+        }
     }
 
     #[test]
@@ -3574,16 +3607,42 @@ mod protocol_tests {
             "RowDescription out of order",
         );
 
-        let mut error_after_result = Vec::new();
-        push_backend_message(&mut error_after_result, b'1', &[]);
-        push_parameter_description(&mut error_after_result, &[]);
-        push_backend_message(&mut error_after_result, b'n', &[]);
-        push_error_response(&mut error_after_result, "ERROR", "XX000", "too late");
-        push_ready_for_query(&mut error_after_result);
-        assert_other_error_contains(
-            parse_statement_description(&error_after_result),
-            "ErrorResponse after result description",
+        let mut duplicate_result = Vec::new();
+        push_backend_message(&mut duplicate_result, b'1', &[]);
+        push_parameter_description(&mut duplicate_result, &[]);
+        push_backend_message(&mut duplicate_result, b'n', &[]);
+        push_backend_message(&mut duplicate_result, b'n', &[]);
+        push_error_response(
+            &mut duplicate_result,
+            "ERROR",
+            "23503",
+            "deferred constraint failed",
         );
+        push_ready_for_query(&mut duplicate_result);
+        assert_other_error_contains(
+            parse_statement_description(&duplicate_result),
+            "NoData out of order",
+        );
+    }
+
+    #[test]
+    fn describe_preserves_errors_reported_during_sync() {
+        for has_rows in [false, true] {
+            let mut bytes = Vec::new();
+            push_backend_message(&mut bytes, b'1', &[]);
+            push_parameter_description(&mut bytes, &[]);
+            if has_rows {
+                push_row_description(&mut bytes, &[("answer", TypeOid::INT4.get())]);
+            } else {
+                push_backend_message(&mut bytes, b'n', &[]);
+            }
+            push_error_response(&mut bytes, "ERROR", "23503", "deferred constraint failed");
+            push_ready_for_query(&mut bytes);
+            assert!(matches!(
+                parse_statement_description(&bytes),
+                Err(Error::Postgres { diagnostic, .. }) if diagnostic.sqlstate.as_deref() == Some("23503")
+            ));
+        }
     }
 
     fn push_parameter_description(bytes: &mut Vec<u8>, types: &[TypeOid]) {

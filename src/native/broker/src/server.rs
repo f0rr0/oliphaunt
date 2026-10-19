@@ -725,7 +725,7 @@ fn exchange(socket: &mut Socket, shared: &Shared) -> io::Result<()> {
                     thread::sleep(Duration::from_millis(1));
                 }
             }
-            closed_input = matches!(tag, b'Q' | b'S' | b'c' | b'f');
+            closed_input = matches!(tag, b'Q' | b'F' | b'S' | b'c' | b'f');
         }
     })();
     if let Some(done) = running {

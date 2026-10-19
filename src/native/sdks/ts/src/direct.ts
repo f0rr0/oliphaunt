@@ -2,9 +2,14 @@ import { Oliphaunt as client } from './index.js';
 import type * as Types from './types.js';
 export * from './index.js';
 
-export type OpenConfig = Omit<Types.OpenConfig, 'topology' | 'brokerExecutable'> & {
+export type OpenConfig = Omit<
+  Types.OpenConfig,
+  'topology' | 'brokerExecutable' | 'broker' | 'timeouts'
+> & {
   topology?: never;
   brokerExecutable?: never;
+  broker?: never;
+  timeouts?: never;
 };
 export type OliphauntClient = Omit<Types.OliphauntClient, 'open'> & {
   open(config?: OpenConfig): Promise<Types.OliphauntDatabase>;

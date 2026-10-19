@@ -510,8 +510,9 @@ static int register_static_extension_fixture(void) {
     return 0;
 }
 
-static int contains_tag(const OliphauntResponse *response, unsigned char tag) {
+static int count_tag(const OliphauntResponse *response, unsigned char tag) {
     size_t off = 0;
+    int count = 0;
     while (off + 5 <= response->len) {
         unsigned char current = response->data[off];
         uint32_t len = ((uint32_t)response->data[off + 1] << 24) |
@@ -522,11 +523,15 @@ static int contains_tag(const OliphauntResponse *response, unsigned char tag) {
             return 0;
         }
         if (current == tag) {
-            return 1;
+            count++;
         }
         off += 1 + len;
     }
-    return 0;
+    return count;
+}
+
+static int contains_tag(const OliphauntResponse *response, unsigned char tag) {
+    return count_tag(response, tag) != 0;
 }
 
 static int contains_bytes(const OliphauntResponse *response, const char *needle) {
@@ -1321,6 +1326,82 @@ static int exec_incremental_copy(OliphauntHandle *db) {
     free(query);
     free(probe.response.data);
     return failed || exec_simple_query_expect_bytes(db, "SELECT count(*) FROM incremental_copy", "1");
+}
+
+static int exec_complete_copy_batches(OliphauntHandle *db) {
+    static const uint8_t copy_end[] = {
+        'd', 0, 0, 0, 7, '4', '2', '\n',
+        'c', 0, 0, 0, 4, 'S', 0, 0, 0, 4,
+    };
+    for (int backend_error = 0; backend_error <= 1; backend_error++) {
+        for (int streaming = 0; streaming <= 1; streaming++) {
+            unsigned char *query = NULL, *following = NULL;
+            size_t query_len = 0, following_len = 0;
+            push_extended_query(&query, &query_len, backend_error
+                ? "SELECT 1 / 0" : "COPY incremental_copy FROM STDIN");
+            push_query(&following, &following_len, "SELECT 'copy-batch-finished'");
+            query = realloc(query, query_len + sizeof(copy_end) + following_len);
+            memcpy(query + query_len, copy_end, sizeof(copy_end));
+            memcpy(query + query_len + sizeof(copy_end), following, following_len);
+            query_len += sizeof(copy_end) + following_len;
+            free(following);
+
+            StreamAccumulator acc = {0};
+            OliphauntResponse response = {0};
+            int rc = streaming
+                ? oliphaunt_exec_protocol_raw_stream(db, query, query_len, append_stream_chunk, &acc)
+                : oliphaunt_exec_protocol(db, query, query_len, &response);
+            free(query);
+            if (streaming) response = (OliphauntResponse){.data = acc.data, .len = acc.len};
+            int failed = rc != 0 || count_tag(&response, 'Z') != (backend_error ? 3 : 2) ||
+                contains_tag(&response, 'E') != backend_error ||
+                !contains_bytes(&response, "copy-batch-finished");
+            oliphaunt_free_response(&response);
+            if (failed) {
+                fprintf(stderr, "complete COPY batch failed: streaming=%d error=%d: %s\n",
+                        streaming, backend_error, last_error_message(db));
+                return 1;
+            }
+        }
+    }
+    return exec_simple_query_expect_bytes(db, "SELECT count(*) FROM incremental_copy", "3");
+}
+
+typedef struct CopyAbortProbe {
+    OliphauntHandle *db;
+    int sync_was_ignored;
+} CopyAbortProbe;
+
+static int32_t fail_after_copy_sync(void *context, const uint8_t *data, size_t len) {
+    (void)data;
+    (void)len;
+    CopyAbortProbe *probe = context;
+    /* Force recovery after the backend discarded Sync, not just after G. */
+    for (int attempt = 0; attempt < 1000; attempt++) {
+        pthread_mutex_lock(&probe->db->mutex);
+        probe->sync_was_ignored = probe->db->stream_copy_ignored_sync != 0;
+        pthread_mutex_unlock(&probe->db->mutex);
+        if (probe->sync_was_ignored) break;
+        smoke_sleep_millis(1);
+    }
+    return -1;
+}
+
+static int exec_copy_callback_failure_after_sync(OliphauntHandle *db) {
+    unsigned char *query = NULL;
+    size_t query_len = 0;
+    push_extended_query(&query, &query_len, "COPY incremental_copy FROM STDIN");
+    CopyAbortProbe probe = {.db = db};
+    int rc = oliphaunt_exec_protocol_raw_stream(db, query, query_len, fail_after_copy_sync, &probe);
+    free(query);
+    if (rc != OLIPHAUNT_STREAM_CALLBACK_ABORTED || !probe.sync_was_ignored) return 1;
+    OliphauntResponse response = {0};
+    const char *sql = "SELECT 'copy-abort-recovered'";
+    rc = oliphaunt_exec_simple_query(db, sql, strlen(sql), &response);
+    int failed = rc != 0 || count_tag(&response, 'Z') != 1 ||
+        !contains_bytes(&response, "copy-abort-recovered") || contains_tag(&response, 'E');
+    oliphaunt_free_response(&response);
+    return failed;
 }
 
 static int exec_stream_callback_failure_recovers(OliphauntHandle *db) {
@@ -2986,7 +3067,9 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         return 1;
     }
 
-    if (exec_incremental_input(db) != 0 || exec_incremental_copy(db) != 0 || exec_stream_callback_failure_recovers(db) != 0) {
+    if (exec_incremental_input(db) != 0 || exec_incremental_copy(db) != 0 ||
+        exec_complete_copy_batches(db) != 0 || exec_copy_callback_failure_after_sync(db) != 0 ||
+        exec_stream_callback_failure_recovers(db) != 0) {
         oliphaunt_close(db);
         return 1;
     }

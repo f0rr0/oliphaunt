@@ -7,11 +7,26 @@ transaction at the next ReadyForQuery boundary. Clear the request only after
 successful checkpoint completion. Normal postmaster backends retain their
 background-checkpointer path. Native and WASIX share this implementation;
 their respective traffic cops own the idle-boundary call.
+Checkpoint errors release locks, wait state, transient files and hash scans
+left outside resource owners; idle transaction abort cannot release them.
 
 diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
 --- a/src/backend/access/transam/xlog.c
 +++ b/src/backend/access/transam/xlog.c
-@@ -100,6 +100,7 @@
+@@ -82,6 +82,7 @@
+ #include "replication/walreceiver.h"
+ #include "replication/walsender.h"
+ #include "storage/bufmgr.h"
++#include "storage/condition_variable.h"
+ #include "storage/fd.h"
+ #include "storage/ipc.h"
+ #include "storage/large_object.h"
+@@ -95,11 +96,13 @@
+ #include "utils/guc_hooks.h"
+ #include "utils/guc_tables.h"
++#include "utils/hsearch.h"
+ #include "utils/injection_point.h"
+ #include "utils/pgstat_internal.h"
  #include "utils/ps_status.h"
  #include "utils/relmapper.h"
 +#include "utils/resowner.h"
@@ -19,6 +34,7 @@ diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog
  #include "utils/timeout.h"
  #include "utils/timestamp.h"
  #include "utils/varlena.h"
+ 
 @@ -166,6 +167,10 @@
   */
  static bool check_wal_consistency_checking_deferred = false;
@@ -30,7 +46,7 @@ diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog
  /*
   * GUC support
   */
-@@ -2288,6 +2292,35 @@
+@@ -2288,6 +2292,50 @@
  	return false;
  }
  
@@ -56,8 +72,23 @@ diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog
 +	}
 +	PG_FINALLY();
 +	{
++		if (!completed)
++		{
++			/* No transaction exists to release failed checkpoint locks. */
++			HOLD_INTERRUPTS();
++			LWLockReleaseAll();
++			ConditionVariableCancelSleep();
++			pgstat_report_wait_end();
++		}
 +		ReleaseAuxProcessResources(completed);
++		if (!completed)
++		{
++			AtEOXact_Files(false);
++			AtEOXact_HashTables(false);
++		}
 +		CurrentResourceOwner = saved_owner;
++		if (!completed)
++			RESUME_INTERRUPTS();
 +	}
 +	PG_END_TRY();
 +}

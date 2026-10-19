@@ -263,6 +263,66 @@ async function verifyOutputDestinations(sourceConnection, restoredConnection, su
       (error) =>
         error instanceof PostgresToolError && (error.signal !== null || error.exitCode !== 0),
     );
+
+    const finalController = new AbortController();
+    const finalFailure = new Error('cancelled final destination write');
+    let finalStarted;
+    const finalWriteStarted = new Promise((resolve) => {
+      finalStarted = resolve;
+    });
+    let releaseFinal;
+    const finalWrite = new Promise((resolve) => {
+      releaseFinal = resolve;
+    });
+    const finalOutput = psqlToStream(
+      sourceConnection,
+      new WritableStream({
+        write(chunk) {
+          finalStarted(Number(new TextDecoder().decode(chunk).trim()));
+          return finalWrite;
+        },
+      }),
+      // The shell's parent is psql, whose final output fits in its pipe.
+      { script: '\\! echo $PPID\n', signal: finalController.signal },
+    );
+    let timeout;
+    try {
+      const pid = await finalWriteStarted;
+      assert(Number.isSafeInteger(pid) && pid > 0);
+      const deadline = performance.now() + 5000;
+      for (;;) {
+        try {
+          process.kill(pid, 0);
+        } catch (error) {
+          if (error.code === 'ESRCH') break;
+          throw error;
+        }
+        assert(performance.now() < deadline, 'psql did not exit before its final write settled');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      finalController.abort(finalFailure);
+      await assert.rejects(
+        Promise.race([
+          finalOutput,
+          new Promise((_, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error('final output cancellation stalled')),
+              1000,
+            );
+          }),
+        ]),
+        (error) =>
+          error instanceof PostgresToolError &&
+          error.exitCode === 0 &&
+          error.signal === null &&
+          error.cause === finalFailure,
+      );
+    } finally {
+      clearTimeout(timeout);
+      releaseFinal();
+      await finalOutput.catch(() => {});
+    }
     assert.equal(
       (await psql(sourceConnection, { args: ['-tA'], command: 'SELECT 42' })).trim(),
       '42',

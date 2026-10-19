@@ -1489,7 +1489,7 @@ func parseOliphauntCommandResponse(
 
         try rejectBackendMessageAfterError(tag, postgresError: postgresError, operation: "execute()")
 
-        if phase == .complete, ![UInt8(0x53), 0x4e, 0x41, 0x5a].contains(tag) {
+        if phase == .complete, ![UInt8(0x45), 0x53, 0x4e, 0x41, 0x5a].contains(tag) {
             throw OliphauntError.engine("execute() received backend message after statement completion")
         }
 
@@ -1607,7 +1607,7 @@ func parseOliphauntQueryResponse(
         }
         let body = try cursor.readData(count: Int(length - 4), label: "backend message body")
         try rejectBackendMessageAfterError(tag, postgresError: postgresError, operation: "query()")
-        if phase == .complete, ![UInt8(0x53), 0x4e, 0x41, 0x5a].contains(tag) {
+        if phase == .complete, ![UInt8(0x45), 0x53, 0x4e, 0x41, 0x5a].contains(tag) {
             throw OliphauntError.engine("query() received backend message after statement completion")
         }
         var bodyCursor = OliphauntByteCursor(body)
@@ -1856,7 +1856,7 @@ func parseOliphauntDescribeResponse(_ data: Data) throws -> OliphauntQueryDescri
         }
         let body = try cursor.readData(count: Int(length - 4), label: "backend message body")
         try rejectBackendMessageAfterError(tag, postgresError: postgresError, operation: "describe()")
-        if sawDescription, ![UInt8(0x53), 0x4e, 0x41, 0x5a].contains(tag) {
+        if sawDescription, ![UInt8(0x45), 0x53, 0x4e, 0x41, 0x5a].contains(tag) {
             throw OliphauntError.engine(
                 "describe() received backend message after statement description"
             )

@@ -14,6 +14,7 @@ import {
   inspectManagedTransactionResponse,
   inspectReadyForQuery,
   json,
+  parseCommandResponse,
   parseDescribeResponse,
   parseExecResponse,
   parseQueryRawResponse,
@@ -897,7 +898,7 @@ test('structured parsers require exact completion and reject post-completion row
           [0x5a, [0x49]],
         ]),
       ),
-    /ErrorResponse arrived after describe completion/,
+    (error) => error instanceof PostgresError && error.message === 'late describe error',
   );
 
   assert.throws(
@@ -949,7 +950,46 @@ test('structured parsers require exact completion and reject post-completion row
           [0x5a, [0x49]],
         ]),
       ),
-    /ErrorResponse arrived after statement completion/,
+    (error) => error instanceof PostgresError && error.message === 'late error',
+  );
+});
+
+test('typed parsers preserve errors after completion without accepting duplicate completions', () => {
+  const command: [number, number[]][] = [[0x43, cstring('INSERT 0 1')]];
+  const row: [number, number[]][] = [
+    [0x54, rowDescription([field('value', postgresOids.int4)])],
+    [0x44, dataRow(['1'])],
+    [0x43, cstring('SELECT 1')],
+  ];
+  const ending: [number, number[]][] = [
+    [0x45, diagnostic('ERROR', '23503', 'deferred constraint violation')],
+    [0x5a, [0x49]],
+  ];
+  const isDeferredFailure = (error: unknown) =>
+    error instanceof PostgresError &&
+    error.sqlstate === '23503' &&
+    error.message === 'deferred constraint violation' &&
+    responseTransactionStatus(error) === 'idle';
+  for (const completion of [command, row]) {
+    const simple = backendResponse([...completion, ...ending]);
+    assert.throws(() => parseSimpleQueryRawResponse(simple), isDeferredFailure);
+    assert.throws(() => parseExecResponse(simple), isDeferredFailure);
+    const extended = backendResponse([
+      [0x31, []],
+      [0x32, []],
+      ...(completion === command ? [[0x6e, []] as [number, number[]]] : []),
+      ...completion,
+      ...ending,
+    ]);
+    assert.throws(() => parseQueryRawResponse(extended), isDeferredFailure);
+    assert.throws(() => parseCommandResponse(extended), isDeferredFailure);
+  }
+  assert.throws(
+    () =>
+      parseCommandResponse(
+        backendResponse([[0x31, []], [0x32, []], [0x6e, []], ...command, ...command, ...ending]),
+      ),
+    /multiple result completions/,
   );
 });
 

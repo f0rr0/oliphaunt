@@ -288,6 +288,63 @@ fn query(stream: &mut TcpStream, sql: &str) -> Vec<u8> {
 
 #[test]
 #[ignore = "requires a prepared native runtime; runs the actual broker executable"]
+fn function_call_batches_preserve_each_completion_boundary() {
+    let broker = Broker::start(None);
+    let _owner = broker.owner();
+    let (mut client, _) = broker.client();
+    let metadata = oliphaunt_query::parse_query_response(
+        &query(
+            &mut client,
+            "SELECT oid FROM pg_proc WHERE proname = 'pg_sleep'",
+        ),
+        oliphaunt_query::ExpectedProtocol::Simple,
+    )
+    .unwrap();
+    let oid = metadata
+        .get_text(0, "oid")
+        .unwrap()
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+    let mut body = oid.to_be_bytes().to_vec();
+    // One binary double argument, with a text-format void result.
+    for value in [1_i16, 1, 1] {
+        body.extend_from_slice(&value.to_be_bytes());
+    }
+    body.extend_from_slice(&8_i32.to_be_bytes());
+    body.extend_from_slice(&0.05_f64.to_be_bytes());
+    body.extend_from_slice(&0_i16.to_be_bytes());
+    let call = frame(b'F', &body);
+    for next in [
+        oliphaunt_query::simple_query("SELECT 42").unwrap(),
+        call.clone(),
+    ] {
+        let mut request = call.clone();
+        request.extend(next);
+        let mut bytes = Vec::new();
+        assert!(
+            pgwire::exchange(&mut client, &request, &mut |chunk| {
+                bytes.extend_from_slice(chunk);
+                Ok::<_, ()>(())
+            })
+            .unwrap()
+            .is_none()
+        );
+        let mut remaining = bytes.as_slice();
+        let mut ready = 0;
+        while !remaining.is_empty() {
+            let (tag, _, rest) = oliphaunt_query::read_backend_message(remaining).unwrap();
+            assert_ne!(tag, b'E');
+            ready += usize::from(tag == b'Z');
+            remaining = rest;
+        }
+        assert_eq!(ready, 2);
+        assert!(String::from_utf8_lossy(&query(&mut client, "SELECT 43")).contains("43"));
+    }
+}
+
+#[test]
+#[ignore = "requires a prepared native runtime; runs the actual broker executable"]
 fn startup_application_name_distinguishes_omission_from_empty() {
     for application in [None, Some(""), Some("client-application")] {
         let broker = Broker::start(None);

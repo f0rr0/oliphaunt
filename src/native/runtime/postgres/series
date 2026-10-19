@@ -25,3 +25,4 @@ src/native/runtime/patches/postgresql-18.4/0022-liboliphaunt-preserve-host-proce
 src/third-party/postgres/patches/common/embedded-fsync-default.patch
 src/third-party/postgres/patches/common/embedded-wal-pressure-checkpoint.patch
 src/native/runtime/patches/postgresql-18.4/0023-liboliphaunt-service-deferred-checkpoints.patch
+src/native/runtime/patches/postgresql-18.4/0024-liboliphaunt-account-for-copy-discarded-sync.patch

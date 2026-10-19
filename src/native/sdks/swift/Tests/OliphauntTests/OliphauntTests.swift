@@ -126,11 +126,6 @@ func structuredParsersRejectInvalidExtendedOrdering() {
         combineMessages(parse, bind, emptyQueryResponse(), readyResponse()),
         combineMessages(parse, bind, noData, close, command, readyResponse()),
         combineMessages(completeCommand, parse, readyResponse()),
-        combineMessages(
-            completeCommand,
-            errorResponse(sqlstate: "22000", message: "late"),
-            readyResponse()
-        ),
     ]
     for response in commonCases {
         #expect(throws: OliphauntError.self) {
@@ -175,7 +170,7 @@ func describeParserRequiresOrderedParseMetadata() {
         parameterDescription([]),
         backendMessage(Character("n").asciiValue!, Data())
     )
-    #expect(throws: OliphauntError.self) {
+    do {
         _ = try parseOliphauntDescribeResponse(
             combineMessages(
                 completeDescription,
@@ -183,6 +178,12 @@ func describeParserRequiresOrderedParseMetadata() {
                 readyResponse()
             )
         )
+        Issue.record("expected a PostgreSQL error after statement description")
+    } catch OliphauntError.postgres(let error) {
+        #expect(error.sqlstate == "22000")
+        #expect(error.message == "late")
+    } catch {
+        Issue.record("expected a PostgreSQL error, got \(error)")
     }
     #expect(throws: OliphauntError.self) {
         _ = try parseOliphauntDescribeResponse(
@@ -493,6 +494,33 @@ func noticesAttachToPostgresErrors() throws {
         #expect(error.sqlstate == "22000")
         #expect(error.notices.map(\.message) == ["before failure"])
     }
+}
+
+@Test
+func latePostgresErrorAfterCommandCompleteKeepsDatabaseUsable() async throws {
+    let response = commandResponse("INSERT 0 1").dropLast(6) +
+        noticeResponse(severity: "NOTICE", message: "before commit") +
+        errorResponse(sqlstate: "23503", message: "deferred constraint violation") +
+        readyResponse()
+    let session = TestSession(response: response)
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let operations: [() async throws -> Void] = [
+        { _ = try await database.execute("INSERT INTO things VALUES (1)") },
+        { _ = try await database.query("INSERT INTO things VALUES (1)") },
+    ]
+    for operation in operations {
+        do {
+            try await operation()
+            Issue.record("expected a PostgreSQL error after CommandComplete")
+        } catch OliphauntError.postgres(let error) {
+            #expect(error.sqlstate == "23503")
+            #expect(error.message == "deferred constraint violation")
+            #expect(error.notices.map(\.message) == ["before commit"])
+        }
+    }
+    #expect(await session.requests().count == 2)
+    #expect(try await database.backup() == Data())
+    try await database.close()
 }
 
 @Test
