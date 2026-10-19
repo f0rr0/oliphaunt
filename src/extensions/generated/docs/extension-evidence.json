@@ -1346,7 +1346,7 @@
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:05c44ce681c43857fb4b49081cb8a290cf3051ea102de324964ec61f4f9566d2",
+  "source-digest": "sha256:9bd5bb09681d1ca3f0057fc0e91cddd2b1516d87940544ae17eb9ea4f1ddffa3",
   "source-digest-inputs": [
     "src/third-party/postgres/source.toml",
     "src/extensions/catalog/extensions.source.json",
@@ -1359,6 +1359,7 @@
     "src/extensions/external/pg_hashids/source.toml",
     "src/extensions/external/pg_ivm/source.toml",
     "src/extensions/external/pg_textsearch/source.toml",
+    "src/extensions/external/pg_textsearch/tests/upgrade/source.toml",
     "src/extensions/external/pg_uuidv7/source.toml",
     "src/extensions/external/pgtap/source.toml",
     "src/extensions/external/postgis/dependencies/geos/source.toml",
@@ -1378,6 +1379,7 @@
     "src/extensions/external/pg_ivm/upstream-license-data.json",
     "src/extensions/external/pg_textsearch/recipe.toml",
     "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
+    "src/extensions/external/pg_textsearch/tests/qualify.sh",
     "src/extensions/external/pg_textsearch/upstream-license-data.json",
     "src/extensions/external/pg_uuidv7/upstream-license-data.json",
     "src/extensions/external/pgtap/recipe.toml",
