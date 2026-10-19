@@ -267,8 +267,8 @@ function aqueryFileGraph(raw: unknown) {
       if (stack.has(key)) throw new Error('cycle in aquery input dep sets');
       if (visited.has(key)) return;
       const item = required(depSets, key);
-      const next = new Set(stack).add(key);
-      for (const child of array(item.transitiveDepSetIds ?? [])) visit(id(child), next);
+      stack.add(key);
+      for (const child of array(item.transitiveDepSetIds ?? [])) visit(id(child), stack);
       let direct = directInputs.get(key);
       if (direct === undefined) {
         direct = [];
@@ -280,6 +280,7 @@ function aqueryFileGraph(raw: unknown) {
         directInputs.set(key, direct);
       }
       for (const artifact of direct) result.add(artifact);
+      stack.delete(key);
       visited.add(key);
     };
     for (const key of array(action.inputDepSetIds ?? [])) visit(id(key), new Set());
@@ -365,6 +366,7 @@ export function buildShippingInputView(
   const products: ShippingInputView['products'] = {};
   const identities = new Set<string>();
   const visitedByProduct = new Map<string, Set<string>>();
+  const visitedActionsByProduct = new Map<string, Set<Row>>();
   const actionDescriptions = new Map<Row, string>();
   const sharedDefinitions = new Map<Row, string>();
   const physicalInputs = new Set<string>();
@@ -529,6 +531,8 @@ export function buildShippingInputView(
     const descriptions = new Set(view.actions);
     const visited = visitedByProduct.get(product) ?? new Set<string>();
     visitedByProduct.set(product, visited);
+    const visitedActions = visitedActionsByProduct.get(product) ?? new Set<Row>();
+    visitedActionsByProduct.set(product, visitedActions);
     const visit = (key: string, stack: Set<string>) => {
       if (stack.has(key)) throw new Error('cycle in aquery producers');
       if (visited.has(key)) return;
@@ -539,12 +543,14 @@ export function buildShippingInputView(
           throw new Error(`missing generated input producer: ${inputPath}`);
         leaves.add(inputPath);
         captureInputs.add(inputPath);
-      } else {
+      } else if (!visitedActions.has(action)) {
         const inputs = inputsOf(action);
-        const next = new Set(stack).add(key);
-        for (const input of inputs) visit(input, next);
+        stack.add(key);
+        for (const input of inputs) visit(input, stack);
         // ActionKey describes action declarations, not consumed content or a remote-cache key.
         descriptions.add(actionDescription(action, inputs));
+        stack.delete(key);
+        visitedActions.add(action);
       }
       visited.add(key);
     };

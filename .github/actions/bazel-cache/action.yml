@@ -46,9 +46,9 @@ runs:
         [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
         gc_max_size=2G
         cache_limit_kib=3145728
-        # Both observed Apple portable snapshots grew to 3.4 GiB before collection.
+        # These three observed cache populations reached 3.4 to 3.6 GiB before collection.
         case "$RUNNER_OS/$RUNNER_ARCH/$COHORT" in
-          macOS/ARM64/portable) gc_max_size=4G; cache_limit_kib=5242880 ;;
+          macOS/ARM64/portable|Linux/X64/linux|Linux/X64/portable) gc_max_size=4G; cache_limit_kib=5242880 ;;
         esac
         printf 'prefix=bazel-ci-v1-%s-%s-%s-%s\nsource=%s\n' \
           "$RUNNER_OS" "$RUNNER_ARCH" "$COHORT" "$version" "$source_commit" >> "$GITHUB_OUTPUT"

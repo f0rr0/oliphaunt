@@ -87,12 +87,18 @@ globalThis.fetch = async (input, options) => {
     const jobs = [
       {
         id: 501,
+        run_id: 77,
+        head_sha: native ? nativeSourceCommit : 'a'.repeat(40),
         name: native ? 'Linux runtime (x86_64)' : 'Qualified',
         status: 'completed',
         conclusion: nativeCase === 'job-failure' ? 'failure' : 'success',
         run_attempt: nativeCase === 'job-attempt' ? 2 : 1,
         ...(native
-          ? { started_at: '2026-10-11T01:00:00Z', completed_at: '2026-10-11T01:02:00Z' }
+          ? {
+              created_at: '2026-10-11T00:59:59Z',
+              started_at: '2026-10-11T01:00:00Z',
+              completed_at: '2026-10-11T01:02:00Z',
+            }
           : {}),
       },
     ];
@@ -102,6 +108,7 @@ globalThis.fetch = async (input, options) => {
         id: 503,
         name: 'Linux runtime (aarch64)',
         run_attempt: 2,
+        created_at: '2026-10-11T01:59:59Z',
         status: nativeCase === 'mixed-pending' ? 'in_progress' : 'completed',
         started_at: '2026-10-11T02:00:00Z',
         completed_at: nativeCase === 'mixed-pending' ? null : '2026-10-11T02:02:00Z',
@@ -114,9 +121,18 @@ globalThis.fetch = async (input, options) => {
                 ? 'cancelled'
                 : 'success',
       };
-      const all = [jobs[0], { ...jobs[0], id: 502, name: retry.name }, retry];
+      // Partial reruns inherit completed roles with new IDs/attempts and their original execution window.
+      const inherited = {
+        ...jobs[0],
+        id: 505,
+        run_attempt: 2,
+        created_at: '2026-10-11T02:00:00Z',
+      };
+      const all = [jobs[0], { ...jobs[0], id: 502, name: retry.name }, inherited, retry];
       if (nativeCase === 'mixed-ambiguous') all.push({ ...retry, id: 504 });
-      return Response.json({ jobs: url.searchParams.get('filter') === 'all' ? all : [retry] });
+      return Response.json({
+        jobs: url.searchParams.get('filter') === 'all' ? all : [inherited, retry],
+      });
     }
     if (native)
       jobs.push({

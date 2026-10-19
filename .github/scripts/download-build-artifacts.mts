@@ -338,15 +338,7 @@ async function jobRecords(repo, runId) {
     ) {
       throw new Error(`job inventory for run ${runId} contains malformed metadata`);
     }
-    jobs.push({
-      conclusion: job.conclusion,
-      id: job.id,
-      name: job.name,
-      run_attempt: job.run_attempt,
-      status: job.status,
-      ...(job.started_at === undefined ? {} : { started_at: job.started_at }),
-      ...(job.completed_at === undefined ? {} : { completed_at: job.completed_at }),
-    });
+    jobs.push(job);
   }
   return jobs;
 }

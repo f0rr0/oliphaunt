@@ -599,7 +599,7 @@ export async function qualifyNativeShipping(
     })}\n`,
     { flag: 'wx' },
   );
-  // Pair sampled stacks with OS CPU time: pinned Bun can bill idle gaps to JavaScript.
+  // Retain OS CPU timing without the memory overhead of continuous sampling.
   const macos = process.platform === 'darwin';
   run('capture', macos ? '/usr/bin/time' : 'bash', [
     ...(macos ? ['-p', 'bash'] : []),
@@ -607,14 +607,6 @@ export async function qualifyNativeShipping(
     'HEAD',
     'bash',
     'tools/dev/bun.sh',
-    ...(macos
-      ? [
-          '--cpu-prof',
-          '--cpu-prof-interval=10000',
-          `--cpu-prof-dir=${diagnostics}`,
-          '--cpu-prof-name=capture.cpuprofile',
-        ]
-      : []),
     'tools/release/capture-native-build-evidence.mts',
     '--github-json',
     file('github.json'),
