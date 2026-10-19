@@ -315,6 +315,7 @@ RelationGetIndexScan
 RelationGetNumberOfBlocksInFork
 RelationIdGetRelation
 RelationIsVisible
+RelationNameGetTupleDesc
 RelationTruncate
 ReleaseAllPlanCacheRefsInOwner
 ReleaseBuffer
@@ -430,6 +431,7 @@ UnlockReleaseBuffer
 UnlockTuple
 UnpinPortal
 UnregisterSnapshot
+UnregisterXactCallback
 UpdateActiveSnapshotCommandId
 WaitForParallelWorkersToAttach
 WaitForParallelWorkersToFinish
