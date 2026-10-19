@@ -19,6 +19,7 @@ export const paths = {
   wasixRustReadme: 'src/wasix/sdks/rust/README.md',
   nativeRustReadme: 'src/native/sdks/rust/README.md',
   wasixDockerTest: 'src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.test.sh',
+  wasixExportList: 'src/wasix/runtime/assets/generated/wasix-dl.exports',
   nativeExtensionFixture: 'src/extensions/artifacts/native/tools/create-artifact.test.mts',
   windowsVcRuntimePolicy: 'tools/packaging/windows-vc-runtime-policy.json',
   wasixRuntimeCarrierSource: 'src/wasix/runtime/crates/assets/src/lib.rs',
@@ -115,6 +116,7 @@ export const paths = {
 export const taskRoots = {
   oliphauntWasixRustTestAot: 'oliphaunt-wasix-rust:test-aot',
   liboliphauntWasixRuntimeAot: 'liboliphaunt-wasix:runtime-aot',
+  liboliphauntWasixRuntimePortable: 'liboliphaunt-wasix:runtime-portable',
   oliphauntSwiftPackageBindings: 'oliphaunt-swift:package-bindings',
   oliphauntSwiftPackage: 'oliphaunt-swift:package',
   oliphauntJsPackage: 'oliphaunt-js:package',

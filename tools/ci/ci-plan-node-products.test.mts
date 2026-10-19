@@ -1152,6 +1152,16 @@ test('Android extension packaging selects matching dependency-complete Linux sup
   }
 });
 
+test('tracked WASIX exports invalidate compilation and cannot be restored by the package cache', () => {
+  const result = effects(paths.wasixExportList);
+  assert(result.directTasks.includes('liboliphaunt-wasix:compiler-output'));
+  const portable = taskRecord(taskRoots.liboliphauntWasixRuntimePortable);
+  assert(
+    portable.outputs.every((output) => (output.glob ?? output.file).startsWith('/target/')),
+    'portable package cache must not restore source inputs',
+  );
+});
+
 test('WASIX package README and compiler unit fixtures do not select runtime compilers', () => {
   for (const file of [
     paths.wasixSdkReadme,

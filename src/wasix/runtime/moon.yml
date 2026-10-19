@@ -209,7 +209,6 @@ tasks:
     outputs:
       - /target/oliphaunt-wasix/wasix-build/build/package-stage/**/*
       - /target/oliphaunt-wasix/assets/**/*
-      - /src/wasix/runtime/assets/generated/**/*
     options:
       cache: local
       runFromWorkspaceRoot: true
