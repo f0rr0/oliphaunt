@@ -127,11 +127,10 @@ export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<strin
     nativeDependencyModules,
     'native dependency modules differ from the canonical recipe',
   );
-  const nativeConstructionLicenseFiles =
-    (['vector', 'pg_textsearch'].includes(spec.sqlName) && spec.target === 'linux-x64-gnu') ||
-    (spec.contrib && spec.sqlName === 'pgcrypto')
-      ? nativeExtensionConstructionLicenseInventory(spec.sqlName, spec.target)
-      : [];
+  const nativeConstructionLicenseFiles = nativeExtensionConstructionLicenseInventory(
+    spec.sqlName,
+    spec.target,
+  );
   assert.deepEqual(
     actual.construction_licenses ?? [],
     nativeConstructionLicenseFiles.map((row) => row.path),

@@ -752,7 +752,7 @@ export function nativeExtensionConstructionLicenseInventory(sqlName, target) {
     );
   }
   if (!['vector', 'pg_textsearch'].includes(sqlName) || target !== 'linux-x64-gnu') {
-    fail('native construction legal closure has no declared source for this member/target');
+    return Object.freeze([]);
   }
   const source = JSON.parse(
     readFileSync(path.join(ROOT, 'build_defs/extensions/compiler_rt/source.json'), 'utf8'),
@@ -796,6 +796,8 @@ export function validateNativeExtensionConstructionLicenseInventory(sqlName, tar
   if (!Array.isArray(files)) fail('native construction legal inventory must be an array');
   if (files.length === 0) return Object.freeze([]);
   const expected = nativeExtensionConstructionLicenseInventory(sqlName, target);
+  if (expected.length === 0)
+    fail('native construction legal closure has no declared source for this member/target');
   if (JSON.stringify(files) !== JSON.stringify(expected))
     fail('native construction legal inventory differs from the immutable construction source');
   return expected;

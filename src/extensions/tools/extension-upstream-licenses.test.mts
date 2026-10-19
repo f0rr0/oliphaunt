@@ -120,6 +120,27 @@ for (const [sqlName, product] of [
   });
 }
 
+test('members without construction sources have frozen empty inventories and reject supplied receipts', () => {
+  const target = 'linux-x64-gnu';
+  const receipts = nativeExtensionConstructionLicenseInventory('vector', target);
+  for (const sqlName of ['pg_hashids', 'hstore', 'unknown_extension']) {
+    const files = nativeExtensionConstructionLicenseInventory(sqlName, target);
+    assert.deepEqual(files, []);
+    assert.equal(Object.isFrozen(files), true);
+    const validated = validateNativeExtensionConstructionLicenseInventory(sqlName, target);
+    assert.deepEqual(validated, []);
+    assert.equal(Object.isFrozen(validated), true);
+    assert.throws(
+      () => validateNativeExtensionConstructionLicenseInventory(sqlName, target, receipts),
+      /no declared source for this member\/target/u,
+    );
+    assert.throws(
+      () => nativeExtensionConstructionMavenLicenses(sqlName, target, receipts),
+      /no declared source for this member\/target/u,
+    );
+  }
+});
+
 test('every active external release has an exact upstream license contract', () => {
   const rows = validateExtensionUpstreamLicenseContract();
   assert.deepEqual(
@@ -204,6 +225,9 @@ test('pgcrypto native construction receipts bind desktop and mobile-host OpenSSL
 test('pgcrypto construction receipts reject unsupported targets and changed source digests', () => {
   const files = nativeExtensionConstructionLicenseInventory('pgcrypto', 'linux-x64-gnu');
   for (const target of ['macos-x64', 'linux-x64-musl', 'wasix']) {
+    const inventory = nativeExtensionConstructionLicenseInventory('pgcrypto', target);
+    assert.deepEqual(inventory, []);
+    assert.equal(Object.isFrozen(inventory), true);
     assert.throws(
       () => validateNativeExtensionConstructionLicenseInventory('pgcrypto', target, files),
       /no declared source for this member\/target/u,
@@ -253,6 +277,10 @@ for (const sqlName of ['vector', 'pg_textsearch']) {
       );
     }
     for (const target of ['ios-xcframework', 'macos-arm64', 'linux-arm64-gnu']) {
+      const inventory = nativeExtensionConstructionLicenseInventory(sqlName, target);
+      assert.deepEqual(inventory, []);
+      assert.equal(Object.isFrozen(inventory), true);
+      assert.deepEqual(validateNativeExtensionConstructionLicenseInventory(sqlName, target), []);
       assert.throws(
         () => validateNativeExtensionConstructionLicenseInventory(sqlName, target, files),
         /no declared source/u,

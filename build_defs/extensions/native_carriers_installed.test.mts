@@ -95,10 +95,10 @@ assert.deepEqual(
 );
 const metadata = {
   ...member,
-  nativeConstructionLicenseFiles:
-    ['vector', 'pg_textsearch'].includes(spec.sqlName) && spec.target === 'linux-x64-gnu'
-      ? nativeExtensionConstructionLicenseInventory(spec.sqlName, spec.target)
-      : [],
+  nativeConstructionLicenseFiles: nativeExtensionConstructionLicenseInventory(
+    spec.sqlName,
+    spec.target,
+  ),
 };
 validateExtensionArtifactArchive({
   file: realpathSync(githubFile),

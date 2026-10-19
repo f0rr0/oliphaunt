@@ -42,7 +42,6 @@ import {
 import {
   extensionCarrierLegalContract,
   nativeExtensionConstructionLicenseInventory,
-  PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS,
 } from '../../src/extensions/tools/extension-upstream-licenses.mts';
 import {
   resolveNativeComponentClosure,
@@ -311,13 +310,7 @@ function expectedMember(spec: NativeCarrierSpec, target: string, selected?: any)
           )
         : [],
     nativeConstructionLicenseFiles:
-      (spec.sqlName === 'vector' &&
-        nativeModuleHostTarget(target) === 'linux-x64-gnu' &&
-        (isDesktopNativeTarget(target) || selected?.nativeConstructionLicenseFiles?.length > 0)) ||
-      (spec.contrib &&
-        spec.sqlName === 'pgcrypto' &&
-        PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS.includes(nativeModuleHostTarget(target)) &&
-        (isDesktopNativeTarget(target) || selected?.nativeConstructionLicenseFiles?.length > 0))
+      isDesktopNativeTarget(target) || selected?.nativeConstructionLicenseFiles?.length > 0
         ? nativeExtensionConstructionLicenseInventory(spec.sqlName, target)
         : [],
   };

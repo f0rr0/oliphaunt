@@ -14,6 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { validateExtensionArtifactArchive } from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
+import { nativeExtensionConstructionLicenseInventory } from '../../src/extensions/tools/extension-upstream-licenses.mts';
 import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
 import {
   assertReleaseNoticesInArchive,
@@ -134,8 +135,9 @@ try {
     assert(contract);
     const metadata = {
       ...contract,
-      nativeConstructionLicenseFiles: contract.licenseFiles.filter((row: any) =>
-        row.path.startsWith('share/licenses/openssl-native/'),
+      nativeConstructionLicenseFiles: nativeExtensionConstructionLicenseInventory(
+        member.sqlName,
+        spec.target,
       ),
     };
     validateExtensionArtifactArchive({
