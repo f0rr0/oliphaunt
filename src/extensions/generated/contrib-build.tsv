@@ -20,9 +20,11 @@ lo	lo	lo	lo.so	extensions/lo.tar.zst
 ltree	ltree	ltree	ltree.so	extensions/ltree.tar.zst
 moddatetime	moddatetime	spi	moddatetime.so	extensions/moddatetime.tar.zst
 pageinspect	pageinspect	pageinspect	pageinspect.so	extensions/pageinspect.tar.zst
+passwordcheck	passwordcheck	passwordcheck	passwordcheck.so	extensions/passwordcheck.tar.zst
 pg_buffercache	pg_buffercache	pg_buffercache	pg_buffercache.so	extensions/pg_buffercache.tar.zst
 pg_freespacemap	pg_freespacemap	pg_freespacemap	pg_freespacemap.so	extensions/pg_freespacemap.tar.zst
 pg_logicalinspect	pg_logicalinspect	pg_logicalinspect	pg_logicalinspect.so	extensions/pg_logicalinspect.tar.zst
+pg_overexplain	pg_overexplain	pg_overexplain	pg_overexplain.so	extensions/pg_overexplain.tar.zst
 pg_stat_statements	pg_stat_statements	pg_stat_statements	pg_stat_statements.so	extensions/pg_stat_statements.tar.zst
 pg_surgery	pg_surgery	pg_surgery	pg_surgery.so	extensions/pg_surgery.tar.zst
 pg_trgm	pg_trgm	pg_trgm	pg_trgm.so	extensions/pg_trgm.tar.zst

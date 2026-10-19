@@ -104,9 +104,11 @@ contrib_extensions=(
   lo
   ltree
   pageinspect
+  passwordcheck
   pg_buffercache
   pg_freespacemap
   pg_logicalinspect
+  pg_overexplain
   pg_stat_statements
   pg_surgery
   pg_trgm
@@ -206,11 +208,13 @@ required_extension_modules=(
   ltree
   moddatetime
   pageinspect
+  passwordcheck
   pg_buffercache
   pg_freespacemap
   pg_hashids
   pg_ivm
   pg_logicalinspect
+  pg_overexplain
   pg_stat_statements
   pg_surgery
   pg_textsearch
@@ -246,7 +250,7 @@ native_extensions_include_postgis() {
 
 native_extension_has_control_artifacts() {
   case "$1" in
-    auto_explain) return 1 ;;
+    auto_explain|passwordcheck|pg_overexplain) return 1 ;;
     *) return 0 ;;
   esac
 }

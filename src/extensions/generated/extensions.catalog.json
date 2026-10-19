@@ -816,6 +816,39 @@
       "notes": []
     },
     {
+      "id": "passwordcheck",
+      "sql-name": "passwordcheck",
+      "rust-constant": "PASSWORDCHECK",
+      "display-name": "passwordcheck",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "passwordcheck",
+      "package-export": "./contrib/passwordcheck",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": false,
+        "load-sql": [
+          "LOAD 'passwordcheck';"
+        ],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": [
+        "src/test-fixtures/extensions/passwordcheck.sql"
+      ],
+      "native-module-file": "passwordcheck.so",
+      "notes": [
+        "LOAD enables password checks for the current session. Use shared_preload_libraries to enforce checks across postmaster sessions."
+      ]
+    },
+    {
       "id": "pg_buffercache",
       "sql-name": "pg_buffercache",
       "rust-constant": "PG_BUFFERCACHE",
@@ -1001,6 +1034,37 @@
         "src/test-fixtures/extensions/pg_logicalinspect.sql"
       ],
       "native-module-file": "pg_logicalinspect.so",
+      "notes": []
+    },
+    {
+      "id": "pg_overexplain",
+      "sql-name": "pg_overexplain",
+      "rust-constant": "PG_OVEREXPLAIN",
+      "display-name": "pg_overexplain",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "pg_overexplain",
+      "package-export": "./contrib/pg_overexplain",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": false,
+        "load-sql": [
+          "LOAD 'pg_overexplain';"
+        ],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": [
+        "src/test-fixtures/extensions/pg_overexplain.sql"
+      ],
+      "native-module-file": "pg_overexplain.so",
       "notes": []
     },
     {

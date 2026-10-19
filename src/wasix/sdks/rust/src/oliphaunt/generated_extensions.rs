@@ -212,6 +212,16 @@ const DEFINITION_PAGEINSPECT: Extension = Extension {
     package: None,
 };
 
+const DEFINITION_PASSWORDCHECK: Extension = Extension {
+    sql_name: "passwordcheck",
+    native_support_modules: &[],
+    native_module_file: Some("passwordcheck.so"),
+    aot_name: Some("extension:passwordcheck"),
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
 const DEFINITION_PG_BUFFERCACHE: Extension = Extension {
     sql_name: "pg_buffercache",
     native_support_modules: &[],
@@ -257,6 +267,16 @@ const DEFINITION_PG_LOGICALINSPECT: Extension = Extension {
     native_support_modules: &[],
     native_module_file: Some("pg_logicalinspect.so"),
     aot_name: Some("extension:pg_logicalinspect"),
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
+const DEFINITION_PG_OVEREXPLAIN: Extension = Extension {
+    sql_name: "pg_overexplain",
+    native_support_modules: &[],
+    native_module_file: Some("pg_overexplain.so"),
+    aot_name: Some("extension:pg_overexplain"),
     dependencies: &[],
     startup_config: &[],
     package: None,
@@ -539,6 +559,9 @@ impl Extension {
     /// Select the `pageinspect` artifact.
 
     pub const PAGEINSPECT: Self = DEFINITION_PAGEINSPECT;
+    /// Select the `passwordcheck` artifact.
+
+    pub const PASSWORDCHECK: Self = DEFINITION_PASSWORDCHECK;
     /// Select the `pg_buffercache` artifact.
 
     pub const PG_BUFFERCACHE: Self = DEFINITION_PG_BUFFERCACHE;
@@ -554,6 +577,9 @@ impl Extension {
     /// Select the `pg_logicalinspect` artifact.
 
     pub const PG_LOGICALINSPECT: Self = DEFINITION_PG_LOGICALINSPECT;
+    /// Select the `pg_overexplain` artifact.
+
+    pub const PG_OVEREXPLAIN: Self = DEFINITION_PG_OVEREXPLAIN;
     /// Select the `pg_partman` artifact.
 
     pub const PG_PARTMAN: Self = DEFINITION_PG_PARTMAN;
@@ -641,11 +667,13 @@ impl Extension {
         Self::LTREE,
         Self::MODDATETIME,
         Self::PAGEINSPECT,
+        Self::PASSWORDCHECK,
         Self::PG_BUFFERCACHE,
         Self::PG_FREESPACEMAP,
         Self::PG_HASHIDS,
         Self::PG_IVM,
         Self::PG_LOGICALINSPECT,
+        Self::PG_OVEREXPLAIN,
         Self::PG_PARTMAN,
         Self::PG_STAT_STATEMENTS,
         Self::PG_SURGERY,
@@ -715,6 +743,8 @@ pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
 
         "pageinspect" => true,
 
+        "passwordcheck" => false,
+
         "pg_buffercache" => true,
 
         "pg_freespacemap" => true,
@@ -724,6 +754,8 @@ pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
         "pg_ivm" => true,
 
         "pg_logicalinspect" => true,
+
+        "pg_overexplain" => false,
 
         "pg_partman" => true,
 
@@ -836,6 +868,8 @@ pub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'stati
             &["CREATE EXTENSION IF NOT EXISTS \"pageinspect\" WITH SCHEMA \"pg_catalog\";"]
         }
 
+        "passwordcheck" => &["LOAD 'passwordcheck';"],
+
         "pg_buffercache" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_buffercache\" WITH SCHEMA \"pg_catalog\";"]
         }
@@ -853,6 +887,8 @@ pub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'stati
         "pg_logicalinspect" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_logicalinspect\" WITH SCHEMA \"pg_catalog\";"]
         }
+
+        "pg_overexplain" => &["LOAD 'pg_overexplain';"],
 
         "pg_partman" => &[
             "CREATE SCHEMA IF NOT EXISTS \"partman\";",

@@ -469,6 +469,29 @@
       "sql-name": "pageinspect"
     },
     {
+      "archive": "extensions/passwordcheck.tar.zst",
+      "dependencies": [],
+      "id": "passwordcheck",
+      "lifecycle": {
+        "create-extension": false,
+        "load-sql": [
+          "LOAD 'passwordcheck';"
+        ],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
+      "native-module-file": "passwordcheck.so",
+      "native-runtime-files": [],
+      "native-support-modules": [],
+      "sql-name": "passwordcheck"
+    },
+    {
       "archive": "extensions/pg_buffercache.tar.zst",
       "dependencies": [],
       "id": "pg_buffercache",
@@ -577,6 +600,29 @@
       "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pg_logicalinspect"
+    },
+    {
+      "archive": "extensions/pg_overexplain.tar.zst",
+      "dependencies": [],
+      "id": "pg_overexplain",
+      "lifecycle": {
+        "create-extension": false,
+        "load-sql": [
+          "LOAD 'pg_overexplain';"
+        ],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
+      "native-module-file": "pg_overexplain.so",
+      "native-runtime-files": [],
+      "native-support-modules": [],
+      "sql-name": "pg_overexplain"
     },
     {
       "archive": "extensions/pg_partman.tar.zst",

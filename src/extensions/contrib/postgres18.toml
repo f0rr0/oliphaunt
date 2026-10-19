@@ -154,6 +154,12 @@ module-file = "pageinspect.so"
 default-version = "1.13"
 
 [[extensions]]
+id = "passwordcheck"
+sql-name = "passwordcheck"
+contrib-dir = "passwordcheck"
+module-file = "passwordcheck.so"
+
+[[extensions]]
 id = "pg_buffercache"
 sql-name = "pg_buffercache"
 contrib-dir = "pg_buffercache"
@@ -173,6 +179,12 @@ sql-name = "pg_logicalinspect"
 contrib-dir = "pg_logicalinspect"
 module-file = "pg_logicalinspect.so"
 default-version = "1.0"
+
+[[extensions]]
+id = "pg_overexplain"
+sql-name = "pg_overexplain"
+contrib-dir = "pg_overexplain"
+module-file = "pg_overexplain.so"
 
 [[extensions]]
 id = "pg_stat_statements"

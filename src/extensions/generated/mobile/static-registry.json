@@ -162,6 +162,13 @@
     },
     {
       "data-files": [],
+      "id": "passwordcheck",
+      "native-module-stem": "passwordcheck",
+      "sql-name": "passwordcheck",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
       "id": "pg_buffercache",
       "native-module-stem": "pg_buffercache",
       "sql-name": "pg_buffercache",
@@ -193,6 +200,13 @@
       "id": "pg_logicalinspect",
       "native-module-stem": "pg_logicalinspect",
       "sql-name": "pg_logicalinspect",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_overexplain",
+      "native-module-stem": "pg_overexplain",
+      "sql-name": "pg_overexplain",
       "static-registry-required": true
     },
     {

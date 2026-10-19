@@ -87,11 +87,13 @@ source-digest-inputs = [
   "src/test-fixtures/extensions/ltree.sql",
   "src/test-fixtures/extensions/moddatetime.sql",
   "src/test-fixtures/extensions/pageinspect.sql",
+  "src/test-fixtures/extensions/passwordcheck.sql",
   "src/test-fixtures/extensions/pg_buffercache.sql",
   "src/test-fixtures/extensions/pg_freespacemap.sql",
   "src/test-fixtures/extensions/pg_hashids.sql",
   "src/test-fixtures/extensions/pg_ivm.sql",
   "src/test-fixtures/extensions/pg_logicalinspect.sql",
+  "src/test-fixtures/extensions/pg_overexplain.sql",
   "src/test-fixtures/extensions/pg_partman.sql",
   "src/test-fixtures/extensions/pg_stat_statements.sql",
   "src/test-fixtures/extensions/pg_surgery.sql",
@@ -284,6 +286,14 @@ runtime-modes = ["direct","server","restart","backup-restore","materialization"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
+extension = "passwordcheck"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
 extension = "pg_buffercache"
 postgres-major = 18
 artifact-family = "wasix-runtime"
@@ -317,6 +327,14 @@ evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
 extension = "pg_logicalinspect"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "pg_overexplain"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]

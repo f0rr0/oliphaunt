@@ -21,11 +21,13 @@ lo	lo	contrib	contrib/lo
 ltree	ltree	contrib	contrib/ltree
 moddatetime	moddatetime	contrib	contrib/spi											moddatetime.c
 pageinspect	pageinspect	contrib	contrib/pageinspect
+passwordcheck	passwordcheck	contrib	contrib/passwordcheck
 pg_buffercache	pg_buffercache	contrib	contrib/pg_buffercache
 pg_freespacemap	pg_freespacemap	contrib	contrib/pg_freespacemap
 pg_hashids	pg_hashids	external	target/oliphaunt-sources/checkouts/pg_hashids
 pg_ivm	pg_ivm	external	target/oliphaunt-sources/checkouts/pg_ivm											createas.c,matview.c,pg_ivm.c,ruleutils.c,subselect.c
 pg_logicalinspect	pg_logicalinspect	contrib	contrib/pg_logicalinspect
+pg_overexplain	pg_overexplain	contrib	contrib/pg_overexplain
 pg_stat_statements	pg_stat_statements	contrib	contrib/pg_stat_statements
 pg_surgery	pg_surgery	contrib	contrib/pg_surgery
 pg_textsearch	pg_textsearch	external	target/oliphaunt-sources/checkouts/pg_textsearch					source:src	-DPG_TEXTSEARCH_VERSION="0.6.1"						src

@@ -25,7 +25,7 @@ export type GeneratedExtensionMetadata = {
   readonly sourceKind: string;
 };
 
-export const GENERATED_EXTENSION_METADATA_SHA256 = "72b4266b1468babd53f59bbcf23d62520f5fb5454d35a07d4f482e0504868ac7" as const;
+export const GENERATED_EXTENSION_METADATA_SHA256 = "2f9c13406ab3ce4f8f4f9fb419aeb8ad899e5bde59228215024933dad44c46fe" as const;
 
 export const GENERATED_EXTENSION_METADATA = [
   {
@@ -522,6 +522,29 @@ export const GENERATED_EXTENSION_METADATA = [
   {
     "artifactProduct": "oliphaunt-extension-contrib-pg18",
     "cargoPackage": "oliphaunt-extension-contrib-pg18",
+    "createsExtension": false,
+    "dataFiles": [],
+    "dependencies": [],
+    "displayName": "passwordcheck",
+    "extensionSqlFileNames": [],
+    "extensionSqlFilePrefixes": [],
+    "id": "passwordcheck",
+    "mavenArtifact": "oliphaunt-extension-contrib-pg18",
+    "mavenGroup": "dev.oliphaunt.extensions",
+    "nativeModuleStem": "passwordcheck",
+    "npmPackage": "@oliphaunt/extension-contrib-pg18",
+    "postgresMajor": 18,
+    "releaseProduct": "liboliphaunt-native",
+    "runtimeBound": true,
+    "runtimeShareDataFiles": [],
+    "selectedExtensionDependencies": [],
+    "sharedPreloadLibraries": [],
+    "sourceKind": "postgres-contrib",
+    "sqlName": "passwordcheck"
+  },
+  {
+    "artifactProduct": "oliphaunt-extension-contrib-pg18",
+    "cargoPackage": "oliphaunt-extension-contrib-pg18",
     "createsExtension": true,
     "dataFiles": [],
     "dependencies": [],
@@ -633,6 +656,29 @@ export const GENERATED_EXTENSION_METADATA = [
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
     "sqlName": "pg_logicalinspect"
+  },
+  {
+    "artifactProduct": "oliphaunt-extension-contrib-pg18",
+    "cargoPackage": "oliphaunt-extension-contrib-pg18",
+    "createsExtension": false,
+    "dataFiles": [],
+    "dependencies": [],
+    "displayName": "pg_overexplain",
+    "extensionSqlFileNames": [],
+    "extensionSqlFilePrefixes": [],
+    "id": "pg_overexplain",
+    "mavenArtifact": "oliphaunt-extension-contrib-pg18",
+    "mavenGroup": "dev.oliphaunt.extensions",
+    "nativeModuleStem": "pg_overexplain",
+    "npmPackage": "@oliphaunt/extension-contrib-pg18",
+    "postgresMajor": 18,
+    "releaseProduct": "liboliphaunt-native",
+    "runtimeBound": true,
+    "runtimeShareDataFiles": [],
+    "selectedExtensionDependencies": [],
+    "sharedPreloadLibraries": [],
+    "sourceKind": "postgres-contrib",
+    "sqlName": "pg_overexplain"
   },
   {
     "artifactProduct": "oliphaunt-extension-pg-partman",

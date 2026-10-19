@@ -719,6 +719,40 @@
       "evidence-required": [
         "wasix-full-lifecycle-v1"
       ],
+      "extension": "passwordcheck",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "passwordcheck"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
       "extension": "pg_buffercache",
       "latest-accepted-evidence": [],
       "missing-current-evidence": [
@@ -883,6 +917,40 @@
         "materialization"
       ],
       "sql-name": "pg_logicalinspect"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
+      "extension": "pg_overexplain",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "pg_overexplain"
     },
     {
       "artifact-family": "wasix-runtime",
@@ -1618,7 +1686,7 @@
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:5519c1a61255d31585b62a63fd3cf7450aad6fae54553f544631c55e131e8335",
+  "source-digest": "sha256:3ebd072c4dbba4aaf1a3cc73b8f299eb2e3e1df6a29e80a1dd6f670a5e9da106",
   "source-digest-inputs": [
     "src/third-party/postgres/source.toml",
     "src/extensions/catalog/extensions.source.json",
@@ -1707,11 +1775,13 @@
     "src/test-fixtures/extensions/ltree.sql",
     "src/test-fixtures/extensions/moddatetime.sql",
     "src/test-fixtures/extensions/pageinspect.sql",
+    "src/test-fixtures/extensions/passwordcheck.sql",
     "src/test-fixtures/extensions/pg_buffercache.sql",
     "src/test-fixtures/extensions/pg_freespacemap.sql",
     "src/test-fixtures/extensions/pg_hashids.sql",
     "src/test-fixtures/extensions/pg_ivm.sql",
     "src/test-fixtures/extensions/pg_logicalinspect.sql",
+    "src/test-fixtures/extensions/pg_overexplain.sql",
     "src/test-fixtures/extensions/pg_partman.sql",
     "src/test-fixtures/extensions/pg_stat_statements.sql",
     "src/test-fixtures/extensions/pg_surgery.sql",

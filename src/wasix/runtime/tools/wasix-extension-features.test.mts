@@ -9,21 +9,39 @@ import { extensionFeatures, fullEvidenceFeatures } from './wasix-extension-featu
 
 const ROOT = path.resolve(import.meta.dirname, '../../../..');
 
-test('the live WASIX public surface includes the PostGIS product', () => {
+test('every catalog extension has matching Rust asset and SDK features', () => {
   const manifest = JSON.parse(
     readFileSync(path.join(ROOT, 'src/extensions/generated/wasix/extensions.json'), 'utf8'),
   );
-  assert.equal(
-    manifest.extensions.some((row) => row['sql-name'] === 'postgis'),
-    true,
-  );
+  const expected = extensionFeatures(manifest);
 
   for (const relative of [
     'src/wasix/runtime/crates/assets/Cargo.toml',
     'src/wasix/sdks/rust/Cargo.toml',
   ]) {
     const cargo = Bun.TOML.parse(readFileSync(path.join(ROOT, relative), 'utf8'));
-    assert.equal(Object.hasOwn(cargo.features ?? {}, 'extension-postgis'), true, relative);
+    assert.deepEqual(
+      Object.keys(cargo.features ?? {})
+        .filter((feature) => feature.startsWith('extension-'))
+        .sort(),
+      expected,
+      relative,
+    );
+    for (const extension of manifest.extensions) {
+      const feature = `extension-${extension['sql-name'].replaceAll('_', '-')}`;
+      // plpgsql ships in the core runtime rather than an extension carrier.
+      const dependencies = extension.dependencies
+        .filter((sqlName) => sqlName !== 'plpgsql')
+        .map((sqlName) => `extension-${sqlName.replaceAll('_', '-')}`);
+      const forwarding = relative.includes('/sdks/')
+        ? ['extensions', `liboliphaunt-wasix-portable/${feature}`]
+        : [];
+      assert.deepEqual(
+        cargo.features[feature].toSorted(),
+        [...dependencies, ...forwarding].sort(),
+        feature,
+      );
+    }
   }
 });
 

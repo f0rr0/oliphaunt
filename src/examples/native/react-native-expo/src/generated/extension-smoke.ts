@@ -7,7 +7,7 @@ export type GeneratedMobileExtensionProof = {
   readonly selectedExtensionDependencies: readonly string[];
 };
 
-export const GENERATED_MOBILE_EXTENSION_METADATA_SHA256 = "72b4266b1468babd53f59bbcf23d62520f5fb5454d35a07d4f482e0504868ac7" as const;
+export const GENERATED_MOBILE_EXTENSION_METADATA_SHA256 = "2f9c13406ab3ce4f8f4f9fb419aeb8ad899e5bde59228215024933dad44c46fe" as const;
 
 export const GENERATED_MOBILE_EXTENSION_PLAN = [
   {
@@ -118,6 +118,11 @@ export const GENERATED_MOBILE_EXTENSION_PLAN = [
     "selectedExtensionDependencies": []
   },
   {
+    "sqlName": "passwordcheck",
+    "createsExtension": false,
+    "selectedExtensionDependencies": []
+  },
+  {
     "sqlName": "pg_buffercache",
     "createsExtension": true,
     "selectedExtensionDependencies": []
@@ -140,6 +145,11 @@ export const GENERATED_MOBILE_EXTENSION_PLAN = [
   {
     "sqlName": "pg_logicalinspect",
     "createsExtension": true,
+    "selectedExtensionDependencies": []
+  },
+  {
+    "sqlName": "pg_overexplain",
+    "createsExtension": false,
     "selectedExtensionDependencies": []
   },
   {
@@ -355,6 +365,10 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "INSERT INTO oliphaunt_pageinspect SELECT generate_series(1, 5);",
     "SELECT * FROM page_header(get_raw_page('oliphaunt_pageinspect', 0));"
   ],
+  "passwordcheck": [
+    "-- oliphaunt-verify\nLOAD 'passwordcheck';",
+    "-- oliphaunt-verify\nDO $oliphaunt$\nBEGIN\n  CREATE ROLE oliphaunt_passwordcheck_probe;\n  BEGIN\n    ALTER ROLE oliphaunt_passwordcheck_probe PASSWORD 'short';\n    RAISE EXCEPTION 'passwordcheck accepted a short password';\n  EXCEPTION WHEN invalid_parameter_value THEN\n    IF SQLERRM <> 'password is too short' THEN\n      RAISE;\n    END IF;\n  END;\n  ALTER ROLE oliphaunt_passwordcheck_probe PASSWORD 'a_nice_long_password';\n  DROP ROLE oliphaunt_passwordcheck_probe;\nEND\n$oliphaunt$;"
+  ],
   "pg_buffercache": [
     "SELECT * FROM pg_buffercache_summary();",
     "SELECT * FROM pg_buffercache_usage_counts();"
@@ -381,6 +395,10 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
   ],
   "pg_logicalinspect": [
     "-- Exercise both entry points without requiring a logical replication slot.\n-- Invalid snapshot names must be rejected before any filesystem access.\n-- oliphaunt-verify\nDO $oliphaunt$\nBEGIN\n  BEGIN\n    PERFORM pg_get_logical_snapshot_meta('../invalid');\n    RAISE EXCEPTION 'pg_logicalinspect accepted an invalid snapshot name';\n  EXCEPTION WHEN internal_error THEN\n    IF SQLERRM <> 'invalid snapshot file name \"../invalid\"' THEN\n      RAISE;\n    END IF;\n  END;\n  BEGIN\n    PERFORM pg_get_logical_snapshot_info('../invalid');\n    RAISE EXCEPTION 'pg_logicalinspect accepted an invalid snapshot name';\n  EXCEPTION WHEN internal_error THEN\n    IF SQLERRM <> 'invalid snapshot file name \"../invalid\"' THEN\n      RAISE;\n    END IF;\n  END;\nEND\n$oliphaunt$;"
+  ],
+  "pg_overexplain": [
+    "-- oliphaunt-verify\nLOAD 'pg_overexplain';",
+    "-- oliphaunt-verify\nDO $oliphaunt$\nDECLARE\n  document jsonb;\nBEGIN\n  EXECUTE 'EXPLAIN (DEBUG, RANGE_TABLE, FORMAT JSON, COSTS OFF) SELECT oid FROM pg_class WHERE relname = ''pg_class'''\n    INTO document;\n  IF (document->0->'Plan' ? 'Plan Node ID') IS DISTINCT FROM true\n      OR COALESCE(jsonb_array_length(document->0->'Range Table'), 0) < 1 THEN\n    RAISE EXCEPTION 'pg_overexplain did not include plan IDs and the range table: %', document;\n  END IF;\nEND\n$oliphaunt$;"
   ],
   "pg_partman": [
     "SELECT set_config('search_path', quote_ident(n.nspname) || ', public', false)\nFROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace\nWHERE e.extname = 'pg_partman';",
