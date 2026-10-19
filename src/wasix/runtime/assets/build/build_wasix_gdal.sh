@@ -57,6 +57,7 @@ cmake=static-core-vrt-gtiff-internal-codecs-no-apps-no-optional-drivers"
 if [ -f "$GDAL_PREFIX/.oliphaunt-wasix-gdal-build" ] &&
    [ -f "$GDAL_PREFIX/include/gdal.h" ] &&
    [ -f "$GDAL_PREFIX/lib/libgdal.a" ] &&
+   [ -f "$GDAL_PREFIX/share/gdal/gdalvrt.xsd" ] &&
    [ -x "$GDAL_PREFIX/bin/gdal-config" ] &&
    [ "$(cat "$GDAL_PREFIX/.oliphaunt-wasix-gdal-build")" = "$stamp" ]; then
   echo "$GDAL_PREFIX"
@@ -119,6 +120,7 @@ fi
 test -f "$GDAL_PREFIX/include/gdal.h"
 test -f "$GDAL_PREFIX/include/ogr_api.h"
 test -f "$GDAL_PREFIX/lib/libgdal.a"
+test -f "$GDAL_PREFIX/share/gdal/gdalvrt.xsd"
 test -x "$GDAL_PREFIX/bin/gdal-config"
 printf '%s\n' "$stamp" > "$GDAL_PREFIX/.oliphaunt-wasix-gdal-build"
 echo "$GDAL_PREFIX"

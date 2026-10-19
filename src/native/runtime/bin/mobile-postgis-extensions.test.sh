@@ -27,13 +27,16 @@ oliphaunt_postgis_selected() {
 }
 
 cmake_args_file="$test_root/cmake-args.txt"
+dependency_builds=0
 oliphaunt_postgis_cmake_install() {
   local dependency_dir="$3"
   shift 3
   printf '%s\n' "$@" > "$cmake_args_file"
-  mkdir -p "$dependency_dir/lib" "$dependency_dir/include" "$dependency_dir/bin"
+  dependency_builds=$((dependency_builds + 1))
+  mkdir -p "$dependency_dir/lib" "$dependency_dir/include" "$dependency_dir/bin" "$dependency_dir/share/gdal"
   : > "$dependency_dir/lib/libgdal.a"
   : > "$dependency_dir/include/gdal.h"
+  : > "$dependency_dir/share/gdal/gdalvrt.xsd"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$dependency_dir/bin/gdal-config"
   chmod +x "$dependency_dir/bin/gdal-config"
 }
@@ -42,6 +45,14 @@ build_postgis_gdal_dependency
 grep -Fx -- '-DCMAKE_BUILD_TYPE=Release' "$cmake_args_file" >/dev/null
 grep -Fx -- '-DBUILD_PYTHON_BINDINGS=OFF' "$cmake_args_file" >/dev/null
 grep -Fx -- '-DBUILD_PYTHON_BINDINGS_OLD_VAL=OFF' "$cmake_args_file" >/dev/null
+build_postgis_gdal_dependency
+[ "$dependency_builds" -eq 1 ]
+rm "$mobile_static_dependency_root/gdal/share/gdal/gdalvrt.xsd"
+build_postgis_gdal_dependency
+[ "$dependency_builds" -eq 2 ] || {
+  echo "mobile GDAL cache accepted missing runtime data" >&2
+  exit 1
+}
 resolved_gdal_archive="$(oliphaunt_mobile_static_dependency_archive_for_root "$mobile_static_dependency_root" gdal)"
 [ "$resolved_gdal_archive" = "$mobile_static_dependency_root/gdal/lib/libgdal.a" ] || {
   echo "mobile packager did not resolve the staged GDAL archive" >&2

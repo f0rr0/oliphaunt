@@ -316,7 +316,8 @@ build_postgis_gdal_dependency() {
   local -a cmake_args
   local build_root="$work_root/gdal-$oliphaunt_mobile_target-build"
   local archive="$dependency_dir/lib/libgdal.a"
-  if [ -f "$archive" ] && [ -f "$dependency_dir/include/gdal.h" ] && [ -x "$dependency_dir/bin/gdal-config" ]; then
+  if [ -f "$archive" ] && [ -f "$dependency_dir/include/gdal.h" ] &&
+    [ -f "$dependency_dir/share/gdal/gdalvrt.xsd" ] && [ -x "$dependency_dir/bin/gdal-config" ]; then
     oliphaunt_postgis_dependency_archive gdal "$archive"
     return 0
   fi
