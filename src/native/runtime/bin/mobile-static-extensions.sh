@@ -174,11 +174,34 @@ oliphaunt_mobile_static_extension_source_dir() {
   local extension="${3:?missing mobile static extension}"
   local rel
   rel="$(oliphaunt_mobile_static_extension_source_rel "$extension")"
+  if [ "$extension" = age ]; then
+    printf '%s/oliphaunt-static-age\n' "$build_dir"
+    return 0
+  fi
   case "$(oliphaunt_mobile_static_extension_kind "$extension")" in
     contrib) printf '%s/%s\n' "$build_dir" "$rel" ;;
     external) printf '%s/%s\n' "$repo_root" "$rel" ;;
     *) return 1 ;;
   esac
+}
+
+# AGE's scanner, GLR parser, keyword table and install SQL are generated inputs.
+# Each target owns a copy so simultaneous Apple/Android builds never write to
+# the shared immutable source checkout or to another target's generated files.
+oliphaunt_mobile_prepare_static_extension() {
+  local repo_root="${1:?missing repo root}"
+  local build_dir="${2:?missing PostgreSQL build dir}"
+  local extension="${3:?missing mobile static extension}"
+  [ "$extension" = age ] || return 0
+  local source_dir destination
+  source_dir="$repo_root/$(oliphaunt_mobile_static_extension_source_rel "$extension")"
+  destination="$(oliphaunt_mobile_static_extension_source_dir "$repo_root" "$build_dir" "$extension")"
+  rm -rf "$destination"
+  mkdir -p "$destination"
+  cp -R "$source_dir/." "$destination/"
+  rm -rf "$destination/.git"
+  "$repo_root/tools/dev/bun.sh" \
+    "$repo_root/src/extensions/external/age/tools/prepare-source.mts" "$destination"
 }
 
 oliphaunt_mobile_static_extension_source_files() {
@@ -240,6 +263,10 @@ oliphaunt_mobile_static_extension_hash_inputs() {
   local extension="${3:?missing mobile static extension}"
   local source_dir
   source_dir="$(oliphaunt_mobile_static_extension_source_dir "$repo_root" "$build_dir" "$extension")"
+  if [ "$extension" = age ]; then
+    source_dir="$repo_root/$(oliphaunt_mobile_static_extension_source_rel "$extension")"
+    printf '%s\n' "$repo_root/src/extensions/external/age/tools/prepare-source.mts"
+  fi
   if [ ! -d "$source_dir" ]; then
     return 0
   fi

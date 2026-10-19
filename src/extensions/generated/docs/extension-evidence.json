@@ -5,6 +5,40 @@
       "evidence-required": [
         "wasix-full-lifecycle-v1"
       ],
+      "extension": "age",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "age"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
       "extension": "amcheck",
       "latest-accepted-evidence": [],
       "missing-current-evidence": [
@@ -1346,7 +1380,7 @@
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:05c44ce681c43857fb4b49081cb8a290cf3051ea102de324964ec61f4f9566d2",
+  "source-digest": "sha256:29f4044bdff14f584ddf78e3ab1947d43f41c473aa6a3256d2a504ba22c516dd",
   "source-digest-inputs": [
     "src/third-party/postgres/source.toml",
     "src/extensions/catalog/extensions.source.json",
@@ -1356,6 +1390,7 @@
     "src/extensions/generated/contrib-build.tsv",
     "src/extensions/generated/pgxs-build.tsv",
     "src/database-resources/icu/source.toml",
+    "src/extensions/external/age/source.toml",
     "src/extensions/external/pg_hashids/source.toml",
     "src/extensions/external/pg_ivm/source.toml",
     "src/extensions/external/pg_textsearch/source.toml",
@@ -1373,6 +1408,10 @@
     "src/third-party/icu/source.toml",
     "src/third-party/openssl/source.toml",
     "src/extensions/external/README.md",
+    "src/extensions/external/age/targets/native-static-registry.toml",
+    "src/extensions/external/age/tools/prepare-source.mts",
+    "src/extensions/external/age/tools/windows/path-compat.h",
+    "src/extensions/external/age/upstream-license-data.json",
     "src/extensions/external/pg_hashids/upstream-license-data.json",
     "src/extensions/external/pg_ivm/targets/native-static-registry.toml",
     "src/extensions/external/pg_ivm/upstream-license-data.json",
@@ -1402,6 +1441,7 @@
     "src/extensions/external/postgis/upstream-license-data.json",
     "src/extensions/external/vector/upstream-license-data.json",
     "src/test-fixtures/extensions/manifest.json",
+    "src/test-fixtures/extensions/age.sql",
     "src/test-fixtures/extensions/amcheck.sql",
     "src/test-fixtures/extensions/auto_explain.sql",
     "src/test-fixtures/extensions/bloom.sql",

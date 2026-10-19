@@ -53,6 +53,7 @@ release = [
   "extension-unaccent",
   "extension-uuid-ossp",
 ]
+extension-age = ["extensions", "oliphaunt-wasix/extension-age"]
 extension-amcheck = ["extensions", "oliphaunt-wasix/extension-amcheck"]
 extension-auto-explain = ["extensions", "oliphaunt-wasix/extension-auto-explain"]
 extension-bloom = ["extensions", "oliphaunt-wasix/extension-bloom"]

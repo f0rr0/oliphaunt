@@ -5,6 +5,7 @@ package dev.oliphaunt
 
 /** Selecting an extension exposes its linked resources; installation remains application SQL. */
 public enum class OliphauntExtension(public val sqlName: String) {
+    AGE("age"),
     AMCHECK("amcheck"),
     AUTO_EXPLAIN("auto_explain"),
     BLOOM("bloom"),

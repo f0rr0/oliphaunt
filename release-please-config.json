@@ -42,6 +42,13 @@
     }
   ],
   "packages": {
+    "src/extensions/external/age": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-age",
+      "package-name": "oliphaunt-extension-age",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
     "src/native/runtime": {
       "release-type": "simple",
       "component": "liboliphaunt-native",

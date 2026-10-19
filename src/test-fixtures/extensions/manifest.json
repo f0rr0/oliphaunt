@@ -1,6 +1,7 @@
 {
   "format-version": 1,
   "recipes": {
+    "age": "age.sql",
     "amcheck": "amcheck.sql",
     "auto_explain": "auto_explain.sql",
     "bloom": "bloom.sql",

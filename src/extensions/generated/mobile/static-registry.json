@@ -13,6 +13,13 @@
   "modules": [
     {
       "data-files": [],
+      "id": "age",
+      "native-module-stem": "age",
+      "sql-name": "age",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
       "id": "amcheck",
       "native-module-stem": "amcheck",
       "sql-name": "amcheck",

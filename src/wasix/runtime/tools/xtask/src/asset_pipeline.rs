@@ -1717,14 +1717,36 @@ fn copy_extension_sql_files(source: &Path, sql_name: &str, destination: &Path) -
         let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if (name.starts_with(&format!("{sql_name}--")) || name == format!("{sql_name}.sql"))
-            && name.ends_with(".sql")
-        {
+        if is_installable_extension_sql(sql_name, name) {
             copy_file(&entry, &destination.join(name))?;
             copied = true;
         }
     }
     Ok(copied)
+}
+
+fn is_installable_extension_sql(sql_name: &str, name: &str) -> bool {
+    // AGE's PGXS DATA deliberately excludes its unreleased upgrade template.
+    // Copying it would advertise an ALTER EXTENSION path to version y.y.y.
+    !(sql_name == "age" && name.ends_with("--y.y.y.sql"))
+        && (name.starts_with(&format!("{sql_name}--")) || name == format!("{sql_name}.sql"))
+        && name.ends_with(".sql")
+}
+
+#[cfg(test)]
+mod extension_sql_tests {
+    use super::is_installable_extension_sql;
+
+    #[test]
+    fn age_packages_released_sql_without_the_upgrade_template() {
+        assert!(is_installable_extension_sql("age", "age--1.8.0.sql"));
+        assert!(is_installable_extension_sql("age", "age--1.7.0--1.8.0.sql"));
+        assert!(!is_installable_extension_sql(
+            "age",
+            "age--1.8.0--y.y.y.sql"
+        ));
+        assert!(!is_installable_extension_sql("age", "age--1.8.0.sql.in"));
+    }
 }
 
 fn copy_extension_sql_dir(source: &Path, destination: &Path) -> Result<bool> {

@@ -9,6 +9,7 @@ internal data class GeneratedExtensionRuntimeContract(
 )
 
 internal val generatedExtensionRuntimeContracts: Map<String, GeneratedExtensionRuntimeContract> = mapOf(
+    "age" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "age"),
     "amcheck" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "amcheck"),
     "auto_explain" to GeneratedExtensionRuntimeContract(createsExtension = false, nativeModuleStem = "auto_explain"),
     "bloom" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "bloom"),

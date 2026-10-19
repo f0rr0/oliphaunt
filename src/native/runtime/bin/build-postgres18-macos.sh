@@ -105,6 +105,7 @@ contrib_extensions=(
 )
 
 external_extensions=(
+  age
   pg_ivm
   pg_hashids
   pg_uuidv7
@@ -115,6 +116,7 @@ external_extensions=(
 )
 
 required_extension_controls=(
+  age
   amcheck
   bloom
   btree_gin
@@ -156,6 +158,7 @@ required_extension_controls=(
 )
 
 required_extension_modules=(
+  age
   _int
   amcheck
   auto_explain
@@ -1970,6 +1973,12 @@ build_pgxs_extension() {
     [ -n "$arg" ] || continue
     embedded_link_args+=("$arg")
   done < <(pgxs_extension_link_args "$extension" "embedded" "$embedded_module_be_dllibs")
+  if [ "$extension" = age ]; then
+    local age_bison
+    age_bison="$(native_postgis_find_modern_bison)" || fail "AGE requires GNU bison 3.8"
+    normal_link_args+=("BISON=$age_bison")
+    embedded_link_args+=("BISON=$age_bison")
+  fi
   if [ ! -d "$checkout" ]; then
     echo "native extension checkout is missing: $checkout" >&2
     exit 1
@@ -2260,7 +2269,7 @@ build_native_extension_artifacts() {
   fi
 
   rm -f "$extension_build_stamp"
-  rm -f "$embedded_modules_dir/age.dylib" "$embedded_modules_dir/pg_hashids.dylib"
+  rm -f "$embedded_modules_dir/pg_hashids.dylib"
   invalidate_native_extension_dependency_cache
 
   local extension

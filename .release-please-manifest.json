@@ -1,4 +1,5 @@
 {
+  "src/extensions/external/age": "0.1.0",
   "src/native/runtime": "0.3.3",
   "src/native/sdks/rust": "0.3.2",
   "src/native/broker": "0.3.1",

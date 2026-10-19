@@ -1,6 +1,32 @@
 {
   "extensions": [
     {
+      "archive": "extensions/age.tar.zst",
+      "dependencies": [],
+      "id": "age",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": null,
+        "load-sql": [
+          "LOAD 'age';"
+        ],
+        "post-create-sql": [
+          "SET search_path = ag_catalog, \"$user\", public;"
+        ],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": true,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
+      "native-module-file": "age.so",
+      "native-runtime-files": [],
+      "native-support-modules": [],
+      "sql-name": "age"
+    },
+    {
       "archive": "extensions/amcheck.tar.zst",
       "dependencies": [],
       "id": "amcheck",

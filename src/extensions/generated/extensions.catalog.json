@@ -20,6 +20,50 @@
   ],
   "extensions": [
     {
+      "id": "age",
+      "sql-name": "age",
+      "rust-constant": "AGE",
+      "display-name": "Apache AGE",
+      "source-kind": "oliphaunt-other-extension",
+      "upstream-import-name": "age",
+      "package-export": "./age",
+      "tags": [
+        "postgres extension",
+        "graph"
+      ],
+      "bundle-size": 510012,
+      "control-file": "target/oliphaunt-sources/checkouts/age/age.control",
+      "control": {
+        "default-version": "1.8.0",
+        "module-pathname": "$libdir/age",
+        "requires": [],
+        "schema": "ag_catalog"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": null,
+        "load-sql": [
+          "LOAD 'age';"
+        ],
+        "post-create-sql": [
+          "SET search_path = ag_catalog, \"$user\", public;"
+        ],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": true
+      },
+      "tests": [
+        "src/test-fixtures/extensions/age.sql"
+      ],
+      "native-module-file": "age.so",
+      "notes": [
+        "Each session must LOAD age and include ag_catalog in search_path before Cypher queries."
+      ]
+    },
+    {
       "id": "amcheck",
       "sql-name": "amcheck",
       "rust-constant": "AMCHECK",

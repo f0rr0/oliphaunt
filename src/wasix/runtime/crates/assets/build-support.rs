@@ -325,6 +325,14 @@ const EXTENSION_PACKAGES: &[ExtensionPackage] = &[
         crate_ident: "oliphaunt_extension_pg_hashids",
     },
     ExtensionPackage {
+        feature: "extension-age",
+        env: "CARGO_FEATURE_EXTENSION_AGE",
+        product: "oliphaunt-extension-age",
+        sql_name: "age",
+        crate_ident: "oliphaunt_extension_age",
+    },
+
+    ExtensionPackage {
         feature: "extension-pg-ivm",
         env: "CARGO_FEATURE_EXTENSION_PG_IVM",
         product: "oliphaunt-extension-pg-ivm",
