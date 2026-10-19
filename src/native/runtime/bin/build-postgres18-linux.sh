@@ -1633,6 +1633,8 @@ build_postgis_extension() {
     # shellcheck source=/dev/null
     . "$postgis_time_helper"
     oliphaunt_postgis_enable_reproducible_time "$repo_root"
+    # Upstream revision generation must identify PostGIS, not the enclosing repository.
+    export GIT_DIR="$checkout/.git"
     export CC="$cc_string"
     export "${postgis_configure_env[@]}"
     if [ ! -f configure ]; then
