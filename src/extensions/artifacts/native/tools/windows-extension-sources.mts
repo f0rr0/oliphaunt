@@ -117,6 +117,10 @@ export function prepareSimple(config: Config, extension: string) {
         'bcrypt.lib',
         'ws2_32.lib',
         'user32.lib',
+        'ole32.lib',
+        'oleaut32.lib',
+        'uuid.lib',
+        'msvcprt.lib',
       );
     } else {
       copyFileSync(
@@ -244,6 +248,7 @@ export function preparePostgis(config: Config) {
     LOCALE_DIR: path.join(config.install, 'share/locale').replaceAll('\\', '/'),
     BUILD_DATE: sourceDate(config),
     GEOS_VERSION: number(componentVersion('geos')),
+    GDAL_VERSION: number(componentVersion('gdal')),
     LIBXML_VERSION: componentVersion('libxml2'),
     PROJ_VERSION: number(componentVersion('proj')),
     VERSION: pgis.version,
@@ -281,6 +286,30 @@ export function preparePostgis(config: Config) {
     path.join(directory, 'extensions/postgis/postgis.control'),
     { EXTVERSION: pgis.version, EXTENSION: 'postgis', MODULEPATH: '$libdir/postgis-3' },
   );
+  write(
+    path.join(directory, 'raster/raster_config.h'),
+    `#ifndef POSTGIS_RASTER_CONFIG_H
+#define POSTGIS_RASTER_CONFIG_H 1
+#define POSTGIS_GDAL_VERSION ${values.GDAL_VERSION}
+#endif
+`,
+  );
+  expand(
+    path.join(directory, 'extensions/postgis_raster/postgis_raster.control.in'),
+    path.join(directory, 'extensions/postgis_raster/postgis_raster.control'),
+    {
+      EXTVERSION: pgis.version,
+      EXTENSION: 'postgis_raster',
+      MODULEPATH: '$libdir/postgis_raster-3',
+    },
+  );
+  for (const file of ['raster/rt_core/librtcore.h', 'raster/rt_pg/rtpostgis.c']) {
+    replace(
+      path.join(directory, file),
+      '# define __attribute__ (x)',
+      '# ifndef __attribute__\n#  define __attribute__(x)\n# endif',
+    );
+  }
   copyFileSync(
     path.join(postgisTemplates(config), 'postgis-compat.h'),
     path.join(directory, 'oliphaunt_postgis_windows_compat.h'),
@@ -289,7 +318,7 @@ export function preparePostgis(config: Config) {
     path.join(postgisTemplates(config), 'flatgeobuf-compat.h'),
     path.join(directory, 'oliphaunt_flatgeobuf_windows_compat.h'),
   );
-  for (const folder of ['postgis', 'libpgcommon', 'liblwgeom']) {
+  for (const folder of ['postgis', 'libpgcommon', 'liblwgeom', 'raster/rt_core', 'raster/rt_pg']) {
     for (const file of glob(path.join(directory, folder), '**/*.{c,h}')) {
       const target = path.join(directory, folder, file),
         text = read(target);
@@ -349,10 +378,14 @@ export function postgisMeson(config: Config) {
       'deps/flatgeobuf',
       'deps/flatgeobuf/include',
       'deps/ryu',
+      'raster',
+      'raster/rt_core',
+      'raster/rt_pg',
     ].map((file) => `/I${path.join(directory, file)}`),
   );
   cArgs.push(
     ...[
+      'gdal/include',
       'geos/include',
       'proj/include',
       'json-c/include',
@@ -362,6 +395,7 @@ export function postgisMeson(config: Config) {
   );
   const linkArgs = [
     firstLibrary(path.join(dependencies, 'flatgeobuf'), ['flatgeobuf.lib']),
+    firstLibrary(path.join(dependencies, 'gdal'), ['gdal.lib']),
     firstLibrary(path.join(dependencies, 'geos'), ['geos_c.lib']),
     firstLibrary(path.join(dependencies, 'geos'), ['geos.lib']),
     firstLibrary(path.join(dependencies, 'proj'), ['proj.lib', 'libproj.lib']),
@@ -373,10 +407,16 @@ export function postgisMeson(config: Config) {
     'advapi32.lib',
     'shell32.lib',
     'user32.lib',
+    'ole32.lib',
+    'oleaut32.lib',
+    'uuid.lib',
+    'msvcprt.lib',
   ];
   const data = [
     'extensions/postgis/postgis.control',
     ...glob(directory, 'extensions/postgis/sql/postgis--*.sql'),
+    'extensions/postgis_raster/postgis_raster.control',
+    ...glob(directory, 'extensions/postgis_raster/sql/postgis_raster--*.sql'),
   ];
   const contrib = [
     'postgis/legacy.sql',
@@ -405,6 +445,7 @@ export function postgisMeson(config: Config) {
     path.join(dependencies, 'proj/share/proj/proj.db'),
     path.join(directory, 'share/proj/proj.db'),
   );
+  copy(path.join(dependencies, 'gdal/share/gdal'), path.join(directory, 'share/gdal'));
   appendSubdir(config, 'postgis');
 }
 
@@ -413,13 +454,30 @@ const withoutTransactions = (text: string) =>
 const joined = (...texts: string[]) =>
   texts.map((text) => (text.endsWith('\n') ? text : text + '\n')).join('');
 
+function extensionDropGuards(text: string, extension: string) {
+  return text
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      const drop = line.match(/^(DROP .*);/);
+      return drop
+        ? [
+            `SELECT @extschema@.postgis_extension_drop_if_exists('${extension}', '${drop[1]}');`,
+            line,
+          ]
+        : [line];
+    })
+    .join('\n');
+}
+
 export function postgisSql(config: Config, phase: string) {
   const directory = postgisDirectory(config),
     pgis = postgisVersion(directory);
   const pg = path.join(directory, 'postgis'),
     sql = path.join(directory, 'extensions/postgis/sql');
   const raster = path.join(directory, 'raster/rt_pg');
+  const rasterSql = path.join(directory, 'extensions/postgis_raster/sql');
   mkdirSync(sql, { recursive: true });
+  mkdirSync(rasterSql, { recursive: true });
   if (phase === 'postgis-sql-preprocess') {
     const template = (
       input: string,
@@ -469,11 +527,19 @@ export function postgisSql(config: Config, phase: string) {
         path.join(raster, name + '.sql.in'),
         path.join(raster, name + '.sql'),
         [pg, raster],
-        '$libdir/rtpostgis-3',
+        '$libdir/postgis_raster-3',
         false,
         true,
       );
     }
+    template(
+      path.join(raster, 'rtpostgis.sql.in'),
+      path.join(rasterSql, 'rtpostgis.sql'),
+      [pg, raster],
+      '$libdir/postgis_raster-3',
+      true,
+      false,
+    );
   } else if (phase === 'postgis-sql-upgrade') {
     const upgrade = (body: string) =>
       joined(
@@ -493,20 +559,23 @@ export function postgisSql(config: Config, phase: string) {
       upgrade(path.join(sql, 'postgis_upgrade_for_extension.sql.in')),
     );
     write(path.join(sql, 'postgis_upgrade_for_extension.sql'), extensionUpgrade);
+    write(path.join(sql, 'postgis_upgrade.sql'), extensionDropGuards(extensionUpgrade, 'postgis'));
     write(
-      path.join(sql, 'postgis_upgrade.sql'),
-      extensionUpgrade
-        .split(/\r?\n/)
-        .flatMap((line) => {
-          const drop = line.match(/^(DROP .*);/);
-          return drop
-            ? [
-                `SELECT @extschema@.postgis_extension_drop_if_exists('postgis', '${drop[1]}');`,
-                line,
-              ]
-            : [line];
-        })
-        .join('\n'),
+      path.join(rasterSql, 'rtpostgis_upgrade.sql'),
+      extensionDropGuards(
+        withoutTransactions(
+          joined(
+            ...[
+              path.join(pg, 'common_before_upgrade.sql'),
+              path.join(raster, 'rtpostgis_upgrade_cleanup.sql'),
+              path.join(rasterSql, 'rtpostgis_upgrade.sql.in'),
+              path.join(raster, 'rtpostgis_drop.sql'),
+              path.join(pg, 'common_after_upgrade.sql'),
+            ].map(read),
+          ),
+        ),
+        'postgis_raster',
+      ),
     );
     write(
       path.join(sql, 'raster_drop_all.sql'),
@@ -554,9 +623,34 @@ export function postgisSql(config: Config, phase: string) {
     write(path.join(sql, 'postgis--TEMPLATED--TO--ANY.sql'), tag);
     write(path.join(sql, `postgis--${pgis.version}--ANY.sql`), tag);
     write(path.join(sql, 'postgis--unpackaged.sql'), '-- Nothing to do here\n');
+    const rasterGuard = '\\echo Use "CREATE EXTENSION postgis_raster" to load this file. \\quit';
+    write(
+      path.join(rasterSql, `postgis_raster--${pgis.version}.sql`),
+      joined(rasterGuard, read(path.join(rasterSql, 'rtpostgis.sql'))),
+    );
+    write(
+      path.join(rasterSql, `postgis_raster--ANY--${pgis.version}.sql`),
+      joined(
+        rasterGuard,
+        ...[
+          path.join(directory, 'extensions/postgis_extension_helper.sql'),
+          path.join(rasterSql, 'rtpostgis_upgrade.sql'),
+          path.join(directory, 'extensions/postgis_extension_helper_uninstall.sql'),
+        ].map(read),
+      ),
+    );
+    const rasterTag = tag.replaceAll('extension postgis ', 'extension postgis_raster ');
+    write(path.join(rasterSql, 'postgis_raster--TEMPLATED--TO--ANY.sql'), rasterTag);
+    write(path.join(rasterSql, `postgis_raster--${pgis.version}--ANY.sql`), rasterTag);
+    write(path.join(rasterSql, 'postgis_raster--unpackaged.sql'), '-- Nothing to do here\n');
   } else if (phase === 'postgis-sql-unpackaged') {
-    const file = path.join(sql, `postgis--unpackaged--${pgis.version}.sql`);
-    write(file, joined(read(file), read(path.join(sql, `postgis--ANY--${pgis.version}.sql`))));
+    for (const [name, folder] of [
+      ['postgis', sql],
+      ['postgis_raster', rasterSql],
+    ]) {
+      const file = path.join(folder, `${name}--unpackaged--${pgis.version}.sql`);
+      write(file, joined(read(file), read(path.join(folder, `${name}--ANY--${pgis.version}.sql`))));
+    }
   } else throw new Error(`unknown SQL phase ${phase}`);
 }
 

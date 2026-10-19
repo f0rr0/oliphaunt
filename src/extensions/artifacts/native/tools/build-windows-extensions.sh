@@ -87,6 +87,29 @@ windows_extension_postgis_dependencies() {
       cp "$work_root/proj-windows-build/data/proj.db" "$prefix/share/proj/proj.db"
     fi
   fi
+  prefix="$dependency_root/gdal"
+  if ! (first_file "$prefix" gdal.lib) >/dev/null 2>&1 || [ ! -f "$prefix/share/gdal/gdalvrt.xsd" ]; then
+    windows_extension_cmake gdal "$external_checkout_root/gdal" "$prefix" \
+      -DBUILD_SHARED_LIBS=OFF -DBUILD_APPS=OFF -DBUILD_TESTING=OFF \
+      -DBUILD_CSHARP_BINDINGS=OFF -DBUILD_JAVA_BINDINGS=OFF -DBUILD_PYTHON_BINDINGS=OFF \
+      -DGDAL_BUILD_OPTIONAL_DRIVERS=OFF -DOGR_BUILD_OPTIONAL_DRIVERS=OFF \
+      -DGDAL_ENABLE_DRIVER_GTIFF=ON -DGDAL_ENABLE_DRIVER_VRT=ON \
+      -DOGR_ENABLE_DRIVER_GEOJSON=ON -DOGR_ENABLE_DRIVER_SHAPE=ON \
+      -DGDAL_USE_EXTERNAL_LIBS=OFF -DGDAL_USE_INTERNAL_LIBS=ON -DGDAL_USE_OPENMP=OFF \
+      -DGDAL_USE_CURL=OFF -DGDAL_USE_OPENSSL=OFF -DGDAL_USE_ICONV=OFF \
+      -DGDAL_USE_GEOS=ON "-DGEOS_INCLUDE_DIR=$(native_path "$dependency_root/geos/include")" \
+      "-DGEOS_LIBRARY=$(native_path "$(first_file "$dependency_root/geos" geos_c.lib)")" \
+      -DGDAL_USE_JSONC=ON -DGDAL_USE_JSONC_INTERNAL=OFF \
+      "-DJSONC_INCLUDE_DIR=$(native_path "$dependency_root/json-c/include/json-c")" \
+      "-DJSONC_LIBRARY=$(native_path "$(first_file "$dependency_root/json-c" json-c.lib json-c-static.lib)")" \
+      -DGDAL_USE_LIBXML2=ON "-DLIBXML2_INCLUDE_DIR=$(native_path "$dependency_root/libxml2/include/libxml2")" \
+      "-DLIBXML2_LIBRARY=$(native_path "$(first_file "$dependency_root/libxml2" libxml2s.lib libxml2.lib xml2.lib)")" \
+      -DGDAL_USE_PROJ=ON "-DPROJ_INCLUDE_DIR=$(native_path "$dependency_root/proj/include")" \
+      "-DPROJ_LIBRARY=$(native_path "$(first_file "$dependency_root/proj" proj.lib libproj.lib)")" \
+      -DGDAL_USE_SQLITE3=ON "-DSQLite3_INCLUDE_DIR=$(native_path "$dependency_root/sqlite/include")" \
+      "-DSQLite3_LIBRARY=$(native_path "$dependency_root/sqlite/lib/sqlite3.lib")" \
+      -DACCEPT_MISSING_SQLITE3_MUTEX_ALLOC=ON
+  fi
 }
 
 windows_extension_generate() {

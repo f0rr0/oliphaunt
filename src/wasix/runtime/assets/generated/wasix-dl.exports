@@ -153,10 +153,12 @@ GenericXLogRegisterBuffer
 GenericXLogStart
 GetAccessStrategy
 GetActiveSnapshot
+GetAttributeByName
 GetAttributeByNum
 GetCachedExpression
 GetCommandTagName
 GetConfigOption
+GetConfigOptionByName
 GetCurrentFullTransactionId
 GetCurrentSubTransactionId
 GetCurrentTimestamp
@@ -341,6 +343,7 @@ SPI_copytuple
 SPI_cursor_close
 SPI_cursor_fetch
 SPI_cursor_find
+SPI_cursor_open_with_args
 SPI_cursor_open_with_paramlist
 SPI_cursor_parse_open
 SPI_datumTransfer
@@ -361,6 +364,7 @@ SPI_getvalue
 SPI_keepplan
 SPI_modifytuple
 SPI_palloc
+SPI_pfree
 SPI_plan_get_cached_plan
 SPI_plan_get_plan_sources
 SPI_plan_is_valid
@@ -369,6 +373,7 @@ SPI_prepare_extended
 SPI_processed
 SPI_register_relation
 SPI_register_trigger_data
+SPI_repalloc
 SPI_result
 SPI_result_code_string
 SPI_returntuple
@@ -496,6 +501,7 @@ array_free_iterator
 array_iterate
 arraycontjoinsel
 arraycontsel
+asc_tolower
 asin
 assign_expr_collations
 atan2l
@@ -736,6 +742,7 @@ free_object_addresses
 fseek
 fstat
 ftell
+func_volatile
 function_parse_error_transpose
 fwrite
 gen_random_uuid
@@ -768,6 +775,7 @@ get_fn_opclass_options
 get_func_arg_info
 get_func_name
 get_func_namespace
+get_func_result_type
 get_func_rettype
 get_func_support
 get_function_sibling_type
@@ -945,7 +953,9 @@ max_parallel_maintenance_workers
 memchr
 memcmp
 memset
+mmap
 mul_size
+munmap
 namein
 nanosleep
 network_cmp

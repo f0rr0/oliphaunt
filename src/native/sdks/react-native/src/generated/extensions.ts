@@ -26,7 +26,7 @@ export type GeneratedExtensionMetadata = {
   readonly sourceKind: string;
 };
 
-export const GENERATED_EXTENSION_METADATA_SHA256 = "c1d2e09905d7ecc0172173b34b9e4104dad58987503dd3dab7af4ae78890d9f3" as const;
+export const GENERATED_EXTENSION_METADATA_SHA256 = "26ce911f641272aa18249e7c7d044dfa5ea7061d07119bb275544e164bb9249a" as const;
 
 export const GENERATED_EXTENSION_METADATA = [
   {
@@ -781,6 +781,32 @@ export const GENERATED_EXTENSION_METADATA = [
       "share/postgresql/contrib/postgis-3.6/spatial_ref_sys.sql",
       "share/postgresql/contrib/postgis-3.6/uninstall_legacy.sql",
       "share/postgresql/contrib/postgis-3.6/uninstall_postgis.sql",
+      "share/postgresql/gdal/GDALLogoBW.svg",
+      "share/postgresql/gdal/GDALLogoColor.svg",
+      "share/postgresql/gdal/GDALLogoGS.svg",
+      "share/postgresql/gdal/LICENSE.TXT",
+      "share/postgresql/gdal/cubewerx_extra.wkt",
+      "share/postgresql/gdal/ecw_cs.wkt",
+      "share/postgresql/gdal/epsg.wkt",
+      "share/postgresql/gdal/esri_StatePlane_extra.wkt",
+      "share/postgresql/gdal/gdal_algorithm.schema.json",
+      "share/postgresql/gdal/gdalicon.png",
+      "share/postgresql/gdal/gdalinfo_output.schema.json",
+      "share/postgresql/gdal/gdalmdiminfo_output.schema.json",
+      "share/postgresql/gdal/gdalvrt.xsd",
+      "share/postgresql/gdal/leaflet_template.html",
+      "share/postgresql/gdal/ogr_fields_override.schema.json",
+      "share/postgresql/gdal/ogrinfo_output.schema.json",
+      "share/postgresql/gdal/ozi_datum.csv",
+      "share/postgresql/gdal/ozi_ellips.csv",
+      "share/postgresql/gdal/pci_datum.txt",
+      "share/postgresql/gdal/pci_ellips.txt",
+      "share/postgresql/gdal/stateplane.csv",
+      "share/postgresql/gdal/template_tiles.mapml",
+      "share/postgresql/gdal/tms_LINZAntarticaMapTileGrid.json",
+      "share/postgresql/gdal/tms_MapML_APSTILE.json",
+      "share/postgresql/gdal/tms_MapML_CBMTILE.json",
+      "share/postgresql/gdal/tms_NZTM2000.json",
       "share/postgresql/proj/proj.db"
     ],
     "dependencies": [],
@@ -791,10 +817,12 @@ export const GENERATED_EXTENSION_METADATA = [
     "extensionSqlFilePrefixes": [
       "postgis_comments",
       "postgis_proc_set_search_path",
+      "postgis_raster",
       "rtpostgis"
     ],
     "id": "postgis",
     "iosStaticDependencies": [
+      "gdal",
       "geos",
       "geos-c",
       "json-c",
@@ -818,6 +846,32 @@ export const GENERATED_EXTENSION_METADATA = [
       "contrib/postgis-3.6/spatial_ref_sys.sql",
       "contrib/postgis-3.6/uninstall_legacy.sql",
       "contrib/postgis-3.6/uninstall_postgis.sql",
+      "gdal/GDALLogoBW.svg",
+      "gdal/GDALLogoColor.svg",
+      "gdal/GDALLogoGS.svg",
+      "gdal/LICENSE.TXT",
+      "gdal/cubewerx_extra.wkt",
+      "gdal/ecw_cs.wkt",
+      "gdal/epsg.wkt",
+      "gdal/esri_StatePlane_extra.wkt",
+      "gdal/gdal_algorithm.schema.json",
+      "gdal/gdalicon.png",
+      "gdal/gdalinfo_output.schema.json",
+      "gdal/gdalmdiminfo_output.schema.json",
+      "gdal/gdalvrt.xsd",
+      "gdal/leaflet_template.html",
+      "gdal/ogr_fields_override.schema.json",
+      "gdal/ogrinfo_output.schema.json",
+      "gdal/ozi_datum.csv",
+      "gdal/ozi_ellips.csv",
+      "gdal/pci_datum.txt",
+      "gdal/pci_ellips.txt",
+      "gdal/stateplane.csv",
+      "gdal/template_tiles.mapml",
+      "gdal/tms_LINZAntarticaMapTileGrid.json",
+      "gdal/tms_MapML_APSTILE.json",
+      "gdal/tms_MapML_CBMTILE.json",
+      "gdal/tms_NZTM2000.json",
       "proj/proj.db"
     ],
     "selectedExtensionDependencies": [],

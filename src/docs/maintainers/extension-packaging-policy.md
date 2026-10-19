@@ -458,10 +458,16 @@ OpenSSL checkout and links `pgcrypto` against the staged static `libcrypto`.
 `uuid-ossp` is mobile-prebuilt through the first-party portable UUID static
 `libuuid` archive. The Windows native producer links the same portable UUID
 source directly into the `uuid-ossp` module and installs the matching
-control/SQL files. The Windows native PostGIS producer builds the pinned GEOS,
-PROJ, SQLite, json-c, and libxml2 dependency stack, links the generated
-`postgis-3` module against those static archives, and stages the matching
-extension SQL plus `proj/proj.db`.
+control/SQL files. The Windows native PostGIS producer builds the pinned GDAL,
+GEOS, PROJ, SQLite, json-c, and libxml2 dependency stack, links the generated
+`postgis-3` and `postgis_raster-3` modules against those static archives, and stages
+the matching extension SQL, GDAL data, and `proj/proj.db`. The PostGIS product
+owns both SQL extensions; applications can enable raster with
+`CREATE EXTENSION postgis_raster` after enabling `postgis`. Mobile carriers
+register the combined core/raster archive. Desktop and WASIX carriers ship
+separate modules. GDAL includes GTiff/VRT and GeoJSON/Shapefile drivers; raster
+smoke tests explicitly enable GTiff and verify pixel values, dimensions, and
+SRID through a GeoTIFF round trip after creation and restart.
 
 ## Target-Specific PG18.4 Support
 

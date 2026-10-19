@@ -5,6 +5,31 @@ oliphaunt_postgis_time_fail() {
   return 1
 }
 
+oliphaunt_postgis_resolve_executable_path() {
+  local path="${1:-}"
+  local directory basename
+  [ -n "$path" ] || return 1
+  case "$path" in
+    */*) ;;
+    *) path="$(command -v "$path" || true)" ;;
+  esac
+  [ -n "$path" ] || return 1
+  directory="$(dirname "$path")"
+  basename="$(basename "$path")"
+  (
+    unset CDPATH
+    cd -- "$directory" 2>/dev/null || exit 1
+    printf '%s/%s\n' "$(pwd -P)" "$basename"
+  )
+}
+
+oliphaunt_postgis_same_executable() {
+  local left right
+  left="$(oliphaunt_postgis_resolve_executable_path "${1:-}")" || return 1
+  right="$(oliphaunt_postgis_resolve_executable_path "${2:-}")" || return 1
+  [ "$left" = "$right" ]
+}
+
 oliphaunt_postgis_source_date_epoch() {
   local repo_root="${1:?missing repository root}"
   local manifest="$repo_root/src/extensions/external/postgis/source.toml"
@@ -34,14 +59,15 @@ oliphaunt_postgis_enable_reproducible_time() {
     oliphaunt_postgis_time_fail "portable date shim is not executable: $shim" || return 1
   SOURCE_DATE_EPOCH="$(oliphaunt_postgis_source_date_epoch "$repo_root")" || return 1
   resolved_date="$(command -v date || true)"
-  if [ "$resolved_date" = "$shim" ]; then
+  if oliphaunt_postgis_same_executable "$resolved_date" "$shim"; then
     real_date="${OLIPHAUNT_POSTGIS_REAL_DATE:-}"
   else
     # Never trust an inherited override on first enable. Capture the date command
     # selected by the producer's PATH before installing our scoped shim.
     real_date="$resolved_date"
   fi
-  [ -n "$real_date" ] && [ -x "$real_date" ] && [ "$real_date" != "$shim" ] ||
+  [ -n "$real_date" ] && [ -x "$real_date" ] &&
+    ! oliphaunt_postgis_same_executable "$real_date" "$shim" ||
     oliphaunt_postgis_time_fail "could not capture the host date command before installing the shim" || return 1
   OLIPHAUNT_POSTGIS_REAL_DATE="$real_date"
   case ":$PATH:" in

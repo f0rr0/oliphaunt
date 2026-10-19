@@ -1,4 +1,4 @@
 name = "sqlite"
 url = "https://github.com/sqlite/sqlite.git"
-branch = "version-3.53.1"
-commit = "ccd445d76a9362c63add000354fac84ba9022176"
+branch = "version-3.54.1"
+commit = "57520227c95396ce39ba6ecaac8d475b78dd3964"

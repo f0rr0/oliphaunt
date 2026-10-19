@@ -21,17 +21,53 @@ needs_superuser = true
 trusted = false
 
 [artifacts]
-control_files = ["share/postgresql/extension/postgis.control"]
-sql_globs = ["share/postgresql/extension/postgis--*.sql"]
+control_files = [
+  "share/postgresql/extension/postgis.control",
+  "share/postgresql/extension/postgis_raster.control",
+]
+sql_globs = [
+  "share/postgresql/extension/postgis--*.sql",
+  "share/postgresql/extension/postgis_raster--*.sql",
+]
 extension_sql_file_prefixes = [
   "postgis_comments",
   "postgis_proc_set_search_path",
+  "postgis_raster",
   "rtpostgis",
 ]
 extension_sql_file_names = ["uninstall_postgis.sql"]
 native_modules = ["lib/postgresql/postgis-3.so"]
-native_dependency_modules = ["lib/postgresql/liboliphaunt_postgis_deps.so"]
+native_dependency_modules = [
+  "lib/postgresql/postgis_raster-3.so",
+  "lib/postgresql/liboliphaunt_postgis_deps.so",
+]
 data_files = [
+  "share/postgresql/gdal/GDALLogoBW.svg",
+  "share/postgresql/gdal/GDALLogoColor.svg",
+  "share/postgresql/gdal/GDALLogoGS.svg",
+  "share/postgresql/gdal/LICENSE.TXT",
+  "share/postgresql/gdal/cubewerx_extra.wkt",
+  "share/postgresql/gdal/ecw_cs.wkt",
+  "share/postgresql/gdal/epsg.wkt",
+  "share/postgresql/gdal/esri_StatePlane_extra.wkt",
+  "share/postgresql/gdal/gdal_algorithm.schema.json",
+  "share/postgresql/gdal/gdalicon.png",
+  "share/postgresql/gdal/gdalinfo_output.schema.json",
+  "share/postgresql/gdal/gdalmdiminfo_output.schema.json",
+  "share/postgresql/gdal/gdalvrt.xsd",
+  "share/postgresql/gdal/leaflet_template.html",
+  "share/postgresql/gdal/ogr_fields_override.schema.json",
+  "share/postgresql/gdal/ogrinfo_output.schema.json",
+  "share/postgresql/gdal/ozi_datum.csv",
+  "share/postgresql/gdal/ozi_ellips.csv",
+  "share/postgresql/gdal/pci_datum.txt",
+  "share/postgresql/gdal/pci_ellips.txt",
+  "share/postgresql/gdal/stateplane.csv",
+  "share/postgresql/gdal/template_tiles.mapml",
+  "share/postgresql/gdal/tms_LINZAntarticaMapTileGrid.json",
+  "share/postgresql/gdal/tms_MapML_APSTILE.json",
+  "share/postgresql/gdal/tms_MapML_CBMTILE.json",
+  "share/postgresql/gdal/tms_NZTM2000.json",
   "share/postgresql/contrib/postgis-3.6/legacy.sql",
   "share/postgresql/contrib/postgis-3.6/legacy_gist.sql",
   "share/postgresql/contrib/postgis-3.6/legacy_minimal.sql",
@@ -44,6 +80,7 @@ data_files = [
 ]
 headers = []
 licenses = [
+  "share/licenses/gdal/LICENSE.TXT",
   "share/licenses/geos/COPYING",
   "share/licenses/geos/src/deps/ryu/LICENSE",
   "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
@@ -61,6 +98,11 @@ licenses = [
   "share/licenses/proj/COPYING",
   "share/licenses/sqlite/LICENSE.md",
 ]
+
+[[runtime_environment]]
+name = "GDAL_DATA"
+path = "share/postgresql/gdal"
+required_file = "gdalvrt.xsd"
 
 [[runtime_environment]]
 name = "PROJ_DATA"

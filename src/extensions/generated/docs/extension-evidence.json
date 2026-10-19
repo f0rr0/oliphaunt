@@ -1362,6 +1362,7 @@
     "src/extensions/external/pg_textsearch/tests/upgrade/source.toml",
     "src/extensions/external/pg_uuidv7/source.toml",
     "src/extensions/external/pgtap/source.toml",
+    "src/extensions/external/postgis/dependencies/gdal/source.toml",
     "src/extensions/external/postgis/dependencies/geos/source.toml",
     "src/extensions/external/postgis/dependencies/json-c/source.toml",
     "src/extensions/external/postgis/dependencies/libiconv/source.toml",

@@ -228,7 +228,7 @@ postgis_dependency_build_roots="$(
     in_array && /^\)$/ { exit }
   ' "$macos_build_script"
 )"
-for dependency_build_root in json-c sqlite geos libxml2 proj; do
+for dependency_build_root in json-c sqlite geos libxml2 proj gdal; do
   if ! grep -Fq '"$work_root/'"$dependency_build_root"'-native-build"' <<< "$postgis_dependency_build_roots"; then
     echo "native PostGIS dependency cache omits build root: $dependency_build_root" >&2
     exit 1

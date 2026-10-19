@@ -135,7 +135,7 @@ test("the contract retains dependency licenses and pgtap's complete upstream gra
   const postgis = rows.find((row) => row.sqlName === 'postgis');
   assert.deepEqual(
     [...new Set(postgis.files.map((file) => file.checkout))],
-    ['geos', 'json-c', 'libiconv', 'libxml2', 'postgis', 'proj', 'sqlite'],
+    ['gdal', 'geos', 'json-c', 'libiconv', 'libxml2', 'postgis', 'proj', 'sqlite'],
   );
   assert.deepEqual(
     postgis.files.filter((file) => file.checkout === 'libiconv').map((file) => file.path),
@@ -231,6 +231,7 @@ test('carrier legal roles derive exact contrib and external payload closure', ()
   assert.equal(postgis.profile, 'external-native');
   assert.deepEqual(postgis.upstreamMembers, ['postgis']);
   assert.deepEqual(postgis.licenseFiles, [
+    'share/licenses/gdal/LICENSE.TXT',
     'share/licenses/geos/COPYING',
     'share/licenses/geos/src/deps/ryu/LICENSE',
     'share/licenses/geos/src/deps/ryu/LICENSE-Apache2',

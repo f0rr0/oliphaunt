@@ -233,6 +233,14 @@ mod tests {
             postgis,
             "postgis_proc_set_search_path.sql"
         ));
+        assert!(extension_sql_file_belongs(
+            postgis,
+            "postgis_raster.control"
+        ));
+        assert!(extension_sql_file_belongs(
+            postgis,
+            "postgis_raster--3.6.4.sql"
+        ));
         assert!(extension_sql_file_belongs(postgis, "rtpostgis--3.6.sql"));
 
         assert!(!extension_sql_file_belongs("pgtap", "postgis_comments.sql"));

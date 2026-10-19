@@ -262,6 +262,10 @@ pub(crate) fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
         fs::remove_dir_all(destination)
             .with_context(|| format!("remove {}", destination.display()))?;
     }
+    copy_dir_all_overlay(source, destination)
+}
+
+pub(crate) fn copy_dir_all_overlay(source: &Path, destination: &Path) -> Result<()> {
     fs::create_dir_all(destination).with_context(|| format!("create {}", destination.display()))?;
     for entry in WalkDir::new(source) {
         let entry = entry.with_context(|| format!("walk {}", source.display()))?;
@@ -507,6 +511,34 @@ mod tests {
             );
             assert!(error.to_string().contains(name));
         }
+    }
+
+    #[test]
+    fn overlay_preserves_core_sql_while_replace_removes_stale_files() {
+        let fixture = TestDirectory::new("extension-sql-overlay");
+        let source = fixture.0.join("raster");
+        let destination = fixture.0.join("extension");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(source.join("nested/postgis_raster.control"), b"raster").unwrap();
+        fs::write(destination.join("postgis.control"), b"core").unwrap();
+
+        copy_dir_all_overlay(&source, &destination).unwrap();
+        assert_eq!(
+            fs::read(destination.join("postgis.control")).unwrap(),
+            b"core"
+        );
+        assert_eq!(
+            fs::read(destination.join("nested/postgis_raster.control")).unwrap(),
+            b"raster"
+        );
+
+        copy_dir_all(&source, &destination).unwrap();
+        assert!(!destination.join("postgis.control").exists());
+        assert_eq!(
+            fs::read(destination.join("nested/postgis_raster.control")).unwrap(),
+            b"raster"
+        );
     }
 
     #[test]

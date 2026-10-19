@@ -15,9 +15,17 @@ function resolve(extension, family, kind, target) {
 
 test('PROJ brings SQLite and its runtime database into every PostGIS closure', () => {
   const ios = resolve('postgis', 'native', 'native-static-registry', 'ios-xcframework');
-  assert.deepEqual(ios.components, ['geos', 'sqlite', 'proj', 'libxml2', 'json-c']);
-  assert.deepEqual(ios.runtimeFiles, ['proj/proj.db']);
-  assert.deepEqual(ios.linkUnits, ['geos-c', 'geos', 'proj', 'sqlite', 'libxml2', 'json-c']);
+  assert.deepEqual(ios.components, ['geos', 'sqlite', 'proj', 'libxml2', 'json-c', 'gdal']);
+  assert.deepEqual(ios.runtimeFiles, ['gdal/gdalvrt.xsd', 'proj/proj.db']);
+  assert.deepEqual(ios.linkUnits, [
+    'gdal',
+    'geos-c',
+    'geos',
+    'proj',
+    'sqlite',
+    'libxml2',
+    'json-c',
+  ]);
 });
 
 test('PostGIS target differences are explicit', () => {
@@ -25,9 +33,10 @@ test('PostGIS target differences are explicit', () => {
   const android = resolve('postgis', 'native', 'native-static-registry', 'android-arm64-v8a');
   const wasix = resolve('postgis', 'wasix', 'wasix-runtime', 'wasix-portable');
   assert.equal(ios.components.includes('libiconv'), false);
-  assert.deepEqual(android.components.slice(-1), ['libiconv']);
+  assert(android.components.indexOf('libiconv') < android.components.indexOf('gdal'));
+  assert.equal(android.components.at(-1), 'gdal');
   assert.deepEqual(wasix.components, android.components);
-  assert.deepEqual(android.linkUnits.slice(-2), ['libiconv', 'libcharset']);
+  assert.deepEqual(android.linkUnits.slice(0, 2), ['libiconv', 'libcharset']);
 });
 
 test('contrib native dependencies share the same cross-platform contract', () => {

@@ -1,0 +1,4 @@
+name = "gdal"
+url = "https://github.com/OSGeo/gdal.git"
+branch = "v3.13.3"
+commit = "c8b4c45fca87d3e6fbf80e7a7898b8a661ad0edc"
