@@ -5,6 +5,8 @@ members = [
   "src/native/mobile-bindings",
   "src/query/rust",
   "src/wasix/sdks/rust",
+  "src/wasix/node-addon",
+  "src/wasix/pgwire-server",
   "src/native/sdks/rust/crates/oliphaunt-build",
   "src/native/sdks/rust",
   "src/native/postgres-tools/crates/tools",
@@ -28,7 +30,6 @@ members = [
   "src/wasix/runtime/tools/xtask",
 ]
 resolver = "3"
-exclude = ["src/wasix/node-addon", "src/wasix/pgwire-server"]
 
 [workspace.package]
 edition = "2024"
@@ -40,6 +41,7 @@ license = "MIT"
 [workspace.dependencies]
 # These adapters exchange Rust types/state with the SDK they adopt.
 liboliphaunt-native-bindings = { path = "src/native/rust-bindings", version = "0.2.0" }
+oliphaunt-wasix = { path = "src/wasix/sdks/rust", version = "0.3.2" }
 
 [profile.release]
 strip = "symbols"

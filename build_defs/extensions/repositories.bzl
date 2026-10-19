@@ -13,6 +13,7 @@ filegroup(
 )
 filegroup(name = "headers", srcs = glob(["src/**/*.h"], allow_empty = True))
 filegroup(name = "sql_resources", srcs = glob(["*.control", "*--*.sql", "sql/*--*.sql"], allow_empty = True))
+filegroup(name = "sql_upgrade_resources", srcs = glob(["*--*--*.sql", "sql/*--*--*.sql"], allow_empty = True))
 filegroup(name = "test_inputs", srcs = glob(["Makefile", "test/sql/*.sql", "test/expected/*.out", "test/scripts/gen*_bm25vector.py"], allow_empty = True))
 """
 

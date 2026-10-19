@@ -151,8 +151,8 @@ or an individual platform job cannot authorize publication.
 Shared construction stays on Linux to reproduce CI locally. macOS/Windows jobs
 provide licensed SDK construction and native execution where required. Cross-host
 consumers receive exact final archives with their source, target and hash receipts
-through GitHub artifacts. The WASIX producer captures the five core Cargo files
-from actual shipping roots; native host jobs download that producing job's immutable
+through GitHub artifacts. The WASIX producer captures the fifteen core, contrib
+and tools Cargo files from actual shipping roots; native host jobs download that producing job's immutable
 artifact ID and require the checkout commit to match its source receipt. The importer
 verifies each archive and compiles its extracted Rust sources and build script.
 macOS, Windows and Linux ARM64 then run the same seven SDK SQL scenarios without
@@ -160,6 +160,13 @@ requesting Linux WASIX or AOT producers. This is a matching-source construction
 handoff; it does not select historical published versions or admit a release.
 Foreign-host execution and full carrier coverage must pass before cutover. No remote
 executor is needed for this handoff.
+
+The Node-API release build compiles the workspace Rust SDK and embeds the
+constructed core and contrib payloads. Linux constructs those payloads once;
+other hosts consume the original captured archives. Cargo path/version
+requirements and the addon's exact npm compatibility metadata describe these
+relationships. The public Rust SDK's minimum runtime requirement can remain
+held while the addon embeds a newer compatible runtime.
 
 Reproduce an imported Linux SDK consumer using a captured directory locally:
 
@@ -194,6 +201,14 @@ compares authenticated deliveries with each product's completed publication,
 closes necessary compatibility adoption and passes those selected owners to
 Release Please for version calculation. Missing historical facts block a decision;
 the old ownership graph is not a fallback selector.
+
+Compiled external WASIX extensions first link against their declared completed
+runtime. When that floor equals the workspace runtime version, source
+qualification can also prove that new imports require the current core. It
+records both physical inputs and the missing exports. Preparation uses this
+proof to retarget a necessary extension/runtime release pair; it does not select
+either product solely from ABI reachability. Generated release trees require
+the final exact host and cannot use this source probe as publication evidence.
 
 Tool/rule repins intentionally update `MODULE.bazel.lock`:
 

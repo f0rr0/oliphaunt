@@ -239,6 +239,23 @@ try {
   const oldVersion = /default_version\s*=\s*'([^']+)'/u.exec(readFileSync(oldControl, 'utf8'))?.[1];
   assert.equal(oldVersion, '0.6.1');
   assert.equal(currentVersion, '1.5.1');
+  const dataAssignments = [
+    ...readFileSync(currentMakefile, 'utf8')
+      .replace(/\\\r?\n[ \t]*/gu, ' ')
+      .matchAll(/^DATA[ \t]*([+:?]?=)[ \t]*(.*)$/gmu),
+  ];
+  assert.equal(dataAssignments.length, 1, 'upstream must declare one literal DATA inventory');
+  assert.equal(dataAssignments[0][1], '=');
+  const dataFiles = dataAssignments[0][2].trim().split(/\s+/u);
+  assert(
+    dataFiles.every((file) => /^sql\/pg_textsearch--[0-9.]+(?:--[0-9.]+)?\.sql$/u.test(file)),
+    'review a nonliteral upstream DATA inventory',
+  );
+  assert.deepEqual(
+    readdirSync(currentExtension).filter((file) => file.endsWith('.sql')).sort(),
+    dataFiles.map((file) => file.slice('sql/'.length)).sort(),
+    'shipped SQL differs from the upstream PGXS DATA inventory',
+  );
   for (const binary of cTests) run(binary, []);
   install(oldModule, dirname(oldControl));
   run(join(runtime, 'bin/initdb'), [

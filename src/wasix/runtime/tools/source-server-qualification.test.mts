@@ -23,13 +23,18 @@ function fixture(sdkVersion = '0.3.2') {
     writeFileSync(file, text);
   };
   write('Cargo.lock', 'version = 4\n');
-  write('src/wasix/node-addon/Cargo.lock', 'version = 4\n');
   write(
-    'src/wasix/node-addon/Cargo.toml',
+    'Cargo.toml',
     renderCargoToml({
       workspace: {
+        members: [
+          'src/wasix/pgwire-server',
+          'src/wasix/sdks/rust',
+          'src/wasix/runtime/crates/assets',
+        ],
+        resolver: '3',
         package: { repository: 'https://example.invalid/repository' },
-        dependencies: { 'oliphaunt-wasix': { version: '0.3.2' } },
+        dependencies: { 'oliphaunt-wasix': { version: '0.3.2', path: 'src/wasix/sdks/rust' } },
       },
     }),
   );
@@ -40,7 +45,6 @@ function fixture(sdkVersion = '0.3.2') {
         name: 'oliphaunt-pgwire-server',
         version: '0.2.1',
         edition: '2024',
-        workspace: '../node-addon',
         repository: { workspace: true },
       },
       features: {
@@ -84,12 +88,10 @@ function fixture(sdkVersion = '0.3.2') {
   );
   write('src/wasix/runtime/crates/assets/src/lib.rs', 'pub fn answer() -> u32 { 42 }\n');
   const held = new Map(
-    [
-      'Cargo.lock',
-      'src/wasix/node-addon/Cargo.lock',
-      'src/wasix/node-addon/Cargo.toml',
-      'src/wasix/pgwire-server/Cargo.toml',
-    ].map((relative) => [relative, readFileSync(path.join(root, relative), 'utf8')]),
+    ['Cargo.lock', 'Cargo.toml', 'src/wasix/pgwire-server/Cargo.toml'].map((relative) => [
+      relative,
+      readFileSync(path.join(root, relative), 'utf8'),
+    ]),
   );
   const manifest = stageSourceServerQualification(root, path.join(directory, 'source-proof'));
   const cargo = (...arguments_: string[]) =>

@@ -649,6 +649,7 @@ export async function qualifyNativeShipping(
       requestedTargets: buildTargets,
       completedRoots: completedCiRequestRoots(bep, buildTargets),
       executionRoot,
+      nativeEvidence: evidence,
       configuredGraph: json(depsFile),
       recipeQueries: [...recipeQueries.values()],
     });

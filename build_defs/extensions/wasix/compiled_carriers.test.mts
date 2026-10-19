@@ -10,6 +10,7 @@ import {
 import {
   assertSingleWasixNapiAddonMember,
   assertWasixNapiCarrierManifest,
+  assertWasixNapiConstructionData,
   assertWasixTypescriptNativeCarrier,
 } from '../../../src/wasix/node-addon/tools/carrier-contract.mts';
 import { assertWasixAotArtifactPayloads } from '../../../src/wasix/runtime/tools/check-release-assets.mts';
@@ -38,8 +39,9 @@ const [
   napiInput,
   facadeInput,
   addonTemplateInput,
+  currentAddonInput,
 ] = process.argv.slice(2);
-const napi = JSON.parse(readFileSync(napiInput, 'utf8'));
+const napiContract = JSON.parse(readFileSync(napiInput, 'utf8'));
 const addonTemplate = JSON.parse(readFileSync(addonTemplateInput, 'utf8'));
 const hostManifestBytes = readFileSync(hostManifestInput);
 const hostManifest = JSON.parse(hostManifestBytes.toString());
@@ -47,9 +49,9 @@ const githubRoot = path.dirname(githubInput);
 const npmRoot = path.dirname(npmInput);
 const cargoRoot = path.dirname(cargoInput);
 const spec = JSON.parse(readFileSync(input, 'utf8'));
-const partInputs = process.argv.slice(18);
+const partInputs = process.argv.slice(19);
 const partParents = Object.keys(spec.outputs.cargoParts ?? {});
-assert.equal(process.argv.length, 18 + partParents.length);
+assert.equal(process.argv.length, 19 + partParents.length);
 if (partParents.length)
   assert.deepEqual(
     partParents.sort(),
@@ -61,6 +63,41 @@ if (partParents.length)
 assert.deepEqual(partInputs.map((file) => path.basename(file)).sort(), partParents.sort());
 const frozen = JSON.parse(readFileSync(frozenInput, 'utf8'));
 const compiled = moduleInput !== '-';
+const linkContract = compiled ? JSON.parse(readFileSync(linkInput, 'utf8')) : null;
+const selection = linkContract?.runtimeSelection;
+if (selection) {
+  assert(['completed-publication', 'current-source'].includes(selection.kind));
+  for (const key of ['declaredModuleSha256', 'currentModuleSha256', 'selectedModuleSha256'])
+    assert.match(selection[key], /^[a-f0-9]{64}$/u);
+  assert.deepEqual(selection.missingExports, [...new Set(selection.missingExports)].sort());
+  assert(
+    selection.missingExports.every((name: unknown) => typeof name === 'string' && name.length > 0),
+  );
+  assert.equal(selection.kind === 'current-source', selection.missingExports.length > 0);
+  assert.equal(
+    selection.selectedModuleSha256,
+    selection.kind === 'current-source'
+      ? selection.currentModuleSha256
+      : selection.declaredModuleSha256,
+  );
+  assert.equal(selection.selectedModuleSha256, hostManifest.runtime['module-sha256']);
+}
+const current = selection?.kind === 'current-source';
+if (current)
+  assert.notEqual(
+    currentAddonInput,
+    '-',
+    'selected current core requires its actual source addon carrier',
+  );
+const napi = current
+  ? {
+      ...napiContract,
+      current: true,
+      version: napiContract.currentVersion,
+      constructionContract: napiContract.currentConstructionContract,
+    }
+  : napiContract;
+const selectedFacadeInput = current ? '-' : facadeInput;
 assert.equal(compiled, frozen.wasixInstall.nativeModules.length > 0);
 const root = mkdtempSync(
   path.join(process.env.TEST_TMPDIR ?? os.tmpdir(), 'installed-wasix-member-'),
@@ -109,7 +146,6 @@ try {
     );
     assert(frozen.wasixInstall.coreExportsRequired.length > 0);
     assert.deepEqual(frozen.wasixInstall.unresolvedImports, []);
-    const linkContract = JSON.parse(readFileSync(linkInput, 'utf8'));
     assert.equal(linkContract.sourceFingerprint, hostManifest['source-fingerprint']);
     assert.equal(linkContract.postgresVersion, hostManifest.runtime['postgres-version']);
     const link = linkContract.moduleLinkMetadata[spec.sqlName];
@@ -212,7 +248,7 @@ try {
       );
     }
   }
-  const addonArchive = realpathSync(addonInput);
+  const addonArchive = realpathSync(current ? currentAddonInput : addonInput);
   const addonEntries = readPortableArchiveEntries(addonArchive);
   const addonMember = (name: string) => {
     const entry = addonEntries.get(name);
@@ -224,17 +260,17 @@ try {
   const addonManifest = JSON.parse(addonMember('package/package.json').toString());
   let runtimeContract;
   if (napi.current) {
-    assert.equal(facadeInput, '-');
+    assert.equal(selectedFacadeInput, '-');
     assert.equal(addonTemplate.version, napi.version);
     runtimeContract = { ...addonTemplate.oliphaunt, packageLicense: addonTemplate.license };
   } else {
     const originalBytes = readFileSync(addonArchive);
     assert.equal(digest(originalBytes), napi.original.file.sha256);
     assert.equal(originalBytes.length, napi.original.file.size);
-    const facadeBytes = readFileSync(facadeInput);
+    const facadeBytes = readFileSync(selectedFacadeInput);
     assert.equal(digest(facadeBytes), napi.facade.file.sha256);
     assert.equal(facadeBytes.length, napi.facade.file.size);
-    const facadeEntries = readPortableArchiveEntries(realpathSync(facadeInput));
+    const facadeEntries = readPortableArchiveEntries(realpathSync(selectedFacadeInput));
     const facadePackage = facadeEntries.get('package/package.json');
     assert(facadePackage?.isFile && !facadePackage.isSymbolicLink);
     const facadeManifest = JSON.parse(facadePackage.data().toString());
@@ -267,12 +303,41 @@ try {
   );
   assertSingleWasixNapiAddonMember(addonEntries, 'package/prebuilds/oliphaunt_wasix_napi.node');
   const addonProvenance = JSON.parse(addonMember('package/artifact-provenance.json').toString());
-  const constructed = addonProvenance.schema === 'oliphaunt-wasix-napi-construction-data-v2';
-  if (!constructed) assert.equal(addonProvenance.schema, 'oliphaunt-wasix-napi-provenance-v1');
-  assert.equal(
-    addonProvenance.buildInputs.schema,
-    constructed ? 'oliphaunt-wasix-napi-build-inputs-v2' : 'oliphaunt-wasix-napi-build-inputs-v1',
-  );
+  const heldSource =
+    !napi.current && addonProvenance.schema === 'oliphaunt-wasix-napi-construction-data-v3';
+  const constructed =
+    napi.current ||
+    heldSource ||
+    addonProvenance.schema === 'oliphaunt-wasix-napi-construction-data-v2';
+  if (napi.current || heldSource) {
+    // Completed carriers retain their own historical SDK/extension contract;
+    // the original archive and facade identities were authenticated above.
+    const contract = heldSource
+      ? {
+          targetTriple: addonProvenance.buildInputs.targetTriple,
+          sdkVersion: addonProvenance.buildInputs.sdk.version,
+          sqlNames: addonProvenance.buildInputs.inputs.extensionArtifacts.flatMap((row: any) =>
+            row.portableArchives.map((member: any) => member.sqlName),
+          ),
+        }
+      : napi.constructionContract;
+    assert(contract, 'source addon requires its actual producer construction contract');
+    assertWasixNapiConstructionData(
+      addonProvenance,
+      napi.target.target,
+      digest(addonMember('package/prebuilds/oliphaunt_wasix_napi.node')),
+      {
+        ...contract,
+        runtimeVersion: addonManifest.oliphaunt.runtimeVersion,
+      },
+    );
+  } else {
+    if (!constructed) assert.equal(addonProvenance.schema, 'oliphaunt-wasix-napi-provenance-v1');
+    assert.equal(
+      addonProvenance.buildInputs.schema,
+      constructed ? 'oliphaunt-wasix-napi-build-inputs-v2' : 'oliphaunt-wasix-napi-build-inputs-v1',
+    );
+  }
   assert.equal(
     addonProvenance.buildInputs.inputs.portableManifest.sha256,
     digest(hostManifestBytes),

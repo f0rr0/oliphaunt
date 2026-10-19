@@ -1,10 +1,9 @@
 [package]
 name = "oliphaunt-pgwire-server"
 version = "0.2.1"
-workspace = "../node-addon"
-edition = "2024"
-rust-version = "1.93"
-license = "MIT"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "PostgreSQL socket server and CLI for embedded Oliphaunt databases."

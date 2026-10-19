@@ -42,6 +42,11 @@ export function defaultExtensionReleasePlan(products, selectedProducts, options 
   const buildBound = resolveBuildBoundCompatibilityProducts(products, options);
   const currentExactInputs = snapshotCurrentExactInputs(products, options.currentExactInputs);
   const selected = new Set(selectedProducts);
+  const currentContracts = new Set(
+    currentExactInputs
+      .filter(({ product, sourceProduct }) => selected.has(product) && selected.has(sourceProduct))
+      .map(({ product, sourceProduct }) => `${product}:${sourceProduct}`),
+  );
   const required = new Set(selected);
   const requirements = new Map();
   const extensions = Object.keys(products).filter(
@@ -74,8 +79,12 @@ export function defaultExtensionReleasePlan(products, selectedProducts, options 
   }
   const maximum = (versions) => versions.sort(Bun.semver.order).at(-1);
   for (const runtime of runtimes) {
+    const requiredCurrentHost = extensions.some((product) =>
+      currentContracts.has(`${product}:${runtime}`),
+    );
     const hosts = extensions.map((product) =>
-      selected.has(product) && buildBound.get(product).has(runtime)
+      (selected.has(product) && buildBound.get(product).has(runtime)) ||
+      currentContracts.has(`${product}:${runtime}`)
         ? products[runtime].version
         : pin(product, runtime),
     );
@@ -103,10 +112,17 @@ export function defaultExtensionReleasePlan(products, selectedProducts, options 
           !buildBound.get(product).has(runtime) &&
           readCompatibility(product, runtime, 'default-extension-release-plan', { ref: null }) !==
             target
-        )
-          throw new Error(
-            `default-extension-release-plan: ${product} retains a held ${runtime} requirement; update its conventional runtime requirement before targeting ${runtime}@${target}`,
-          );
+        ) {
+          // A proven missing ABI export can require a new exact default host.
+          // Propose the conventional requirements together; final qualification
+          // must still execute every affected carrier on that exact host.
+          if (requiredCurrentHost && target === products[runtime].version)
+            writeRequirement(product, runtime, target);
+          else
+            throw new Error(
+              `default-extension-release-plan: ${product} retains a held ${runtime} requirement; update its conventional runtime requirement before targeting ${runtime}@${target}`,
+            );
+        }
         if (pin(product, runtime) !== target || selected.has(product)) required.add(product);
       }
     }

@@ -20,7 +20,7 @@ const readManifest = (file: string) => Bun.TOML.parse(readFileSync(file, 'utf8')
 export function stageSourceServerQualification(root: string, directory: string) {
   const source = path.join(root, SERVER);
   const original = readManifest(path.join(source, 'Cargo.toml'));
-  const workspace = readManifest(path.resolve(source, original.package.workspace, 'Cargo.toml'));
+  const workspace = readManifest(path.join(root, 'Cargo.toml'));
   const manifest = resolveCargoWorkspaceInheritance(original, workspace.workspace);
   delete manifest.package.workspace;
   manifest.package.publish = false;

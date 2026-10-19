@@ -18,7 +18,7 @@ const manifest = require(`${packageName}/package.json`);
 const binary = require.resolve(`${packageName}/oliphaunt_wasix_napi.node`);
 const addon = require(binary);
 const provenance = require(`${packageName}/artifact-provenance.json`);
-assert.equal(provenance.schema, 'oliphaunt-wasix-napi-construction-data-v2');
+assert.equal(provenance.schema, 'oliphaunt-wasix-napi-construction-data-v3');
 assert(!Object.hasOwn(provenance, 'scope'));
 assert(!Object.hasOwn(manifest.oliphaunt, 'qualificationOnly'));
 assert.equal(

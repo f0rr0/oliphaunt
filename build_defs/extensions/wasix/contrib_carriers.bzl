@@ -2,8 +2,6 @@
 
 load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "EXTENSION_RELEASE_METADATA", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("@wasix_tool_metadata//:targets.bzl", "WASIX_AOT_TARGETS")
-load("@cargo_crates//:defs.bzl", _current_crate_deps = "crate_deps")
-load("@native_cargo_metadata//:cargo.bzl", _CURRENT_CARGO = "CARGO")
 load("//build_defs/extensions:contrib_carriers.bzl", "native_contrib_carrier_legal", "native_contrib_carrier_metadata")
 load("//build_defs/extensions:extensions.bzl", "extension_identity")
 load("//build_defs/extensions:final_leaf.bzl", "ExtensionFinalLeafInfo")
@@ -195,27 +193,6 @@ def wasix_contrib_extension_incremental_installed_test(name, **kwargs):
         tools_aot = "//src/wasix/postgres-tools:linux_x64_gnu_cargo",
         additional_helpers = ["//src/wasix/postgres-tools:tools/package-assets.mts", "//src/wasix/runtime:tools/package-release-assets.mts"] + RUNTIME_NPM_NOTICES.keys(),
         **kwargs)
-
-def wasix_contrib_server_crate_deps(names, package_name):
-    """Bind the constructed server variant to one current Cargo dependency graph."""
-    if package_name != "src/wasix/pgwire-server":
-        fail("contrib server dependency override belongs only to its source test owner")
-    dependencies = []
-    for name in names:
-        if name == "oliphaunt-wasix":
-            dependencies.append("//src/wasix/sdks/rust:extension_carrier_lib")
-        else:
-            labels = {}
-            for owner, facts in _CURRENT_CARGO.items():
-                declaration = (facts["dependencies"] | facts["dev_dependencies"]).get(name)
-                if declaration == None or (type(declaration) == "dict" and ("path" in declaration or declaration.get("optional", False))):
-                    continue
-                for label in _current_crate_deps([name], package_name = owner):
-                    labels[str(label)] = label
-            if len(labels) != 1:
-                fail("contrib server requires one current Cargo identity for " + name + ": " + str(labels.keys()))
-            dependencies += labels.values()
-    return dependencies
 
 def wasix_contrib_extension_shipping(name, carriers, qualification):
     """Expose canonical runtime-owned bundle Files through existing shipping rules."""

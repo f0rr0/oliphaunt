@@ -2,10 +2,7 @@ import assert from 'node:assert/strict';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {
-  assertWasixNapiCarrierManifest,
-  WASIX_NAPI_SOURCE_PATCH_MEMBER,
-} from '../../src/wasix/node-addon/tools/carrier-contract.mts';
+import { assertWasixNapiCarrierManifest } from '../../src/wasix/node-addon/tools/carrier-contract.mts';
 import {
   packageWasixNapiCarrier,
   WASIX_NAPI_BINARY,
@@ -23,7 +20,6 @@ export type WasixNapiCarrierSpec = {
   version: string;
   sdkVersion: string;
   sqlNames: string[];
-  sourcePatch: string;
   targetContract: Record<string, any>;
   binary: string;
   inputs: string;
@@ -63,7 +59,7 @@ export async function packageNativeWasixNapi(spec: WasixNapiCarrierSpec) {
     assert.equal(
       product.oliphaunt.runtimeVersion,
       layout.runtimeVersion,
-      'addon runtime pin differs from compiled held SDK',
+      'addon runtime pin differs from compiled source SDK',
     );
     const sourceRoot = path.join(scratch, 'source');
     for (const [member, input] of Object.entries(spec.notices))
@@ -96,7 +92,7 @@ export async function packageNativeWasixNapi(spec: WasixNapiCarrierSpec) {
       },
     );
     const provenance = {
-      schema: 'oliphaunt-wasix-napi-construction-data-v2',
+      schema: 'oliphaunt-wasix-napi-construction-data-v3',
       product: 'oliphaunt-wasix-napi',
       target: spec.target,
       build: {
@@ -137,7 +133,6 @@ export async function packageNativeWasixNapi(spec: WasixNapiCarrierSpec) {
       );
     const readme = path.join(scratch, 'README.md');
     copy(spec.readme, readme);
-    const patchIdentity = copy(spec.sourcePatch, path.join(scratch, 'source.patch'));
     const outputs = await packageWasixNapiCarrier({
       target: spec.target,
       manifest,
@@ -148,11 +143,6 @@ export async function packageNativeWasixNapi(spec: WasixNapiCarrierSpec) {
         sdkVersion: spec.sdkVersion,
         runtimeVersion: layout.runtimeVersion,
         sqlNames: spec.sqlNames,
-        sourcePatch: {
-          path: WASIX_NAPI_SOURCE_PATCH_MEMBER,
-          sha256: patchIdentity.sha256,
-          size: patchIdentity.size,
-        },
       },
       sourceRoot,
       readme,

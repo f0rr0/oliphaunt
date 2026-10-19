@@ -383,6 +383,7 @@ export async function acquireNativePublicationInputs(
     catalog.products.find(({ id }) => id === 'liboliphaunt-wasix')!.version,
   );
   const authoredProducts = loadProducts();
+  const wasixExtensions = loadReleaseMetadata(ROOT).wasixExtensions;
   const conventionalFiles = new Map<string, string>();
   const conventionalText = (file: string) => {
     if (!conventionalFiles.has(file))
@@ -404,6 +405,13 @@ export async function acquireNativePublicationInputs(
           const dependency = cargoCompatibilityDependency(entry, text);
           if (dependency?.path !== undefined) return [];
           let requestedCarrier = dependency ? `cargo:${dependency.packageName}` : undefined;
+          const extension = authoredProducts[entry.product].extension;
+          if (
+            entry.sourceProduct === 'liboliphaunt-wasix' &&
+            extension?.class === 'external' &&
+            typeof wasixExtensions[extension.sql_name]?.['native-module-file'] === 'string'
+          )
+            requestedCarrier = 'cargo:liboliphaunt-wasix-portable';
           if (entry.product === 'oliphaunt-wasix-ts') {
             if (entry.sourceProduct === 'liboliphaunt-wasix') {
               const names = authoredProducts[entry.sourceProduct].registry_packages.filter((name) =>
@@ -1308,18 +1316,23 @@ export async function acquireNativeReleaseArchives(
   }
 }
 
-/** Existing Apple producer composition owns the tuple used by the RN factory.
+/** Existing producer composition owns the tuple used by the selected factory.
  * This narrows construction acquisition, never release necessity or admission. */
 export function nativeConstructorProducerArtifacts(consumerProducts: string[]) {
-  assert.deepEqual(
-    consumerProducts,
-    ['oliphaunt-react-native'],
-    'native constructor bootstrap requires the canonical RN consumer',
+  const artifactByConsumer: Record<string, string> = {
+    'oliphaunt-react-native': 'native-build-evidence-mobile-ios',
+    'oliphaunt-wasix-napi': 'native-build-evidence-wasix-tools',
+    'oliphaunt-wasix-rust': 'native-build-evidence-wasix-tools',
+    'liboliphaunt-wasix-postmaster': 'native-build-evidence-postmaster-linux',
+  };
+  assert.ok(
+    consumerProducts.length === 1 && Object.hasOwn(artifactByConsumer, consumerProducts[0]),
+    'native constructor bootstrap requires one canonical consumer',
   );
   const roles = reviewedNativeProducerArtifacts().filter(
-    ({ artifactName }) => artifactName === 'native-build-evidence-mobile-ios',
+    ({ artifactName }) => artifactName === artifactByConsumer[consumerProducts[0]],
   );
-  assert.equal(roles.length, 1, 'source-owned Apple constructor role is absent');
+  assert.equal(roles.length, 1, 'source-owned constructor role is absent');
   return roles.map(({ artifactName }) => artifactName);
 }
 

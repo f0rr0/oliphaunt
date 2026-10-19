@@ -1869,6 +1869,16 @@ struct DeclaredExtensionLinkSpec {
     runtime: PathBuf,
     runtime_manifest: PathBuf,
     modules: Vec<DeclaredExtensionModule>,
+    candidate: Option<DeclaredExtensionRuntimeCandidate>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredExtensionRuntimeCandidate {
+    runtime: PathBuf,
+    runtime_manifest: PathBuf,
+    selected_runtime: PathBuf,
+    selected_runtime_manifest: PathBuf,
 }
 
 #[derive(serde::Deserialize)]
@@ -1877,6 +1887,34 @@ struct DeclaredExtensionModule {
     name: String,
     path: PathBuf,
     runtime_path: String,
+}
+
+fn declared_extension_runtime(
+    runtime: &Path,
+    manifest: &Path,
+) -> Result<(AssetManifestOut, WasmLinkMetadataOut)> {
+    let portable: AssetManifestOut = serde_json::from_slice(&fs::read(manifest)?)?;
+    ensure!(
+        portable.format_version == ASSET_MANIFEST_FORMAT_VERSION
+            && portable.runtime.runtime_kind == "wasix-dynamic-main"
+            && portable.source_lane.as_deref() == Some(DEFAULT_SOURCE_LANE),
+        "extension link requires its canonical portable runtime manifest"
+    );
+    portable
+        .source_fingerprint
+        .as_ref()
+        .context("extension core source fingerprint")?;
+    ensure_eq(
+        &sha256_file(runtime)?,
+        &portable.runtime.module_sha256,
+        "extension core module digest",
+    )?;
+    let link = read_wasm_link_metadata(runtime)?;
+    ensure!(
+        serde_json::to_value(&link)? == serde_json::to_value(&portable.runtime.link)?,
+        "extension core link metadata differs from its physical module"
+    );
+    Ok((portable, link))
 }
 
 /// Resolve one declared extension's physical side-module closure against its core.
@@ -1897,23 +1935,35 @@ pub(crate) fn generate_declared_extension_link(args: &[String]) -> Result<()> {
             && spec.modules.iter().all(|module| output != module.path),
         "extension link output must differ from its declared inputs"
     );
-    let portable: AssetManifestOut = serde_json::from_slice(&fs::read(&spec.runtime_manifest)?)?;
-    ensure!(
-        portable.format_version == ASSET_MANIFEST_FORMAT_VERSION
-            && portable.runtime.runtime_kind == "wasix-dynamic-main"
-            && portable.source_lane.as_deref() == Some(DEFAULT_SOURCE_LANE),
-        "extension link requires its canonical portable runtime manifest"
-    );
-    ensure_eq(
-        &sha256_file(&spec.runtime)?,
-        &portable.runtime.module_sha256,
-        "extension core module digest",
-    )?;
-    let runtime_link = read_wasm_link_metadata(&spec.runtime)?;
-    ensure!(
-        serde_json::to_value(&runtime_link)? == serde_json::to_value(&portable.runtime.link)?,
-        "extension core link metadata differs from its physical module"
-    );
+    if let Some(candidate) = &spec.candidate {
+        let inputs = [
+            &input,
+            &spec.runtime,
+            &spec.runtime_manifest,
+            &candidate.runtime,
+            &candidate.runtime_manifest,
+        ];
+        let outputs = [
+            &output,
+            &candidate.selected_runtime,
+            &candidate.selected_runtime_manifest,
+        ];
+        ensure!(
+            outputs.iter().copied().collect::<BTreeSet<_>>().len() == outputs.len()
+                && outputs.iter().all(|path| !inputs.contains(path)
+                    && spec.modules.iter().all(|module| *path != &module.path)),
+            "extension runtime selection outputs must differ from each other and all inputs"
+        );
+    }
+    let (portable, runtime_link) =
+        declared_extension_runtime(&spec.runtime, &spec.runtime_manifest)?;
+    let current = spec
+        .candidate
+        .as_ref()
+        .map(|candidate| {
+            declared_extension_runtime(&candidate.runtime, &candidate.runtime_manifest)
+        })
+        .transpose()?;
     let mut links = BTreeMap::new();
     let mut runtime_paths = BTreeSet::new();
     let mut native_modules = Vec::new();
@@ -1959,7 +2009,7 @@ pub(crate) fn generate_declared_extension_link(args: &[String]) -> Result<()> {
             .iter()
             .map(|module| (module.name.as_str(), module.path.as_path())),
     )?;
-    let mut required = BTreeSet::new();
+    let mut imports = Vec::new();
     for module in &spec.modules {
         let providers = side_module_provider_exports(&module.name, &links, &basenames)?;
         for import in &links[&module.name].imports {
@@ -1968,23 +2018,69 @@ pub(crate) fn generate_declared_extension_link(args: &[String]) -> Result<()> {
             {
                 continue;
             }
-            let name = resolved_wasm_export_name(import, &runtime_link.exports, "runtime")?
-                .ok_or_else(|| {
-                    anyhow!(
-                        "extension {} has unresolved import {}.{} ({})",
-                        module.name,
-                        import.module,
-                        import.name,
-                        import.kind
-                    )
-                })?;
-            required.insert(name);
+            imports.push((module.name.as_str(), import));
         }
     }
+    let resolve_imports = |runtime: &WasmLinkMetadataOut| -> Result<_> {
+        let mut required = BTreeSet::new();
+        let mut missing = Vec::new();
+        for (module, import) in &imports {
+            if let Some(name) = resolved_wasm_export_name(import, &runtime.exports, "runtime")? {
+                required.insert(name);
+            } else {
+                missing.push((*module, *import));
+            }
+        }
+        Ok((required, missing))
+    };
+    let (mut required, missing) = resolve_imports(&runtime_link)?;
+    let mut selected = (&portable, &spec.runtime, &spec.runtime_manifest);
+    if let Some((module, import)) = missing.first() {
+        let Some((candidate_portable, candidate_link)) = &current else {
+            bail!(
+                "extension {} has unresolved import {}.{} ({})",
+                module,
+                import.module,
+                import.name,
+                import.kind
+            );
+        };
+        let (candidate_required, candidate_missing) = resolve_imports(candidate_link)?;
+        if let Some((module, import)) = candidate_missing.first() {
+            bail!(
+                "extension {} has unresolved import {}.{} ({})",
+                module,
+                import.module,
+                import.name,
+                import.kind
+            );
+        }
+        required = candidate_required;
+        let candidate = spec
+            .candidate
+            .as_ref()
+            .expect("validated candidate runtime");
+        selected = (
+            candidate_portable,
+            &candidate.runtime,
+            &candidate.runtime_manifest,
+        );
+    }
     native_modules.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
-    let result = serde_json::json!({"schema": "oliphaunt-declared-wasix-extension-link-v1", "sqlName": spec.sql_name,
+    let mut result = serde_json::json!({"schema": "oliphaunt-declared-wasix-extension-link-v1", "sqlName": spec.sql_name,
         "nativeModules": native_modules, "coreExportsRequired": required, "unresolvedImports": [], "moduleLinkMetadata": links,
-        "sourceFingerprint": portable.source_fingerprint.context("extension core source fingerprint")?, "postgresVersion": portable.runtime.postgres_version});
+        "sourceFingerprint": selected.0.source_fingerprint.as_ref().context("extension core source fingerprint")?, "postgresVersion": selected.0.runtime.postgres_version});
+    if let Some(candidate) = &spec.candidate {
+        result["runtimeSelection"] = serde_json::json!({
+            "kind": if missing.is_empty() { "completed-publication" } else { "current-source" },
+            "declaredModuleSha256": portable.runtime.module_sha256,
+            "currentModuleSha256": current.as_ref().expect("validated candidate runtime").0.runtime.module_sha256,
+            "selectedModuleSha256": selected.0.runtime.module_sha256,
+            "missingExports": missing.iter().map(|(_, import)| &import.name).collect::<BTreeSet<_>>(),
+        });
+        fs::copy(selected.1, &candidate.selected_runtime)?;
+        fs::copy(selected.2, &candidate.selected_runtime_manifest)?;
+    }
     fs::write(
         output,
         format!("{}\n", serde_json::to_string_pretty(&result)?),
@@ -3497,6 +3593,7 @@ mod tests {
         generate_declared_extension_link(&args).unwrap();
         let first = fs::read(&output).unwrap();
         let result: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        assert!(result.get("runtimeSelection").is_none());
         assert_eq!(
             result["coreExportsRequired"],
             serde_json::json!(["backend"])
@@ -3560,6 +3657,195 @@ mod tests {
         fs::write(&manifest, serde_json::to_vec(&portable).unwrap()).unwrap();
         fs::write(&runtime, b"invalid core bytes").unwrap();
         assert!(generate_declared_extension_link(&args).is_err());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn declared_extension_link_prefers_published_and_selects_current_only_for_missing_exports() {
+        let directory = std::env::temp_dir().join(format!(
+            "oliphaunt-extension-runtime-selection-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let module = directory.join("plugin.so");
+        // The same function is imported directly and through GOT.func, matching
+        // callbacks taken by real side modules. Missing names must be unique.
+        fs::write(&module, b"\0asm\x01\0\0\0\0\x0f\x08dylink.0\x01\x04\0\0\0\0\x01\x04\x01\x60\0\0\x02\x23\x02\x03env\x07backend\0\0\x08GOT.func\x07backend\x03\x7f\x01\x07\x0a\x01\x06plugin\0\0").unwrap();
+        let core = b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0\x07\x0b\x01\x07backend\0\0\x0a\x04\x01\x02\0\x0b";
+        let declared = directory.join("declared.wasm");
+        let declared_manifest = directory.join("declared.json");
+        let current = directory.join("current.wasm");
+        let current_manifest = directory.join("current.json");
+        fs::write(&declared, core).unwrap();
+        let mut current_bytes = core.to_vec();
+        current_bytes.extend_from_slice(b"\0\x08\x07current");
+        fs::write(&current, &current_bytes).unwrap();
+        let write_manifest = |runtime: &Path, manifest: &Path, fingerprint: &str| {
+            let value = serde_json::json!({"format-version": ASSET_MANIFEST_FORMAT_VERSION, "source-lane": "stable", "source-fingerprint": fingerprint,
+                "runtime": {"archive": "oliphaunt.wasix.tar.zst", "sha256": "a".repeat(64), "module-sha256": sha256_file(runtime).unwrap(), "postgres-version": fingerprint, "runtime-kind": "wasix-dynamic-main", "link": read_wasm_link_metadata(runtime).unwrap()}, "runtime-support": [], "extensions": [], "sources": []});
+            fs::write(manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+        };
+        write_manifest(&declared, &declared_manifest, "18.4:declared");
+        write_manifest(&current, &current_manifest, "18.5:current");
+        let selected = directory.join("selected.wasm");
+        let selected_manifest = directory.join("selected.json");
+        let spec = directory.join("spec.json");
+        let output = directory.join("link.json");
+        let mut inputs = serde_json::json!({"sql_name": "plugin", "runtime": declared, "runtime_manifest": declared_manifest,
+            "modules": [{"name": "plugin", "path": module, "runtime_path": "lib/postgresql/plugin.so"}],
+            "candidate": {"runtime": current, "runtime_manifest": current_manifest, "selected_runtime": selected, "selected_runtime_manifest": selected_manifest}});
+        let args = [
+            "--spec".to_owned(),
+            spec.display().to_string(),
+            "--output".to_owned(),
+            output.display().to_string(),
+        ];
+        let run = |inputs: &serde_json::Value| {
+            fs::write(&spec, serde_json::to_vec(inputs).unwrap()).unwrap();
+            generate_declared_extension_link(&args)
+        };
+        let result = || -> serde_json::Value {
+            serde_json::from_slice(&fs::read(&output).unwrap()).unwrap()
+        };
+        run(&inputs).unwrap();
+        let published = result();
+        assert_eq!(
+            published["runtimeSelection"],
+            serde_json::json!({
+                "kind": "completed-publication", "declaredModuleSha256": sha256_file(&declared).unwrap(),
+                "currentModuleSha256": sha256_file(&current).unwrap(), "selectedModuleSha256": sha256_file(&declared).unwrap(), "missingExports": []
+            })
+        );
+        assert_ne!(
+            sha256_file(&declared).unwrap(),
+            sha256_file(&current).unwrap()
+        );
+        assert_eq!(published["sourceFingerprint"], "18.4:declared");
+        assert_eq!(published["postgresVersion"], "18.4:declared");
+        assert_eq!(fs::read(&selected).unwrap(), fs::read(&declared).unwrap());
+        assert_eq!(
+            fs::read(&selected_manifest).unwrap(),
+            fs::read(&declared_manifest).unwrap()
+        );
+
+        // Even an unused candidate must authenticate its physical bytes/link.
+        for (runtime, manifest) in [
+            (&declared, &declared_manifest),
+            (&current, &current_manifest),
+        ] {
+            let original = fs::read(manifest).unwrap();
+            let mut value: serde_json::Value = serde_json::from_slice(&original).unwrap();
+            for field in ["module-sha256", "link"] {
+                value["runtime"][field] = if field == "module-sha256" {
+                    serde_json::json!("0".repeat(64))
+                } else {
+                    serde_json::json!({})
+                };
+                fs::write(manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+                assert!(run(&inputs).is_err());
+                value = serde_json::from_slice(&original).unwrap();
+            }
+            fs::write(manifest, &original).unwrap();
+            let bytes = fs::read(runtime).unwrap();
+            fs::write(runtime, b"invalid core bytes").unwrap();
+            assert!(run(&inputs).is_err());
+            fs::write(runtime, bytes).unwrap();
+        }
+
+        let mut missing_core = core.to_vec();
+        let position = missing_core
+            .windows(7)
+            .position(|bytes| bytes == b"backend")
+            .unwrap();
+        missing_core[position..position + 7].copy_from_slice(b"legacy_");
+        fs::write(&declared, &missing_core).unwrap();
+        write_manifest(&declared, &declared_manifest, "18.4:declared");
+        run(&inputs).unwrap();
+        let needed = result();
+        assert_eq!(
+            needed["runtimeSelection"],
+            serde_json::json!({
+                "kind": "current-source", "declaredModuleSha256": sha256_file(&declared).unwrap(),
+                "currentModuleSha256": sha256_file(&current).unwrap(), "selectedModuleSha256": sha256_file(&current).unwrap(), "missingExports": ["backend"]
+            })
+        );
+        assert_eq!(
+            needed["coreExportsRequired"],
+            serde_json::json!(["backend"])
+        );
+        assert_eq!(needed["sourceFingerprint"], "18.5:current");
+        assert_eq!(needed["postgresVersion"], "18.5:current");
+        assert_eq!(fs::read(&selected).unwrap(), current_bytes);
+        assert_eq!(
+            fs::read(&selected_manifest).unwrap(),
+            fs::read(&current_manifest).unwrap()
+        );
+        // A candidate must also retain imports that the declared core supplied.
+        let original_module = fs::read(&module).unwrap();
+        fs::write(&module, b"\0asm\x01\0\0\0\0\x0f\x08dylink.0\x01\x04\0\0\0\0\x01\x04\x01\x60\0\0\x02\x31\x03\x03env\x07backend\0\0\x08GOT.func\x07backend\x03\x7f\x01\x03env\x07legacy_\0\0\x07\x0a\x01\x06plugin\0\0").unwrap();
+        assert!(
+            run(&inputs)
+                .unwrap_err()
+                .to_string()
+                .contains("unresolved import env.legacy_")
+        );
+        fs::write(&module, original_module).unwrap();
+        let mut strict = inputs.clone();
+        strict.as_object_mut().unwrap().remove("candidate");
+        // Link metadata orders GOT.func before env, so this is the first
+        // unresolved import even though both reference the same symbol.
+        assert!(
+            run(&strict)
+                .unwrap_err()
+                .to_string()
+                .contains("unresolved import GOT.func.backend (global)")
+        );
+
+        fs::write(&current, &missing_core).unwrap();
+        write_manifest(&current, &current_manifest, "18.5:current");
+        assert!(
+            run(&inputs)
+                .unwrap_err()
+                .to_string()
+                .contains("unresolved import GOT.func.backend (global)")
+        );
+
+        let wrong_kind =
+            b"\0asm\x01\0\0\0\x06\x06\x01\x7f\0\x41\0\x0b\x07\x0b\x01\x07backend\x03\0";
+        fs::write(&current, wrong_kind).unwrap();
+        write_manifest(&current, &current_manifest, "18.5:current");
+        assert!(
+            run(&inputs)
+                .unwrap_err()
+                .to_string()
+                .contains("expected func")
+        );
+        fs::write(&current, core).unwrap();
+        write_manifest(&current, &current_manifest, "18.5:current");
+        fs::write(&declared, wrong_kind).unwrap();
+        write_manifest(&declared, &declared_manifest, "18.4:declared");
+        assert!(
+            run(&inputs)
+                .unwrap_err()
+                .to_string()
+                .contains("expected func")
+        );
+
+        fs::write(&declared, core).unwrap();
+        write_manifest(&declared, &declared_manifest, "18.4:declared");
+        for collision in [
+            &spec,
+            &declared,
+            &declared_manifest,
+            &current,
+            &current_manifest,
+            &module,
+            &output,
+            &selected_manifest,
+        ] {
+            inputs["candidate"]["selected_runtime"] = serde_json::json!(collision);
+            assert!(run(&inputs).is_err(), "{}", collision.display());
+        }
         fs::remove_dir_all(directory).unwrap();
     }
 

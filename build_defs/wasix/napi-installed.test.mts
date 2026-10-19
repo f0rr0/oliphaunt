@@ -3,18 +3,14 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {
-  assertWasixNapiConstructionData,
-  WASIX_NAPI_SOURCE_PATCH_MEMBER,
-} from '../../src/wasix/node-addon/tools/carrier-contract.mts';
+import { assertWasixNapiConstructionData } from '../../src/wasix/node-addon/tools/carrier-contract.mts';
 import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
 } from '../../tools/packaging/portable-archive.mts';
 import { copyNativeInputFile } from '../../tools/release/native-file-identity.mts';
 
-const [archiveInput, lifecycle, node, consumer, productManifest, sourcePatch] =
-  process.argv.slice(2);
+const [archiveInput, lifecycle, node, consumer, productManifest] = process.argv.slice(2);
 const root = mkdtempSync(
   path.join(process.env.TEST_TMPDIR ?? os.tmpdir(), 'oliphaunt-installed-wasix-'),
 );
@@ -29,7 +25,6 @@ try {
   );
   const product = JSON.parse(readFileSync(productManifest, 'utf8'));
   const contract = JSON.parse(readFileSync(lifecycle, 'utf8'));
-  const patch = readFileSync(sourcePatch);
   const entries = readPortableArchiveEntries(archive);
   assert(
     [...entries.keys()].every((member) => member === 'package' || member.startsWith('package/')),
@@ -58,11 +53,6 @@ try {
       sdkVersion: contract.sdkVersion,
       runtimeVersion: product.oliphaunt.runtimeVersion,
       sqlNames: contract.lifecycles.map((row: any) => row.sqlName),
-      sourcePatch: {
-        path: WASIX_NAPI_SOURCE_PATCH_MEMBER,
-        sha256: createHash('sha256').update(patch).digest('hex'),
-        size: patch.length,
-      },
     },
   );
   assert(/^@oliphaunt\/wasix-napi-[a-z0-9-]+$/u.test(manifest.name));

@@ -500,26 +500,48 @@ export interface WasixCompiledCarrierSpec extends Omit<WasixSqlCarrierSpec, 'sql
 
 export function stageDeclaredWasixExtensionHost(spec: {
   version: string;
-  files: Record<string, string>;
+  archive: string;
   module: string;
   manifest: string;
 }) {
-  const cargo = Bun.TOML.parse(readFileSync(spec.files['Cargo.toml'], 'utf8'));
+  const entries = readPortableArchiveEntries(realpathSync(spec.archive), { format: 'tar.gz' });
+  const prefix = `liboliphaunt-wasix-portable-${spec.version}`;
+  const cargo = Bun.TOML.parse(hostArchiveMember(entries, `${prefix}/Cargo.toml`).toString('utf8'));
   assert.equal(cargo.package.name, 'liboliphaunt-wasix-portable');
   assert.equal(cargo.package.version, spec.version);
-  stageWasixExtensionHostPayload(spec);
+  stageWasixExtensionHostBytes(
+    spec,
+    hostArchiveMember(entries, `${prefix}/payload/manifest.json`),
+    hostArchiveMember(entries, `${prefix}/payload/oliphaunt.wasix.tar.zst`),
+  );
 }
 
-export function stageWasixExtensionHostPayload(spec: {
-  files: Record<string, string>;
+export function stageCurrentWasixExtensionHost(spec: {
+  archive: string;
   module: string;
   manifest: string;
 }) {
-  const manifest = JSON.parse(readFileSync(spec.files['payload/manifest.json'], 'utf8'));
+  const entries = readPortableArchiveEntries(realpathSync(spec.archive), { format: 'tar.zst' });
+  const member = (name: string) =>
+    hostArchiveMember(entries, `target/oliphaunt-wasix/assets/${name}`);
+  stageWasixExtensionHostBytes(spec, member('manifest.json'), member('oliphaunt.wasix.tar.zst'));
+}
+
+function hostArchiveMember(entries: ReturnType<typeof readPortableArchiveEntries>, name: string) {
+  const entry = entries.get(name);
+  assert(entry?.isFile && !entry.isSymbolicLink, 'host requires original regular archive members');
+  return Buffer.from(entry.data());
+}
+
+function stageWasixExtensionHostBytes(
+  spec: { module: string; manifest: string },
+  manifestBytes: Buffer,
+  bytes: Buffer,
+) {
+  const manifest = JSON.parse(manifestBytes.toString('utf8'));
   assert.equal(manifest['format-version'], 2);
   assert.equal(manifest['source-lane'], 'stable');
   assert.equal(manifest.runtime['runtime-kind'], 'wasix-dynamic-main');
-  const bytes = readFileSync(spec.files['payload/oliphaunt.wasix.tar.zst']);
   assert.equal(createHash('sha256').update(bytes).digest('hex'), manifest.runtime.sha256);
   const entry = readPortableTarZstdBufferEntries(bytes).get('oliphaunt/bin/postgres');
   assert(entry?.isFile && !entry.isSymbolicLink, 'declared host has no physical core module');
@@ -869,7 +891,7 @@ if (import.meta.main) {
   const [input, leaves] = process.argv.slice(2);
   const spec = JSON.parse(readFileSync(input, 'utf8'));
   if (spec.operation === 'host') stageDeclaredWasixExtensionHost(spec);
-  else if (spec.operation === 'current-host') stageWasixExtensionHostPayload(spec);
+  else if (spec.operation === 'current-host') stageCurrentWasixExtensionHost(spec);
   else if (spec.operation === 'compiled') {
     assert(leaves?.startsWith('--resource-files='));
     const inventory = readFileSync(leaves.slice('--resource-files='.length), 'utf8').trim();

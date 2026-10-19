@@ -28,18 +28,32 @@ import {
 } from '../release/github-read.mts';
 import {
   assertNativeBuildGithub,
+  type NativeBuildEvidence,
   type NativeBuildGithub,
   type NativeBuildSource,
+  nativeBuildEventIndex as indexNativeBep,
+  nativeBuildMetadata,
 } from '../release/native-build-qualification.mts';
 import { configuredRecipeGraph } from '../release/native-configured-inputs.mts';
 import { collectBazelRecordedSourceInputs } from './bazel-recorded-inputs.mts';
+import {
+  type NativeImportedRoot,
+  createNativeImportProjection,
+  isNativeImportSourceLabel,
+} from './native-import-projection.mts';
 
+type NativeOutputProjection = NativeImportedRoot & {
+  files: string[];
+  importedRoots?: NativeImportedRoot[];
+};
 export type ConfiguredCiProjection = {
   roots: { label: string; configuration: string }[];
   files: string[];
   trees: string[];
   directories: string[];
   analysisInputs: string[];
+  importedRoots?: NativeImportedRoot[];
+  nativeOutputs?: NativeOutputProjection[];
 };
 export type ConfiguredCiRequest = {
   schema: 'oliphaunt-ci-request-v1';
@@ -50,6 +64,7 @@ export type ConfiguredCiRequest = {
   source: NativeBuildSource;
   github: NativeBuildGithub;
   requires: string[];
+  fullOnly?: boolean;
   projection?: ConfiguredCiProjection;
 };
 export type ConfiguredCiBasis = {
@@ -69,7 +84,7 @@ export type ConfiguredCiPlan = {
   selected_jobs: string[];
   capture_requests: string[];
 };
-type RequestIdentity = { id: string; job: string; requires: string[] };
+type RequestIdentity = { id: string; job: string; requires: string[]; fullOnly?: boolean };
 type SourceChange = { path: string; kind: string; oldMode?: string; newMode?: string };
 const WORKFLOW = '.github/workflows/bazel.yml';
 const SHA = /^[a-f0-9]{40}$/u;
@@ -77,6 +92,32 @@ const CONFIG = /^[a-f0-9]{64}$/u;
 const ordered = (values: Iterable<string>) => [...new Set(values)].sort();
 const json = (file: string) => JSON.parse(readFileSync(file, 'utf8'));
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+const importedRootKey = (value: NativeImportedRoot) =>
+  JSON.stringify([
+    value.root,
+    value.configuration,
+    value.evidenceDigest,
+    value.invocationId,
+    value.output,
+  ]);
+const orderedImportedRoots = <T extends NativeImportedRoot>(values: T[]): T[] =>
+  [...new Map(values.map((value) => [importedRootKey(value), value])).entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([, value]) => value);
+const requestIdentity = ({ id, job, requires, fullOnly }: RequestIdentity) => ({
+  id,
+  job,
+  requires,
+  fullOnly: fullOnly === true,
+});
+
+function fullOnlyAnnotation(value: unknown) {
+  assert(
+    value === undefined || value === 'true' || value === 'false',
+    'CI full-only annotation is invalid',
+  );
+  return value === 'true';
+}
 
 function identity(value: string) {
   assert(
@@ -154,12 +195,15 @@ type CiSuccess = {
   source: NativeBuildSource;
   github: NativeBuildGithub;
   requires?: string[];
+  fullOnly?: boolean;
   outputDirectory: string;
   workspaceRoot?: string;
 };
 function successRecord(request: CiSuccess, mode: 'full' | 'source'): ConfiguredCiRequest {
   validSource(request.source);
   assertNativeBuildGithub(request.github);
+  const fullOnly = request.fullOnly ?? fullOnlyAnnotation(process.env.CI_FULL_ONLY);
+  assert(!fullOnly || mode === 'full', 'full-only CI request cannot emit a source receipt');
   return {
     schema: 'oliphaunt-ci-request-v1',
     id: identity(request.id),
@@ -169,6 +213,7 @@ function successRecord(request: CiSuccess, mode: 'full' | 'source'): ConfiguredC
     source: request.source,
     github: request.github,
     requires: ordered((request.requires ?? []).map(identity)),
+    ...(fullOnly ? { fullOnly: true } : {}),
   };
 }
 function writeReceipt(request: CiSuccess, record: ConfiguredCiRequest) {
@@ -192,6 +237,8 @@ export type ConfiguredCiCapture = CiSuccess & {
   /** Existing qualifier supplies the same post-build query after update-mode persistence. */
   configuredGraph?: unknown;
   recipeQueries?: RecipeQuery[];
+  /** Original serialized shipping packet produced by this qualifier invocation. */
+  nativeEvidence?: string;
 };
 
 /** Complete source-only projection; no action command lines or environments are serialized. */
@@ -259,12 +306,21 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
     sourceLock.equals(readFileSync(path.join(root, 'MODULE.bazel.lock'))),
     'CI projection changed the tracked module lock',
   );
-  const graph = configuredRecipeGraph(raw, roots, true);
+  const graph = configuredRecipeGraph(
+    raw,
+    roots,
+    true,
+    request.nativeEvidence
+      ? (name) => name.startsWith('//') || isNativeImportSourceLabel(name)
+      : undefined,
+  );
   const sources = new Set<string>();
+  const sourceLabels: string[] = [];
   const reachable = new Set(graph.labels);
   for (const entry of (raw as { results: any[] }).results) {
     const name = entry.target?.sourceFile?.name;
     if (typeof name !== 'string' || !reachable.has(canonicalShippingLabel(name))) continue;
+    if (isNativeImportSourceLabel(name)) sourceLabels.push(canonicalShippingLabel(name));
     const file = workspacePath(name);
     if (file !== undefined) sources.add(file);
   }
@@ -329,6 +385,130 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
     outputBase,
     repositories,
   });
+  const snapshotFile = process.env.OLIPHAUNT_NATIVE_PUBLICATION_INPUTS;
+  const wasixCargoInputs = request.configuration
+    .filter((flag) => flag.startsWith('--repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS='))
+    .map((flag) => flag.slice('--repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS='.length));
+  assert(wasixCargoInputs.length <= 1, 'CI WASIX Cargo input configuration is ambiguous');
+  const snapshot = snapshotFile ? json(snapshotFile) : { source: request.source };
+  const projectImports = createNativeImportProjection({
+    snapshot,
+    source: request.source,
+    executionRoot,
+    wasixCargoInputs: wasixCargoInputs[0],
+  });
+  const importScopes = new Map<string, NativeImportedRoot[]>();
+  const importsOf = (labels: string[]) => {
+    const external = ordered(labels.filter(isNativeImportSourceLabel));
+    const key = JSON.stringify(external);
+    if (!importScopes.has(key)) importScopes.set(key, projectImports(external));
+    return importScopes.get(key)!;
+  };
+  const importedRoots = graph.sourceRoots
+    ? orderedImportedRoots(graph.sourceRoots.flatMap((scope) => importsOf(scope.labels)))
+    : importsOf(sourceLabels);
+  const nativeOutputs: NativeOutputProjection[] = [];
+  if (request.nativeEvidence) {
+    const bytes = readFileSync(request.nativeEvidence);
+    const evidenceDigest = `sha256:${digest(bytes)}`;
+    const evidence = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+    ) as NativeBuildEvidence;
+    assert(
+      evidence.schema === 'oliphaunt-native-build-evidence-v1' &&
+        Array.isArray(evidence.cohorts) &&
+        evidence.cohorts.length,
+      'CI original native evidence schema differs',
+    );
+    assert.deepEqual(evidence.source, request.source, 'CI original native evidence source differs');
+    assert.deepEqual(
+      evidence.github,
+      request.github,
+      'CI original native evidence context differs',
+    );
+    const bazelVersion = readFileSync(path.join(root, '.bazelversion'), 'utf8').trim();
+    const metadata = nativeBuildMetadata(request.source, request.github);
+    for (const cohort of evidence.cohorts) {
+      const bep = indexNativeBep(cohort, bazelVersion, metadata);
+      for (const producingRoot of cohort.roots) {
+        const label = explicitTarget(producingRoot.label);
+        const configurations = cohort.rootConfigurations.filter(
+          (value) => explicitTarget(value.label) === label,
+        );
+        assert.equal(
+          configurations.length,
+          1,
+          'CI original native root configuration is ambiguous',
+        );
+        const configuration = configurations[0].configuration;
+        assert(
+          CONFIG.test(configuration) && bep.configs.has(configuration),
+          'CI original native root configuration is missing',
+        );
+        const completed = bep.completed.filter(
+          (value) =>
+            explicitTarget(value.label) === label &&
+            value.configuration === configuration &&
+            value.value.success === true,
+        );
+        assert.equal(completed.length, 1, 'CI original native root did not complete successfully');
+        const completedFiles = bep.filesOf(completed[0].value, 'default');
+        for (const output of producingRoot.package.outputs) {
+          assert(
+            roots.some((value) => value.label === label && value.configuration === configuration),
+            'CI original native evidence root is outside this request',
+          );
+          const scopes = graph.sourceRoots!.filter(
+            (scope) => scope.label === label && scope.configuration === configuration,
+          );
+          assert.equal(
+            scopes.length,
+            1,
+            'CI original native evidence lacks its configured source scope',
+          );
+          sourcePath(output.path);
+          const captures = cohort.outputs.filter((value) => value.path === output.path);
+          assert.equal(
+            captures.length,
+            1,
+            'CI original native output capture is missing or ambiguous',
+          );
+          const members = captures[0].members.filter((member) => member.type === 'file');
+          assert(members.length, 'CI original native output has no completed File');
+          for (const member of members) {
+            const file = member.path ? `${output.path}/${sourcePath(member.path)}` : output.path;
+            assert(
+              /^[a-f0-9]{64}$/u.test(member.sha256) &&
+                Number.isSafeInteger(member.size) &&
+                member.size >= 0,
+              'CI original native output File identity is invalid',
+            );
+            assert.deepEqual(
+              completedFiles.get(file),
+              { size: member.size, sha256: member.sha256 },
+              'CI original native output File is absent from its completion',
+            );
+          }
+          const imports = importsOf(scopes[0].labels);
+          nativeOutputs.push({
+            root: label,
+            configuration,
+            evidenceDigest,
+            invocationId: bep.invocationId,
+            output: output.path,
+            files: ordered([
+              ...recorded.files,
+              ...scopes[0].labels.flatMap((name) => {
+                const file = workspacePath(name);
+                return file === undefined ? [] : [file];
+              }),
+            ]),
+            ...(imports.length ? { importedRoots: imports } : {}),
+          });
+        }
+      }
+    }
+  }
   const record = successRecord(request, 'full');
   record.projection = {
     roots,
@@ -336,6 +516,8 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
     trees: recorded.trees,
     directories: recorded.directories,
     analysisInputs,
+    ...(importedRoots.length ? { importedRoots } : {}),
+    ...(nativeOutputs.length ? { nativeOutputs: orderedImportedRoots(nativeOutputs) } : {}),
   };
   return writeReceipt(request, record);
 }
@@ -349,6 +531,10 @@ function validateRequest(record: ConfiguredCiRequest, full: boolean) {
   );
   identity(record.id);
   identity(record.job);
+  assert(
+    record.fullOnly === undefined || typeof record.fullOnly === 'boolean',
+    'CI full-only policy is invalid',
+  );
   validSource(record.source);
   assertNativeBuildGithub(record.github);
   assert(
@@ -378,6 +564,101 @@ function validateRequest(record: ConfiguredCiRequest, full: boolean) {
       ),
     'CI projection roots are missing',
   );
+  const validateRoots = (values: NativeImportedRoot[]) => {
+    assert(Array.isArray(values), 'CI native source lineage is malformed');
+    for (const value of values) {
+      assert.deepEqual(Object.keys(value).sort(), [
+        'configuration',
+        'evidenceDigest',
+        'invocationId',
+        'output',
+        'root',
+      ]);
+      explicitTarget(value.root);
+      assert(CONFIG.test(value.configuration), 'CI native source lineage configuration is invalid');
+      assert(
+        /^sha256:[a-f0-9]{64}$/u.test(value.evidenceDigest),
+        'CI native source lineage evidence is invalid',
+      );
+      assert(
+        typeof value.invocationId === 'string' &&
+          value.invocationId.length &&
+          !/[\u0000-\u001f\u007f]/u.test(value.invocationId),
+        'CI native source lineage invocation is invalid',
+      );
+      sourcePath(value.output);
+    }
+    assert.deepEqual(values, orderedImportedRoots(values), 'CI native source lineage is ambiguous');
+  };
+  for (const field of ['importedRoots', 'nativeOutputs'] as const) {
+    const values = record.projection[field];
+    if (values === undefined) continue;
+    assert(Array.isArray(values), 'CI native source lineage is malformed');
+    if (field === 'importedRoots') validateRoots(values);
+    else
+      for (const value of record.projection.nativeOutputs!) {
+        const { files, importedRoots, ...proof } = value;
+        validateRoots([proof]);
+        assert(Array.isArray(files), 'CI native producer source scope is missing');
+        assert.deepEqual(
+          files,
+          ordered(files.map((file) => sourcePath(file))),
+          'CI native producer source scope is malformed',
+        );
+        if (importedRoots !== undefined) validateRoots(importedRoots);
+        assert(
+          record.projection.roots.some(
+            (root) => root.label === value.root && root.configuration === value.configuration,
+          ),
+          'CI native producer proof root is outside this request',
+        );
+      }
+    assert.deepEqual(values, orderedImportedRoots(values), 'CI native source lineage is ambiguous');
+  }
+}
+
+/** Join semantic source inputs through exact original producer proofs, never transport prerequisites. */
+export function joinConfiguredCiProjections(
+  records: ConfiguredCiRequest[],
+  source: NativeBuildSource,
+) {
+  const producers = new Map<
+    string,
+    { record: ConfiguredCiRequest; output: NativeOutputProjection }[]
+  >();
+  for (const record of records) {
+    validateRequest(record, true);
+    assert.deepEqual(record.source, source, 'CI native source lineage producer source differs');
+    for (const proof of record.projection!.nativeOutputs ?? []) {
+      const key = importedRootKey(proof);
+      producers.set(key, [...(producers.get(key) ?? []), { record, output: proof }]);
+    }
+  }
+  type Inputs = Pick<ConfiguredCiProjection, 'files' | 'trees' | 'directories' | 'analysisInputs'>;
+  const resolved = new Map<object, Inputs>();
+  const active = new Set<object>();
+  const visit = (record: ConfiguredCiRequest, output?: NativeOutputProjection): Inputs => {
+    const projection = record.projection!;
+    const scope = output ?? projection;
+    if (resolved.has(scope)) return resolved.get(scope)!;
+    assert(!active.has(scope), 'cycle in CI native source lineage');
+    active.add(scope);
+    const inherited = (scope.importedRoots ?? []).map((proof) => {
+      const matches = producers.get(importedRootKey(proof)) ?? [];
+      assert.equal(matches.length, 1, 'CI native source lineage lacks one exact original producer');
+      return visit(matches[0].record, matches[0].output);
+    });
+    const joined: Inputs = { ...projection, files: scope.files };
+    for (const field of ['files', 'trees', 'directories', 'analysisInputs'] as const)
+      joined[field] = ordered([joined, ...inherited].flatMap((value) => value[field]));
+    active.delete(scope);
+    resolved.set(scope, joined);
+    return joined;
+  };
+  return records.map((record) => ({
+    ...record,
+    projection: { ...record.projection!, ...visit(record) },
+  }));
 }
 function requestClosure(requests: RequestIdentity[], selected: Iterable<string>) {
   const byId = new Map(requests.map((value) => [identity(value.id), value]));
@@ -452,24 +733,24 @@ export function selectConfiguredCiRequests(args: {
     )
   )
     return full();
+  let projections: ConfiguredCiRequest[];
   try {
     assert(basis.schema === 'oliphaunt-ci-basis-v1', 'CI basis schema differs');
     validSource(basis.source);
     assert(Array.isArray(basis.controllerInputs), 'CI basis controller context is missing');
     assert.deepEqual(
-      basis.requests
-        .map(({ id, job, requires }) => ({ id, job, requires }))
-        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
-      [...inventory].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+      basis.requests.map(requestIdentity).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+      inventory.map(requestIdentity).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
       'CI basis request inventory differs',
     );
-    for (const request of basis.requests) validateRequest(request, true);
+    projections = joinConfiguredCiProjections(basis.requests, basis.source);
   } catch {
     return full();
   }
   if (args.changes.some((change) => basis.controllerInputs.includes(change.path))) return full();
   const changed = args.changes.map((value) => sourcePath(value.path));
-  const selected = basis.requests
+  const selected = projections
+    .filter((request) => !request.fullOnly)
     .filter((request) => {
       const scope = request.projection!;
       const files = new Set([...scope.files, ...scope.analysisInputs]);
@@ -481,6 +762,8 @@ export function selectConfiguredCiRequests(args: {
     })
     .map((value) => value.id);
   const closed = requestClosure(inventory, selected);
+  if (inventory.some((request) => request.fullOnly && closed.selected.includes(request.id)))
+    return full();
   const selectedSet = new Set(closed.selected);
   return {
     schema: 'oliphaunt-ci-plan-v1',
@@ -516,6 +799,7 @@ export function configuredCiWorkflowInventory(workflow: any) {
         const declared = JSON.parse(substitute(annotation));
         const ids = Array.isArray(declared) ? declared : (declared[matrixValue] ?? []);
         const requires = JSON.parse(substitute(step.env?.CI_REQUIRES ?? '[]'));
+        const fullOnly = fullOnlyAnnotation(step.env?.CI_FULL_ONLY);
         assert(
           Array.isArray(ids) && Array.isArray(requires),
           'CI workflow request annotation is missing',
@@ -525,6 +809,7 @@ export function configuredCiWorkflowInventory(workflow: any) {
             id: identity(id),
             job: identity(jobKey),
             requires: ordered(requires.map(identity)),
+            ...(fullOnly ? { fullOnly: true } : {}),
           });
       }
     }
@@ -562,6 +847,12 @@ export function verifyConfiguredCiResults(
       declared.requires,
       'CI request receipt transport prerequisites differ',
     );
+    assert.equal(
+      record.fullOnly === true,
+      declared.fullOnly === true,
+      'CI request receipt full-only policy differs',
+    );
+    assert(plan.mode === 'full' || !declared.fullOnly, 'source CI selected a full-only request');
     assert.deepEqual(record.source, plan.source, 'CI request receipt source differs');
     for (const key of ['repository', 'workflow', 'workflowPath', 'runId'] as const)
       assert(record.github[key] === github[key], 'CI request receipt producer context differs');
@@ -570,6 +861,7 @@ export function verifyConfiguredCiResults(
       'CI request receipt producer attempt is newer than the observer',
     );
   }
+  if (plan.mode === 'full') joinConfiguredCiProjections(records, plan.source);
 }
 
 /** Recompute selected work and every omission from the same transported admitted basis. */
@@ -715,6 +1007,7 @@ function basisIdentity(basis: ConfiguredCiBasis, run: any, jobs: any[], root: st
     );
   }
   requestClosure(basis.requests, []);
+  joinConfiguredCiProjections(basis.requests, basis.source);
 }
 
 /** Only the immutable artifact of an authenticated successful full main run is a basis. */

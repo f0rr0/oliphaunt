@@ -103,6 +103,62 @@ test('native AOT hosts consume source-bound side-module and tools inputs and sta
   assert.deepEqual(filtered, [{ ...cohort, source, roots: expected }]);
 });
 
+test('NAPI shipping shares the Linux WASIX producer and imported native host lanes', () => {
+  const name = 'Qualify final WASIX addon on its native host';
+  assert.ok(!jobs.portable.steps.some((step: any) => step.name === name));
+  const producer = jobs.wasix.steps.find((step: any) =>
+    step.run?.includes('--shipping-export //:wasix_shipping_export'),
+  );
+  assert.equal(producer.env.CI_REQUEST_ID, 'wasix/tools-sdk-browser');
+  const root = readFileSync(path.resolve(import.meta.dir, '../../BUILD.bazel'), 'utf8');
+  const wasix = root.match(/shipping_export\(\s*name = "wasix_shipping_export",([\s\S]*?)\n\)/u);
+  assert.ok(wasix, 'missing actual WASIX shipping export');
+  assert.ok(wasix[1].includes('"//src/wasix/node-addon:release_shipping_export"'));
+  assert.ok(wasix[1].includes('"//src/wasix/sdks/rust:napi_release_compiled_shipping_export"'));
+  assert.ok(wasix[1].includes('"//src/wasix/pgwire-server:napi_release_compiled_shipping_export"'));
+  const combined = root.match(
+    /shipping_export\(\s*name = "wasix_napi_shipping_export",([\s\S]*?)\n\)/u,
+  );
+  assert.ok(combined, 'missing combined NAPI and compiled SDK export');
+  assert.ok(combined[1].includes('"//src/wasix/node-addon:release_shipping_export"'));
+  assert.ok(combined[1].includes('"//src/wasix/sdks/rust:napi_release_compiled_shipping_export"'));
+  assert.ok(
+    combined[1].includes('"//src/wasix/pgwire-server:napi_release_compiled_shipping_export"'),
+  );
+  const host = jobs['wasix-host'].steps.find((step: any) => step.name === name);
+  assert.ok(host, 'imported host NAPI qualification is missing');
+  assert.equal(host.env.CI_REQUEST_ID, 'wasix-host/${{ matrix.platform }}/napi');
+  assert.deepEqual(JSON.parse(host.env.CI_REQUIRES), ['wasix/tools-sdk-browser']);
+  assert.deepEqual(
+    JSON.parse(workflow.env.CI_FULL_MATRICES)
+      ['wasix-host'].map((row: any) => row.platform)
+      .sort(),
+    ['linux-arm64', 'macos-arm64', 'windows-x64'],
+  );
+  const authentication = jobs['wasix-host'].steps.find(
+    (step: any) => step.name === 'Authenticate current WASIX constructor inputs',
+  );
+  assert.ok(authentication, 'missing authenticated current WASIX constructor inputs');
+  assert.ok(authentication.run.includes(`jq -nc '["oliphaunt-wasix-rust"]'`));
+  assert.ok(
+    authentication.run.includes('--consumer-products-json "$input_root/consumer-products.json"'),
+  );
+  assert.ok(authentication.run.includes('--stage-release-archives --run-id "$GITHUB_RUN_ID"'));
+  assert.ok(authentication.run.includes('with-source.sh HEAD'));
+  assert.ok(authentication.if.includes('needs.release-inputs.outputs.ci_selected_jobs'));
+  assert.ok(authentication.if.includes("format('wasix-host/{0}', matrix.platform)"));
+  assert.equal(authentication['continue-on-error'], undefined);
+  for (const consumer of [
+    host,
+    jobs['wasix-host'].steps.find(
+      (step: any) => step.name === 'Qualify imported AOT runtime on its native host',
+    ),
+  ])
+    assert.ok(
+      jobs['wasix-host'].steps.indexOf(authentication) < jobs['wasix-host'].steps.indexOf(consumer),
+    );
+});
+
 test('native package consumers follow their producers and remain required for admission', () => {
   for (const id of Object.keys(jobs)) predecessors(id);
   assert.ok(predecessors('react-native').has('portable'));
@@ -166,21 +222,28 @@ test('native package consumers follow their producers and remain required for ad
       new RegExp(`shipping_export\\(\\n\\s*name = "${owner}",\\n([\\s\\S]*?)\\n\\)`, 'u'),
     );
     assert.ok(declaration, `Missing source-owned shipping export: ${owner}`);
-    return new Set([...declaration[1].matchAll(/"(\/\/[^"\n]+)"/gu)].map((row) => row[1]));
+    return new Set([...declaration[1].matchAll(/"((?:\/\/|:)[^"\n]+)"/gu)].map((row) => row[1]));
   };
   const early = exports('native_shipping_export');
+  const publicSource = exports('public_source_shipping_export');
   const family = exports('release_family_shipping_export');
-  for (const owner of [
+  const sourceOwners = [
     '//src/native/rust-bindings:shipping_export',
     '//src/native/sdks/rust:shipping_export',
     '//src/native/sdks/rust/crates/oliphaunt-build:shipping_export',
     '//src/native/broker:shipping_export',
-  ]) {
+  ];
+  assert.deepEqual([...publicSource].sort(), [...sourceOwners].sort());
+  assert.ok(family.has(':public_source_shipping_export'));
+  for (const owner of sourceOwners) {
     assert.ok(
       !early.has(owner),
-      `Cargo installed consumer requested before all carriers: ${owner}`,
+      `Cargo source owner escaped its separate source qualification: ${owner}`,
     );
-    assert.ok(family.has(owner), `Cargo source owner lost its final qualification: ${owner}`);
+    assert.ok(
+      !family.has(owner),
+      `Cargo source export was duplicated in its full aggregate: ${owner}`,
+    );
   }
   for (const producer of [
     'portable',
@@ -188,6 +251,7 @@ test('native package consumers follow their producers and remain required for ad
     'wasix',
     'postmaster',
     'postmaster-host',
+    'wasix-host',
     'release-inputs',
   ])
     assert.ok(predecessors('release-families').has(producer));
@@ -204,25 +268,127 @@ test('native package consumers follow their producers and remain required for ad
     assert.ok(!commands.includes('//build_defs/languages/installed:consumer_test'));
     assert.ok(!commands.includes('//build_defs/languages/installed:consumer_minimum_test'));
   }
-  qualifierFixture((directory, env) => {
-    const step = jobs['release-families'].steps.find((step: any) =>
-      step.run?.includes('--shipping-export //:release_family_shipping_export'),
+  const sourceStep = jobs['release-families'].steps.find((step: any) =>
+    step.run?.includes('--shipping-export //:public_source_shipping_export'),
+  );
+  const familyStep = jobs['release-families'].steps.find((step: any) =>
+    step.run?.includes('--shipping-export //:release_family_shipping_export'),
+  );
+  assert.equal(sourceStep.env.CI_REQUEST_ID, 'release-families/public-source');
+  assert.equal(sourceStep.env.CI_REQUIRES, undefined);
+  assert.equal(sourceStep.env.CI_FULL_ONLY, undefined);
+  assert.ok(!sourceStep.run.includes('OLIPHAUNT_NATIVE_RELEASE_ARCHIVES'));
+  assert.equal(familyStep.env.CI_REQUEST_ID, 'release-families/checksums');
+  assert.equal(familyStep.env.CI_FULL_ONLY, 'true');
+  assert.equal(JSON.parse(familyStep.env.CI_REQUIRES).length, 13);
+  for (const mode of ['source', 'full'])
+    qualifierFixture((directory, env) => {
+      const execute = (step: any, shippingExport: string) => {
+        const result = spawnSync('bash', ['-eu', '-c', step.run], {
+          cwd: directory,
+          env: {
+            ...requestEnvironment(step, env, 'x86_64'),
+            CI_REQUEST_JOB: 'release-families',
+            CI_MODE: mode,
+          },
+        });
+        assert.equal(result.status, 0, result.stderr.toString());
+        const args = readFileSync(env.QUALIFIER_ARGS, 'utf8').split('\0');
+        const argument = (flag: string) => args[args.indexOf(flag) + 1];
+        assert.equal(argument('--shipping-export'), shippingExport);
+        assert.equal(argument('--ci-request-id'), step.env.CI_REQUEST_ID);
+        assert.equal(argument('--ci-job'), 'release-families');
+        assert.equal(argument('--ci-mode'), mode);
+        assert.equal(
+          JSON.parse(readFileSync(argument('--github-json'), 'utf8')).job,
+          'Native release families',
+        );
+        assert.deepEqual(
+          JSON.parse(readFileSync(argument('--ci-requires-json'), 'utf8')),
+          JSON.parse(step.env.CI_REQUIRES ?? '[]'),
+        );
+        assert.ok(
+          existsSync(
+            path.join(env.RUNNER_TEMP, 'ci-requests', step.env.CI_REQUEST_ID, 'ci-request.json'),
+          ),
+        );
+        return JSON.parse(readFileSync(argument('--configuration-json'), 'utf8')) as string[];
+      };
+      const configuration = execute(sourceStep, '//:public_source_shipping_export');
+      assert.deepEqual(configuration, [
+        '-c',
+        'opt',
+        '--platforms=//build_defs/native:linux_x86_64_glibc_2_28',
+        '--host_platform=//build_defs/native:linux_x86_64_glibc_2_28',
+        '--jobs=2',
+      ]);
+      if (mode === 'full') {
+        const complete = execute(familyStep, '//:release_family_shipping_export');
+        assert.deepEqual(complete.slice(0, -1), configuration);
+        assert.equal(
+          complete.at(-1),
+          `--repo_env=OLIPHAUNT_NATIVE_RELEASE_ARCHIVES=${directory}/target/native-release-archive-inputs`,
+        );
+        assert.ok(
+          existsSync(
+            path.join(
+              env.RUNNER_TEMP,
+              'ci-requests/release-families/public-source/ci-request.json',
+            ),
+          ),
+        );
+      }
+    });
+});
+
+test('release-family archive acquisition is full-only while source qualification permits unrelated skipped jobs', () => {
+  const family = jobs['release-families'];
+  const acquisition = family.steps.find(
+    (step: any) => step.name === "Authenticate this run's completed archive producers",
+  );
+  const aggregate = family.steps.find(
+    (step: any) => step.env?.CI_REQUEST_ID === 'release-families/checksums',
+  );
+  const evidence = family.steps.filter((step: any) =>
+    step.with?.name?.startsWith('native-build-evidence-'),
+  );
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0].with.name, 'native-build-evidence-release-families');
+  assert.equal(evidence[0].with.path, '${{ runner.temp }}/release-family-build-capture/evidence/');
+  const evaluate = (expression: string, mode: string, requests: string[], results: string[]) =>
+    runInNewContext(
+      expression
+        .replace(/^\$\{\{\s*|\s*\}\}$/gu, '')
+        .replaceAll('needs.release-inputs', 'inputs')
+        .replaceAll('needs.*.result', 'results'),
+      {
+        inputs: {
+          result: 'success',
+          outputs: {
+            ci_mode: mode,
+            ci_selected_requests: JSON.stringify(requests),
+            ci_selected_jobs: JSON.stringify(requests.length ? ['release-families'] : []),
+          },
+        },
+        results,
+        env: aggregate.env,
+        cancelled: () => false,
+        contains: (values: string[], value: string) => values.includes(value),
+        fromJSON: JSON.parse,
+      },
     );
-    const result = spawnSync('bash', ['-eu', '-c', step.run], { cwd: directory, env });
-    assert.equal(result.status, 0, result.stderr.toString());
-    const args = readFileSync(env.QUALIFIER_ARGS, 'utf8').split('\0');
-    assert.equal(args[args.indexOf('--shipping-export') + 1], '//:release_family_shipping_export');
-    const configuration = JSON.parse(
-      readFileSync(
-        path.join(env.RUNNER_TEMP, 'release-family-build-inputs/configuration.json'),
-        'utf8',
-      ),
-    );
-    assert.ok(configuration.includes('--platforms=//build_defs/native:linux_x86_64_glibc_2_28'));
-    assert.ok(
-      configuration.includes('--host_platform=//build_defs/native:linux_x86_64_glibc_2_28'),
-    );
-  });
+  const source = ['release-families/public-source'];
+  const full = [...source, 'release-families/checksums'];
+  assert.equal(evaluate(family.if, 'source', source, ['success', 'skipped']), true);
+  for (const result of ['failure', 'cancelled'])
+    assert.equal(evaluate(family.if, 'source', source, ['success', result]), false);
+  assert.equal(evaluate(family.if, 'source', [], ['success', 'skipped']), false);
+  for (const step of [acquisition, aggregate, evidence[0]]) {
+    assert.equal(evaluate(step.if, 'source', source, ['success', 'skipped']), false);
+    assert.equal(evaluate(step.if, 'source', full, ['success']), false);
+    assert.equal(evaluate(step.if, 'full', source, ['success']), false);
+    assert.equal(evaluate(step.if, 'full', full, ['success']), true);
+  }
 });
 
 test('WASIX probes share the complete opt qualification invocation', () => {
@@ -760,32 +926,72 @@ test('postmaster host scheduling keeps native tests serial and Linux guest input
   const step = job.steps.find(
     (step: any) => step.name === 'Qualify native carrier from authenticated Linux guest',
   );
-  const start = step.run.indexOf('jq -nc --arg compiler "$TARGET_COMPILER"');
-  const end = step.run.indexOf('jq -nc --arg prefix "$TARGET_PREFIX"', start);
-  assert.ok(start >= 0 && end > start, 'Missing actual host configuration generator');
+  const authentication = job.steps.find(
+    (step: any) => step.name === 'Authenticate current Linux postmaster constructor inputs',
+  );
+  assert.ok(authentication, 'missing authenticated current Linux postmaster constructor inputs');
+  assert.ok(authentication.run.includes(`'["liboliphaunt-wasix-postmaster"]'`));
+  assert.ok(authentication.run.includes('with-source.sh HEAD'));
+  assert.ok(authentication.run.includes('--stage-release-archives --run-id "$GITHUB_RUN_ID"'));
+  assert.ok(authentication.run.includes('--ref "$GITHUB_REF"'));
+  assert.ok(
+    authentication.run.includes('--consumer-products-json "$input_root/consumer-products.json"'),
+  );
+  assert.ok(authentication.if.includes('needs.release-inputs.outputs.ci_selected_requests'));
+  assert.ok(
+    authentication.if.includes("format('postmaster-host/{0}/carrier-lifecycle', matrix.platform)"),
+  );
+  assert.equal(authentication['continue-on-error'], undefined);
+  assert.ok(job.steps.indexOf(authentication) < job.steps.indexOf(step));
+  assert.ok(
+    !job.steps.some((candidate: any) => candidate.uses?.startsWith('actions/download-artifact@')),
+  );
+  assert.ok(!step.run.includes('native-build-files'));
+  assert.deepEqual(JSON.parse(step.env.CI_REQUIRES), ['postmaster/linux-carrier-lifecycle']);
+  const start = step.run.indexOf('archive="$(jq');
+  const end = step.run.indexOf('ci_arguments=(', start);
+  assert.ok(start >= 0 && end > start, 'Missing actual archive and host configuration selection');
   qualifierFixture((directory, env) => {
     const inputRoot = path.join(directory, 'host inputs');
     mkdirSync(inputRoot);
-    for (const platform of ['macos-arm64', 'linux-arm64']) {
-      const compiler =
-        platform === 'macos-arm64'
-          ? '//src/wasix/postmaster:native_macos_arm64'
-          : '//src/wasix/postmaster:compiler_linux_arm64';
-      const archive = path.join(directory, 'original-linux-x64-gnu.tar.zst');
-      const result = spawnSync(
+    const snapshot = path.join(inputRoot, 'native-publication-inputs.json');
+    const archive = path.join(directory, 'original-linux-x64-gnu.tar.zst');
+    const canonical = {
+      product: 'liboliphaunt-wasix-postmaster',
+      artifact: 'github-release:postmaster:postmaster-linux-x64-gnu.tar.zst',
+      file: { path: archive },
+    };
+    const artifacts = [
+      { ...canonical, product: 'another-product' },
+      { ...canonical, artifact: 'github-release:postmaster:postmaster-macos-arm64.tar.zst' },
+      { ...canonical, artifact: 'untrusted:postmaster:postmaster-linux-x64-gnu.tar.zst' },
+      canonical,
+    ];
+    const execute = (platform: string, compiler: string, prefix: string, current = artifacts) => {
+      writeFileSync(snapshot, JSON.stringify({ nativeCurrentArtifacts: current }));
+      return spawnSync(
         'bash',
         ['-eu', '-c', `input_root="$HOST_INPUT_ROOT"\n${step.run.slice(start, end)}`],
         {
           cwd: directory,
           env: {
-            ...env,
+            ...requestEnvironment(step, env, platform),
             HOST_INPUT_ROOT: inputRoot,
+            OLIPHAUNT_NATIVE_PUBLICATION_INPUTS: snapshot,
             TARGET_PLATFORM: platform,
             TARGET_COMPILER: compiler,
-            archive,
+            TARGET_PREFIX: prefix,
           },
         },
       );
+    };
+    for (const platform of ['macos-arm64', 'linux-arm64']) {
+      const compiler =
+        platform === 'macos-arm64'
+          ? '//src/wasix/postmaster:native_macos_arm64'
+          : '//src/wasix/postmaster:compiler_linux_arm64';
+      const prefix = platform === 'macos-arm64' ? 'macos_arm64' : 'linux_arm64_gnu';
+      const result = execute(platform, compiler, prefix);
       assert.equal(result.status, 0, result.stderr.toString());
       assert.deepEqual(
         JSON.parse(readFileSync(path.join(inputRoot, 'configuration.json'), 'utf8')),
@@ -802,7 +1008,24 @@ test('postmaster host scheduling keeps native tests serial and Linux guest input
         ],
         `${platform} actual qualification configuration`,
       );
+      assert.deepEqual(JSON.parse(readFileSync(path.join(inputRoot, 'targets.json'), 'utf8')), [
+        `//src/wasix/postmaster:${prefix}_public_archive_test`,
+        `//src/wasix/postmaster:${prefix}_runtime_test`,
+      ]);
+      assert.deepEqual(JSON.parse(readFileSync(path.join(inputRoot, 'ci-requires.json'), 'utf8')), [
+        'postmaster/linux-carrier-lifecycle',
+      ]);
     }
+    for (const current of [artifacts.slice(0, -1), [...artifacts, canonical]])
+      assert.notEqual(
+        execute(
+          'linux-arm64',
+          '//src/wasix/postmaster:compiler_linux_arm64',
+          'linux_arm64_gnu',
+          current,
+        ).status,
+        0,
+      );
   });
 });
 
@@ -880,11 +1103,13 @@ test('Source CI verifies ordinary receipts while full qualification retains Requ
       env: { PATH: process.env.PATH, NEEDS_JSON: JSON.stringify(results) },
     }).status;
   assert.equal(runGuard(), 0, 'a verified empty ordinary selection needs no producer jobs');
-  for (const status of ['failure', 'cancelled']) {
-    results.portable.result = status;
-    assert.notEqual(runGuard(), 0, `Source CI must reject a ${status} selected job`);
+  for (const id of ['portable', 'wasix-host']) {
+    for (const status of ['failure', 'cancelled']) {
+      results[id].result = status;
+      assert.notEqual(runGuard(), 0, `Source CI must reject a ${status} selected ${id} job`);
+    }
+    results[id].result = 'skipped';
   }
-  results.portable.result = 'skipped';
   for (const status of ['failure', 'skipped']) {
     results['release-inputs'].result = status;
     assert.notEqual(runGuard(), 0, `Source CI must reject a ${status} planner`);
@@ -960,30 +1185,61 @@ test('every configured request is annotated and opaque controller qualification 
 });
 
 test('source producer capture is enabled only for an actual workflow handoff', () => {
-  const step = jobs.portable.steps.find(
+  const step = jobs['wasix-host'].steps.find(
     (value: any) => value.name === 'Qualify final WASIX addon on its native host',
   );
   qualifierFixture((directory, env) => {
+    const source = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: directory,
+      env,
+      encoding: 'utf8',
+    }).trim();
     for (const handoff of [false, true]) {
-      const request = requestEnvironment(step, env, 'linux-x64');
+      for (const generated of [env.RUNNER_TEMP, env.QUALIFIER_ARGS, env.QUALIFIER_SOURCE])
+        rmSync(generated, { recursive: true, force: true });
+      const request = requestEnvironment(step, env, 'linux-arm64');
       const result = spawnSync('bash', ['-eu', '-c', step.run], {
         cwd: directory,
         env: {
           ...request,
-          CI_REQUEST_JOB: 'portable/linux-x64',
+          CI_REQUEST_JOB: 'wasix-host/linux-arm64',
           CI_MODE: 'source',
-          TARGET_PLATFORM: 'linux-x64',
+          TARGET_PLATFORM: 'linux-arm64',
+          EXPECTED_SOURCE_COMMIT: source,
+          QUALIFICATION_JOB_NAME: 'WASIX imported runtime (linux-arm64)',
           CI_CAPTURE_REQUESTS: JSON.stringify(handoff ? [request.CI_REQUEST_ID] : []),
         },
       });
       assert.equal(result.status, 0, result.stderr.toString());
       const args = readFileSync(env.QUALIFIER_ARGS, 'utf8').split('\0');
-      assert.equal(args[args.indexOf('--ci-request-id') + 1], 'portable/linux-x64/napi');
+      assert.equal(args[args.indexOf('--ci-request-id') + 1], 'wasix-host/linux-arm64/napi');
       assert.equal(args[args.indexOf('--ci-mode') + 1], 'source');
       assert.equal(args.includes('--ci-handoff'), handoff);
+      assert.equal(args[args.indexOf('--shipping-export') + 1], '//:wasix_napi_shipping_export');
+      const configuration = JSON.parse(
+        readFileSync(args[args.indexOf('--configuration-json') + 1], 'utf8'),
+      );
+      for (const flag of [
+        '--platforms=//build_defs/native:linux_aarch64_glibc_2_28',
+        '--host_platform=//build_defs/native:linux_aarch64_glibc_2_28',
+        `--repo_env=OLIPHAUNT_WASIX_SOURCE_COMMIT=${source}`,
+        `--repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS=${env.RUNNER_TEMP}/wasix-cargo-inputs`,
+        '--jobs=1',
+        '--local_test_jobs=1',
+        '--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full',
+      ])
+        assert.ok(configuration.includes(flag), `missing imported NAPI configuration: ${flag}`);
+      assert.deepEqual(
+        JSON.parse(readFileSync(args[args.indexOf('--ci-requires-json') + 1], 'utf8')),
+        ['wasix/tools-sdk-browser'],
+      );
+      assert.equal(
+        JSON.parse(readFileSync(args[args.indexOf('--github-json') + 1], 'utf8')).job,
+        'WASIX imported runtime (linux-arm64)',
+      );
       assert.ok(
         existsSync(
-          path.join(env.RUNNER_TEMP, 'ci-requests/portable/linux-x64/napi/ci-request.json'),
+          path.join(env.RUNNER_TEMP, 'ci-requests/wasix-host/linux-arm64/napi/ci-request.json'),
         ),
       );
     }
@@ -1113,17 +1369,26 @@ test('full module preflight follows source planning and retains strict failure p
   });
 });
 
-test('selected artifact consumers allocate runners only after their actual producers succeed', () => {
+test('selected consumers reject failed producers while independent source families permit skipped jobs', () => {
   const producers: Record<string, string[]> = {
     'postmaster-host': ['postmaster'],
     'wasix-host': ['wasix'],
     'react-native': ['portable'],
-    'release-families': ['portable', 'linux', 'wasix', 'postmaster', 'postmaster-host'],
+    'release-families': [
+      'portable',
+      'linux',
+      'wasix',
+      'wasix-host',
+      'postmaster',
+      'postmaster-host',
+    ],
   };
   for (const [id, required] of Object.entries(producers)) {
-    assert.deepEqual(needs(id), [...required, 'release-inputs']);
+    assert.deepEqual([...needs(id)].sort(), [...required, 'release-inputs'].sort());
     const evaluate = (results: Record<string, string>, selected = true, cancelled = false) => {
       const outputs = {
+        ci_mode: 'source',
+        ci_selected_requests: JSON.stringify(selected ? ['release-families/public-source'] : []),
         ci_selected_jobs: JSON.stringify(selected ? [id] : []),
         postmaster_host_matrix: JSON.stringify({
           include: selected ? [{ platform: 'linux-arm64' }] : [],
@@ -1138,7 +1403,10 @@ test('selected artifact consumers allocate runners only after their actual produ
           { result: results[producer] ?? 'success', outputs },
         ]),
       );
-      const expression = jobs[id].if.slice(3, -2).replace(/needs[.]([\w-]+)/gu, "needs['$1']");
+      const expression = jobs[id].if
+        .slice(3, -2)
+        .replace(/needs[.]\*[.]([\w-]+)/gu, "Object.values(needs).map(value => value['$1'])")
+        .replace(/needs[.]([\w-]+)/gu, "needs['$1']");
       return runInNewContext(expression, {
         needs: input,
         cancelled: () => cancelled,
@@ -1149,8 +1417,23 @@ test('selected artifact consumers allocate runners only after their actual produ
     assert.equal(evaluate({}), true, `${id}: successful selected producer chain`);
     assert.equal(evaluate({}, false), false, `${id}: omitted consumer`);
     assert.equal(evaluate({}, true, true), false, `${id}: cancelled workflow`);
-    for (const producer of needs(id))
-      for (const result of ['failure', 'cancelled', 'skipped'])
+    for (const producer of needs(id)) {
+      for (const result of ['failure', 'cancelled'])
         assert.equal(evaluate({ [producer]: result }), false, `${id}: ${producer} ${result}`);
+      assert.equal(
+        evaluate({ [producer]: 'skipped' }),
+        id === 'release-families' && producer !== 'release-inputs',
+        `${id}: ${producer} skipped`,
+      );
+    }
+    const skipped = Object.fromEntries(required.map((producer) => [producer, 'skipped']));
+    assert.equal(evaluate(skipped), id === 'release-families', `${id}: all producers skipped`);
+    for (const producer of required)
+      for (const result of ['failure', 'cancelled'])
+        assert.equal(
+          evaluate({ ...skipped, [producer]: result }),
+          false,
+          `${id}: mixed skipped and ${producer} ${result}`,
+        );
   }
 });

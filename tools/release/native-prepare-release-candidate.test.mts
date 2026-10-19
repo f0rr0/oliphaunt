@@ -1036,6 +1036,8 @@ test('actual RP exact-module requirements preserve held resources and independen
   for (const selected of [[sourceProduct], [product], [sourceProduct, product]]) {
     const plans = [];
     const options = nativeProductOptions(selected);
+    for (const producer of [sourceProduct, 'oliphaunt-wasix-rust'])
+      options.buildBound.get('oliphaunt-wasix-napi').add(producer);
     options.nativeCurrentExactInputs = [{ product, sourceProduct }];
     options.observeNativePlan = async (plan) => {
       plans.push(plan);
@@ -1050,7 +1052,9 @@ test('actual RP exact-module requirements preserve held resources and independen
       options,
     );
     expect(plans).toHaveLength(1);
-    expect(plans[0].selectedProducts).toEqual([...selected].sort());
+    expect(plans[0].selectedProducts).toEqual(
+      [...selected, ...(selected.includes(sourceProduct) ? ['oliphaunt-wasix-napi'] : [])].sort(),
+    );
     const updates = mergeUpdates(candidate.updates);
     const manifest = updates.find(({ path: file }) => file === '.release-please-manifest.json');
     const after = JSON.parse(manifest.updater.updateContent(JSON.stringify(versions)));
@@ -1072,7 +1076,7 @@ test('actual RP exact-module requirements preserve held resources and independen
     expect(Bun.TOML.parse(final).package.metadata.oliphaunt['runtime-version']).toBe(
       selected.includes(sourceProduct) && selected.includes(product) ? expectedCore : '0.3.2',
     );
-    expect(plans[0].requirements).toEqual(
+    expect(plans[0].requirements.filter((entry) => entry.product === product)).toEqual(
       selected.length === 2 ? [{ product, sourceProduct, version: expectedCore }] : [],
     );
     expect(options.buildBound.get(product).size).toBe(0);
@@ -1080,6 +1084,236 @@ test('actual RP exact-module requirements preserve held resources and independen
     else expect(after[resource.path]).toBe(resource.version);
   }
 });
+
+{
+  const runtime = 'liboliphaunt-wasix';
+  const sdk = 'oliphaunt-wasix-rust';
+  const addon = 'oliphaunt-wasix-napi';
+  const server = 'oliphaunt-pgwire-server';
+  const query = 'oliphaunt-query';
+  const patch = (version) => {
+    const [major, minor, patch] = version.split('.').map(Number);
+    return `${major}.${minor}.${patch + 1}`;
+  };
+  for (const scenario of [
+    { name: 'runtime-only', necessary: [runtime], selected: [runtime, addon], compiled: true },
+    {
+      name: 'SDK-only adopts shared pgwire requirement',
+      necessary: [sdk],
+      selected: [sdk, addon, server],
+      compiled: true,
+    },
+    { name: 'addon-only', necessary: [addon], selected: [addon], compiled: true },
+    { name: 'unrelated Cargo producer', necessary: [query], selected: [query], compiled: true },
+    {
+      name: 'no current compiled edge',
+      necessary: [runtime],
+      selected: [runtime],
+      compiled: false,
+    },
+  ])
+    test(`actual RP current embedded Cargo owners: ${scenario.name}`, async () => {
+      const options = nativeProductOptions(scenario.necessary);
+      if (scenario.compiled)
+        for (const producer of [runtime, sdk]) options.buildBound.get(addon).add(producer);
+      let plan;
+      options.observeNativePlan = async (value) => {
+        plan = value;
+      };
+      const { candidate, versions } = await generateProductCandidate(
+        [],
+        undefined,
+        undefined,
+        options,
+      );
+      const updates = mergeUpdates(candidate.updates);
+      const read = (file) => {
+        const original = readFileSync(path.join(ROOT, file), 'utf8');
+        return (
+          updates.find((update) => update.path === file)?.updater.updateContent(original) ??
+          original
+        );
+      };
+      const after = JSON.parse(read('.release-please-manifest.json'));
+      expect(plan.selectedProducts).toEqual([...scenario.selected].sort());
+      expect(candidate.body.releaseData.map(({ component }) => component).sort()).toEqual(
+        [...scenario.selected].sort(),
+      );
+      for (const product of [runtime, sdk, addon, server, query])
+        expect(after[graph.products[product].path]).toBe(
+          scenario.selected.includes(product)
+            ? patch(graph.products[product].version)
+            : versions[graph.products[product].path],
+        );
+      const runtimeVersion = after[graph.products[runtime].path];
+      const sdkVersion = after[graph.products[sdk].path];
+      const addonSelected = scenario.selected.includes(addon);
+      const product = JSON.parse(read('src/wasix/node-addon/package.json'));
+      expect(product.oliphaunt.runtimeVersion).toBe(
+        addonSelected ? runtimeVersion : graph.products[runtime].version,
+      );
+      expect(product.oliphaunt.rustBindingVersion).toBe(
+        addonSelected ? sdkVersion : graph.products[sdk].version,
+      );
+      for (const platform of [
+        'darwin-arm64',
+        'linux-arm64-gnu',
+        'linux-x64-gnu',
+        'win32-x64-msvc',
+      ]) {
+        const manifest = JSON.parse(read(`src/wasix/node-addon/packages/${platform}/package.json`));
+        expect(manifest.version).toBe(after[graph.products[addon].path]);
+        expect(manifest.oliphaunt.runtimeVersion).toBe(product.oliphaunt.runtimeVersion);
+      }
+      const addonCargo = Bun.TOML.parse(read('src/wasix/node-addon/Cargo.toml'));
+      expect(addonCargo.package.version).toBe(after[graph.products[addon].path]);
+      expect(addonCargo.dependencies['liboliphaunt-wasix-portable']).toEqual({
+        version: `=${runtimeVersion}`,
+        path: '../runtime/crates/assets',
+      });
+      const workspace = Bun.TOML.parse(read('Cargo.toml'));
+      expect(workspace.workspace.dependencies['oliphaunt-wasix']).toEqual({
+        path: 'src/wasix/sdks/rust',
+        version: sdkVersion,
+      });
+      if (scenario.necessary.includes(sdk)) {
+        expect(
+          plan.requirements
+            .filter((entry) => entry.path === 'Cargo.toml')
+            .map((entry) => entry.product)
+            .sort(),
+        ).toEqual([addon, server].sort());
+        const packed = sourceManifest(
+          read('src/wasix/pgwire-server/Cargo.toml'),
+          read('Cargo.toml'),
+          {
+            product: server,
+            version: after[graph.products[server].path],
+            compatibility: {},
+            dependencyOwners: {},
+          },
+        );
+        expect(packed.dependencies['oliphaunt-wasix'].version).toBe(sdkVersion);
+        expect(packed.dependencies['oliphaunt-wasix'].path).toBeUndefined();
+      }
+      // Private source embedding does not replace the SDK's public runtime floor.
+      expect(
+        Bun.TOML.parse(read('src/wasix/sdks/rust/Cargo.toml')).package.metadata.oliphaunt[
+          'runtime-version'
+        ],
+      ).toBe(graph.products[runtime].version);
+      expect(
+        plan.selectedProducts.some((id) => graph.products[id].extension?.class === 'external'),
+      ).toBe(false);
+      expect(
+        plan.requirements.filter((entry) => entry.product === addon && !entry.binding),
+      ).toEqual(
+        addonSelected && scenario.necessary.some((id) => id === runtime || id === sdk)
+          ? [
+              {
+                product: addon,
+                sourceProduct: scenario.necessary[0],
+                version: scenario.necessary[0] === runtime ? runtimeVersion : sdkVersion,
+              },
+            ]
+          : [],
+      );
+      if (!scenario.compiled)
+        expect(
+          plan.requirements
+            .filter((entry) => entry.path === 'src/wasix/node-addon/Cargo.toml')
+            .map((entry) => entry.product),
+        ).toEqual([null]);
+    });
+}
+
+{
+  const product = 'oliphaunt-extension-pg-textsearch',
+    sourceProduct = 'liboliphaunt-wasix',
+    otherProduct = 'oliphaunt-extension-vector';
+  const extension = graph.products[product],
+    core = graph.products[sourceProduct];
+  const patch = (version) => {
+    const [major, minor, patch] = version.split('.').map(Number);
+    return `${major}.${minor}.${patch + 1}`;
+  };
+  const breaking = (version) => {
+    const [major, minor] = version.split('.').map(Number);
+    return major === 0 ? `0.${minor + 1}.0` : `${major + 1}.0.0`;
+  };
+  for (const { name, necessary } of [
+    { name: 'producer only retains held extension', necessary: [sourceProduct] },
+    { name: 'consumer only retains held runtime', necessary: [product] },
+    { name: 'selected pair adopts current host', necessary: [sourceProduct, product] },
+    {
+      name: 'selected pair retargets an already-selected extension',
+      necessary: [sourceProduct, product, otherProduct],
+    },
+  ])
+    test(`actual RP public WASIX exact-host adoption: ${name}`, async () => {
+      const plans = [];
+      const options = nativeProductOptions(necessary);
+      // The addon embeds current runtime and SDK Files; the extension remains ABI-only.
+      for (const producer of [sourceProduct, 'oliphaunt-wasix-rust'])
+        options.buildBound.get('oliphaunt-wasix-napi').add(producer);
+      options.nativeCurrentExactInputs = [{ product, sourceProduct }];
+      options.observeNativePlan = async (plan) => {
+        plans.push(plan);
+      };
+      const { candidate, versions } = await generateProductCandidate(
+        [],
+        undefined,
+        undefined,
+        options,
+      );
+      expect(plans).toHaveLength(1);
+      const updates = mergeUpdates(candidate.updates);
+      const manifest = updates.find(({ path: file }) => file === '.release-please-manifest.json');
+      const after = JSON.parse(manifest.updater.updateContent(JSON.stringify(versions)));
+      const adopts = necessary.includes(product) && necessary.includes(sourceProduct);
+      const expectedCore = necessary.includes(sourceProduct) ? patch(core.version) : core.version;
+      expect(after[core.path]).toBe(expectedCore);
+      expect(after[extension.path]).toBe(
+        !necessary.includes(product)
+          ? extension.version
+          : adopts
+            ? breaking(extension.version)
+            : patch(extension.version),
+      );
+      for (const participant of [product, sourceProduct])
+        expect(plans[0].selectedProducts.includes(participant)).toBe(
+          necessary.includes(participant),
+        );
+      expect(
+        plans[0].requirements.filter(
+          (entry) => entry.product === product && entry.sourceProduct === sourceProduct,
+        ),
+      ).toEqual(adopts ? [{ product, sourceProduct, version: expectedCore }] : []);
+      for (const owner of [product, ...(necessary.includes(otherProduct) ? [otherProduct] : [])]) {
+        const metadata = graph.products[owner];
+        const file = metadata.path + '/release.toml';
+        const original = readFileSync(path.join(ROOT, file), 'utf8');
+        const update = updates.find(({ path }) => path === file);
+        const result = update ? update.updater.updateContent(original) : original;
+        expect(Bun.TOML.parse(result).extension.compatibility.wasix_runtime_version).toBe(
+          adopts
+            ? expectedCore
+            : Bun.TOML.parse(original).extension.compatibility.wasix_runtime_version,
+        );
+        if (adopts) {
+          expect(after[metadata.path]).toBe(breaking(metadata.version));
+          const changelog = updates
+            .find(({ path: file }) => file === metadata.changelog_path)
+            .updater.updateContent('# Changelog\n');
+          expect(changelog).toContain('replace exact host support');
+          expect(changelog).toContain(sourceProduct + '@' + core.version);
+          expect(changelog).toContain(sourceProduct + '@' + expectedCore);
+        }
+      }
+      expect(options.buildBound.get(product).size).toBe(0);
+      expect(options.buildBound.get(otherProduct).size).toBe(0);
+    });
+}
 
 test('actual RP local Cargo closure preserves held pins and projects released source minimums offline', async () => {
   const core = 'liboliphaunt-native-bindings',

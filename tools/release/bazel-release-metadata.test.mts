@@ -40,6 +40,7 @@ test('one per-run metadata snapshot projects exact completed suppliers without a
   const input = { source, supplierPublications: [publication] };
   const projected = nativePublicationInputProjection(input);
   expect(projected).toEqual({
+    prepared: false,
     supplierPublications: { 'liboliphaunt-wasix@0.3.2': publication },
     seedControls: {},
     extensionFinalInputs: {},
@@ -63,6 +64,7 @@ test('one per-run metadata snapshot projects exact completed suppliers without a
   ])
     expect(() => nativePublicationInputProjection(corrupt)).toThrow();
   expect(nativePublicationInputProjection({ source })).toEqual({
+    prepared: false,
     supplierPublications: {},
     seedControls: {},
     extensionFinalInputs: {},
@@ -1135,12 +1137,22 @@ test('prepared selection remains fact-only, validates canonical IDs and renders 
   const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
   const selected = ['native'];
   const projected = nativePublicationInputProjection({ source, selectedProducts: selected });
+  expect(projected.prepared).toBe(true);
+  const empty = nativePublicationInputProjection({ source, selectedProducts: [] });
+  expect(empty.prepared).toBe(true);
+  expect(nativePublicationInputProjection({ source }).prepared).toBe(false);
   selected.push('wasix');
   expect(projected.selectedProducts).toEqual(['native']);
   for (const selectedProducts of [['native', 'native'], ['../outside'], null, {}, ['native', 4]])
     expect(() => nativePublicationInputProjection({ source, selectedProducts })).toThrow();
   fixture((root) => {
     const metadata = loadReleaseMetadata(root);
+    expect(renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl').bzl).toContain(
+      'PREPARED_NATIVE_INPUTS = False',
+    );
+    expect(
+      renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl', empty).bzl,
+    ).toContain('PREPARED_NATIVE_INPUTS = True');
     expect(
       renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl', projected).bzl,
     ).toContain('PREPARED_NATIVE_SELECTED_PRODUCTS = ["native"]');

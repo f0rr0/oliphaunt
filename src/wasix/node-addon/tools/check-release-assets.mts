@@ -240,29 +240,42 @@ function assertPayload(entries, { prefix = '', label, target, version, npm = fal
     throw new Error(`${label} is missing non-empty regular ${binaryMember}`);
   }
   const actual = entrySha256(entry);
-  if (provenance.schema === 'oliphaunt-wasix-napi-construction-data-v2') {
+  if (
+    provenance.schema === 'oliphaunt-wasix-napi-construction-data-v2' ||
+    provenance.schema === 'oliphaunt-wasix-napi-construction-data-v3'
+  ) {
     const cargo = Bun.TOML.parse(
       readFileSync(path.join(ROOT, 'src/wasix/node-addon/Cargo.toml'), 'utf8'),
     );
-    const sdk = resolveCargoWorkspaceInheritance(cargo, cargo.workspace).dependencies[
+    const workspace = Bun.TOML.parse(readFileSync(path.join(ROOT, 'Cargo.toml'), 'utf8'));
+    const sdk = resolveCargoWorkspaceInheritance(cargo, workspace.workspace).dependencies[
       'oliphaunt-wasix'
     ];
-    const patch = readFileSync(
-      path.join(ROOT, 'build_defs/wasix/held-wasix-relocatable-includes.patch'),
-    );
+    const legacy = provenance.schema === 'oliphaunt-wasix-napi-construction-data-v2';
+    const patch = legacy
+      ? readFileSync(path.join(ROOT, 'build_defs/wasix/held-wasix-relocatable-includes.patch'))
+      : undefined;
+    const sdkVersion = legacy
+      ? (typeof sdk === 'string' ? sdk : sdk.version).replace(/^=/u, '')
+      : Bun.TOML.parse(readFileSync(path.join(ROOT, 'src/wasix/sdks/rust/Cargo.toml'), 'utf8'))
+          .package.version;
     assertWasixNapiConstructionData(provenance, target.target, actual, {
       targetTriple: target.triple,
       runtimeVersion: (contract ?? PRODUCT_MANIFEST.oliphaunt).runtimeVersion,
-      sdkVersion: (typeof sdk === 'string' ? sdk : sdk.version).replace(/^=/u, ''),
+      sdkVersion,
       sqlNames: wasixNapiReleaseSqlNames(
         cargo,
         extensionSqlNames('oliphaunt-extension-contrib-pg18', PREFIX),
       ),
-      sourcePatch: {
-        path: WASIX_NAPI_SOURCE_PATCH_MEMBER,
-        sha256: createHash('sha256').update(patch).digest('hex'),
-        size: patch.length,
-      },
+      ...(patch
+        ? {
+            sourcePatch: {
+              path: WASIX_NAPI_SOURCE_PATCH_MEMBER,
+              sha256: createHash('sha256').update(patch).digest('hex'),
+              size: patch.length,
+            },
+          }
+        : {}),
     });
   } else {
     if (

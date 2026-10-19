@@ -222,18 +222,23 @@ _isolated_cache_test = rule(
     toolchains = BUN_SOURCE_TOOLCHAINS,
 )
 
-def cargo_library_test(name = "unit_test", crate = ":lib", data = [], tags = [], isolated_cache = False, cargo_facts = CARGO, all_dependencies = all_crate_deps, package_name = None, cargo_env = ":cargo_env", path_dependencies = {}, rustc_env = {}, features = [], default_features = True, **kwargs):
+def cargo_library_test(name = "unit_test", crate = ":lib", data = [], tags = [], isolated_cache = False, cargo_facts = CARGO, all_dependencies = all_crate_deps, package_name = None, cargo_env = ":cargo_env", path_dependencies = {}, rustc_env = {}, features = [], default_features = True, crate_dependencies = crate_deps, proc_macro_names = [], build_script = None, **kwargs):
     package_name = _package_name(package_name)
     facts = cargo_facts[package_name]
     enabled = cargo_features(facts, features, default_features)
+    if crate == None:
+        deps, macros = _dependencies(facts, enabled, "dependencies", path_dependencies, proc_macro_names, crate_dependencies, include_dev = True, package_name = package_name)
+    else:
+        deps = all_dependencies(normal_dev = True, package_name = package_name) + path_dependencies.values()
+        macros = all_dependencies(proc_macro_dev = True, package_name = package_name)
     rust_test(
         name = name + "_binary" if isolated_cache else name,
         crate = crate,
         edition = facts["edition"],
         version = facts["version"],
         crate_features = enabled,
-        deps = all_dependencies(normal_dev = True, package_name = package_name) + path_dependencies.values(),
-        proc_macro_deps = all_dependencies(proc_macro_dev = True, package_name = package_name),
+        deps = deps + ([build_script] if build_script else []),
+        proc_macro_deps = macros,
         rustc_env_files = [cargo_env],
         rustc_env = rustc_env | {"CARGO_MANIFEST_DIR": package_name},
         data = data + [_source_prefix(package_name) + "Cargo.toml"],

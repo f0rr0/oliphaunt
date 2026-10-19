@@ -62,7 +62,11 @@ export async function stageWasixNapiCarrier(input: WasixNapiStage) {
   if (!binary.isFile() || binary.isSymbolicLink() || binary.size <= 0)
     throw new Error('WASIX Node-API binary must be a non-empty regular file');
   const buildInputs = input.provenance.buildInputs;
-  const construction = input.provenance.schema === 'oliphaunt-wasix-napi-construction-data-v2';
+  const constructionVersion = {
+    'oliphaunt-wasix-napi-construction-data-v2': 'oliphaunt-wasix-napi-build-inputs-v2',
+    'oliphaunt-wasix-napi-construction-data-v3': 'oliphaunt-wasix-napi-build-inputs-v3',
+  }[input.provenance.schema];
+  const construction = constructionVersion !== undefined;
   if (!construction && input.provenance.schema !== 'oliphaunt-wasix-napi-provenance-v1')
     throw new Error('unknown WASIX Node-API provenance schema');
   if (construction) {
@@ -76,10 +80,7 @@ export async function stageWasixNapiCarrier(input: WasixNapiStage) {
     );
   }
   if (
-    buildInputs?.schema !==
-      (construction
-        ? 'oliphaunt-wasix-napi-build-inputs-v2'
-        : 'oliphaunt-wasix-napi-build-inputs-v1') ||
+    buildInputs?.schema !== (constructionVersion ?? 'oliphaunt-wasix-napi-build-inputs-v1') ||
     buildInputs.target !== input.target ||
     typeof buildInputs.targetTriple !== 'string' ||
     buildInputs.targetTriple.length === 0 ||

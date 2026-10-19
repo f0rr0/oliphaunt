@@ -1,12 +1,27 @@
 load("//build_defs/quality:sources.bzl", "rust_quality_files")
-load("//build_defs/languages:rust.bzl", "cargo_generator_test")
+load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_generator_test", "cargo_library")
 load("//build_defs/languages:wasix.bzl", "wasix_runtime_carrier")
 load("//build_defs/wasix:cargo.bzl", "wasix_runtime_cargo")
+load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS")
 
 package(default_visibility = ["//visibility:public"])
 exports_files(["Cargo.toml"])
 
 wasix_runtime_carrier(payload = "//src/wasix/runtime:portable_payload", portable = True)
+
+_NAPI_RELEASE_FEATURES = ["extension-" + member["sql-name"].replace("_", "-") for member in CONTRIB_MEMBERS]
+_NAPI_RELEASE_INPUTS = "//src/wasix/node-addon:release_inputs"
+cargo_generator(
+    name = "napi_release_build_script",
+    srcs = ["build-support.rs"], data = [_NAPI_RELEASE_INPUTS], features = _NAPI_RELEASE_FEATURES,
+    build_script_env = {
+        "OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD": "1",
+        "OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST": "0",
+        "OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR": "$(execpath " + _NAPI_RELEASE_INPUTS + ")/portable",
+        "OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT": "$(execpath " + _NAPI_RELEASE_INPUTS + ")/extensions",
+    },
+)
+cargo_library(name = "napi_release_lib", build_script = ":napi_release_build_script", features = _NAPI_RELEASE_FEATURES, compile_data = [_NAPI_RELEASE_INPUTS])
 
 wasix_runtime_cargo(payload = "//src/wasix/runtime:portable_payload")
 

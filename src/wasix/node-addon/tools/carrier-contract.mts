@@ -38,7 +38,7 @@ export type WasixNapiConstructionContract = {
   runtimeVersion: string;
   sdkVersion: string;
   sqlNames: readonly string[];
-  sourcePatch: { path: string; sha256: string; size: number };
+  sourcePatch?: { path: string; sha256: string; size: number };
 };
 
 /** Conventional Cargo feature expansion supplies the release member expectation. */
@@ -77,7 +77,11 @@ export function assertWasixNapiConstructionData(
   binarySha256: string,
   contract: WasixNapiConstructionContract,
 ) {
-  assert.equal(value.schema, 'oliphaunt-wasix-napi-construction-data-v2');
+  const source = value.schema === 'oliphaunt-wasix-napi-construction-data-v3';
+  assert(
+    source || value.schema === 'oliphaunt-wasix-napi-construction-data-v2',
+    'unknown WASIX Node-API construction schema',
+  );
   assert(!Object.hasOwn(value, 'scope'), 'construction data does not authorize release');
   assert.equal(value.product, 'oliphaunt-wasix-napi');
   assert.equal(value.target, target);
@@ -86,7 +90,10 @@ export function assertWasixNapiConstructionData(
     'construction cannot invent Git source authentication',
   );
   const inputs = value.buildInputs;
-  assert.equal(inputs.schema, 'oliphaunt-wasix-napi-build-inputs-v2');
+  assert.equal(
+    inputs.schema,
+    source ? 'oliphaunt-wasix-napi-build-inputs-v3' : 'oliphaunt-wasix-napi-build-inputs-v2',
+  );
   assert.equal(inputs.target, target);
   assert(Object.hasOwn(AOT_TARGET_TRIPLES, target), 'unsupported addon construction target');
   assert.equal(inputs.targetTriple, AOT_TARGET_TRIPLES[target]);
@@ -104,6 +111,11 @@ export function assertWasixNapiConstructionData(
   assert.equal(value.binary.sha256, binarySha256);
   assert(!Object.hasOwn(value, 'binaries'), 'construction binds one addon binary');
   assert.match(binarySha256, /^[0-9a-f]{64}$/u);
+  if (source) {
+    assert(!Object.hasOwn(value, 'sourcePatch'), 'source construction cannot claim source patches');
+    assertWasixNapiSourceInputs(inputs, contract);
+    return value;
+  }
   assert(
     Array.isArray(inputs.dependencies) && inputs.dependencies.length > 0,
     'construction requires exact compiled registry origins',
@@ -147,14 +159,16 @@ export function assertWasixNapiConstructionData(
     'construction requires its exact compiled SDK, runtime and contrib origins',
   );
   const origin = (name: string) => inputs.dependencies.find((row: any) => row.name === name);
-  assert.equal(contract.sourcePatch.path, WASIX_NAPI_SOURCE_PATCH_MEMBER);
-  assert.match(contract.sourcePatch.sha256, /^[0-9a-f]{64}$/u);
-  assert(Number.isSafeInteger(contract.sourcePatch.size) && contract.sourcePatch.size > 0);
+  const sourcePatch = contract.sourcePatch;
+  assert(sourcePatch, 'registry construction requires its declared source patch');
+  assert.equal(sourcePatch.path, WASIX_NAPI_SOURCE_PATCH_MEMBER);
+  assert.match(sourcePatch.sha256, /^[0-9a-f]{64}$/u);
+  assert(Number.isSafeInteger(sourcePatch.size) && sourcePatch.size > 0);
   for (const dependency of inputs.dependencies) {
     if (dependency.name === portableName || dependency.name === coreName) {
       assert.deepEqual(
         dependency.patches,
-        [contract.sourcePatch],
+        [sourcePatch],
         'compiled source patch differs from the declared recipe',
       );
       assert(
@@ -227,6 +241,105 @@ export function assertWasixNapiConstructionData(
   assert.match(inputs.cargoLock.sha256, /^[0-9a-f]{64}$/u);
   assert(Number.isSafeInteger(inputs.cargoLock.size) && inputs.cargoLock.size > 0);
   return value;
+}
+
+function assertWasixNapiSourceInputs(inputs: any, contract: WasixNapiConstructionContract) {
+  assert.equal(inputs.runtimeVersion, contract.runtimeVersion);
+  assert(
+    !Object.hasOwn(inputs, 'dependencies') && !Object.hasOwn(inputs, 'sourcePatch'),
+    'source construction cannot claim registry origins or source patches',
+  );
+  assert(
+    !Object.hasOwn(inputs, 'cargoLock'),
+    'source construction cannot claim the workspace lock',
+  );
+  assert(Array.isArray(inputs.files) && inputs.files.length > 0, 'source inventory is empty');
+  const files = new Map<string, any>();
+  for (const file of inputs.files) {
+    assert.deepEqual(Object.keys(file).sort(), ['path', 'sha256', 'size']);
+    assert(
+      typeof file.path === 'string' &&
+        file.path &&
+        !path.posix.isAbsolute(file.path) &&
+        !/^[A-Za-z]:/u.test(file.path) &&
+        !/[\u0000-\u001f\u007f]/u.test(file.path) &&
+        !file.path.includes('\\') &&
+        file.path.split('/').every((part: string) => part && part !== '.' && part !== '..'),
+      'noncanonical source construction file',
+    );
+    assert(
+      !file.path.startsWith('registry/') && file.path !== WASIX_NAPI_SOURCE_PATCH_MEMBER,
+      'source construction cannot claim registry origins or source patches',
+    );
+    assert.notEqual(file.path, 'Cargo.lock', 'source inventory cannot include the workspace lock');
+    assert.notEqual(
+      file.path,
+      'src/wasix/sdks/rust/Cargo.toml',
+      'source inventory cannot include the SDK source manifest',
+    );
+    assert(!files.has(file.path), 'duplicate source construction file');
+    assert.match(file.sha256, /^[0-9a-f]{64}$/u);
+    assert(Number.isSafeInteger(file.size) && file.size >= 0);
+    files.set(file.path, file);
+  }
+  assert.deepEqual(
+    [...files.keys()],
+    [...files.keys()].sort(compareText),
+    'source inventory is not ordered',
+  );
+  assert(files.get('layout.json')?.size > 0, 'source inventory omits its build layout');
+  const bound = (file: any) => {
+    assert(file && files.has(file.path), 'construction input is outside its source inventory');
+    const { sqlName: _sqlName, targetTriple: _targetTriple, ...identity } = file;
+    assert.deepEqual(identity, files.get(file.path), 'construction input differs from source file');
+    assert(file.size > 0, 'construction payload must be nonempty');
+  };
+  assert.deepEqual(Object.keys(inputs.sdk).sort(), ['name', 'version']);
+  assert.equal(inputs.sdk.name, 'oliphaunt-wasix');
+  assert.equal(inputs.sdk.version, contract.sdkVersion);
+  bound(inputs.inputs.portableManifest);
+  bound(inputs.inputs.runtimeArchive);
+  bound(inputs.inputs.runtimeAotManifest);
+  assert.equal(inputs.inputs.portableManifest.path, 'portable/manifest.json');
+  assert.equal(inputs.inputs.runtimeArchive.path, 'portable/oliphaunt.wasix.tar.zst');
+  assert.equal(inputs.inputs.runtimeAotManifest.path, `aot/${contract.targetTriple}/manifest.json`);
+  assert.equal(inputs.inputs.runtimeAotManifest.targetTriple, contract.targetTriple);
+  assert(
+    files.get('portable/bin/initdb.wasix.wasm')?.size > 0,
+    'source inventory omits packaged initdb',
+  );
+  const product = 'oliphaunt-extension-contrib-pg18';
+  assert(
+    files.get(`extensions/${product}/extension-artifacts.json`)?.size > 0,
+    'source inventory omits the original contrib manifest',
+  );
+  assert.equal(inputs.inputs.extensionArtifacts.length, 1);
+  const contrib = inputs.inputs.extensionArtifacts[0];
+  assert.equal(contrib.product, product);
+  const portableNames = contrib.portableArchives.map((row: any) => row.sqlName).sort();
+  const aotNames = contrib.aotManifests.map((row: any) => row.sqlName).sort();
+  assert(portableNames.length > 0 && new Set(portableNames).size === portableNames.length);
+  assert.deepEqual(
+    portableNames,
+    [...contract.sqlNames].sort(),
+    'construction differs from the release Cargo extension closure',
+  );
+  assert.deepEqual(aotNames, portableNames, 'construction portable and AOT member sets differ');
+  for (const row of contrib.portableArchives) {
+    bound(row);
+    assert.equal(
+      row.path,
+      `extensions/${product}/member-assets/${row.sqlName}/${product}-${contract.runtimeVersion}-wasix-portable.tar.zst`,
+    );
+  }
+  for (const row of contrib.aotManifests) {
+    bound(row);
+    assert.equal(row.targetTriple, contract.targetTriple);
+    assert.equal(
+      row.path,
+      `extensions/${product}/wasix-aot/${inputs.target}/${row.sqlName}/manifest.json`,
+    );
+  }
 }
 
 /** The expected runtime is the selected consumer pin, independent of current producer versions. */

@@ -1,62 +1,57 @@
 load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
-load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_napi_library", "cargo_library_test", "cargo_package_env", "napi_artifact")
+load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_generator_test", "cargo_napi_library", "cargo_library_test", "cargo_package_env", "napi_artifact")
+load("//build_defs/languages:napi-noop.bzl", "napi_unit_crate_deps")
 load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
-load("@wasix_adapter_cargo_metadata//:cargo.bzl", "CARGO")
-load("@wasix_adapter_crates//:defs.bzl", "all_crate_deps", "crate_deps")
-load("@wasix_release_cargo_metadata//:cargo.bzl", RELEASE_CARGO = "CARGO")
-load("@wasix_release_crates//:defs.bzl", release_crate_deps = "crate_deps")
+load("@native_cargo_metadata//:cargo.bzl", "CARGO")
+load("@cargo_crates//:defs.bzl", "crate_deps")
 load("//build_defs/wasix:napi.bzl", "wasix_napi_carriers", "wasix_napi_inputs", "wasix_napi_installed_test", "wasix_napi_release")
 load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
 
 package(default_visibility = ["//visibility:public"])
 
 native_release_checksum_family(product = "oliphaunt-wasix-napi")
-exports_files(["Cargo.toml", "Cargo.lock", "package.json"] + glob(["tools/*.mts", "packages/*/package.json", "packages/*/README.md"]))
+exports_files(["Cargo.toml", "package.json"] + glob(["tools/*.mts", "packages/*/package.json", "packages/*/README.md"]))
 
 PATH_DEPS = {
     "oliphaunt-pgwire-server": "//src/wasix/pgwire-server:napi_lib",
+    "oliphaunt-wasix": "//src/wasix/sdks/rust:napi_lib",
+    "liboliphaunt-wasix-portable": "@wasix_runtime_carriers//src/wasix/runtime/crates/assets:lib",
 }
 
-cargo_package_env(workspace_manifest = ":Cargo.toml")
+cargo_package_env()
+cargo_generator_test()
 cargo_generator(path_dependencies = PATH_DEPS, proc_macro_names = ["napi-derive"], cargo_facts = CARGO, crate_dependencies = crate_deps)
 cargo_napi_library(name = "addon_library", path_dependencies = PATH_DEPS, proc_macro_names = ["napi-derive"], build_script = ":build_script", cargo_facts = CARGO, crate_dependencies = crate_deps)
 napi_artifact(name = "addon", library = ":addon_library", out = "oliphaunt_wasix_napi.node")
-cargo_library_test(crate = ":addon_library", cargo_facts = CARGO, all_dependencies = all_crate_deps, tags = ["manual"])
 rust_clippy_test(name = "clippy_test", targets = [":addon_library", ":unit_test", ":build_script_"], transitive = False, size = "small")
 
-# These payload Files and compiled dependencies come from the same maintained
-# release-feature resolver; a stale repository version fails against Cargo.lock.
-_REGISTRY_COMMON = {
-    "@wasix_release_crates__oliphaunt-wasix-0.3.2//:payload_files": "oliphaunt-wasix",
-    "@wasix_release_crates__liboliphaunt-wasix-portable-0.3.2//:payload_files": "liboliphaunt-wasix-portable",
-    "@wasix_release_crates__oliphaunt-extension-contrib-pg18-wasix-0.3.2//:payload_files": "oliphaunt-extension-contrib-pg18-wasix",
+wasix_napi_inputs(name = "release_inputs", cargo_facts = CARGO)
+_RELEASE_PATH_DEPS = PATH_DEPS | {
+    "oliphaunt-pgwire-server": "//src/wasix/pgwire-server:napi_release_lib",
+    "oliphaunt-wasix": "//src/wasix/sdks/rust:napi_release_lib",
+    "liboliphaunt-wasix-portable": "//src/wasix/runtime/crates/assets:napi_release_lib",
 }
-_REGISTRY_TARGETS = {
-    "linux-x64-gnu": ("x86_64-unknown-linux-gnu", "linux-x64"),
-    "linux-arm64-gnu": ("aarch64-unknown-linux-gnu", "linux-arm64"),
-    "macos-arm64": ("aarch64-apple-darwin", "macos-arm64"),
-    "windows-x64-msvc": ("x86_64-pc-windows-msvc", "windows-x64"),
-}
-wasix_napi_inputs(name = "release_inputs", cargo_facts = RELEASE_CARGO, registry_inputs = {
-    target: _REGISTRY_COMMON | {
-        "@wasix_release_crates__liboliphaunt-wasix-aot-" + triple + "-0.3.2//:payload_files": "liboliphaunt-wasix-aot-" + triple,
-        "@wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-" + suffix + "-0.3.2//:payload_files": "oliphaunt-extension-contrib-pg18-aot-" + suffix,
-    } for target, (triple, suffix) in _REGISTRY_TARGETS.items()
-})
-_RELEASE_PATH_DEPS = {"oliphaunt-pgwire-server": "//src/wasix/pgwire-server:napi_release_lib"}
-_PORTABLE_VERSION = RELEASE_CARGO["src/wasix/node-addon"]["dependencies"]["liboliphaunt-wasix-portable"]["version"].removeprefix("=")
+cargo_library_test(crate = None, srcs = glob(["src/**/*.rs"]), crate_root = "src/lib.rs", features = ["extensions", "test-noop"], default_features = False,
+                   path_dependencies = _RELEASE_PATH_DEPS, proc_macro_names = ["napi-derive"], build_script = ":build_script",
+                   cargo_facts = CARGO, crate_dependencies = napi_unit_crate_deps, size = "small")
 cargo_generator(name = "release_build_script", path_dependencies = _RELEASE_PATH_DEPS, proc_macro_names = ["napi-derive"], features = ["release"],
-                cargo_facts = RELEASE_CARGO, crate_dependencies = release_crate_deps, data = [":release_inputs"], build_script_env = {
+                cargo_facts = CARGO, crate_dependencies = crate_deps, data = [":release_inputs"], build_script_env = {
     "OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD": "1",
-    "OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR": "$(execpath :release_inputs)/registry/liboliphaunt-wasix-portable-" + _PORTABLE_VERSION + "/payload",
+    "OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST": "0",
+    "OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR": "$(execpath :release_inputs)/portable",
     "OLIPHAUNT_WASM_GENERATED_AOT_DIR": "$(execpath :release_inputs)/aot",
-    "OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT": "$(execpath :release_inputs)/registry",
+    "OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT": "$(execpath :release_inputs)/extensions",
     "OLIPHAUNT_WASIX_NAPI_BUILD_INPUTS": "$(execpath :release_inputs)/build-inputs.json",
 })
 cargo_napi_library(name = "release_addon_library", path_dependencies = _RELEASE_PATH_DEPS, proc_macro_names = ["napi-derive"], features = ["release"],
-              build_script = ":release_build_script", cargo_facts = RELEASE_CARGO, crate_dependencies = release_crate_deps)
+              build_script = ":release_build_script", cargo_facts = CARGO, crate_dependencies = crate_deps)
 wasix_napi_release(name = "release_addon", library = ":release_addon_library", inputs = ":release_inputs")
-wasix_napi_carriers(producer = ":release_addon", qualification = [":release_installed_test"])
+# Unit tests and ordinary Clippy follow the real local SDK payloads; qualify them once where
+# the Linux WASIX execution platform is already configured.
+wasix_napi_carriers(producer = ":release_addon", qualification = [":release_installed_test", ":generator_test", "//build_defs/wasix:napi_envelopes_test", "//build_defs/languages:napi_payload_profile_test"] + select({
+    "//build_defs/native:linux_x86_64": [":clippy_test", ":unit_test"],
+    "//conditions:default": [],
+}))
 wasix_napi_installed_test(name = "release_installed_test", producer = ":release_addon", carrier = ":release_carriers", size = "large", timeout = "long", tags = ["manual", "installed-consumer"])
 
 source_quality_files()

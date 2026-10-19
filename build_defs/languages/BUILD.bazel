@@ -10,7 +10,7 @@ config_setting(
     values = {"compilation_mode": "opt"},
 )
 
-exports_files(["cargo-metadata.mts", "repositories.bzl", "rust.bzl", "mobile.bzl", "source.bzl", "source-package.mts", "source-contract.mts", "uniffi.mts", "mobile-legal.mts", "wasix.bzl", "cargo-environment.mts", "cargo-toolchain.bzl", "isolated-cache-test.mts", "wasix-crate-payloads.BUILD.bazel"])
+exports_files(["cargo-metadata.mts", "repositories.bzl", "rust.bzl", "napi-noop.bzl", "mobile.bzl", "source.bzl", "source-package.mts", "source-contract.mts", "uniffi.mts", "mobile-legal.mts", "wasix.bzl", "cargo-environment.mts", "cargo-toolchain.bzl", "isolated-cache-test.mts"])
 
 bun_test(
     name = "cargo_metadata_test",

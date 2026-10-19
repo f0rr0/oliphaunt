@@ -16,6 +16,7 @@ import {
   writeSeedConstructionReceipt,
 } from '../../build_defs/resources/seed_construction.mts';
 import { createDeterministicTar } from '../packaging/archive-directory.mts';
+import { loadReleaseMetadata } from './bazel-release-metadata.mts';
 import type { ExtensionFinalInputFile } from './native-extension-final-inputs.mts';
 import { fileIdentity } from './native-file-identity.mts';
 import { projectPreparedNativePublicationPlan } from './native-freeze-publication-candidate.mts';
@@ -39,6 +40,7 @@ import {
   collectNativeVersionUpdates,
   commitNativeVersionUpdates,
 } from './native-version-source.mts';
+import { isNativeCurrentCargoRoot } from './qualified-native-extension-final-inputs.mts';
 import { loadProducts } from './release-graph.mts';
 
 async function fixture() {
@@ -1293,13 +1295,81 @@ test('same final source constructor facts replace stale tuples and survive the e
   }
 });
 
-test('the actual constructor coordinator rejects a raw origin and uses only the known Apple role for RN bootstrap', () => {
+test('canonical WASIX core and contrib Cargo roots survive a shared extension constructor owner', () => {
+  const metadata = loadReleaseMetadata(path.resolve(import.meta.dir, '../..'));
+  const owner = '//extensions:compiled_carriers';
+  const extensionConstructors = new Set([owner]);
+  const cargoRoot = (carrier: (typeof metadata.publicationCarriers)[number]) => ({
+    package: {
+      product: carrier.product,
+      ecosystem: carrier.ecosystem,
+      configuration: carrier.target ?? 'source',
+      name: carrier.name,
+      outputs: [{ owner }],
+    },
+  });
+  const wasixCarriers = metadata.publicationCarriers.filter(
+    (row) =>
+      row.product === 'liboliphaunt-wasix' &&
+      row.ecosystem === 'cargo' &&
+      row.target !== null &&
+      row.target !== 'source',
+  );
+  expect(wasixCarriers.some((row) => row.name.startsWith('liboliphaunt-wasix-'))).toBe(true);
+  expect(wasixCarriers.some((row) => row.name.startsWith('oliphaunt-extension-contrib-'))).toBe(
+    true,
+  );
+  for (const carrier of wasixCarriers) {
+    const root = cargoRoot(carrier);
+    expect(isNativeCurrentCargoRoot(root, metadata, extensionConstructors)).toBe(true);
+    expect(
+      isNativeCurrentCargoRoot(
+        { package: { ...root.package, configuration: 'source' } },
+        metadata,
+        extensionConstructors,
+      ),
+    ).toBe(false);
+    expect(
+      isNativeCurrentCargoRoot(
+        { package: { ...root.package, name: `${carrier.name}-uncanonical` } },
+        metadata,
+        extensionConstructors,
+      ),
+    ).toBe(false);
+  }
+  const extensionCarrier = metadata.publicationCarriers.find(
+    (row) =>
+      row.ecosystem === 'cargo' &&
+      row.target !== null &&
+      row.target !== 'source' &&
+      metadata.extensionReleaseMetadata.some(
+        (extension) => extension.class === 'external' && extension.product === row.product,
+      ),
+  );
+  expect(extensionCarrier).toBeDefined();
+  const extensionRoot = cargoRoot(extensionCarrier!);
+  expect(isNativeCurrentCargoRoot(extensionRoot, metadata, new Set())).toBe(true);
+  expect(isNativeCurrentCargoRoot(extensionRoot, metadata, extensionConstructors)).toBe(false);
+});
+
+test('the constructor coordinator keeps RN and WASIX bootstrap roles separate and rejects raw origins', () => {
   expect(nativeConstructorProducerArtifacts(['oliphaunt-react-native'])).toEqual([
     'native-build-evidence-mobile-ios',
   ]);
-  expect(() =>
-    nativeConstructorProducerArtifacts(['oliphaunt-react-native', 'oliphaunt-swift']),
-  ).toThrow('canonical RN');
+  expect(nativeConstructorProducerArtifacts(['oliphaunt-wasix-napi'])).toEqual([
+    'native-build-evidence-wasix-tools',
+  ]);
+  expect(nativeConstructorProducerArtifacts(['oliphaunt-wasix-rust'])).toEqual([
+    'native-build-evidence-wasix-tools',
+  ]);
+  expect(nativeConstructorProducerArtifacts(['liboliphaunt-wasix-postmaster'])).toEqual([
+    'native-build-evidence-postmaster-linux',
+  ]);
+  for (const consumers of [
+    ['oliphaunt-react-native', 'oliphaunt-swift'],
+    ['oliphaunt-react-native', 'oliphaunt-wasix-napi'],
+  ])
+    expect(() => nativeConstructorProducerArtifacts(consumers)).toThrow('canonical consumer');
   const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
   expect(() =>
     nativeArchiveConstructionFinalInputs(

@@ -278,10 +278,9 @@ test('reviewed main producer assurance preserves construction limits and accepts
     ['Linux native postmaster lifecycle', 'native-build-evidence-postmaster-linux'],
     ['Native postmaster lifecycle (linux-arm64)', 'native-build-evidence-postmaster-linux-arm64'],
     ['Native postmaster lifecycle (macos-arm64)', 'native-build-evidence-postmaster-macos-arm64'],
-    ['Portable packages (linux-x64)', 'native-build-evidence-napi-linux-x64'],
-    ['Portable packages (linux-arm64)', 'native-build-evidence-napi-linux-arm64'],
-    ['Portable packages (macos-arm64)', 'native-build-evidence-napi-macos-arm64'],
-    ['Portable packages (windows-x64)', 'native-build-evidence-napi-windows-x64'],
+    ['WASIX imported runtime (linux-arm64)', 'native-build-evidence-napi-linux-arm64'],
+    ['WASIX imported runtime (macos-arm64)', 'native-build-evidence-napi-macos-arm64'],
+    ['WASIX imported runtime (windows-x64)', 'native-build-evidence-napi-windows-x64'],
     ['Linux runtime (x86_64)', 'native-build-evidence-mobile-android'],
     ['Portable packages (macos-arm64)', 'native-build-evidence-mobile-ios'],
   ]) {
@@ -309,6 +308,18 @@ test('reviewed main producer assurance preserves construction limits and accepts
         'native action-graph dump bytes authenticated by the producing invocation',
       );
     }
+  }
+});
+
+test('portable matrix roles cannot authenticate the relocated NAPI producer artifacts', async () => {
+  for (const platform of ['linux-x64', 'linux-arm64', 'macos-arm64', 'windows-x64']) {
+    const f = syntheticReviewedProducer(
+      `Portable packages (${platform})`,
+      `native-build-evidence-napi-${platform}`,
+    );
+    await expect(assureReviewedNativeBuildProducer('synthetic', f.request, f)).rejects.toThrow(
+      'job/artifact role is not canonical',
+    );
   }
 });
 

@@ -3,14 +3,14 @@
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_script_test", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
-load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "file_shipping_supplier")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "file_shipping_supplier", "merge_shipping_suppliers")
 load("//build_defs/wasix:cargo.bzl", "RUNTIME_CARGO_HELPERS")
 load("//build_defs/wasix:aot.bzl", "WasixAotInfo", "wasix_aot")
 load("//build_defs/wasix:platform.bzl", "WASIX_PORTABLE_TRANSITION")
 load("//build_defs/wasix:wasm.bzl", "WasmModuleInfo")
 load("//build_defs/wasix:napi.bzl", "WasixNapiCarrierInfo")
 load("@wasix_tool_metadata//:targets.bzl", "WASIX_AOT_TARGETS")
-load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_ARTIFACTS", "COMPLETED_SUPPLIER_PUBLICATIONS", "PREPARED_NATIVE_SELECTED_PRODUCTS", "PRODUCTS", "PUBLICATION_CARRIERS", "WASIX_ARTIFACTS", "WASIX_EXTENSIONS")
+load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_ARTIFACTS", "PREPARED_NATIVE_INPUTS", "PREPARED_NATIVE_SELECTED_PRODUCTS", "PRODUCTS", "PUBLICATION_CARRIERS", "WASIX_ARTIFACTS", "WASIX_EXTENSIONS")
 load(":extensions.bzl", "extension_identity")
 load(":final_leaf.bzl", "ExtensionFinalLeafInfo")
 load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extension_carrier_legal", "native_external_carrier_metadata")
@@ -100,7 +100,7 @@ def _unit_inputs_impl(ctx):
 
 wasix_sql_carrier_unit_inputs = rule(implementation = _unit_inputs_impl)
 
-WasixExtensionHostInfo = provider(fields = ["module", "manifest", "version"])
+WasixExtensionHostInfo = provider(fields = ["module", "manifest", "version", "candidate"])
 
 def _compiled_metadata(sql_name):
     spec = native_external_carrier_metadata(sql_name, "wasix-portable")
@@ -129,10 +129,23 @@ def _compiled_carriers_impl(ctx):
     module_rows = [{"name": ctx.attr.sql_name if file == modules[0] else support["lib/postgresql/" + file.basename], "path": file.path, "runtime_path": "lib/postgresql/" + file.basename} for file in modules]
     link_spec = ctx.actions.declare_file(ctx.label.name + ".link-inputs.json")
     link = ctx.actions.declare_file(ctx.label.name + ".link.json")
-    ctx.actions.write(link_spec, json.encode({"sql_name": ctx.attr.sql_name, "runtime": runtime.path, "runtime_manifest": host.manifest.path, "modules": module_rows}))
+    link_inputs = {"sql_name": ctx.attr.sql_name, "runtime": runtime.path, "runtime_manifest": host.manifest.path, "modules": module_rows}
+    link_files = modules + portable + [runtime, link_spec]
+    link_outputs = [link]
+    selected_host = host
+    if getattr(host, "candidate", None):
+        selected_runtime = ctx.actions.declare_file(ctx.label.name + "/selected-host/postgres.wasm")
+        selected_manifest = ctx.actions.declare_file(ctx.label.name + "/selected-host/manifest.json")
+        candidate = host.candidate
+        link_inputs["candidate"] = {"runtime": candidate.module.path, "runtime_manifest": candidate.manifest.path,
+                                    "selected_runtime": selected_runtime.path, "selected_runtime_manifest": selected_manifest.path}
+        link_files += [candidate.module, candidate.manifest]
+        link_outputs += [selected_runtime, selected_manifest]
+        selected_host = WasixExtensionHostInfo(module = selected_runtime, manifest = selected_manifest, version = host.version)
+    ctx.actions.write(link_spec, json.encode(link_inputs))
     args = ctx.actions.args()
     args.add_all(["assets", "declared-extension-link", "--spec", link_spec, "--output", link])
-    ctx.actions.run(executable = ctx.executable._analyzer, arguments = [args], inputs = modules + portable + [runtime, link_spec], outputs = [link], mnemonic = "WasixExtensionLinkContract")
+    ctx.actions.run(executable = ctx.executable._analyzer, arguments = [args], inputs = link_files, outputs = link_outputs, mnemonic = "WasixExtensionLinkContract")
     resources = []
     resource_files = list(ctx.files.resources)
     for file in resource_files:
@@ -192,7 +205,7 @@ def _compiled_carriers_impl(ctx):
     bun_file_action(ctx, ctx.file._tool, arguments = [inputs.path, leaves], inputs = modules + resource_files + image_files + [link, inputs, ctx.file.toolchain] + ctx.files.legal,
                     source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal, outputs = output_files, mnemonic = "WasixCompiledExtensionEnvelopes")
     supplier = ctx.attr.host[ShippingSupplierInfo] if ShippingSupplierInfo in ctx.attr.host else ShippingSupplierInfo(suppliers = None, files = depset([host.module, host.manifest]))
-    return [DefaultInfo(files = depset(output_files)), supplier, host, ExtensionFinalLeafInfo(product = spec["product"], owner = owner.id, version = owner.version, family = "wasix", target = "wasix-portable", metadata = spec,
+    return [DefaultInfo(files = depset(output_files)), supplier, selected_host, ExtensionFinalLeafInfo(product = spec["product"], owner = owner.id, version = owner.version, family = "wasix", target = "wasix-portable", metadata = spec,
         github = outputs["github"], npm = outputs["npm"], cargo = outputs["cargo"] + cargo_parts.values(), manifest = outputs["manifest"][0], frozen = outputs["frozen"][0], spec = inputs, validation = link, receipt = None, origin = None),
         OutputGroupInfo(**{name: depset(files + (cargo_parts.values() if name == "cargo" else [])) for name, files in outputs.items()} | carrier_groups | {"spec": depset([inputs]), "link": depset([link])})]
 
@@ -229,10 +242,12 @@ def wasix_compiled_extension_shipping(name, sql_name, carriers, qualification):
         native.filegroup(name = package + "_files", srcs = [carriers], output_group = "carrier_" + str(index))
         shipping_package(name = package, owner = owner, artifacts = [":" + package + "_files"], ecosystem = row["ecosystem"], package_name = row["name"], configuration = row["target"], role = row["role"], suppliers = carriers)
         packages.append(":" + package)
-    for group in ["github", "manifest", "frozen"]:
+    for group in ["github", "manifest", "frozen", "link"]:
         package = name + "_" + group + "_shipping"
         native.filegroup(name = package + "_files", srcs = [carriers], output_group = group)
         package_name = spec["product"] + "-" + spec["version"] + "-wasix-portable.tar.zst" if group == "github" else sql_name + "-wasix-" + group
+        if group == "link":
+            package_name = sql_name + "-wasix-" + ("final" if PREPARED_NATIVE_INPUTS else "pre-version") + "-link"
         shipping_package(name = package, owner = owner, artifacts = [":" + package + "_files"], ecosystem = "github" if group == "github" else "internal", package_name = package_name,
             configuration = "wasix-portable", role = "github-release-asset" if group == "github" else "extension-release-" + group + "-input", suppliers = carriers)
         packages.append(":" + package)
@@ -240,68 +255,77 @@ def wasix_compiled_extension_shipping(name, sql_name, carriers, qualification):
 
 def _host_impl(ctx):
     expected = native_external_carrier_metadata(ctx.attr.sql_name, "wasix-portable")["compatibility"]["wasix_runtime_version"]
-    files = ctx.files.package
-    rows = {}
-    source_files = {}
-    for name in ["Cargo.toml", "payload/manifest.json", "payload/oliphaunt.wasix.tar.zst"]:
-        matches = [file for file in files if file.path.endswith("/" + name)]
-        if len(matches) != 1:
-            fail("declared WASIX host package requires exactly " + name)
-        rows[name] = matches[0].path
-        source_files[name] = matches[0]
+    archive = ctx.file.archive
+    if not archive or not ctx.attr.origin:
+        fail("WASIX host qualification requires its retained completed portable Cargo archive input")
     runtime = ctx.actions.declare_file(ctx.label.name + "/postgres.wasm")
     manifest = ctx.actions.declare_file(ctx.label.name + "/manifest.json")
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
-    ctx.actions.write(spec, json.encode({"operation": "host", "version": expected, "files": rows, "module": runtime.path, "manifest": manifest.path}))
-    bun_file_action(ctx, ctx.file._tool, arguments = [spec.path], inputs = files + [spec], source_files = [ctx.file._tool] + ctx.files._helpers, outputs = [runtime, manifest], mnemonic = "DeclaredWasixExtensionHost")
+    ctx.actions.write(spec, json.encode({"operation": "host", "version": expected, "archive": archive.path, "module": runtime.path, "manifest": manifest.path}))
+    bun_file_action(ctx, ctx.file._tool, arguments = [spec.path], inputs = [archive, spec], source_files = [ctx.file._tool] + ctx.files._helpers, outputs = [runtime, manifest], mnemonic = "DeclaredWasixExtensionHost")
     carriers = [row for row in PUBLICATION_CARRIERS if row["product"] == "liboliphaunt-wasix" and row["ecosystem"] == "cargo" and row["name"] == "liboliphaunt-wasix-portable"]
     if len(carriers) != 1:
         fail("declared WASIX host requires its unique canonical portable Cargo carrier")
     carrier = carriers[0]
-    publication = COMPLETED_SUPPLIER_PUBLICATIONS.get(carrier["product"] + "@" + expected)
-    suppliers = None
-    if publication:
-        if publication["product"] != carrier["product"] or publication["version"] != expected:
-            fail("declared WASIX ABI supplier differs from its conventional host requirement")
-        suppliers = [{"product": carrier["product"], "version": expected, "configuration": carrier["target"] or "portable", "binding": "abi-contract",
-                      "origin": {"kind": "completed-publication", "publication": publication, "artifact": "cargo:" + carrier["name"]},
-                      "files": [{"path": source_files[name].path, "member": name} for name in sorted(source_files)]}]
-    # The strict extractor proves module/hash identity from these pristine
-    # published Files; the extension imports the host ABI and embeds no core.
-    supplier = ShippingSupplierInfo(suppliers = suppliers, files = depset(source_files.values()))
-    return [DefaultInfo(files = depset([runtime, manifest])), supplier, WasixExtensionHostInfo(module = runtime, manifest = manifest, version = expected)]
+    origin = json.decode(ctx.attr.origin)
+    publication = origin["publication"]
+    if origin["kind"] != "completed-publication" or origin["artifact"] != "cargo:" + carrier["name"] or publication["product"] != carrier["product"] or publication["version"] != expected:
+        fail("declared WASIX ABI supplier differs from its conventional host requirement")
+    # The extractor validates the core from this original completed archive;
+    # its derived Files never become a substitute supplier origin.
+    supplier = ShippingSupplierInfo(suppliers = [{"product": carrier["product"], "version": expected, "configuration": carrier["target"] or "portable", "binding": "abi-contract",
+                      "origin": origin, "files": [{"path": archive.path}]}], files = depset([archive]))
+    candidate = None
+    if ctx.attr.candidate:
+        candidate = ctx.attr.candidate[WasixExtensionHostInfo]
+        if candidate.version != expected:
+            fail("source WASIX candidate differs from its declared host version")
+        supplier = merge_shipping_suppliers([supplier, ctx.attr.candidate[ShippingSupplierInfo]])
+    return [DefaultInfo(files = depset([runtime, manifest])), supplier, WasixExtensionHostInfo(module = runtime, manifest = manifest, version = expected, candidate = candidate)]
 
 _wasix_extension_host = rule(implementation = _host_impl, toolchains = BUN_SOURCE_TOOLCHAINS, attrs = {
-    "sql_name": attr.string(mandatory = True), "package": attr.label(mandatory = True),
+    "sql_name": attr.string(mandatory = True), "archive": attr.label(allow_single_file = True), "origin": attr.string(),
+    "candidate": attr.label(providers = [WasixExtensionHostInfo, ShippingSupplierInfo]),
     "_tool": attr.label(default = "//build_defs/extensions:wasix_carriers.mts", allow_single_file = True), "_helpers": attr.label_list(default = wasix_sql_carrier_helpers(), allow_files = True)})
 
 def wasix_extension_uses_current_host(required_version, current_version, selected_products):
     return "liboliphaunt-wasix" in selected_products and required_version == current_version
 
+def wasix_extension_source_candidate(required_version, current_version, prepared):
+    return not prepared and required_version == current_version
+
 def wasix_extension_declared_host(name, sql_name):
     version = native_external_carrier_metadata(sql_name, "wasix-portable")["compatibility"]["wasix_runtime_version"]
-    if wasix_extension_uses_current_host(version, PRODUCTS["liboliphaunt-wasix"]["version"], PREPARED_NATIVE_SELECTED_PRODUCTS):
+    current_version = PRODUCTS["liboliphaunt-wasix"]["version"]
+    if PREPARED_NATIVE_INPUTS and wasix_extension_uses_current_host(version, current_version, PREPARED_NATIVE_SELECTED_PRODUCTS):
         wasix_extension_current_host(name = name)
     else:
-        _wasix_extension_host(name = name, sql_name = sql_name, package = "@wasix_release_crates__liboliphaunt-wasix-portable-" + version + "//:payload_files")
+        candidate = None
+        if wasix_extension_source_candidate(version, current_version, PREPARED_NATIVE_INPUTS):
+            wasix_extension_current_host(name = name + "_current_candidate")
+            candidate = ":" + name + "_current_candidate"
+        original = COMPLETED_SUPPLIER_ARTIFACTS.get("liboliphaunt-wasix/" + version + "/cargo:liboliphaunt-wasix-portable")
+        _wasix_extension_host(name = name, sql_name = sql_name, archive = original["file"]["path"] if original else None,
+            origin = json.encode({"kind": "completed-publication", "publication": original["publication"], "artifact": original["artifact"]}) if original else "", candidate = candidate)
 
 def _current_host_impl(ctx):
     owner = ctx.attr.owner[ReleaseIdentityInfo]
     if owner.id != "liboliphaunt-wasix":
         fail("current WASIX extension host requires its canonical runtime owner")
-    payloads = ctx.attr.payload[DefaultInfo].files.to_list()
-    if len(payloads) != 1 or not payloads[0].is_directory:
-        fail("current WASIX extension host requires the source-built portable payload")
-    payload = payloads[0]
+    archive = ctx.file.archive
+    if archive.is_source or archive.is_directory or archive.owner != ctx.attr.archive.label:
+        fail("current WASIX extension host requires the original source-built runtime archive File")
     runtime = ctx.actions.declare_file(ctx.label.name + "/postgres.wasm")
     manifest = ctx.actions.declare_file(ctx.label.name + "/manifest.json")
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
-    ctx.actions.write(spec, json.encode({"operation": "current-host", "files": {"payload/manifest.json": payload.path + "/manifest.json", "payload/oliphaunt.wasix.tar.zst": payload.path + "/oliphaunt.wasix.tar.zst"}, "module": runtime.path, "manifest": manifest.path}))
-    bun_file_action(ctx, ctx.file._tool, arguments = [spec.path], inputs = [payload, spec], source_files = [ctx.file._tool] + ctx.files._helpers, outputs = [runtime, manifest], mnemonic = "CurrentWasixExtensionHost")
-    return [DefaultInfo(files = depset([runtime, manifest])), WasixExtensionHostInfo(module = runtime, manifest = manifest, version = owner.version)]
+    ctx.actions.write(spec, json.encode({"operation": "current-host", "archive": archive.path, "module": runtime.path, "manifest": manifest.path}))
+    bun_file_action(ctx, ctx.file._tool, arguments = [spec.path], inputs = [archive, spec], source_files = [ctx.file._tool] + ctx.files._helpers, outputs = [runtime, manifest], mnemonic = "CurrentWasixExtensionHost")
+    supplier = ShippingSupplierInfo(suppliers = [{"product": owner.id, "version": owner.version, "configuration": "wasix-portable", "binding": "abi-contract",
+        "origin": {"kind": "current-source"}, "files": [{"path": archive.path}]}], files = depset([archive]))
+    return [DefaultInfo(files = depset([runtime, manifest])), supplier, WasixExtensionHostInfo(module = runtime, manifest = manifest, version = owner.version)]
 
 wasix_extension_current_host = rule(implementation = _current_host_impl, toolchains = BUN_SOURCE_TOOLCHAINS, attrs = {
-    "payload": attr.label(default = "//src/wasix/runtime:portable_payload"),
+    "archive": attr.label(default = "//src/wasix/runtime:release_archive_portable", allow_single_file = True),
     "owner": attr.label(default = "@oliphaunt_metadata//:product_liboliphaunt-wasix", providers = [ReleaseIdentityInfo]),
     "_tool": attr.label(default = "//build_defs/extensions:wasix_carriers.mts", allow_single_file = True), "_helpers": attr.label_list(default = wasix_sql_carrier_helpers(), allow_files = True)})
 
@@ -312,10 +336,12 @@ def _compiled_installed_impl(ctx):
         fail("compiled WASIX installed test requires its actual declared module")
     if module != None and leaf.validation == None:
         fail("compiled WASIX installed test requires its actual strict link contract")
-    host_target = ctx.attr.host or ctx.attr.leaf
-    if WasixExtensionHostInfo not in host_target:
+    host_target = ctx.attr.leaf if WasixExtensionHostInfo in ctx.attr.leaf else ctx.attr.host
+    if not host_target or WasixExtensionHostInfo not in host_target:
         fail("installed WASIX extension requires its exact selected host Files")
     host = host_target[WasixExtensionHostInfo]
+    if ctx.attr.host and ctx.attr.host[WasixExtensionHostInfo].version != host.version:
+        fail("explicit WASIX host differs from the leaf's selected host identity")
     if host.version != leaf.metadata["compatibility"]["wasix_runtime_version"]:
         fail("installed WASIX host differs from its owner's conventional requirement")
     if not ctx.attr.addon:
@@ -326,26 +352,35 @@ def _compiled_installed_impl(ctx):
         if carrier.target != napi["target"]["target"]:
             fail("installed WASIX addon target differs from its canonical carrier")
         addon = carrier.npm
+        napi["constructionContract"] = carrier.construction_contract
     else:
         originals = ctx.attr.addon[DefaultInfo].files.to_list()
         if len(originals) != 1 or originals[0].is_directory:
             fail("installed held WASIX addon requires one original npm archive File")
         addon = originals[0]
+    current_addon = None
+    if ctx.attr.current_addon:
+        current_carrier = ctx.attr.current_addon[WasixNapiCarrierInfo]
+        if current_carrier.target != napi["target"]["target"]:
+            fail("current WASIX addon target differs from its canonical carrier")
+        current_addon = current_carrier.npm
+        napi["currentConstructionContract"] = current_carrier.construction_contract
     napi_input = ctx.actions.declare_file(ctx.label.name + ".napi.json")
     ctx.actions.write(napi_input, json.encode(napi))
     node = ctx.toolchains["@rules_nodejs//nodejs:toolchain_type"].nodeinfo.node
     fixtures = [file for file in ctx.files._fixtures if file.basename == leaf.metadata["sqlName"] + ".sql"]
     if len(fixtures) != 1:
         fail("compiled WASIX installed test requires its canonical source-owned SQL fixture")
-    files = leaf.github + leaf.npm + leaf.cargo + [leaf.manifest, leaf.frozen, leaf.spec, addon, node, ctx.file._runner, ctx.file._consumer, host.module, host.manifest, napi_input, ctx.file.addon_template] + ([ctx.file.addon_facade] if ctx.file.addon_facade else []) + ([module, leaf.validation] if module else []) + fixtures + ctx.files._helpers
+    files = leaf.github + leaf.npm + leaf.cargo + [leaf.manifest, leaf.frozen, leaf.spec, addon, node, ctx.file._runner, ctx.file._consumer, host.module, host.manifest, napi_input, ctx.file.addon_template] + ([current_addon] if current_addon else []) + ([ctx.file.addon_facade] if ctx.file.addon_facade else []) + ([module, leaf.validation] if module else []) + fixtures + ctx.files._helpers
     parts = [file for file in leaf.cargo if file.is_directory]
-    return bun_test_entrypoint(ctx, ctx.file._runner, [leaf.spec, leaf.github[0], leaf.npm[0], leaf.cargo[0], leaf.frozen, module or "-", addon, node, ctx.file._consumer, leaf.validation or "-", fixtures[0], host.module, host.manifest, napi_input, ctx.file.addon_facade or "-", ctx.file.addon_template] + parts, files, source_files = [ctx.file._runner, ctx.file._consumer] + ctx.files._helpers)
+    return bun_test_entrypoint(ctx, ctx.file._runner, [leaf.spec, leaf.github[0], leaf.npm[0], leaf.cargo[0], leaf.frozen, module or "-", addon, node, ctx.file._consumer, leaf.validation or "-", fixtures[0], host.module, host.manifest, napi_input, ctx.file.addon_facade or "-", ctx.file.addon_template, current_addon or "-"] + parts, files, source_files = [ctx.file._runner, ctx.file._consumer] + ctx.files._helpers)
 
 _compiled_installed_test = rule(implementation = _compiled_installed_impl, test = True, toolchains = BUN_SOURCE_TOOLCHAINS + ["@rules_nodejs//nodejs:toolchain_type"], attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
     "leaf": attr.label(mandatory = True, providers = [ExtensionFinalLeafInfo]), "module": attr.label(cfg = WASIX_PORTABLE_TRANSITION),
     "host": attr.label(providers = [WasixExtensionHostInfo]),
     "addon": attr.label(providers = [[WasixNapiCarrierInfo], [ShippingSupplierInfo]]),
     "addon_facade": attr.label(allow_single_file = True), "addon_template": attr.label(allow_single_file = True, mandatory = True),
+    "current_addon": attr.label(providers = [WasixNapiCarrierInfo]),
     "napi_contract": attr.string(mandatory = True),
     "_runner": attr.label(default = "//build_defs/extensions/wasix:compiled_carriers.test.mts", allow_single_file = True),
     "_consumer": attr.label(default = "//build_defs/extensions/wasix:installed_consumer.mts", allow_single_file = True),
@@ -359,8 +394,11 @@ def wasix_compiled_extension_installed_test(name, sql_name, **kwargs):
         fail("installed WASIX extension requires its canonical GNU x64 addon target")
     target = target_rows[0]
     requirement = native_external_carrier_metadata(sql_name, "wasix-portable")["compatibility"]["wasix_runtime_version"]
-    current = requirement == PRODUCTS["oliphaunt-wasix-napi"]["compatibility_versions"]["liboliphaunt-wasix"]
+    current = PREPARED_NATIVE_INPUTS and wasix_extension_uses_current_host(requirement, PRODUCTS["liboliphaunt-wasix"]["version"], PREPARED_NATIVE_SELECTED_PRODUCTS)
+    candidate = kwargs.get("module") and wasix_extension_source_candidate(requirement, PRODUCTS["liboliphaunt-wasix"]["version"], PREPARED_NATIVE_INPUTS)
     napi = {"current": current, "version": PRODUCTS["oliphaunt-wasix-napi"]["version"], "target": target}
+    if candidate:
+        napi["currentVersion"] = PRODUCTS["oliphaunt-wasix-napi"]["version"]
     addon = "//src/wasix/node-addon:release_carriers" if current else None
     facade = None
     if not current:
@@ -379,7 +417,8 @@ def wasix_compiled_extension_installed_test(name, sql_name, **kwargs):
             napi.update({"version": original["publication"]["version"], "original": original, "facade": facades[0]})
     directory = target["npm_os"] + "-" + target["npm_cpu"] + "-gnu"
     _compiled_installed_test(name = name, args = bun_test_entrypoint_args(name), addon = addon, addon_facade = facade,
-        addon_template = "//src/wasix/node-addon:packages/" + directory + "/package.json", napi_contract = json.encode(napi), **kwargs)
+        addon_template = "//src/wasix/node-addon:packages/" + directory + "/package.json", napi_contract = json.encode(napi),
+        current_addon = "//src/wasix/node-addon:release_carriers" if candidate else None, **kwargs)
 
 def wasix_compiled_extension_qualification(name, sql_name, module):
     wasix_compiled_extension_installed_test(name = name + "_installed_test", sql_name = sql_name, leaf = ":" + name, module = module,

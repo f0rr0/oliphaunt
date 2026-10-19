@@ -1,34 +1,56 @@
 load("//build_defs/quality:sources.bzl", "rust_quality_files")
 load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_integration_test", "cargo_library", "cargo_library_test", "cargo_package_env")
-load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test", "rust_library")
 load("//build_defs/languages:source.bzl", "cargo_source_contract_test", "cargo_source_package")
-load("@wasix_adapter_cargo_metadata//:cargo.bzl", "CARGO")
-load("@wasix_adapter_crates//:defs.bzl", "all_crate_deps", "crate_deps")
-load("@wasix_release_cargo_metadata//:cargo.bzl", RELEASE_CARGO = "CARGO")
-load("@wasix_release_crates//:defs.bzl", release_crate_deps = "crate_deps")
+load("@native_cargo_metadata//:cargo.bzl", "CARGO")
+load("@cargo_crates//:defs.bzl", "all_crate_deps", "crate_deps")
 load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "PRODUCTS")
-load("//build_defs/extensions/wasix:contrib_carriers.bzl", "wasix_contrib_server_crate_deps")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "shipping_suppliers")
+load("@wasix_tool_metadata//:targets.bzl", "WASIX_AOT_TARGETS")
 
 package(default_visibility = ["//visibility:public"])
 exports_files(["Cargo.toml"])
 
-PATH_DEPS = {}
+rust_library(
+    name = "shipping_supplier_fixture",
+    testonly = True,
+    srcs = ["tools/testdata/shipping_supplier_fixture.rs"],
+    edition = "2024",
+    tags = ["manual"],
+)
 
-cargo_package_env(workspace_manifest = "//src/wasix/node-addon:Cargo.toml")
+PATH_DEPS = {"oliphaunt-wasix": "//src/wasix/sdks/rust:lib"}
+_NAPI_PATH_DEPS = {"oliphaunt-wasix": "//src/wasix/sdks/rust:napi_lib"}
+_NAPI_RELEASE_PATH_DEPS = {"oliphaunt-wasix": "//src/wasix/sdks/rust:napi_release_lib"}
+_CONTRIB_PATH_DEPS = {"oliphaunt-wasix": "//src/wasix/sdks/rust:extension_carrier_lib"}
+
+cargo_package_env()
 cargo_library(path_dependencies = PATH_DEPS, cargo_facts = CARGO, crate_dependencies = crate_deps)
 # Cargo unifies the SDK's dependency feature from the N-API root across both
 # direct and pgwire paths. Keep that one configured SDK instance in this root.
-cargo_library(name = "napi_lib", path_dependencies = PATH_DEPS, cargo_facts = CARGO, crate_dependencies = crate_deps)
-cargo_library(name = "napi_release_lib", features = ["extensions"], path_dependencies = PATH_DEPS, cargo_facts = RELEASE_CARGO, crate_dependencies = release_crate_deps)
+cargo_library(name = "napi_lib", path_dependencies = _NAPI_PATH_DEPS, cargo_facts = CARGO, crate_dependencies = crate_deps)
+cargo_library(name = "napi_release_lib", features = ["extensions"], path_dependencies = _NAPI_RELEASE_PATH_DEPS, cargo_facts = CARGO, crate_dependencies = crate_deps)
+shipping_suppliers(name = "napi_release_compiled_suppliers", inputs = [])
+filegroup(name = "napi_release_compiled_files", srcs = ["//src/wasix/node-addon:release_addon"], output_group = "server_compiled")
+shipping_package(
+    name = "napi_release_compiled_shipping",
+    owner = "@oliphaunt_metadata//:product_oliphaunt-pgwire-server",
+    artifacts = [":napi_release_compiled_files"], ecosystem = "internal", package_name = "oliphaunt-pgwire-server",
+    configuration = select({"@rules_rust//rust/platform:" + triple: target for target, triple in WASIX_AOT_TARGETS.items()}),
+    role = "compiled-source", suppliers = ":napi_release_compiled_suppliers",
+)
+shipping_export(name = "napi_release_compiled_shipping_export", packages = [":napi_release_compiled_shipping"], qualification = ["//src/wasix/node-addon:release_installed_test"], testonly = True)
 _CONTRIB_FEATURES = ["extension-" + member["sql-name"].replace("_", "-") for member in CONTRIB_MEMBERS]
-cargo_library(name = "extension_carrier_lib", features = _CONTRIB_FEATURES, cargo_facts = CARGO, crate_dependencies = wasix_contrib_server_crate_deps)
+cargo_library(name = "extension_carrier_lib", features = _CONTRIB_FEATURES, path_dependencies = _CONTRIB_PATH_DEPS, cargo_facts = CARGO, crate_dependencies = crate_deps)
 cargo_integration_test(
     name = "contrib_carrier_server_test",
     source = "tests/extensions.rs",
     crate = ":extension_carrier_lib",
     features = _CONTRIB_FEATURES,
     cargo_facts = CARGO,
-    crate_dependencies = wasix_contrib_server_crate_deps,
+    path_dependencies = _CONTRIB_PATH_DEPS,
+    crate_dependencies = crate_deps,
     rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode([member["sql-name"] for member in CONTRIB_MEMBERS]), "OLIPHAUNT_DECLARED_RUNTIME_VERSION": PRODUCTS["liboliphaunt-wasix"]["version"]},
     data = ["//src/test-fixtures:rust_fixtures", "//src/extensions/catalog:extensions.source.json"],
     tags = ["manual"],
@@ -38,8 +60,9 @@ cargo_integration_test(
     source = "tests/extensions.rs",
     crate = ":napi_release_lib",
     features = _CONTRIB_FEATURES,
-    cargo_facts = RELEASE_CARGO,
-    crate_dependencies = release_crate_deps,
+    path_dependencies = _NAPI_RELEASE_PATH_DEPS,
+    cargo_facts = CARGO,
+    crate_dependencies = crate_deps,
     args = ["--ignored", "--exact", "public_extensions_pass_server_smoke", "--nocapture", "--test-threads=1"],
     rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode([member["sql-name"] for member in CONTRIB_MEMBERS])},
     data = ["//src/test-fixtures:rust_fixtures", "//src/extensions/catalog:extensions.source.json"],
@@ -47,9 +70,9 @@ cargo_integration_test(
     timeout = "long",
     tags = ["manual", "installed-consumer"],
 )
-cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"], cargo_facts = CARGO, all_dependencies = all_crate_deps)
+cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"], path_dependencies = PATH_DEPS, cargo_facts = CARGO, all_dependencies = all_crate_deps)
 cargo_binary(name = "server", source = "src/main.rs", path_dependencies = PATH_DEPS, library = ":lib", cargo_facts = CARGO, crate_dependencies = crate_deps)
-cargo_library_test(name = "binary_test", crate = ":server", cargo_facts = CARGO, all_dependencies = all_crate_deps, tags = ["manual"])
+cargo_library_test(name = "binary_test", crate = ":server", path_dependencies = PATH_DEPS, cargo_facts = CARGO, all_dependencies = all_crate_deps, tags = ["manual"])
 _INTEGRATION_ROOTS = glob(["tests/*.rs"])
 [
     cargo_integration_test(
@@ -62,6 +85,7 @@ _INTEGRATION_ROOTS = glob(["tests/*.rs"])
         rustc_env = {"CARGO_BIN_EXE_oliphaunt-pgwire-server": "$(rootpath :server)"},
         data = [":server", "//src/test-fixtures:rust_fixtures"],
         cargo_facts = CARGO,
+        path_dependencies = PATH_DEPS,
         crate_dependencies = crate_deps,
         tags = ["manual"],
     )
@@ -76,8 +100,7 @@ rust_clippy_test(
 cargo_source_package(
     product = "oliphaunt-pgwire-server",
     cargo_facts = CARGO,
-    workspace_manifest = "//src/wasix/node-addon:Cargo.toml",
-    qualification = [":source_package_test", "//build_defs/languages/installed:pgwire_source_compile_test", ":unit_test", ":binary_test", ":held_contrib_server_test"] +
+    qualification = [":source_package_test", "//build_defs/languages/installed:pgwire_source_compile_test", ":unit_test", ":binary_test", ":held_contrib_server_test", ":clippy_test"] +
                     [":" + source.removeprefix("tests/").removesuffix(".rs") + "_test" for source in _INTEGRATION_ROOTS if source != "tests/extensions.rs"],
 )
 cargo_source_contract_test(

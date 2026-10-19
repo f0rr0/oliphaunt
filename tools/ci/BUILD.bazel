@@ -11,6 +11,7 @@ filegroup(
     srcs = [
         "bazel-recorded-inputs.mts",
         "configured-scope.mts",
+        "native-import-projection.mts",
         "run-configured-request.mts",
         "//build_defs/resources:seed_construction.mts",
         "//src/database-resources:contracts/native-manifest.mts",
@@ -24,6 +25,8 @@ filegroup(
         "//tools/release:native-build-qualification.mts",
         "//tools/release:native-configured-inputs.mts",
         "//tools/release:native-file-identity.mts",
+        "//tools/release:native-extension-final-inputs.mts",
+        "//tools/release:native-supplier-artifacts.mts",
         "//tools/release:with-source.mts",
     ],
 )
@@ -31,12 +34,13 @@ filegroup(
 [bun_test(
     name = name,
     entry_point = entry,
-    data = ["bazel-recorded-inputs.mts"] if name == "bazel_recorded_inputs_test" else [":configured_ci_sources", "//:workflow_policy_sources", "//:tools/packaging/testdata/zip-fixture.mts", "//tools/release:with-source.sh", "//tools/release:qualified-release-replay.sh"],
+    data = ["bazel-recorded-inputs.mts"] if name == "bazel_recorded_inputs_test" else [":configured_ci_sources", "//:workflow_policy_sources", "//:tools/packaging/testdata/zip-fixture.mts", "//:tools/packaging/testdata/tar-fixture.mts", "//tools/release:with-source.sh", "//tools/release:qualified-release-replay.sh"],
     tags = ["source-check"],
     size = "small",
 ) for name, entry in [
     ("bazel_recorded_inputs_test", "bazel-recorded-inputs.test.mts"),
     ("configured_scope_test", "configured-scope.test.mts"),
+    ("native_import_projection_test", "native-import-projection.test.mts"),
     ("run_configured_request_test", "run-configured-request.test.mts"),
 ]]
 
@@ -115,6 +119,7 @@ test_suite(
     tests = [
         ":bazel_recorded_inputs_test",
         ":configured_scope_test",
+        ":native_import_projection_test",
         ":run_configured_request_test",
         ":ci_gate_test",
         ":installed_replay_tools_test",

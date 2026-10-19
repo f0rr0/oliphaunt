@@ -1,4 +1,13 @@
-"""Configure portable C producers independently of their host consumers."""
+"""Configure WASIX payload producers independently of their host consumers."""
+
+def _payload_profile_impl(_settings, _attr):
+    # Cargo payload construction keeps the pinned Rust defaults, outside addon link policy.
+    return {"@rules_rust//rust/settings:lto": "unspecified", "@rules_rust//rust/settings:codegen_units": -1,
+            "@rules_rust//rust/settings:extra_rustc_flags": []}
+
+WASIX_PAYLOAD_PROFILE = transition(implementation = _payload_profile_impl, inputs = [], outputs = [
+    "@rules_rust//rust/settings:lto", "@rules_rust//rust/settings:codegen_units", "@rules_rust//rust/settings:extra_rustc_flags",
+])
 
 def _portable_impl(_settings, _attr):
     return {"//command_line_option:platforms": [str(Label("//build_defs/wasix:portable"))]}

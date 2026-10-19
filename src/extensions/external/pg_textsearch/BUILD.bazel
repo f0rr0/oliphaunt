@@ -1,6 +1,6 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/extensions:external.bzl", "native_external_extension_modules")
-load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "extension_identity", "extension_member_payload", "extension_member_validation_test")
+load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "extension_default_version", "extension_identity", "extension_member_payload", "extension_member_validation_test")
 load("//build_defs/release:shipping.bzl", "shipping_package")
 load("//build_defs/extensions:native_carriers.bzl", "native_external_extension_carriers")
 
@@ -18,12 +18,20 @@ native_external_extension_carriers(
 
 native_external_extension_modules(name = "pg_textsearch")
 
+filegroup(
+    name = "sql_resources",
+    srcs = [
+        "@pg_textsearch//:pg_textsearch.control",
+        "@pg_textsearch//:sql/pg_textsearch--" + extension_default_version("pg_textsearch") + ".sql",
+        "@pg_textsearch//:sql_upgrade_resources",
+    ],
+)
 
 extension_member_payload(
     name = "native_payload",
     sql_name = "pg_textsearch",
     owner = extension_identity("pg_textsearch"),
-    resources = ["@pg_textsearch//:sql_resources"],
+    resources = [":sql_resources"],
     server_module = ":pg_textsearch_server_module",
     embedded_module = ":pg_textsearch_embedded_module",
     construction_licenses = select({

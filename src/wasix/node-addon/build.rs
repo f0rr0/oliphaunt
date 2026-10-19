@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 const RELEASE_INPUT_ENVS: &[&str] = &[
     "OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD",
+    "OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST",
     "OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR",
     "OLIPHAUNT_WASM_GENERATED_AOT_DIR",
     "OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT",
@@ -62,6 +63,15 @@ fn validate_release_inputs() {
     required_file(&inventory, "validated WASIX N-API build-input inventory");
     println!("cargo::rerun-if-changed={}", inventory.display());
 
+    if !requires_cargo_artifact_manifests(
+        std::env::var("OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST")
+            .ok()
+            .as_deref(),
+    ) {
+        // Native construction observes declared payload Files instead of Cargo relay manifests.
+        return;
+    }
+
     // `oliphaunt-wasix` relays the manifests emitted by the exact payload
     // crates it compiled. These prove Cargo selected the embedded
     // portable/core-AOT inputs, not only that similarly named
@@ -80,6 +90,16 @@ fn validate_release_inputs() {
         ),
     ] {
         required_env_file(&name, "relayed WASIX Cargo artifact manifest");
+    }
+}
+
+fn requires_cargo_artifact_manifests(mode: Option<&str>) -> bool {
+    match mode {
+        None | Some("1") => true,
+        Some("0") => false,
+        Some(other) => {
+            panic!("OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST must be 0 or 1, got {other}")
+        }
     }
 }
 
@@ -118,4 +138,21 @@ fn required_env_file(name: &str, label: &str) {
     let path = required_path(name);
     required_file(&path, label);
     println!("cargo::rerun-if-changed={}", path.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::requires_cargo_artifact_manifests;
+
+    #[test]
+    fn only_explicit_native_mode_disables_cargo_manifest_relay() {
+        assert!(requires_cargo_artifact_manifests(None));
+        assert!(requires_cargo_artifact_manifests(Some("1")));
+        assert!(!requires_cargo_artifact_manifests(Some("0")));
+        for mode in ["", "false", " 0", "0 ", "2"] {
+            assert!(
+                std::panic::catch_unwind(|| requires_cargo_artifact_manifests(Some(mode))).is_err()
+            );
+        }
+    }
 }

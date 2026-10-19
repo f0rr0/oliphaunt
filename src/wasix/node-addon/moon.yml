@@ -73,7 +73,7 @@ tasks:
     tags: ["quality", "unit", "requires-rust"]
     script: |
       set -e
-      bash ../../../tools/dev/bun.sh test --cwd src/wasix/node-addon ./tools/detect-linux-libc.test.mts ./tools/package-contract.test.mts ../../../tools/packaging/local-npm-tarball.test.mts
+      bash ../../../tools/dev/bun.sh test --cwd src/wasix/node-addon ./tools/detect-linux-libc.test.mts ./tools/package-contract.test.mts ./tools/workspace-runtime-contract.test.mts ../../../tools/packaging/local-npm-tarball.test.mts
       bash tools/package-platform.test.sh
       cargo test --manifest-path Cargo.toml --locked --no-default-features --features extensions,test-noop --lib
     env:

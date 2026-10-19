@@ -444,10 +444,23 @@ shipping_export(
 )
 
 shipping_export(
+    name = "wasix_napi_shipping_export",
+    testonly = True,
+    exports = [
+        "//src/wasix/node-addon:release_shipping_export",
+        "//src/wasix/sdks/rust:napi_release_compiled_shipping_export",
+        "//src/wasix/pgwire-server:napi_release_compiled_shipping_export",
+    ],
+)
+
+shipping_export(
     name = "wasix_shipping_export",
     testonly = True,
     exports = [
         "//src/wasix/runtime:shipping_export",
+        "//src/wasix/node-addon:release_shipping_export",
+        "//src/wasix/sdks/rust:napi_release_compiled_shipping_export",
+        "//src/wasix/pgwire-server:napi_release_compiled_shipping_export",
         "//src/wasix/postgres-tools:shipping_export",
         "//src/database-resources:wasix_shipping_export",
         "//src/wasix/sdks/ts:shipping_export",
@@ -465,13 +478,21 @@ shipping_export(
 )
 
 shipping_export(
-    name = "release_family_shipping_export",
+    name = "public_source_shipping_export",
     testonly = True,
     exports = [
         "//src/native/rust-bindings:shipping_export",
         "//src/native/sdks/rust:shipping_export",
         "//src/native/sdks/rust/crates/oliphaunt-build:shipping_export",
         "//src/native/broker:shipping_export",
+    ],
+)
+
+shipping_export(
+    name = "release_family_shipping_export",
+    testonly = True,
+    exports = [
+        ":public_source_shipping_export",
         "//src/native/runtime:checksum_shipping_export",
         "//src/native/postgres-tools:checksum_shipping_export",
         "//src/native/broker:checksum_shipping_export",

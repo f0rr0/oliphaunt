@@ -463,63 +463,6 @@ jobs:
           capture_jvm_snapshot jvm-final.out
           exit "$qualifier_status"
 
-      - name: Qualify final WASIX addon on its native host
-        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
-        env:
-          CI_REQUEST_ID: portable/${{ matrix.platform }}/napi
-          TARGET_PLATFORM: ${{ matrix.platform }}
-          QUALIFICATION_JOB_NAME: Portable packages (${{ matrix.platform }})
-        run: |
-          startup=()
-          configuration=()
-          case "$TARGET_PLATFORM" in
-            linux-x64) profile=//build_defs/native:linux_x86_64_glibc_2_28 ;;
-            linux-arm64) profile=//build_defs/native:linux_aarch64_glibc_2_28 ;;
-            macos-arm64)
-              profile=//build_defs/host:native_macos_arm64
-              startup=(--output_base="$RUNNER_TEMP/native-bazel" --host_jvm_args=-Xmx3g
-                --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out")
-              configuration=(--config=macos-sandbox)
-              ;;
-            windows-x64)
-              profile=//build_defs/host:native_windows_x64
-              startup=(--output_base="$RUNNER_TEMP/b")
-              ;;
-          esac
-          input_root="$RUNNER_TEMP/napi-build-inputs"
-          mkdir -p "$input_root"
-          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
-            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
-            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
-            > "$input_root/github.json"
-          jq -nc --args '$ARGS.positional' -- "${startup[@]}" > "$input_root/startup.json"
-          jq -nc --args '$ARGS.positional' -- -c opt "${configuration[@]}" \
-            "--platforms=$profile" "--host_platform=$profile" --jobs=1 --local_test_jobs=1 \
-            > "$input_root/configuration.json"
-          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
-          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
-            --ci-requires-json "$input_root/ci-requires.json")
-          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
-            ci_arguments+=(--ci-handoff)
-          fi
-          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
-            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
-            --configuration-json "$input_root/configuration.json" \
-            --shipping-export //src/wasix/node-addon:release_shipping_export \
-            --output-directory "$RUNNER_TEMP/napi-build-capture"
-          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
-          cp "$RUNNER_TEMP/napi-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
-
-      - name: Upload WASIX addon construction evidence
-        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('portable/{0}/napi', matrix.platform))
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: native-build-evidence-napi-${{ matrix.platform }}
-          path: ${{ runner.temp }}/napi-build-capture/evidence/
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Construct native iOS device and simulator ABI consumers
         if: matrix.platform == 'macos-arm64'
         env:
@@ -666,7 +609,6 @@ jobs:
           name: native-bazel-macos-diagnostics
           path: |
             ${{ runner.temp }}/native-bazel-diagnostics
-            ${{ runner.temp }}/napi-build-capture/diagnostics
             ${{ runner.temp }}/native-build-capture/diagnostics
             ${{ runner.temp }}/ios-extension-build-capture/diagnostics
             ${{ runner.temp }}/ci-requests/**/diagnostics
@@ -1308,17 +1250,26 @@ jobs:
         with:
           install-build-dependencies: "false"
 
+      - name: Authenticate current Linux postmaster constructor inputs
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), format('postmaster-host/{0}/carrier-lifecycle', matrix.platform))
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          input_root="$RUNNER_TEMP/postmaster-build-inputs"
+          mkdir -p "$input_root"
+          printf '%s\n' '["liboliphaunt-wasix-postmaster"]' > "$input_root/consumer-products.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts \
+            --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF" \
+            --consumer-products-json "$input_root/consumer-products.json" \
+            --output-directory target/postmaster-linux-import
+
       - name: Qualify native carrier from authenticated Linux guest
         if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
         env:
           CI_REQUEST_ID: postmaster-host/${{ matrix.platform }}/carrier-lifecycle
           CI_REQUIRES: '["postmaster/linux-carrier-lifecycle"]'
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           EXPECTED_SOURCE_COMMIT: ${{ needs.postmaster.outputs.source_commit }}
           EXPECTED_SOURCE_TREE: ${{ needs.postmaster.outputs.source_tree }}
-          WORKFLOW_EVENT: ${{ github.event_name }}
-          WORKFLOW_REF: ${{ github.ref }}
           TARGET_PLATFORM: ${{ matrix.platform }}
           TARGET_COMPILER: ${{ matrix.compiler }}
           TARGET_PREFIX: ${{ matrix.prefix }}
@@ -1328,32 +1279,11 @@ jobs:
           test "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_SOURCE_TREE"
           input_root="$RUNNER_TEMP/postmaster-build-inputs"
           mkdir -p "$input_root"
-          bun_binary="$(bash tools/dev/bun.sh -p process.execPath)"
-          bun_directory="$(dirname "$bun_binary")"
-          PATH="$bun_directory:$PATH"
-          export PATH
-          origin_snapshots="$input_root/linux-origin"
-          OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR="$origin_snapshots" \
-          bash .github/scripts/download-build-artifacts.sh "$GITHUB_WORKFLOW" "$EXPECTED_SOURCE_COMMIT" \
-            "$RUNNER_TEMP/postmaster-linux-packet" --run-id "$GITHUB_RUN_ID" \
-            --job 'Linux native postmaster lifecycle' --job-success-only \
-            --workflow-path .github/workflows/bazel.yml --event "$WORKFLOW_EVENT" --ref "$WORKFLOW_REF" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" --source-tree "$EXPECTED_SOURCE_TREE" \
-            --artifact native-build-evidence-postmaster-linux
-          producer_attempt="$(jq -er '[.jobs[] | select(.name == "Linux native postmaster lifecycle")] | max_by(.run_attempt) | .run_attempt' "$origin_snapshots/run-$GITHUB_RUN_ID.json")"
+          archive="$(jq -er '[.nativeCurrentArtifacts[] | select(.product == "liboliphaunt-wasix-postmaster" and (.artifact | startswith("github-release:")) and (.artifact | endswith("-linux-x64-gnu.tar.zst"))) | .file.path] | if length == 1 then .[0] else error("one original Linux postmaster archive required") end' "$OLIPHAUNT_NATIVE_PUBLICATION_INPUTS")"
           jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
-            --arg workflowPath .github/workflows/bazel.yml --arg job 'Linux native postmaster lifecycle' \
-            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$producer_attempt" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
-            > "$input_root/linux-github.json"
-          bash tools/dev/bun.sh tools/release/native-build-files.mts \
-            --evidence-root "$RUNNER_TEMP/postmaster-linux-packet" \
-            --source-commit "$EXPECTED_SOURCE_COMMIT" --source-tree "$EXPECTED_SOURCE_TREE" \
-            --github-json "$input_root/linux-github.json" --output-directory target/postmaster-linux-import \
-            > "$input_root/files.json"
-          archive="$(jq -er '[.[] | select(endswith("-linux-x64-gnu.tar.zst"))] | if length == 1 then .[0] else error("one canonical Linux archive required") end' "$input_root/files.json")"
-          jq --arg job "$QUALIFICATION_JOB_NAME" --argjson attempt "$GITHUB_RUN_ATTEMPT" \
-            '.job=$job | .runAttempt=$attempt' "$input_root/linux-github.json" \
             > "$input_root/github.json"
           jq -nc --arg base "$RUNNER_TEMP/postmaster-native" \
             '["--output_base="+$base,"--host_jvm_args=-Xmx3g"]' > "$input_root/startup.json"
@@ -1527,8 +1457,8 @@ jobs:
 
   release-families:
     name: Native release families
-    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && needs.portable.result == 'success' && needs.linux.result == 'success' && needs.wasix.result == 'success' && needs.postmaster.result == 'success' && needs.postmaster-host.result == 'success' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), 'release-families') }}
-    needs: [portable, linux, wasix, postmaster, postmaster-host, release-inputs]
+    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), 'release-families') }}
+    needs: [portable, linux, wasix, postmaster, postmaster-host, wasix-host, release-inputs]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -1562,7 +1492,37 @@ jobs:
           phase: restore
           cohort: release-families
 
+      - name: Qualify public Cargo source packages
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUEST_ID: release-families/public-source
+        run: |
+          input_root="$RUNNER_TEMP/public-source-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "Native release families" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc '[
+            "-c","opt","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=2"
+          ]' > "$input_root/configuration.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:public_source_shipping_export \
+            --output-directory "$RUNNER_TEMP/public-source-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/public-source-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
       - name: Authenticate this run's completed archive producers
+        if: needs.release-inputs.outputs.ci_mode == 'full' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), 'release-families/checksums')
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
@@ -1571,10 +1531,11 @@ jobs:
           --output-directory target/native-release-archive-inputs
 
       - name: Qualify complete public checksum families
-        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        if: needs.release-inputs.outputs.ci_mode == 'full' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
         env:
           CI_REQUEST_ID: release-families/checksums
-          CI_REQUIRES: '["portable/linux-x64/napi","portable/linux-arm64/napi","portable/macos-arm64/napi","portable/windows-x64/napi","portable/macos-arm64/native-carriers","portable/windows-x64/native-carriers","portable/macos-arm64/apple-packages","linux/x86_64/android-packages","linux/x86_64/native-carriers","linux/aarch64/native-carriers","wasix/tools-sdk-browser","postmaster/linux-carrier-lifecycle","postmaster-host/macos-arm64/carrier-lifecycle","postmaster-host/linux-arm64/carrier-lifecycle"]'
+          CI_FULL_ONLY: 'true'
+          CI_REQUIRES: '["wasix-host/linux-arm64/napi","wasix-host/macos-arm64/napi","wasix-host/windows-x64/napi","portable/macos-arm64/native-carriers","portable/windows-x64/native-carriers","portable/macos-arm64/apple-packages","linux/x86_64/android-packages","linux/x86_64/native-carriers","linux/aarch64/native-carriers","wasix/tools-sdk-browser","postmaster/linux-carrier-lifecycle","postmaster-host/macos-arm64/carrier-lifecycle","postmaster-host/linux-arm64/carrier-lifecycle"]'
         run: |
           input_root="$RUNNER_TEMP/release-family-build-inputs"
           mkdir -p "$input_root"
@@ -1602,7 +1563,7 @@ jobs:
           cp "$RUNNER_TEMP/release-family-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
 
       - name: Upload public checksum construction evidence
-        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), 'release-families/checksums')
+        if: needs.release-inputs.outputs.ci_mode == 'full' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), 'release-families/checksums')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: native-build-evidence-release-families
@@ -1677,6 +1638,19 @@ jobs:
           artifact-ids: ${{ needs.wasix.outputs.cargo_artifact_id }}
           path: ${{ runner.temp }}/wasix-cargo-inputs
 
+      - name: Authenticate current WASIX constructor inputs
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), format('wasix-host/{0}', matrix.platform))
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          input_root="$RUNNER_TEMP/wasix-host-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc '["oliphaunt-wasix-rust"]' > "$input_root/consumer-products.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts \
+            --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF" \
+            --consumer-products-json "$input_root/consumer-products.json" \
+            --output-directory target/native-wasix-host-archive-inputs
+
       - name: Qualify imported AOT runtime on its native host
         if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
         env:
@@ -1715,6 +1689,77 @@ jobs:
             --targets-json "$ci_input_root/targets.json" --configuration-json "$ci_input_root/configuration.json" \
             --startup-json "$ci_input_root/startup.json" --requires-json "$ci_input_root/requires.json" \
             --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+
+      - name: Qualify final WASIX addon on its native host
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUEST_ID: wasix-host/${{ matrix.platform }}/napi
+          CI_REQUIRES: '["wasix/tools-sdk-browser"]'
+          EXPECTED_SOURCE_COMMIT: ${{ needs.wasix.outputs.source_commit }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          QUALIFICATION_JOB_NAME: WASIX imported runtime (${{ matrix.platform }})
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
+          test -z "$(git status --porcelain)"
+          startup=()
+          configuration=()
+          case "$TARGET_PLATFORM" in
+            linux-arm64) profile=//build_defs/native:linux_aarch64_glibc_2_28 ;;
+            macos-arm64)
+              profile=//build_defs/host:native_macos_arm64
+              startup=(--host_jvm_args=-Xmx3g)
+              configuration=(--config=macos-sandbox)
+              ;;
+            windows-x64)
+              profile=//build_defs/host:native_windows_x64
+              startup=(--output_base="$RUNNER_TEMP/b")
+              ;;
+          esac
+          input_root="$RUNNER_TEMP/napi-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --args '$ARGS.positional' -- "${startup[@]}" > "$input_root/startup.json"
+          jq -nc --args '$ARGS.positional' -- -c opt "${configuration[@]}" \
+            "--platforms=$profile" "--host_platform=$profile" \
+            "--repo_env=OLIPHAUNT_WASIX_SOURCE_COMMIT=$EXPECTED_SOURCE_COMMIT" \
+            "--repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS=$RUNNER_TEMP/wasix-cargo-inputs" \
+            --jobs=1 --local_test_jobs=1 --test_env=OLIPHAUNT_WASM_AOT_VERIFY=full \
+            > "$input_root/configuration.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:wasix_napi_shipping_export \
+            --output-directory "$RUNNER_TEMP/napi-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/napi-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload WASIX addon construction evidence
+        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('wasix-host/{0}/napi', matrix.platform))
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-napi-${{ matrix.platform }}
+          path: ${{ runner.temp }}/napi-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload WASIX addon build diagnostics
+        if: ${{ always() && matrix.platform == 'macos-arm64' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-wasix-addon-build-diagnostics-${{ matrix.platform }}
+          path: ${{ runner.temp }}/napi-build-capture/diagnostics/
+          if-no-files-found: ignore
+          retention-days: 5
 
       - *ci_request_receipts
 

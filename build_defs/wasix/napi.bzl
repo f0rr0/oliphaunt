@@ -1,24 +1,26 @@
 """Release-feature Node-API construction from its actual locked Cargo inputs."""
 
-load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_PUBLICATIONS", "EXTENSIONS", "PRODUCTS", "PUBLICATION_CARRIERS", "WASIX_ARTIFACTS")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_FINAL_INPUTS", "NATIVE_CURRENT_ARTIFACTS", "PRODUCTS", "PUBLICATION_CARRIERS", "WASIX_ARTIFACTS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/languages:rust.bzl", "cargo_features", "rust_cdylib_output")
 load("@rules_rust//rust:defs.bzl", "rust_common")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
-load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "current_rust_shipping_supplier", "merge_shipping_suppliers")
 load(":cargo.bzl", "RUNTIME_CARGO_HELPERS")
 load(":npm.bzl", "RUNTIME_NPM_NOTICES")
+load(":platform.bzl", "WASIX_PAYLOAD_PROFILE")
 
-WasixNapiInputsInfo = provider(fields = ["tree", "target", "triple", "sql_names", "sdk_version", "source_patch"])
+WasixNapiInputsInfo = provider(fields = ["tree", "target", "triple", "sql_names", "sdk_version"])
 WasixNapiReleaseInfo = provider(fields = ["binary", "inputs"])
-WasixNapiCarrierInfo = provider(fields = ["npm", "github", "provenance", "target"])
+WasixNapiCarrierInfo = provider(fields = ["npm", "github", "provenance", "target", "construction_contract"])
 
 NAPI_NOTICES = RUNTIME_NPM_NOTICES | {
     "//src/third-party/openssl:LICENSE.txt": "src/third-party/openssl/LICENSE.txt",
     "//src/third-party/openssl:source.toml": "src/third-party/openssl/source.toml",
 }
 NAPI_HELPERS = {label: True for label in RUNTIME_CARGO_HELPERS + [
+    "//src/wasix/runtime:toolchain.toml",
     "//src/wasix/node-addon:tools/package-platform.mts",
     "//src/wasix/node-addon:tools/workspace-runtime-contract.mts",
     "//src/wasix/node-addon:tools/carrier-contract.mts",
@@ -50,84 +52,94 @@ def release_sql_names(facts):
     return sorted(names)
 
 def _inputs_impl(ctx):
-    dependencies = []
-    suppliers = [] if ctx.attr.supplier_bindings else None
-    supplier_files = []
-    inputs = [ctx.file.cargo_lock, ctx.file.toolchain, ctx.file.source_patch]
-    for target, name in ctx.attr.dependencies.items():
-        files = {}
-        for file in target[DefaultInfo].files.to_list():
-            # These are source Files from the same registry repositories used
-            # by crate_universe's compiled SDK, never ambient Cargo caches.
-            if file.is_directory or not file.short_path.startswith("../"):
-                fail("WASIX addon registry payload requires external source Files")
-            member = "/".join(file.short_path.split("/")[2:])
-            if member in files:
-                fail("duplicate WASIX addon registry member " + member)
-            files[member] = file.path
-            inputs.append(file)
-        dependencies.append({"name": name, "files": files})
-        if suppliers != None:
-            if name not in ctx.attr.supplier_bindings:
-                fail("WASIX addon supplier coverage omits its actual registry input: " + name)
-            binding = json.decode(ctx.attr.supplier_bindings[name])
-            # The held relocation patch changes only the compiler helper. It
-            # remains an observed consumer recipe input, not a pristine member
-            # of the completed archive. Actual embedded payloads stay exact.
-            declarations = [{"path": source, "member": member} for member, source in files.items()
-                            if not (binding["relocatable_helper"] and member == "build-support.rs")]
-            supplier_files.extend(target[DefaultInfo].files.to_list())
-            suppliers.append({"product": binding["publication"]["product"], "version": binding["publication"]["version"],
-                              "configuration": binding["configuration"], "binding": "compiled-input",
-                              "origin": {"kind": "completed-publication", "publication": binding["publication"], "artifact": binding["artifact"]},
-                              "files": declarations})
+    inputs = [ctx.file.sdk_manifest, ctx.file.contrib_frozen]
+    archives, suppliers = {}, []
+    for target, role in ctx.attr.archives.items():
+        record = json.decode(ctx.attr.archive_records[role])
+        expected = record["package"] + "-" + ctx.attr.runtime_version + ".crate"
+        files = [file for file in target[DefaultInfo].files.to_list() if file.basename == expected]
+        if len(files) != 1 or files[0].is_directory:
+            fail("WASIX addon needs one original constructed Cargo archive for " + role)
+        file = files[0]
+        archives[role] = file.path
+        origin = {"kind": "current-source"}
+        if "producer" in record.get("file", {}):
+            original = record["file"]
+            origin["producer"] = dict(original["producer"], **({"member": original["member"]} if "member" in original else {}))
+        suppliers.append({"product": "liboliphaunt-wasix", "version": ctx.attr.runtime_version,
+                          "configuration": record["configuration"], "binding": "compiled-input",
+                          "origin": origin, "files": [{"path": file.path}]})
+        inputs.append(file)
+    if sorted(archives) != ["contribAot", "contribPortable", "coreAotArchive", "portableArchive"]:
+        fail("WASIX addon is missing original current portable/AOT constructor Files")
     output = ctx.actions.declare_directory(ctx.label.name)
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
-    ctx.actions.write(spec, json.encode({"target": ctx.attr.target_id, "targetTriple": ctx.attr.triple, "cargoLock": ctx.file.cargo_lock.path, "sourcePatch": ctx.file.source_patch.path, "sqlNames": ctx.attr.sql_names, "dependencies": dependencies, "output": output.path}))
+    ctx.actions.write(spec, json.encode(dict(archives, target = ctx.attr.target_id, targetTriple = ctx.attr.triple,
+        sdkManifest = ctx.file.sdk_manifest.path,
+        runtimeVersion = ctx.attr.runtime_version, sdkVersion = ctx.attr.sdk_version,
+        sqlNames = ctx.attr.sql_names, contribFrozen = ctx.file.contrib_frozen.path, output = output.path)))
     bun_file_action(ctx, ctx.file._stager, arguments = [spec.path], inputs = inputs + [spec],
-                    source_files = ctx.files._helpers + [ctx.file.toolchain], outputs = [output], mnemonic = "WasixNapiLockedInputs")
-    return [DefaultInfo(files = depset([output])), WasixNapiInputsInfo(tree = output, target = ctx.attr.target_id, triple = ctx.attr.triple, sql_names = ctx.attr.sql_names, sdk_version = ctx.attr.sdk_version, source_patch = ctx.file.source_patch),
-            ShippingSupplierInfo(suppliers = suppliers, files = depset(supplier_files))]
+                    source_files = ctx.files._helpers, outputs = [output], mnemonic = "WasixNapiConstructedInputs")
+    return [DefaultInfo(files = depset([output])), WasixNapiInputsInfo(tree = output, target = ctx.attr.target_id, triple = ctx.attr.triple, sql_names = ctx.attr.sql_names, sdk_version = ctx.attr.sdk_version),
+            ShippingSupplierInfo(suppliers = suppliers, files = depset(inputs))]
 
 _inputs = rule(implementation = _inputs_impl, toolchains = BUN_SOURCE_TOOLCHAINS, attrs = {
-    "dependencies": attr.label_keyed_string_dict(mandatory = True),
-    "supplier_bindings": attr.string_dict(),
+    "archives": attr.label_keyed_string_dict(allow_files = True, mandatory = True, cfg = WASIX_PAYLOAD_PROFILE),
+    "archive_records": attr.string_dict(mandatory = True),
     "target_id": attr.string(mandatory = True), "triple": attr.string(mandatory = True), "sql_names": attr.string_list(mandatory = True),
     "sdk_version": attr.string(mandatory = True),
-    "cargo_lock": attr.label(allow_single_file = True, mandatory = True),
-    "source_patch": attr.label(default = "//build_defs/wasix:held-wasix-relocatable-includes.patch", allow_single_file = True),
-    "toolchain": attr.label(default = "//src/wasix/runtime:toolchain.toml", allow_single_file = True),
+    "runtime_version": attr.string(mandatory = True),
+    "sdk_manifest": attr.label(default = "//src/wasix/sdks/rust:Cargo.toml", allow_single_file = True),
+    "contrib_frozen": attr.label(allow_single_file = True, mandatory = True, cfg = WASIX_PAYLOAD_PROFILE),
+    "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
     "_stager": attr.label(default = "//build_defs/wasix:napi-inputs.mts", allow_single_file = True),
     "_helpers": attr.label_list(default = NAPI_HELPERS, allow_files = True),
 })
 
-def wasix_napi_inputs(name, cargo_facts, registry_inputs):
+def wasix_napi_inputs(name, cargo_facts):
     targets = _targets()
-    facts = cargo_facts[native.package_name()]
-    sdk_version = facts["dependencies"]["oliphaunt-wasix"]["version"].removeprefix("=")
-    runtime_version = facts["dependencies"]["liboliphaunt-wasix-portable"]["version"].removeprefix("=")
-    supplier_bindings = {}
-    for target in targets:
-        bindings = {}
-        for registry_name in registry_inputs[target].values():
-            rows = [row for row in PUBLICATION_CARRIERS if row["ecosystem"] == "cargo" and row["name"] == registry_name]
+    runtime_version = PRODUCTS["liboliphaunt-wasix"]["version"]
+    archives, records = {}, {}
+    for target, definition in targets.items():
+        selected, declarations = {}, {}
+        for role, package, source in [
+            ("portableArchive", "liboliphaunt-wasix-portable", "//src/wasix/runtime/crates/assets:crate"),
+            ("coreAotArchive", "liboliphaunt-wasix-aot-" + definition["triple"], "//src/wasix/runtime/crates/aot/" + definition["triple"] + ":crate"),
+            ("contribPortable", "oliphaunt-extension-contrib-pg18-wasix", ""),
+            ("contribAot", "oliphaunt-extension-contrib-pg18-aot-" + target.removesuffix("-gnu").removesuffix("-msvc"), ""),
+        ]:
+            rows = [row for row in PUBLICATION_CARRIERS if row["product"] == "liboliphaunt-wasix" and row["ecosystem"] == "cargo" and row["name"] == package]
             if len(rows) != 1:
-                fail("WASIX addon registry File has no unique canonical supplier: " + registry_name)
-            row = rows[0]
-            version = sdk_version if row["product"] == "oliphaunt-wasix-rust" else runtime_version
-            key = row["product"] + "@" + version
-            if key not in COMPLETED_SUPPLIER_PUBLICATIONS:
-                bindings = {}
-                break
-            bindings[registry_name] = json.encode({"publication": COMPLETED_SUPPLIER_PUBLICATIONS[key],
-                                                 "artifact": "cargo:" + registry_name, "configuration": row["target"] or "portable",
-                                                 "relocatable_helper": row["product"] == "liboliphaunt-wasix" and registry_name.startswith("liboliphaunt-wasix-")})
-        supplier_bindings[target] = bindings
-    _inputs(name = name, dependencies = _selected(registry_inputs), target_id = _selected({target: target for target in targets}),
-            supplier_bindings = _selected(supplier_bindings),
+                fail("WASIX addon needs one canonical current carrier: " + package)
+            record = {"package": package, "configuration": target if role == "coreAotArchive" else (rows[0]["target"] or "portable")}
+            if NATIVE_CURRENT_ARTIFACTS != None:
+                original = NATIVE_CURRENT_ARTIFACTS.get("liboliphaunt-wasix/" + runtime_version + "/cargo:" + package)
+                if original:
+                    source = original["file"]["path"]
+                    record = dict(original, package = package)
+                else:
+                    source = ""
+            elif not source:
+                source = name + "_" + target.replace("-", "_") + "_" + role
+                native.filegroup(name = source, srcs = ["//build_defs/extensions/wasix:contrib"], output_group = "cargo")
+                source = ":" + source
+            if source:
+                selected[source] = role
+                declarations[role] = json.encode(record)
+        archives[target], records[target] = selected, declarations
+    frozen = name + "_contrib_frozen"
+    if NATIVE_CURRENT_ARTIFACTS == None:
+        native.filegroup(name = frozen, srcs = ["//build_defs/extensions/wasix:contrib"], output_group = "frozen")
+        frozen = ":" + frozen
+    else:
+        imported = EXTENSION_FINAL_INPUTS.get("oliphaunt-extension-contrib-pg18/wasix/wasix-portable")
+        frozen = imported["frozen"]["path"] if imported else None
+    _inputs(name = name, archives = _selected(archives), archive_records = _selected(records),
+            target_id = _selected({target: target for target in targets}),
             triple = _selected({target: row["triple"] for target, row in targets.items()}),
-            sql_names = release_sql_names(cargo_facts[native.package_name()]), cargo_lock = "Cargo.lock",
-            sdk_version = sdk_version)
+            sql_names = release_sql_names(cargo_facts[native.package_name()]),
+            contrib_frozen = frozen, runtime_version = runtime_version,
+            sdk_version = PRODUCTS["oliphaunt-wasix-rust"]["version"])
 
 def _release_profile_impl(settings, attr):
     return {"//command_line_option:compilation_mode": "opt", "@rules_rust//rust/settings:lto": "thin",
@@ -143,12 +155,26 @@ def _producer_impl(ctx):
     if binary.is_directory:
         fail("WASIX addon release must supply exactly its maintained native cdylib")
     inputs = ctx.attr.inputs[0][WasixNapiInputsInfo]
+    suppliers = [ctx.attr.inputs[0][ShippingSupplierInfo]]
+    compiled = {}
+    for name, target, owner, source in [
+        ("sdk", ctx.attr.sdk[0], ctx.attr.sdk_owner, "src/wasix/sdks/rust"),
+        ("server", ctx.attr.server[0], ctx.attr.server_owner, "src/wasix/pgwire-server"),
+    ]:
+        supplier = current_rust_shipping_supplier(target[rust_common.crate_info], target.label,
+            owner[ReleaseIdentityInfo], source, inputs.target)
+        suppliers.append(supplier)
+        compiled[name + "_compiled"] = supplier.files
     return [DefaultInfo(files = depset([binary])), WasixNapiReleaseInfo(binary = binary, inputs = inputs),
-            ctx.attr.inputs[0][ShippingSupplierInfo]]
+            merge_shipping_suppliers(suppliers), OutputGroupInfo(**compiled)]
 
 wasix_napi_release = rule(implementation = _producer_impl, attrs = {
     "library": attr.label(mandatory = True, providers = [rust_common.test_crate_info], cfg = _release_profile),
     "inputs": attr.label(mandatory = True, providers = [WasixNapiInputsInfo], cfg = _release_profile),
+    "sdk": attr.label(default = "//src/wasix/sdks/rust:napi_release_lib", cfg = _release_profile),
+    "sdk_owner": attr.label(default = "@oliphaunt_metadata//:product_oliphaunt-wasix-rust", providers = [ReleaseIdentityInfo]),
+    "server": attr.label(default = "//src/wasix/pgwire-server:napi_release_lib", cfg = _release_profile),
+    "server_owner": attr.label(default = "@oliphaunt_metadata//:product_oliphaunt-pgwire-server", providers = [ReleaseIdentityInfo]),
     "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
 })
 
@@ -161,7 +187,7 @@ def _carrier_impl(ctx):
     npm = ctx.actions.declare_file(ctx.label.name + ".tgz")
     github = ctx.actions.declare_file(row["asset"].replace("{version}", owner.version))
     provenance = ctx.actions.declare_file(ctx.label.name + ".provenance.json")
-    inputs = [producer.binary, producer.inputs.tree, producer.inputs.source_patch, ctx.file.manifest, ctx.file.product_manifest, ctx.file.readme]
+    inputs = [producer.binary, producer.inputs.tree, ctx.file.manifest, ctx.file.product_manifest, ctx.file.readme]
     notices = {}
     for target, destination in ctx.attr.notices.items():
         files = target[DefaultInfo].files.to_list()
@@ -171,14 +197,15 @@ def _carrier_impl(ctx):
         inputs += files
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(spec, json.encode({"target": producer.inputs.target, "version": owner.version, "targetContract": row,
-        "sdkVersion": producer.inputs.sdk_version, "sqlNames": producer.inputs.sql_names, "sourcePatch": producer.inputs.source_patch.path,
+        "sdkVersion": producer.inputs.sdk_version, "sqlNames": producer.inputs.sql_names,
         "binary": producer.binary.path, "inputs": producer.inputs.tree.path, "manifest": ctx.file.manifest.path, "productManifest": ctx.file.product_manifest.path,
         "readme": ctx.file.readme.path, "notices": notices, "windowsRuntime": {file.basename: file.path for file in ctx.files.windows_runtime},
         "outputs": {"npm": npm.path, "github": github.path, "provenance": provenance.path}}))
     inputs += ctx.files.windows_runtime
     bun_file_action(ctx, ctx.file._packager, arguments = [spec.path], inputs = inputs + [spec], source_files = ctx.files._helpers,
                     outputs = [npm, github, provenance], mnemonic = "WasixNapiReleaseEnvelopes")
-    return [DefaultInfo(files = depset([npm, github, provenance])), WasixNapiCarrierInfo(npm = npm, github = github, provenance = provenance, target = producer.inputs.target),
+    return [DefaultInfo(files = depset([npm, github, provenance])), WasixNapiCarrierInfo(npm = npm, github = github, provenance = provenance, target = producer.inputs.target,
+            construction_contract = {"targetTriple": producer.inputs.triple, "sdkVersion": producer.inputs.sdk_version, "sqlNames": producer.inputs.sql_names}),
             ctx.attr.producer[ShippingSupplierInfo],
             OutputGroupInfo(npm = depset([npm]), github = depset([github]), provenance = depset([provenance]))]
 
@@ -240,8 +267,8 @@ def _installed_impl(ctx):
     node = ctx.toolchains["@rules_nodejs//nodejs:toolchain_type"].nodeinfo.node
     if not node:
         fail("installed WASIX addon requires its pinned Node toolchain")
-    files = [carrier.npm, metadata, node, ctx.file._consumer, ctx.file.product_manifest, producer.inputs.source_patch] + ctx.files._helpers
-    return bun_test_entrypoint(ctx, ctx.file._runner, [carrier.npm, metadata, node, ctx.file._consumer, ctx.file.product_manifest, producer.inputs.source_patch], files,
+    files = [carrier.npm, metadata, node, ctx.file._consumer, ctx.file.product_manifest] + ctx.files._helpers
+    return bun_test_entrypoint(ctx, ctx.file._runner, [carrier.npm, metadata, node, ctx.file._consumer, ctx.file.product_manifest], files,
                                source_files = [ctx.file._runner, ctx.file._consumer] + ctx.files._helpers)
 
 _installed_test = rule(implementation = _installed_impl, test = True,

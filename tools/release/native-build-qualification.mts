@@ -1296,6 +1296,14 @@ export function assertNativeFinalShippingPhase(
   if (selectedProducts.includes('oliphaunt-swift'))
     assertNativeSwiftShippingPhase(qualification, 'final');
   for (const cohort of qualification.cohorts)
+    for (const { package: pkg } of cohort.roots)
+      if (
+        selectedProducts.includes(pkg.product) &&
+        pkg.role === 'extension-release-link-input' &&
+        (pkg.ecosystem !== 'internal' || !pkg.name.endsWith('-wasix-final-link'))
+      )
+        throw new Error('final WASIX extension requires prepared exact-host qualification');
+  for (const cohort of qualification.cohorts)
     for (const root of cohort.roots.filter(
       (root) =>
         selectedProducts.includes(root.package.product) &&

@@ -63,6 +63,36 @@ export function constructionNativeFinalInputs(
   return collectNativeFinalInputs(preparation, metadata, true);
 }
 
+/** Physical classification only; collection still requires the authenticated original producer. */
+export function isNativeCurrentCargoRoot(
+  root: {
+    package: {
+      product: string;
+      ecosystem: string;
+      configuration: string;
+      name: string;
+      outputs: readonly { owner: string }[];
+    };
+  },
+  metadata: ReleaseMetadata,
+  extensionConstructors: ReadonlySet<string>,
+) {
+  const pkg = root.package;
+  return (
+    pkg.ecosystem === 'cargo' &&
+    pkg.configuration !== 'source' &&
+    metadata.publicationCarriers.some(
+      (row) => row.product === pkg.product && row.ecosystem === 'cargo' && row.name === pkg.name,
+    ) &&
+    // NAPI embeds the original core/contrib crates while the extension tuple
+    // retains its own final installed-consumer inputs from the same constructor.
+    (pkg.product === 'liboliphaunt-wasix' ||
+      !pkg.outputs.some((output) =>
+        extensionConstructors.has(canonicalShippingLabel(output.owner)),
+      ))
+  );
+}
+
 function collectNativeFinalInputs(
   preparation: NativeFinalInputPreparation,
   metadata: ReleaseMetadata,
@@ -195,18 +225,7 @@ function collectNativeFinalInputs(
       if (currentArtifacts) {
         for (const root of cohort.roots) {
           const pkg = root.package;
-          // Canonical payload roots retain their original registry Files. Extension
-          // constructors already preserve their complete tuple below.
-          const cargo =
-            pkg.ecosystem === 'cargo' &&
-            pkg.configuration !== 'source' &&
-            metadata.publicationCarriers.some(
-              (row) =>
-                row.product === pkg.product && row.ecosystem === 'cargo' && row.name === pkg.name,
-            ) &&
-            !pkg.outputs.some((output) =>
-              extensionConstructors.has(canonicalShippingLabel(output.owner)),
-            );
+          const cargo = isNativeCurrentCargoRoot(root, metadata, extensionConstructors);
           const github =
             pkg.ecosystem === 'github' &&
             pkg.role === 'github-release-asset' &&

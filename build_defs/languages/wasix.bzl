@@ -2,9 +2,23 @@
 
 load(":rust.bzl", "cargo_generator", "cargo_library", "cargo_library_test", "cargo_package_env")
 load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
+load("//build_defs/wasix:platform.bzl", "WASIX_PAYLOAD_PROFILE")
+
+def _cargo_payload_impl(ctx):
+    return [ctx.attr.payload[0][DefaultInfo]]
+
+_cargo_payload = rule(
+    implementation = _cargo_payload_impl,
+    attrs = {
+        "payload": attr.label(mandatory = True, cfg = WASIX_PAYLOAD_PROFILE),
+        "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
+    },
+)
 
 def wasix_runtime_carrier(payload, portable = False):
     cargo_package_env()
+    _cargo_payload(name = "cargo_payload", payload = payload)
+    payload = ":cargo_payload"
     environment = {
         "OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD": "1",
         # Native packaging consumes declared File providers. Conventional

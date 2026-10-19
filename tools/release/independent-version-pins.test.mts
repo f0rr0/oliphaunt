@@ -207,77 +207,111 @@ test('WASIX tools staging retains its explicit SDK pin after that SDK advances',
   }
 });
 
-test('WASIX addon qualification holds registry identities after current producers advance', () => {
+test('WASIX addon qualification requires aligned local sources after producers advance', () => {
   const product = json('src/wasix/node-addon/package.json');
   const original = json('src/wasix/node-addon/packages/linux-x64-gnu/package.json');
-  const staged = workspaceCarrierManifest(original, product.oliphaunt);
-  const resolved = resolvedAdapterRuntimeContract();
-  assert.equal(staged.oliphaunt.runtimeVersion, resolved.runtimeVersion);
-  assert.equal(staged.oliphaunt.runtimeVersion, original.oliphaunt.runtimeVersion);
-  assert.notEqual(staged.oliphaunt.runtimeVersion, workspaceRuntimeVersion());
-  assert.equal(staged.oliphaunt.qualificationOnly, true);
-  const aligned = workspaceCarrierManifest(original, resolved);
-  assert.equal(aligned.oliphaunt.qualificationOnly, true);
-  const runtimeFile = 'src/wasix/runtime/VERSION';
-  const sdkFile = 'src/wasix/sdks/rust/Cargo.toml';
-  const runtimeText = read(runtimeFile);
-  const sdkText = read(sdkFile);
+  assert.throws(() => resolvedAdapterRuntimeContract(), /must resolve local/u);
+  const files = [
+    'Cargo.toml',
+    'Cargo.lock',
+    'src/wasix/node-addon/Cargo.toml',
+    'src/wasix/runtime/crates/assets/Cargo.toml',
+  ];
+  const sources = new Map(files.map((file) => [file, read(file)]));
   try {
-    write(runtimeFile, `${resolved.runtimeVersion}\n`);
+    const runtimeVersion = workspaceRuntimeVersion();
+    const sdkVersion = Bun.TOML.parse(read('src/wasix/sdks/rust/Cargo.toml')).package.version;
     write(
-      sdkFile,
-      sdkText.replace(/^version = "[^"]+"/mu, `version = "${resolved.rustBindingVersion}"`),
+      'Cargo.toml',
+      sources
+        .get('Cargo.toml')
+        .replace(/^(oliphaunt-wasix = \{[^\n]*version = ")[^"]+/mu, `$1${sdkVersion}`),
     );
-    assert.equal(workspaceCarrierManifest(original, resolved).oliphaunt.qualificationOnly, true);
-  } finally {
-    write(runtimeFile, runtimeText);
-    write(sdkFile, sdkText);
-  }
-  const rustOnly = workspaceCarrierManifest(original, {
-    ...resolved,
-    rustBindingVersion: '0.0.0',
-  });
-  assert.equal(rustOnly.oliphaunt.qualificationOnly, true);
-  assert.deepEqual(json('src/wasix/node-addon/packages/linux-x64-gnu/package.json'), original);
-  const target = {
-    target: 'linux-x64-gnu',
-    npmPackage: original.name,
-    npmOs: 'linux',
-    npmCpu: 'x64',
-    npmLibc: 'glibc',
-  };
-  assert.doesNotThrow(() =>
-    assertWasixNapiCarrierManifest(staged, target, original.version, 'workspace', staged.oliphaunt),
-  );
-  assert.throws(
-    () => assertWasixNapiCarrierManifest(staged, target, original.version),
-    /runtime\/ABI\/profile metadata/u,
-  );
-  const result = spawnSync(
-    process.execPath,
-    [
-      'src/wasix/node-addon/tools/native-build-data.mts',
-      'metadata',
-      'src/wasix/node-addon/package.json',
-    ],
-    { cwd: ROOT, encoding: 'utf8' },
-  );
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.split('\t')[0], staged.oliphaunt.runtimeVersion);
-  const lockFile = 'src/wasix/node-addon/Cargo.lock';
-  const lockText = read(lockFile);
-  try {
+    write(
+      'src/wasix/node-addon/Cargo.toml',
+      sources
+        .get('src/wasix/node-addon/Cargo.toml')
+        .replace(
+          /^(liboliphaunt-wasix-portable = \{[^\n]*version = ")[^"]+/mu,
+          `$1=${runtimeVersion}`,
+        ),
+    );
+    write(
+      'src/wasix/runtime/crates/assets/Cargo.toml',
+      sources
+        .get('src/wasix/runtime/crates/assets/Cargo.toml')
+        .replace(/^version = "[^"]+"/mu, `version = "${runtimeVersion}"`),
+    );
+    let lockText = sources.get('Cargo.lock');
     const lock = Bun.TOML.parse(lockText);
-    const runtime = lock.package.find((pkg) => pkg.name === 'liboliphaunt-wasix-portable');
-    write(lockFile, lockText.replace(`checksum = "${runtime.checksum}"`, 'checksum = "invalid"'));
-    assert.throws(() => resolvedAdapterRuntimeContract(), /checksum-pinned registry/u);
-    write(
-      lockFile,
-      lockText.replace(`source = "${runtime.source}"\nchecksum = "${runtime.checksum}"`, ''),
+    for (const [name, version] of [
+      ['oliphaunt-wasix', sdkVersion],
+      ['liboliphaunt-wasix-portable', runtimeVersion],
+    ]) {
+      const rows = lock.package.filter((pkg) => pkg.name === name && !pkg.source);
+      assert.equal(rows.length, 1);
+      lockText = lockText.replace(
+        `name = "${name}"\nversion = "${rows[0].version}"`,
+        `name = "${name}"\nversion = "${version}"`,
+      );
+    }
+    write('Cargo.lock', lockText);
+    const resolved = resolvedAdapterRuntimeContract();
+    assert.deepEqual(resolved, { runtimeVersion, rustBindingVersion: sdkVersion });
+    const staged = workspaceCarrierManifest(original, product.oliphaunt);
+    assert.equal(staged.oliphaunt.runtimeVersion, runtimeVersion);
+    assert.equal(staged.oliphaunt.rustBindingVersion, sdkVersion);
+    assert.notEqual(staged.oliphaunt.runtimeVersion, original.oliphaunt.runtimeVersion);
+    assert.equal(staged.oliphaunt.qualificationOnly, true);
+    assert.deepEqual(json('src/wasix/node-addon/packages/linux-x64-gnu/package.json'), original);
+    assert.deepEqual(json('src/wasix/node-addon/package.json'), product);
+    const target = {
+      target: 'linux-x64-gnu',
+      npmPackage: original.name,
+      npmOs: 'linux',
+      npmCpu: 'x64',
+      npmLibc: 'glibc',
+    };
+    assert.doesNotThrow(() =>
+      assertWasixNapiCarrierManifest(
+        staged,
+        target,
+        original.version,
+        'workspace',
+        staged.oliphaunt,
+      ),
     );
-    assert.throws(() => resolvedAdapterRuntimeContract(), /checksum-pinned registry/u);
+    assert.throws(
+      () => assertWasixNapiCarrierManifest(staged, target, original.version),
+      /runtime\/ABI\/profile metadata/u,
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        'src/wasix/node-addon/tools/native-build-data.mts',
+        'metadata',
+        'src/wasix/node-addon/package.json',
+      ],
+      { cwd: ROOT, encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.split('\t')[0], runtimeVersion);
+    const runtimeRow = `name = "liboliphaunt-wasix-portable"\nversion = "${runtimeVersion}"`;
+    write(
+      'Cargo.lock',
+      lockText.replace(
+        runtimeRow,
+        `${runtimeRow}\nsource = "registry+https://github.com/rust-lang/crates.io-index"`,
+      ),
+    );
+    assert.throws(() => resolvedAdapterRuntimeContract(), /must resolve local/u);
+    write(
+      'Cargo.lock',
+      lockText.replace(runtimeRow, 'name = "liboliphaunt-wasix-portable"\nversion = "0.0.0"'),
+    );
+    assert.throws(() => resolvedAdapterRuntimeContract(), /must resolve local/u);
   } finally {
-    write(lockFile, lockText);
+    for (const [file, source] of sources) write(file, source);
   }
 });
 

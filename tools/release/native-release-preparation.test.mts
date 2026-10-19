@@ -7,7 +7,10 @@ import { sourceManifest } from '../../build_defs/languages/source-package.mts';
 import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
 import { renderCargoToml } from '../packaging/cargo-manifest.mts';
 import { tarArchive } from '../packaging/testdata/tar-fixture.mts';
-import { loadReleaseMetadata } from './bazel-release-metadata.mts';
+import {
+  loadReleaseMetadata,
+  nativePublicationInputProjection,
+} from './bazel-release-metadata.mts';
 import { fileIdentity } from './native-file-identity.mts';
 import { nativePublicationMetadataArtifactRow } from './native-publication-metadata-contract.mts';
 import {
@@ -77,7 +80,7 @@ test('source payload requests preserve held pins and request an explicitly newer
   }
 });
 
-test('WASIX source payload requests include optional and foreign carriers without replacing server held SDK pins', () => {
+test('WASIX source payload requests include optional and foreign carriers without registry acquisition for the local server SDK', () => {
   const catalog = loadPublicationCatalog('WASIX payload request fixture');
   const requests = nativeCargoPayloadBindings(catalog, ['oliphaunt-wasix-rust'], sourceText);
   expect(requests.filter((row) => row.producer === 'liboliphaunt-wasix')).toHaveLength(5);
@@ -302,7 +305,7 @@ test('completed payload acquisition rejects missing, wrong-version and wrong-req
   }
 });
 
-test('server retained SDK payloads follow its authentic pins and deduplicate shared requests', async () => {
+test('SDK source payloads deduplicate shared requests while a local server SDK needs no held runtime', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'held-wasix-payload-inputs-'));
   try {
     const fixture = payloadAcquisitionTransport();
@@ -338,7 +341,112 @@ test('server retained SDK payloads follow its authentic pins and deduplicate sha
       heldOnly.snapshot.supplierArtifacts
         ?.filter((row) => row.artifact.startsWith('cargo:liboliphaunt-wasix-'))
         .map((row) => row.publication.version),
-    ).toEqual(Array(5).fill('0.3.1'));
+    ).toEqual([]);
+    expect(held.requests.map((request) => request.split('@')[0])).toEqual([
+      'cargo:oliphaunt-query',
+    ]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('compiled external WASIX hosts retain their exact portable crate without an SDK request', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'external-wasix-host-inputs-'));
+  const metadata = loadReleaseMetadata(ROOT);
+  const products = loadProducts();
+  const consumer = 'oliphaunt-extension-pg-textsearch';
+  const floor = metadata.products[consumer].compatibility_versions['liboliphaunt-wasix'];
+  expect(typeof metadata.wasixExtensions.pg_textsearch['native-module-file']).toBe('string');
+  try {
+    for (const consumers of [
+      [consumer],
+      [consumer, 'oliphaunt-extension-pg-ivm', 'oliphaunt-wasix-rust'],
+    ]) {
+      const fixture = payloadAcquisitionTransport();
+      const nativeFloors = new Set(
+        consumers
+          .filter((id) => products[id].extension?.class === 'external')
+          .map((id) => metadata.products[id].compatibility_versions['liboliphaunt-native']),
+      );
+      const nativeRows = [...nativeFloors].flatMap((version) =>
+        expectedProductArtifactRows([{ ...products['liboliphaunt-native'], version }]).filter(
+          (row) =>
+            row.kind === 'apple-swiftpm-binary' ||
+            (row.kind === 'runtime-resources' && row.target === 'ios-datum64'),
+        ),
+      );
+      const publicFiles = new Map(
+        nativeRows.map((row, index) => [
+          row.name,
+          {
+            id: index + 100,
+            row,
+            bytes: Buffer.from(`controlled held native archive ${row.name}`),
+          },
+        ]),
+      );
+      const acquired = await acquireNativePublicationInputs(
+        {
+          source,
+          directory: path.join(directory, String(consumers.length)),
+          consumerProducts: consumers,
+        },
+        {
+          ...fixture.transport,
+          readPages: async () =>
+            [...publicFiles.values()].map(({ id, row, bytes }) => ({
+              id,
+              name: row.name,
+              state: 'uploaded',
+              size: bytes.length,
+              digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+              url: `https://api.github.com/repos/f0rr0/oliphaunt/releases/assets/${id}`,
+            })),
+          proveAsset: async (url, name, size, options) => {
+            const retained = publicFiles.get(name)!;
+            expect(retained).toBeDefined();
+            expect(url).toBe(
+              `https://api.github.com/repos/f0rr0/oliphaunt/releases/assets/${retained.id}`,
+            );
+            expect(size).toBe(retained.bytes.length);
+            mkdirSync(path.dirname(options.retainedPath), { recursive: true });
+            writeFileSync(options.retainedPath, retained.bytes);
+            const identity = fileIdentity(options.retainedPath);
+            expect(identity.sha256).toBe(options.expectedSha256);
+            return { bytes: identity.size, sha256: identity.sha256 };
+          },
+        },
+      );
+      const artifact = 'cargo:liboliphaunt-wasix-portable';
+      expect(fixture.requests.filter((request) => request === `${artifact}@${floor}`)).toHaveLength(
+        1,
+      );
+      expect(new Set(fixture.requests).size).toBe(fixture.requests.length);
+      expect(fixture.requests.some((request) => request.startsWith('cargo:oliphaunt-wasix@'))).toBe(
+        false,
+      );
+      const rows = (acquired.snapshot.supplierArtifacts ?? []).filter(
+        (row) => row.artifact === artifact,
+      );
+      expect(rows).toHaveLength(1);
+      const row = rows[0];
+      expect(row.publication.product).toBe('liboliphaunt-wasix');
+      expect(row.publication.version).toBe(floor);
+      expect(fileIdentity(row.file.path).sha256).toBe(row.file.sha256);
+      expect(
+        (acquired.snapshot.supplierArtifacts ?? [])
+          .filter((row) => row.publication.product === 'liboliphaunt-native')
+          .map((row) => row.artifact)
+          .sort(),
+      ).toEqual(nativeRows.map((row) => row.id).sort());
+      const key = `liboliphaunt-wasix/${floor}/${artifact}`;
+      const projected = nativePublicationInputProjection(acquired.snapshot).supplierArtifacts[key];
+      expect(projected.publication).toEqual(row.publication);
+      expect(projected.file).toEqual({
+        ...row.file,
+        path: `@oliphaunt_metadata//:supplier-artifacts/liboliphaunt-wasix/${floor}/${row.file.sha256}/${path.basename(row.file.path)}`,
+      });
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -759,7 +867,7 @@ test('source Cargo requirements retain each canonical completed crate once throu
         },
       },
     );
-    expect(retained.sort()).toEqual(['cargo:oliphaunt-query', 'cargo:oliphaunt-wasix']);
+    expect(retained.sort()).toEqual(['cargo:oliphaunt-query']);
     expect(new Set(retained).size).toBe(retained.length);
     expect(result.snapshot.seedControls).toEqual([]);
     expect(result.snapshot.supplierArtifacts?.map((row) => row.artifact).sort()).toEqual(retained);

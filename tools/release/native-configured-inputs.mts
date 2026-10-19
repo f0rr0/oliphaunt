@@ -13,6 +13,7 @@ export type RecipeGraph = {
   labels: string[];
   packages: { package: string; label: string }[];
   roots: { label: string; packages: string[] }[];
+  sourceRoots?: { label: string; configuration: string; labels: string[] }[];
 };
 
 /** Index Bazel's configured edges once; do not expand selects in the loading graph. */
@@ -20,6 +21,7 @@ export function configuredRecipeGraph(
   raw: any,
   roots: RecipeRoot[],
   unionOnly = false,
+  rootSourceFilter?: (label: string) => boolean,
 ): RecipeGraph {
   assert(
     Array.isArray(raw?.results) && Array.isArray(raw.configurations),
@@ -103,6 +105,7 @@ export function configuredRecipeGraph(
   const names = new Set<string>();
   const unionVisited = new Set<string>();
   const unionActive = new Set<string>();
+  const sourceRoots: NonNullable<RecipeGraph['sourceRoots']> = [];
   const mapped = roots.map((root) => {
     const name = targetLabel(root.label);
     const rootId = key(name, root.configuration);
@@ -111,9 +114,10 @@ export function configuredRecipeGraph(
       'configured recipe roots are ambiguous',
     );
     names.add(rootId);
-    const visited = unionOnly ? unionVisited : new Set<string>();
-    const active = unionOnly ? unionActive : new Set<string>();
+    const visited = unionOnly && !rootSourceFilter ? unionVisited : new Set<string>();
+    const active = unionOnly && !rootSourceFilter ? unionActive : new Set<string>();
     const packages = new Set<string>();
+    const sourceLabels = new Set<string>();
     const pending = [{ id: key(name, root.configuration), exit: false }];
     while (pending.length) {
       const current = pending.pop();
@@ -129,12 +133,20 @@ export function configuredRecipeGraph(
       assert(node, 'configured recipe dependency is missing');
       active.add(current.id);
       labels.add(node.label);
+      if (node.kind === 'source-file' && rootSourceFilter?.(node.label))
+        sourceLabels.add(node.label);
       packages.add(node.label.slice(0, node.label.indexOf(':')));
       pending.push(
         { id: current.id, exit: true },
         ...node.edges.map((id) => ({ id, exit: false })),
       );
     }
+    if (rootSourceFilter)
+      sourceRoots.push({
+        label: name,
+        configuration: root.configuration,
+        labels: [...sourceLabels].sort(),
+      });
     return { label: name, packages: [...packages].sort() };
   });
   const ordered = [...labels].sort();
@@ -147,6 +159,7 @@ export function configuredRecipeGraph(
     labels: ordered,
     packages: [...packages].map(([pkg, name]) => ({ package: pkg, label: name })),
     roots: unionOnly ? [] : mapped,
+    ...(rootSourceFilter ? { sourceRoots } : {}),
   };
 }
 

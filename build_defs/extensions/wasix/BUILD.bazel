@@ -110,7 +110,7 @@ wasix_compiled_extension_carriers(
     sql_name = "pg_textsearch",
     module = "//src/wasix/runtime:external_pg_textsearch",
     host = ":pg_textsearch_declared_host",
-    resources = ["@pg_textsearch//:sql_resources"],
+    resources = ["//src/extensions/external/pg_textsearch:sql_resources"],
 )
 
 _POSTGIS_DATA = EXTENSION_RECIPES["postgis"]["artifacts"]["data_files"]

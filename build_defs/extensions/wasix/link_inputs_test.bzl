@@ -3,7 +3,7 @@
 load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts", "unittest")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//build_defs/extensions:external.bzl", "external_extension_inputs")
-load("//build_defs/extensions:wasix_carriers.bzl", "wasix_extension_uses_current_host")
+load("//build_defs/extensions:wasix_carriers.bzl", "wasix_extension_source_candidate", "wasix_extension_uses_current_host")
 load("//build_defs/wasix:wasm.bzl", "wasix_module")
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_COMPATIBILITY")
 
@@ -22,6 +22,10 @@ def _inputs_test_impl(ctx):
     asserts.false(env, wasix_extension_uses_current_host("0.3.3", "0.3.3", []))
     asserts.false(env, wasix_extension_uses_current_host("0.3.3", "0.3.3", ["oliphaunt-extension-vector"]))
     asserts.false(env, wasix_extension_uses_current_host("0.3.2", "0.3.3", ["liboliphaunt-wasix"]))
+    asserts.true(env, wasix_extension_source_candidate("0.3.2", "0.3.2", False))
+    asserts.false(env, wasix_extension_source_candidate("0.3.2", "0.3.3", False))
+    # An explicitly empty prepared selection still forbids source fallback.
+    asserts.false(env, wasix_extension_source_candidate("0.3.2", "0.3.2", True))
     return unittest.end(env)
 
 _inputs_test = unittest.make(_inputs_test_impl)

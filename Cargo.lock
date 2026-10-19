@@ -2567,6 +2567,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "oliphaunt-pgwire-server"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "oliphaunt-query 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "oliphaunt-wasix",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+]
+
+[[package]]
 name = "oliphaunt-query"
 version = "0.1.1"
 
@@ -2627,6 +2643,21 @@ dependencies = [
  "wasmer-wasix-types",
  "webc",
  "zstd",
+]
+
+[[package]]
+name = "oliphaunt-wasix-napi"
+version = "0.2.1"
+dependencies = [
+ "liboliphaunt-wasix-portable",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "oliphaunt-pgwire-server",
+ "oliphaunt-wasix",
+ "rustix",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

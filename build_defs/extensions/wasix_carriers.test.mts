@@ -18,11 +18,18 @@ import {
   WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
 } from '../../src/extensions/contracts/wasix-extension-install.mts';
 import { packageSqlOnlyWasixExtensionCargo } from '../../src/wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
-import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
+import { createDeterministicTar } from '../../tools/packaging/archive-directory.mts';
+import {
+  canonicalGzipSync,
+  readPortableArchiveEntries,
+  releaseZstdCompressSync,
+} from '../../tools/packaging/portable-archive.mts';
 import { extensionCompatibilityMetadata } from '../../tools/release/extension-release-metadata.mts';
 import {
   declaredSqlFiles,
   packageSqlOnlyWasixCarriers,
+  stageCurrentWasixExtensionHost,
+  stageDeclaredWasixExtensionHost,
   type WasixSqlCarrierSpec,
   wasixSqlCarrierLeaves,
 } from './wasix_carriers.mts';
@@ -151,6 +158,74 @@ if (github) {
 
 const root = mkdtempSync(path.join(process.env.TEST_TMPDIR ?? tmpdir(), 'wasix-sql-carrier-test-'));
 try {
+  // Both host paths validate the same physical inner runtime. The current path
+  // must obtain it from the original release archive, never an adapter payload.
+  const outer = path.join(root, 'runtime-release');
+  const assets = path.join(outer, 'target/oliphaunt-wasix/assets');
+  const runtime = path.join(root, 'runtime');
+  mkdirSync(path.join(runtime, 'oliphaunt/bin'), { recursive: true });
+  const core = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
+  writeFileSync(path.join(runtime, 'oliphaunt/bin/postgres'), core);
+  const runtimeBytes = releaseZstdCompressSync(await createDeterministicTar(runtime));
+  const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+  const hostManifest = {
+    'format-version': 2,
+    'source-lane': 'stable',
+    runtime: {
+      'runtime-kind': 'wasix-dynamic-main',
+      sha256: hash(runtimeBytes),
+      'module-sha256': hash(core),
+    },
+  };
+  mkdirSync(assets, { recursive: true });
+  writeFileSync(path.join(assets, 'manifest.json'), JSON.stringify(hostManifest));
+  writeFileSync(path.join(assets, 'oliphaunt.wasix.tar.zst'), runtimeBytes);
+  const archive = path.join(root, 'liboliphaunt-wasix.tar.zst');
+  writeFileSync(archive, releaseZstdCompressSync(await createDeterministicTar(outer)));
+  const currentHost = {
+    archive,
+    module: path.join(root, 'current-host/postgres.wasm'),
+    manifest: path.join(root, 'current-host/manifest.json'),
+  };
+  stageCurrentWasixExtensionHost(currentHost);
+  const version = metadata.compatibility.wasix_runtime_version;
+  const crateRoot = path.join(root, 'portable-crate');
+  const cratePackage = path.join(crateRoot, `liboliphaunt-wasix-portable-${version}`);
+  mkdirSync(path.join(cratePackage, 'payload'), { recursive: true });
+  writeFileSync(
+    path.join(cratePackage, 'Cargo.toml'),
+    `[package]\nname="liboliphaunt-wasix-portable"\nversion="${version}"\n`,
+  );
+  writeFileSync(path.join(cratePackage, 'payload/manifest.json'), JSON.stringify(hostManifest));
+  writeFileSync(path.join(cratePackage, 'payload/oliphaunt.wasix.tar.zst'), runtimeBytes);
+  const crate = path.join(root, 'retained-portable-input');
+  writeFileSync(crate, canonicalGzipSync(await createDeterministicTar(crateRoot)));
+  const heldHost = {
+    archive: crate,
+    version,
+    module: path.join(root, 'held-host/postgres.wasm'),
+    manifest: path.join(root, 'held-host/manifest.json'),
+  };
+  stageDeclaredWasixExtensionHost(heldHost);
+  assert.throws(
+    () => stageDeclaredWasixExtensionHost({ ...heldHost, version: '99.0.0' }),
+    /original regular archive members/u,
+  );
+  assert.deepEqual(readFileSync(currentHost.module), core);
+  assert.deepEqual(readFileSync(currentHost.module), readFileSync(heldHost.module));
+  assert.deepEqual(readFileSync(currentHost.manifest), readFileSync(heldHost.manifest));
+  // A changed inner payload cannot borrow the original manifest's hash, and a
+  // failed extraction must leave the previously validated outputs untouched.
+  writeFileSync(path.join(assets, 'oliphaunt.wasix.tar.zst'), Buffer.from('wrong runtime'));
+  writeFileSync(archive, releaseZstdCompressSync(await createDeterministicTar(outer)));
+  assert.throws(() => stageCurrentWasixExtensionHost(currentHost));
+  assert.deepEqual(readFileSync(currentHost.module), core);
+  rmSync(path.join(assets, 'manifest.json'));
+  writeFileSync(archive, releaseZstdCompressSync(await createDeterministicTar(outer)));
+  assert.throws(
+    () => stageCurrentWasixExtensionHost(currentHost),
+    /original regular archive members/u,
+  );
   const sqlRoot = path.join(root, 'sql');
   mkdirSync(sqlRoot);
   const defaultVersion = metadata.source['extension-control']['default-version'];

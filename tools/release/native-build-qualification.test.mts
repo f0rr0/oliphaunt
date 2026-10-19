@@ -24,6 +24,27 @@ import {
 } from './native-build-qualification.mts';
 import { captureNativeOutputMembers } from './native-publication-staging.mts';
 
+test('source WASIX host probes cannot replace prepared exact-host final qualification', () => {
+  const product = 'oliphaunt-extension-pg-textsearch';
+  const pkg = {
+    product,
+    name: 'pg_textsearch-wasix-pre-version-link',
+    ecosystem: 'internal',
+    role: 'extension-release-link-input',
+  };
+  const qualification = { cohorts: [{ roots: [{ package: pkg }] }] } as any;
+  expect(() => assertNativeFinalShippingPhase(qualification, [])).not.toThrow();
+  expect(() => assertNativeFinalShippingPhase(qualification, [product])).toThrow(
+    'prepared exact-host',
+  );
+  pkg.name = 'pg_textsearch-wasix-final-link';
+  expect(() => assertNativeFinalShippingPhase(qualification, [product])).not.toThrow();
+  pkg.ecosystem = 'npm';
+  expect(() => assertNativeFinalShippingPhase(qualification, [product])).toThrow(
+    'prepared exact-host',
+  );
+});
+
 test('selected SDK and Broker final sources require minimum proof, without a helper-only or held trigger', () => {
   const common = '//build_defs/languages/installed:consumer_test';
   const minimum = '//build_defs/languages/installed:consumer_minimum_test';

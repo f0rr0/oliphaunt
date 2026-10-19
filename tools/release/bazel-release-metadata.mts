@@ -883,6 +883,7 @@ export function nativePublicationInputProjection(value: unknown, _metadata?: Rel
       throw new Error('completed supplier artifact source conflicts with supplier publication');
   }
   return {
+    prepared: Object.hasOwn(snapshot, 'selectedProducts'),
     selectedProducts: [...selectedProducts],
     nativeSwiftSource: swift.input,
     nativeCurrentArtifacts: current.artifacts,
@@ -933,6 +934,7 @@ export function renderReleaseMetadata(
   metadata: ReleaseMetadata,
   identityRule: string,
   publicationInputs = {
+    prepared: false,
     supplierPublications: {},
     seedControls: {},
     extensionFinalInputs: {},
@@ -982,6 +984,7 @@ export function renderReleaseMetadata(
     NATIVE_APPLE_BASE_INPUT: publicationInputs.nativeAppleBase,
     NATIVE_SWIFT_SOURCE_INPUT: publicationInputs.nativeSwiftSource,
     NATIVE_CURRENT_ARTIFACTS: publicationInputs.nativeCurrentArtifacts,
+    PREPARED_NATIVE_INPUTS: publicationInputs.prepared,
     PREPARED_NATIVE_SELECTED_PRODUCTS: publicationInputs.selectedProducts,
     COMPLETED_SUPPLIER_ARTIFACTS: publicationInputs.supplierArtifacts,
   };

@@ -477,17 +477,33 @@ export function iterDependencyTables(manifest) {
   return tables;
 }
 
-export function cargoPathDependencyConsumers(file, manifest, manifests, owners, binding) {
+export function cargoPathDependencyConsumers(
+  file,
+  manifest,
+  manifests,
+  owners,
+  binding,
+  products = {},
+) {
+  const consumerOwners = (file, manifest) => {
+    const relative = path.isAbsolute(file) ? rel(file) : file;
+    return [
+      owners.get(manifest.package?.name),
+      ...Object.entries(products)
+        .filter(([, product]) => product.embedded_cargo_manifests?.includes(relative))
+        .map(([id]) => id),
+    ];
+  };
   const consumers =
     file === 'Cargo.toml'
-      ? [...manifests.values()]
-          .filter(({ manifest }) =>
+      ? [...manifests]
+          .filter(([, { manifest }]) =>
             iterDependencyTables(manifest).some(
               ([, table]) => table[binding.name]?.workspace === true,
             ),
           )
-          .map(({ manifest }) => owners.get(manifest.package?.name))
-      : [owners.get(manifest.package?.name)];
+          .flatMap(([file, { manifest }]) => consumerOwners(file, manifest))
+      : consumerOwners(file, manifest);
   return [...new Set(consumers.filter(Boolean))];
 }
 
@@ -607,7 +623,14 @@ function syncCargoPathDependencyPins(changes, { write, observeUpdate, transition
             input.startsWith(path.join(ROOT, metadata.path) + path.sep),
         )
         .sort((left, right) => right[1].path.length - left[1].path.length)[0]?.[0];
-      const consumers = cargoPathDependencyConsumers(file, parsed, manifests, owners, binding);
+      const consumers = cargoPathDependencyConsumers(
+        file,
+        parsed,
+        manifests,
+        owners,
+        binding,
+        products,
+      );
       const producerSelected = selected.has(producer);
       const adopts = producerSelected && consumers.some((product) => selected.has(product));
       if (adopts)
@@ -617,7 +640,12 @@ function syncCargoPathDependencyPins(changes, { write, observeUpdate, transition
           true,
         );
       if (file === 'Cargo.toml' && producerSelected) {
-        const held = consumers.filter((product) => !selected.has(product));
+        const held = consumers.filter(
+          (product) =>
+            !selected.has(product) &&
+            (buildBound.get(product)?.has(producer) ||
+              products[product].registry_packages?.some((name) => name.startsWith('crates:'))),
+        );
         const prior = priorVersions.get(JSON.stringify(binding.entryParts)) ?? dependency.version;
         if (held.length && binding.expected !== prior)
           fail(

@@ -14,6 +14,7 @@ import { TagName } from 'release-please/build/src/util/tag-name.js';
 import { Version } from 'release-please/build/src/version.js';
 import { loadReleaseMetadata } from './bazel-release-metadata.mts';
 import { readCommitHistory, readCommitPaths } from './commit-paths.mts';
+import { cargoCompatibilityDependency } from './compatibility-version-parser.mts';
 import { createCompletedPublicationChecker } from './completed-release-publication.mts';
 import {
   defaultExtensionReleasePlan,
@@ -460,6 +461,13 @@ export function includeOwnedSourceCommits(
           );
           if (candidate) plannedProducts[runtime].version = candidate.version.toString();
         }
+        const nativeSupportRequirements = native
+          ? defaultExtensionReleasePlan(plannedProducts, nativeSelected, {
+              readCompatibility,
+              buildBound,
+              currentExactInputs: nativeCurrentExactInputs,
+            }).requirements
+          : undefined;
         for (const [ownerPath, config] of Object.entries(manifest.repositoryConfig)) {
           const product = config.component;
           if (!graph.products[product] || !releasesByPath[ownerPath]) continue;
@@ -473,6 +481,10 @@ export function includeOwnedSourceCommits(
             buildBound,
             readValue: (entry) => readCompatibility(entry.product, entry.sourceProduct),
           });
+          for (const entry of plan) {
+            const adopted = nativeSupportRequirements?.get(`${product}:${entry.sourceProduct}`);
+            if (adopted) entry.version = adopted.version;
+          }
           const changes = plan.flatMap((entry) => {
             const previous = readCompatibility(
               product,
@@ -525,6 +537,26 @@ export function includeOwnedSourceCommits(
               currentExactInputs: nativeCurrentExactInputs,
             });
             if (!nativeCargoManifests) return plan;
+            // Exact source identities follow actual compiled Files. Cargo ranges
+            // retain the separate minimum policy below.
+            for (const entry of entries) {
+              if (
+                !products[entry.product].embedded_cargo_manifests?.length ||
+                !buildBound.get(entry.product).has(entry.sourceProduct) ||
+                (!selected.has(entry.product) && !selected.has(entry.sourceProduct))
+              )
+                continue;
+              const conventional = nativeCargoManifests.get(entry.path);
+              if (conventional && cargoCompatibilityDependency(entry, conventional.text)) continue;
+              const version = products[entry.sourceProduct].version;
+              if (readCompatibility(entry.product, entry.sourceProduct) === version) continue;
+              plan.required.add(entry.product);
+              plan.requirements.set(`${entry.product}:${entry.sourceProduct}`, {
+                product: entry.product,
+                sourceProduct: entry.sourceProduct,
+                version,
+              });
+            }
             const owners = new Map(
               Object.entries(products).flatMap(([id, product]) =>
                 (product.registry_packages ?? [])
@@ -572,6 +604,7 @@ export function includeOwnedSourceCommits(
                   nativeCargoManifests,
                   owners,
                   binding,
+                  products,
                 );
                 binding.expected = desiredCargoPathDependencyVersion(
                   declaration.version,
@@ -582,7 +615,13 @@ export function includeOwnedSourceCommits(
                 // A changed normalized public Cargo requirement is a changed
                 // source envelope. Private build/test manifests need a coherent
                 // checkout without inventing another public delivery.
-                for (const product of new Set(consumers.length ? consumers : [null])) {
+                const affected = consumers.filter(
+                  (product) =>
+                    selected.has(product) ||
+                    buildBound.get(product).has(sourceProduct) ||
+                    products[product].registry_packages?.some((name) => name.startsWith('crates:')),
+                );
+                for (const product of new Set(affected.length ? affected : [null])) {
                   if (product) plan.required.add(product);
                   plan.requirements.set(
                     'cargo:' + file + ':' + JSON.stringify(binding.entryParts) + ':' + product,

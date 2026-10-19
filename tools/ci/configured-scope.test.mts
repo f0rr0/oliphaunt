@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { zipArchive } from '../packaging/testdata/zip-fixture.mts';
+import { nativeBuildMetadata } from '../release/native-build-qualification.mts';
+import { projectNativeCurrentArtifacts } from '../release/native-extension-final-inputs.mts';
 import {
   configuredRecipeGraph,
   nativeConfiguredRecipeGraph,
@@ -18,11 +20,13 @@ import {
   captureConfiguredCiRequest,
   configuredCiSourceChanges,
   configuredCiWorkflowInventory,
+  joinConfiguredCiProjections,
   selectConfiguredCiRequests,
   verifyConfiguredCiDecision,
   verifyConfiguredCiResults,
   writeConfiguredCiSuccessReceipt,
 } from './configured-scope.mts';
+import { isNativeImportSourceLabel } from './native-import-projection.mts';
 
 const configuration = 'a'.repeat(64);
 const source = { commit: '1'.repeat(40), tree: '2'.repeat(40) };
@@ -88,6 +92,208 @@ test('one, shared, many and unused source changes select only configured request
     'docs/site',
     'linux/producer',
     'mac/consumer',
+  ]);
+});
+
+test('current imported roots inherit only their configured producer source scope and transitive inputs', () => {
+  const proof = (name: string) => ({
+    root: `//wasix:${name}`,
+    configuration,
+    evidenceDigest: `sha256:${'b'.repeat(64)}`,
+    invocationId: 'current-combined-wasix-build',
+    output: `bazel-out/wasix/bin/${name}.crate`,
+  });
+  const core = proof('core'),
+    tools = proof('tools'),
+    addon = proof('addon');
+  const producer = request('wasix/combined', ['core.rs', 'addon.rs', 'server.rs', 'tools.rs']);
+  producer.projection!.roots = [core, tools, addon].map(({ root: label, configuration }) => ({
+    label,
+    configuration,
+  }));
+  producer.projection!.analysisInputs = ['shared/recipe.mts'];
+  producer.projection!.trees = ['acquired'];
+  producer.projection!.directories = ['observed'];
+  producer.projection!.nativeOutputs = [addon, core, tools].map((row) => ({
+    ...row,
+    files: [`${row.root.split(':')[1]}.rs`],
+  }));
+  const runtime = request('wasix-host/runtime', ['runtime.rs'], [producer.id]);
+  runtime.projection!.importedRoots = [core];
+  const napi = request('wasix-host/napi', ['addon.rs', 'napi.rs'], [producer.id]);
+  napi.projection!.importedRoots = [core];
+  const toolConsumer = request('wasix-host/tools', ['tool-consumer.rs'], [producer.id]);
+  toolConsumer.projection!.importedRoots = [tools];
+  const downstream = request('installed/runtime', ['installed.rs']);
+  const runtimeProof = {
+    ...proof('runtime'),
+    evidenceDigest: `sha256:${'c'.repeat(64)}`,
+    invocationId: 'runtime-build',
+  };
+  runtime.projection!.roots.push({ label: runtimeProof.root, configuration });
+  runtime.projection!.nativeOutputs = [
+    { ...runtimeProof, files: ['runtime.rs'], importedRoots: [core] },
+  ];
+  downstream.projection!.importedRoots = [runtimeProof];
+  const requests = [producer, runtime, napi, toolConsumer, downstream];
+  const identities = requests.map(({ id, job, requires }) => ({ id, job, requires }));
+  const currentBasis = { ...basis, requests };
+  const selected = (file: string) =>
+    select([modified(file)], { requests: identities, basis: currentBasis });
+  assert.deepEqual(selected('addon.rs').selected_requests, ['wasix-host/napi', 'wasix/combined']);
+  assert.deepEqual(selected('server.rs').selected_requests, ['wasix/combined']);
+  assert.deepEqual(selected('napi.rs').selected_requests, ['wasix-host/napi', 'wasix/combined']);
+  assert.deepEqual(selected('core.rs').selected_requests, [
+    'installed/runtime',
+    'wasix-host/napi',
+    'wasix-host/runtime',
+    'wasix/combined',
+  ]);
+  assert.deepEqual(selected('tools.rs').selected_requests, ['wasix-host/tools', 'wasix/combined']);
+  const joined = joinConfiguredCiProjections(requests, source);
+  const installed = joined.find((row) => row.id === downstream.id)!.projection!;
+  assert.deepEqual(installed.files, ['core.rs', 'installed.rs', 'runtime.rs']);
+  assert.deepEqual(installed.trees, ['acquired']);
+  assert.deepEqual(installed.directories, ['observed']);
+  assert(installed.analysisInputs.includes('shared/recipe.mts'));
+  assert(!installed.files.includes('addon.rs'));
+  assert.deepEqual(downstream.requires, []);
+  assert.deepEqual(downstream.projection!.files, ['installed.rs'], 'retained basis stays local');
+});
+
+test('native lineage fails closed for absent, ambiguous, older-source and different original producer proofs', () => {
+  const proof = {
+    root: '//pkg:root',
+    configuration,
+    evidenceDigest: `sha256:${'b'.repeat(64)}`,
+    invocationId: 'current-build',
+    output: 'bazel-out/cfg/bin/core.crate',
+  };
+  const producer = request('wasix/producer', ['core.rs']);
+  producer.projection!.nativeOutputs = [{ ...proof, files: ['core.rs'] }];
+  const consumer = request('host/consumer', ['consumer.rs']);
+  consumer.projection!.importedRoots = [proof];
+  const requests = [producer, consumer];
+  const identities = requests.map(({ id, job, requires }) => ({ id, job, requires }));
+  for (const field of [
+    'evidenceDigest',
+    'invocationId',
+    'output',
+    'root',
+    'configuration',
+  ] as const) {
+    const corrupt = structuredClone(requests);
+    const importProof = corrupt[1].projection!.importedRoots![0];
+    importProof[field] =
+      field === 'evidenceDigest'
+        ? `sha256:${'c'.repeat(64)}`
+        : field === 'configuration'
+          ? 'd'.repeat(64)
+          : `${importProof[field]}-other`;
+    assert.throws(() => joinConfiguredCiProjections(corrupt, source), /exact original producer/u);
+    assert.equal(
+      select([modified('core.rs')], {
+        requests: identities,
+        basis: { ...basis, requests: corrupt },
+      }).mode,
+      'full',
+    );
+  }
+  const absent = structuredClone(requests);
+  delete absent[0].projection!.nativeOutputs;
+  assert.throws(() => joinConfiguredCiProjections(absent, source), /exact original producer/u);
+  const duplicate = { ...structuredClone(producer), id: 'duplicate/producer', job: 'duplicate' };
+  assert.throws(
+    () => joinConfiguredCiProjections([...requests, duplicate], source),
+    /exact original producer/u,
+  );
+  const older = structuredClone(requests);
+  older[0].source.commit = '9'.repeat(40);
+  assert.throws(() => joinConfiguredCiProjections(older, source), /producer source differs/u);
+  const unrelated = structuredClone(requests);
+  unrelated[0].projection!.roots = [{ label: '//different:root', configuration }];
+  assert.throws(() => joinConfiguredCiProjections(unrelated, source), /outside this request/u);
+});
+
+test('authored full-only requests never intersect source changes or leak through transport closure', () => {
+  const publicSource = request('families/public-source', ['sdk.rs']);
+  const producer = request('producer/runtime', ['runtime.rs']);
+  const aggregate = {
+    ...request('families/aggregate', ['sdk.rs'], [publicSource.id, producer.id].sort()),
+    fullOnly: true,
+  };
+  const requests = [publicSource, producer, aggregate];
+  const identities = requests.map(({ id, job, requires, fullOnly }) => ({
+    id,
+    job,
+    requires,
+    ...(fullOnly ? { fullOnly } : {}),
+  }));
+  const currentBasis = { ...basis, requests };
+  const args = { requests: identities, basis: currentBasis };
+  const sourcePlan = select([modified('sdk.rs')], args);
+  assert.equal(sourcePlan.mode, 'source');
+  assert.deepEqual(sourcePlan.selected_requests, [publicSource.id]);
+  assert.deepEqual(sourcePlan.capture_requests, []);
+  assert.deepEqual(
+    select([], { ...args, full: true }).selected_requests,
+    requests.map((row) => row.id).sort(),
+  );
+  const dependent = structuredClone(requests);
+  dependent[0].requires = [aggregate.id];
+  dependent[2].requires = [producer.id];
+  const dependentIdentities = identities.map((row) =>
+    row.id === publicSource.id
+      ? { ...row, requires: [aggregate.id] }
+      : row.id === aggregate.id
+        ? { ...row, requires: [producer.id] }
+        : row,
+  );
+  assert.equal(
+    select([modified('sdk.rs')], {
+      requests: dependentIdentities,
+      basis: { ...basis, requests: dependent },
+    }).mode,
+    'full',
+  );
+  const changedPolicy = identities.map((row) =>
+    row.id === aggregate.id ? { ...row, fullOnly: false } : row,
+  );
+  assert.equal(
+    select([modified('sdk.rs')], { requests: changedPolicy, basis: currentBasis }).mode,
+    'full',
+  );
+  const explicitFalse = structuredClone(requests);
+  explicitFalse[0].fullOnly = false;
+  assert.equal(
+    select([modified('sdk.rs')], { ...args, basis: { ...basis, requests: explicitFalse } }).mode,
+    'source',
+  );
+  assert.throws(
+    () =>
+      verifyConfiguredCiResults(
+        { ...sourcePlan, selected_requests: [aggregate.id] },
+        [{ ...aggregate, mode: 'source', projection: undefined }],
+        'skipped',
+        github,
+        identities,
+      ),
+    /full-only/u,
+  );
+  const workflow = {
+    env: {},
+    jobs: {
+      families: {
+        steps: [
+          { env: { CI_REQUEST_ID: 'families/public-source' } },
+          { env: { CI_REQUEST_ID: 'families/aggregate', CI_FULL_ONLY: 'true' } },
+        ],
+      },
+    },
+  };
+  assert.deepEqual(configuredCiWorkflowInventory(workflow).requests, [
+    { id: 'families/aggregate', job: 'families', requires: [], fullOnly: true },
+    { id: 'families/public-source', job: 'families', requires: [] },
   ]);
 });
 
@@ -246,6 +452,31 @@ test('union traversal preserves all shared DAG labels/packages and Native per-ro
   assert.deepEqual(ordinary.packages, native.packages);
   assert.deepEqual(ordinary.roots, []);
   assert.equal(native.roots.length, 2);
+  const imported =
+    '@@_main+metadata+oliphaunt_metadata//:native-current-artifacts/runtime/archive.tgz';
+  const sdk = '@@apple_sdk+//include:SDK.h';
+  const withForeignSources = graph();
+  for (const label of [imported, sdk]) {
+    withForeignSources.results[2].target.rule!.configuredRuleInput.push({
+      label,
+      configurationId: 0,
+    });
+    withForeignSources.results.push({
+      configurationId: 0,
+      target: { sourceFile: { name: label } },
+    });
+  }
+  const sliced = configuredRecipeGraph(
+    withForeignSources,
+    roots,
+    true,
+    (name) => name.startsWith('//') || isNativeImportSourceLabel(name),
+  );
+  assert.deepEqual(sliced.roots, [], 'default root recipe shape remains unchanged');
+  assert.deepEqual(
+    sliced.sourceRoots,
+    roots.map((root) => ({ ...root, labels: ['//shared:input.rs', imported] })),
+  );
   const external = graph();
   external.results[0].target.rule!.name = '@@icu+//:smoke';
   assert.equal(
@@ -272,10 +503,46 @@ test('actual executable workflow inventory covers every 33 request context and a
   assert.equal(actual.requests.length, 33);
   assert.equal(new Set(actual.requests.map((row) => row.id)).size, 33);
   assert.equal(
-    actual.requests.find((row) => row.id === 'release-families/checksums')!.requires.length,
-    14,
+    actual.requests.find((row) => row.id === 'release-families/checksums')!.fullOnly,
+    true,
   );
-  assert.equal(actual.requests.filter((row) => row.requires.length).length, 7);
+  assert.deepEqual(
+    actual.requests.find((row) => row.id === 'release-families/public-source')!.requires,
+    [],
+  );
+  assert.equal(
+    actual.requests.find((row) => row.id === 'release-families/checksums')!.requires.length,
+    13,
+  );
+  assert.equal(actual.requests.filter((row) => row.requires.length).length, 10);
+  assert(!actual.requests.some((row) => /^portable\/[^/]+\/napi$/u.test(row.id)));
+  for (const platform of ['linux-arm64', 'macos-arm64', 'windows-x64']) {
+    const napi = actual.requests.find((row) => row.id === `wasix-host/${platform}/napi`);
+    assert(napi, `missing imported NAPI request for ${platform}`);
+    assert.equal(napi.job, `wasix-host/${platform}`);
+    assert.deepEqual(napi.requires, ['wasix/tools-sdk-browser']);
+    assert(
+      actual.requests
+        .find((row) => row.id === 'release-families/checksums')!
+        .requires.includes(napi.id),
+    );
+  }
+  const napiId = 'wasix-host/linux-arm64/napi';
+  const napiPlan = selectConfiguredCiRequests({
+    source,
+    requests: actual.requests,
+    basis: {
+      ...basis,
+      requests: actual.requests.map((row) => ({
+        ...request(row.id, row.id === napiId ? ['napi.rs'] : []),
+        ...row,
+      })),
+    },
+    changes: [modified('napi.rs')],
+  });
+  assert.deepEqual(napiPlan.selected_requests, [napiId, 'wasix/tools-sdk-browser']);
+  assert.deepEqual(napiPlan.selected_jobs, ['wasix', 'wasix-host/linux-arm64']);
+  assert.deepEqual(napiPlan.capture_requests, ['wasix/tools-sdk-browser']);
   assert(actual.requests.some((row) => row.id === 'linux/x86_64/android-packages'));
   assert(!actual.requests.some((row) => row.id === 'linux/aarch64/android-packages'));
 });
@@ -301,6 +568,8 @@ async function gitFixture(
   put('shared/input.rs', 'pub fn input() {}');
   put('one/BUILD', '#root');
   put('two/BUILD', '#root');
+  put('one/core.rs', 'pub fn core() {}');
+  put('two/addon.rs', 'pub fn addon() {}');
   put('shared/BUILD', '#input');
   put('unused.md', 'docs');
   put(
@@ -331,9 +600,17 @@ async function gitFixture(
     path.join(outputBase, 'MODULE.bazel.lock'),
     '{"lockFileVersion":28,"moduleExtensions":{}}',
   );
+  const originalSnapshot = process.env.OLIPHAUNT_NATIVE_PUBLICATION_INPUTS;
+  const originalFullOnly = process.env.CI_FULL_ONLY;
+  delete process.env.OLIPHAUNT_NATIVE_PUBLICATION_INPUTS;
+  delete process.env.CI_FULL_ONLY;
   try {
     await run(root, outputBase, current());
   } finally {
+    if (originalSnapshot === undefined) delete process.env.OLIPHAUNT_NATIVE_PUBLICATION_INPUTS;
+    else process.env.OLIPHAUNT_NATIVE_PUBLICATION_INPUTS = originalSnapshot;
+    if (originalFullOnly === undefined) delete process.env.CI_FULL_ONLY;
+    else process.env.CI_FULL_ONLY = originalFullOnly;
     rmSync(base, { recursive: true, force: true });
   }
 }
@@ -405,6 +682,246 @@ test('shared capture uses existing configured/recipe views without query, binds 
       }).trim(),
     };
     assert.deepEqual(configuredCiSourceChanges(root, actualSource, now), [modified('unused.md')]);
+  });
+});
+
+test('native capture binds original packet bytes to root-local source Files and reached imports', async () => {
+  await gitFixture(async (root, outputBase, actualSource) => {
+    const executionRoot = path.join(outputBase, 'execroot/_main');
+    const output = 'bazel-out/wasix/bin/one/fixture-runtime-1.0.0.tar.gz';
+    const original = path.join(executionRoot, output);
+    mkdirSync(path.dirname(original), { recursive: true });
+    const bytes = Buffer.from('controlled original public runtime');
+    writeFileSync(original, bytes);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const shipping = {
+      label: '//one:root',
+      package: {
+        product: 'fixture-runtime',
+        version: '1.0.0',
+        ecosystem: 'github',
+        name: 'fixture-runtime-1.0.0.tar.gz',
+        configuration: 'portable',
+        role: 'github-release-asset',
+        outputs: [{ path: output, owner: '//one:archive' }],
+      },
+    };
+    const evidence = {
+      schema: 'oliphaunt-native-build-evidence-v1',
+      source: actualSource,
+      github,
+      cohorts: [
+        {
+          executionRoot,
+          roots: [shipping],
+          rootConfigurations: [{ label: shipping.label, configuration }],
+          aquery: {
+            pathFragments: output.split('/').map((label, index) => ({
+              id: index + 1,
+              label,
+              ...(index ? { parentId: index } : {}),
+            })),
+            artifacts: [{ id: 1, pathFragmentId: output.split('/').length }],
+            targets: [{ id: 1, label: '//one:archive' }],
+            configuration: [{ id: 1, checksum: configuration }],
+            actions: [
+              {
+                targetId: 1,
+                configurationId: 1,
+                mnemonic: 'FileWrite',
+                actionKey: 'controlled-archive',
+                outputIds: [1],
+                primaryOutputId: 1,
+              },
+            ],
+          },
+          buildEvents: [
+            {
+              id: { started: {} },
+              started: {
+                uuid: 'controlled-current-invocation',
+                buildToolVersion: '8.8.1',
+                command: 'build',
+              },
+            },
+            { id: { workspace: {} }, workspaceInfo: { localExecRoot: executionRoot } },
+            { id: { configuration: { id: configuration } }, configuration: { mnemonic: 'wasix' } },
+            {
+              id: { namedSet: { id: 'output' } },
+              namedSetOfFiles: {
+                files: [{ name: output, digest: sha256, length: String(bytes.length) }],
+              },
+            },
+            {
+              id: {
+                targetCompleted: { label: shipping.label, configuration: { id: configuration } },
+              },
+              completed: {
+                success: true,
+                outputGroup: [{ name: 'default', fileSets: [{ id: 'output' }] }],
+              },
+            },
+            {
+              id: { buildFinished: {} },
+              finished: { overallSuccess: true, exitCode: { name: 'SUCCESS' } },
+            },
+            {
+              id: { buildMetadata: {} },
+              buildMetadata: { metadata: nativeBuildMetadata(actualSource, github) },
+            },
+            { id: { buildMetrics: {} }, lastMessage: true, buildMetrics: {} },
+          ],
+          inputs: [],
+          outputs: [
+            {
+              path: output,
+              members: [{ path: '', type: 'file', mode: 0o644, size: bytes.length, sha256 }],
+            },
+          ],
+        },
+      ],
+    };
+    const nativeEvidence = path.join(outputBase, 'native-build-evidence.json');
+    const packet = Buffer.from(`${JSON.stringify(evidence)}\n`);
+    writeFileSync(nativeEvidence, packet);
+    const repository = 'oliphaunt_metadata';
+    writeFileSync(
+      path.join(outputBase, 'external', `@${repository}.marker`),
+      `${'f'.repeat(64)}\n`,
+    );
+    const rule = (name: string, labels: string[]) => ({
+      configurationId: 1,
+      target: {
+        rule: {
+          name,
+          configuredRuleInput: labels.map((label) => ({
+            label,
+            configurationId: label.endsWith('.rs') ? 0 : 1,
+          })),
+        },
+      },
+    });
+    const sourceFile = (name: string) => ({ configurationId: 0, target: { sourceFile: { name } } });
+    const aliasRule = `@@${repository}//:rule_alias`;
+    const raw = {
+      configurations: [{ id: 1, checksum: configuration }],
+      results: [
+        rule('//one:root', ['//one:core.rs']),
+        rule('//two:root', ['//two:addon.rs', aliasRule]),
+        rule(aliasRule, []),
+        sourceFile('//one:core.rs'),
+        sourceFile('//two:addon.rs'),
+      ],
+    };
+    const capture = (id: string, configuredGraph = raw, extra = {}) =>
+      captureConfiguredCiRequest({
+        id,
+        job: id.split('/')[0],
+        source: actualSource,
+        github,
+        outputDirectory: path.join(outputBase, 'receipts', id),
+        workspaceRoot: root,
+        configuration: [],
+        startup: [],
+        requestedTargets: ['//one:root', '//two:root'],
+        completedRoots: ['//one:root', '//two:root'].map((label) => ({ label, configuration })),
+        executionRoot,
+        configuredGraph,
+        recipeQueries: [
+          {
+            packages: ['//one', '//two', `@@${repository}//`],
+            labels: ['//one:BUILD', '//two:BUILD'],
+          },
+        ],
+        ...extra,
+      });
+    const producer = JSON.parse(
+      readFileSync(await capture('producer/current', raw, { nativeEvidence }), 'utf8'),
+    );
+    assert.equal(
+      producer.projection.importedRoots,
+      undefined,
+      'reached rule aliases are not imported Files',
+    );
+    const retained = producer.projection.nativeOutputs[0];
+    assert.deepEqual(retained.files, ['one/core.rs']);
+    assert.equal(
+      retained.evidenceDigest,
+      `sha256:${createHash('sha256').update(packet).digest('hex')}`,
+    );
+    assert.equal(retained.invocationId, 'controlled-current-invocation');
+    assert.deepEqual(producer.projection.files, ['one/core.rs', 'two/addon.rs']);
+    const { files: _files, importedRoots: _imports, ...proof } = retained;
+    const snapshot = {
+      source: actualSource,
+      nativeCurrentArtifacts: [
+        {
+          product: 'fixture-runtime',
+          version: '1.0.0',
+          artifact: 'github-release:fixture-runtime-1.0.0.tar.gz',
+          configuration: 'portable',
+          source: actualSource,
+          file: { path: original, size: bytes.length, sha256, producer: proof },
+        },
+      ],
+    };
+    const aliases = projectNativeCurrentArtifacts(
+      snapshot.nativeCurrentArtifacts,
+      actualSource,
+    ).files;
+    assert.equal(aliases.length, 1);
+    const alias = aliases[0];
+    const importedFile = path.join(executionRoot, 'external', repository, alias.path);
+    mkdirSync(path.dirname(importedFile), { recursive: true });
+    writeFileSync(importedFile, bytes);
+    const importedLabel = `@@${repository}//:${alias.path}`;
+    const consumerGraph = structuredClone(raw);
+    consumerGraph.results[1].target.rule!.configuredRuleInput.push({
+      label: importedLabel,
+      configurationId: 0,
+    });
+    consumerGraph.results.push(sourceFile(importedLabel));
+    const snapshotFile = path.join(outputBase, 'publication-inputs.json');
+    writeFileSync(snapshotFile, JSON.stringify(snapshot));
+    process.env.OLIPHAUNT_NATIVE_PUBLICATION_INPUTS = snapshotFile;
+    const consumer = JSON.parse(
+      readFileSync(await capture('consumer/current', consumerGraph), 'utf8'),
+    );
+    assert.deepEqual(consumer.projection.importedRoots, [proof]);
+    assert.equal(
+      consumer.projection.nativeOutputs,
+      undefined,
+      'ordinary capture has no native producer authority',
+    );
+    assert.equal(joinConfiguredCiProjections([producer, consumer], actualSource).length, 2);
+    delete process.env.OLIPHAUNT_NATIVE_PUBLICATION_INPUTS;
+    await assert.rejects(capture('consumer/missing-snapshot', consumerGraph), /original producer/u);
+    const missingOutput = structuredClone(evidence);
+    const namedOutput = missingOutput.cohorts[0].buildEvents.find(
+      (event) => 'namedSetOfFiles' in event,
+    ) as { namedSetOfFiles: { files: unknown[] } } | undefined;
+    assert(namedOutput);
+    namedOutput.namedSetOfFiles.files = [];
+    writeFileSync(nativeEvidence, JSON.stringify(missingOutput));
+    await assert.rejects(
+      capture('producer/missing-completed-output', raw, { nativeEvidence }),
+      /absent from its completion/u,
+    );
+    writeFileSync(nativeEvidence, packet);
+    await assert.rejects(
+      capture('producer/unrelated-root', raw, {
+        nativeEvidence,
+        requestedTargets: ['//two:root'],
+        completedRoots: [{ label: '//two:root', configuration }],
+      }),
+      /outside this request/u,
+    );
+    evidence.github = { ...github, job: 'different-producer' };
+    writeFileSync(nativeEvidence, JSON.stringify(evidence));
+    await assert.rejects(
+      capture('producer/different-context', raw, { nativeEvidence }),
+      /context differs/u,
+    );
   });
 });
 
