@@ -90,18 +90,21 @@ contrib_extensions=(
   pageinspect
   pg_buffercache
   pg_freespacemap
-  pgcrypto
-  uuid-ossp
+  pg_logicalinspect
+  pg_stat_statements
   pg_surgery
   pg_trgm
   pg_visibility
   pg_walinspect
+  pgcrypto
   seg
+  spi
   tablefunc
   tcn
   tsm_system_rows
   tsm_system_time
   unaccent
+  uuid-ossp
 )
 
 external_extensions=(
@@ -117,6 +120,7 @@ external_extensions=(
 
 required_extension_controls=(
   amcheck
+  autoinc
   bloom
   btree_gin
   btree_gist
@@ -128,25 +132,30 @@ required_extension_controls=(
   file_fdw
   fuzzystrmatch
   hstore
+  insert_username
   intarray
   isn
   lo
   ltree
+  moddatetime
   pageinspect
   pg_buffercache
   pg_freespacemap
   pg_hashids
   pg_ivm
-  pgcrypto
-  postgis
+  pg_logicalinspect
+  pg_stat_statements
   pg_surgery
   pg_textsearch
   pg_trgm
   pg_uuidv7
   pg_visibility
   pg_walinspect
+  pgcrypto
   pgtap
   pgmq
+  postgis
+  refint
   seg
   tablefunc
   tcn
@@ -161,6 +170,7 @@ required_extension_modules=(
   _int
   amcheck
   auto_explain
+  autoinc
   bloom
   btree_gin
   btree_gist
@@ -172,22 +182,27 @@ required_extension_modules=(
   file_fdw
   fuzzystrmatch
   hstore
+  insert_username
   isn
   lo
   ltree
+  moddatetime
   pageinspect
   pg_buffercache
   pg_freespacemap
   pg_hashids
   pg_ivm
-  pgcrypto
-  postgis-3
+  pg_logicalinspect
+  pg_stat_statements
   pg_surgery
   pg_textsearch
   pg_trgm
   pg_uuidv7
   pg_visibility
   pg_walinspect
+  pgcrypto
+  postgis-3
+  refint
   seg
   tablefunc
   tcn

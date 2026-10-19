@@ -164,3 +164,18 @@ test('extension projections retain dependency and runtime data while deriving mo
   assert(updated.includes('-DPG_TEXTSEARCH_VERSION="9.8.7"'));
   assert(!updated.includes('@EXTVERSION@'));
 });
+
+test('SPI modules compile only their own C source in mobile static registries', () => {
+  const rows = readFileSync('src/extensions/generated/mobile/static-extensions.tsv', 'utf8')
+    .trimEnd()
+    .split('\n')
+    .slice(2)
+    .map((line) => line.split('\t'));
+  for (const name of ['autoinc', 'insert_username', 'moddatetime', 'refint']) {
+    const row = rows.find((fields) => fields[0] === name);
+    assert(row, `missing SPI module ${name}`);
+    assert.equal(row[3], 'contrib/spi');
+    assert.equal(row[14], `${name}.c`);
+    assert(!row[15], 'SPI members must not also compile recursive source directories');
+  }
+});

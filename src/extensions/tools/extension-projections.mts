@@ -393,7 +393,7 @@ ${metadataRows.map((row) => `    public static let ${row.id.replace(/[-_]([a-z])
       dependencies('sources', ['ios-xcframework']),
       dependencies('sources', ['android-arm64-v8a', 'android-x86_64']),
       list('hash_dirs', 'mobile-static-hash-dirs'),
-      list('source_files'),
+      list('source_files', 'mobile-static-source-files'),
       list('source_recursive_dirs'),
     ]
       .map((value) => (Array.isArray(value) ? value.join(',') : value))

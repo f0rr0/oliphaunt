@@ -93,6 +93,43 @@
       "notes": []
     },
     {
+      "id": "autoinc",
+      "sql-name": "autoinc",
+      "rust-constant": "AUTOINC",
+      "display-name": "autoinc",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "autoinc",
+      "package-export": "./contrib/autoinc",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "control-file": "src/third-party/postgres/contrib/spi/autoinc.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/autoinc",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": [
+        "src/test-fixtures/extensions/autoinc.sql"
+      ],
+      "native-module-file": "autoinc.so",
+      "notes": []
+    },
+    {
       "id": "bloom",
       "sql-name": "bloom",
       "rust-constant": "BLOOM",
@@ -515,6 +552,43 @@
       "notes": []
     },
     {
+      "id": "insert_username",
+      "sql-name": "insert_username",
+      "rust-constant": "INSERT_USERNAME",
+      "display-name": "insert_username",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "insert_username",
+      "package-export": "./contrib/insert_username",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "control-file": "src/third-party/postgres/contrib/spi/insert_username.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/insert_username",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": [
+        "src/test-fixtures/extensions/insert_username.sql"
+      ],
+      "native-module-file": "insert_username.so",
+      "notes": []
+    },
+    {
       "id": "intarray",
       "sql-name": "intarray",
       "rust-constant": "INTARRAY",
@@ -664,6 +738,43 @@
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/ltree.test.js"
       ],
       "native-module-file": "ltree.so",
+      "notes": []
+    },
+    {
+      "id": "moddatetime",
+      "sql-name": "moddatetime",
+      "rust-constant": "MODDATETIME",
+      "display-name": "moddatetime",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "moddatetime",
+      "package-export": "./contrib/moddatetime",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "control-file": "src/third-party/postgres/contrib/spi/moddatetime.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/moddatetime",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": [
+        "src/test-fixtures/extensions/moddatetime.sql"
+      ],
+      "native-module-file": "moddatetime.so",
       "notes": []
     },
     {
@@ -853,6 +964,81 @@
         "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_ivm.test.ts"
       ],
       "native-module-file": "pg_ivm.so",
+      "notes": []
+    },
+    {
+      "id": "pg_logicalinspect",
+      "sql-name": "pg_logicalinspect",
+      "rust-constant": "PG_LOGICALINSPECT",
+      "display-name": "pg_logicalinspect",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "pg_logicalinspect",
+      "package-export": "./contrib/pg_logicalinspect",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "control-file": "src/third-party/postgres/contrib/pg_logicalinspect/pg_logicalinspect.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/pg_logicalinspect",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": [
+        "src/test-fixtures/extensions/pg_logicalinspect.sql"
+      ],
+      "native-module-file": "pg_logicalinspect.so",
+      "notes": []
+    },
+    {
+      "id": "pg_stat_statements",
+      "sql-name": "pg_stat_statements",
+      "rust-constant": "PG_STAT_STATEMENTS",
+      "display-name": "pg_stat_statements",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "pg_stat_statements",
+      "package-export": "./contrib/pg_stat_statements",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "control-file": "src/third-party/postgres/contrib/pg_stat_statements/pg_stat_statements.control",
+      "control": {
+        "default-version": "1.12",
+        "module-pathname": "$libdir/pg_stat_statements",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [
+          "shared_preload_libraries=pg_stat_statements"
+        ],
+        "preload-required": true,
+        "restart-required": true,
+        "shared-memory-required": true
+      },
+      "tests": [
+        "src/test-fixtures/extensions/pg_stat_statements.sql"
+      ],
+      "native-module-file": "pg_stat_statements.so",
       "notes": []
     },
     {
@@ -1235,6 +1421,43 @@
         "target/oliphaunt-sources/checkouts/src/extensions/tests/postgis/postgis.test.ts"
       ],
       "native-module-file": "postgis-3.so",
+      "notes": []
+    },
+    {
+      "id": "refint",
+      "sql-name": "refint",
+      "rust-constant": "REFINT",
+      "display-name": "refint",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "refint",
+      "package-export": "./contrib/refint",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "control-file": "src/third-party/postgres/contrib/spi/refint.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/refint",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": [
+        "src/test-fixtures/extensions/refint.sql"
+      ],
+      "native-module-file": "refint.so",
       "notes": []
     },
     {

@@ -62,6 +62,7 @@ source-digest-inputs = [
   "src/test-fixtures/extensions/manifest.json",
   "src/test-fixtures/extensions/amcheck.sql",
   "src/test-fixtures/extensions/auto_explain.sql",
+  "src/test-fixtures/extensions/autoinc.sql",
   "src/test-fixtures/extensions/bloom.sql",
   "src/test-fixtures/extensions/btree_gin.sql",
   "src/test-fixtures/extensions/btree_gist.sql",
@@ -73,15 +74,19 @@ source-digest-inputs = [
   "src/test-fixtures/extensions/file_fdw.sql",
   "src/test-fixtures/extensions/fuzzystrmatch.sql",
   "src/test-fixtures/extensions/hstore.sql",
+  "src/test-fixtures/extensions/insert_username.sql",
   "src/test-fixtures/extensions/intarray.sql",
   "src/test-fixtures/extensions/isn.sql",
   "src/test-fixtures/extensions/lo.sql",
   "src/test-fixtures/extensions/ltree.sql",
+  "src/test-fixtures/extensions/moddatetime.sql",
   "src/test-fixtures/extensions/pageinspect.sql",
   "src/test-fixtures/extensions/pg_buffercache.sql",
   "src/test-fixtures/extensions/pg_freespacemap.sql",
   "src/test-fixtures/extensions/pg_hashids.sql",
   "src/test-fixtures/extensions/pg_ivm.sql",
+  "src/test-fixtures/extensions/pg_logicalinspect.sql",
+  "src/test-fixtures/extensions/pg_stat_statements.sql",
   "src/test-fixtures/extensions/pg_surgery.sql",
   "src/test-fixtures/extensions/pg_textsearch.sql",
   "src/test-fixtures/extensions/pg_trgm.sql",
@@ -92,6 +97,7 @@ source-digest-inputs = [
   "src/test-fixtures/extensions/pgmq.sql",
   "src/test-fixtures/extensions/pgtap.sql",
   "src/test-fixtures/extensions/postgis.sql",
+  "src/test-fixtures/extensions/refint.sql",
   "src/test-fixtures/extensions/seg.sql",
   "src/test-fixtures/extensions/tablefunc.sql",
   "src/test-fixtures/extensions/tcn.sql",
@@ -112,6 +118,14 @@ evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
 extension = "auto_explain"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "autoinc"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
@@ -207,6 +221,14 @@ runtime-modes = ["direct","server","restart","backup-restore","materialization"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
+extension = "insert_username"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
 extension = "intarray"
 postgres-major = 18
 artifact-family = "wasix-runtime"
@@ -232,6 +254,14 @@ evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
 extension = "ltree"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "moddatetime"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
@@ -272,6 +302,22 @@ evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
 extension = "pg_ivm"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "pg_logicalinspect"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "pg_stat_statements"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
@@ -352,6 +398,14 @@ evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
 extension = "postgis"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "refint"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]

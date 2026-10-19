@@ -49,6 +49,28 @@
       "sql-name": "auto_explain"
     },
     {
+      "archive": "extensions/autoinc.tar.zst",
+      "dependencies": [],
+      "id": "autoinc",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
+      "native-module-file": "autoinc.so",
+      "native-runtime-files": [],
+      "native-support-modules": [],
+      "sql-name": "autoinc"
+    },
+    {
       "archive": "extensions/bloom.tar.zst",
       "dependencies": [],
       "id": "bloom",
@@ -293,6 +315,28 @@
       "sql-name": "hstore"
     },
     {
+      "archive": "extensions/insert_username.tar.zst",
+      "dependencies": [],
+      "id": "insert_username",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
+      "native-module-file": "insert_username.so",
+      "native-runtime-files": [],
+      "native-support-modules": [],
+      "sql-name": "insert_username"
+    },
+    {
       "archive": "extensions/intarray.tar.zst",
       "dependencies": [],
       "id": "intarray",
@@ -379,6 +423,28 @@
       "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "ltree"
+    },
+    {
+      "archive": "extensions/moddatetime.tar.zst",
+      "dependencies": [],
+      "id": "moddatetime",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
+      "native-module-file": "moddatetime.so",
+      "native-runtime-files": [],
+      "native-support-modules": [],
+      "sql-name": "moddatetime"
     },
     {
       "archive": "extensions/pageinspect.tar.zst",
@@ -489,6 +555,51 @@
       "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pg_ivm"
+    },
+    {
+      "archive": "extensions/pg_logicalinspect.tar.zst",
+      "dependencies": [],
+      "id": "pg_logicalinspect",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
+      "native-module-file": "pg_logicalinspect.so",
+      "native-runtime-files": [],
+      "native-support-modules": [],
+      "sql-name": "pg_logicalinspect"
+    },
+    {
+      "archive": "extensions/pg_stat_statements.tar.zst",
+      "dependencies": [],
+      "id": "pg_stat_statements",
+      "lifecycle": {
+        "create-extension": true,
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": true,
+        "restart-required": true,
+        "shared-memory-required": true,
+        "startup-config": [
+          "shared_preload_libraries=pg_stat_statements"
+        ]
+      },
+      "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
+      "native-module-file": "pg_stat_statements.so",
+      "native-runtime-files": [],
+      "native-support-modules": [],
+      "sql-name": "pg_stat_statements"
     },
     {
       "archive": "extensions/pg_surgery.tar.zst",
@@ -744,6 +855,28 @@
         }
       ],
       "sql-name": "postgis"
+    },
+    {
+      "archive": "extensions/refint.tar.zst",
+      "dependencies": [],
+      "id": "refint",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
+      "native-module-file": "refint.so",
+      "native-runtime-files": [],
+      "native-support-modules": [],
+      "sql-name": "refint"
     },
     {
       "archive": "extensions/seg.tar.zst",

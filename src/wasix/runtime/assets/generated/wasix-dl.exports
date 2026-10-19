@@ -1,6 +1,7 @@
 AcquireRewriteLocks
 AggCheckCallContext
 AllocSetContextCreateInternal
+AllocateFile
 ArrayGetIntegerTypmods
 ArrayGetNItems
 Async_Notify
@@ -22,6 +23,7 @@ BufFileWrite
 BufferBlocks
 BufferDescriptors
 BufferGetBlockNumber
+BufferUsageAccumDiff
 BuildIndexInfo
 BuildTupleFromCStrings
 CacheMemoryContext
@@ -37,6 +39,8 @@ CheckFunctionValidatorAccess
 CheckIndexCompatible
 CheckTableNotInUse
 CheckXidAlive
+CleanQuerytext
+CloseTransientFile
 CommandCounterIncrement
 ConditionVariableBroadcast
 ConditionVariableCancelSleep
@@ -83,6 +87,7 @@ DirectFunctionCall4Coll
 DirectFunctionCall5Coll
 EOH_flatten_into
 EOH_get_flat_size
+EnableQueryId
 EncodeDateOnly
 EncodeDateTime
 EncodeSpecialDate
@@ -126,6 +131,7 @@ FreeAccessStrategy
 FreeCachedExpression
 FreeExecutorState
 FreeExprContext
+FreeFile
 FreeQueryDesc
 FunctionCall0Coll
 FunctionCall1Coll
@@ -156,6 +162,7 @@ GetForeignServer
 GetForeignTable
 GetFreeIndexPage
 GetMemoryChunkContext
+GetNamedLWLockTranche
 GetOldestNonRemovableTransactionId
 GetRecordedFreeSpace
 GetRunningTransactionData
@@ -165,6 +172,7 @@ GetTopFullTransactionId
 GetTransactionSnapshot
 GetUserId
 GetUserIdAndSecContext
+GetUserNameFromId
 GetXLogReplayRecPtr
 GinDataLeafPageGetItems
 HeapTupleGetUpdateXid
@@ -182,6 +190,7 @@ Int64GetDatum
 InterruptPending
 InvalidObjectAddress
 IsTransactionState
+IsUnderPostmaster
 IsValidJsonNumber
 ItemPointerCompare
 ItemPointerEquals
@@ -222,6 +231,7 @@ MemoryContextSetParent
 MemoryContextStrdup
 MultiXactIdPrecedes
 MultiXactIdPrecedesOrEquals
+MyDatabaseId
 MyProc
 NBuffers
 NameListToString
@@ -231,6 +241,7 @@ NewRelationCreateToastTable
 NextCopyFrom
 OidFunctionCall1Coll
 OidOutputFunctionCall
+OpenTransientFile
 OpernameGetOprid
 OutputFunctionCall
 PG_exception_stack
@@ -285,6 +296,7 @@ ReleaseCurrentSubTransaction
 ReleaseSysCache
 RelnameGetRelid
 RequestAddinShmemSpace
+RequestNamedLWLockTranche
 ResourceOwnerCreate
 ResourceOwnerDelete
 ResourceOwnerEnlarge
@@ -307,6 +319,7 @@ SPI_cursor_open_with_paramlist
 SPI_cursor_parse_open
 SPI_datumTransfer
 SPI_exec
+SPI_execp
 SPI_execute
 SPI_execute_extended
 SPI_execute_plan
@@ -318,7 +331,9 @@ SPI_fnumber
 SPI_freeplan
 SPI_freetuptable
 SPI_getbinval
+SPI_getrelname
 SPI_gettype
+SPI_gettypeid
 SPI_getvalue
 SPI_keepplan
 SPI_modifytuple
@@ -341,6 +356,8 @@ SPI_scroll_cursor_move
 SPI_tuptable
 ScanKeyInit
 ScanKeywordLookup
+ScanKeywordTokens
+ScanKeywords
 SearchPathMatchesCurrentEnvironment
 SearchSysCache1
 SearchSysCache2
@@ -352,7 +369,9 @@ SetTuplestoreDestReceiverParams
 SetUserIdAndSecContext
 SharedFileSetAttach
 SharedFileSetInit
+ShmemInitHash
 ShmemInitStruct
+SnapBuildRestoreSnapshot
 SnapshotAnyData
 SplitIdentifierString
 SysCacheGetAttrNotNull
@@ -380,6 +399,7 @@ UnregisterSnapshot
 UpdateActiveSnapshotCommandId
 WaitForParallelWorkersToAttach
 WaitForParallelWorkersToFinish
+WalUsageAccumDiff
 WinGetCurrentPosition
 WinGetFuncArgCurrent
 WinGetFuncArgInPartition
@@ -591,6 +611,7 @@ dshash_release_lock
 dshash_seq_init
 dshash_seq_next
 dshash_seq_term
+durable_rename
 end_MultiFuncCall
 enlargeStringInfo
 enum_cmp
@@ -685,6 +706,7 @@ free_object_addresses
 fseek
 fstat
 ftell
+ftruncate
 function_parse_error_transpose
 fwrite
 gen_random_uuid
@@ -763,16 +785,19 @@ hash_bytes
 hash_bytes_extended
 hash_create
 hash_destroy
+hash_estimate_size
 hash_get_num_entries
 hash_search
 hash_seq_init
 hash_seq_search
+hash_seq_term
 heap_deform_tuple
 heap_fetch
 heap_form_tuple
 heap_freetuple
 heap_getsysattr
 heap_modify_tuple
+heap_modify_tuple_by_cols
 heap_reloptions
 heap_tuple_needs_eventual_freeze
 identify_opfamily_groups
@@ -879,6 +904,7 @@ nanosleep
 network_cmp
 new_object_addresses
 nextafterf
+nextval
 nocache_index_getattr
 nocachegetattr
 nodeToString
@@ -914,6 +940,7 @@ oliphaunt_wasix_set_active
 oliphaunt_wasix_set_force_host_error_recovery
 oliphaunt_wasix_set_protocol_transport
 oliphaunt_wasix_start
+on_shmem_exit
 op_hashjoinable
 op_mergejoinable
 open
@@ -930,6 +957,8 @@ parser_errposition
 per_MultiFuncCall
 performMultipleDeletions
 pfree
+pgBufferUsage
+pgWalUsage
 pg_any_to_server
 pg_ascii_tolower
 pg_bindtextdomain
@@ -1029,6 +1058,7 @@ pull_varattnos
 pull_varnos
 pull_vars_of_level
 pushJsonbValue
+pwrite
 qsort
 qsort_arg
 query_tree_walker_impl
@@ -1166,9 +1196,11 @@ timestamp_cmp
 timestamp_eq
 timestamp_ge
 timestamp_gt
+timestamp_in
 timestamp_le
 timestamp_lt
 timestamp_mi
+timestamptz_in
 timetz_cmp
 tm2timestamp
 to_hex32
@@ -1212,6 +1244,7 @@ type_is_collatable
 type_is_rowtype
 typeidType
 typenameTypeIdAndMod
+unlink
 unpack_sql_state
 untransformRelOptions
 updateClosestMatch

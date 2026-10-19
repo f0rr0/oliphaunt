@@ -25,7 +25,7 @@ export type GeneratedExtensionMetadata = {
   readonly sourceKind: string;
 };
 
-export const GENERATED_EXTENSION_METADATA_SHA256 = "f6982b4f5ace1f2b8478bbb794dece00d6379545e64bf65a28fa28b459210028" as const;
+export const GENERATED_EXTENSION_METADATA_SHA256 = "b9b246ee0a810514f7ef1fc5966ae31d8e857e8fb146b4593baa04c32cf8fcbf" as const;
 
 export const GENERATED_EXTENSION_METADATA = [
   {
@@ -73,6 +73,29 @@ export const GENERATED_EXTENSION_METADATA = [
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
     "sqlName": "auto_explain"
+  },
+  {
+    "artifactProduct": "oliphaunt-extension-contrib-pg18",
+    "cargoPackage": "oliphaunt-extension-contrib-pg18",
+    "createsExtension": true,
+    "dataFiles": [],
+    "dependencies": [],
+    "displayName": "autoinc",
+    "extensionSqlFileNames": [],
+    "extensionSqlFilePrefixes": [],
+    "id": "autoinc",
+    "mavenArtifact": "oliphaunt-extension-contrib-pg18",
+    "mavenGroup": "dev.oliphaunt.extensions",
+    "nativeModuleStem": "autoinc",
+    "npmPackage": "@oliphaunt/extension-contrib-pg18",
+    "postgresMajor": 18,
+    "releaseProduct": "liboliphaunt-native",
+    "runtimeBound": true,
+    "runtimeShareDataFiles": [],
+    "selectedExtensionDependencies": [],
+    "sharedPreloadLibraries": [],
+    "sourceKind": "postgres-contrib",
+    "sqlName": "autoinc"
   },
   {
     "artifactProduct": "oliphaunt-extension-contrib-pg18",
@@ -341,6 +364,29 @@ export const GENERATED_EXTENSION_METADATA = [
     "createsExtension": true,
     "dataFiles": [],
     "dependencies": [],
+    "displayName": "insert_username",
+    "extensionSqlFileNames": [],
+    "extensionSqlFilePrefixes": [],
+    "id": "insert_username",
+    "mavenArtifact": "oliphaunt-extension-contrib-pg18",
+    "mavenGroup": "dev.oliphaunt.extensions",
+    "nativeModuleStem": "insert_username",
+    "npmPackage": "@oliphaunt/extension-contrib-pg18",
+    "postgresMajor": 18,
+    "releaseProduct": "liboliphaunt-native",
+    "runtimeBound": true,
+    "runtimeShareDataFiles": [],
+    "selectedExtensionDependencies": [],
+    "sharedPreloadLibraries": [],
+    "sourceKind": "postgres-contrib",
+    "sqlName": "insert_username"
+  },
+  {
+    "artifactProduct": "oliphaunt-extension-contrib-pg18",
+    "cargoPackage": "oliphaunt-extension-contrib-pg18",
+    "createsExtension": true,
+    "dataFiles": [],
+    "dependencies": [],
     "displayName": "intarray",
     "extensionSqlFileNames": [],
     "extensionSqlFilePrefixes": [],
@@ -426,6 +472,29 @@ export const GENERATED_EXTENSION_METADATA = [
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
     "sqlName": "ltree"
+  },
+  {
+    "artifactProduct": "oliphaunt-extension-contrib-pg18",
+    "cargoPackage": "oliphaunt-extension-contrib-pg18",
+    "createsExtension": true,
+    "dataFiles": [],
+    "dependencies": [],
+    "displayName": "moddatetime",
+    "extensionSqlFileNames": [],
+    "extensionSqlFilePrefixes": [],
+    "id": "moddatetime",
+    "mavenArtifact": "oliphaunt-extension-contrib-pg18",
+    "mavenGroup": "dev.oliphaunt.extensions",
+    "nativeModuleStem": "moddatetime",
+    "npmPackage": "@oliphaunt/extension-contrib-pg18",
+    "postgresMajor": 18,
+    "releaseProduct": "liboliphaunt-native",
+    "runtimeBound": true,
+    "runtimeShareDataFiles": [],
+    "selectedExtensionDependencies": [],
+    "sharedPreloadLibraries": [],
+    "sourceKind": "postgres-contrib",
+    "sqlName": "moddatetime"
   },
   {
     "artifactProduct": "oliphaunt-extension-contrib-pg18",
@@ -541,6 +610,54 @@ export const GENERATED_EXTENSION_METADATA = [
     "sharedPreloadLibraries": [],
     "sourceKind": "oliphaunt-other-extension",
     "sqlName": "pg_ivm"
+  },
+  {
+    "artifactProduct": "oliphaunt-extension-contrib-pg18",
+    "cargoPackage": "oliphaunt-extension-contrib-pg18",
+    "createsExtension": true,
+    "dataFiles": [],
+    "dependencies": [],
+    "displayName": "pg_logicalinspect",
+    "extensionSqlFileNames": [],
+    "extensionSqlFilePrefixes": [],
+    "id": "pg_logicalinspect",
+    "mavenArtifact": "oliphaunt-extension-contrib-pg18",
+    "mavenGroup": "dev.oliphaunt.extensions",
+    "nativeModuleStem": "pg_logicalinspect",
+    "npmPackage": "@oliphaunt/extension-contrib-pg18",
+    "postgresMajor": 18,
+    "releaseProduct": "liboliphaunt-native",
+    "runtimeBound": true,
+    "runtimeShareDataFiles": [],
+    "selectedExtensionDependencies": [],
+    "sharedPreloadLibraries": [],
+    "sourceKind": "postgres-contrib",
+    "sqlName": "pg_logicalinspect"
+  },
+  {
+    "artifactProduct": "oliphaunt-extension-contrib-pg18",
+    "cargoPackage": "oliphaunt-extension-contrib-pg18",
+    "createsExtension": true,
+    "dataFiles": [],
+    "dependencies": [],
+    "displayName": "pg_stat_statements",
+    "extensionSqlFileNames": [],
+    "extensionSqlFilePrefixes": [],
+    "id": "pg_stat_statements",
+    "mavenArtifact": "oliphaunt-extension-contrib-pg18",
+    "mavenGroup": "dev.oliphaunt.extensions",
+    "nativeModuleStem": "pg_stat_statements",
+    "npmPackage": "@oliphaunt/extension-contrib-pg18",
+    "postgresMajor": 18,
+    "releaseProduct": "liboliphaunt-native",
+    "runtimeBound": true,
+    "runtimeShareDataFiles": [],
+    "selectedExtensionDependencies": [],
+    "sharedPreloadLibraries": [
+      "pg_stat_statements"
+    ],
+    "sourceKind": "postgres-contrib",
+    "sqlName": "pg_stat_statements"
   },
   {
     "artifactProduct": "oliphaunt-extension-contrib-pg18",
@@ -808,6 +925,29 @@ export const GENERATED_EXTENSION_METADATA = [
     "sharedPreloadLibraries": [],
     "sourceKind": "postgis",
     "sqlName": "postgis"
+  },
+  {
+    "artifactProduct": "oliphaunt-extension-contrib-pg18",
+    "cargoPackage": "oliphaunt-extension-contrib-pg18",
+    "createsExtension": true,
+    "dataFiles": [],
+    "dependencies": [],
+    "displayName": "refint",
+    "extensionSqlFileNames": [],
+    "extensionSqlFilePrefixes": [],
+    "id": "refint",
+    "mavenArtifact": "oliphaunt-extension-contrib-pg18",
+    "mavenGroup": "dev.oliphaunt.extensions",
+    "nativeModuleStem": "refint",
+    "npmPackage": "@oliphaunt/extension-contrib-pg18",
+    "postgresMajor": 18,
+    "releaseProduct": "liboliphaunt-native",
+    "runtimeBound": true,
+    "runtimeShareDataFiles": [],
+    "selectedExtensionDependencies": [],
+    "sharedPreloadLibraries": [],
+    "sourceKind": "postgres-contrib",
+    "sqlName": "refint"
   },
   {
     "artifactProduct": "oliphaunt-extension-contrib-pg18",

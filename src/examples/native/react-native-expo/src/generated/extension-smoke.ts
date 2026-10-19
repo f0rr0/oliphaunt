@@ -7,7 +7,7 @@ export type GeneratedMobileExtensionProof = {
   readonly selectedExtensionDependencies: readonly string[];
 };
 
-export const GENERATED_MOBILE_EXTENSION_METADATA_SHA256 = "f6982b4f5ace1f2b8478bbb794dece00d6379545e64bf65a28fa28b459210028" as const;
+export const GENERATED_MOBILE_EXTENSION_METADATA_SHA256 = "b9b246ee0a810514f7ef1fc5966ae31d8e857e8fb146b4593baa04c32cf8fcbf" as const;
 
 export const GENERATED_MOBILE_EXTENSION_PLAN = [
   {
@@ -18,6 +18,11 @@ export const GENERATED_MOBILE_EXTENSION_PLAN = [
   {
     "sqlName": "auto_explain",
     "createsExtension": false,
+    "selectedExtensionDependencies": []
+  },
+  {
+    "sqlName": "autoinc",
+    "createsExtension": true,
     "selectedExtensionDependencies": []
   },
   {
@@ -78,6 +83,11 @@ export const GENERATED_MOBILE_EXTENSION_PLAN = [
     "selectedExtensionDependencies": []
   },
   {
+    "sqlName": "insert_username",
+    "createsExtension": true,
+    "selectedExtensionDependencies": []
+  },
+  {
     "sqlName": "intarray",
     "createsExtension": true,
     "selectedExtensionDependencies": []
@@ -94,6 +104,11 @@ export const GENERATED_MOBILE_EXTENSION_PLAN = [
   },
   {
     "sqlName": "ltree",
+    "createsExtension": true,
+    "selectedExtensionDependencies": []
+  },
+  {
+    "sqlName": "moddatetime",
     "createsExtension": true,
     "selectedExtensionDependencies": []
   },
@@ -119,6 +134,16 @@ export const GENERATED_MOBILE_EXTENSION_PLAN = [
   },
   {
     "sqlName": "pg_ivm",
+    "createsExtension": true,
+    "selectedExtensionDependencies": []
+  },
+  {
+    "sqlName": "pg_logicalinspect",
+    "createsExtension": true,
+    "selectedExtensionDependencies": []
+  },
+  {
+    "sqlName": "pg_stat_statements",
     "createsExtension": true,
     "selectedExtensionDependencies": []
   },
@@ -173,6 +198,11 @@ export const GENERATED_MOBILE_EXTENSION_PLAN = [
     "selectedExtensionDependencies": []
   },
   {
+    "sqlName": "refint",
+    "createsExtension": true,
+    "selectedExtensionDependencies": []
+  },
+  {
     "sqlName": "seg",
     "createsExtension": true,
     "selectedExtensionDependencies": []
@@ -223,6 +253,15 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
   "auto_explain": [
     "EXPLAIN SELECT count(*) FROM pg_class;"
   ],
+  "autoinc": [
+    "DROP TABLE IF EXISTS oliphaunt_autoinc;",
+    "DROP SEQUENCE IF EXISTS oliphaunt_autoinc_sequence;",
+    "CREATE SEQUENCE oliphaunt_autoinc_sequence START 11;",
+    "CREATE TABLE oliphaunt_autoinc (id integer, value text);",
+    "CREATE TRIGGER oliphaunt_autoinc_trigger BEFORE INSERT ON oliphaunt_autoinc\nFOR EACH ROW EXECUTE FUNCTION autoinc('id', 'oliphaunt_autoinc_sequence');",
+    "INSERT INTO oliphaunt_autoinc VALUES (NULL, 'generated'), (50, 'preserved');",
+    "-- oliphaunt-verify\nDO $oliphaunt$\nBEGIN\n  IF (SELECT array_agg(id ORDER BY id) FROM oliphaunt_autoinc) IS DISTINCT FROM ARRAY[11, 50] THEN\n    RAISE EXCEPTION 'autoinc did not generate a missing id and preserve an explicit id';\n  END IF;\nEND\n$oliphaunt$;"
+  ],
   "bloom": [
     "CREATE TEMP TABLE oliphaunt_bloom (id int, value int);",
     "CREATE INDEX oliphaunt_bloom_idx ON oliphaunt_bloom USING bloom (id, value);",
@@ -272,6 +311,14 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "INSERT INTO oliphaunt_hstore VALUES ('a=>1,b=>2'::hstore);",
     "DO $$ DECLARE v text; BEGIN SELECT attrs -> 'b' INTO v FROM oliphaunt_hstore; IF v <> '2' THEN RAISE EXCEPTION 'hstore lookup failed: %', v; END IF; END $$;"
   ],
+  "insert_username": [
+    "DROP TABLE IF EXISTS oliphaunt_insert_username;",
+    "CREATE TABLE oliphaunt_insert_username (id integer, username text, expected_username text);",
+    "CREATE TRIGGER oliphaunt_insert_username_trigger BEFORE INSERT OR UPDATE ON oliphaunt_insert_username\nFOR EACH ROW EXECUTE FUNCTION insert_username('username');",
+    "INSERT INTO oliphaunt_insert_username VALUES (1, 'untrusted', current_user);",
+    "UPDATE oliphaunt_insert_username SET username = 'still untrusted';",
+    "-- oliphaunt-verify\nDO $oliphaunt$\nBEGIN\n  IF NOT EXISTS (SELECT FROM oliphaunt_insert_username WHERE username = expected_username) THEN\n    RAISE EXCEPTION 'insert_username did not replace the caller-supplied username';\n  END IF;\nEND\n$oliphaunt$;"
+  ],
   "intarray": [
     "CREATE TEMP TABLE oliphaunt_intarray (tags int[]);",
     "INSERT INTO oliphaunt_intarray VALUES (ARRAY[1, 2, 5]), (ARRAY[3, 4]);",
@@ -289,6 +336,14 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "CREATE TEMP TABLE oliphaunt_ltree (path ltree);",
     "INSERT INTO oliphaunt_ltree VALUES ('Top.Science.Astronomy'), ('Top.Collections.Pictures');",
     "DO $$ DECLARE n int; BEGIN SELECT count(*) INTO n FROM oliphaunt_ltree WHERE path <@ 'Top.Science'; IF n <> 1 THEN RAISE EXCEPTION 'ltree ancestor query failed: %', n; END IF; END $$;"
+  ],
+  "moddatetime": [
+    "DROP TABLE IF EXISTS oliphaunt_moddatetime;",
+    "CREATE TABLE oliphaunt_moddatetime (id integer, modified_at timestamptz);",
+    "CREATE TRIGGER oliphaunt_moddatetime_trigger BEFORE UPDATE ON oliphaunt_moddatetime\nFOR EACH ROW EXECUTE FUNCTION moddatetime('modified_at');",
+    "INSERT INTO oliphaunt_moddatetime VALUES (1, '2000-01-01 00:00:00+00');",
+    "UPDATE oliphaunt_moddatetime SET id = 2;",
+    "-- oliphaunt-verify\nDO $oliphaunt$\nBEGIN\n  IF NOT EXISTS (SELECT FROM oliphaunt_moddatetime WHERE id = 2 AND modified_at > '2000-01-01 00:00:00+00') THEN\n    RAISE EXCEPTION 'moddatetime did not update the modification timestamp';\n  END IF;\nEND\n$oliphaunt$;"
   ],
   "pageinspect": [
     "CREATE TEMP TABLE oliphaunt_pageinspect (id int);",
@@ -318,6 +373,14 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "-- Recreate metadata for an existing populated relation, as after pg_dump.\nCREATE TABLE oliphaunt_ivm_restored AS SELECT id, amount FROM oliphaunt_ivm_orders;",
     "SELECT pgivm.restore_immv('oliphaunt_ivm_restored', $$ SELECT id, amount FROM oliphaunt_ivm_orders $$);",
     "-- oliphaunt-verify\nDO $$\nDECLARE n int; populated boolean;\nBEGIN\n  SELECT count(*) INTO n FROM oliphaunt_ivm_summary;\n  IF n <> 2 THEN RAISE EXCEPTION 'pg_ivm count failed: %', n; END IF;\n  UPDATE oliphaunt_ivm_orders SET amount = 11 WHERE id = 1;\n  SELECT amount INTO n FROM oliphaunt_ivm_summary WHERE id = 1;\n  IF n IS DISTINCT FROM 11 THEN RAISE EXCEPTION 'pg_ivm maintenance failed: %', n; END IF;\n  UPDATE oliphaunt_ivm_orders SET amount = 10 WHERE id = 1;\n  SELECT ispopulated INTO populated FROM pgivm.pg_ivm_immv\n    WHERE immvrelid = 'oliphaunt_ivm_restored'::regclass;\n  IF populated IS DISTINCT FROM true THEN\n    RAISE EXCEPTION 'pg_ivm restored relation lost populated state';\n  END IF;\n  -- Before 1.17 this refresh added duplicate maintenance triggers after restore.\n  PERFORM pgivm.refresh_immv('oliphaunt_ivm_restored');\n  INSERT INTO oliphaunt_ivm_orders VALUES (99, 30);\n  SELECT count(*) INTO n FROM oliphaunt_ivm_restored WHERE id = 99;\n  IF n <> 1 THEN RAISE EXCEPTION 'pg_ivm restored maintenance duplicated rows: %', n; END IF;\n  DELETE FROM oliphaunt_ivm_orders WHERE id = 99;\nEND $$;"
+  ],
+  "pg_logicalinspect": [
+    "-- Exercise both entry points without requiring a logical replication slot.\n-- Invalid snapshot names must be rejected before any filesystem access.\n-- oliphaunt-verify\nDO $oliphaunt$\nBEGIN\n  BEGIN\n    PERFORM pg_get_logical_snapshot_meta('../invalid');\n    RAISE EXCEPTION 'pg_logicalinspect accepted an invalid snapshot name';\n  EXCEPTION WHEN internal_error THEN\n    IF SQLERRM <> 'invalid snapshot file name \"../invalid\"' THEN\n      RAISE;\n    END IF;\n  END;\n  BEGIN\n    PERFORM pg_get_logical_snapshot_info('../invalid');\n    RAISE EXCEPTION 'pg_logicalinspect accepted an invalid snapshot name';\n  EXCEPTION WHEN internal_error THEN\n    IF SQLERRM <> 'invalid snapshot file name \"../invalid\"' THEN\n      RAISE;\n    END IF;\n  END;\nEND\n$oliphaunt$;"
+  ],
+  "pg_stat_statements": [
+    "-- Reset and collect fresh counters on creation, restart, and backup restore.\n-- This fails if the library was loaded after shared-memory startup.\n-- oliphaunt-verify\nSELECT pg_stat_statements_reset();",
+    "-- oliphaunt-verify\nSELECT sum(value) FROM generate_series(1, 3) AS oliphaunt_pgss_probe(value);",
+    "-- oliphaunt-verify\nDO $oliphaunt$\nBEGIN\n  IF NOT EXISTS (\n    SELECT FROM pg_stat_statements\n    WHERE query LIKE 'SELECT sum(value) FROM generate_series%oliphaunt_pgss_probe%'\n      AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database())\n      AND queryid <> 0 AND calls >= 1 AND rows = calls\n  ) THEN\n    RAISE EXCEPTION 'pg_stat_statements did not record a completed query';\n  END IF;\nEND\n$oliphaunt$;"
   ],
   "pg_surgery": [
     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'heap_force_kill') THEN RAISE EXCEPTION 'pg_surgery function missing'; END IF; END $$;"
@@ -377,6 +440,19 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "INSERT INTO oliphaunt_postgis_points VALUES\n  (1, ST_SetSRID(ST_MakePoint(-71.060316, 48.432044), 4326)),\n  (2, ST_SetSRID(ST_MakePoint(-71.061, 48.433), 4326));",
     "CREATE INDEX oliphaunt_postgis_points_gix ON oliphaunt_postgis_points USING GIST (geom);",
     "-- oliphaunt-verify\nDO $$\nDECLARE\n  distance float8;\n  srid int;\n  area float8;\n  polygons int;\n  nearby int;\nBEGIN\n  SELECT ST_Distance(ST_GeomFromText('POINT(0 0)'), ST_GeomFromText('POINT(3 4)')) INTO distance;\n  IF distance <> 5 THEN\n    RAISE EXCEPTION 'postgis geometry distance failed: %', distance;\n  END IF;\n  IF ST_AsText(ST_Buffer(ST_GeomFromText('POINT(0 0)'), 1, 'quad_segs=1')) IS NULL THEN\n    RAISE EXCEPTION 'postgis buffer failed';\n  END IF;\n  IF NOT ST_Within(\n    ST_GeomFromText('POINT(0.5 0.5)'),\n    ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))')\n  ) THEN\n    RAISE EXCEPTION 'postgis within failed';\n  END IF;\n  SELECT ST_SRID(ST_Transform(ST_SetSRID(ST_MakePoint(-71.060316, 48.432044), 4326), 3857)) INTO srid;\n  IF srid <> 3857 THEN\n    RAISE EXCEPTION 'postgis transform failed: %', srid;\n  END IF;\n  SELECT ST_Area(ST_Transform(ST_SetSRID(ST_MakePolygon(ST_GeomFromText('LINESTRING(-71.1776848522251 42.3902896512902,-71.1776843766797 42.3903701743239,-71.1775844305465 42.3903829478009,-71.1775825927231 42.3902893647987,-71.1776848522251 42.3902896512902)')), 4326), 26986)) INTO area;\n  IF area <= 0 THEN\n    RAISE EXCEPTION 'postgis projected area failed: %', area;\n  END IF;\n  SELECT ST_NumGeometries(ST_Polygonize(ARRAY[\n    ST_GeomFromText('LINESTRING(0 0, 1 0)'),\n    ST_GeomFromText('LINESTRING(1 0, 1 1)'),\n    ST_GeomFromText('LINESTRING(1 1, 0 1)'),\n    ST_GeomFromText('LINESTRING(0 1, 0 0)')\n  ])) INTO polygons;\n  IF polygons <> 1 THEN\n    RAISE EXCEPTION 'postgis polygonize failed: %', polygons;\n  END IF;\n  SELECT count(*) INTO nearby\n  FROM oliphaunt_postgis_points\n  WHERE ST_DWithin(\n    geom::geography,\n    ST_SetSRID(ST_MakePoint(-71.060316, 48.432044), 4326)::geography,\n    200\n  );\n  IF nearby <> 2 THEN\n    RAISE EXCEPTION 'postgis dwithin failed: %', nearby;\n  END IF;\nEND $$;"
+  ],
+  "refint": [
+    "DROP TABLE IF EXISTS oliphaunt_refint_child;",
+    "DROP TABLE IF EXISTS oliphaunt_refint_parent;",
+    "CREATE TABLE oliphaunt_refint_parent (id integer PRIMARY KEY);",
+    "CREATE TABLE oliphaunt_refint_child (parent_id integer);",
+    "CREATE TRIGGER oliphaunt_refint_parent_trigger AFTER DELETE OR UPDATE ON oliphaunt_refint_parent\nFOR EACH ROW EXECUTE FUNCTION check_foreign_key(1, 'cascade', 'id', 'oliphaunt_refint_child', 'parent_id');",
+    "CREATE TRIGGER oliphaunt_refint_child_trigger AFTER INSERT OR UPDATE ON oliphaunt_refint_child\nFOR EACH ROW EXECUTE FUNCTION check_primary_key('parent_id', 'oliphaunt_refint_parent', 'id');",
+    "INSERT INTO oliphaunt_refint_parent VALUES (1), (2);",
+    "INSERT INTO oliphaunt_refint_child VALUES (1), (2);",
+    "DO $oliphaunt$\nBEGIN\n  BEGIN\n    INSERT INTO oliphaunt_refint_child VALUES (3);\n    RAISE EXCEPTION 'refint accepted a missing parent';\n  EXCEPTION WHEN triggered_action_exception THEN\n    NULL;\n  END;\nEND\n$oliphaunt$;",
+    "DELETE FROM oliphaunt_refint_parent WHERE id = 1;",
+    "-- oliphaunt-verify\nDO $oliphaunt$\nBEGIN\n  IF (SELECT array_agg(parent_id) FROM oliphaunt_refint_child) IS DISTINCT FROM ARRAY[2] THEN\n    RAISE EXCEPTION 'refint did not cascade deletion to the referencing row';\n  END IF;\nEND\n$oliphaunt$;"
   ],
   "seg": [
     "DO $$ BEGIN IF '7(+-)1'::seg::text <> '6 .. 8' THEN RAISE EXCEPTION 'seg cast failed'; END IF; END $$;"

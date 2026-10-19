@@ -27,6 +27,13 @@
     },
     {
       "data-files": [],
+      "id": "autoinc",
+      "native-module-stem": "autoinc",
+      "sql-name": "autoinc",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
       "id": "bloom",
       "native-module-stem": "bloom",
       "sql-name": "bloom",
@@ -106,6 +113,13 @@
     },
     {
       "data-files": [],
+      "id": "insert_username",
+      "native-module-stem": "insert_username",
+      "sql-name": "insert_username",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
       "id": "intarray",
       "native-module-stem": "_int",
       "sql-name": "intarray",
@@ -130,6 +144,13 @@
       "id": "ltree",
       "native-module-stem": "ltree",
       "sql-name": "ltree",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "moddatetime",
+      "native-module-stem": "moddatetime",
+      "sql-name": "moddatetime",
       "static-registry-required": true
     },
     {
@@ -165,6 +186,20 @@
       "id": "pg_ivm",
       "native-module-stem": "pg_ivm",
       "sql-name": "pg_ivm",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_logicalinspect",
+      "native-module-stem": "pg_logicalinspect",
+      "sql-name": "pg_logicalinspect",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_stat_statements",
+      "native-module-stem": "pg_stat_statements",
+      "sql-name": "pg_stat_statements",
       "static-registry-required": true
     },
     {
@@ -231,6 +266,13 @@
       "id": "postgis",
       "native-module-stem": "postgis-3",
       "sql-name": "postgis",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "refint",
+      "native-module-stem": "refint",
+      "sql-name": "refint",
       "static-registry-required": true
     },
     {

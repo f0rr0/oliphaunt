@@ -260,6 +260,7 @@ fn extension_source_dir_for(id: &str, source_kind: &str) -> String {
 fn extension_contrib_dir_name(id: &str) -> String {
     match id {
         "uuid_ossp" => "uuid-ossp".to_owned(),
+        "autoinc" | "insert_username" | "moddatetime" | "refint" => "spi".to_owned(),
         other => other.to_owned(),
     }
 }
@@ -415,5 +416,34 @@ mod tests {
             pgmq.source_dir,
             "target/oliphaunt-sources/checkouts/pgmq/pgmq-extension"
         );
+    }
+
+    #[test]
+    fn contrib_build_paths_match_the_shared_postgres_inventory() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../..");
+        let catalog: ExtensionCatalog =
+            serde_json::from_str(&fs::read_to_string(root.join(CATALOG_PATH)).unwrap()).unwrap();
+        let inventory: toml::Value = toml::from_str(
+            &fs::read_to_string(root.join("src/extensions/contrib/postgres18.toml")).unwrap(),
+        )
+        .unwrap();
+        for spec in build_specs_at(&catalog, &root).unwrap() {
+            let Some(directory) = spec.contrib_dir else {
+                continue;
+            };
+            let recipe = inventory["extensions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|recipe| recipe["id"].as_str() == Some(spec.id.as_str()))
+                .unwrap();
+            assert_eq!(Some(directory.as_str()), recipe["contrib-dir"].as_str());
+            assert_eq!(
+                spec.source_dir,
+                format!("{POSTGRES_CONTRIB}/{directory}"),
+                "{} must stage its own SQL files from the canonical contrib directory",
+                spec.id
+            );
+        }
     }
 }
