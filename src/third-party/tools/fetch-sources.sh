@@ -86,6 +86,8 @@ fetch_source() (
     source_git 60 "$checkout_root" init --quiet --template= "$candidate"
     source_git 60 "$candidate" config --local core.autocrlf false
     source_git 60 "$candidate" config --local core.eol lf
+    # GDAL includes paths beyond Win32 MAX_PATH; retain support after promotion.
+    source_git 60 "$candidate" config --local core.longpaths true
     source_git 60 "$candidate" remote add origin "$url"
     local transports=("$url") attempt transport success=false
     if [[ -n "$mirror" ]]; then transports+=("$mirror"); fi
