@@ -304,12 +304,15 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "DO $$ BEGIN IF id_encode(1001) <> 'jNl' THEN RAISE EXCEPTION 'pg_hashids encode failed'; END IF; IF id_decode_once('jNl') <> 1001 THEN RAISE EXCEPTION 'pg_hashids decode failed'; END IF; END $$;"
   ],
   "pg_ivm": [
+    "DROP TABLE IF EXISTS oliphaunt_ivm_restored;",
     "DROP TABLE IF EXISTS oliphaunt_ivm_summary;",
     "DROP TABLE IF EXISTS oliphaunt_ivm_orders;",
     "CREATE TABLE oliphaunt_ivm_orders (id int, amount int);",
     "INSERT INTO oliphaunt_ivm_orders VALUES (1, 10), (2, 20);",
     "SELECT pgivm.create_immv('oliphaunt_ivm_summary', $$ SELECT id, amount FROM oliphaunt_ivm_orders $$);",
-    "-- oliphaunt-verify\nDO $$\nDECLARE n int;\nBEGIN\n  SELECT count(*) INTO n FROM oliphaunt_ivm_summary;\n  IF n <> 2 THEN RAISE EXCEPTION 'pg_ivm count failed: %', n; END IF;\n  UPDATE oliphaunt_ivm_orders SET amount = 11 WHERE id = 1;\n  SELECT amount INTO n FROM oliphaunt_ivm_summary WHERE id = 1;\n  IF n IS DISTINCT FROM 11 THEN RAISE EXCEPTION 'pg_ivm maintenance failed: %', n; END IF;\n  UPDATE oliphaunt_ivm_orders SET amount = 10 WHERE id = 1;\nEND $$;"
+    "-- Recreate metadata for an existing populated relation, as after pg_dump.\nCREATE TABLE oliphaunt_ivm_restored AS SELECT id, amount FROM oliphaunt_ivm_orders;",
+    "SELECT pgivm.restore_immv('oliphaunt_ivm_restored', $$ SELECT id, amount FROM oliphaunt_ivm_orders $$);",
+    "-- oliphaunt-verify\nDO $$\nDECLARE n int; populated boolean;\nBEGIN\n  SELECT count(*) INTO n FROM oliphaunt_ivm_summary;\n  IF n <> 2 THEN RAISE EXCEPTION 'pg_ivm count failed: %', n; END IF;\n  UPDATE oliphaunt_ivm_orders SET amount = 11 WHERE id = 1;\n  SELECT amount INTO n FROM oliphaunt_ivm_summary WHERE id = 1;\n  IF n IS DISTINCT FROM 11 THEN RAISE EXCEPTION 'pg_ivm maintenance failed: %', n; END IF;\n  UPDATE oliphaunt_ivm_orders SET amount = 10 WHERE id = 1;\n  SELECT ispopulated INTO populated FROM pgivm.pg_ivm_immv\n    WHERE immvrelid = 'oliphaunt_ivm_restored'::regclass;\n  IF populated IS DISTINCT FROM true THEN\n    RAISE EXCEPTION 'pg_ivm restored relation lost populated state';\n  END IF;\n  -- Before 1.17 this refresh added duplicate maintenance triggers after restore.\n  PERFORM pgivm.refresh_immv('oliphaunt_ivm_restored');\n  INSERT INTO oliphaunt_ivm_orders VALUES (99, 30);\n  SELECT count(*) INTO n FROM oliphaunt_ivm_restored WHERE id = 99;\n  IF n <> 1 THEN RAISE EXCEPTION 'pg_ivm restored maintenance duplicated rows: %', n; END IF;\n  DELETE FROM oliphaunt_ivm_orders WHERE id = 99;\nEND $$;"
   ],
   "pg_surgery": [
     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'heap_force_kill') THEN RAISE EXCEPTION 'pg_surgery function missing'; END IF; END $$;"
@@ -390,6 +393,14 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "DROP TABLE IF EXISTS oliphaunt_vector;",
     "CREATE TABLE oliphaunt_vector (id int PRIMARY KEY, embedding vector(3));",
     "INSERT INTO oliphaunt_vector VALUES (1, '[1,2,3]');",
-    "-- oliphaunt-verify\nDO $$ DECLARE d float8; BEGIN SELECT embedding <-> '[1,2,4]'::vector INTO d FROM oliphaunt_vector WHERE id = 1; IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'vector distance failed: %', d; END IF; END $$;"
+    "DROP TABLE IF EXISTS oliphaunt_vector_indexed;",
+    "CREATE TABLE oliphaunt_vector_indexed (id int PRIMARY KEY, embedding vector(3));",
+    "INSERT INTO oliphaunt_vector_indexed SELECT i, ARRAY[i, i, i]::vector FROM generate_series(1, 64) i;",
+    "CREATE INDEX ON oliphaunt_vector_indexed USING hnsw (embedding vector_l2_ops);",
+    "DELETE FROM oliphaunt_vector_indexed WHERE id = 32;",
+    "VACUUM oliphaunt_vector_indexed;",
+    "INSERT INTO oliphaunt_vector_indexed VALUES (32, '[32,32,32]');",
+    "-- oliphaunt-verify\nDO $$ DECLARE d float8; BEGIN SELECT embedding <-> '[1,2,4]'::vector INTO d FROM oliphaunt_vector WHERE id = 1; IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'vector distance failed: %', d; END IF; END $$;",
+    "DO $$\nDECLARE nearest int;\nBEGIN\n  PERFORM set_config('enable_seqscan', 'off', true);\n  SELECT id INTO nearest FROM oliphaunt_vector_indexed ORDER BY embedding <-> '[32,32,32]'::vector LIMIT 1;\n  IF nearest IS DISTINCT FROM 32 THEN\n    RAISE EXCEPTION 'vector HNSW search after vacuum/insert failed: %', nearest;\n  END IF;\nEND $$;"
   ]
 } as const satisfies Readonly<Record<string, readonly string[]>>;

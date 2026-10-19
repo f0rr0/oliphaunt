@@ -831,7 +831,7 @@
       "bundle-size": 24865,
       "control-file": "target/oliphaunt-sources/checkouts/pg_ivm/pg_ivm.control",
       "control": {
-        "default-version": "1.13",
+        "default-version": "1.17",
         "module-pathname": "$libdir/pg_ivm",
         "requires": [],
         "relocatable": "false",
@@ -1476,7 +1476,7 @@
       "bundle-size": 43953,
       "control-file": "target/oliphaunt-sources/checkouts/pgvector/vector.control",
       "control": {
-        "default-version": "0.8.2",
+        "default-version": "0.8.7",
         "module-pathname": "$libdir/vector",
         "requires": [],
         "relocatable": "true"

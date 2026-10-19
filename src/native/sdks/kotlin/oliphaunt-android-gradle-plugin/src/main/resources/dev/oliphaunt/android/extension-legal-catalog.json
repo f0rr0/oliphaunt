@@ -155,7 +155,7 @@
         {
           "path": "share/licenses/pg_ivm/LICENSE",
           "bytes": 1015,
-          "sha256": "22e995337ca75d05f5057e741e063acb802ff10cb8a13dc822bae749d9df59f4",
+          "sha256": "f395253af7c50689bdfcd7df4ea247dc2fc39fa0627100699f006639df406d2b",
           "mode": "0644"
         }
       ]
@@ -185,7 +185,7 @@
         {
           "path": "share/licenses/pg_ivm/LICENSE",
           "bytes": 1015,
-          "sha256": "22e995337ca75d05f5057e741e063acb802ff10cb8a13dc822bae749d9df59f4",
+          "sha256": "f395253af7c50689bdfcd7df4ea247dc2fc39fa0627100699f006639df406d2b",
           "mode": "0644"
         }
       ]
@@ -1919,7 +1919,7 @@
         {
           "path": "files/share/licenses/pg_ivm/LICENSE",
           "bytes": 1015,
-          "sha256": "22e995337ca75d05f5057e741e063acb802ff10cb8a13dc822bae749d9df59f4",
+          "sha256": "f395253af7c50689bdfcd7df4ea247dc2fc39fa0627100699f006639df406d2b",
           "mode": "0644"
         }
       ]
@@ -1949,7 +1949,7 @@
         {
           "path": "files/share/licenses/pg_ivm/LICENSE",
           "bytes": 1015,
-          "sha256": "22e995337ca75d05f5057e741e063acb802ff10cb8a13dc822bae749d9df59f4",
+          "sha256": "f395253af7c50689bdfcd7df4ea247dc2fc39fa0627100699f006639df406d2b",
           "mode": "0644"
         }
       ]

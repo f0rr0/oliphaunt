@@ -7,7 +7,7 @@
       "kind": "git",
       "url": "https://github.com/pgvector/pgvector.git",
       "branch": "master",
-      "commit": "d238409becebb8172fe696ffa776badfad4b631c"
+      "commit": "f37c13f68b57d2c3472b2214fbcff699d6d34876"
     }
   ],
   "extension": {
@@ -19,7 +19,7 @@
         "destination": "share/licenses/vector/LICENSE",
         "role": "license",
         "spdx": "PostgreSQL",
-        "license_url": "https://github.com/pgvector/pgvector/blob/d238409becebb8172fe696ffa776badfad4b631c/LICENSE",
+        "license_url": "https://github.com/pgvector/pgvector/blob/f37c13f68b57d2c3472b2214fbcff699d6d34876/LICENSE",
         "sha256": "6bba9ebeb73e27477463b05e5ef1bf303bccbddb3db9bbc95905d351604d6a87"
       }
     ]
