@@ -1833,6 +1833,7 @@ case "$script_mode" in
       (cd "$build_dir" && backend_objects_ready && plpgsql_objects_ready && jit_objects_ready) &&
       [ -f "$stamp" ] &&
       [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
+      build_native_extension_artifacts
       echo "$lib_out"
       exit 0
     fi
@@ -1861,6 +1862,7 @@ case "$script_mode" in
     if artifact_ready &&
       (cd "$build_dir" && backend_objects_ready && plpgsql_objects_ready && jit_objects_ready) &&
       runtime_installed &&
+      { [ "${OLIPHAUNT_BUILD_EXTENSIONS:-0}" = "0" ] || native_extension_artifacts_current; } &&
       [ -f "$stamp" ] &&
       [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
       echo "Linux $target_id liboliphaunt shared library is current"
