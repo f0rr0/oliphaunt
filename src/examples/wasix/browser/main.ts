@@ -179,6 +179,10 @@ async function expectLargePostgisWorkerModule(): Promise<string> {
   const database = await WorkerOliphaunt.open({ seed: standardSeed, extensions: [postgis] });
   try {
     await database.execute('CREATE EXTENSION postgis');
+    const { default: fixture } = await import('../../../test-fixtures/extensions/postgis.sql?raw');
+    for (const statement of fixture.split('-- oliphaunt-statement')) {
+      await database.execute(statement);
+    }
     const version = await readPostgisVersion(database);
     await database.queryRaw('CREATE TEMP TABLE postgis_nested_error_catch(value integer)');
     await database.queryRaw(
