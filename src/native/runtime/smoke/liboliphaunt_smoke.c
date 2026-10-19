@@ -1290,7 +1290,7 @@ static int exec_incremental_input(OliphauntHandle *db) {
 static int feed_stream_when_available(
     OliphauntHandle *db, uint64_t token, const uint8_t *data, size_t len) {
     struct timespec deadline;
-    clock_gettime(CLOCK_REALTIME, &deadline);
+    if (timespec_get(&deadline, TIME_UTC) != TIME_UTC) return 1;
     deadline.tv_sec += 5;
     OliphauntErrorCapture error;
     for (;;) {
@@ -1484,7 +1484,10 @@ static void *feed_finite_exchange(void *context) {
     }
     if (probe->end_after_ready) {
         struct timespec deadline;
-        clock_gettime(CLOCK_REALTIME, &deadline);
+        if (timespec_get(&deadline, TIME_UTC) != TIME_UTC) {
+            probe->producer_failed = 1;
+            return NULL;
+        }
         deadline.tv_sec += 5;
         pthread_mutex_lock(&probe->mutex);
         while (!probe->saw_ready && !probe->operation_returned) {
