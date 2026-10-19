@@ -341,11 +341,17 @@ async function developmentDescriptor(packageName: string): Promise<Record<string
       ),
     },
   };
+  const runtimeSupport = new Set(
+    requireArray(manifest['runtime-support'], 'runtime support').map(
+      (entry) => requireRecord(entry, 'runtime support entry').name,
+    ),
+  );
   const carriers: unknown[] = [];
   for (const dependency of requireArray(metadata.dependencies, 'extension dependencies')) {
     if (typeof dependency !== 'string') {
       throw new Error('extension dependency must be a SQL name');
     }
+    if (runtimeSupport.has(dependency)) continue;
     const descriptor = await developmentDescriptor(dependency);
     carriers.push(...requireArray(descriptor.carriers, 'dependency carriers'));
   }
