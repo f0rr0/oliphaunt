@@ -1799,7 +1799,7 @@ case "\$pkg" in
   json-c)
     case " \$* " in
       *" --exists "*) exit 0 ;;
-      *" --modversion "*) echo "0.18"; exit 0 ;;
+      *" --modversion "*) echo "0.19"; exit 0 ;;
       *" --cflags "*) echo "-I$native_postgis_dependency_root/json-c/include -I$native_postgis_dependency_root/json-c/include/json-c"; exit 0 ;;
       *" --libs "*) echo "-L$native_postgis_dependency_root/json-c/lib -ljson-c"; exit 0 ;;
     esac
