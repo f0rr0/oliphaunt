@@ -262,6 +262,16 @@ const DEFINITION_PG_LOGICALINSPECT: Extension = Extension {
     package: None,
 };
 
+const DEFINITION_PG_PARTMAN: Extension = Extension {
+    sql_name: "pg_partman",
+    native_support_modules: &[],
+    native_module_file: None,
+    aot_name: None,
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
 const DEFINITION_PG_STAT_STATEMENTS: Extension = Extension {
     sql_name: "pg_stat_statements",
     native_support_modules: &[],
@@ -544,6 +554,9 @@ impl Extension {
     /// Select the `pg_logicalinspect` artifact.
 
     pub const PG_LOGICALINSPECT: Self = DEFINITION_PG_LOGICALINSPECT;
+    /// Select the `pg_partman` artifact.
+
+    pub const PG_PARTMAN: Self = DEFINITION_PG_PARTMAN;
     /// Select the `pg_stat_statements` artifact.
 
     pub const PG_STAT_STATEMENTS: Self = DEFINITION_PG_STAT_STATEMENTS;
@@ -633,6 +646,7 @@ impl Extension {
         Self::PG_HASHIDS,
         Self::PG_IVM,
         Self::PG_LOGICALINSPECT,
+        Self::PG_PARTMAN,
         Self::PG_STAT_STATEMENTS,
         Self::PG_SURGERY,
         Self::PG_TEXTSEARCH,
@@ -710,6 +724,8 @@ pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
         "pg_ivm" => true,
 
         "pg_logicalinspect" => true,
+
+        "pg_partman" => true,
 
         "pg_stat_statements" => true,
 
@@ -837,6 +853,11 @@ pub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'stati
         "pg_logicalinspect" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_logicalinspect\" WITH SCHEMA \"pg_catalog\";"]
         }
+
+        "pg_partman" => &[
+            "CREATE SCHEMA IF NOT EXISTS \"partman\";",
+            "CREATE EXTENSION IF NOT EXISTS \"pg_partman\" WITH SCHEMA \"partman\";",
+        ],
 
         "pg_stat_statements" => &["CREATE EXTENSION IF NOT EXISTS \"pg_stat_statements\";"],
 

@@ -156,4 +156,5 @@ windows_extension_install_pgtap() {
 windows_extension_install() {
   windows_extension_install_pgtap
   if selected pgmq; then windows_extension_generate pgmq-install; fi
+  if selected pg_partman; then windows_extension_generate pg_partman-install; fi
 }

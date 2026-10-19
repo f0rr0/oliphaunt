@@ -35,6 +35,7 @@ internal val generatedExtensionRuntimeContracts: Map<String, GeneratedExtensionR
     "pg_hashids" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_hashids"),
     "pg_ivm" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_ivm"),
     "pg_logicalinspect" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_logicalinspect"),
+    "pg_partman" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = null),
     "pg_stat_statements" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_stat_statements"),
     "pg_surgery" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_surgery"),
     "pg_textsearch" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_textsearch"),

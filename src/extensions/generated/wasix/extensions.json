@@ -579,6 +579,30 @@
       "sql-name": "pg_logicalinspect"
     },
     {
+      "archive": "extensions/pg_partman.tar.zst",
+      "dependencies": [
+        "plpgsql"
+      ],
+      "id": "pg_partman",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "partman",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
+      "native-module-file": null,
+      "native-runtime-files": [],
+      "native-support-modules": [],
+      "sql-name": "pg_partman"
+    },
+    {
       "archive": "extensions/pg_stat_statements.tar.zst",
       "dependencies": [],
       "id": "pg_stat_statements",

@@ -92,7 +92,7 @@ fi
     ln -sf "$PGSRC/src/makefiles/pgxs.mk" "$BUILD_DIR/src/makefiles/pgxs.mk"
     ln -sf "$PGSRC/src/Makefile.shlib" "$BUILD_DIR/src/Makefile.shlib"
 
-	    while IFS=$'\''\t'\'' read -r id sql_name source_dir module_file archive stable make_args; do
+	    while IFS=$'\''\t'\'' read -r id sql_name source_dir module_file archive make_args; do
 	      case "$id" in ""|"#"*) continue ;; esac
 	      test -n "$sql_name"
 	      test -n "$source_dir"

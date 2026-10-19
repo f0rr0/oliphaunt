@@ -28,6 +28,7 @@
     "pg_ivm": "pg_ivm.sql",
     "pg_logicalinspect": "pg_logicalinspect.sql",
     "pg_stat_statements": "pg_stat_statements.sql",
+    "pg_partman": "pg_partman.sql",
     "pg_surgery": "pg_surgery.sql",
     "pg_textsearch": "pg_textsearch.sql",
     "pg_trgm": "pg_trgm.sql",

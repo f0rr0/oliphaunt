@@ -1004,6 +1004,47 @@
       "notes": []
     },
     {
+      "id": "pg_partman",
+      "sql-name": "pg_partman",
+      "rust-constant": "PG_PARTMAN",
+      "display-name": "pg_partman",
+      "source-kind": "oliphaunt-other-extension",
+      "upstream-import-name": "pg_partman",
+      "package-export": "./pg_partman",
+      "tags": [
+        "postgres extension"
+      ],
+      "control-file": "target/oliphaunt-sources/checkouts/pg_partman/pg_partman.control",
+      "control": {
+        "default-version": "5.5.0",
+        "requires": [
+          "plpgsql"
+        ],
+        "relocatable": "false",
+        "superuser": "false"
+      },
+      "dependencies": [
+        "plpgsql"
+      ],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "partman",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": [
+        "src/test-fixtures/extensions/pg_partman.sql"
+      ],
+      "notes": [
+        "SQL-only build without pg_partman_bgw or Python utilities. Applications invoke maintenance explicitly."
+      ]
+    },
+    {
       "id": "pg_stat_statements",
       "sql-name": "pg_stat_statements",
       "rust-constant": "PG_STAT_STATEMENTS",

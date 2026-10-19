@@ -1706,6 +1706,16 @@ fn stage_pgxs_style_extension(
         ensure!(copied, "PGMQ build has no versioned SQL files");
         return Ok(());
     }
+    if sql_name == "pg_partman" {
+        // sql/ also contains source fragments: only ship the assembled install
+        // script and versioned updates, never the unexpanded @extschema@ pieces.
+        ensure!(
+            copy_extension_sql_files(&build_dir.join("sql"), sql_name, &extension_sql_dir)?,
+            "pg_partman generated install SQL is missing"
+        );
+        copy_extension_sql_files(&source.join("updates"), sql_name, &extension_sql_dir)?;
+        return Ok(());
+    }
     let mut copied_root_sql = copy_extension_sql_files(&build_dir, sql_name, &extension_sql_dir)?;
     if !copied_root_sql {
         copied_root_sql = copy_extension_sql_files(source, sql_name, &extension_sql_dir)?;
@@ -2629,6 +2639,80 @@ mod tests {
                 "pgmq.control"
             ]
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn partman_staging_keeps_install_and_upgrade_sql_without_source_fragments() {
+        let root = temp_aot_manifest_path("partman-stage");
+        let source = root.join("source");
+        let build = root.join("build");
+        let stage = root.join("stage");
+        let built_sql = build.join("pgxs/pg_partman/sql");
+        fs::create_dir_all(built_sql.join("functions")).unwrap();
+        fs::create_dir_all(source.join("updates")).unwrap();
+        fs::write(
+            source.join("pg_partman.control"),
+            "default_version = '5.5.0'\n",
+        )
+        .unwrap();
+        fs::write(built_sql.join("pg_partman--5.5.0.sql"), "install\n").unwrap();
+        fs::write(
+            built_sql.join("functions/raw.sql"),
+            "@extschema@ fragment\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("updates/pg_partman--5.4.0--5.5.0.sql"),
+            "upgrade\n",
+        )
+        .unwrap();
+        fs::write(source.join("updates/unrelated.sql"), "excluded\n").unwrap();
+        let extension = extension_catalog::ExtensionBuildSpec {
+            id: "pg_partman".to_owned(),
+            display_name: "pg_partman".to_owned(),
+            sql_name: "pg_partman".to_owned(),
+            build_kind: "pgxs-sql-only".to_owned(),
+            source_dir: source.to_string_lossy().into_owned(),
+            contrib_dir: None,
+            module_file: None,
+            archive: "extensions/pg_partman.tar.zst".to_owned(),
+            control_file: None,
+            native_support_modules: Vec::new(),
+            excluded_sql_extensions: Vec::new(),
+            staging: None,
+            lifecycle: extension_catalog::ExtensionLifecycle {
+                create_extension: true,
+                create_schema: Some("partman".to_owned()),
+                load_sql: Vec::new(),
+                post_create_sql: Vec::new(),
+                startup_config: Vec::new(),
+                preload_required: false,
+                restart_required: false,
+                shared_memory_required: false,
+            },
+        };
+        stage_pgxs_style_extension(&build, &extension, &stage).unwrap();
+        let names = sorted_files(&stage)
+            .unwrap()
+            .into_iter()
+            .map(|file| {
+                file.strip_prefix(&stage)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                "share/postgresql/extension/pg_partman--5.4.0--5.5.0.sql",
+                "share/postgresql/extension/pg_partman--5.5.0.sql",
+                "share/postgresql/extension/pg_partman.control",
+            ]
+        );
+        fs::remove_file(built_sql.join("pg_partman--5.5.0.sql")).unwrap();
+        assert!(stage_pgxs_style_extension(&build, &extension, &root.join("missing")).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 

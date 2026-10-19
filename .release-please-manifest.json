@@ -10,6 +10,7 @@
   "src/native/sdks/ts": "0.3.1",
   "src/extensions/external/pg_hashids": "0.3.2",
   "src/extensions/external/pg_ivm": "0.3.2",
+  "src/extensions/external/pg_partman": "0.0.0",
   "src/extensions/external/pg_textsearch": "0.3.2",
   "src/extensions/external/pg_uuidv7": "0.3.2",
   "src/extensions/external/pgmq": "0.0.0",

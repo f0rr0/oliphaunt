@@ -62,6 +62,7 @@ extension-pg-buffercache = ["extensions", "liboliphaunt-wasix-portable/extension
 extension-pg-freespacemap = ["extensions", "liboliphaunt-wasix-portable/extension-pg-freespacemap"]
 extension-pg-hashids = ["extensions", "liboliphaunt-wasix-portable/extension-pg-hashids"]
 extension-pg-ivm = ["extensions", "liboliphaunt-wasix-portable/extension-pg-ivm"]
+extension-pg-partman = ["extensions", "liboliphaunt-wasix-portable/extension-pg-partman"]
 extension-pg-surgery = ["extensions", "liboliphaunt-wasix-portable/extension-pg-surgery"]
 extension-pg-textsearch = ["extensions", "liboliphaunt-wasix-portable/extension-pg-textsearch"]
 extension-pg-trgm = ["extensions", "liboliphaunt-wasix-portable/extension-pg-trgm"]

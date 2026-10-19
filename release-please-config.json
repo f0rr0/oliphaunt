@@ -245,6 +245,13 @@
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },
+    "src/extensions/external/pg_partman": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-partman",
+      "package-name": "oliphaunt-extension-pg-partman",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
     "src/extensions/external/pg_textsearch": {
       "release-type": "simple",
       "component": "oliphaunt-extension-pg-textsearch",

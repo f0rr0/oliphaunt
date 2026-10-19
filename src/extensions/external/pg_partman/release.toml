@@ -1,0 +1,55 @@
+id = "oliphaunt-extension-pg-partman"
+owner = "@oliphaunt/extensions"
+kind = "exact-extension-artifact"
+shared_source_paths = ["src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts", "src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts", "src/native/sdks/swift/tools/ios-carrier-manifest.mts", "src/wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts", "tools/packaging/build-maven-artifact-manifest.mts", "tools/packaging/maven-artifact-staging.mts"]
+publish_targets = [
+  "github-release-assets",
+  "npm",
+  "maven-central",
+  "crates-io",
+]
+registry_packages = [
+  "crates:oliphaunt-extension-pg-partman",
+  "crates:oliphaunt-extension-pg-partman-linux-arm64-gnu",
+  "crates:oliphaunt-extension-pg-partman-linux-x64-gnu",
+  "crates:oliphaunt-extension-pg-partman-macos-arm64",
+  "crates:oliphaunt-extension-pg-partman-wasix",
+  "crates:oliphaunt-extension-pg-partman-windows-x64-msvc",
+  "npm:@oliphaunt/extension-pg-partman",
+  "npm:@oliphaunt/extension-pg-partman-linux-arm64-gnu",
+  "npm:@oliphaunt/extension-pg-partman-linux-x64-gnu",
+  "npm:@oliphaunt/extension-pg-partman-macos-arm64",
+  "npm:@oliphaunt/extension-pg-partman-wasix",
+  "npm:@oliphaunt/extension-pg-partman-windows-x64-msvc",
+  "maven:dev.oliphaunt.extensions:oliphaunt-extension-pg-partman-android-arm64-v8a",
+  "maven:dev.oliphaunt.extensions:oliphaunt-extension-pg-partman-android-x86_64",
+]
+release_artifacts = ["exact-extension-artifacts"]
+extension_sql_name = "pg_partman"
+
+[extension]
+sql_name = "pg_partman"
+class = "external"
+versioning = "upstream-bound"
+
+[extension.source]
+path = "src/extensions/external/pg_partman/source.toml"
+
+[extension.compatibility]
+postgres_major = "18"
+extension_runtime_contract = "src/extensions/contracts/contract.toml"
+native_runtime_product = "liboliphaunt-native"
+native_runtime_version = "0.3.3"
+wasix_runtime_product = "liboliphaunt-wasix"
+wasix_runtime_version = "0.3.2"
+[compatibility_versions.oliphaunt-extension-pg-partman-liboliphaunt-native]
+public_support = true
+source_product = "liboliphaunt-native"
+path = "src/extensions/external/pg_partman/release.toml"
+parser = "toml:extension.compatibility.native_runtime_version"
+
+[compatibility_versions.oliphaunt-extension-pg-partman-liboliphaunt-wasix]
+public_support = true
+source_product = "liboliphaunt-wasix"
+path = "src/extensions/external/pg_partman/release.toml"
+parser = "toml:extension.compatibility.wasix_runtime_version"

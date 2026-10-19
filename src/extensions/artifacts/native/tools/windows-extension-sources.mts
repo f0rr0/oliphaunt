@@ -642,6 +642,29 @@ export function installPgmq(config: Config) {
   );
 }
 
+export function installPartman(config: Config) {
+  const source = path.join(config.repo, 'target/oliphaunt-sources/checkouts/pg_partman');
+  const destination = path.join(config.install, 'share/postgresql/extension');
+  // Match the pinned Makefile's wildcard groups: types and tables precede functions.
+  const inputs = ['types', 'tables', 'functions', 'procedures'].flatMap((group) => {
+    const directory = path.join(source, 'sql', group);
+    const names = glob(directory, '*.sql');
+    assert(names.length > 0, `pg_partman SQL group is empty: ${group}`);
+    return names.map((name) => read(path.join(directory, name)));
+  });
+  write(
+    path.join(destination, `pg_partman--${version(source, 'pg_partman')}.sql`),
+    inputs.join(''),
+  );
+  copyFileSync(
+    path.join(source, 'pg_partman.control'),
+    path.join(destination, 'pg_partman.control'),
+  );
+  for (const name of glob(path.join(source, 'updates'), 'pg_partman--*--*.sql')) {
+    copyFileSync(path.join(source, 'updates', name), path.join(destination, name));
+  }
+}
+
 if (import.meta.main) {
   const phase = process.argv[2];
   const { values } = parseArgs({
@@ -685,6 +708,9 @@ if (import.meta.main) {
     case 'postgis-sql-install':
     case 'postgis-sql-unpackaged':
       postgisSql(config, phase);
+      break;
+    case 'pg_partman-install':
+      installPartman(config);
       break;
     case 'pgtap':
       pgtap(config);

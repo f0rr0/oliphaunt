@@ -59,6 +59,7 @@ public struct OliphauntExtension: Sendable, Equatable {
     public static let pgHashids = OliphauntExtension(sqlName: "pg_hashids", registration: {})
     public static let pgIvm = OliphauntExtension(sqlName: "pg_ivm", registration: {})
     public static let pgLogicalinspect = OliphauntExtension(sqlName: "pg_logicalinspect", registration: {})
+    public static let pgPartman = OliphauntExtension(sqlName: "pg_partman", registration: {})
     public static let pgStatStatements = OliphauntExtension(sqlName: "pg_stat_statements", registration: {})
     public static let pgSurgery = OliphauntExtension(sqlName: "pg_surgery", registration: {})
     public static let pgTextsearch = OliphauntExtension(sqlName: "pg_textsearch", registration: {})

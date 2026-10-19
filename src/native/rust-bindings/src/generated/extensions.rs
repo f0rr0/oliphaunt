@@ -64,6 +64,8 @@ enum ExtensionId {
     PgIvm,
     /// PostgreSQL `pg_logicalinspect`.
     PgLogicalinspect,
+    /// PostgreSQL `pg_partman`.
+    PgPartman,
     /// PostgreSQL `pg_stat_statements`.
     PgStatStatements,
     /// PostgreSQL `pg_surgery`.
@@ -237,6 +239,11 @@ impl Extension {
         id: ExtensionId::PgLogicalinspect,
         package: None,
     };
+    /// Select the `pg_partman` artifact.
+    pub const PG_PARTMAN: Self = Self {
+        id: ExtensionId::PgPartman,
+        package: None,
+    };
     /// Select the `pg_stat_statements` artifact.
     pub const PG_STAT_STATEMENTS: Self = Self {
         id: ExtensionId::PgStatStatements,
@@ -366,6 +373,7 @@ impl Extension {
         Extension::PG_HASHIDS,
         Extension::PG_IVM,
         Extension::PG_LOGICALINSPECT,
+        Extension::PG_PARTMAN,
         Extension::PG_STAT_STATEMENTS,
         Extension::PG_SURGERY,
         Extension::PG_TEXTSEARCH,
@@ -418,6 +426,7 @@ pub(super) const fn sql_name(extension: Extension) -> &'static str {
         ExtensionId::PgHashids => "pg_hashids",
         ExtensionId::PgIvm => "pg_ivm",
         ExtensionId::PgLogicalinspect => "pg_logicalinspect",
+        ExtensionId::PgPartman => "pg_partman",
         ExtensionId::PgStatStatements => "pg_stat_statements",
         ExtensionId::PgSurgery => "pg_surgery",
         ExtensionId::PgTextsearch => "pg_textsearch",
@@ -470,6 +479,7 @@ pub(super) const fn artifact_product(extension: Extension) -> &'static str {
         ExtensionId::PgHashids => "oliphaunt-extension-pg-hashids",
         ExtensionId::PgIvm => "oliphaunt-extension-pg-ivm",
         ExtensionId::PgLogicalinspect => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::PgPartman => "oliphaunt-extension-pg-partman",
         ExtensionId::PgStatStatements => "oliphaunt-extension-contrib-pg18",
         ExtensionId::PgSurgery => "oliphaunt-extension-contrib-pg18",
         ExtensionId::PgTextsearch => "oliphaunt-extension-pg-textsearch",
@@ -522,6 +532,7 @@ pub(super) const fn native_module_stem(extension: Extension) -> Option<&'static 
         ExtensionId::PgHashids => Some("pg_hashids"),
         ExtensionId::PgIvm => Some("pg_ivm"),
         ExtensionId::PgLogicalinspect => Some("pg_logicalinspect"),
+        ExtensionId::PgPartman => None,
         ExtensionId::PgStatStatements => Some("pg_stat_statements"),
         ExtensionId::PgSurgery => Some("pg_surgery"),
         ExtensionId::PgTextsearch => Some("pg_textsearch"),
@@ -574,6 +585,7 @@ pub(super) const fn creates_extension(extension: Extension) -> bool {
         ExtensionId::PgHashids => true,
         ExtensionId::PgIvm => true,
         ExtensionId::PgLogicalinspect => true,
+        ExtensionId::PgPartman => true,
         ExtensionId::PgStatStatements => true,
         ExtensionId::PgSurgery => true,
         ExtensionId::PgTextsearch => true,
@@ -626,6 +638,7 @@ pub(super) const fn dependencies(extension: Extension) -> &'static [Extension] {
         ExtensionId::PgHashids => &[],
         ExtensionId::PgIvm => &[],
         ExtensionId::PgLogicalinspect => &[],
+        ExtensionId::PgPartman => &[],
         ExtensionId::PgStatStatements => &[],
         ExtensionId::PgSurgery => &[],
         ExtensionId::PgTextsearch => &[],
@@ -678,6 +691,7 @@ pub(super) const fn required_shared_preload_library(extension: Extension) -> Opt
         ExtensionId::PgHashids => None,
         ExtensionId::PgIvm => None,
         ExtensionId::PgLogicalinspect => None,
+        ExtensionId::PgPartman => None,
         ExtensionId::PgStatStatements => Some("pg_stat_statements"),
         ExtensionId::PgSurgery => None,
         ExtensionId::PgTextsearch => Some("pg_textsearch"),
@@ -730,6 +744,7 @@ pub(super) const fn extension_data_files(extension: Extension) -> &'static [&'st
         ExtensionId::PgHashids => &[],
         ExtensionId::PgIvm => &[],
         ExtensionId::PgLogicalinspect => &[],
+        ExtensionId::PgPartman => &[],
         ExtensionId::PgStatStatements => &[],
         ExtensionId::PgSurgery => &[],
         ExtensionId::PgTextsearch => &[],
@@ -792,6 +807,7 @@ pub(super) const fn extension_sql_file_prefixes(extension: Extension) -> &'stati
         ExtensionId::PgHashids => &[],
         ExtensionId::PgIvm => &[],
         ExtensionId::PgLogicalinspect => &[],
+        ExtensionId::PgPartman => &[],
         ExtensionId::PgStatStatements => &[],
         ExtensionId::PgSurgery => &[],
         ExtensionId::PgTextsearch => &[],
@@ -848,6 +864,7 @@ pub(super) const fn extension_sql_file_names(extension: Extension) -> &'static [
         ExtensionId::PgHashids => &[],
         ExtensionId::PgIvm => &[],
         ExtensionId::PgLogicalinspect => &[],
+        ExtensionId::PgPartman => &[],
         ExtensionId::PgStatStatements => &[],
         ExtensionId::PgSurgery => &[],
         ExtensionId::PgTextsearch => &[],
@@ -902,6 +919,7 @@ pub(super) const fn runtime_environment(
         ExtensionId::PgHashids => &[],
         ExtensionId::PgIvm => &[],
         ExtensionId::PgLogicalinspect => &[],
+        ExtensionId::PgPartman => &[],
         ExtensionId::PgStatStatements => &[],
         ExtensionId::PgSurgery => &[],
         ExtensionId::PgTextsearch => &[],

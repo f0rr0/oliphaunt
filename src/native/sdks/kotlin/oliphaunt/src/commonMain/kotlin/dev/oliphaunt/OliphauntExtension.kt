@@ -31,6 +31,7 @@ public enum class OliphauntExtension(public val sqlName: String) {
     PG_HASHIDS("pg_hashids"),
     PG_IVM("pg_ivm"),
     PG_LOGICALINSPECT("pg_logicalinspect"),
+    PG_PARTMAN("pg_partman"),
     PG_STAT_STATEMENTS("pg_stat_statements"),
     PG_SURGERY("pg_surgery"),
     PG_TEXTSEARCH("pg_textsearch"),

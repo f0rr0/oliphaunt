@@ -889,6 +889,40 @@
       "evidence-required": [
         "wasix-full-lifecycle-v1"
       ],
+      "extension": "pg_partman",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "pg_partman"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
       "extension": "pg_stat_statements",
       "latest-accepted-evidence": [],
       "missing-current-evidence": [
@@ -1584,7 +1618,7 @@
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:fb1ece0312ea77afc2f313191fb705a959389f8b8e1cb2ca9142a608d861cdf4",
+  "source-digest": "sha256:5519c1a61255d31585b62a63fd3cf7450aad6fae54553f544631c55e131e8335",
   "source-digest-inputs": [
     "src/third-party/postgres/source.toml",
     "src/extensions/catalog/extensions.source.json",
@@ -1596,6 +1630,7 @@
     "src/database-resources/icu/source.toml",
     "src/extensions/external/pg_hashids/source.toml",
     "src/extensions/external/pg_ivm/source.toml",
+    "src/extensions/external/pg_partman/source.toml",
     "src/extensions/external/pg_textsearch/source.toml",
     "src/extensions/external/pg_uuidv7/source.toml",
     "src/extensions/external/pgmq/source.toml",
@@ -1615,6 +1650,11 @@
     "src/extensions/external/pg_hashids/upstream-license-data.json",
     "src/extensions/external/pg_ivm/targets/native-static-registry.toml",
     "src/extensions/external/pg_ivm/upstream-license-data.json",
+    "src/extensions/external/pg_partman/recipe.toml",
+    "src/extensions/external/pg_partman/targets/native-static-registry.toml",
+    "src/extensions/external/pg_partman/targets/native.toml",
+    "src/extensions/external/pg_partman/targets/wasix.toml",
+    "src/extensions/external/pg_partman/upstream-license-data.json",
     "src/extensions/external/pg_textsearch/recipe.toml",
     "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
     "src/extensions/external/pg_textsearch/upstream-license-data.json",
@@ -1672,6 +1712,7 @@
     "src/test-fixtures/extensions/pg_hashids.sql",
     "src/test-fixtures/extensions/pg_ivm.sql",
     "src/test-fixtures/extensions/pg_logicalinspect.sql",
+    "src/test-fixtures/extensions/pg_partman.sql",
     "src/test-fixtures/extensions/pg_stat_statements.sql",
     "src/test-fixtures/extensions/pg_surgery.sql",
     "src/test-fixtures/extensions/pg_textsearch.sql",

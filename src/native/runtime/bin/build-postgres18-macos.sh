@@ -111,6 +111,7 @@ external_extensions=(
   pg_ivm
   pg_hashids
   pg_uuidv7
+  pg_partman
   pgtap
   pgmq
   pgvector
@@ -152,6 +153,7 @@ required_extension_controls=(
   pg_visibility
   pg_walinspect
   pgcrypto
+  pg_partman
   pgtap
   pgmq
   postgis
@@ -1938,6 +1940,9 @@ pgxs_extension_link_args() {
   local link_flags="$3"
   local be_dllibs="$link_flags"
   case "$extension" in
+    pg_partman)
+      printf '%s\n' "NO_BGW=1" "SCRIPTS=" "DOCS="
+      ;;
     pg_textsearch|pgvector|vector)
       if [ -n "$be_dllibs" ]; then
         be_dllibs="$be_dllibs -lm"

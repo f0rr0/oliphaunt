@@ -1,5 +1,5 @@
 {
-  "extension-catalog-sha256": "b9b246ee0a810514f7ef1fc5966ae31d8e857e8fb146b4593baa04c32cf8fcbf",
+  "extension-catalog-sha256": "72b4266b1468babd53f59bbcf23d62520f5fb5454d35a07d4f482e0504868ac7",
   "extensions": [
     {
       "artifact-product": "oliphaunt-extension-contrib-pg18",
@@ -684,6 +684,34 @@
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
       "sql-name": "pg_logicalinspect"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-pg-partman",
+      "cargo-package": "oliphaunt-extension-pg-partman",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [
+        "plpgsql"
+      ],
+      "display-name": "pg_partman",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_partman",
+      "maven-artifact": "oliphaunt-extension-pg-partman",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": null,
+      "npm-package": "@oliphaunt/extension-pg-partman",
+      "postgres-major": 18,
+      "release-product": "oliphaunt-extension-pg-partman",
+      "runtime-bound": false,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "oliphaunt-other-extension",
+      "sql-name": "pg_partman"
     },
     {
       "artifact-product": "oliphaunt-extension-contrib-pg18",

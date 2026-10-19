@@ -647,7 +647,11 @@ export function catalogProjections(catalog: Row): Map<string, string> {
           pgxsSourceDirectory(source.name, recipe.build?.source_subdirectory),
           row['native-module-file'] ?? '-',
           archive,
-          row.id === 'age' ? 'SIZEOF_DATUM=4' : '-',
+          row.id === 'age'
+            ? 'SIZEOF_DATUM=4'
+            : row.id === 'pg_partman'
+              ? 'NO_BGW=1 SCRIPTS= DOCS='
+              : '-',
         ].join('\t'),
       );
     } else assert.equal(row['source-kind'], 'postgis', 'unsupported extension build kind');

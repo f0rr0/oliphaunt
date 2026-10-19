@@ -25,7 +25,7 @@ export type GeneratedExtensionMetadata = {
   readonly sourceKind: string;
 };
 
-export const GENERATED_EXTENSION_METADATA_SHA256 = "b9b246ee0a810514f7ef1fc5966ae31d8e857e8fb146b4593baa04c32cf8fcbf" as const;
+export const GENERATED_EXTENSION_METADATA_SHA256 = "72b4266b1468babd53f59bbcf23d62520f5fb5454d35a07d4f482e0504868ac7" as const;
 
 export const GENERATED_EXTENSION_METADATA = [
   {
@@ -633,6 +633,31 @@ export const GENERATED_EXTENSION_METADATA = [
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
     "sqlName": "pg_logicalinspect"
+  },
+  {
+    "artifactProduct": "oliphaunt-extension-pg-partman",
+    "cargoPackage": "oliphaunt-extension-pg-partman",
+    "createsExtension": true,
+    "dataFiles": [],
+    "dependencies": [
+      "plpgsql"
+    ],
+    "displayName": "pg_partman",
+    "extensionSqlFileNames": [],
+    "extensionSqlFilePrefixes": [],
+    "id": "pg_partman",
+    "mavenArtifact": "oliphaunt-extension-pg-partman",
+    "mavenGroup": "dev.oliphaunt.extensions",
+    "nativeModuleStem": null,
+    "npmPackage": "@oliphaunt/extension-pg-partman",
+    "postgresMajor": 18,
+    "releaseProduct": "oliphaunt-extension-pg-partman",
+    "runtimeBound": false,
+    "runtimeShareDataFiles": [],
+    "selectedExtensionDependencies": [],
+    "sharedPreloadLibraries": [],
+    "sourceKind": "oliphaunt-other-extension",
+    "sqlName": "pg_partman"
   },
   {
     "artifactProduct": "oliphaunt-extension-contrib-pg18",

@@ -1,6 +1,6 @@
 {
   "schema": "oliphaunt-android-extension-legal-catalog-v1",
-  "sourceCatalogSha256": "b9b246ee0a810514f7ef1fc5966ae31d8e857e8fb146b4593baa04c32cf8fcbf",
+  "sourceCatalogSha256": "72b4266b1468babd53f59bbcf23d62520f5fb5454d35a07d4f482e0504868ac7",
   "contracts": [
     {
       "scope": "aggregate",
@@ -192,6 +192,66 @@
     },
     {
       "scope": "aggregate",
+      "identity": "oliphaunt-extension-pg-partman",
+      "product": "oliphaunt-extension-pg-partman",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_partman/LICENSE.txt"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 821,
+          "sha256": "20fd67487d1a631ba959cf7ec3fdbaf4977997ed624c0188dcb3c8870eded830",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pg_partman/LICENSE.txt",
+          "bytes": 1201,
+          "sha256": "657cd7bde17fc758e47824280a7ccb9bc7d44067e3f3790c2ef4b07e8a04223a",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-pg-partman",
+      "product": "oliphaunt-extension-pg-partman",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_partman/LICENSE.txt"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 821,
+          "sha256": "20fd67487d1a631ba959cf7ec3fdbaf4977997ed624c0188dcb3c8870eded830",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pg_partman/LICENSE.txt",
+          "bytes": 1201,
+          "sha256": "657cd7bde17fc758e47824280a7ccb9bc7d44067e3f3790c2ef4b07e8a04223a",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
       "identity": "oliphaunt-extension-pg-textsearch",
       "product": "oliphaunt-extension-pg-textsearch",
       "target": "android-arm64-v8a",
@@ -2234,6 +2294,66 @@
           "path": "THIRD_PARTY_NOTICES.md",
           "bytes": 821,
           "sha256": "20fd67487d1a631ba959cf7ec3fdbaf4977997ed624c0188dcb3c8870eded830",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_partman",
+      "product": "oliphaunt-extension-pg-partman",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_partman/LICENSE.txt"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 821,
+          "sha256": "20fd67487d1a631ba959cf7ec3fdbaf4977997ed624c0188dcb3c8870eded830",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pg_partman/LICENSE.txt",
+          "bytes": 1201,
+          "sha256": "657cd7bde17fc758e47824280a7ccb9bc7d44067e3f3790c2ef4b07e8a04223a",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_partman",
+      "product": "oliphaunt-extension-pg-partman",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_partman/LICENSE.txt"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 821,
+          "sha256": "20fd67487d1a631ba959cf7ec3fdbaf4977997ed624c0188dcb3c8870eded830",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pg_partman/LICENSE.txt",
+          "bytes": 1201,
+          "sha256": "657cd7bde17fc758e47824280a7ccb9bc7d44067e3f3790c2ef4b07e8a04223a",
           "mode": "0644"
         }
       ]
