@@ -75,14 +75,32 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
         '-m',
         'fixture',
       ]);
-      // Moon tasks inherit their parent's workspace; this proof owns a separate one.
-      const env = { ...process.env, MOON_CACHE: 'off', MOON_WORKSPACE_ROOT: scratch };
+      // This fixture owns its workspace and revisions, even inside a parent PR's CI.
+      const env = {
+        ...process.env,
+        MOON_CACHE: 'off',
+        MOON_WORKSPACE_ROOT: scratch,
+        CI: 'true',
+        GITHUB_ACTIONS: 'true',
+        GITHUB_REF: 'refs/pull/1/merge',
+        GITHUB_BASE_REF: 'parent-workspace-base',
+      };
       delete env.MOON_BASE;
       delete env.MOON_HEAD;
       const run = () =>
         spawnSync(
           process.env.MOON_BIN ?? 'moon',
-          ['run', 'fixture:qualify', '--upstream', 'none', '--no-actions'],
+          [
+            'run',
+            'fixture:qualify',
+            '--upstream',
+            'none',
+            '--no-actions',
+            '--base',
+            'HEAD',
+            '--head',
+            'HEAD',
+          ],
           { cwd: scratch, env, encoding: 'utf8' },
         );
       const result = run();
