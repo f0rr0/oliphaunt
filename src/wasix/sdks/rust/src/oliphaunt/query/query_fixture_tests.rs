@@ -64,9 +64,7 @@ fn typed_parsers_match_shared_query_fixtures() -> Result<()> {
             for (actual, expected) in result.fields().iter().zip(&expected.fields) {
                 assert_eq!(actual.name, expected.name);
                 assert_eq!(actual.type_oid, expected.type_oid);
-                if expected.format.as_deref() == Some("text") {
-                    assert_eq!(actual.format, QueryFormat::Text);
-                }
+                assert_eq!(actual.format, if expected.format.as_deref() == Some("text") { QueryFormat::Text } else { QueryFormat::Binary });
             }
             for (actual, expected) in result.rows().iter().zip(&expected.rows) {
                 for (column, expected) in expected.iter().enumerate() {

@@ -208,6 +208,24 @@ def postgres_native_targets(version):
               defines = ["FRONTEND"], copts = _COPTS, linkopts = _FRONTEND_LINKOPTS + NATIVE_RELEASE_LINKOPTS, target_compatible_with = _COMPATIBLE)
     cc_binary(name = "psql", srcs = POSTGRES_PSQL_SOURCES + ["src/bin/psql/psqlscanslash.c", "src/bin/psql/tab-complete.c", "src/bin/psql/sql_help.c"],
               deps = frontend_deps + [":tools_headers"], defines = ["FRONTEND"], copts = _COPTS, linkopts = _FRONTEND_LINKOPTS + NATIVE_RELEASE_LINKOPTS, target_compatible_with = _COMPATIBLE)
+    # Original PostgreSQL regression driver, constructed only by test consumers.
+    cc_binary(
+        name = "pg_regress",
+        srcs = ["src/test/regress/pg_regress.c", "src/test/regress/pg_regress_main.c", "src/test/regress/pg_regress.h"],
+        deps = [":server_headers", ":common_frontend", ":port_frontend", ":libpq"],
+        defines = ["FRONTEND"],
+        copts = _COPTS + ["-DSHELLPROG=\\\"/bin/sh\\\""] + select({
+            "@oliphaunt//build_defs/native:linux_aarch64_gnu_2_28": ["-DHOST_TUPLE=\\\"aarch64-unknown-linux-gnu\\\""],
+            "//conditions:default": ["-DHOST_TUPLE=\\\"x86_64-pc-linux-gnu\\\""],
+        }),
+        linkopts = _FRONTEND_LINKOPTS + NATIVE_RELEASE_LINKOPTS,
+        target_compatible_with = select({
+            "@oliphaunt//build_defs/native:linux_x86_64": [],
+            "@oliphaunt//build_defs/native:linux_aarch64_gnu_2_28": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        }),
+        testonly = True,
+    )
     cc_library(name = "initdb_frontend_utils", srcs = ["src/fe_utils/option_utils.c", "src/fe_utils/string_utils.c"],
                deps = [":server_headers", ":common_frontend", ":port_frontend", ":libpq"], defines = ["FRONTEND"], copts = _COPTS, target_compatible_with = _COMPATIBLE)
     cc_binary(name = "postgres", srcs = POSTGRES_MAIN_SOURCES, deps = [":backend_server"], copts = _COPTS,

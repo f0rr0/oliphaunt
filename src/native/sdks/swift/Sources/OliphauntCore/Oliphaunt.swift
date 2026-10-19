@@ -380,7 +380,8 @@ private final class OliphauntProtocolStreamCallbackGate: @unchecked Sendable {
     }
 
     func isReentry(databaseID: UUID) -> Bool {
-        OliphauntProtocolStreamTaskContext.databaseID == databaseID
+        // Callback activity alone cannot identify the calling task.
+        return OliphauntProtocolStreamTaskContext.databaseID == databaseID
     }
 
     static let reentryMessage =
@@ -406,6 +407,7 @@ public actor OliphauntDatabase {
     }
 
     private var session: (any OliphauntSession)?
+    private var terminalCloseFailure: (any Error)?
     private var closing = false
     private var closeTeardownStarted = false
     private var activeCancellationCount = 0
@@ -624,6 +626,7 @@ public actor OliphauntDatabase {
 
     public func close() async throws {
         try ensureNoProtocolStreamCallbackReentry()
+        if let terminalCloseFailure { throw terminalCloseFailure }
         guard let closingSession = session else {
             return
         }
@@ -644,7 +647,10 @@ public actor OliphauntDatabase {
             closing = false
             await operationGate.release()
         } catch {
-            if !closingSession.isUsable() { session = nil }
+            if !closingSession.isUsable() {
+                terminalCloseFailure = error
+                session = nil
+            }
             closeTeardownStarted = false
             closing = false
             await operationGate.release()

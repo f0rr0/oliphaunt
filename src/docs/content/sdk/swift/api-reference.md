@@ -43,7 +43,9 @@ Transaction callbacks receive an `OliphauntTransaction` with typed query methods
 
 `backup()` returns `Data`. `cancel()` requests an interrupt. `close()` observes shutdown; `isClosed` reports terminal state. Work is serialized on one PostgreSQL session, away from the main actor.
 
-Buffered `execProtocolRaw` and callback `execProtocolRawStream` are database-only interfaces for protocol integrations. Stream callbacks are synchronous backpressure boundaries. Do not re-enter database or transaction operations from a callback, apart from the documented out-of-band cancellation path.
+Buffered `execProtocolRaw` and callback `execProtocolRawStream` are database-only interfaces for protocol integrations. Stream callbacks are synchronous backpressure boundaries. Same-handle calls that inherit the callback's task-local context, including `Task { ... }`, are rejected before queueing. Unrelated callers retain their queue order. Detached tasks and dispatch queues do not inherit that context: return from the callback before waiting for their work on the same database. Another database and out-of-band `cancel()` remain available.
+
+See [large mobile responses](/docs/learn/mobile-stability#large-responses) for buffered response limits and streaming alternatives.
 
 ## Errors
 

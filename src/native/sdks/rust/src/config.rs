@@ -10,6 +10,52 @@ pub(crate) const DEFAULT_USERNAME: &str = "postgres";
 /// Default PostgreSQL database used by SDK-managed native sessions.
 pub(crate) const DEFAULT_DATABASE: &str = "postgres";
 
+#[cfg(feature = "desktop")]
+pub(crate) const DEFAULT_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+#[cfg(feature = "desktop")]
+pub(crate) const DEFAULT_CONTROL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(feature = "desktop")]
+pub(crate) const CONTROL_TIMEOUT_ENV: &str = "OLIPHAUNT_CONTROL_TIMEOUT_MS";
+
+#[cfg(feature = "desktop")]
+pub(crate) fn lifecycle_timeout(
+    name: &str,
+    fallback: std::time::Duration,
+) -> Result<std::time::Duration> {
+    match std::env::var(name) {
+        Ok(value) => parse_lifecycle_timeout(name, &value, fallback),
+        Err(std::env::VarError::NotPresent) => Ok(fallback),
+        Err(std::env::VarError::NotUnicode(_)) => Err(invalid_lifecycle_timeout(name)),
+    }
+}
+
+#[cfg(feature = "desktop")]
+fn parse_lifecycle_timeout(
+    name: &str,
+    value: &str,
+    fallback: std::time::Duration,
+) -> Result<std::time::Duration> {
+    if value.is_empty() {
+        return Ok(fallback);
+    }
+    let value = value.trim();
+    let milliseconds = value
+        .parse::<u32>()
+        .ok()
+        .filter(|&milliseconds| {
+            milliseconds > 0 && milliseconds <= i32::MAX as u32 && milliseconds.to_string() == value
+        })
+        .ok_or_else(|| invalid_lifecycle_timeout(name))?;
+    Ok(std::time::Duration::from_millis(u64::from(milliseconds)))
+}
+
+#[cfg(feature = "desktop")]
+fn invalid_lifecycle_timeout(name: &str) -> Error {
+    Error::InvalidConfig(format!(
+        "{name} must be a positive integer number of milliseconds between 1 and 2147483647"
+    ))
+}
+
 /// Native runtime mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum EngineMode {
@@ -244,6 +290,25 @@ fn validate_server_unix_socket_path(directory: &Path, port: u16) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{EngineMode, OpenConfig, PostgresStartupGuc, ServerListen};
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn lifecycle_timeouts_reject_timer_overflow_and_noncanonical_integers() {
+        use super::{CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT, parse_lifecycle_timeout};
+        for value in ["0", "-1", "+1", "01", "1.0", "1ms", " ", "2147483648"] {
+            assert!(
+                parse_lifecycle_timeout(CONTROL_TIMEOUT_ENV, value, DEFAULT_CONTROL_TIMEOUT)
+                    .is_err()
+            );
+        }
+        for (value, expected) in [("", 5000), (" 30 ", 30), ("2147483647", 2147483647)] {
+            assert_eq!(
+                parse_lifecycle_timeout(CONTROL_TIMEOUT_ENV, value, DEFAULT_CONTROL_TIMEOUT)
+                    .unwrap(),
+                std::time::Duration::from_millis(expected),
+            );
+        }
+    }
 
     #[test]
     fn startup_guc_names_use_portable_postgres_grammar() {

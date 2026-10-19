@@ -576,6 +576,13 @@ package_desktop_target() {
     selected_sql_name_matches "$sql_name" || continue
     [ "$pg_major" = "18" ] || fail "extension catalog row for $sql_name targets PostgreSQL $pg_major"
     [ "$desktop_prebuilt" = "yes" ] || continue
+    local qualification="$root/src/extensions/external/$sql_name/tests/qualify.sh"
+    if [ "$target_id" = linux-x64-gnu ] && [ -f "$qualification" ]; then
+      "$observed_phase" \
+        --label "qualify $sql_name upstream and upgrade behavior" \
+        --log "/tmp/liboliphaunt-$sql_name-qualification.log" \
+        -- bash "$qualification" "$source_runtime"
+    fi
     runtime_artifact="$(desktop_runtime_artifact_name "$sql_name")"
     profile_args=()
     if [ "$stem" != "-" ]; then

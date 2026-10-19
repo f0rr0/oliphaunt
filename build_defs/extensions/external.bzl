@@ -12,11 +12,13 @@ EXTERNAL_C_SOURCES = {
     "pg_uuidv7": ["pg_uuidv7.c"],
     "pg_ivm": ["createas.c", "matview.c", "pg_ivm.c", "ruleutils.c", "subselect.c"],
     "pg_textsearch": ["src/" + unit + ".c" for unit in [
-        "mod", "source", "am/handler", "am/build", "am/build_context", "am/build_parallel", "am/scan", "am/vacuum",
-        "memtable/arena", "memtable/expull", "memtable/memtable", "memtable/posting", "memtable/stringtable", "memtable/scan", "memtable/source",
-        "segment/segment", "segment/dictionary", "segment/scan", "segment/merge", "segment/docmap", "segment/compression",
-        "query/bmw", "query/score", "types/vector", "types/query", "state/state", "state/registry", "state/metapage", "state/limit",
-        "planner/hooks", "planner/cost", "debug/dump",
+        "mod", "layout_check",
+        "access/handler", "access/build", "access/build_context", "access/build_merge", "access/build_parallel", "access/compaction_api", "access/boolean", "access/rls", "access/scan", "access/vacuum",
+        "memtable/arena", "memtable/cache", "memtable/cache_source", "memtable/chain_source", "memtable/chain_walker", "memtable/expull", "memtable/log", "memtable/page", "memtable/posting", "memtable/scan", "memtable/stringtable",
+        "segment/segment", "segment/graph_snapshot", "segment/dictionary", "segment/scan", "segment/merge", "segment/compaction", "segment/tombstone", "segment/docmap", "segment/alive_bitset", "segment/compression", "segment/fieldnorm",
+        "scoring/bmw", "scoring/bm25", "scoring/snapshot", "types/array", "types/vector", "types/query",
+        "index/compaction_job", "index/compaction_request", "index/state", "index/registry", "index/metapage", "index/freepage", "index/limit", "index/resolve", "index/source",
+        "planner/hooks", "planner/cost", "debug/injection", "debug/dump",
     ]],
     "vector": ["src/" + unit + ".c" for unit in [
         "bitutils", "bitvec", "halfutils", "halfvec", "hnsw", "hnswbuild",
@@ -69,12 +71,10 @@ def _windows_sources_impl(ctx):
         companion_inputs.append(files[0])
     generated = []
     if ctx.attr.sql_name == "pg_textsearch":
-        for relative in ["src/oliphaunt_windows_compat.h", "src/unistd.h"]:
+        for relative in ["src/unistd.h"]:
             output = ctx.actions.declare_file(ctx.label.name + "/" + relative)
             headers.append(output)
             generated.append({"name": relative, "output": output.path})
-            if relative.endswith("oliphaunt_windows_compat.h"):
-                compatibility.append(output)
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(spec, json.encode({"extension": ctx.attr.sql_name, "files": rows, "headers": generated}))
     args = ctx.actions.args()
@@ -144,13 +144,6 @@ def native_external_extension_modules(name, sql_name = None):
         attrs["srcs"] = select({"//build_defs/native:windows_x64": [":" + prepared], "//conditions:default": attrs["srcs"]})
         attrs["hdrs"] = select({"//build_defs/native:windows_x64": [], "//conditions:default": attrs.get("hdrs", [])})
         attrs["deps"] = select({"//build_defs/native:windows_x64": [":" + prepared], "//conditions:default": attrs.get("deps", [])})
-        if sql_name == "pg_textsearch":
-            compatibility = prepared + "_compatibility"
-            native.filegroup(name = compatibility, srcs = [":" + prepared], output_group = "compatibility_header", target_compatible_with = NATIVE_WINDOWS_COMPATIBLE)
-            compatibility_inputs = select({"//build_defs/native:windows_x64": [":" + compatibility], "//conditions:default": []})
-            attrs["hdrs"] = attrs["hdrs"] + compatibility_inputs
-            attrs["additional_compiler_inputs"] = compatibility_inputs
-            attrs["copts"] = select({"//build_defs/native:windows_x64": ["/FI$(location :%s)" % compatibility], "//conditions:default": []}) + attrs["copts"]
     if sql_name == "vector":
         # Clang's EVEX width permission preserves upstream's optional AVX512
         # dispatch without enabling AVX instructions in baseline functions.
@@ -158,6 +151,7 @@ def native_external_extension_modules(name, sql_name = None):
             "//build_defs/native:linux_x86_64_gnu_2_28": ["-mevex512"],
             "//conditions:default": [],
         })
+    if sql_name in ["vector", "pg_textsearch"]:
         attrs["deps"] = attrs.get("deps", []) + select({
             "//build_defs/native:linux_x86_64_gnu_2_28": ["@pgvector_compiler_rt//:cpu_model"],
             "//conditions:default": [],

@@ -74,9 +74,7 @@ private func expectSharedProtocolOkFixture(
         let actual = result.fields[index]
         #expect(actual.name == expectedField.name)
         #expect(actual.typeOID.rawValue == expectedField.typeOid)
-        if expectedField.format == "text" {
-            #expect(actual.format == .text)
-        }
+        #expect(actual.format == (expectedField.format == "text" ? .text : .binary))
     }
 
     for (rowIndex, expectedRow) in expected.rows.enumerated() {
@@ -86,8 +84,7 @@ private func expectSharedProtocolOkFixture(
                 Issue.record("shared protocol fixture \(fixture.name) is missing expected field \(columnIndex)")
                 continue
             }
-            let field = expected.fields[columnIndex]
-            #expect(try result.getText(row: rowIndex, column: field.name) == expectedValue)
+            #expect(try result.rows[rowIndex].text(columnIndex) == expectedValue)
         }
     }
 }

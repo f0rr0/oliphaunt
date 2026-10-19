@@ -121,6 +121,10 @@ OliphauntDataRowValidation oliphaunt_validate_data_row(
     size_t body_len,
     uint16_t expected_columns);
 
+void oliphaunt_postgres_error_message(const uint8_t *body, size_t len, char *out, size_t out_len);
+bool oliphaunt_response_error_message(
+    const uint8_t *response, size_t response_len, char *out, size_t out_len);
+
 bool oliphaunt_response_confirms_command(
     const uint8_t *response,
     size_t response_len,

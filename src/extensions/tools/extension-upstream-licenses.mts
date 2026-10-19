@@ -751,7 +751,7 @@ export function nativeExtensionConstructionLicenseInventory(sqlName, target) {
       ].map(Object.freeze),
     );
   }
-  if (sqlName !== 'vector' || target !== 'linux-x64-gnu') {
+  if (!['vector', 'pg_textsearch'].includes(sqlName) || target !== 'linux-x64-gnu') {
     fail('native construction legal closure has no declared source for this member/target');
   }
   const source = JSON.parse(

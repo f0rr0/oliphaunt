@@ -19,6 +19,7 @@ import {
   validateExtensionArtifactArchive,
   validateExtensionArtifactEntries,
 } from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
+import { nativeExtensionConstructionLicenseInventory } from '../../src/extensions/tools/extension-upstream-licenses.mts';
 import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
 import {
   exerciseNativeCarrierSql,
@@ -95,8 +96,8 @@ assert.deepEqual(
 const metadata = {
   ...member,
   nativeConstructionLicenseFiles:
-    spec.sqlName === 'vector' && spec.target === 'linux-x64-gnu'
-      ? member.licenseFiles.filter((row) => row.path.startsWith('share/licenses/llvm-compiler-rt/'))
+    ['vector', 'pg_textsearch'].includes(spec.sqlName) && spec.target === 'linux-x64-gnu'
+      ? nativeExtensionConstructionLicenseInventory(spec.sqlName, spec.target)
       : [],
 };
 validateExtensionArtifactArchive({
@@ -131,6 +132,9 @@ for (const dependency of member.nativeDependencyModules ?? []) {
   );
 }
 for (const construction of metadata.nativeConstructionLicenseFiles) {
+  const missing = new Map(canonicalEntries);
+  missing.delete(`files/${construction.path}`);
+  assert.throws(() => validateEntries(missing), /missing:/);
   const changed = new Map(canonicalEntries);
   changed.set(`files/${construction.path}`, {
     ...changed.get(`files/${construction.path}`),
@@ -141,7 +145,9 @@ for (const construction of metadata.nativeConstructionLicenseFiles) {
 const digest = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
 const cargoPayload = readNativeCargoPayload(cargoDirectory, identities.cargo.name, spec.version, [
   'MIT',
-  ...(spec.sqlName === 'vector' && metadata.nativeConstructionLicenseFiles.length > 0
+  ...(metadata.nativeConstructionLicenseFiles.some((row) =>
+    row.path.startsWith('share/licenses/llvm-compiler-rt/'),
+  )
     ? ['Apache-2.0 WITH LLVM-exception']
     : []),
 ]);

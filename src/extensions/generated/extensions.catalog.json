@@ -907,7 +907,7 @@
       "bundle-size": 55062,
       "control-file": "target/oliphaunt-sources/checkouts/pg_textsearch/pg_textsearch.control",
       "control": {
-        "default-version": "0.6.1",
+        "default-version": "1.5.1",
         "module-pathname": "$libdir/pg_textsearch",
         "requires": [],
         "relocatable": "true"

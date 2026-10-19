@@ -144,7 +144,7 @@ kt_jvm_test(
     size = "medium",
 )
 
-test_suite(name = "android_test", tests = [":android_configuration_test", ":android_java_test", ":android_runtime_assets_test", ":native_bindings_test"])
+test_suite(name = "android_test", tests = [":android_configuration_test", ":android_java_test", ":android_runtime_assets_test", ":native_bindings_test", "//src/native/sdks/react-native:android_temporary_root_test"])
 
 [android_artifact(
     name = "mobile_" + abi,
@@ -205,6 +205,7 @@ shipping_export(
         ":installed_maven_test",
         ":database_test", ":broker_test", ":shared_protocol_test",
         ":android_configuration_test", ":android_java_test", ":android_runtime_assets_test", ":native_bindings_test",
+        "//src/native/sdks/react-native:android_temporary_root_test",
         "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:contract_test",
     ],
     testonly = True,

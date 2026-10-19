@@ -52,6 +52,10 @@ Use structured PostgreSQL error fields, including SQLSTATE, to classify database
 
 `close()` reports teardown errors and makes the handle terminal. `is_closed()` reports its state. Use `cancel_handle()` for out-of-thread cancellation of synchronous work, or `cancel().await` on the async type.
 
+Desktop broker startup and authentication, cancellation transport, and close-control I/O have deadlines. These deadlines do not limit ordinary SQL execution. PostgreSQL cancellation sends a request without waiting for an acknowledgement.
+
+Set `OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS` or `OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS` to tune startup (default 20,000 ms). `OLIPHAUNT_CONTROL_TIMEOUT_MS` tunes cancellation transport, close-control I/O, and each graceful or forced process-reaping phase (default 5,000 ms). Values must be integer milliseconds from 1 through 2,147,483,647; an unset or empty value uses the default. Each desktop session captures these settings at open, so later environment changes do not alter its cleanup budget.
+
 Server handles expose `connection_string()`, closed state, and close. Querying, pooling, and logical tools use ordinary PostgreSQL connections.
 
 ## Raw protocol

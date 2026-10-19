@@ -33,6 +33,7 @@ bazel_dep(name = "rules_android_ndk", version = "0.1.5")
 bazel_dep(name = "rules_java", version = "8.14.0")
 bazel_dep(name = "rules_kotlin", version = "2.2.2")
 bazel_dep(name = "rules_android", version = "0.6.6")
+bazel_dep(name = "rules_robolectric", version = "4.14.1.2")
 bazel_dep(name = "rules_jvm_external", version = "6.10")
 # The separately hosted stock Maven extension emits this upstream metadata load.
 bazel_dep(name = "package_metadata", version = "0.0.7")
@@ -400,7 +401,27 @@ kotlin_maven.override(
     coordinates = "com.google.protobuf:protobuf-java",
     target = "@protobuf//java/core:core",
 )
-use_repo(kotlin_maven, "oliphaunt_kotlin_maven", "oliphaunt_android_lint_maven")
+use_repo(kotlin_maven, "oliphaunt_kotlin_maven", "oliphaunt_android_lint_maven", "rules_android_maven")
+
+robolectric_sdks = use_extension("@rules_robolectric//bazel:extensions.bzl", "robolectric_repository_extensions")
+use_repo(
+    robolectric_sdks,
+    "org_robolectric_android_all_instrumented_10_robolectric_5803371_i7",
+    "org_robolectric_android_all_instrumented_11_robolectric_6757853_i7",
+    "org_robolectric_android_all_instrumented_12_1_robolectric_8229987_i7",
+    "org_robolectric_android_all_instrumented_12_robolectric_7732740_i7",
+    "org_robolectric_android_all_instrumented_13_robolectric_9030017_i7",
+    "org_robolectric_android_all_instrumented_14_robolectric_10818077_i7",
+    "org_robolectric_android_all_instrumented_5_0_2_r3_robolectric_r0_i7",
+    "org_robolectric_android_all_instrumented_5_1_1_r9_robolectric_r2_i7",
+    "org_robolectric_android_all_instrumented_6_0_1_r3_robolectric_r1_i7",
+    "org_robolectric_android_all_instrumented_7_0_0_r1_robolectric_r1_i7",
+    "org_robolectric_android_all_instrumented_7_1_0_r7_robolectric_r1_i7",
+    "org_robolectric_android_all_instrumented_8_0_0_r4_robolectric_r1_i7",
+    "org_robolectric_android_all_instrumented_8_1_0_robolectric_4611349_i7",
+    "org_robolectric_android_all_instrumented_9_robolectric_4913185_2_i7",
+    robolectric_android_35 = "org_robolectric_android_all_instrumented_15_robolectric_12650502_i7",
+)
 
 expo_android_sources = use_repo_rule("//build_defs/android:native-repository.bzl", "expo_android_sources_repository")
 expo_android_sources(name = "expo_android_sources", metadata = "@expo_app_javascript_metadata//:consumer-tools.json")
@@ -1000,4 +1021,10 @@ filegroup(
     srcs = glob(["**"], exclude = ["BUILD.bazel", "WORKSPACE", "WORKSPACE.bazel"]),
 )
 """,
+)
+
+extension_test_source = use_repo_rule("//build_defs/extensions:repositories.bzl", "extension_test_source")
+extension_test_source(
+    name = "pg_textsearch_upgrade_from",
+    source_manifest = "//src/extensions/external/pg_textsearch/tests:upgrade/source.toml",
 )
