@@ -31,7 +31,6 @@ test('PGMQ SQL packaging includes the current installation and upgrades, without
   }
 });
 
-
 test('SQL-only pg_partman stages ordered install SQL and upgrades without workers or tools', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'partman-windows-'));
   try {

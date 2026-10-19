@@ -53,12 +53,18 @@ test('matches CocoaPods iOS link inputs exactly for all generated extension iden
     REACT_NATIVE_METADATA.extensions.map((row) => [row['sql-name'], row['native-module-stem']]),
   );
   assert.equal(bySqlName.get('intarray'), '_int');
+  assert.equal(bySqlName.get('pg_partman'), null);
+  assert.equal(bySqlName.get('pgmq'), null);
   assert.equal(bySqlName.get('pgtap'), null);
   assert.equal(bySqlName.get('postgis'), 'postgis-3');
   assert.equal(bySqlName.get('uuid-ossp'), 'uuid-ossp');
 
   const expectedStems = [...bySqlName.values()].filter((stem) => stem !== null).sort();
-  assert.equal(expectedStems.length, 38);
+  assert.equal(expectedStems.length, 46);
+  assert.deepEqual(
+    expectedStems,
+    MOBILE_STATIC_REGISTRY.modules.map((row) => row['native-module-stem']).sort(),
+  );
   const evidence = iosCocoaPodsExtensionLinkEvidence({
     expectedStems,
     inputText: expectedStems

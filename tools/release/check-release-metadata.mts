@@ -300,11 +300,7 @@ function validateCompatibility(graph, { publication = false } = {}) {
     new Set(entries.map((entry) => entry.id)).size === entries.length,
     'compatibility field ids must be globally unique',
   );
-  const dependencyPlan = new Map(
-    (publication ? releaseDependencyPlan(graph.products, Object.keys(graph.products)) : []).map(
-      (entry) => [entry.id, entry.version],
-    ),
-  );
+  let dependencyPlan = new Map();
   let pendingRelease;
   let checkedPendingRelease = false;
   let pendingVersions = new Map();
@@ -349,6 +345,12 @@ function validateCompatibility(graph, { publication = false } = {}) {
         if (status.currentTagCommit === null) {
           pendingRelease = latestVerifiedReleaseCommit({ repo: ROOT });
           pendingVersions = new Map(Object.entries(pendingRelease?.versions ?? {}));
+          dependencyPlan = new Map(
+            releaseDependencyPlan(graph.products, pendingVersions.keys()).map((entry) => [
+              entry.id,
+              entry.version,
+            ]),
+          );
           checkedPendingRelease = true;
         }
       }
@@ -369,11 +371,17 @@ function validateCompatibility(graph, { publication = false } = {}) {
             // release. Once published, its immutable tag supplies this value.
             missingValue: value,
           })
-        : dependencyPlan.get(entry.id);
+        : // A 0.0.0 product has no immutable release yet. An unrelated runtime
+          // release must preserve its declaration, just as candidate sync does.
+          pendingVersions.has(entry.product)
+          ? dependencyPlan.get(entry.id)
+          : value;
     const provenance =
       source.kind === 'tagged-sink'
         ? `immutable ${entry.product} tag ${source.tag}`
-        : `planned ${entry.sourceProduct} binding ${expected}`;
+        : pendingVersions.has(entry.product)
+          ? `planned ${entry.sourceProduct} binding ${expected}`
+          : `unreleased ${entry.product} declared requirement ${expected}`;
     requireCompatibilityVersionBinding(
       {
         id: entry.id,
