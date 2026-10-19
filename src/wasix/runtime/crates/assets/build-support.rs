@@ -332,6 +332,13 @@ const EXTENSION_PACKAGES: &[ExtensionPackage] = &[
         crate_ident: "oliphaunt_extension_pg_ivm",
     },
     ExtensionPackage {
+        feature: "extension-pgmq",
+        env: "CARGO_FEATURE_EXTENSION_PGMQ",
+        product: "oliphaunt-extension-pgmq",
+        sql_name: "pgmq",
+        crate_ident: "oliphaunt_extension_pgmq",
+    },
+    ExtensionPackage {
         feature: "extension-pg-partman",
         env: "CARGO_FEATURE_EXTENSION_PG_PARTMAN",
         product: "oliphaunt-extension-pg-partman",

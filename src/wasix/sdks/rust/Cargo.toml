@@ -70,6 +70,7 @@ extension-pg-uuidv7 = ["extensions", "liboliphaunt-wasix-portable/extension-pg-u
 extension-pg-visibility = ["extensions", "liboliphaunt-wasix-portable/extension-pg-visibility"]
 extension-pg-walinspect = ["extensions", "liboliphaunt-wasix-portable/extension-pg-walinspect"]
 extension-pgcrypto = ["extensions", "liboliphaunt-wasix-portable/extension-pgcrypto"]
+extension-pgmq = ["extensions", "liboliphaunt-wasix-portable/extension-pgmq"]
 extension-pgtap = ["extensions", "liboliphaunt-wasix-portable/extension-pgtap"]
 extension-postgis = ["extensions", "liboliphaunt-wasix-portable/extension-postgis"]
 extension-seg = ["extensions", "liboliphaunt-wasix-portable/extension-seg"]
