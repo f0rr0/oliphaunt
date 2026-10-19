@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'bun:test';
+import {
+  GENERATED_MOBILE_EXTENSION_PLAN,
+  GENERATED_MOBILE_EXTENSION_SMOKE,
+} from '../src/generated/extension-smoke';
 
 class FixturePostgresError extends Error {}
 
@@ -10,7 +14,9 @@ mock.module('@oliphaunt/react-native', () => ({
   },
 }));
 
-const { runMobileReleaseExtensionProof } = await import('../src/mobile-smoke.ts');
+const { activationSqlForExtension, runMobileReleaseExtensionProof } = await import(
+  '../src/mobile-smoke.ts'
+);
 const { serializeExpoSmokePassReceipt } = await import('../src/smoke-pass-receipt.ts');
 
 function queryResult(values) {
@@ -53,7 +59,10 @@ test('the successful pg_textsearch producer supplies every semantic PASS fact', 
       createsExtension: true,
       nativeModuleStem: 'pg_textsearch',
       selectedExtensionDependencies: [],
-      activationSql: ['CREATE EXTENSION pg_textsearch'],
+      activationSql: activationSqlForExtension({
+        sqlName: 'pg_textsearch',
+        createsExtension: true,
+      }),
       smokeStatements: ['SELECT 1'],
     },
   ]);
@@ -62,7 +71,7 @@ test('the successful pg_textsearch producer supplies every semantic PASS fact', 
   assert.equal(proof.extensionCatalogComplete, true);
   assert.equal(proof.pgTextsearchEnglishBm25, true);
   assert.deepEqual(executed, [
-    'CREATE EXTENSION pg_textsearch',
+    'CREATE EXTENSION "pg_textsearch"',
     'DROP TABLE IF EXISTS oliphaunt_mobile_pg_textsearch_english',
     'CREATE TABLE oliphaunt_mobile_pg_textsearch_english (id bigint PRIMARY KEY, body text NOT NULL)',
     `INSERT INTO oliphaunt_mobile_pg_textsearch_english (id, body) VALUES
@@ -101,4 +110,80 @@ test('the successful pg_textsearch producer supplies every semantic PASS fact', 
   assert.equal(receipt.allExtensionsActivated, true);
   assert.equal(receipt.extensionCatalogComplete, true);
   assert.equal(receipt.pgTextsearchEnglishBm25, true);
+});
+
+for (const sqlName of ['passwordcheck', 'pg_overexplain']) {
+  test(`${sqlName} proves its generated LOAD-only recipe without auto_explain`, async () => {
+    const extension = GENERATED_MOBILE_EXTENSION_PLAN.find((row) => row.sqlName === sqlName);
+    assert.ok(extension);
+    assert.equal(extension.createsExtension, false);
+    const smokeStatements = GENERATED_MOBILE_EXTENSION_SMOKE[sqlName];
+    const queried = [];
+    const db = {
+      async execute(sql) {
+        throw new Error(`unexpected LOAD-only activation: ${sql}`);
+      },
+      async query(sql) {
+        queried.push(sql);
+        if (smokeStatements.includes(sql)) return queryResult({});
+        if (sql.includes('string_agg')) return queryResult({ value: '' });
+        throw new Error(`unexpected LOAD-only query: ${sql}`);
+      },
+    };
+    const proof = await runMobileReleaseExtensionProof(db, [
+      {
+        ...extension,
+        activationSql: activationSqlForExtension(extension),
+        smokeStatements,
+      },
+    ]);
+    assert.deepEqual(queried.slice(0, -1), smokeStatements);
+    assert.deepEqual(proof.activatedExtensions, [sqlName]);
+    assert.equal(proof.extensionCatalogComplete, true);
+    assert.equal(proof.pgTextsearchEnglishBm25, false);
+    assert.equal(proof.checks[0].name, `extension activation: ${sqlName}`);
+    assert.equal(
+      proof.checks[0].detail,
+      `${sqlName} canonical LOAD-only smoke proof completed in the installed app session`,
+    );
+  });
+}
+
+test('auto_explain still requires its configured logging duration', async () => {
+  const extension = GENERATED_MOBILE_EXTENSION_PLAN.find((row) => row.sqlName === 'auto_explain');
+  assert.ok(extension);
+  const executed = [];
+  let logMinDuration = '0';
+  const db = {
+    async execute(sql) {
+      executed.push(sql);
+    },
+    async query(sql) {
+      if (GENERATED_MOBILE_EXTENSION_SMOKE.auto_explain.includes(sql)) return queryResult({});
+      if (sql === "SELECT current_setting('auto_explain.log_min_duration')::text AS value")
+        return queryResult({ value: logMinDuration });
+      if (sql.includes('string_agg')) return queryResult({ value: '' });
+      throw new Error(`unexpected auto_explain query: ${sql}`);
+    },
+  };
+  const plan = [
+    {
+      ...extension,
+      activationSql: activationSqlForExtension(extension),
+      smokeStatements: GENERATED_MOBILE_EXTENSION_SMOKE.auto_explain,
+    },
+  ];
+  const proof = await runMobileReleaseExtensionProof(db, plan);
+  assert.deepEqual(executed, [
+    "LOAD 'auto_explain'",
+    "SET auto_explain.log_min_duration = '0'",
+    "SET auto_explain.log_analyze = 'true'",
+    "SET auto_explain.log_level = 'NOTICE'",
+  ]);
+  assert.equal(proof.extensionCatalogComplete, true);
+  logMinDuration = '-1';
+  await assert.rejects(
+    () => runMobileReleaseExtensionProof(db, plan),
+    /auto_explain load\/configuration proof/,
+  );
 });

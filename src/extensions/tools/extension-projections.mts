@@ -651,7 +651,11 @@ export function catalogProjections(catalog: Row): Map<string, string> {
             ? 'SIZEOF_DATUM=4'
             : row.id === 'pg_partman'
               ? 'NO_BGW=1 SCRIPTS= DOCS='
-              : '-',
+              : row.id === 'vector'
+                ? // Upstream contracts floating-point operations; keep its SIMD within
+                  // the pinned Wasmer runtime's supported, non-relaxed instruction set.
+                  'OPTFLAGS=-mno-relaxed-simd'
+                : '-',
         ].join('\t'),
       );
     } else assert.equal(row['source-kind'], 'postgis', 'unsupported extension build kind');

@@ -9,7 +9,7 @@ import { extensionFeatures, fullEvidenceFeatures } from './wasix-extension-featu
 
 const ROOT = path.resolve(import.meta.dirname, '../../../..');
 
-test('every catalog extension has matching Rust asset and SDK features', () => {
+test('every catalog extension has matching Rust asset, SDK, and server features', () => {
   const manifest = JSON.parse(
     readFileSync(path.join(ROOT, 'src/extensions/generated/wasix/extensions.json'), 'utf8'),
   );
@@ -18,6 +18,7 @@ test('every catalog extension has matching Rust asset and SDK features', () => {
   for (const relative of [
     'src/wasix/runtime/crates/assets/Cargo.toml',
     'src/wasix/sdks/rust/Cargo.toml',
+    'src/wasix/pgwire-server/Cargo.toml',
   ]) {
     const cargo = Bun.TOML.parse(readFileSync(path.join(ROOT, relative), 'utf8'));
     assert.deepEqual(
@@ -30,16 +31,19 @@ test('every catalog extension has matching Rust asset and SDK features', () => {
     for (const extension of manifest.extensions) {
       const feature = `extension-${extension['sql-name'].replaceAll('_', '-')}`;
       // plpgsql ships in the core runtime rather than an extension carrier.
-      const dependencies = extension.dependencies
+      const server = relative.includes('/pgwire-server/');
+      const dependencies = (server ? [] : extension.dependencies)
         .filter((sqlName) => sqlName !== 'plpgsql')
         .map((sqlName) => `extension-${sqlName.replaceAll('_', '-')}`);
-      const forwarding = relative.includes('/sdks/')
-        ? ['extensions', `liboliphaunt-wasix-portable/${feature}`]
-        : [];
+      const forwarding = server
+        ? ['extensions', `oliphaunt-wasix/${feature}`]
+        : relative.includes('/sdks/')
+          ? ['extensions', `liboliphaunt-wasix-portable/${feature}`]
+          : [];
       assert.deepEqual(
         cargo.features[feature].toSorted(),
         [...dependencies, ...forwarding].sort(),
-        feature,
+        `${relative}: ${feature}`,
       );
     }
   }

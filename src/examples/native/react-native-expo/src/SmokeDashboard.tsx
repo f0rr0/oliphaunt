@@ -12,6 +12,7 @@ import {
   GENERATED_MOBILE_EXTENSION_SMOKE,
 } from './generated/extension-smoke';
 import {
+  activationSqlForExtension,
   runMobileBindingProof,
   runMobileReleaseExtensionProof,
   runPostgresLifecycleResumeCheck,
@@ -113,7 +114,7 @@ const packagedCatalogProfile = process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE
 const packagedCatalogProfileProbeSql = process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_SQL;
 const packagedCatalogProfileProbeExpected =
   process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_EXPECTED;
-const packagedExtensions = process.env.EXPO_PUBLIC_OLIPHAUNT_EXTENSIONS;
+const packagedExtensions: string | undefined = process.env.EXPO_PUBLIC_OLIPHAUNT_EXTENSIONS;
 let initialLaunchUrlPromise: Promise<string | null> | undefined;
 
 function smokeGlobalState(): SmokeGlobalState {
@@ -544,7 +545,9 @@ function mobileReleaseExtensionProofPlan() {
     selected.has(extension.sqlName),
   );
   if (plan.length !== selected.size) {
-    const known = new Set(GENERATED_MOBILE_EXTENSION_PLAN.map((extension) => extension.sqlName));
+    const known = new Set<string>(
+      GENERATED_MOBILE_EXTENSION_PLAN.map((extension) => extension.sqlName),
+    );
     const unknown = requested.filter((extension) => !known.has(extension));
     throw new Error(`unknown packaged mobile extensions: ${unknown.join(',')}`);
   }
@@ -563,26 +566,6 @@ function mobileReleaseExtensionProofPlan() {
       smokeStatements,
     };
   });
-}
-
-function activationSqlForExtension(extension: {
-  readonly sqlName: string;
-  readonly createsExtension: boolean;
-}): readonly string[] {
-  if (extension.createsExtension) {
-    return [`CREATE EXTENSION "${extension.sqlName}"`];
-  }
-  if (extension.sqlName === 'auto_explain') {
-    return [
-      "LOAD 'auto_explain'",
-      "SET auto_explain.log_min_duration = '0'",
-      "SET auto_explain.log_analyze = 'true'",
-      "SET auto_explain.log_level = 'NOTICE'",
-    ];
-  }
-  throw new Error(
-    `generated mobile extension ${extension.sqlName} does not create an extension and has no runtime proof`,
-  );
 }
 
 function waitForBackgroundAndForeground(

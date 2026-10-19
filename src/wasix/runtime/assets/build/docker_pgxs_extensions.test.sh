@@ -39,12 +39,13 @@ exec bash -c "$payload"
 SH
 chmod +x "$fixture/bin/docker"
 
-# Use the generated SQL-only row, plus a compiled extension with one make arg.
-awk -F '\t' '$1 == "pg_partman"' "$repo_root/src/extensions/generated/pgxs-build.tsv" > "$fixture/plan.tsv"
+# Use generated SQL-only and SIMD policy rows, plus a compiled extension with one make arg.
+awk -F '\t' '$1 == "pg_partman" || $1 == "vector"' "$repo_root/src/extensions/generated/pgxs-build.tsv" > "$fixture/plan.tsv"
 test -s "$fixture/plan.tsv"
 printf 'age\tage\tfixture-age\tage.so\textensions/age.tar.zst\tSIZEOF_DATUM=4\n' >> "$fixture/plan.tsv"
-partman_source="$(cut -f3 "$fixture/plan.tsv" | head -1)"
-mkdir -p "$fixture/$partman_source" "$fixture/fixture-age"
+partman_source="$(awk -F '\t' '$1 == "pg_partman" {print $3}' "$fixture/plan.tsv")"
+vector_source="$(awk -F '\t' '$1 == "vector" {print $3}' "$fixture/plan.tsv")"
+mkdir -p "$fixture/$partman_source" "$fixture/$vector_source" "$fixture/fixture-age"
 cat > "$fixture/$partman_source/Makefile" <<'MAKE'
 SCRIPTS = unwanted-tools
 DOCS = unwanted-docs
@@ -53,6 +54,15 @@ all:
 	@test -z "$(SCRIPTS)"
 	@test -z "$(DOCS)"
 	@touch flags-verified
+clean:
+	@true
+MAKE
+cat > "$fixture/$vector_source/Makefile" <<'MAKE'
+OPTFLAGS = -march=native
+PG_CFLAGS += $(OPTFLAGS) -ffp-contract=fast
+all:
+	@test "$(PG_CFLAGS)" = '-mno-relaxed-simd -ffp-contract=fast'
+	@touch vector.so flags-verified
 clean:
 	@true
 MAKE
@@ -73,4 +83,5 @@ DOCKER="$fixture/bin/docker" \
   bash "$script_dir/docker_pgxs_extensions.sh"
 test -f "$fixture/build/pgxs/pg_partman/flags-verified"
 test -f "$fixture/build/pgxs/age/flags-verified"
+test -f "$fixture/build/pgxs/vector/flags-verified"
 echo 'WASIX PGXS generated plan passes each make argument to the actual build'

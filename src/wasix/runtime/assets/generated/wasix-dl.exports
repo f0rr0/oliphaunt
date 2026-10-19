@@ -50,7 +50,6 @@ ConditionVariableSignal
 ConditionVariableSleep
 ConditionVariableTimedSleep
 ConditionalLockBuffer
-ConditionalLockRelationOid
 CopyErrorData
 CopyFromErrorCallback
 CopyIndexTuple
@@ -278,6 +277,7 @@ PushCopiedSnapshot
 QueryCancelPending
 QueryRewrite
 RangeVarCallbackMaintainsTable
+RangeVarCallbackOwnsRelation
 RangeVarGetRelidExtended
 ReThrowError
 ReadBuffer
@@ -490,6 +490,7 @@ biteq
 bitge
 bitgt
 bitle
+bitlength
 bitlt
 block_range_read_stream_cb
 bloom_add_element
@@ -503,7 +504,6 @@ bms_del_member
 bms_del_members
 bms_equal
 bms_free
-bms_int_members
 bms_is_member
 bms_is_subset
 bms_make_singleton
@@ -851,7 +851,7 @@ lappend_oid
 list_concat
 list_concat_copy
 list_copy
-list_delete_cell
+list_delete_int
 list_delete_last
 list_delete_nth_cell
 list_free
@@ -1011,7 +1011,6 @@ pg_numa_query_pages
 pg_number_of_ones
 pg_parse_query
 pg_plan_query
-pg_popcount64
 pg_popcount_optimized
 pg_printf
 pg_prng_double
