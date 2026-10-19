@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -37,6 +38,12 @@ test('PostGIS target differences are explicit', () => {
   assert.equal(android.components.at(-1), 'gdal');
   assert.deepEqual(wasix.components, android.components);
   assert.deepEqual(android.linkUnits.slice(0, 2), ['libiconv', 'libcharset']);
+  const target = Bun.TOML.parse(
+    readFileSync(new URL('../external/postgis/targets/wasix.toml', import.meta.url), 'utf8'),
+  );
+  for (const file of wasix.runtimeFiles) {
+    assert(target.data_files.includes(`share/${file}`), `WASIX data missing: ${file}`);
+  }
 });
 
 test('contrib native dependencies share the same cross-platform contract', () => {

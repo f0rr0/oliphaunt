@@ -9,32 +9,32 @@ module_files = [
   "lib/postgresql/liboliphaunt_postgis_deps.so",
 ]
 data_files = [
-  "share/postgresql/gdal/GDALLogoBW.svg",
-  "share/postgresql/gdal/GDALLogoColor.svg",
-  "share/postgresql/gdal/GDALLogoGS.svg",
-  "share/postgresql/gdal/LICENSE.TXT",
-  "share/postgresql/gdal/cubewerx_extra.wkt",
-  "share/postgresql/gdal/ecw_cs.wkt",
-  "share/postgresql/gdal/epsg.wkt",
-  "share/postgresql/gdal/esri_StatePlane_extra.wkt",
-  "share/postgresql/gdal/gdal_algorithm.schema.json",
-  "share/postgresql/gdal/gdalicon.png",
-  "share/postgresql/gdal/gdalinfo_output.schema.json",
-  "share/postgresql/gdal/gdalmdiminfo_output.schema.json",
-  "share/postgresql/gdal/gdalvrt.xsd",
-  "share/postgresql/gdal/leaflet_template.html",
-  "share/postgresql/gdal/ogr_fields_override.schema.json",
-  "share/postgresql/gdal/ogrinfo_output.schema.json",
-  "share/postgresql/gdal/ozi_datum.csv",
-  "share/postgresql/gdal/ozi_ellips.csv",
-  "share/postgresql/gdal/pci_datum.txt",
-  "share/postgresql/gdal/pci_ellips.txt",
-  "share/postgresql/gdal/stateplane.csv",
-  "share/postgresql/gdal/template_tiles.mapml",
-  "share/postgresql/gdal/tms_LINZAntarticaMapTileGrid.json",
-  "share/postgresql/gdal/tms_MapML_APSTILE.json",
-  "share/postgresql/gdal/tms_MapML_CBMTILE.json",
-  "share/postgresql/gdal/tms_NZTM2000.json",
+  "share/gdal/GDALLogoBW.svg",
+  "share/gdal/GDALLogoColor.svg",
+  "share/gdal/GDALLogoGS.svg",
+  "share/gdal/LICENSE.TXT",
+  "share/gdal/cubewerx_extra.wkt",
+  "share/gdal/ecw_cs.wkt",
+  "share/gdal/epsg.wkt",
+  "share/gdal/esri_StatePlane_extra.wkt",
+  "share/gdal/gdal_algorithm.schema.json",
+  "share/gdal/gdalicon.png",
+  "share/gdal/gdalinfo_output.schema.json",
+  "share/gdal/gdalmdiminfo_output.schema.json",
+  "share/gdal/gdalvrt.xsd",
+  "share/gdal/leaflet_template.html",
+  "share/gdal/ogr_fields_override.schema.json",
+  "share/gdal/ogrinfo_output.schema.json",
+  "share/gdal/ozi_datum.csv",
+  "share/gdal/ozi_ellips.csv",
+  "share/gdal/pci_datum.txt",
+  "share/gdal/pci_ellips.txt",
+  "share/gdal/stateplane.csv",
+  "share/gdal/template_tiles.mapml",
+  "share/gdal/tms_LINZAntarticaMapTileGrid.json",
+  "share/gdal/tms_MapML_APSTILE.json",
+  "share/gdal/tms_MapML_CBMTILE.json",
+  "share/gdal/tms_NZTM2000.json",
   "share/postgresql/contrib/postgis-3.6/legacy.sql",
   "share/postgresql/contrib/postgis-3.6/legacy_gist.sql",
   "share/postgresql/contrib/postgis-3.6/legacy_minimal.sql",
@@ -43,7 +43,7 @@ data_files = [
   "share/postgresql/contrib/postgis-3.6/spatial_ref_sys.sql",
   "share/postgresql/contrib/postgis-3.6/uninstall_legacy.sql",
   "share/postgresql/contrib/postgis-3.6/uninstall_postgis.sql",
-  "share/postgresql/proj/proj.db",
+  "share/proj/proj.db",
 ]
 configure_flags = [
   "--without-sfcgal",
@@ -104,7 +104,7 @@ destination = "share/proj"
 
 [[staging.data_dirs]]
 source = "postgis/share/gdal"
-destination = "share/postgresql/gdal"
+destination = "share/gdal"
 
 [[staging.data_dirs]]
 source = "postgis/share/extension-members"

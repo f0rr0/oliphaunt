@@ -1789,7 +1789,7 @@ fn add_oliphaunt_env(
         ("PGTZ", "UTC"),
         ("PG_COLOR", "never"),
         ("PROJ_DATA", "/share/proj"),
-        ("GDAL_DATA", "/share/postgresql/gdal"),
+        ("GDAL_DATA", "/share/gdal"),
     ] {
         builder.add_env(key, value);
     }
