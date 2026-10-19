@@ -11,6 +11,7 @@ import {
   loadReleaseMetadata,
   nativePublicationInputProjection,
 } from './bazel-release-metadata.mts';
+import { requestGithubPages } from './github-read.mts';
 import { fileIdentity } from './native-file-identity.mts';
 import { nativePublicationMetadataArtifactRow } from './native-publication-metadata-contract.mts';
 import {
@@ -944,7 +945,17 @@ for (const artifacts of [
           { source, runId: 77, completedVersions: {}, directory: path.join(root, 'owned') },
           {
             readJson: async () => eligible,
-            readPages: async () => artifacts,
+            readPages: (endpoint, options) =>
+              requestGithubPages(endpoint, {
+                ...options,
+                environment: {},
+                fetchImpl: async (url) => {
+                  expect(url).toBe(
+                    'https://api.github.com/repos/f0rr0/oliphaunt/actions/runs/77/artifacts?per_page=100&page=1',
+                  );
+                  return Response.json({ total_count: artifacts.length, artifacts });
+                },
+              }),
             acquire: async () => {
               throw new Error('no producer may be acquired');
             },
@@ -1551,12 +1562,23 @@ test('RN bootstrap acquires only the original Apple role and cannot wait on its 
       ],
     };
     const readJson = async () => eligible;
-    const readPages = async () => [
+    const artifacts = [
       { name: 'native-build-evidence-mobile-ios', expired: false },
       { name: 'native-build-evidence-native-macos-arm64', expired: false },
       { name: 'native-build-evidence-react-native-macos-arm64', expired: false },
       { name: 'native-build-evidence-release-families', expired: false },
     ];
+    const readPages = (endpoint, options) =>
+      requestGithubPages(endpoint, {
+        ...options,
+        environment: {},
+        fetchImpl: async (url) => {
+          expect(url).toBe(
+            'https://api.github.com/repos/f0rr0/oliphaunt/actions/runs/77/artifacts?per_page=100&page=1',
+          );
+          return Response.json({ total_count: artifacts.length, artifacts });
+        },
+      });
     const acquire = async (_root: string, expected: any) => {
       requests.push(expected.artifactName);
       return {

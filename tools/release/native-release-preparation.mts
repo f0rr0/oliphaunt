@@ -315,6 +315,19 @@ function cargoPayloadRequests(manifest, catalog, products) {
   return [...requests.values()];
 }
 
+function cacheGithubPages(readPages: typeof requestGithubPages) {
+  const reads = new Map<string, Promise<any[]>>();
+  return (...args: Parameters<typeof requestGithubPages>) => {
+    const key = JSON.stringify(args);
+    let result = reads.get(key);
+    if (!result) {
+      result = Promise.resolve(readPages(...args));
+      reads.set(key, result);
+    }
+    return result;
+  };
+}
+
 /** Construct the existing importer snapshot only from authenticated acquisition.
  * Old public seeds are explicit adoptions; they supply no historical recipe.
  */
@@ -344,7 +357,6 @@ export async function acquireNativePublicationInputs(
 ) {
   const repository = 'f0rr0/oliphaunt';
   const reads = new Map<string, Promise<any>>();
-  const paged = new Map<string, Promise<any[]>>();
   const read = (endpoint: string) => {
     let result = reads.get(endpoint);
     if (!result) {
@@ -353,14 +365,7 @@ export async function acquireNativePublicationInputs(
     }
     return result;
   };
-  const pages = (endpoint: string) => {
-    let result = paged.get(endpoint);
-    if (!result) {
-      result = Promise.resolve(readPages(endpoint));
-      paged.set(endpoint, result);
-    }
-    return result;
-  };
+  const pages = cacheGithubPages(readPages);
   const complete =
     assertCompleted ??
     createCompletedPublicationChecker({
@@ -1169,7 +1174,9 @@ export async function acquireNativePublicationBuilds(
         )),
     'native construction requests must use finite producer roles',
   );
-  const artifacts = await readPages(`repos/${repository}/actions/runs/${runId}/artifacts`);
+  const artifacts = await readPages(`repos/${repository}/actions/runs/${runId}/artifacts`, {
+    itemsField: 'artifacts',
+  });
   const roles = allRoles.filter(
     ({ artifactName }) =>
       !excludeArtifactNames.includes(artifactName) &&
@@ -1717,15 +1724,11 @@ export async function prepareNativeReleaseDelivery(
   );
   const repository = 'f0rr0/oliphaunt';
   const reads = new Map<string, Promise<any>>();
-  const pageReads = new Map<string, Promise<any[]>>();
   const read = (endpoint: string) => {
     if (!reads.has(endpoint)) reads.set(endpoint, Promise.resolve(readJson(endpoint)));
     return reads.get(endpoint)!;
   };
-  const pages = (endpoint: string) => {
-    if (!pageReads.has(endpoint)) pageReads.set(endpoint, Promise.resolve(readPages(endpoint)));
-    return pageReads.get(endpoint)!;
-  };
+  const pages = cacheGithubPages(readPages);
   const run = await read(`repos/${repository}/actions/runs/${runId}`);
   assert.ok(
     run.id === runId &&
@@ -1740,7 +1743,9 @@ export async function prepareNativeReleaseDelivery(
       run.run_attempt > 0,
     'native preparation requires successful exact reviewed-main qualification',
   );
-  const retained = await pages(`repos/${repository}/actions/runs/${runId}/artifacts`);
+  const retained = await pages(`repos/${repository}/actions/runs/${runId}/artifacts`, {
+    itemsField: 'artifacts',
+  });
   assert.ok(
     reviewedNativeProducerArtifacts().some(({ artifactName }) =>
       retained.some((artifact) => artifact.name === artifactName && artifact.expired === false),
