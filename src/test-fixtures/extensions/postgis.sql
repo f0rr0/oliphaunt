@@ -43,6 +43,8 @@ BEGIN
   IF topology_nodes <> 1 OR EXISTS (SELECT 1 FROM topology.ValidateTopology('oliphaunt_postgis_topology')) THEN
     RAISE EXCEPTION 'postgis topology persistence or validation failed: % nodes', topology_nodes;
   END IF;
+  -- Tiger resolves its internal functions and types through the session search path.
+  SET LOCAL search_path = public, tiger;
   normalized := tiger.normalize_address('1 Devonshire Place, Boston, MA 02109');
   IF normalized.address IS DISTINCT FROM 1 OR normalized.streetname IS DISTINCT FROM 'Devonshire'
     OR normalized.streettypeabbrev IS DISTINCT FROM 'Pl' OR normalized.location IS DISTINCT FROM 'Boston'
