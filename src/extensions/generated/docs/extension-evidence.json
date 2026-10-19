@@ -1346,7 +1346,7 @@
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:aad9dccd8ae0ff3bb4247c137d83b66ad8550a4ccbd4c4e860255a2d4a725816",
+  "source-digest": "sha256:9139145a35200f278950a414c400375fa1616c7f05b3cd049ea20321a64b0b25",
   "source-digest-inputs": [
     "src/third-party/postgres/source.toml",
     "src/extensions/catalog/extensions.source.json",
