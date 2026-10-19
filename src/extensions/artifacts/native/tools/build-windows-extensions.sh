@@ -87,6 +87,7 @@ windows_extension_postgis_dependencies() {
       cp "$work_root/proj-windows-build/data/proj.db" "$prefix/share/proj/proj.db"
     fi
   fi
+  # PROJ's CMake target carries PROJ_DLL= for static consumers on Windows.
   prefix="$dependency_root/gdal"
   if ! (first_file "$prefix" gdal.lib) >/dev/null 2>&1 || [ ! -f "$prefix/share/gdal/gdalvrt.xsd" ]; then
     # Preserve the release date in the pinned header instead of probing the enclosing checkout.
@@ -108,8 +109,8 @@ windows_extension_postgis_dependencies() {
       "-DJSONC_LIBRARY=$(native_path "$(first_file "$dependency_root/json-c" json-c.lib json-c-static.lib)")" \
       -DGDAL_USE_LIBXML2=ON "-DLIBXML2_INCLUDE_DIR=$(native_path "$dependency_root/libxml2/include/libxml2")" \
       "-DLIBXML2_LIBRARY=$(native_path "$(first_file "$dependency_root/libxml2" libxml2s.lib libxml2.lib xml2.lib)")" \
-      -DGDAL_USE_PROJ=ON "-DPROJ_INCLUDE_DIR=$(native_path "$dependency_root/proj/include")" \
-      "-DPROJ_LIBRARY=$(native_path "$(first_file "$dependency_root/proj" proj.lib libproj.lib)")" \
+      -DGDAL_FIND_PACKAGE_PROJ_MODE=CONFIG \
+      "-DPROJ_DIR=$(native_path "$dependency_root/proj/lib/cmake/proj")" \
       -DGDAL_USE_SQLITE3=ON "-DSQLite3_INCLUDE_DIR=$(native_path "$dependency_root/sqlite/include")" \
       "-DSQLite3_LIBRARY=$(native_path "$dependency_root/sqlite/lib/sqlite3.lib")" \
       -DACCEPT_MISSING_SQLITE3_MUTEX_ALLOC=ON
