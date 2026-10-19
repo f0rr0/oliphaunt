@@ -55,12 +55,35 @@ export function nativeSwiftSourceTagRoots(cohort: NativeBuildEvidence['cohorts']
   return roots;
 }
 
+/** The existing Swift source publisher writes Git100644; Bazel materialization modes are evidence only. */
+export function nativeSwiftSourceTagPublication(cohort: NativeBuildEvidence['cohorts'][number]) {
+  const tree = nativeSwiftSourceTagRoots(cohort).find(
+    ({ package: pkg }) => pkg.name === 'release-tree',
+  )?.package.outputs[0].path;
+  if (tree === undefined) return cohort;
+  return {
+    ...cohort,
+    outputs: cohort.outputs.map((output) =>
+      output.path === tree
+        ? {
+            ...output,
+            members: output.members.map((member) => ({
+              ...member,
+              mode: member.type === 'file' ? 0o644 : 0o755,
+            })),
+          }
+        : output,
+    ),
+  };
+}
+
 /** Current and held legal/source admission stays in the existing source-basis contract. */
 export function validateNativeSwiftSourceTagFiles(
   evidence: NativeBuildEvidence,
   resolve: (cohort: number, output: string) => string,
 ) {
-  for (const [index, cohort] of evidence.cohorts.entries()) {
+  for (const [index, captured] of evidence.cohorts.entries()) {
+    const cohort = nativeSwiftSourceTagPublication(captured);
     const roots = nativeSwiftSourceTagRoots(cohort);
     if (!roots.length) continue;
     const output = (name: string) =>

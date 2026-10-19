@@ -34,7 +34,7 @@ import { expectedProductArtifactRows } from './publication-lock.mts';
 import { ROOT } from './release-graph.mts';
 
 /** Real package writer and capture boundary; fixture BEP is never claimed to authenticate a build. */
-async function sourceFixture(f) {
+async function sourceFixture(f, rawExecutable = false) {
   const inputs = path.join(f.directory, 'swift-inputs');
   mkdirSync(inputs);
   const spec = await swiftInputs(inputs);
@@ -51,14 +51,18 @@ async function sourceFixture(f) {
     path.join(executionRoot, assets, checksum),
     `${createHash('sha256').update(readFileSync(spec.bindingsArchive)).digest('hex')}  ./${bindings}\n`,
   );
-  // An executable declared source member exercises Actions' outer mode normalization.
   const executable = `${source}/release-tree/src/sdks/swift/Templates/launch.sh`;
-  writeFileSync(path.join(executionRoot, executable), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  const archive = path.join(executionRoot, source, 'Oliphaunt-source.zip');
-  const portable = path.join(f.directory, 'package');
-  extractPortableArchiveTree(archive, portable, 'package');
-  writeFileSync(path.join(portable, 'Templates/launch.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  writeFileSync(archive, await createDeterministicZip(portable, { keepParent: true }));
+  if (rawExecutable) {
+    // Physical executable evidence remains exact; this source publisher still declares Git100644.
+    writeFileSync(path.join(executionRoot, executable), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const archive = path.join(executionRoot, source, 'Oliphaunt-source.zip');
+    const portable = path.join(f.directory, 'package');
+    extractPortableArchiveTree(archive, portable, 'package');
+    writeFileSync(path.join(portable, 'Templates/launch.sh'), '#!/bin/sh\nexit 0\n', {
+      mode: 0o644,
+    });
+    writeFileSync(archive, await createDeterministicZip(portable, { keepParent: true }));
+  }
   const rows = expectedProductArtifactRows([
     { id: 'oliphaunt-swift', kind: 'sdk', version: spec.version },
   ]);
@@ -191,9 +195,9 @@ async function sourceFixture(f) {
   };
 }
 
-test('complete Swift source tag transfers once with exact supplier bytes and restores captured safe modes at capsule staging', async () => {
+test('complete Swift source tag transfers once with exact raw modes and canonical publication modes', async () => {
   await fixture(async (f) => {
-    const s = await sourceFixture(f);
+    const s = await sourceFixture(f, true);
     const captured = s.capture();
     const directory = path.join(f.directory, 'source-packet');
     const evidence = JSON.parse(
@@ -230,7 +234,10 @@ test('complete Swift source tag transfers once with exact supplier bytes and res
     expect(observed.find(({ path }) => path.endsWith('launch.sh')).mode).toBe(0o644);
     const stagingRoot = path.resolve(ROOT, stageDirectory);
     const relativeTree = path.relative(stagingRoot, stagedTree).split(path.sep).join('/');
-    expect(captureNativeInputMembers(stagingRoot, relativeTree).members).toEqual(tree.members);
+    expect(tree.members.find(({ path }) => path.endsWith('launch.sh')).mode).toBe(0o755);
+    expect(captureNativeInputMembers(stagingRoot, relativeTree).members).toEqual(
+      tree.members.map((member) => ({ ...member, mode: member.type === 'file' ? 0o644 : 0o755 })),
+    );
     for (const member of treeFiles) {
       expect(readFileSync(path.join(stagedTree, member.path))).toEqual(
         readFileSync(path.join(s.executionRoot, tree.path, member.path)),
@@ -243,6 +250,12 @@ test('complete Swift source tag transfers once with exact supplier bytes and res
       readFileSync(path.join(stagedTree, 'src/sdks/swift/LIBOLIPHAUNT_VERSION'), 'utf8').trim(),
     ).toBe(s.spec.nativeVersion);
     expect(packet).not.toHaveProperty('releaseDecision');
+    const assetsOnly = normalized.stage({
+      excludeRoles: ['release-input'],
+      stageDirectory: `${stageDirectory}-assets`,
+    });
+    expect(assetsOnly).toHaveLength(2);
+    expect(assetsOnly.some((file) => path.basename(file) === 'release-tree')).toBe(false);
   });
 });
 
@@ -259,7 +272,13 @@ for (const fault of ['removed', 'extra', 'changed', 'mode'])
       if (fault === 'changed') writeFileSync(source, '// changed source tag only\n');
       if (fault === 'extra')
         writeFileSync(path.join(path.dirname(source), 'extra.swift'), '// extra source tag only\n');
-      if (fault === 'mode') chmodSync(source, 0o755);
+      if (fault === 'mode') {
+        const archive = path.join(s.executionRoot, s.source, 'Oliphaunt-source.zip');
+        const packaged = path.join(f.directory, 'executable-source-zip', 'package');
+        extractPortableArchiveTree(archive, packaged, 'package');
+        chmodSync(path.join(packaged, 'Sources/Oliphaunt/Oliphaunt.swift'), 0o755);
+        writeFileSync(archive, await createDeterministicZip(packaged, { keepParent: true }));
+      }
       const captured = s.capture();
       expect(() =>
         validateNativeSwiftSourceTagFiles(captured.evidence, (_, output) =>
@@ -356,7 +375,7 @@ for (const kind of [
 
 test('source tree transport rejects post-capture bytes and unsafe mode restoration without changing downloaded files', async () => {
   await fixture(async (f) => {
-    const s = await sourceFixture(f);
+    const s = await sourceFixture(f, true);
     const directory = path.join(f.directory, 'source-packet');
     const evidence = JSON.parse(
       readFileSync(writeNativeBuildEvidence(s.capture(), directory), 'utf8'),
@@ -376,9 +395,65 @@ test('source tree transport rejects post-capture bytes and unsafe mode restorati
     changed.cohorts[0].outputs
       .find(({ path }) => path.endsWith('/release-tree'))
       .members.find(({ path }) => path.endsWith('launch.sh')).mode = 0o777;
-    expect(() => readNativeBuildFinalFiles(directory, changed, s.expected)).toThrow(
-      'shared delivered members differ',
+    expect(() => readNativeBuildFinalFiles(directory, changed, s.expected).stage()).toThrow(
+      'unsafe captured mode',
     );
     expect(statSync(manifest).mode & 0o777).toBe(0o644);
+  });
+});
+
+test('readonly declared Swift source trees retain raw evidence and stage canonical publisher modes', async () => {
+  await fixture(async (f) => {
+    // The actual source writer creates0644 files. Stock Bazel8.8.1 makes every
+    // TreeArtifact member0555 after both cold execution and disk restoration.
+    const s = await sourceFixture(f);
+    const treePath = `${s.source}/release-tree`;
+    const physical = captureNativeOutputMembers(s.executionRoot, treePath).members;
+    try {
+      for (const member of physical)
+        chmodSync(path.join(s.executionRoot, treePath, member.path), 0o555);
+      const captured = s.capture();
+      const original = JSON.stringify(captured.evidence);
+      const raw = captured.evidence.cohorts[0].outputs.find(({ path }) => path === treePath);
+      expect(raw.members.every(({ mode }) => mode === 0o555)).toBe(true);
+      const directory = path.join(f.directory, 'readonly-source-packet');
+      const evidence = JSON.parse(
+        readFileSync(writeNativeBuildEvidence(captured, directory), 'utf8'),
+      );
+      const packet = readNativeBuildFinalFiles(directory, evidence, s.expected);
+      const stageDirectory = path
+        .relative(ROOT, path.join(f.directory, 'readonly-source-stage'))
+        .split(path.sep)
+        .join('/');
+      const staged = packet.stage({ stageDirectory });
+      const tree = staged.find((file) => path.basename(file) === 'release-tree');
+      const stagedMembers = captureNativeInputMembers(
+        path.dirname(tree),
+        path.basename(tree),
+      ).members;
+      expect(stagedMembers.map(({ mode, ...member }) => member)).toEqual(
+        raw.members.map(({ mode, ...member }) => member),
+      );
+      expect(
+        stagedMembers.every(({ type, mode }) => mode === (type === 'file' ? 0o644 : 0o755)),
+      ).toBe(true);
+      expect(JSON.stringify(captured.evidence)).toBe(original);
+      expect(evidence.cohorts[0].outputs.find(({ path }) => path === treePath).members).toEqual(
+        raw.members,
+      );
+      expect(captureNativeOutputMembers(s.executionRoot, treePath).members).toEqual(raw.members);
+      captured.assertUnchanged();
+      const version = path.join(s.executionRoot, treePath, 'src/sdks/swift/VERSION');
+      chmodSync(version, 0o444);
+      expect(() => captured.assertUnchanged()).toThrow('changed after capture');
+      chmodSync(version, 0o555);
+    } finally {
+      // Restore only fixture-owned permissions so cleanup cannot mask the assertion.
+      for (const member of physical)
+        chmodSync(
+          path.join(s.executionRoot, treePath, member.path),
+          member.type === 'file' ? 0o644 : 0o755,
+        );
+    }
   });
 });

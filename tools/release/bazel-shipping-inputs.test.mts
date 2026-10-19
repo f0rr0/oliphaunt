@@ -729,6 +729,65 @@ test('multi-output actions expand a shared input DAG once per product and graph 
   expect(() => buildShippingInputView(exported, cyclic)).toThrow('cycle in aquery producers');
 });
 
+test('cached compiler actions share input DAG traversal within each later product', () => {
+  const { exported, graph } = fixture();
+  exported.packages[0].ecosystem = 'github';
+  exported.packages.push({ ...exported.packages[0], product: 'beta', version: '2.3.4' });
+  for (let index = 0; index < 256; index++) {
+    const id = 100 + index;
+    graph.pathFragments.push({ id, parentId: 1, label: `header-${index}.h` });
+    graph.artifacts.push({ id, pathFragmentId: id });
+    graph.depSetOfFiles[0].directArtifactIds.push(id);
+  }
+  for (let index = 0; index < 63; index++) {
+    const id = 10000 + index;
+    graph.pathFragments.push({ id, parentId: 5, label: `object-${index}.o` });
+    graph.artifacts.push({ id, pathFragmentId: id });
+    graph.actions.push({
+      ...graph.actions[0],
+      actionKey: `compile-${index}`,
+      outputIds: [id],
+      primaryOutputId: id,
+    });
+    graph.depSetOfFiles[1].directArtifactIds.push(id);
+  }
+  const flat = buildShippingInputView(exported, graph);
+  const sets = graph.depSetOfFiles as {
+    id: number;
+    directArtifactIds?: number[];
+    transitiveDepSetIds?: number[];
+  }[];
+  const headers = sets[0].directArtifactIds;
+  sets[0] = { id: 1, transitiveDepSetIds: [1000, 1001] };
+  sets.push(
+    { id: 1000, transitiveDepSetIds: [1002] },
+    { id: 1001, transitiveDepSetIds: [1002] },
+    { id: 1002, directArtifactIds: headers },
+  );
+  const original = JSON.stringify(graph);
+  let childIdReads = 0;
+  for (const set of sets)
+    set.transitiveDepSetIds?.forEach((value, index, ids) => {
+      Object.defineProperty(ids, index, {
+        get() {
+          childIdReads++;
+          return value;
+        },
+      });
+    });
+  const view = buildShippingInputView(exported, graph);
+  expect(childIdReads).toBe(260);
+  expect(view).toEqual(flat);
+  expect(view.products.beta.inputs).toEqual(view.products.alpha.inputs);
+  expect(view.products.beta.actions).toEqual(view.products.alpha.actions);
+  expect(view.products.beta.inputs).toHaveLength(258);
+  expect(view.products.beta.actions).toHaveLength(65);
+  childIdReads = 0;
+  expect(buildShippingInputView(exported, graph)).toEqual(view);
+  expect(childIdReads).toBe(260);
+  expect(JSON.stringify(graph)).toBe(original);
+});
+
 test('direct input validation remains lazy, ordered and isolated to each graph read', () => {
   const { exported, graph } = fixture();
   const before = buildShippingInputView(exported, graph);
