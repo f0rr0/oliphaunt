@@ -82,6 +82,38 @@ For concurrent commit, recreate the fixture and use two fresh sessions:
 4. B: run `Q` again under the default READ COMMITTED isolation. It incorrectly
    still returns Alice/Bob. `SELECT count(*) FROM cache_probe."KNOWS"` returns 0.
 
+## Narrower cache-policy assessment
+
+The pinned source defines only `age.enable_containment`; it has no GUC that
+turns traversal caching off. That setting controls property-filter planning,
+not the graph cache.
+
+There is an existing, upstream-tested SQL cache-reset API:
+
+```sql
+SELECT ag_catalog.age_delete_global_graphs(NULL);
+```
+
+Calling it as a separate statement after rollback, or in the reader after the
+other session commits, makes **both reproductions pass** on stock PostgreSQL
+18. It is a useful manual recovery step and leaves caching inside the next
+query intact. It is not a persistent disabled-cache mode: that query creates
+another backend-local cache, which can become stale again.
+
+Adding this call to LOAD/post-create activation does not protect subsequent
+transactions. Transparent use before every query would require an execution
+policy covering native, WASIX, pgwire, nested SPI and subtransaction entry
+points. It would also need to preserve live traversal contexts held by active
+portals/cursors instead of freeing them. The public SQL reset API alone does
+not establish those guarantees, so the draft does not inject it globally or
+alter the retained regression to call it.
+
+A precise snapshot-lifetime guard remains a plausible follow-up, but merely
+checking snapshot xmin/xmax is insufficient: the in-progress transaction set
+can change without those bounds changing. Command/subtransaction visibility,
+cache construction during concurrent commits, and REPEATABLE READ snapshots
+also need tests. No partial snapshot guard is presented as a qualified fix.
+
 ## Implementation and observed checks
 
 | Surface | Implemented | Observed locally |
