@@ -506,7 +506,6 @@ asin
 assign_expr_collations
 atan2l
 atexit
-atof
 atoi
 be_lo_unlink
 before_shmem_exit
@@ -960,7 +959,6 @@ namein
 nanosleep
 network_cmp
 new_object_addresses
-nextafterf
 nocache_index_getattr
 nocachegetattr
 nodeToString
@@ -1149,7 +1147,6 @@ repalloc_huge
 reservoir_get_next_S
 reservoir_init_selection_state
 resetStringInfo
-roundf
 s_lock
 sampler_random_fract
 sampler_random_init_state
@@ -1176,7 +1173,6 @@ smgrnblocks
 smgropen
 smgrpin
 smgrtruncate
-sprintf
 sqrtl
 sscanf
 standard_ExecutorEnd
