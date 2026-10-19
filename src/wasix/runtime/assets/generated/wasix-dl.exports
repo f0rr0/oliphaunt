@@ -1036,6 +1036,7 @@ pg_detoast_datum_packed
 pg_detoast_datum_slice
 pg_do_encoding_conversion
 pg_encoding_max_length
+pg_fprintf
 pg_get_indexdef_columns_extended
 pg_get_querydef
 pg_get_shmem_pagesize
