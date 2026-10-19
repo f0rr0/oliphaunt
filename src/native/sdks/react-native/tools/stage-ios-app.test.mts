@@ -789,7 +789,15 @@ async function createFixture(root) {
       assert.deepEqual(iosDependencies, ['openssl']);
     }
     if (fixture.sqlName === 'postgis') {
-      assert.deepEqual(iosDependencies, ['geos', 'geos-c', 'json-c', 'libxml2', 'proj', 'sqlite']);
+      assert.deepEqual(iosDependencies, [
+        'gdal',
+        'geos',
+        'geos-c',
+        'json-c',
+        'libxml2',
+        'proj',
+        'sqlite',
+      ]);
     }
     const config = {
       ...fixture,
@@ -976,6 +984,7 @@ async function main() {
 
     const frameworkNames = (await fs.readdir(path.join(output, 'frameworks', 'extensions'))).sort();
     assert.deepEqual(frameworkNames, [
+      'liboliphaunt_dependency_gdal.xcframework',
       'liboliphaunt_dependency_geos-c.xcframework',
       'liboliphaunt_dependency_geos.xcframework',
       'liboliphaunt_dependency_json-c.xcframework',
