@@ -51,7 +51,11 @@ export class StartupBudget {
 
   prepare<T>(operation: Promise<T>): Promise<T> {
     if (this.remaining === 0) this.#controller.abort(this.#error);
-    return observePreparation(operation, this.signal);
+    return observePreparation(operation, this.signal).then((value) => {
+      // A settled microtask can run before an overdue timer after host work blocks.
+      this.check();
+      return value;
+    });
   }
 
   finish(): void {

@@ -106,6 +106,26 @@ type ExecProtocolRawStreamWithErrorFn = unsafe extern "C" fn(
     *mut c_void,
     *mut NativeErrorCapture,
 ) -> c_int;
+pub(super) type ProtocolStartCallbackFn = unsafe extern "C" fn(*mut c_void, u64) -> c_int;
+type ExecProtocolRawStreamStartedWithErrorFn = unsafe extern "C" fn(
+    *mut NativeHandle,
+    *const c_uchar,
+    usize,
+    ProtocolStartCallbackFn,
+    *mut c_void,
+    StreamCallbackFn,
+    *mut c_void,
+    *mut NativeErrorCapture,
+) -> c_int;
+type ExecProtocolExchangeWithErrorFn = unsafe extern "C" fn(
+    *mut NativeHandle,
+    usize,
+    ProtocolStartCallbackFn,
+    *mut c_void,
+    StreamCallbackFn,
+    *mut c_void,
+    *mut NativeErrorCapture,
+) -> c_int;
 type ExecSimpleQueryWithErrorFn = unsafe extern "C" fn(
     *mut NativeHandle,
     *const c_char,
@@ -124,6 +144,8 @@ pub(super) type FeedStreamFn = unsafe extern "C" fn(
     usize,
     *mut NativeErrorCapture,
 ) -> c_int;
+pub(super) type FinishExchangeFn =
+    unsafe extern "C" fn(*mut NativeHandle, u64, *mut NativeErrorCapture) -> c_int;
 type CopyLastErrorFn = unsafe extern "C" fn(*mut NativeHandle, *mut c_char, usize) -> usize;
 type VersionFn = unsafe extern "C" fn() -> *const c_char;
 type FreeResponseFn = unsafe extern "C" fn(*mut NativeResponse);
@@ -139,6 +161,12 @@ pub(super) struct NativeSymbols {
     pub(super) init_with_error: InitWithErrorFn,
     pub(super) exec_protocol_with_error: ExecProtocolWithErrorFn,
     pub(super) exec_protocol_raw_stream_with_error: ExecProtocolRawStreamWithErrorFn,
+    pub(super) exec_protocol_raw_stream_started_with_error:
+        Option<ExecProtocolRawStreamStartedWithErrorFn>,
+    pub(super) exec_protocol_exchange_with_error: Option<ExecProtocolExchangeWithErrorFn>,
+    pub(super) feed_protocol_stream_wait: Option<FeedStreamFn>,
+    pub(super) feed_protocol_exchange: Option<FeedStreamFn>,
+    pub(super) finish_protocol_exchange: Option<FinishExchangeFn>,
     pub(super) exec_simple_query_with_error: ExecSimpleQueryWithErrorFn,
     pub(super) cancel: CancelFn,
     pub(super) detach_with_error: DetachWithErrorFn,
@@ -251,6 +279,12 @@ impl NativeSymbols {
             load_symbol(&library, b"oliphaunt_exec_protocol_with_error\0")?;
         let exec_protocol_raw_stream_with_error =
             load_symbol(&library, b"oliphaunt_exec_protocol_raw_stream_with_error\0")?;
+        let exec_protocol_raw_stream_started_with_error = load_optional_symbol(
+            &library,
+            b"oliphaunt_exec_protocol_raw_stream_started_with_error\0",
+        );
+        let exec_protocol_exchange_with_error =
+            load_optional_symbol(&library, b"oliphaunt_exec_protocol_exchange_with_error\0");
         let exec_simple_query_with_error =
             load_symbol(&library, b"oliphaunt_exec_simple_query_with_error\0")?;
         let cancel = load_symbol(&library, b"oliphaunt_cancel\0")?;
@@ -273,6 +307,20 @@ impl NativeSymbols {
             init_with_error,
             exec_protocol_with_error,
             exec_protocol_raw_stream_with_error,
+            exec_protocol_raw_stream_started_with_error,
+            exec_protocol_exchange_with_error,
+            feed_protocol_stream_wait: load_optional_symbol(
+                &library,
+                b"oliphaunt_feed_protocol_stream_wait\0",
+            ),
+            feed_protocol_exchange: load_optional_symbol(
+                &library,
+                b"oliphaunt_feed_protocol_exchange\0",
+            ),
+            finish_protocol_exchange: load_optional_symbol(
+                &library,
+                b"oliphaunt_finish_protocol_exchange\0",
+            ),
             exec_simple_query_with_error,
             cancel,
             detach_with_error,
@@ -382,6 +430,18 @@ fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T> {
         ))
     })?;
     Ok(*symbol)
+}
+
+fn load_optional_symbol<T: Copy>(library: &Library, name: &[u8]) -> Option<T> {
+    unsafe { library.get::<T>(name) }.ok().map(|symbol| *symbol)
+}
+
+pub(super) fn require_symbol<T>(symbol: Option<T>, name: &str) -> Result<T> {
+    symbol.ok_or_else(|| {
+        Error::Engine(format!(
+            "native liboliphaunt is missing required symbol {name}"
+        ))
+    })
 }
 
 pub(super) fn path_to_cstring(path: &Path, label: &str) -> Result<CString> {

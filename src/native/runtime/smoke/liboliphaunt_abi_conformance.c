@@ -122,6 +122,23 @@ int main(void) {
         size_t,
         OliphauntStreamCallback,
         void *) = oliphaunt_exec_protocol_raw_stream;
+    int32_t (*exec_protocol_raw_stream_started_with_error_fn)(
+        OliphauntHandle *, const uint8_t *, size_t,
+        OliphauntProtocolStartCallback, void *, OliphauntStreamCallback, void *,
+        OliphauntErrorCapture *) = oliphaunt_exec_protocol_raw_stream_started_with_error;
+    int32_t (*feed_protocol_stream_wait_fn)(
+        OliphauntHandle *, uint64_t, const uint8_t *, size_t,
+        OliphauntErrorCapture *) = oliphaunt_feed_protocol_stream_wait;
+    int32_t (*exec_protocol_exchange_with_error_fn)(
+        OliphauntHandle *, size_t, OliphauntProtocolStartCallback, void *,
+        OliphauntStreamCallback, void *,
+        OliphauntErrorCapture *) = oliphaunt_exec_protocol_exchange_with_error;
+    int32_t (*feed_protocol_exchange_fn)(
+        OliphauntHandle *, uint64_t, const uint8_t *, size_t,
+        OliphauntErrorCapture *) = oliphaunt_feed_protocol_exchange;
+    int32_t (*finish_protocol_exchange_fn)(
+        OliphauntHandle *, uint64_t,
+        OliphauntErrorCapture *) = oliphaunt_finish_protocol_exchange;
     int32_t (*backup_fn)(OliphauntHandle *, OliphauntResponse *) =
         oliphaunt_backup;
     int32_t (*restore_fn)(const OliphauntRestoreOptions *) = oliphaunt_restore;
@@ -174,6 +191,13 @@ int main(void) {
     CHECK(exec_protocol_fn != NULL, "oliphaunt_exec_protocol must link");
     CHECK(exec_simple_query_fn != NULL, "oliphaunt_exec_simple_query must link");
     CHECK(exec_protocol_raw_stream_fn != NULL, "oliphaunt_exec_protocol_raw_stream must link");
+    CHECK(exec_protocol_raw_stream_started_with_error_fn != NULL,
+          "oliphaunt_exec_protocol_raw_stream_started_with_error must link");
+    CHECK(feed_protocol_stream_wait_fn != NULL, "oliphaunt_feed_protocol_stream_wait must link");
+    CHECK(exec_protocol_exchange_with_error_fn != NULL,
+          "oliphaunt_exec_protocol_exchange_with_error must link");
+    CHECK(feed_protocol_exchange_fn != NULL, "oliphaunt_feed_protocol_exchange must link");
+    CHECK(finish_protocol_exchange_fn != NULL, "oliphaunt_finish_protocol_exchange must link");
     CHECK(backup_fn != NULL, "oliphaunt_backup must link");
     CHECK(restore_fn != NULL, "oliphaunt_restore must link");
     CHECK(init_with_error_fn != NULL, "oliphaunt_init_with_error must link");

@@ -1785,6 +1785,7 @@ impl AsyncOliphaunt {
     /// Run packaged `pg_dump` against this database on its owner thread.
     #[cfg(feature = "tools-execution")]
     pub async fn pg_dump(&self, options: crate::oliphaunt::tools::PgDumpOptions) -> Result<String> {
+        let options = options.start_startup_budget();
         self.owner
             .call_factory(options.retained_bytes(), None, None, || {
                 move |database: &mut DirectOliphaunt| {
@@ -1803,6 +1804,7 @@ impl AsyncOliphaunt {
         writer: impl std::io::Write + Send + 'static,
         diagnostics: Option<Box<dyn std::io::Write + Send>>,
     ) -> Result<crate::oliphaunt::tools::PostgresToolSummary> {
+        let options = options.start_startup_budget();
         self.owner
             .call_factory(options.retained_bytes(), None, None, || {
                 move |database: &mut DirectOliphaunt| {
@@ -1820,6 +1822,7 @@ impl AsyncOliphaunt {
         destination: impl Into<std::path::PathBuf>,
         diagnostics: Option<Box<dyn std::io::Write + Send>>,
     ) -> Result<crate::oliphaunt::tools::PostgresToolSummary> {
+        let options = options.start_startup_budget();
         let destination = destination.into();
         self.owner
             .call_factory(
@@ -1848,6 +1851,7 @@ impl AsyncOliphaunt {
     ) where
         C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolOutput>) + Send + 'static,
     {
+        let options = options.start_startup_budget();
         self.owner.call_with_completion_bytes(
             options.retained_bytes(),
             None,
@@ -1867,6 +1871,7 @@ impl AsyncOliphaunt {
     ) where
         C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolSummary>) + Send + 'static,
     {
+        let options = options.start_startup_budget();
         self.owner.call_with_completion_bytes(
             options
                 .retained_bytes()
@@ -1889,6 +1894,7 @@ impl AsyncOliphaunt {
     ) where
         C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolSummary>) + Send + 'static,
     {
+        let options = options.start_startup_budget();
         self.owner.call_with_completion_bytes(
             options.retained_bytes(),
             None,
@@ -1900,6 +1906,7 @@ impl AsyncOliphaunt {
     /// Run packaged non-interactive `psql` against this database on its owner thread.
     #[cfg(feature = "tools-execution")]
     pub async fn psql(&self, options: crate::oliphaunt::tools::PsqlOptions) -> Result<String> {
+        let options = options.start_startup_budget();
         self.owner
             .call_factory(options.retained_bytes(), None, None, || {
                 move |database: &mut DirectOliphaunt| {
@@ -1918,6 +1925,7 @@ impl AsyncOliphaunt {
         writer: impl std::io::Write + Send + 'static,
         diagnostics: Option<Box<dyn std::io::Write + Send>>,
     ) -> Result<crate::oliphaunt::tools::PostgresToolSummary> {
+        let options = options.start_startup_budget();
         self.owner
             .call_factory(options.retained_bytes(), None, None, || {
                 move |database: &mut DirectOliphaunt| {
@@ -1935,6 +1943,7 @@ impl AsyncOliphaunt {
         destination: impl Into<std::path::PathBuf>,
         diagnostics: Option<Box<dyn std::io::Write + Send>>,
     ) -> Result<crate::oliphaunt::tools::PostgresToolSummary> {
+        let options = options.start_startup_budget();
         let destination = destination.into();
         self.owner
             .call_factory(
@@ -1963,6 +1972,7 @@ impl AsyncOliphaunt {
     ) where
         C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolOutput>) + Send + 'static,
     {
+        let options = options.start_startup_budget();
         self.owner.call_with_completion_bytes(
             options.retained_bytes(),
             None,
@@ -1982,6 +1992,7 @@ impl AsyncOliphaunt {
     ) where
         C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolSummary>) + Send + 'static,
     {
+        let options = options.start_startup_budget();
         self.owner.call_with_completion_bytes(
             options
                 .retained_bytes()
@@ -2004,6 +2015,7 @@ impl AsyncOliphaunt {
     ) where
         C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolSummary>) + Send + 'static,
     {
+        let options = options.start_startup_budget();
         self.owner.call_with_completion_bytes(
             options.retained_bytes(),
             None,

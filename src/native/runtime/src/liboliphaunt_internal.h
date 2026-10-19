@@ -13,7 +13,7 @@
 #define OLIPHAUNT_ICU_DATA_DIR_ENV "OLIPHAUNT_ICU_DATA_DIR"
 #define OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV "OLIPHAUNT_EMBEDDED_MODULE_DIR"
 #define OLIPHAUNT_ERROR_CAPACITY 1024
-#define OLIPHAUNT_EMBEDDED_IO_ABI_VERSION 2U
+#define OLIPHAUNT_EMBEDDED_IO_ABI_VERSION 3U
 
 /* Resource overrides are decimal integers, never prefixes, signs or wrapped sizes.
  * Invalid legacy environment values retain their documented fallback. */
@@ -72,7 +72,8 @@ typedef struct OliphauntEmbeddedIO {
     ssize_t (*write)(void *context, const void *ptr, size_t len);
     int (*set_timeout)(void *context, long timeout_ms);
     int (*set_interrupt_wakeup)(void *context, uint32_t kind, uintptr_t token);
-    void (*ignore_sync)(void *context);
+    void (*protocol_checkpoint)(void *context, bool synchronized, size_t buffered_input);
+    void (*copy_input)(void *context, bool extended);
 } OliphauntEmbeddedIO;
 
 typedef struct OliphauntOutputChunk {
@@ -225,7 +226,12 @@ struct OliphauntHandle {
     size_t output_cap;
     size_t output_scan_off;
     bool output_ready;
-    size_t ready_remaining;
+    bool protocol_operation;
+    bool protocol_checkpoint_valid;
+    bool protocol_synchronized;
+    bool protocol_saw_ready;
+    bool protocol_waiting_input;
+    size_t protocol_buffered_input;
     unsigned char transaction_status;
     bool backup_mode_exit_unconfirmed;
 
@@ -234,8 +240,14 @@ struct OliphauntHandle {
     bool stream_input_closed;
     bool stream_extended_pending;
     bool stream_copy_input;
-    bool stream_ready_implicit;
-    size_t stream_copy_ignored_sync;
+    bool stream_copy_extended;
+    bool stream_fragmented;
+    bool input_finite;
+    size_t stream_input_expected;
+    size_t stream_input_received;
+    unsigned char stream_input_header[5];
+    size_t stream_input_header_len;
+    size_t stream_input_body_remaining;
     bool stream_failed;
     OliphauntOutputChunk *stream_head;
     OliphauntOutputChunk *stream_tail;
@@ -360,7 +372,8 @@ ssize_t oliphaunt_embedded_read(void *context, void *ptr, size_t len, long timeo
 ssize_t oliphaunt_embedded_write(void *context, const void *ptr, size_t len);
 int oliphaunt_embedded_set_timeout(void *context, long timeout_ms);
 int oliphaunt_embedded_set_interrupt_wakeup(void *context, uint32_t kind, uintptr_t token);
-void oliphaunt_embedded_ignore_sync(void *context);
+void oliphaunt_embedded_protocol_checkpoint(void *context, bool synchronized, size_t buffered_input);
+void oliphaunt_embedded_copy_input(void *context, bool extended);
 int oliphaunt_wake_backend_locked(OliphauntHandle *handle);
 int oliphaunt_set_input_locked(OliphauntHandle *handle, const void *buf, size_t len);
 int oliphaunt_startup_timeout_ms(void);

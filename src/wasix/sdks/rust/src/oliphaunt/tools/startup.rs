@@ -29,10 +29,10 @@ pub(super) struct Startup {
 }
 
 impl Startup {
-    pub(super) fn new(timeout: Duration) -> Result<Self> {
+    pub(super) fn new(timeout: Duration, deadline: Option<Instant>) -> Result<Self> {
         validate_timeout(timeout)?;
         Ok(Self {
-            deadline: Instant::now() + timeout,
+            deadline: deadline.unwrap_or_else(|| Instant::now() + timeout),
             state: Mutex::new(State::default()),
         })
     }
@@ -97,14 +97,14 @@ mod tests {
 
     #[test]
     fn completion_and_expiry_cannot_reclassify_each_other() {
-        let ready = Startup::new(Duration::from_secs(1)).unwrap();
+        let ready = Startup::new(Duration::from_secs(1), None).unwrap();
         ready.connected().unwrap();
         assert!(!ready.expire());
         ready.check().unwrap();
-        let expired = Startup::new(Duration::from_secs(1)).unwrap();
+        let expired = Startup::new(Duration::from_secs(1), None).unwrap();
         assert!(expired.expire());
         assert!(expired.connected().is_err());
         assert!(expired.check().is_err());
-        assert!(Startup::new(Duration::ZERO).is_err());
+        assert!(Startup::new(Duration::ZERO, None).is_err());
     }
 }

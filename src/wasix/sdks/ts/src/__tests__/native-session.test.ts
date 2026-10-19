@@ -266,6 +266,62 @@ describe('WASIX native embedded payload compatibility', () => {
     }
   });
 
+  it('checks the residual tool budget after script preparation at native submission', async () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    nativeMocks.loadAddon.mockReturnValue({ ...addon(), toolOptionsVersion: () => 1 });
+    try {
+      for (const owner of [NativeWasixSession, NativeWasixActorSession]) {
+        now = 0;
+        const session = await owner.open(workerOpenOptions());
+        await expect(
+          session.runTool({
+            runtimeVersion: '0.1.1',
+            tool: { ...toolDescriptor, name: 'psql' },
+            args: [],
+            startupTimeoutMs: 10,
+            get stdin() {
+              now = 11;
+              return new TextEncoder().encode('select 1');
+            },
+          }),
+        ).rejects.toThrow('startup exceeded 10ms');
+        expect(nativeMocks.psql).not.toHaveBeenCalled();
+        await session.close();
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('allows execution beyond the tool startup budget after native ownership transfers', async () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    nativeMocks.loadAddon.mockReturnValue({ ...addon(), toolOptionsVersion: () => 1 });
+    nativeMocks.pgDump.mockImplementation((_args, input) => {
+      expect(input.startupTimeoutMs).toBe(10);
+      now = 100;
+      return { status: 0, stdout: Uint8Array.of(1), stderr: new Uint8Array() };
+    });
+    try {
+      for (const owner of [NativeWasixSession, NativeWasixActorSession]) {
+        now = 0;
+        const session = await owner.open(workerOpenOptions());
+        await expect(
+          session.runTool({
+            runtimeVersion: '0.1.1',
+            tool: toolDescriptor,
+            args: [],
+            startupTimeoutMs: 10,
+          }),
+        ).resolves.toMatchObject({ exitCode: 0, stdout: Uint8Array.of(1) });
+        await session.close();
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('passes an immutable profile to direct and actor opens', async () => {
     const options = workerOpenOptions();
 

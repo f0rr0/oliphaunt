@@ -11,7 +11,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::task::{Context as TaskContext, Poll};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use tempfile::TempDir;
@@ -71,6 +71,7 @@ const PSQL_VALUE_OPTIONS: &[&str] = &[
 pub struct PgDumpOptions {
     args: Vec<String>,
     startup_timeout: Option<Duration>,
+    startup_deadline: Option<Instant>,
     assets: Option<Arc<ToolAssets>>,
 }
 
@@ -99,6 +100,21 @@ impl ToolAssets {
 }
 
 impl PgDumpOptions {
+    pub(crate) fn start_startup_budget(mut self) -> Self {
+        if self.startup_deadline.is_none() {
+            self.startup_deadline = Instant::now()
+                .checked_add(self.startup_timeout.unwrap_or(startup::DEFAULT_TIMEOUT));
+        }
+        self
+    }
+
+    /// Begin the existing startup budget before the native adapter copies or queues assets.
+    #[cfg(feature = "__internal-napi")]
+    #[doc(hidden)]
+    pub fn __start_startup_budget(self) -> Self {
+        self.start_startup_budget()
+    }
+
     /// Budget through opening the embedded protocol connection; queries/output are excluded.
     /// Defaults to 30 seconds. Expiry cancels the owned guest and waits for cleanup.
     pub fn startup_timeout(mut self, timeout: Duration) -> Self {
@@ -330,6 +346,7 @@ pub struct PsqlOptions {
     args: Vec<String>,
     input: Option<PsqlInput>,
     startup_timeout: Option<Duration>,
+    startup_deadline: Option<Instant>,
     assets: Option<Arc<ToolAssets>>,
 }
 
@@ -340,6 +357,21 @@ enum PsqlInput {
 }
 
 impl PsqlOptions {
+    pub(crate) fn start_startup_budget(mut self) -> Self {
+        if self.startup_deadline.is_none() {
+            self.startup_deadline = Instant::now()
+                .checked_add(self.startup_timeout.unwrap_or(startup::DEFAULT_TIMEOUT));
+        }
+        self
+    }
+
+    /// Begin the existing startup budget before the native adapter copies or queues assets.
+    #[cfg(feature = "__internal-napi")]
+    #[doc(hidden)]
+    pub fn __start_startup_budget(self) -> Self {
+        self.start_startup_budget()
+    }
+
     /// Budget through opening the embedded protocol connection; queries/output are excluded.
     /// Defaults to 30 seconds. Expiry cancels the owned guest and waits for cleanup.
     pub fn startup_timeout(mut self, timeout: Duration) -> Self {
@@ -1052,6 +1084,7 @@ where
     let options = options.clone();
     run_direct_tool(
         options.startup_timeout.unwrap_or(startup::DEFAULT_TIMEOUT),
+        options.startup_deadline,
         move |networking| {
             pg_dump_with_networking(
                 DIRECT_TOOL_ADDR,
@@ -1081,6 +1114,7 @@ where
     let options = options.clone();
     run_direct_tool(
         options.startup_timeout.unwrap_or(startup::DEFAULT_TIMEOUT),
+        options.startup_deadline,
         move |networking| {
             run_psql_with_networking(
                 DIRECT_TOOL_ADDR,
@@ -1095,13 +1129,19 @@ where
     )
 }
 
-fn run_direct_tool<T, R, F>(timeout: Duration, run: R, serve: F) -> Result<T>
+fn run_direct_tool<T, R, F>(
+    timeout: Duration,
+    deadline: Option<Instant>,
+    run: R,
+    serve: F,
+) -> Result<T>
 where
     T: Send + 'static,
     R: FnOnce(DirectToolNetworking) -> Result<T> + Send + 'static,
     F: FnOnce(DirectToolSocket) -> Result<()>,
 {
-    let startup = Arc::new(startup::Startup::new(timeout)?);
+    let startup = Arc::new(startup::Startup::new(timeout, deadline)?);
+    startup.check()?;
     let (socket_tx, socket_rx) = mpsc::sync_channel(1);
     let guest_startup = startup.clone();
     let runner = thread::spawn(move || run(DirectToolNetworking::new(socket_tx, guest_startup)));
@@ -1965,9 +2005,32 @@ mod tests {
     }
 
     #[test]
+    fn submitted_tool_startup_deadline_is_not_renewed_before_execution() {
+        let options = PgDumpOptions::new()
+            .startup_timeout(Duration::from_millis(10))
+            .start_startup_budget();
+        let deadline = options.startup_deadline;
+        assert!(deadline.is_some());
+        assert_eq!(
+            options.clone().start_startup_budget().startup_deadline,
+            deadline
+        );
+        let error = run_direct_tool(
+            Duration::from_secs(30),
+            Some(Instant::now()),
+            |_| -> Result<()> { panic!("expired queued work must not launch its guest") },
+            |_| panic!("expired queued work must not enter the database"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("startup deadline exceeded"));
+        assert!(!is_direct_tool_outcome_unknown(&error));
+    }
+
+    #[test]
     fn failure_before_direct_tool_connection_has_known_outcome() {
         let error = run_direct_tool(
             startup::DEFAULT_TIMEOUT,
+            None,
             |_| Err::<String, _>(anyhow!("tool failed before opening its virtual connection")),
             |_| panic!("a pre-connection failure must not enter the database protocol server"),
         )
@@ -1983,6 +2046,7 @@ mod tests {
     fn selected_startup_budget_expires_before_connect_but_not_during_serving() {
         let error = run_direct_tool(
             Duration::from_millis(20),
+            None,
             |network| {
                 while network.startup.check().is_ok() {
                     thread::sleep(Duration::from_millis(1));
@@ -1997,6 +2061,7 @@ mod tests {
 
         let output = run_direct_tool(
             Duration::from_millis(100),
+            None,
             |network| {
                 let _socket = crate::oliphaunt::host_runtime::runtime()?
                     .block_on(network.connect_tcp(DIRECT_TOOL_LOCAL_ADDR, DIRECT_TOOL_ADDR))?;
@@ -2017,6 +2082,7 @@ mod tests {
     fn successful_direct_tool_without_connection_returns_output() {
         let output = run_direct_tool(
             startup::DEFAULT_TIMEOUT,
+            None,
             |_| Ok("pg_dump (PostgreSQL) 18.4\n".to_owned()),
             |_| panic!("a successful pre-connection tool must not enter the protocol server"),
         )
@@ -2052,6 +2118,7 @@ mod tests {
     fn runner_panic_is_unknown_only_after_direct_tool_connection() {
         let before_connection = run_direct_tool(
             startup::DEFAULT_TIMEOUT,
+            None,
             |_| -> Result<String> {
                 panic!("tool runner panicked before opening its virtual connection")
             },

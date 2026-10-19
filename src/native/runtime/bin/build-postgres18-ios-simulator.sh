@@ -294,6 +294,11 @@ artifact_ready() {
     _oliphaunt_exec_protocol_raw_stream \
     _oliphaunt_protocol_stream_token \
     _oliphaunt_feed_protocol_stream \
+    _oliphaunt_exec_protocol_raw_stream_started_with_error \
+    _oliphaunt_feed_protocol_stream_wait \
+    _oliphaunt_exec_protocol_exchange_with_error \
+    _oliphaunt_feed_protocol_exchange \
+    _oliphaunt_finish_protocol_exchange \
     _oliphaunt_backup \
     _oliphaunt_restore \
     _oliphaunt_init_with_error \

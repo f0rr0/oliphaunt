@@ -58,9 +58,9 @@ a power-loss durability guarantee. Both methods require an idle transaction.
 
 The transaction object exposes the typed query methods and `rollback()`. It expires when the callback settles and cannot escape into later application work. It has no raw-protocol or backup methods.
 
-Desktop broker startup and authentication, cancellation transport, and close-control I/O have deadlines. These deadlines do not limit ordinary SQL execution. PostgreSQL cancellation sends a request without waiting for an acknowledgement.
+Desktop broker startup and authentication, cancellation transport, and close-control I/O have deadlines. These deadlines do not limit ordinary SQL execution. Broker cancellation targets the request active when `cancel()` is called; delayed delivery cannot cancel a later request. `cancel()` acknowledges a best-effort attempt; wait for the operation's result to observe cancellation or normal completion.
 
-Set `OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS` or `OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS` to tune startup (default 60,000 ms). `OLIPHAUNT_CONTROL_TIMEOUT_MS` tunes cancellation transport, close-control I/O, and each graceful or forced process-reaping phase (default 5,000 ms). Values must be integer milliseconds from 1 through 2,147,483,647; an unset or empty value uses the default. Each desktop session captures these settings at open, so later environment changes do not alter its cleanup budget.
+Set `OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS` or `OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS` to tune startup (default 60,000 ms). `OLIPHAUNT_CONTROL_TIMEOUT_MS` tunes cancellation transport and the graceful shutdown allowance (default 5,000 ms), followed by a separate forced-reap allowance of the same length. Stop commands, control receipts and process waiting share the graceful deadline. Values must be integer milliseconds from 1 through 2,147,483,647; an unset or empty value uses the default. Each desktop session captures these settings at open, so later environment changes do not alter its cleanup budget. These allowances do not bound filesystem cleanup or prove that an unreaped process has stopped.
 
 The server handle exposes `connectionString`, `closed`, `close()`, and `Symbol.asyncDispose`. SQL, cancellation, and backup through a server use your PostgreSQL driver or tools.
 

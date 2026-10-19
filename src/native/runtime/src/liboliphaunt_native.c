@@ -419,7 +419,8 @@ static int start_backend(OliphauntHandle *handle) {
     handle->io.write = oliphaunt_embedded_write;
     handle->io.set_timeout = oliphaunt_embedded_set_timeout;
     handle->io.set_interrupt_wakeup = oliphaunt_embedded_set_interrupt_wakeup;
-    handle->io.ignore_sync = oliphaunt_embedded_ignore_sync;
+    handle->io.protocol_checkpoint = oliphaunt_embedded_protocol_checkpoint;
+    handle->io.copy_input = oliphaunt_embedded_copy_input;
 
     pthread_attr_t attr;
     int rc = pthread_attr_init(&attr);

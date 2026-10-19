@@ -363,6 +363,7 @@ impl BrokerListener {
             Self::Tcp(listener) => {
                 let (stream, _) = listener.accept()?;
                 stream.set_nonblocking(false)?;
+                stream.set_nodelay(true)?;
                 Ok(server::Socket::tcp(stream))
             }
             #[cfg(unix)]

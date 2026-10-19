@@ -22,7 +22,8 @@ import {
   writeBrokerRequest,
 } from './broker-frames.js';
 import { type ByteStream, withStreamDeadline } from './byte-stream.js';
-import { PostgresWireClient } from './pgwire.js';
+import { authenticatePostgresStream } from './pgwire.js';
+import { BrokerExchangeClient, BrokerExchangeError } from './broker-exchange.js';
 import { throwCollectedCloseFailures } from './close.js';
 import { createForgottenRuntimeHandleCleanup } from './forgotten-handle.js';
 import {
@@ -31,6 +32,7 @@ import {
   createTempDir,
   type FailedManagedLaunch,
   type ManagedChild,
+  type LocalEndpoint,
   parseReadyEndpoint,
   randomHexToken,
   readReadyLine,
@@ -119,7 +121,9 @@ export function createBrokerRuntimeBinding(
 export class BrokerHandle {
   #child: ManagedChild | undefined;
   #stream: ByteStream | undefined;
-  #client: PostgresWireClient | undefined;
+  #client: BrokerExchangeClient | undefined;
+  readonly #controlEndpoint: LocalEndpoint | undefined;
+  readonly #authToken: string | undefined;
   #ipcDir: string | undefined;
   #temporaryInstanceDirectory: string | undefined;
   #failed = false;
@@ -134,6 +138,8 @@ export class BrokerHandle {
     this.#child = launch.child;
     this.#stream = launch.stream;
     this.#client = launch.client;
+    this.#controlEndpoint = launch.controlEndpoint;
+    this.#authToken = launch.authToken;
     this.#ipcDir = launch.ipcDir;
     this.#temporaryInstanceDirectory = config.temporaryDirectory
       ? config.instanceDirectory
@@ -212,30 +218,66 @@ export class BrokerHandle {
     await this.ensureStream();
     const client = this.#client;
     if (!client) throw new Error('native broker SQL connection is unavailable');
-    let callbackFailed = false;
-    let callbackError: unknown;
+    let callbackFailure: { error: unknown } | undefined;
     try {
       await client.execProtocolStream(request, (chunk) => {
-        if (!callbackFailed) {
-          try {
-            onChunk(chunk);
-          } catch (error) {
-            callbackFailed = true;
-            callbackError = error;
-          }
+        try {
+          onChunk(chunk);
+        } catch (error) {
+          callbackFailure = { error };
+          throw error;
         }
       });
     } catch (error) {
-      await this.markFailed(error);
+      if (
+        (callbackFailure === undefined || !Object.is(error, callbackFailure.error)) &&
+        (!(error instanceof BrokerExchangeError) || error.requiresReopen)
+      )
+        await this.markFailed(error);
       throw error;
     }
-    if (callbackFailed) throw callbackError;
   }
 
   async cancel(): Promise<void> {
+    // Capture before connecting: a delayed cancel can never target the next exchange.
+    const active = this.#client?.activeRequest;
+    if (active === undefined) return;
     await this.ensureStream();
-    if (!this.#client) throw new Error('native broker SQL connection is unavailable');
-    await this.#client.cancel(this.shutdownTimeoutMs);
+    if (this.#controlEndpoint === undefined || this.#authToken === undefined)
+      throw new Error('native broker cancellation credential is unavailable');
+    const controller = new AbortController();
+    const deadline = performance.now() + this.shutdownTimeoutMs;
+    const timer = setTimeout(() => controller.abort(), this.shutdownTimeoutMs);
+    let stream: ByteStream | undefined;
+    const failures: unknown[] = [];
+    try {
+      stream = await connectEndpoint(this.#controlEndpoint, controller.signal);
+      const connection = stream;
+      await withStreamDeadline(
+        connection,
+        deadline,
+        async () => {
+          await writeBrokerRequest(connection, {
+            kind: 'cancel',
+            token: this.#authToken!,
+            ...active,
+          });
+          const response = await readBrokerResponse(connection);
+          if (response.kind === 'error') throw new Error(response.message);
+        },
+        'native broker cancellation',
+      );
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      clearTimeout(timer);
+      try {
+        await stream?.close();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    throwCollectedCloseFailures(failures, 'native broker cancellation and close failed');
   }
 
   async detach(): Promise<void> {
@@ -246,9 +288,7 @@ export class BrokerHandle {
     const client = this.#client;
     if (client) {
       try {
-        if (firstAttempt && !this.#failed)
-          await client.terminate(Math.max(0, deadline - performance.now()));
-        else await client.close();
+        await client.close();
         this.#client = undefined;
       } catch (error) {
         failures.push(error);
@@ -441,7 +481,9 @@ const retainedFailedBrokerHandles = new Set<BrokerHandle>();
 type BrokerLaunch = {
   child: ManagedChild;
   stream: ByteStream;
-  client: PostgresWireClient;
+  client: BrokerExchangeClient;
+  controlEndpoint?: LocalEndpoint;
+  authToken?: string;
   ipcDir?: string;
 };
 
@@ -484,19 +526,49 @@ async function openBrokerHandle(
         }),
       ]).finally(() => readiness.abort());
       const ready = parseBrokerReadyLine(line);
-      const stream = await connectEndpoint(parseReadyEndpoint(ready.control), startup.signal);
+      const controlEndpoint = parseReadyEndpoint(ready.control);
+      const stream = await connectEndpoint(controlEndpoint, startup.signal);
       failedLaunch.stream = stream;
-      await authenticateBroker(stream, authToken);
-      const client = await PostgresWireClient.connect(
-        parseReadyEndpoint(ready.primary),
-        config.username,
-        config.database,
-        Math.max(0, deadline - performance.now()),
-        authToken,
+      await withStreamDeadline(
+        stream,
+        deadline,
+        () => authenticateBroker(stream, authToken),
+        'native broker authentication',
       );
+      const sqlStream = await connectEndpoint(parseReadyEndpoint(ready.primary), startup.signal);
+      let client: BrokerExchangeClient;
+      try {
+        client = await withStreamDeadline(
+          sqlStream,
+          deadline,
+          async () => {
+            await authenticatePostgresStream(
+              sqlStream,
+              config.username,
+              config.database,
+              authToken,
+              {
+                '_pq_.oliphaunt_exchange': '1',
+              },
+            );
+            return BrokerExchangeClient.open(sqlStream);
+          },
+          'native broker SQL startup',
+        );
+      } catch (error) {
+        try {
+          await sqlStream.close();
+        } catch (closeError) {
+          throw new AggregateError(
+            [error, closeError],
+            'native broker SQL startup and close failed',
+          );
+        }
+        throw error;
+      }
       return new BrokerHandle(
         config,
-        { child, stream, client, ipcDir: endpoint.ipcDir },
+        { child, stream, client, controlEndpoint, authToken, ipcDir: endpoint.ipcDir },
         controlTimeoutMs,
       );
     } finally {

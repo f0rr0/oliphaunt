@@ -336,6 +336,7 @@ export async function openWorkerDatabase(
   const startup = new StartupBudget(options.timeouts?.startupTimeoutMs);
   try {
     await startup.prepare(rpc.request({ method: 'open', options }, transfer));
+    startup.check();
     return new WasixDatabaseImpl(
       new WorkerDatabaseSession(rpc, options),
       undefined,

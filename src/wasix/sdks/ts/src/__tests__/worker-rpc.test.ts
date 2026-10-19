@@ -8,6 +8,20 @@ import { openWorkerDatabase, WorkerRpc } from '../workers/worker-rpc.js';
 import { FakeWorkerPort, workerOpenOptions } from './worker-helpers.js';
 
 describe('WASIX worker RPC', () => {
+  it('retires an owned worker whose ready reply arrives after startup expiry', async () => {
+    const port = new FakeWorkerPort();
+    const opening = openWorkerDatabase(port, {
+      ...workerOpenOptions(),
+      timeouts: { startupTimeoutMs: 10 },
+    });
+    const request = port.requests[0]!.message;
+    const unblock = performance.now() + 30;
+    while (performance.now() < unblock) {}
+    port.respond({ id: request.id, ok: true });
+    await expect(opening).rejects.toThrow('startup exceeded 10ms');
+    expect(port.terminations).toBe(1);
+  });
+
   it('uses selected startup and shutdown deadlines and awaits owner termination', async () => {
     const unopened = new FakeWorkerPort();
     const opening = openWorkerDatabase(unopened, {

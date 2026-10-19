@@ -654,8 +654,8 @@ class OliphauntDatabaseBase {
       await this.binding.execProtocolStream(this.handle, requestBytes, consumer.callback);
     } catch (error) {
       // Adapters only preserve callback identity when they have positively
-      // confirmed recovery (for example the broker SQL connection reaching ReadyForQuery). Any
-      // other rejection is the authoritative execution/recovery outcome.
+      // confirmed recovery, such as a matching successful broker Terminal.
+      // Other rejections are the authoritative execution/recovery outcome.
       if (consumer.failure === undefined || !Object.is(error, consumer.failure.error)) {
         this.#poison(error, 'streaming raw PostgreSQL recovery was not proven');
       }

@@ -5,6 +5,32 @@ import { prepareRuntimeCached } from '../hosts/browser/direct-client-common.js';
 import type { PreparedWasixRuntime } from '../resources/extensions.js';
 import { workerOpenOptions } from './worker-helpers.js';
 
+test('expired preparation observes its already-rejected input and rejects as a promise', async () => {
+  const budget = new StartupBudget(10);
+  try {
+    const unblock = performance.now() + 30;
+    while (performance.now() < unblock) {}
+    const prepared = budget.prepare(Promise.reject(new Error('preparation failed')));
+    expect(prepared).toBeInstanceOf(Promise);
+    await expect(prepared).rejects.toThrow('exceeded 10ms');
+  } finally {
+    budget.finish();
+  }
+});
+
+test('startup rejects late preparation even when its microtask beats the overdue timer', async () => {
+  const budget = new StartupBudget(10);
+  try {
+    const prepared = budget.prepare(Promise.resolve('late'));
+    const unblock = performance.now() + 30;
+    while (performance.now() < unblock) {}
+    await expect(prepared).rejects.toThrow('exceeded 10ms');
+    expect(budget.signal.aborted).toBe(true);
+  } finally {
+    budget.finish();
+  }
+});
+
 test('startup budget aborts an asset fetch before instance creation begins', async () => {
   const original = globalThis.fetch;
   let received: AbortSignal | undefined;

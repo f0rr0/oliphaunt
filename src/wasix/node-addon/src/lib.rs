@@ -1344,11 +1344,11 @@ pub fn tool_options_version() -> u32 {
 #[cfg(feature = "tools")]
 fn pg_dump_options(args: Vec<String>, input: NativeToolInput) -> PgDumpOptions {
     let timeout = input.startup_timeout_ms;
-    let mut options = PgDumpOptions::new().args(args).assets(tool_assets(input));
+    let mut options = PgDumpOptions::new().args(args);
     if let Some(millis) = timeout {
         options = options.startup_timeout(std::time::Duration::from_millis(u64::from(millis)));
     }
-    options
+    options.__start_startup_budget().assets(tool_assets(input))
 }
 
 #[cfg(feature = "tools")]
@@ -1359,7 +1359,7 @@ fn psql_options(
     input: NativeToolInput,
 ) -> PsqlOptions {
     let timeout = input.startup_timeout_ms;
-    let mut options = PsqlOptions::new().args(args).assets(tool_assets(input));
+    let mut options = PsqlOptions::new().args(args);
     if let Some(millis) = timeout {
         options = options.startup_timeout(std::time::Duration::from_millis(u64::from(millis)));
     }
@@ -1369,7 +1369,7 @@ fn psql_options(
     if let Some(script) = script {
         options = options.script(script);
     }
-    options
+    options.__start_startup_budget().assets(tool_assets(input))
 }
 
 fn static_object(env: &Env, object: Object<'_>) -> Object<'static> {

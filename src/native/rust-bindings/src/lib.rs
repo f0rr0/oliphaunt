@@ -22,7 +22,8 @@ pub use error::{Error, Result};
 pub use extension::{Extension, ExtensionPackage};
 pub use liboliphaunt::root::{PreparedNativeRoot, configure_native_tool_env, native_root_key};
 pub use liboliphaunt::{
-    NativeCancel, NativeOpenOptions, NativeProtocolInput, NativeSession, ProtocolStreamOutcome,
+    NativeCancel, NativeOpenOptions, NativeProtocolInput, NativeSession, ProtocolInputStatus,
+    ProtocolStreamOutcome,
 };
 #[cfg(feature = "internal-native-packaging")]
 pub use liboliphaunt::{

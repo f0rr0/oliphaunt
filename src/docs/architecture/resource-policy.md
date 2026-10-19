@@ -345,10 +345,21 @@ The public guide states these differences; equal names do not imply that a
 native process and an in-process guest can be interrupted in the same way.
 
 Use one monotonic deadline through each owned lifecycle phase rather than
-resetting the full duration for every retry. A native tool's termination grace
-starts at SIGTERM and governs escalation to SIGKILL; draining and reaping still
+resetting the full duration for every retry or protocol step. Native server
+port retries consume the original startup deadline. Graceful shutdown shares
+one deadline across stop commands, control receipts and process exit; every
+unresolved process is escalated before waiting through the separate forced-reap
+phase. A native tool's termination grace starts at SIGTERM and governs
+escalation to SIGKILL; draining and reaping still
 need explicit cleanup ownership. Report an unreaped owner or uncertain teardown
 as failure, preserving the existing terminal state and retained ownership.
+
+A timer requests a wakeup; readiness and completion also check the monotonic
+deadline when claiming success. Native WASIX tools carry their remaining
+preparation budget into native submission and owner waiting until virtual
+connection. Browser tools retain their controller-start boundary. None of these
+changes adds a public option, an ordinary SQL timeout or a hard total close-time
+guarantee: resource release still requires the owning process/guest to settle.
 
 Only placements that can enforce the requested deadline may accept it. A
 timer cannot preempt a synchronous direct guest call or arbitrary blocked host
@@ -380,12 +391,11 @@ an incompatible stack change on a later logical lease.
 - For typed settings, explicit per-owner values take precedence over an
   existing environment override and then the product default. Preserve and
   document legacy environment read timing until its migration is implemented.
-  Validate legacy native numeric text completely; current `strtoull` paths
-  accept numeric prefixes and do not consistently reject overflow/signs.
-- Durations must fit the timer actually used. Current desktop TS startup
-  parsers accept values beyond Node's 2,147,483,647 ms timer range. Reject such
-  values for a single timer; supporting longer deadlines requires bounded
-  rearming. Do not turn a requested long deadline into 1 ms.
+  Native byte overrides accept complete positive decimal values that fit the
+  destination size; invalid legacy overrides retain their documented default.
+- Durations must fit the timer actually used. Desktop TS validates the
+  1..2,147,483,647 ms single-timer range; supporting longer deadlines would
+  require bounded rearming. Do not turn a requested long deadline into 1 ms.
 - Admission-only changes need no guest or native C layout change. Native
   runtime queue/stack settings need an explicitly versioned C configuration
   change with all header/FFI consumers updated; the current `OliphauntConfig`

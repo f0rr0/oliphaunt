@@ -127,8 +127,11 @@ These are language-native deltas, not parity failures:
   documented C ABI contract rather than the Swift application API.
 - The native broker is an independent library and executable built on the
   shared native binding. The SDK depends on it; the broker does not import a
-  private SDK feature. SQL uses PostgreSQL wire messages, with lifecycle and
-  physical-resource operations on the separate control boundary.
+  private SDK feature. Native SDKs share a private finite-exchange record format
+  around unchanged PostgreSQL bytes; external drivers retain the standard
+  PostgreSQL listener. Lifecycle, physical resources and request-bound
+  cancellation use the authenticated control boundary. See the
+  [binding amendment](../architecture/repository-simplification-contracts.md#binding-amendment--native-broker-exchange-completion).
 - Native tools are endpoint-oriented optional products. `oliphaunt-tools` and
   `@oliphaunt/tools` accept a PostgreSQL connection string and do not become
   dependencies or methods of the embedded database SDKs.
@@ -139,7 +142,8 @@ These are language-native deltas, not parity failures:
   connections. Native server clients own normal PostgreSQL cancellation;
   lightweight WASIX server wire `CancelRequest` support is deferred.
 - Native cancellation targets the runtime's active operation and recovers it
-  through PostgreSQL readiness. It is not query-scoped cancellation, and WASIX
+  through PostgreSQL readiness. Broker transport binds that selection to its
+  current generation/request; the public method accepts no query token. WASIX
   exposes no cancellation method until it has a guest interrupt contract.
 - WASIX TypeScript persistence settles a logical operation only after provider
   publication. A callback transaction publishes once after confirmed commit or

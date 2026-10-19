@@ -701,6 +701,23 @@ describe('PE32+ architecture and self-contained runtime imports', () => {
         }),
       ),
     ).toThrow(/does not expose required symbol oliphaunt_copy_last_error/u);
+    for (const symbol of [
+      'oliphaunt_exec_protocol_raw_stream_started_with_error',
+      'oliphaunt_feed_protocol_stream_wait',
+      'oliphaunt_exec_protocol_exchange_with_error',
+      'oliphaunt_feed_protocol_exchange',
+      'oliphaunt_finish_protocol_exchange',
+    ]) {
+      expect(() =>
+        inspectImportLibrary(
+          windowsImportLibraryFixture({
+            importSymbols: OLIPHAUNT_WINDOWS_IMPORT_SYMBOLS.filter(
+              (candidate) => candidate !== symbol,
+            ),
+          }),
+        ),
+      ).toThrow(`does not expose required symbol ${symbol}`);
+    }
 
     const invalidOffset = Buffer.from(windowsImportLibraryFixture());
     invalidOffset.writeUInt32BE(0, 8 + 60 + 4);

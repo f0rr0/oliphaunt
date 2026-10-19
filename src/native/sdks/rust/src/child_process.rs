@@ -44,62 +44,90 @@ pub(crate) fn reap_child_process_until(
     forced_timeout: Duration,
     label: &str,
 ) -> ChildReapOutcome {
-    let mut failures = Vec::new();
-    match wait_for_child_exit(child, graceful_deadline) {
-        Ok(Some(exit_success)) => {
-            return ChildReapOutcome {
-                reaped: true,
-                exit_success: Some(exit_success),
-                failures,
-            };
-        }
-        Ok(None) => failures.push(format!("{label} did not stop before the shutdown deadline")),
-        Err(error) => failures.push(format!("wait for {label}: {error}")),
-    }
+    reap_child_processes_until(&mut [(child, label)], graceful_deadline, forced_timeout)
+        .pop()
+        .expect("one child has one reap outcome")
+}
 
-    if let Err(error) = child.kill_process() {
-        failures.push(format!(
-            "kill {label} after failed graceful shutdown: {error}"
-        ));
+/// Escalate every unresolved owner before spending the shared forced-reap budget.
+pub(crate) fn reap_child_processes_until(
+    children: &mut [(&mut dyn ChildProcessReaper, &str)],
+    graceful_deadline: Instant,
+    forced_timeout: Duration,
+) -> Vec<ChildReapOutcome> {
+    let mut outcomes: Vec<_> = children
+        .iter()
+        .map(|_| ChildReapOutcome {
+            reaped: false,
+            exit_success: None,
+            failures: Vec::new(),
+        })
+        .collect();
+    let graceful_failed = wait_for_children_exit(children, &mut outcomes, graceful_deadline, false);
+    let forced_deadline = Instant::now() + forced_timeout;
+    for (index, (child, label)) in children.iter_mut().enumerate() {
+        let outcome = &mut outcomes[index];
+        if outcome.reaped {
+            continue;
+        }
+        if !graceful_failed[index] {
+            outcome
+                .failures
+                .push(format!("{label} did not stop before the shutdown deadline"));
+        }
+        if let Err(error) = child.kill_process() {
+            outcome.failures.push(format!(
+                "kill {label} after failed graceful shutdown: {error}"
+            ));
+        }
     }
-    match wait_for_child_exit(child, Instant::now() + forced_timeout) {
-        Ok(Some(exit_success)) => ChildReapOutcome {
-            reaped: true,
-            exit_success: Some(exit_success),
-            failures,
-        },
-        Ok(None) => {
-            failures.push(format!(
+    let forced_failed = wait_for_children_exit(children, &mut outcomes, forced_deadline, true);
+    for (index, (_, label)) in children.iter().enumerate() {
+        if !outcomes[index].reaped && !forced_failed[index] {
+            outcomes[index].failures.push(format!(
                 "{label} reap remained unconfirmed {}ms after kill",
                 forced_timeout.as_millis()
             ));
-            ChildReapOutcome {
-                reaped: false,
-                exit_success: None,
-                failures,
-            }
-        }
-        Err(error) => {
-            failures.push(format!("poll {label} after kill: {error}"));
-            ChildReapOutcome {
-                reaped: false,
-                exit_success: None,
-                failures,
-            }
         }
     }
+    outcomes
 }
 
-fn wait_for_child_exit(
-    child: &mut impl ChildProcessReaper,
+fn wait_for_children_exit(
+    children: &mut [(&mut dyn ChildProcessReaper, &str)],
+    outcomes: &mut [ChildReapOutcome],
     deadline: Instant,
-) -> std::io::Result<Option<bool>> {
+    after_kill: bool,
+) -> Vec<bool> {
+    let mut failed = vec![false; children.len()];
     loop {
-        if let Some(success) = child.try_exit_status()? {
-            return Ok(Some(success));
+        for (index, (child, label)) in children.iter_mut().enumerate() {
+            if outcomes[index].reaped || failed[index] {
+                continue;
+            }
+            match child.try_exit_status() {
+                Ok(Some(success)) => {
+                    outcomes[index].reaped = true;
+                    outcomes[index].exit_success = Some(success);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    failed[index] = true;
+                    outcomes[index].failures.push(if after_kill {
+                        format!("poll {label} after kill: {error}")
+                    } else {
+                        format!("wait for {label}: {error}")
+                    });
+                }
+            }
         }
-        if Instant::now() >= deadline {
-            return Ok(None);
+        if outcomes
+            .iter()
+            .enumerate()
+            .all(|(index, outcome)| outcome.reaped || failed[index])
+            || Instant::now() >= deadline
+        {
+            return failed;
         }
         thread::sleep(
             deadline
@@ -112,6 +140,55 @@ fn wait_for_child_exit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escalates_all_children_before_reaping_any_forced_exit() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        struct Child {
+            killed: bool,
+            kills: Rc<RefCell<usize>>,
+        }
+        impl ChildProcessReaper for Child {
+            fn try_exit_status(&mut self) -> std::io::Result<Option<bool>> {
+                if self.killed {
+                    assert_eq!(
+                        *self.kills.borrow(),
+                        2,
+                        "all owners must be escalated before forced reap"
+                    );
+                    Ok(Some(true))
+                } else {
+                    Ok(None)
+                }
+            }
+            fn kill_process(&mut self) -> std::io::Result<()> {
+                self.killed = true;
+                *self.kills.borrow_mut() += 1;
+                Ok(())
+            }
+        }
+        let kills = Rc::new(RefCell::new(0));
+        let mut command = Child {
+            killed: false,
+            kills: kills.clone(),
+        };
+        let mut server = Child {
+            killed: false,
+            kills,
+        };
+        let outcomes = reap_child_processes_until(
+            &mut [(&mut command, "command"), (&mut server, "server")],
+            Instant::now(),
+            Duration::ZERO,
+        );
+        assert!(
+            outcomes
+                .iter()
+                .all(|outcome| outcome.reaped && outcome.failures.len() == 1)
+        );
+    }
 
     #[derive(Default)]
     struct FailingChildReaper {

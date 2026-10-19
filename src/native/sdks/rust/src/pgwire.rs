@@ -3,7 +3,7 @@ use std::io::{BufReader, Read, Write};
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::error::{Error, Result};
 
@@ -26,13 +26,12 @@ impl PostgresWireClient {
         endpoint: PostgresEndpoint,
         user: &str,
         database: &str,
-        connect_timeout: Duration,
-        io_timeout: Duration,
+        connect_deadline: Instant,
+        deadline: Instant,
     ) -> Result<Self> {
-        let deadline = Instant::now() + io_timeout;
         let mut stream = BufReader::with_capacity(
             POSTGRES_WIRE_READ_BUFFER,
-            connect_stream(&endpoint, (Instant::now() + connect_timeout).min(deadline))?,
+            connect_stream(&endpoint, connect_deadline.min(deadline))?,
         );
         stream
             .get_mut()

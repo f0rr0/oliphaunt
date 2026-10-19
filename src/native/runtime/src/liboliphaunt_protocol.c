@@ -25,6 +25,7 @@
 #define INITIAL_BUFFERED_OUTPUT_BYTES (8 * 1024)
 
 extern void RequestTrustedEmbeddedTimeoutCheck(void);
+extern void RequestTrustedEmbeddedQueryCancel(void);
 extern bool TrustedEmbeddedInterruptPending(void);
 
 static uint32_t read_be32(const unsigned char *ptr);
@@ -35,13 +36,13 @@ static int wait_for_output_locked(
 
 static int validate_frontend_protocol_frames(
     OliphauntHandle *handle, const uint8_t *request, size_t request_len,
-    bool complete, bool *extended_pending, size_t *boundaries) {
+    bool complete, bool *extended_pending) {
     if (request_len == 0) {
         set_error(handle, "malformed frontend protocol request: empty request");
         return -1;
     }
     size_t off = 0;
-    size_t count = 0;
+    bool has_boundary = false;
     bool extended = *extended_pending;
     uint8_t last = 0;
     while (off < request_len) {
@@ -65,47 +66,98 @@ static int validate_frontend_protocol_frames(
         last = request[off];
         if (last == 'Q' || last == 'F') {
             /* An extended-protocol error ignores subsequent messages until
-             * Sync, including Query. Such a batch has no fixed ready count. */
+             * Sync, including Query. Require an explicit recovery boundary. */
             if (extended) {
                 set_error(handle, "Query or FunctionCall must follow Sync after extended protocol messages");
                 return -1;
             }
-            count++;
+            has_boundary = true;
         } else if (last == 'S') {
             extended = false;
-            count++;
+            has_boundary = true;
         } else if (last == 'P' || last == 'B' || last == 'C' ||
                    last == 'D' || last == 'E' || last == 'H') {
             extended = true;
         }
         off += total;
     }
-    if ((complete || count > 0) &&
-        (count == 0 || (last != 'Q' && last != 'F' && last != 'S' && last != 'c' && last != 'f'))) {
+    if ((complete || has_boundary) &&
+        (!has_boundary || (last != 'Q' && last != 'F' && last != 'S' && last != 'c' && last != 'f'))) {
         set_error(handle, "frontend protocol request must end at a complete Query, FunctionCall, Sync, or COPY boundary");
         return -1;
     }
     *extended_pending = extended;
-    *boundaries = count;
     return 0;
+}
+
+static void check_protocol_completion_locked(OliphauntHandle *handle) {
+    if (handle->protocol_operation && handle->protocol_checkpoint_valid &&
+        handle->protocol_synchronized && handle->protocol_saw_ready &&
+        handle->protocol_buffered_input == 0 && handle->input_len == 0 &&
+        handle->stream_input_closed && !handle->stream_failed) {
+        handle->output_ready = true;
+        pthread_cond_broadcast(&handle->output_cond);
+        pthread_cond_broadcast(&handle->input_cond);
+    }
 }
 
 static bool record_ready_locked(OliphauntHandle *handle, unsigned char status) {
     handle->transaction_status = status;
-    if (handle->ready_remaining > 0) handle->ready_remaining--;
-    return handle->ready_remaining == 0;
+    handle->protocol_saw_ready = true;
+    return !handle->protocol_operation;
 }
 
-void oliphaunt_embedded_ignore_sync(void *context) {
+void oliphaunt_embedded_protocol_checkpoint(
+    void *context, bool synchronized, size_t buffered_input) {
     OliphauntHandle *handle = context;
     pthread_mutex_lock(&handle->mutex);
-    /* Incremental input reserves its final readiness before Sync is supplied. */
-    if (handle->ready_remaining > 0 &&
-        !(handle->streaming && handle->stream_ready_implicit)) {
-        handle->ready_remaining--;
+    handle->protocol_checkpoint_valid = true;
+    handle->protocol_synchronized = synchronized;
+    handle->protocol_buffered_input = buffered_input;
+    handle->stream_copy_input = false;
+    if (handle->protocol_operation && handle->streaming && !handle->stream_fragmented &&
+        !synchronized && buffered_input == 0 && handle->input_len == 0) {
+        /* COPY may have consumed the submitted Sync. PostgreSQL now needs
+         * ordinary recovery input, independent of the original tag sequence. */
+        handle->stream_input_closed = false;
+        handle->stream_extended_pending = true;
     }
-    if (handle->streaming) handle->stream_copy_ignored_sync++;
+    check_protocol_completion_locked(handle);
+    pthread_cond_broadcast(&handle->input_cond);
     pthread_mutex_unlock(&handle->mutex);
+}
+
+void oliphaunt_embedded_copy_input(void *context, bool extended) {
+    OliphauntHandle *handle = context;
+    pthread_mutex_lock(&handle->mutex);
+    handle->protocol_checkpoint_valid = false;
+    handle->stream_copy_input = true;
+    handle->stream_copy_extended = extended;
+    pthread_cond_broadcast(&handle->input_cond);
+    pthread_mutex_unlock(&handle->mutex);
+}
+
+static void begin_protocol_operation_locked(OliphauntHandle *handle, bool finite) {
+    handle->protocol_operation = true;
+    handle->protocol_checkpoint_valid = false;
+    handle->protocol_saw_ready = false;
+    handle->protocol_waiting_input = false;
+    handle->stream_fragmented = false;
+    handle->input_finite = finite;
+    handle->stream_input_closed = true;
+    handle->stream_failed = false;
+    handle->output_ready = false;
+}
+
+static void fail_protocol_input_locked(OliphauntHandle *handle) {
+    handle->stream_failed = true;
+    handle->closing = true;
+    if (handle->thread_started && !handle->backend_exited) {
+        RequestTrustedEmbeddedQueryCancel();
+        (void)oliphaunt_wake_backend_locked(handle);
+    }
+    pthread_cond_broadcast(&handle->input_cond);
+    pthread_cond_broadcast(&handle->output_cond);
 }
 
 static int append_output_locked(OliphauntHandle *handle, const void *buf, size_t len) {
@@ -171,7 +223,6 @@ static bool scan_stream_ready_locked(OliphauntHandle *handle, const unsigned cha
                 bool ready = scanner->tag == 'Z';
                 if (scanner->tag == 'G') {
                     handle->stream_copy_input = true;
-                    handle->stream_copy_ignored_sync = 0;
                 }
                 if (scanner->tag == 'E' || ready) handle->stream_copy_input = false;
                 if (ready) {
@@ -197,7 +248,6 @@ static bool scan_stream_ready_locked(OliphauntHandle *handle, const unsigned cha
                 bool ready = scanner->tag == 'Z';
                 if (scanner->tag == 'G') {
                     handle->stream_copy_input = true;
-                    handle->stream_copy_ignored_sync = 0;
                 }
                 if (scanner->tag == 'E' || ready) handle->stream_copy_input = false;
                 if (ready) {
@@ -700,6 +750,20 @@ ssize_t oliphaunt_embedded_read(void *context, void *ptr, size_t len, long timeo
         while (handle->input_off >= handle->input_len &&
                !handle->closing &&
                !TrustedEmbeddedInterruptPending()) {
+            if (!handle->protocol_waiting_input) {
+                handle->protocol_waiting_input = true;
+                if (handle->streaming && !handle->stream_fragmented &&
+                    (handle->stream_copy_input || handle->stream_copy_extended))
+                    pthread_cond_broadcast(&handle->output_cond);
+            }
+            check_protocol_completion_locked(handle);
+            if (handle->protocol_operation && handle->input_finite &&
+                handle->stream_input_closed && !handle->output_ready) {
+                set_error(handle, "finite protocol input ended before synchronization");
+                fail_protocol_input_locked(handle);
+                pthread_mutex_unlock(&handle->mutex);
+                return 0;
+            }
             int wait_rc = has_timeout
                 ? pthread_cond_timedwait(
                     &handle->input_cond,
@@ -743,6 +807,8 @@ ssize_t oliphaunt_embedded_read(void *context, void *ptr, size_t len, long timeo
     size_t take = available < len ? available : len;
     bool trace = handle->trace_protocol;
     uint64_t copy_started = trace ? oliphaunt_monotonic_ns() : 0;
+    handle->protocol_checkpoint_valid = false;
+    handle->protocol_waiting_input = false;
     memcpy(ptr, handle->input + handle->input_off, take);
     if (trace) {
         handle->trace_read_calls++;
@@ -754,6 +820,7 @@ ssize_t oliphaunt_embedded_read(void *context, void *ptr, size_t len, long timeo
     if (handle->input_off >= handle->input_len) {
         handle->input_len = 0;
         handle->input_off = 0;
+        pthread_cond_broadcast(&handle->input_cond);
     }
 
     pthread_mutex_unlock(&handle->mutex);
@@ -892,7 +959,10 @@ static int oliphaunt_wait_and_copy_response_locked(OliphauntHandle *handle, Olip
     if (trace) {
         handle->trace_wait_ns = oliphaunt_elapsed_ns(wait_started);
     }
-    return oliphaunt_copy_response_locked(handle, out, trace);
+    int rc = oliphaunt_copy_response_locked(handle, out, trace);
+    handle->protocol_operation = false;
+    handle->input_finite = false;
+    return rc;
 }
 
 static int32_t oliphaunt_exec_protocol_impl(
@@ -907,9 +977,8 @@ static int32_t oliphaunt_exec_protocol_impl(
     out->data = NULL;
     out->len = 0;
     bool extended_pending = false;
-    size_t boundaries = 0;
     if (validate_frontend_protocol_frames(handle, request, request_len,
-                                         true, &extended_pending, &boundaries) != 0) {
+                                         true, &extended_pending) != 0) {
         return -1;
     }
 
@@ -942,12 +1011,11 @@ static int32_t oliphaunt_exec_protocol_impl(
     }
     handle->output_len = 0;
     handle->output_scan_off = 0;
-    handle->output_ready = false;
-    handle->ready_remaining = boundaries;
     if (oliphaunt_set_input_locked(handle, request, request_len) != 0) {
         pthread_mutex_unlock(&handle->mutex);
         return -1;
     }
+    begin_protocol_operation_locked(handle, true);
     if (oliphaunt_wait_and_copy_response_locked(handle, out, trace) != 0) {
         pthread_mutex_unlock(&handle->mutex);
         return -1;
@@ -1056,12 +1124,11 @@ static int32_t oliphaunt_exec_simple_query_impl(
     }
     handle->output_len = 0;
     handle->output_scan_off = 0;
-    handle->output_ready = false;
-    handle->ready_remaining = 1;
     if (oliphaunt_set_simple_query_input_locked(handle, sql, sql_len) != 0) {
         pthread_mutex_unlock(&handle->mutex);
         return -1;
     }
+    begin_protocol_operation_locked(handle, true);
     if (oliphaunt_wait_and_copy_response_locked(handle, out, trace) != 0) {
         pthread_mutex_unlock(&handle->mutex);
         return -1;
@@ -1130,23 +1197,6 @@ static bool request_closes_stream_input(const uint8_t *request, size_t len) {
     return false;
 }
 
-static bool stream_copy_is_extended(
-    OliphauntHandle *handle, const uint8_t *request, size_t len, size_t boundaries) {
-    size_t completed = boundaries > handle->ready_remaining
-        ? boundaries - handle->ready_remaining : 0;
-    /* The current COPY's discarded Sync still identifies its active exchange. */
-    completed = completed > handle->stream_copy_ignored_sync
-        ? completed - handle->stream_copy_ignored_sync : 0;
-    for (size_t off = 0; off < len;
-         off += (size_t)read_be32(request + off + 1) + 1) {
-        uint8_t tag = request[off];
-        if (tag != 'Q' && tag != 'F' && tag != 'S') continue;
-        if (completed == 0) return tag == 'S';
-        completed--;
-    }
-    return true;
-}
-
 uint64_t oliphaunt_protocol_stream_token(OliphauntHandle *handle) {
     if (oliphaunt_begin_handle_call(handle) != 0) {
         return 0;
@@ -1154,16 +1204,17 @@ uint64_t oliphaunt_protocol_stream_token(OliphauntHandle *handle) {
     pthread_mutex_lock(&handle->mutex);
     uint64_t token = handle->streaming && handle->logical_active &&
         !handle->closing && !handle->backend_exited && !handle->output_ready &&
-        !handle->stream_failed && (!handle->stream_input_closed || handle->stream_copy_input)
+        !handle->stream_failed && (handle->stream_fragmented ? !handle->stream_input_closed :
+         (!handle->stream_input_closed || handle->stream_copy_input))
             ? handle->stream_token : 0;
     pthread_mutex_unlock(&handle->mutex);
     oliphaunt_end_handle_call();
     return token;
 }
 
-int32_t oliphaunt_feed_protocol_stream(
+static int32_t feed_protocol_stream_operation(
     OliphauntHandle *handle, uint64_t token, const uint8_t *request,
-    size_t request_len, OliphauntErrorCapture *capture) {
+    size_t request_len, OliphauntErrorCapture *capture, bool wait) {
     OliphauntErrorScope scope;
     oliphaunt_error_scope_begin(&scope, NULL, "oliphaunt_feed_protocol_stream");
     int32_t rc = -1;
@@ -1178,17 +1229,31 @@ int32_t oliphaunt_feed_protocol_stream(
         goto done;
     }
     pthread_mutex_lock(&handle->mutex);
-    if (!handle->streaming || handle->stream_token != token || !handle->logical_active ||
-        handle->closing || handle->backend_exited || handle->stream_failed ||
-        handle->output_ready || (handle->stream_input_closed && !handle->stream_copy_input)) {
+    while (wait && handle->streaming && !handle->stream_fragmented &&
+           handle->stream_token == token && handle->logical_active && !handle->closing &&
+           !handle->backend_exited && !handle->stream_failed && !handle->output_ready &&
+           (handle->input_len != 0 || (handle->stream_input_closed && !handle->stream_copy_input))) {
+        if (pthread_cond_wait(&handle->input_cond, &handle->mutex) != 0) {
+            set_error(handle, "could not wait for protocol stream input capacity");
+            pthread_mutex_unlock(&handle->mutex);
+            goto done;
+        }
+    }
+    if (handle->stream_fragmented || handle->stream_token != token ||
+        !handle->logical_active || handle->closing || handle->backend_exited ||
+        handle->stream_failed) {
+        set_error(handle, "protocol stream input token is no longer active");
+    } else if (!handle->streaming || handle->output_ready) {
+        if (wait) rc = OLIPHAUNT_STREAM_INPUT_FINISHED;
+        else set_error(handle, "protocol stream input token is no longer active");
+    } else if (handle->stream_input_closed && !handle->stream_copy_input) {
         set_error(handle, "protocol stream input token is no longer active");
     } else if (handle->input_len != 0) {
         rc = OLIPHAUNT_STREAM_INPUT_BUSY;
     } else {
         bool extended_pending = handle->stream_extended_pending;
-        size_t boundaries = 0;
         if (validate_frontend_protocol_frames(handle, request, request_len,
-                                             false, &extended_pending, &boundaries) != 0) {
+                                             false, &extended_pending) != 0) {
             pthread_mutex_unlock(&handle->mutex);
             goto done;
         }
@@ -1207,22 +1272,22 @@ int32_t oliphaunt_feed_protocol_stream(
             for (size_t off = 0; off < request_len;) {
                 uint8_t tag = request[off];
                 size_t end = off + (size_t)read_be32(request + off + 1) + 1;
-                if ((tag != 'd' && tag != 'c' && tag != 'f' && tag != 'X') ||
+                if ((tag != 'd' && tag != 'c' && tag != 'f' && tag != 'X' && tag != 'S' && tag != 'H') ||
                     ((tag == 'c' || tag == 'f' || tag == 'X') && end != request_len)) {
-                    set_error(handle, "COPY input accepts only CopyData followed by CopyDone, CopyFail, or Terminate");
+                    set_error(handle, "COPY input accepts CopyData, Flush, Sync and a final CopyDone, CopyFail or Terminate");
                     pthread_mutex_unlock(&handle->mutex);
                     goto done;
                 }
-                copy_finished = tag != 'd';
+                copy_finished = tag == 'c' || tag == 'f' || tag == 'X';
                 off = end;
             }
         }
         rc = oliphaunt_set_input_locked(handle, request, request_len);
         if (rc == 0) {
-            handle->stream_extended_pending = extended_pending;
             if (handle->stream_copy_input) {
                 if (copy_finished) handle->stream_copy_input = false;
             } else {
+                handle->stream_extended_pending = extended_pending;
                 handle->stream_input_closed = request_closes_stream_input(request, request_len);
             }
         }
@@ -1237,77 +1302,72 @@ done:
     return rc;
 }
 
-static int32_t oliphaunt_exec_protocol_raw_stream_impl(
-    OliphauntHandle *handle,
-    const uint8_t *request,
-    size_t request_len,
-    OliphauntStreamCallback callback,
-    void *callback_context) {
-    if (handle == NULL || callback == NULL || (request_len > 0 && request == NULL)) {
-        set_error(handle, "invalid oliphaunt_exec_protocol_raw_stream arguments");
-        return -1;
-    }
-    bool extended_pending = false;
-    size_t boundaries = 0;
-    if (validate_frontend_protocol_frames(handle, request, request_len,
-                                         false, &extended_pending, &boundaries) != 0) {
-        return -1;
-    }
+int32_t oliphaunt_feed_protocol_stream(
+    OliphauntHandle *handle, uint64_t token, const uint8_t *request,
+    size_t request_len, OliphauntErrorCapture *capture) {
+    return feed_protocol_stream_operation(handle, token, request, request_len, capture, false);
+}
 
-    pthread_mutex_lock(&handle->mutex);
-    if (!handle->logical_active) {
+int32_t oliphaunt_feed_protocol_stream_wait(
+    OliphauntHandle *handle, uint64_t token, const uint8_t *request,
+    size_t request_len, OliphauntErrorCapture *capture) {
+    return feed_protocol_stream_operation(handle, token, request, request_len, capture, true);
+}
+
+static int start_protocol_stream_locked(
+    OliphauntHandle *handle, bool finite, bool fragmented, size_t input_len,
+    bool extended_pending, bool closed) {
+    if (!handle->logical_active || handle->closing) {
         set_error(handle, "native liboliphaunt logical handle is closed");
-        pthread_mutex_unlock(&handle->mutex);
         return -1;
     }
     if (handle->backup_mode_exit_unconfirmed) {
-        set_error(handle, "native liboliphaunt backup-mode exit is unconfirmed; close the database and restart the process before reopening it");
-        pthread_mutex_unlock(&handle->mutex);
+        set_error(handle, "native liboliphaunt backup-mode exit is unconfirmed; close and restart");
         return -1;
     }
-    if (handle->backend_exited) {
-        set_error(handle, "native backend is not running");
-        pthread_mutex_unlock(&handle->mutex);
+    if (handle->backend_exited || handle->streaming) {
+        set_error(handle, "native backend is stopped or busy");
         return -1;
     }
-    if (handle->streaming) {
-        set_error(handle, "native liboliphaunt stream queue is busy");
-        pthread_mutex_unlock(&handle->mutex);
-        return -1;
-    }
-
     if (handle->stream_token == UINT64_MAX) {
         set_error(handle, "protocol stream token space is exhausted");
-        pthread_mutex_unlock(&handle->mutex);
         return -1;
     }
     handle->stream_token++;
-    handle->stream_input_closed = request_closes_stream_input(request, request_len);
+    begin_protocol_operation_locked(handle, finite);
+    handle->stream_fragmented = fragmented;
+    handle->stream_input_closed = closed;
     handle->stream_extended_pending = extended_pending;
     handle->stream_copy_input = false;
-    handle->stream_ready_implicit = boundaries == 0;
-    handle->stream_copy_ignored_sync = 0;
-
+    handle->stream_copy_extended = false;
+    handle->stream_input_expected = input_len;
+    handle->stream_input_received = 0;
+    handle->stream_input_header_len = 0;
+    handle->stream_input_body_remaining = 0;
     handle->output_len = 0;
     handle->output_scan_off = 0;
-    handle->output_ready = false;
-    /* Incremental input promises one boundary until its final Sync is fed. */
-    handle->ready_remaining = boundaries > 0 ? boundaries : 1;
     handle->streaming = true;
-    handle->stream_failed = false;
     handle->stream_queue_max_bytes = stream_queue_max_bytes();
     reset_protocol_scanner(&handle->stream_scanner);
     oliphaunt_clear_stream_chunks_locked(handle);
+    return 0;
+}
 
-    if (oliphaunt_set_input_locked(handle, request, request_len) != 0) {
-        handle->streaming = false;
-        handle->stream_queue_max_bytes = 0;
-        oliphaunt_clear_stream_chunks_locked(handle);
-        pthread_cond_broadcast(&handle->output_cond);
-        pthread_mutex_unlock(&handle->mutex);
-        return -1;
+/* Called with the mutex held; the notification may wake an independent feeder. */
+static void notify_protocol_start_locked(
+    OliphauntHandle *handle, OliphauntProtocolStartCallback started, void *context) {
+    uint64_t token = handle->stream_token;
+    pthread_mutex_unlock(&handle->mutex);
+    int32_t rc = started(context, token);
+    pthread_mutex_lock(&handle->mutex);
+    if (rc != 0) {
+        set_error(handle, "protocol input producer failed to start");
+        fail_protocol_input_locked(handle);
     }
+}
 
+static int32_t drain_protocol_stream_locked(
+    OliphauntHandle *handle, OliphauntStreamCallback callback, void *callback_context) {
     int status = 0;
     bool callback_failed = false;
     while (status == 0) {
@@ -1332,22 +1392,6 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
             }
             free_stream_chunk(chunk);
             pthread_mutex_lock(&handle->mutex);
-            if (callback_failed && handle->stream_copy_input) {
-                /* A rejected callback cannot supply COPY input. Finish that
-                 * subprotocol explicitly; query cancellation alone cannot wake
-                 * PostgreSQL while it is reading a frontend message. Extended
-                 * COPY consumes the original Sync, so supply its recovery Sync. */
-                static const uint8_t copy_fail[] = {'f', 0, 0, 0, 5, 0,
-                                                   'S', 0, 0, 0, 4};
-                bool extended_copy = stream_copy_is_extended(
-                    handle, request, request_len, boundaries);
-                size_t length = extended_copy ? sizeof(copy_fail) : 6;
-                if (oliphaunt_set_input_locked(handle, copy_fail, length) != 0) {
-                    status = -1;
-                    break;
-                }
-                handle->stream_copy_input = false;
-            }
             if (check_embedded_timeout_deadline_locked(handle) != 0) {
                 status = -1;
                 break;
@@ -1386,6 +1430,37 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
             break;
         }
 
+        if (callback_failed && !handle->stream_fragmented &&
+            handle->protocol_waiting_input && handle->input_len == 0) {
+            /* Drain admitted input first: it may already contain CopyDone.
+             * Only a COPY still waiting for input needs synthetic failure.
+             * Extended COPY also needs a replacement for its consumed Sync. */
+            static const uint8_t copy_fail[] = {'f', 0, 0, 0, 5, 0,
+                                               'S', 0, 0, 0, 4};
+            const uint8_t *recovery = NULL;
+            size_t length = 0;
+            if (handle->stream_copy_input) {
+                recovery = copy_fail;
+                length = handle->stream_copy_extended ? sizeof(copy_fail) : 6;
+            } else if (handle->stream_copy_extended && handle->protocol_checkpoint_valid &&
+                       !handle->protocol_synchronized && handle->protocol_buffered_input == 0 &&
+                       !handle->stream_input_closed) {
+                /* Admitted CopyDone may have finished COPY after its Sync was
+                 * consumed. Recover the known extended COPY boundary only. */
+                recovery = copy_fail + 6;
+                length = sizeof(copy_fail) - 6;
+            }
+            if (recovery != NULL) {
+                if (oliphaunt_set_input_locked(handle, recovery, length) != 0) {
+                    status = -1;
+                    break;
+                }
+                handle->stream_input_closed = true;
+                handle->stream_copy_input = false;
+                handle->stream_copy_extended = false;
+            }
+        }
+
         int rc = wait_for_output_locked(handle, NULL);
         if (rc < 0) {
             status = -1;
@@ -1416,10 +1491,13 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
     }
 
     handle->streaming = false;
+    handle->protocol_operation = false;
+    handle->input_finite = false;
     handle->stream_queue_max_bytes = 0;
     reset_protocol_scanner(&handle->stream_scanner);
     oliphaunt_clear_stream_chunks_locked(handle);
     pthread_cond_broadcast(&handle->output_cond);
+    pthread_cond_broadcast(&handle->input_cond);
     if (status == 0 && callback_failed) {
         set_error(handle, "protocol stream callback failed");
         status = OLIPHAUNT_STREAM_CALLBACK_ABORTED;
@@ -1428,10 +1506,197 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
     return status;
 }
 
+static int32_t oliphaunt_exec_protocol_raw_stream_impl(
+    OliphauntHandle *handle,
+    const uint8_t *request,
+    size_t request_len,
+    OliphauntProtocolStartCallback started,
+    void *started_context,
+    OliphauntStreamCallback callback,
+    void *callback_context) {
+    if (handle == NULL || callback == NULL || (request_len > 0 && request == NULL)) {
+        set_error(handle, "invalid oliphaunt_exec_protocol_raw_stream arguments");
+        return -1;
+    }
+    bool extended_pending = false;
+    if (validate_frontend_protocol_frames(handle, request, request_len,
+                                         false, &extended_pending) != 0) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&handle->mutex);
+    if (start_protocol_stream_locked(handle, false, false, request_len,
+            extended_pending, request_closes_stream_input(request, request_len)) != 0) {
+        pthread_mutex_unlock(&handle->mutex);
+        return -1;
+    }
+
+    if (oliphaunt_set_input_locked(handle, request, request_len) != 0) {
+        handle->streaming = false;
+        handle->protocol_operation = false;
+        handle->input_finite = false;
+        handle->stream_queue_max_bytes = 0;
+        oliphaunt_clear_stream_chunks_locked(handle);
+        pthread_cond_broadcast(&handle->output_cond);
+        pthread_mutex_unlock(&handle->mutex);
+        return -1;
+    }
+
+    if (started != NULL) {
+        notify_protocol_start_locked(handle, started, started_context);
+    }
+    return drain_protocol_stream_locked(handle, callback, callback_context);
+}
+
+/* Validate fragment framing before PostgreSQL can allocate a declared body. */
+static int validate_protocol_fragment_locked(
+    OliphauntHandle *handle, const uint8_t *data, size_t len) {
+    size_t off = 0;
+    while (off < len) {
+        if (handle->stream_input_body_remaining > 0) {
+            size_t take = len - off;
+            if (take > handle->stream_input_body_remaining)
+                take = handle->stream_input_body_remaining;
+            handle->stream_input_body_remaining -= take;
+            off += take;
+            continue;
+        }
+        size_t take = sizeof(handle->stream_input_header) - handle->stream_input_header_len;
+        if (take > len - off) take = len - off;
+        memcpy(handle->stream_input_header + handle->stream_input_header_len, data + off, take);
+        handle->stream_input_header_len += take;
+        off += take;
+        if (handle->stream_input_header_len == sizeof(handle->stream_input_header)) {
+            uint32_t length = read_be32(handle->stream_input_header + 1);
+            if (length < 4 || (size_t)length >= OLIPHAUNT_STREAM_INPUT_MAX_BYTES ||
+                (size_t)length - 4 > handle->stream_input_expected - handle->stream_input_received - off ||
+                handle->stream_input_header[0] == 'X' || handle->stream_input_header[0] == 'p') {
+                set_error(handle, "invalid finite frontend message length or connection control");
+                return -1;
+            }
+            handle->stream_input_header_len = 0;
+            handle->stream_input_body_remaining = (size_t)length - 4;
+        }
+    }
+    return 0;
+}
+
+static bool exchange_token_active_locked(OliphauntHandle *handle, uint64_t token) {
+    return token != 0 && handle->streaming && handle->stream_fragmented &&
+        handle->stream_token == token && handle->logical_active && !handle->closing &&
+        !handle->backend_exited && !handle->stream_failed && !handle->output_ready &&
+        !handle->stream_input_closed;
+}
+
+static int32_t exchange_input_operation(
+    OliphauntHandle *handle, uint64_t token, const uint8_t *data, size_t len,
+    bool finish, OliphauntErrorCapture *capture) {
+    OliphauntErrorScope scope;
+    oliphaunt_error_scope_begin(&scope, NULL, "oliphaunt_protocol_exchange_input");
+    int32_t rc = -1;
+    bool leased = oliphaunt_begin_handle_call(handle) == 0;
+    if (!leased) goto done;
+    scope.fallback_handle = handle;
+    pthread_mutex_lock(&handle->mutex);
+    if (!exchange_token_active_locked(handle, token)) {
+        set_error(handle, "protocol exchange input token is no longer active");
+        goto unlock;
+    }
+    if (finish) {
+        if (handle->stream_input_received != handle->stream_input_expected ||
+            handle->stream_input_header_len != 0 || handle->stream_input_body_remaining != 0) {
+            set_error(handle, "incomplete finite protocol input");
+            goto failed;
+        }
+        handle->stream_input_closed = true;
+        check_protocol_completion_locked(handle);
+        pthread_cond_broadcast(&handle->input_cond);
+        rc = 0;
+        goto unlock;
+    }
+    if (data == NULL || len == 0 || len > OLIPHAUNT_STREAM_INPUT_MAX_BYTES ||
+        len > handle->stream_input_expected - handle->stream_input_received) {
+        set_error(handle, "invalid or oversized protocol exchange fragment");
+        goto failed;
+    }
+    while (handle->input_len != 0 && exchange_token_active_locked(handle, token)) {
+        int wait_rc = pthread_cond_wait(&handle->input_cond, &handle->mutex);
+        if (wait_rc != 0) {
+            set_error(handle, "could not wait for protocol input capacity");
+            goto failed;
+        }
+    }
+    if (!exchange_token_active_locked(handle, token)) {
+        set_error(handle, "protocol exchange ended before input was accepted");
+        goto unlock;
+    }
+    if (len > handle->stream_input_expected - handle->stream_input_received) {
+        set_error(handle, "protocol exchange fragment exceeds its remaining extent");
+        goto failed;
+    }
+    if (validate_protocol_fragment_locked(handle, data, len) != 0 ||
+        oliphaunt_set_input_locked(handle, data, len) != 0) goto failed;
+    handle->stream_input_received += len;
+    rc = 0;
+    goto unlock;
+failed:
+    handle->stream_input_closed = true;
+    fail_protocol_input_locked(handle);
+unlock:
+    pthread_mutex_unlock(&handle->mutex);
+done:
+    oliphaunt_error_scope_end(&scope, rc < 0);
+    oliphaunt_error_capture_current(capture, leased ? handle : NULL, rc < 0);
+    if (leased) oliphaunt_end_handle_call();
+    return rc;
+}
+
+int32_t oliphaunt_feed_protocol_exchange(
+    OliphauntHandle *handle, uint64_t token, const uint8_t *data, size_t len,
+    OliphauntErrorCapture *error) {
+    return exchange_input_operation(handle, token, data, len, false, error);
+}
+
+int32_t oliphaunt_finish_protocol_exchange(
+    OliphauntHandle *handle, uint64_t token, OliphauntErrorCapture *error) {
+    return exchange_input_operation(handle, token, NULL, 0, true, error);
+}
+
+int32_t oliphaunt_exec_protocol_exchange_with_error(
+    OliphauntHandle *handle, size_t input_len,
+    OliphauntProtocolStartCallback started, void *started_context,
+    OliphauntStreamCallback output, void *output_context,
+    OliphauntErrorCapture *error) {
+    OliphauntErrorScope scope;
+    oliphaunt_error_scope_begin(&scope, NULL, "oliphaunt_exec_protocol_exchange");
+    int32_t rc = -1;
+    bool leased = false;
+    if (handle == NULL || input_len == 0 || input_len > OLIPHAUNT_STREAM_INPUT_MAX_BYTES ||
+        started == NULL || output == NULL || error == NULL) {
+        set_error(handle, "invalid finite protocol exchange arguments");
+    } else if (oliphaunt_begin_handle_call(handle) == 0) {
+        leased = true;
+        scope.fallback_handle = handle;
+        pthread_mutex_lock(&handle->mutex);
+        if (start_protocol_stream_locked(handle, true, true, input_len, false, false) != 0) {
+            pthread_mutex_unlock(&handle->mutex);
+        } else {
+            notify_protocol_start_locked(handle, started, started_context);
+            rc = drain_protocol_stream_locked(handle, output, output_context);
+        }
+    }
+    oliphaunt_error_scope_end(&scope, rc != 0);
+    oliphaunt_error_capture_current(error, leased ? handle : NULL, rc != 0);
+    if (leased) oliphaunt_end_handle_call();
+    return rc;
+}
+
 static int32_t run_exec_protocol_raw_stream_operation(
     OliphauntHandle *handle,
     const uint8_t *request,
     size_t request_len,
+    OliphauntProtocolStartCallback started,
+    void *started_context,
     OliphauntStreamCallback callback,
     void *callback_context,
     OliphauntErrorCapture *capture,
@@ -1444,12 +1709,12 @@ static int32_t run_exec_protocol_raw_stream_operation(
         set_error(NULL, "oliphaunt_exec_protocol_raw_stream error capture is null");
     } else if (handle == NULL) {
         rc = oliphaunt_exec_protocol_raw_stream_impl(
-            handle, request, request_len, callback, callback_context);
+            handle, request, request_len, started, started_context, callback, callback_context);
     } else if (oliphaunt_begin_handle_call(handle) == 0) {
         leased = true;
         error_scope.fallback_handle = handle;
         rc = oliphaunt_exec_protocol_raw_stream_impl(
-            handle, request, request_len, callback, callback_context);
+            handle, request, request_len, started, started_context, callback, callback_context);
     }
     oliphaunt_error_scope_end(&error_scope, rc != 0);
     oliphaunt_error_capture_current(capture, leased ? handle : NULL, rc != 0);
@@ -1466,7 +1731,7 @@ int32_t oliphaunt_exec_protocol_raw_stream(
     OliphauntStreamCallback callback,
     void *callback_context) {
     return run_exec_protocol_raw_stream_operation(
-        handle, request, request_len, callback, callback_context, NULL, false);
+        handle, request, request_len, NULL, NULL, callback, callback_context, NULL, false);
 }
 
 int32_t oliphaunt_exec_protocol_raw_stream_with_error(
@@ -1477,5 +1742,19 @@ int32_t oliphaunt_exec_protocol_raw_stream_with_error(
     void *callback_context,
     OliphauntErrorCapture *error) {
     return run_exec_protocol_raw_stream_operation(
-        handle, request, request_len, callback, callback_context, error, true);
+        handle, request, request_len, NULL, NULL, callback, callback_context, error, true);
+}
+
+int32_t oliphaunt_exec_protocol_raw_stream_started_with_error(
+    OliphauntHandle *handle, const uint8_t *request, size_t request_len,
+    OliphauntProtocolStartCallback started, void *started_context,
+    OliphauntStreamCallback output, void *output_context,
+    OliphauntErrorCapture *error) {
+    if (started == NULL) {
+        set_error(NULL, "protocol stream start callback is null");
+        oliphaunt_error_capture_current(error, NULL, true);
+        return -1;
+    }
+    return run_exec_protocol_raw_stream_operation(
+        handle, request, request_len, started, started_context, output, output_context, error, true);
 }

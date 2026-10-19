@@ -6,6 +6,7 @@ import { test } from 'bun:test';
 import {
   PostgresError,
   array,
+  assertSuccessfulQueryResponse,
   binary,
   containsTopLevelCopy,
   containsTransactionChain,
@@ -31,6 +32,11 @@ test('protocol fixtures', () => {
   assertSharedProtocolFixtures({
     parseSimpleQueryResponse: parseSimpleQueryRawResponse,
     parseExtendedQueryResponse: parseQueryRawResponse,
+    parseSimpleCommandResponse(bytes: Uint8Array) {
+      assertSuccessfulQueryResponse(bytes);
+      return parseSimpleQueryRawResponse(bytes);
+    },
+    parseExtendedCommandResponse: parseCommandResponse,
     isPostgresError: (error): error is PostgresError => error instanceof PostgresError,
   });
 });

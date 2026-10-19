@@ -13,6 +13,11 @@ pub enum RequestFrame {
     Close,
     Backup,
     BackupStream,
+    Cancel {
+        token: String,
+        epoch: crate::exchange::Epoch,
+        request: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +32,17 @@ pub fn write_request(writer: &mut impl Write, frame: RequestFrame) -> Result<()>
         RequestFrame::Close => write_frame(writer, 3, &[]),
         RequestFrame::Backup => write_frame(writer, 5, &[]),
         RequestFrame::BackupStream => write_frame(writer, 7, &[]),
+        RequestFrame::Cancel {
+            token,
+            epoch,
+            request,
+        } => {
+            let mut payload = Vec::with_capacity(24 + token.len());
+            payload.extend_from_slice(&epoch);
+            payload.extend_from_slice(&request.to_be_bytes());
+            payload.extend_from_slice(token.as_bytes());
+            write_frame(writer, 8, &payload)
+        }
     }
 }
 
@@ -39,6 +55,13 @@ pub fn read_request(reader: &mut impl Read) -> Result<RequestFrame> {
         3 => empty_payload(payload, RequestFrame::Close),
         5 => empty_payload(payload, RequestFrame::Backup),
         7 => empty_payload(payload, RequestFrame::BackupStream),
+        8 if payload.len() >= 24 => Ok(RequestFrame::Cancel {
+            epoch: payload[..16].try_into().unwrap(),
+            request: u64::from_be_bytes(payload[16..24].try_into().unwrap()),
+            token: String::from_utf8(payload[24..].to_vec()).map_err(|error| {
+                Error::Engine(format!("broker cancel token is not UTF-8: {error}"))
+            })?,
+        }),
         _ => Err(Error::Engine(format!(
             "unknown broker request frame {kind}"
         ))),
@@ -189,6 +212,21 @@ mod tests {
 
         let mut cursor = Cursor::new(bytes);
         assert_eq!(read_request(&mut cursor).unwrap(), RequestFrame::Backup);
+    }
+
+    #[test]
+    fn cancellation_binds_credentials_and_exact_exchange_identity() {
+        let request = RequestFrame::Cancel {
+            token: "token-123".into(),
+            epoch: [9; 16],
+            request: 42,
+        };
+        let mut bytes = Vec::new();
+        write_request(&mut bytes, request.clone()).unwrap();
+        assert_eq!(bytes[4], 8);
+        assert_eq!(&bytes[13..29], &[9; 16]);
+        assert_eq!(&bytes[29..37], &42_u64.to_be_bytes());
+        assert_eq!(read_request(&mut bytes.as_slice()).unwrap(), request);
     }
 
     #[test]

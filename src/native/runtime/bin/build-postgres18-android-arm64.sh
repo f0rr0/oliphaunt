@@ -316,6 +316,11 @@ artifact_ready() {
     oliphaunt_exec_protocol_raw_stream \
     oliphaunt_protocol_stream_token \
     oliphaunt_feed_protocol_stream \
+    oliphaunt_exec_protocol_raw_stream_started_with_error \
+    oliphaunt_feed_protocol_stream_wait \
+    oliphaunt_exec_protocol_exchange_with_error \
+    oliphaunt_feed_protocol_exchange \
+    oliphaunt_finish_protocol_exchange \
     oliphaunt_backup \
     oliphaunt_restore \
     oliphaunt_init_with_error \

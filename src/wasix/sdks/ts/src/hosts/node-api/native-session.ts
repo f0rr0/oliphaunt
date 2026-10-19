@@ -160,7 +160,7 @@ export class NativeWasixSession implements WasixDatabaseSession {
         'async WASIX tool destinations require a root or /worker database; /direct supports host files',
       );
     }
-    const assets = await loadNativeToolInput(this.#runtimeVersion, options);
+    const prepared = await loadNativeToolInput(this.#runtimeVersion, options);
     try {
       if (options.output?.nativeRegistration !== undefined) {
         const run =
@@ -177,7 +177,7 @@ export class NativeWasixSession implements WasixDatabaseSession {
           run.call(
             this.#handle,
             options.args,
-            assets,
+            nativeToolInput(prepared),
             options.output.nativeRegistration,
             options.command,
             script,
@@ -185,19 +185,23 @@ export class NativeWasixSession implements WasixDatabaseSession {
         );
       }
       if (options.outputFile !== undefined) {
-        return await runNativeToolFile(this.#handle, options, assets);
+        return await runNativeToolFile(this.#handle, options, prepared);
       }
       if (options.tool.name === 'pg_dump') {
-        return toolProcessResult(this.#handle.pgDump(options.args, assets));
+        return toolProcessResult(this.#handle.pgDump(options.args, nativeToolInput(prepared)));
       }
       const script =
         options.script ??
         (options.stdin === undefined
           ? undefined
           : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin));
-      return toolProcessResult(this.#handle.psql(options.args, assets, options.command, script));
+      return toolProcessResult(
+        this.#handle.psql(options.args, nativeToolInput(prepared), options.command, script),
+      );
     } catch (error) {
       throw this.#mapFailure(error);
+    } finally {
+      prepared.startup.finish();
     }
   }
 
@@ -323,16 +327,18 @@ export class NativeWasixActorSession implements WasixDatabaseSession {
 
   async runTool(options: WasixToolProcessOptions): Promise<WasixToolProcessResult> {
     this.#assertOpen();
-    const assets = await loadNativeToolInput(this.#runtimeVersion, options);
+    const prepared = await loadNativeToolInput(this.#runtimeVersion, options);
     try {
       if (options.outputFile !== undefined) {
-        return await runNativeToolFile(this.#handle, options, assets);
+        return await runNativeToolFile(this.#handle, options, prepared);
       }
       if (options.output !== undefined) {
-        return await runNativeToolStream(this.#handle, options, assets);
+        return await runNativeToolStream(this.#handle, options, prepared);
       }
       if (options.tool.name === 'pg_dump') {
-        return toolProcessResult(await this.#handle.pgDump(options.args, assets));
+        return toolProcessResult(
+          await this.#handle.pgDump(options.args, nativeToolInput(prepared)),
+        );
       }
       const script =
         options.script ??
@@ -340,10 +346,12 @@ export class NativeWasixActorSession implements WasixDatabaseSession {
           ? undefined
           : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin));
       return toolProcessResult(
-        await this.#handle.psql(options.args, assets, options.command, script),
+        await this.#handle.psql(options.args, nativeToolInput(prepared), options.command, script),
       );
     } catch (error) {
       throw this.#mapFailure(error);
+    } finally {
+      prepared.startup.finish();
     }
   }
 
@@ -579,10 +587,24 @@ function nativeStorage(options: SerializedOpenOptions): NativeWasixOpenOptions['
   throw new TypeError(`@oliphaunt/wasix-ts ${provider} storage is browser-only`);
 }
 
+type PreparedNativeToolInput = {
+  input: NativeWasixToolInput;
+  startup: StartupBudget;
+};
+
+function nativeToolInput({ input, startup }: PreparedNativeToolInput): NativeWasixToolInput {
+  startup.check();
+  const remaining = startup.remaining;
+  if (remaining === 0) startup.check();
+  // Native code owns this residual budget from submission through virtual connect.
+  startup.finish();
+  return { ...input, startupTimeoutMs: remaining };
+}
+
 async function loadNativeToolInput(
   runtimeVersion: string,
   options: WasixToolProcessOptions,
-): Promise<NativeWasixToolInput> {
+): Promise<PreparedNativeToolInput> {
   if (options.runtimeVersion !== '' && options.runtimeVersion !== runtimeVersion) {
     throw new Error(
       `WASIX tools runtime ${options.runtimeVersion} is incompatible with database runtime ${runtimeVersion}`,
@@ -606,16 +628,16 @@ async function loadNativeToolInput(
     );
     if (wasm.length !== options.tool.size) throw new Error('WASIX tool module size mismatch');
     await assertSha256(wasm, options.tool.sha256, 'WASIX tool module');
-    const remaining = startup.remaining;
-    startup.check();
-    return {
+    const input = {
       wasm,
       aot,
       manifest: new TextDecoder('utf-8', { fatal: true }).decode(manifest),
-      startupTimeoutMs: remaining,
     };
-  } finally {
+    startup.check();
+    return { input, startup };
+  } catch (error) {
     startup.finish();
+    throw error;
   }
 }
 
@@ -659,7 +681,7 @@ function binaryView(value: Uint8Array): Uint8Array {
 async function runNativeToolFile(
   handle: NativeWasixDatabaseHandle | NativeWasixActorDatabaseHandle,
   options: WasixToolProcessOptions,
-  assets: NativeWasixToolInput,
+  prepared: PreparedNativeToolInput,
 ): Promise<WasixToolProcessResult> {
   const run:
     | NativeWasixFileTool<NativeWasixToolSummary | Promise<NativeWasixToolSummary>>
@@ -677,7 +699,7 @@ async function runNativeToolFile(
   const result = await run.call(
     handle,
     options.args,
-    assets,
+    nativeToolInput(prepared),
     options.outputFile!,
     options.command,
     script,
@@ -688,7 +710,7 @@ async function runNativeToolFile(
 async function runNativeToolStream(
   handle: NativeWasixActorDatabaseHandle,
   options: WasixToolProcessOptions,
-  assets: NativeWasixToolInput,
+  prepared: PreparedNativeToolInput,
 ): Promise<WasixToolProcessResult> {
   const run = options.tool.name === 'pg_dump' ? handle.pgDumpToStream : handle.psqlToStream;
   if (run === undefined) {
@@ -716,7 +738,7 @@ async function runNativeToolStream(
     await run.call(
       handle,
       options.args,
-      assets,
+      nativeToolInput(prepared),
       {
         stdout: acknowledgeAfterWrite(output.stdout),
         ...(output.stderr === undefined ? {} : { stderr: acknowledgeAfterWrite(output.stderr) }),

@@ -18,7 +18,7 @@ PostgreSQL internals.
 - `src/liboliphaunt_runtime.c`: embedded backend argv/default-GUC construction
   and backend thread stack sizing policy.
 - `src/liboliphaunt_protocol.c`: raw protocol execution, streaming backpressure,
-  readiness scanning, and embedded backend read/write callbacks.
+  completion fences, and embedded backend read/write callbacks.
 - `src/liboliphaunt_config.c`: configuration copying, PostgreSQL executable
   resolution, and startup argument copying.
 - `src/liboliphaunt_process.c`: process-wide direct-mode instance guard and
@@ -100,6 +100,20 @@ error, or cancel, but same-handle query, backup, detach, close, and nested strea
 calls fail busy until streaming drains to `ReadyForQuery`. This guard applies
 while the callback lock is released as well, preventing callback reentrancy or a
 concurrent close from corrupting protocol state or freeing the active handle.
+
+Protocol completion requires PostgreSQL's actual synchronized top-level read
+checkpoint, emitted readiness, and exhausted native/backend input buffers.
+The runtime does not infer a terminal count from frontend messages: COPY can
+discard Sync while consuming input. Process adapters use the finite exchange
+entrypoint, feed bounded byte fragments on an independent producer, and seal the
+declared input extent with Finish. An exhausted incomplete exchange fails;
+the adapter does not append a speculative Sync. Public SDK raw methods retain
+their complete-input, buffered-or-callback shape.
+
+Embedded WAL-pressure checkpoints run at an idle query boundary before
+readiness, using PostgreSQL's checkpoint implementation. Their errors remain
+PostgreSQL ErrorResponse bytes even when CommandComplete has already arrived.
+This storage maintenance is distinct from the protocol completion checkpoint.
 
 FFI schedulers that resume on a different thread use the ABI 10 `_with_error`
 variants with one caller-owned `OliphauntErrorCapture` per invocation. The

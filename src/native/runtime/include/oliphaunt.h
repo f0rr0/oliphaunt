@@ -13,6 +13,7 @@ extern "C" {
 #define OLIPHAUNT_ERROR_CAPTURE_CAPACITY 1024u
 #define OLIPHAUNT_STREAM_CALLBACK_ABORTED 1
 #define OLIPHAUNT_STREAM_INPUT_BUSY 1
+#define OLIPHAUNT_STREAM_INPUT_FINISHED 2
 #define OLIPHAUNT_STREAM_INPUT_MAX_BYTES (128u * 1024u * 1024u)
 /* The caller already owns liboliphaunt's stable sibling root lease. */
 #define OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK (1ull << 0)
@@ -149,6 +150,7 @@ typedef struct OliphauntRestoreOptions {
  * also allow incomplete extended input completed through their stream token.
  */
 typedef int32_t (*OliphauntStreamCallback)(void *context, const uint8_t *data, size_t len);
+typedef int32_t (*OliphauntProtocolStartCallback)(void *context, uint64_t token);
 
 /* Returns zero and sets read_len (zero at EOF), or nonzero on failure.
  * Read/write callbacks run synchronously and must not reenter this database.
@@ -181,8 +183,8 @@ OLIPHAUNT_API int32_t oliphaunt_restore_stream_with_error(
  * no bytes were accepted: retry after the backend consumes its current input.
  * Sync (or simple Query) must be the final frame and closes further input for
  * this stream. Output continues through the existing callback to ReadyForQuery.
- * A backend CopyInResponse temporarily permits CopyData and a final CopyDone
- * or CopyFail even after Query/Sync closed ordinary input. Other frontend
+ * A backend CopyInResponse temporarily permits CopyData, Flush, Sync and a final
+ * CopyDone or CopyFail even after Query/Sync closed ordinary input. Other frontend
  * commands remain excluded until that stream reaches ReadyForQuery.
  * Terminate also closes input, ends the backend and fails the stream instead
  * of producing ReadyForQuery; terminal close then releases the owned handle.
@@ -193,6 +195,38 @@ OLIPHAUNT_API uint64_t oliphaunt_protocol_stream_token(OliphauntHandle *handle);
 OLIPHAUNT_API int32_t oliphaunt_feed_protocol_stream(
     OliphauntHandle *handle, uint64_t token, const uint8_t *request,
     size_t request_len, OliphauntErrorCapture *error);
+
+/* Wait for native input admission or exact-stream completion. This blocks
+ * through occupied input and submitted boundaries that may enter COPY.
+ * FINISHED means no bytes were accepted because that exact stream ended;
+ * wait for its owner's outcome before dispatching new work.
+ * Returns zero, FINISHED, or a negative error; never BUSY. */
+OLIPHAUNT_API int32_t oliphaunt_feed_protocol_stream_wait(
+    OliphauntHandle *handle, uint64_t token, const uint8_t *request,
+    size_t request_len, OliphauntErrorCapture *error);
+/* Publish the stream token after admitting the initial complete frames.
+ * Start must notify an independent producer; failure retires the session. */
+OLIPHAUNT_API int32_t oliphaunt_exec_protocol_raw_stream_started_with_error(
+    OliphauntHandle *handle, const uint8_t *request, size_t request_len,
+    OliphauntProtocolStartCallback started, void *started_context,
+    OliphauntStreamCallback output, void *output_context,
+    OliphauntErrorCapture *error);
+
+/* Finite raw exchange for process adapters. Start publishes the input token
+ * before execution waits for bytes. Feed accepts fragments and waits for input
+ * capacity; use a producer independent of the output callback. Finish seals the
+ * declared extent after exactly input_len bytes. PostgreSQL owns synchronization;
+ * exhausted incomplete input fails rather than manufacturing Sync. */
+OLIPHAUNT_API int32_t oliphaunt_exec_protocol_exchange_with_error(
+    OliphauntHandle *handle, size_t input_len,
+    OliphauntProtocolStartCallback started, void *started_context,
+    OliphauntStreamCallback output, void *output_context,
+    OliphauntErrorCapture *error);
+OLIPHAUNT_API int32_t oliphaunt_feed_protocol_exchange(
+    OliphauntHandle *handle, uint64_t token, const uint8_t *data, size_t len,
+    OliphauntErrorCapture *error);
+OLIPHAUNT_API int32_t oliphaunt_finish_protocol_exchange(
+    OliphauntHandle *handle, uint64_t token, OliphauntErrorCapture *error);
 
 OLIPHAUNT_API int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out);
 OLIPHAUNT_API int32_t oliphaunt_exec_protocol(

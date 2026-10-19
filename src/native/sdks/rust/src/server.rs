@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::child_process::{reap_child_process, reap_child_process_until};
+use crate::child_process::{ChildProcessReaper, reap_child_process, reap_child_processes_until};
 #[cfg(unix)]
 use crate::config::server_unix_socket_directory_str;
 use crate::config::{
@@ -91,13 +91,21 @@ impl NativeRuntime for NativeServerRuntime {
             AUTO_PORT_START_ATTEMPTS
         };
         let mut last_error = None;
+        let mut startup_deadline = None;
         for attempt in 0..attempts {
+            if startup_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                return Err(Error::Engine(
+                    "native server startup deadline exceeded".to_owned(),
+                ));
+            }
             let port = match fixed_port {
                 Some(port) => port,
                 None => pick_port()?,
             };
             let (process_listen, sdk_endpoint, connection_string, mut owned_socket_dir) =
                 prepare_server_listen(&listen, &config, port)?;
+            let attempt_deadline =
+                *startup_deadline.get_or_insert_with(|| Instant::now() + startup_timeout);
             let mut child =
                 match start_postgres(&root, &executable, &config, &extensions, &process_listen) {
                     Ok(child) => child,
@@ -107,7 +115,7 @@ impl NativeRuntime for NativeServerRuntime {
                         return Err(failed_start_error(error, cleanup_failures));
                     }
                 };
-            match wait_for_server(sdk_endpoint, &mut child, &config, startup_timeout) {
+            match wait_for_server(sdk_endpoint, &mut child, &config, attempt_deadline) {
                 Ok(()) => {
                     return Ok(Box::new(NativeServerSession {
                         control_timeout,
@@ -191,6 +199,7 @@ impl NativeServerSession {
                 Duration::ZERO
             };
         let mut cleanup_failures = Vec::new();
+        let mut stop_child = None;
         if first_attempt {
             let root = self
                 .root
@@ -219,26 +228,7 @@ impl NativeServerSession {
                     .stderr(Stdio::null())
                     .spawn();
                 match stop {
-                    Ok(mut child) => {
-                        let outcome = reap_child_process_until(
-                            &mut child,
-                            deadline,
-                            self.control_timeout,
-                            "pg_ctl stop",
-                        );
-                        cleanup_failures.extend(outcome.failures);
-                        if outcome.reaped {
-                            if outcome.exit_success == Some(false) {
-                                cleanup_failures
-                                    .push("pg_ctl stop exited unsuccessfully".to_owned());
-                            }
-                        } else {
-                            // No enclosing owner can safely retry an unconfirmed
-                            // pg_ctl child after this terminal close attempt.
-                            self.retain_root_on_drop = true;
-                            std::mem::forget(child);
-                        }
-                    }
+                    Ok(child) => stop_child = Some(child),
                     Err(err) => cleanup_failures.push(format!("run pg_ctl stop: {err}")),
                 }
             } else {
@@ -249,13 +239,28 @@ impl NativeServerSession {
             }
         }
 
+        let mut children: Vec<(&mut dyn ChildProcessReaper, &str)> = Vec::new();
+        if let Some(child) = stop_child.as_mut() {
+            children.push((child, "pg_ctl stop"));
+        }
         if let Some(child) = self.child.as_mut() {
-            let outcome = reap_child_process_until(
-                child,
-                deadline,
-                self.control_timeout,
-                "native server process",
-            );
+            children.push((child, "native server process"));
+        }
+        let mut outcomes =
+            reap_child_processes_until(&mut children, deadline, self.control_timeout).into_iter();
+        drop(children);
+        if let Some(child) = stop_child.take() {
+            let outcome = outcomes.next().expect("pg_ctl has a reap outcome");
+            cleanup_failures.extend(outcome.failures);
+            if !outcome.reaped {
+                self.retain_root_on_drop = true;
+                std::mem::forget(child);
+            } else if outcome.exit_success == Some(false) {
+                cleanup_failures.push("pg_ctl stop exited unsuccessfully".to_owned());
+            }
+        }
+        if self.child.is_some() {
+            let outcome = outcomes.next().expect("native server has a reap outcome");
             cleanup_failures.extend(outcome.failures);
             if outcome.reaped {
                 self.child = None;
@@ -263,6 +268,7 @@ impl NativeServerSession {
         }
 
         if self.child.is_none()
+            && !self.retain_root_on_drop
             && let Some(socket_dir) = self.owned_socket_dir.as_ref()
         {
             match fs::remove_dir_all(socket_dir) {
@@ -430,9 +436,8 @@ fn wait_for_server(
     endpoint: PostgresEndpoint,
     child: &mut Child,
     config: &OpenConfig,
-    startup_timeout: Duration,
+    deadline: Instant,
 ) -> Result<()> {
-    let deadline = Instant::now() + startup_timeout;
     let mut last_error = None;
     while Instant::now() < deadline {
         if let Some(status) = child
@@ -447,21 +452,30 @@ fn wait_for_server(
             endpoint.clone(),
             &config.username,
             &config.database,
-            CONNECT_ATTEMPT_TIMEOUT.min(deadline.saturating_duration_since(Instant::now())),
-            deadline.saturating_duration_since(Instant::now()),
+            (Instant::now() + CONNECT_ATTEMPT_TIMEOUT).min(deadline),
+            deadline,
         ) {
             Ok(mut connection) => {
                 connection.terminate(deadline)?;
+                if Instant::now() >= deadline {
+                    return Err(Error::Engine(
+                        "native server startup deadline exceeded".to_owned(),
+                    ));
+                }
                 return Ok(());
             }
             Err(err) => last_error = Some(err),
         }
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(50)),
+        );
     }
     Err(last_error.unwrap_or_else(|| {
         Error::Engine(format!(
-            "native server did not accept SDK connections on {:?} within {:?}",
-            endpoint, startup_timeout
+            "native server did not accept SDK connections on {:?} before the startup deadline",
+            endpoint
         ))
     }))
 }

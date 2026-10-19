@@ -168,6 +168,11 @@ android_liboliphaunt_has_current_abi() {
     oliphaunt_exec_protocol \
     oliphaunt_exec_simple_query \
     oliphaunt_exec_protocol_raw_stream \
+    oliphaunt_exec_protocol_raw_stream_started_with_error \
+    oliphaunt_feed_protocol_stream_wait \
+    oliphaunt_exec_protocol_exchange_with_error \
+    oliphaunt_feed_protocol_exchange \
+    oliphaunt_finish_protocol_exchange \
     oliphaunt_backup \
     oliphaunt_restore \
     oliphaunt_init_with_error \

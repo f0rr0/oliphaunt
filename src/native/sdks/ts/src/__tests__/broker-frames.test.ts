@@ -11,12 +11,13 @@ import {
 } from '../runtime/broker-frames.js';
 import { MemoryDuplexStream } from '../runtime/byte-stream.js';
 
-test('broker management carries authentication, backup and close; SQL uses PostgreSQL', async () => {
+test('broker management carries authentication, backup, cancellation and close', async () => {
   for (const request of [
     { kind: 'authenticate', token: 'secret' },
     { kind: 'backup' },
     { kind: 'backup-stream' },
     { kind: 'close' },
+    { kind: 'cancel', token: 'secret', epoch: new Uint8Array(16).fill(7), request: 12n },
   ] as const) {
     assert.deepEqual(
       await readBrokerRequest(new MemoryDuplexStream([encodeBrokerRequest(request)])),

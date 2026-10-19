@@ -115,7 +115,7 @@ export class ServerHandle {
   #shutdownCommandCompletion: Promise<number | null> | undefined;
   #scheduledShutdownCommandCompletion: Promise<number | null> | undefined;
   #detachTail: Promise<void> = Promise.resolve();
-  readonly #shutdownServer: () => Promise<void>;
+  readonly #shutdownServer: (deadline: number) => Promise<void>;
 
   constructor(
     child: ManagedChild,
@@ -126,7 +126,7 @@ export class ServerHandle {
     ownedSocketDir: string | undefined,
     readonly connectionString: string,
     readonly temporaryDirectory: boolean,
-    shutdownServer?: () => Promise<void>,
+    shutdownServer?: (deadline: number) => Promise<void>,
     private readonly shutdownTimeoutMs = DEFAULT_CONTROL_TIMEOUT_MS,
   ) {
     this.#child = child;
@@ -134,7 +134,7 @@ export class ServerHandle {
     this.#temporaryInstanceDirectory = temporaryDirectory ? instanceDirectory : undefined;
     this.#shutdownServer =
       shutdownServer ??
-      (() =>
+      ((deadline) =>
         runCommand(
           this.pgCtl,
           [
@@ -144,11 +144,12 @@ export class ServerHandle {
             'fast',
             '-w',
             '-t',
-            String(Math.ceil(this.shutdownTimeoutMs / 1_000)),
+            String(Math.ceil(Math.max(0, deadline - performance.now()) / 1_000)),
             'stop',
           ],
           this.toolEnvironment,
           this.shutdownTimeoutMs,
+          deadline,
         ).then(() => undefined));
   }
 
@@ -165,68 +166,82 @@ export class ServerHandle {
     const firstAttempt = !this.#closed;
     this.#closed = true;
     const failures: unknown[] = [];
-    if (firstAttempt) {
-      try {
-        await this.#shutdownServer();
-      } catch (error) {
-        failures.push(error);
-        const completion = unconfirmedServerCommandCompletion(error);
-        this.#shutdownCommandCompletion = completion;
-        if (completion !== undefined && this.#scheduledShutdownCommandCompletion !== completion) {
-          this.#scheduledShutdownCommandCompletion = completion;
-          void completion.then(
-            () => {
-              // Public close becomes terminal after its first failure. Queue
-              // one internal cleanup pass behind that attempt once pg_ctl is
-              // conclusively reaped so retained socket/PGDATA paths can be
-              // released without requiring another public close.
-              void this.detach().catch(() => {});
-            },
-            () => {},
-          );
-        }
-      }
-    } else if (this.#shutdownCommandCompletion !== undefined) {
-      const completion = this.#shutdownCommandCompletion;
-      try {
-        if (await waitForServerCommand(completion, this.shutdownTimeoutMs)) {
-          if (this.#shutdownCommandCompletion === completion) {
-            this.#shutdownCommandCompletion = undefined;
-          }
-        } else {
-          failures.push(
-            new Error(
-              `native server shutdown command reap remained unconfirmed after ${this.shutdownTimeoutMs}ms`,
-            ),
-          );
-        }
-      } catch (error) {
-        failures.push(error);
-      }
-    }
-    const child = this.#child;
-    if (child !== undefined) {
-      try {
-        let exited = await waitForManagedChild(child, this.shutdownTimeoutMs);
-        if (!exited) {
-          failures.push(new Error(`native server did not stop within ${this.shutdownTimeoutMs}ms`));
-          child.kill('SIGKILL');
-          exited = await waitForManagedChild(child, this.shutdownTimeoutMs);
-          if (!exited) {
-            failures.push(
-              new Error(
-                `native server was not reaped within ${this.shutdownTimeoutMs}ms after SIGKILL`,
-              ),
+    const deadline = performance.now() + (firstAttempt ? this.shutdownTimeoutMs : 0);
+    const stopCommand = async () => {
+      const failures: unknown[] = [];
+      if (firstAttempt) {
+        try {
+          await this.#shutdownServer(deadline);
+        } catch (error) {
+          failures.push(error);
+          const completion = unconfirmedServerCommandCompletion(error);
+          this.#shutdownCommandCompletion = completion;
+          if (completion !== undefined && this.#scheduledShutdownCommandCompletion !== completion) {
+            this.#scheduledShutdownCommandCompletion = completion;
+            void completion.then(
+              () => {
+                // Public close becomes terminal after its first failure. Queue
+                // one internal cleanup pass behind that attempt once pg_ctl is
+                // conclusively reaped so retained socket/PGDATA paths can be
+                // released without requiring another public close.
+                void this.detach().catch(() => {});
+              },
+              () => {},
             );
           }
         }
-        if (exited && this.#child === child) {
-          this.#child = undefined;
+      } else if (this.#shutdownCommandCompletion !== undefined) {
+        const completion = this.#shutdownCommandCompletion;
+        try {
+          if (await waitForServerCommand(completion, this.shutdownTimeoutMs)) {
+            if (this.#shutdownCommandCompletion === completion) {
+              this.#shutdownCommandCompletion = undefined;
+            }
+          } else {
+            failures.push(
+              new Error(
+                `native server shutdown command reap remained unconfirmed after ${this.shutdownTimeoutMs}ms`,
+              ),
+            );
+          }
+        } catch (error) {
+          failures.push(error);
         }
-      } catch (error) {
-        failures.push(error);
       }
-    }
+      return failures;
+    };
+    const stopBackend = async () => {
+      const failures: unknown[] = [];
+      const child = this.#child;
+      if (child !== undefined) {
+        try {
+          let exited = await waitForManagedChild(child, Math.max(0, deadline - performance.now()));
+          if (!exited) {
+            failures.push(
+              new Error(`native server did not stop within ${this.shutdownTimeoutMs}ms`),
+            );
+            child.kill('SIGKILL');
+            exited = await waitForManagedChild(child, this.shutdownTimeoutMs);
+            if (!exited) {
+              failures.push(
+                new Error(
+                  `native server was not reaped within ${this.shutdownTimeoutMs}ms after SIGKILL`,
+                ),
+              );
+            }
+          }
+          if (exited && this.#child === child) {
+            this.#child = undefined;
+          }
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      return failures;
+    };
+    // Neither owner's forced reap may delay escalation of the other owner.
+    const [commandFailures, backendFailures] = await Promise.all([stopCommand(), stopBackend()]);
+    failures.push(...commandFailures, ...backendFailures);
     // A process whose reap is unconfirmed may still be using its socket and
     // PGDATA. Retain both exact paths and defer deletion until the process is
     // conclusively gone.
@@ -326,6 +341,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
     const port = listen.port ?? (listen.transport === 'tcp' ? await pickPort() : 5432);
     const socketDir = await prepareSocketDirectory(listen, port);
     ownedSocketDir = listen.transport === 'tcp' ? socketDir : undefined;
+    const startupDeadline = performance.now() + startupTimeoutMs;
     child = spawnManagedChild({
       executable,
       args: postgresServerArguments(config, listen, port, socketDir),
@@ -338,7 +354,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
       child,
       config.username,
       config.database,
-      startupTimeoutMs,
+      startupDeadline,
     );
     await releaseReadinessClient(readinessClient, controlTimeoutMs);
     return new ServerHandle(
@@ -433,11 +449,10 @@ async function waitForServer(
   child: ManagedChild,
   username: string,
   database: string,
-  startupTimeoutMs: number,
+  deadline: number,
 ): Promise<PostgresWireClient> {
-  const deadline = Date.now() + startupTimeoutMs;
   let lastError: unknown;
-  while (Date.now() < deadline) {
+  while (performance.now() < deadline) {
     const exited = await Promise.race([
       child.exited().then((code) => ({ exited: true, code })),
       sleep(0).then(() => ({ exited: false, code: null })),
@@ -445,16 +460,20 @@ async function waitForServer(
     if (exited.exited) {
       throw new Error(`native server exited before accepting connections with code ${exited.code}`);
     }
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) break;
     try {
       return await PostgresWireClient.connect(
         endpoint,
         username,
         database,
-        Math.max(1, deadline - Date.now()),
+        remaining,
+        undefined,
+        deadline,
       );
     } catch (error) {
       lastError = error;
-      await sleep(Math.min(CONNECT_RETRY_MS, Math.max(0, deadline - Date.now())));
+      await sleep(Math.min(CONNECT_RETRY_MS, Math.max(0, deadline - performance.now())));
     }
   }
   throw new Error(`native server did not accept SDK connections: ${errorString(lastError)}`);
@@ -754,6 +773,7 @@ async function runCommand(
   args: string[],
   env?: Record<string, string>,
   timeoutMs?: number,
+  deadline?: number,
 ): Promise<Uint8Array> {
   const child = spawn(command, args, {
     env: env ?? process.env,
@@ -779,6 +799,7 @@ async function runCommand(
       wait: () => exited,
     },
     timeoutMs,
+    deadline,
   );
 }
 
@@ -787,6 +808,7 @@ export async function runSpawnedServerCommand(
   command: string,
   child: ServerCommandProcess,
   timeoutMs?: number,
+  deadline = timeoutMs === undefined ? Infinity : performance.now() + timeoutMs,
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   child.stdout.on('data', (chunk: Buffer) => chunks.push(new Uint8Array(chunk)));
@@ -796,7 +818,7 @@ export async function runSpawnedServerCommand(
   let code: number | null | undefined;
   if (timeoutMs === undefined) {
     code = await completion;
-  } else if (await waitForServerCommand(completion, timeoutMs)) {
+  } else if (await waitForServerCommand(completion, Math.max(0, deadline - performance.now()))) {
     code = await completion;
   } else {
     timedOut = true;

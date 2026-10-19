@@ -5,18 +5,13 @@ import { DEFAULT_CONTROL_TIMEOUT_MS } from './timeouts.js';
 
 const PROTOCOL_VERSION_3 = 196_608;
 const MAX_FRAME_LEN = 128 * 1024 * 1024;
-const STREAM_CHUNK_BYTES = 64 * 1024;
 
 export class PostgresWireClient {
   readonly #stream: ByteStream;
   #terminateRequested = false;
   #streamClosed = false;
 
-  constructor(
-    stream: ByteStream,
-    private readonly endpoint?: LocalEndpoint,
-    private readonly cancelKey?: Uint8Array,
-  ) {
+  constructor(stream: ByteStream) {
     this.#stream = stream;
   }
 
@@ -26,16 +21,16 @@ export class PostgresWireClient {
     database: string,
     timeoutMs: number,
     password?: string,
+    deadline = performance.now() + timeoutMs,
   ): Promise<PostgresWireClient> {
-    const deadline = performance.now() + timeoutMs;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const timeout = setTimeout(() => controller.abort(), Math.max(0, deadline - performance.now()));
     let stream: ByteStream | undefined;
     try {
       stream = await connectEndpoint(endpoint, controller.signal);
       clearTimeout(timeout);
       const connected = stream;
-      const key = await withStreamDeadline(
+      await withStreamDeadline(
         connected,
         deadline,
         async () => {
@@ -44,7 +39,7 @@ export class PostgresWireClient {
         },
         'PostgreSQL startup',
       );
-      return new PostgresWireClient(stream, endpoint, key);
+      return new PostgresWireClient(stream);
     } catch (error) {
       const failures: unknown[] = [error];
       try {
@@ -54,57 +49,6 @@ export class PostgresWireClient {
       }
       throwCollectedCloseFailures(failures, 'native server startup connection cleanup failed');
       throw error;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  async execProtocolStream(
-    request: Uint8Array,
-    onChunk: (chunk: Uint8Array) => void,
-  ): Promise<void> {
-    let remaining = requestReadyBoundaries(request);
-    let callbackFailed = false;
-    let callbackError: unknown;
-    const emit = (chunk: Uint8Array) => {
-      if (callbackFailed) return;
-      try {
-        onChunk(chunk);
-      } catch (error) {
-        callbackFailed = true;
-        callbackError = error;
-      }
-    };
-    const read = async () => {
-      while (remaining > 0) {
-        if (await readBackendFrameStream(this.#stream, emit)) remaining--;
-      }
-    };
-    try {
-      // Pipelined queries can fill both socket buffers; drain while writing.
-      await Promise.all([this.#stream.writeAll(request), read()]);
-    } catch (error) {
-      const failures: unknown[] = [error];
-      try {
-        await this.close();
-      } catch (closeError) {
-        failures.push(closeError);
-      }
-      throwCollectedCloseFailures(failures, 'PostgreSQL exchange cleanup failed');
-    }
-    if (callbackFailed) throw callbackError;
-  }
-
-  async cancel(timeoutMs = DEFAULT_CONTROL_TIMEOUT_MS): Promise<void> {
-    if (!this.endpoint || !this.cancelKey)
-      throw new Error('PostgreSQL cancellation key is unavailable');
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      await cancelPostgresStream(
-        await connectEndpoint(this.endpoint, controller.signal),
-        this.cancelKey,
-      );
     } finally {
       clearTimeout(timeout);
     }
@@ -148,7 +92,23 @@ export class PostgresWireClient {
   }
 }
 
-export function encodeStartupMessage(username: string, database: string): Uint8Array {
+/** Authenticate an already connected stream before selecting a transport. */
+export async function authenticatePostgresStream(
+  stream: ByteStream,
+  username: string,
+  database: string,
+  password: string,
+  parameters: Readonly<Record<string, string>> = {},
+): Promise<void> {
+  await stream.writeAll(encodeStartupMessage(username, database, parameters));
+  await readUntilReady(stream, password);
+}
+
+export function encodeStartupMessage(
+  username: string,
+  database: string,
+  parameters: Readonly<Record<string, string>> = {},
+): Uint8Array {
   const body: number[] = [];
   pushI32(body, PROTOCOL_VERSION_3);
   pushCString(body, 'user');
@@ -157,6 +117,10 @@ export function encodeStartupMessage(username: string, database: string): Uint8A
   pushCString(body, database);
   pushCString(body, 'client_encoding');
   pushCString(body, 'UTF8');
+  for (const [key, value] of Object.entries(parameters)) {
+    pushCString(body, key);
+    pushCString(body, value);
+  }
   body.push(0);
   const out: number[] = [];
   pushI32(out, body.length + 4);
@@ -212,31 +176,6 @@ async function readUntilReady(
   }
 }
 
-async function readBackendFrameStream(
-  stream: ByteStream,
-  onChunk: (chunk: Uint8Array) => void,
-): Promise<boolean> {
-  const header = await stream.readExactly(5);
-  const length = readI32(header, 1);
-  if (length < 4 || length > MAX_FRAME_LEN)
-    throw new Error(`invalid PostgreSQL message length ${length}`);
-  if (header[0] === 0x5a) {
-    if (length !== 5) throw new Error('invalid PostgreSQL ReadyForQuery frame');
-    const status = await stream.readExactly(1);
-    if (![0x49, 0x54, 0x45].includes(status[0]!))
-      throw new Error('invalid PostgreSQL ReadyForQuery frame');
-    onChunk(Uint8Array.of(...header, status[0]!));
-    return true;
-  }
-  onChunk(header);
-  for (let remaining = length - 4; remaining > 0; ) {
-    const count = Math.min(remaining, STREAM_CHUNK_BYTES);
-    onChunk(await stream.readExactly(count));
-    remaining -= count;
-  }
-  return false;
-}
-
 async function readBackendFrame(stream: ByteStream): Promise<Uint8Array> {
   const header = await stream.readExactly(5);
   const length = readI32(header, 1);
@@ -248,63 +187,6 @@ async function readBackendFrame(stream: ByteStream): Promise<Uint8Array> {
   if (frame[0] === 0x5a && (length !== 5 || ![0x49, 0x54, 0x45].includes(frame[5]!)))
     throw new Error('invalid PostgreSQL ReadyForQuery frame');
   return frame;
-}
-
-function requestReadyBoundaries(request: Uint8Array): number {
-  if (request.length === 0 || request.length > MAX_FRAME_LEN)
-    throw new Error('invalid PostgreSQL request length');
-  let count = 0;
-  let lastTag = 0;
-  let extendedPending = false;
-  for (let offset = 0; offset < request.length; ) {
-    if (request.length - offset < 5) throw new Error('truncated PostgreSQL frontend header');
-    const length = readI32(request, offset + 1);
-    if (length < 4 || length + 1 > request.length - offset)
-      throw new Error('invalid PostgreSQL frontend frame length');
-    lastTag = request[offset]!;
-    if (lastTag === 0x58 || lastTag === 0x70)
-      throw new Error('PostgreSQL connection control is not a query request');
-    if (lastTag === 0x51 || lastTag === 0x46) {
-      if (extendedPending)
-        throw new Error('Query or FunctionCall must follow Sync after extended protocol messages');
-      count++;
-    } else if (lastTag === 0x53) {
-      extendedPending = false;
-      count++;
-    } else if ([0x50, 0x42, 0x43, 0x44, 0x45, 0x48].includes(lastTag)) {
-      extendedPending = true;
-    }
-    offset += length + 1;
-  }
-  if (!count || ![0x51, 0x46, 0x53, 0x63, 0x66].includes(lastTag))
-    throw new Error(
-      'buffered PostgreSQL request must include Query, FunctionCall, or Sync and end at a query or COPY boundary',
-    );
-  return count;
-}
-
-/** Send PostgreSQL CancelRequest; the server intentionally sends no response. */
-export async function cancelPostgresStream(stream: ByteStream, key: Uint8Array): Promise<void> {
-  try {
-    if (key.length !== 8) throw new Error('invalid PostgreSQL cancellation key');
-    const packet = new Uint8Array(16);
-    const view = new DataView(packet.buffer);
-    view.setUint32(0, 16);
-    view.setUint32(4, 80_877_102);
-    packet.set(key, 8);
-    await stream.writeAll(packet);
-  } catch (failure) {
-    try {
-      await stream.close();
-    } catch (closeFailure) {
-      throw new AggregateError(
-        [failure, closeFailure],
-        'PostgreSQL cancel and stream close both failed',
-      );
-    }
-    throw failure;
-  }
-  await stream.close();
 }
 
 function parseErrorResponse(body: Uint8Array): string {

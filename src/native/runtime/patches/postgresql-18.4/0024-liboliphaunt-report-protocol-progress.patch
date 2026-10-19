@@ -1,0 +1,129 @@
+From: Sid Jain <sid_26@outlook.com>
+Subject: [PATCH] Report actual embedded protocol synchronization and COPY input
+
+Keep completion authority in PostgreSQL. Report synchronized top-level reads
+and COPY input before its response is flushed; the host owns input extents.
+
+diff --git a/src/include/libpq/libpq-be.h b/src/include/libpq/libpq-be.h
+--- a/src/include/libpq/libpq-be.h
++++ b/src/include/libpq/libpq-be.h
+@@ -106,7 +106,7 @@
+ } ClientConnectionInfo;
+ 
+ #ifdef OLIPHAUNT_EMBEDDED
+-#define OLIPHAUNT_EMBEDDED_IO_ABI_VERSION 1U
++#define OLIPHAUNT_EMBEDDED_IO_ABI_VERSION 3U
+ 
+ #define OLIPHAUNT_EMBEDDED_WAKE_NONE 0U
+ #define OLIPHAUNT_EMBEDDED_WAKE_POSIX_FD 1U
+@@ -123,6 +123,9 @@
+ 	int			(*set_timeout) (void *context, long timeout_ms);
+ 	int			(*set_interrupt_wakeup) (void *context, uint32 kind,
+ 											 uintptr_t token);
++	void		(*protocol_checkpoint) (void *context, bool synchronized,
++										 size_t buffered_input);
++	void		(*copy_input) (void *context, bool extended);
+ } OliphauntEmbeddedIO;
+ #endif
+ 
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -161,6 +161,18 @@
+  */
+ static bool doing_extended_query_message = false;
+ static bool ignore_till_sync = false;
++#ifdef OLIPHAUNT_EMBEDDED
++/* Readiness survives ignored COPY tails, but not subsequent extended work. */
++static bool oliphaunt_protocol_synchronized = false;
++
++void
++OliphauntReportCopyInput(void)
++{
++	if (IsTrustedEmbeddedProcess())
++		MyProcPort->oliphaunt_io->copy_input(
++			MyProcPort->oliphaunt_io->context, doing_extended_query_message);
++}
++#endif
+ 
+ /*
+  * If an unnamed prepared statement exists, it's stored here.
+@@ -4397,7 +4409,8 @@
+ 		io->abi_version != OLIPHAUNT_EMBEDDED_IO_ABI_VERSION ||
+ 		io->struct_size < sizeof(*io) || io->context == NULL ||
+ 		io->read == NULL || io->write == NULL || io->set_timeout == NULL ||
+-		io->set_interrupt_wakeup == NULL)
++		io->set_interrupt_wakeup == NULL ||
++		io->protocol_checkpoint == NULL || io->copy_input == NULL)
+ 		return -1;
+ 
+ 	*cwd_capture_errno = 0;
+@@ -4998,6 +5011,10 @@
+ 		 * At top of loop, reset extended-query-message flag, so that any
+ 		 * errors encountered in "idle" state don't provoke skip.
+ 		 */
++#ifdef OLIPHAUNT_EMBEDDED
++		if (doing_extended_query_message || ignore_till_sync)
++			oliphaunt_protocol_synchronized = false;
++#endif
+ 		doing_extended_query_message = false;
+ 
+ 		/*
+@@ -5161,6 +5178,9 @@
+ 			}
+ 
+ 			ReadyForQuery(whereToSendOutput);
++#ifdef OLIPHAUNT_EMBEDDED
++			oliphaunt_protocol_synchronized = true;
++#endif
+ 			send_ready_for_query = false;
+ 		}
+ 
+@@ -5175,6 +5195,13 @@
+ 		/*
+ 		 * (3) read a command (loop blocks here)
+ 		 */
++#ifdef OLIPHAUNT_EMBEDDED
++		if (IsTrustedEmbeddedProcess())
++			MyProcPort->oliphaunt_io->protocol_checkpoint(
++				MyProcPort->oliphaunt_io->context,
++				oliphaunt_protocol_synchronized && !ignore_till_sync,
++				pq_buffer_remaining_data());
++#endif
+ 		firstchar = ReadCommand(&input_message);
+ 
+ 		/*
+diff --git a/src/backend/commands/copyfromparse.c b/src/backend/commands/copyfromparse.c
+--- a/src/backend/commands/copyfromparse.c
++++ b/src/backend/commands/copyfromparse.c
+@@ -72,6 +72,9 @@
+ #include "miscadmin.h"
+ #include "pgstat.h"
+ #include "port/pg_bswap.h"
++#ifdef OLIPHAUNT_EMBEDDED
++#include "tcop/tcopprot.h"
++#endif
+ #include "utils/builtins.h"
+ #include "utils/rel.h"
+ 
+@@ -174,6 +177,9 @@
+ 	int16		format = (cstate->opts.binary ? 1 : 0);
+ 	int			i;
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++	OliphauntReportCopyInput();
++#endif
+ 	pq_beginmessage(&buf, PqMsg_CopyInResponse);
+ 	pq_sendbyte(&buf, format);	/* overall format */
+ 	pq_sendint16(&buf, natts);
+diff --git a/src/include/tcop/tcopprot.h b/src/include/tcop/tcopprot.h
+--- a/src/include/tcop/tcopprot.h
++++ b/src/include/tcop/tcopprot.h
+@@ -80,6 +80,7 @@
+ 									  GucContext ctx, const char **dbname);
+ #ifdef OLIPHAUNT_EMBEDDED
+ typedef struct OliphauntEmbeddedIO OliphauntEmbeddedIO;
++extern void OliphauntReportCopyInput(void);
+ extern int	oliphaunt_embedded_main(int argc, char *argv[],
+ 								 const char *dbname, const char *username,
+ 								 OliphauntEmbeddedIO *io, int *cwd_capture_errno);

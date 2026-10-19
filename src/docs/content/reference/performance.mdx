@@ -217,7 +217,7 @@ when you select those overrides.
 | `broker.recoveryTimeoutMs` / `.broker_recovery_timeout(Duration)` | 3 seconds to settle a disconnected stream before retiring the helper | Gives PostgreSQL longer to recover; delays forced cleanup |
 | `broker.maxPendingHandshakes` / `.broker_max_pending_handshakes(count)` | 16 incomplete logins **per endpoint**. SQL and management have independent allowances; authenticated connections release their slot | Allows more simultaneous logins and retains more unauthenticated sockets |
 | `timeouts.startupTimeoutMs` / `.startup_timeout(Duration)` | Helper launch through protocol readiness, after asset resolution. Native TS defaults to 60 seconds; Rust to 20 seconds | Allows slower startup and delays detection of a stalled helper |
-| `timeouts.shutdownTimeoutMs` / `.shutdown_timeout(Duration)` | 5 seconds for owned teardown before forced process cleanup, after ordinary work drains | Gives shutdown longer to finish before escalation |
+| `timeouts.shutdownTimeoutMs` / `.shutdown_timeout(Duration)` | 5 seconds shared by graceful stop commands, control receipts and process exit, after ordinary work drains; forced reaping gets a separate allowance of the same length | Gives shutdown longer to finish before escalation |
 
 The two lifecycle settings also work on native server handles. Direct native
 placement rejects them. Typed selections override the existing process
@@ -225,8 +225,11 @@ environment defaults. The native backend has a separate readiness wait, normally
 60 seconds, selected by `OLIPHAUNT_STARTUP_TIMEOUT_MS`; a larger helper deadline
 does not raise that inner wait. Pending-login counts must be positive and fit a `u32`.
 New timeout values must fit the portable millisecond range above. Management
-admission remains available when SQL logins are full; PostgreSQL cancellation
-packets still enter through the SQL endpoint.
+admission remains available when SQL logins are full. SDK cancellation targets
+the request active when called, so delayed delivery cannot cancel later work.
+External PostgreSQL clients retain ordinary CancelRequest on the SQL endpoint.
+Retries and individual shutdown steps do not restart a phase's deadline.
+Cleanup may outlast an expired phase; an unreaped owner retains its storage.
 
 ## Configure mobile broker cleanup
 
@@ -346,9 +349,12 @@ WASIX `PgDumpOptions` and `PsqlOptions` accept `.startup_timeout(Duration)` in
 Rust; WASIX npm tool options accept `startupTimeoutMs`. The budget ends when the
 tool opens its virtual connection (first protocol activity in the browser).
 It includes tool asset preparation and does not limit SQL execution or output
-delivery afterward. Native WASIX defaults to 30 seconds; browser tools retain
-no startup deadline unless selected. Expiry stops the owned guest/Worker and
-waits for cleanup; blocking host work may delay that cleanup.
+delivery afterward. Native async Rust calls include owner-queue waiting; native
+JavaScript forwards the preparation budget remaining at native submission.
+Browser budgets start when their tool controller starts preparation; time
+queued before that start is excluded. Native WASIX defaults to 30 seconds;
+browser tools have no startup deadline unless selected. Expiry stops the owned
+guest/Worker and waits for cleanup; blocking host work may delay that cleanup.
 
 ## Select physical archive limits
 
