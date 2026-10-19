@@ -872,6 +872,8 @@ build_postgis_mobile_static_extension_objects() {
     # shellcheck source=/dev/null
     . "$time_helper"
     oliphaunt_postgis_enable_reproducible_time "$repo_root"
+    # Upstream revision generation must identify PostGIS, not the enclosing repository.
+    export GIT_DIR="$source_dir/.git"
     [ "$SOURCE_DATE_EPOCH" = "$source_date_epoch" ] ||
       oliphaunt_postgis_fail "PostGIS build epoch changed after fingerprinting"
     ./autogen.sh >> "$make_log" 2>&1

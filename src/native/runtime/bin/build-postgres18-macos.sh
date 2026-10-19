@@ -2187,6 +2187,8 @@ build_postgis_extension() {
     # shellcheck source=/dev/null
     . "$postgis_time_helper"
     oliphaunt_postgis_enable_reproducible_time "$repo_root"
+    # Upstream revision generation must identify PostGIS, not the enclosing repository.
+    export GIT_DIR="$checkout/.git"
     local -a embedded_postgis_make_args=()
     local embedded_postgis_has_ldflags=0
     local embedded_postgis_ldflags="$embedded_module_be_dllibs"
