@@ -24,6 +24,8 @@ build --@rules_rust//rust/settings:clippy_flags=-Dwarnings
 
 # Darwin sandbox reuse otherwise traverses the complete SDK forest per action.
 build:macos-sandbox --experimental_inmemory_sandbox_stashes
+# Reuse shared SDK input hashes when checking the hosted disk action cache.
+build:macos-sandbox --experimental_remote_merkle_tree_cache
 
 # The LLVM serializer runs on Linux; serialized product targets remain separate.
 build:wasix-aot --extra_execution_platforms=//build_defs/wasix:llvm_serializer_linux_x86_64

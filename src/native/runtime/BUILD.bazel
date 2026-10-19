@@ -97,6 +97,7 @@ alias(name = "runtime_shared", actual = select({"//build_defs/native:macos_arm64
 native_android_runtime_targets()
 native_ios_runtime_targets()
 native_apple_runtime_targets(qualification = [
+    "//build_defs/host:apple_sdk_inputs_test",
     "//build_defs/native:ios_device_builtin_link_test",
     "//build_defs/native:ios_simulator_builtin_link_test",
     ":apple_final_contract_test",

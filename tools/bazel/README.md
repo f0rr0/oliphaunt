@@ -45,6 +45,56 @@ extension modules. Linux ARM64 and Android have separate configured targets.
 Cross-compilation proves construction and binary contracts; runtime behavior
 still requires the actual host or device.
 
+Apple C/C++ profiles share the declared macOS, device and simulator SDK inputs.
+This lets sandbox reuse retain the SDK symlinks when a build switches profiles;
+the compiler flags still select each profile's own SDK and deployment target.
+An SDK file change consequently invalidates all Apple C/C++ profiles. Check the
+input closure and actual native compiler with the pinned Xcode selected:
+
+```sh
+export DEVELOPER_DIR="$(plutil -extract apple.developer_dir raw -o - tools/dev/native-host-toolchains.json)"
+profile=//build_defs/host:native_macos_arm64
+bash tools/dev/bazel.sh test -c opt --config=macos-sandbox \
+  //build_defs/host:apple_sdk_inputs_test //build_defs/host:host_c_smoke \
+  --platforms="$profile" --host_platform="$profile" --jobs=2
+```
+
+Extension inventories use the same stock Apple slice transition as their
+XCFrameworks, so both consume the same configured object files. The desktop
+member transition preserves its native deployment contract. On macOS,
+`//build_defs/extensions:mobile_cpp_reuse_test` checks actual object-file reuse
+across the macOS, iOS device and simulator inventories and frameworks.
+It requires each branch to expose all three profiles before comparing their
+object files, so losing framework traversal cannot produce a passing test.
+
+Full native qualifications and configured CI requests retain compact Bazel
+execution logs in `diagnostics/execution-log.binpb.zst`. The workflow uploads
+these beside the existing profiles, including on failure. Use the
+[upstream execution-log parser/converter](https://github.com/bazelbuild/bazel/tree/8.8.1/src/tools/execlog)
+from the pinned Bazel version to compare runs. Match actions by their outputs and
+compare command, environment and complete input digests before attributing cache
+misses to retention. An `aquery` ActionKey does not include input contents.
+To check disk-cache reuse independently of Bazel's in-memory action cache, repeat
+the identical request in a fresh output base with the same disk cache and retain
+both execution logs. GitHub cache restore keys, source commits, runner context and
+cache size before/after collection are also needed for a CI comparison.
+
+Cache transport and action reuse are separate measurements. A cancelled save
+can leave the next job without a snapshot. GitHub scopes PR snapshots to that
+PR, and repository-wide eviction competes with the legacy workflow caches.
+The stock disk collector can also discard results before upload; inspect its
+deleted-file/byte totals and the allocated-size bound in the save log. A larger
+per-cohort disk budget does not increase GitHub's repository-wide capacity.
+
+Use `bazel config <checksum-a> <checksum-b>` on configurations from the same
+configured `aquery` to diagnose duplicate tools. In the Android graph, host
+configurations can differ only by `@rules_android//rules:min_sdk_version`.
+Pinned Bazel 8.8.1 propagates Starlark settings through the exec transition.
+Its global exclusion option also resets Rust and Apple tool settings; avoid
+enabling it without qualifying those consumers. Upstream's
+[per-setting exec scope migration](https://github.com/bazelbuild/bazel/issues/26909)
+provides the direction for a future Bazel upgrade.
+
 Installed SDK checks also consume the completed dependencies declared by their
 manifests. With an existing GitHub CLI login, acquire their source-bound public
 input snapshot once:

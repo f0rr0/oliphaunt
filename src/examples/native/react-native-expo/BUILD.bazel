@@ -18,8 +18,10 @@ load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_ARTIFACTS", "EXTE
 load("@rules_android//android:rules.bzl", "aar_import", "android_binary", "android_library")
 load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
-load("//build_defs/android:app.bzl", "android_aar_native", "android_apk_proof", "android_app_runtime_assets", "android_extension_receipt", "android_final_aar", "android_header_tree", "android_jni_aar", "android_workspace_npm", "expo_android_bundle", "expo_android_project", "expo_autolinking_test", "mobile_query_input", "react_native_android_codegen")
+load("//build_defs/android:app.bzl", "android_aar_native", "android_apk_proof", "android_app_runtime_assets", "android_extension_receipt", "android_final_aar", "android_header_tree", "android_jni_aar", "android_native_member", "android_workspace_npm", "expo_android_bundle", "expo_android_project", "expo_autolinking_test", "mobile_query_input", "react_native_android_codegen")
+load("//build_defs/android:configuration.bzl", "ANDROID_TARGET_PLATFORMS")
 load("//build_defs/android:native-cpp.bzl", "REACT_NATIVE_RELEASE_DEFINES")
+load("//build_defs/android:reuse-test.bzl", "android_cpp_reuse_test")
 load("//build_defs/extensions:mobile.bzl", "mobile_extension_registry")
 load("//build_defs/extensions:mobile_members.bzl", "MOBILE_MEMBER_LIBRARIES", "MOBILE_MEMBER_TARGETS", "MOBILE_SQL_ONLY_MEMBERS")
 load("//build_defs/quality:sources.bzl", "source_quality_files")
@@ -124,6 +126,7 @@ _SHARED = ["-static_link_cpp_runtimes"]
 _RN_NATIVE = ["@expo_android_sources//:react_native_prefab", "@expo_android_sources//:fbjni", "@expo_android_sources//:shared_cxx_runtime"]
 _JNA = ANDROID_NATIVE["reactNativeSdk"]["jna"]
 _MIN_SDK = ANDROID_NATIVE["minSdkVersion"]
+android_cpp_reuse_test(name = "android_cpp_reuse_test", min_sdk_version = _MIN_SDK)
 
 android_final_aar(name = "kotlin_final_aar", source = "//src/native/sdks/kotlin:android_maven_archive")
 aar_import(name = "kotlin_installed", aar = ":kotlin_final_aar", package = "dev.oliphaunt", deps = [
@@ -157,10 +160,12 @@ cc_binary(name = "liboliphauntreactnative.so", deps = [":oliphaunt_reactnative_s
 # Static registration consumes the actual ABI-specific archive; final proof
 # binds its definitions to the same cohort embedded in the Hermes bundle.
 _DESCRIPTORS = {row["sql-name"]: row for row in EXTENSIONS.values()}
-_MEMBERS = [MOBILE_MEMBER_TARGETS[name] for name in ANDROID_COMPILED_EXTENSIONS]
+[android_native_member(name = "selected_" + name, member = MOBILE_MEMBER_TARGETS[name], library = MOBILE_MEMBER_LIBRARIES[name],
+    platform = select({_ARM64: ANDROID_TARGET_PLATFORMS["android-arm64-v8a"], _X64: ANDROID_TARGET_PLATFORMS["android-x86_64"]})) for name in ANDROID_COMPILED_EXTENSIONS]
+_MEMBERS = [":selected_" + name for name in ANDROID_COMPILED_EXTENSIONS]
 mobile_extension_registry(name = "selected_registry", members = _MEMBERS, sql_names = ANDROID_COMPILED_EXTENSIONS)
 cc_binary(name = "liboliphaunt_extensions.so", srcs = [":selected_registry"],
-    deps = [":runtime_cc", ":runtime_headers", "@expo_android_sources//:shared_cxx_runtime"] + [MOBILE_MEMBER_LIBRARIES[name] for name in ANDROID_COMPILED_EXTENSIONS],
+    deps = [":runtime_cc", ":runtime_headers", "@expo_android_sources//:shared_cxx_runtime"] + _MEMBERS,
     features = _SHARED, linkshared = True, linkstatic = True,
     linkopts = ["-Wl,-z,defs", "-Wl,-z,max-page-size=16384", "-Wl,-z,common-page-size=16384", "-Wl,-soname,liboliphaunt_extensions.so"], target_compatible_with = ["@platforms//os:android"])
 android_extension_receipt(name = "extension_receipt", library = ":liboliphaunt_extensions.so", registry = ":selected_registry", members = _MEMBERS, selected_extensions = ANDROID_SELECTED_EXTENSIONS, abi = _ABI)

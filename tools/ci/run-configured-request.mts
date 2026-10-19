@@ -183,12 +183,21 @@ export async function runConfiguredRequest(request: ConfiguredRequest, workspace
         ? { ...nativeBuildMetadata(source, request.github), oliphaunt_ci_request_id: request.id }
         : undefined;
     const bepFile = privateDirectory && path.join(privateDirectory, 'build-events.jsonl');
+    const diagnostics = privateDirectory
+      ? requireSafeDirectoryChain(path.resolve(workspace, request.outputDirectory, 'diagnostics'), {
+          create: true,
+          label: 'CI build diagnostics',
+        })
+      : undefined;
     const args = [
       ...startup,
       request.command,
       ...request.targets,
       ...request.configuration,
       ...(bepFile ? [`--build_event_json_file=${bepFile}`] : []),
+      ...(diagnostics
+        ? [`--execution_log_compact_file=${path.join(diagnostics, 'execution-log.binpb.zst')}`]
+        : []),
       ...Object.entries(metadata ?? {}).map(([key, value]) => `--build_metadata=${key}=${value}`),
     ];
     const result = spawnSync('bash', ['tools/dev/bazel.sh', ...args], {

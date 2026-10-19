@@ -86,7 +86,7 @@ def host_cc_profiles(sdk):
             supports_parse_showincludes = True,
             shorten_virtual_includes = True,
         )
-        _compiler("cc_compiler", ":configuration", sdk, [])
+        _compiler("cc_compiler", ":configuration", sdk)
     else:
         for name, minimum in [("native", sdk["deploymentTargets"]["native_macos"])]:
             unix_config(
@@ -126,7 +126,7 @@ def host_cc_profiles(sdk):
                 ios_floor = sdk["deploymentTargets"]["ios"],
                 use_ar = True,
             )
-            _compiler("cc_" + name, ":configuration_" + name, sdk, [component for other in ["iphoneos", "iphonesimulator"] for component in ["sdk_" + other, "platform_" + other + "/Library", "platform_" + other + "/usr/lib"]])
+            _compiler("cc_" + name, ":configuration_" + name, sdk)
         # Build the pinned standard Apple drivers with the declared native
         # compiler. Upstream's universal_exec_tool uses an ambient shell compiler.
         cc_binary(name = "wrapped_clang", srcs = ["wrapped_clang.cc"], copts = ["-std=c++17"])
@@ -165,10 +165,12 @@ def host_cc_profiles(sdk):
                 macos_floor = sdk["deploymentTargets"]["package_macos"],
                 ios_floor = sdk["deploymentTargets"]["ios"],
             )
-            _compiler("cc_" + name, ":configuration_" + name, sdk, [component for other in ["macosx", "iphoneos", "iphonesimulator"] if other != selected_sdk for component in ["sdk_" + other, "platform_" + other + "/Library", "platform_" + other + "/usr/lib"]], drivers = True)
+            _compiler("cc_" + name, ":configuration_" + name, sdk, drivers = True)
 
-def _compiler(name, configuration, sdk, exclude, drivers = False):
-    components = [component for component in sdk["components"] if component["name"] not in exclude]
+def _compiler(name, configuration, sdk, drivers = False):
+    # A shared SDK closure lets sandbox reuse retain its symlinks across Apple
+    # profiles instead of deleting and recreating thousands on every switch.
+    components = sdk["components"]
     for role in ["compile", "link"]:
         native.filegroup(
             name = name + "_" + role + "_files",

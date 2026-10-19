@@ -227,7 +227,7 @@ export async function qualifyNativeShipping(
     configuration.some(
       (item) =>
         item === '--' ||
-        /^--(?:build_metadata|build_event_json_file|output|output_file|output_groups|profile|query_file|starlark:file|starlark:expr|experimental_aquery_dump_after_build_format|experimental_aquery_dump_after_build_output_file)(?:=|$)/u.test(
+        /^--(?:build_metadata|build_event_json_file|execution_log_compact_file|execution_log_json_file|execution_log_binary_file|output|output_file|output_groups|profile|query_file|starlark:file|starlark:expr|experimental_aquery_dump_after_build_format|experimental_aquery_dump_after_build_output_file)(?:=|$)/u.test(
           item,
         ),
     )
@@ -493,6 +493,7 @@ export async function qualifyNativeShipping(
     ...metadata,
     `--build_event_json_file=${file('build-events.jsonl')}`,
     `--profile=${diagnosticFile('build-profile.json.gz')}`,
+    `--execution_log_compact_file=${diagnosticFile('execution-log.binpb.zst')}`,
     '--output_groups=+shipping_manifest,+shipping_policy,+observation_inputs',
   ]);
   assertSource();

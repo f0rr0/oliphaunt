@@ -370,7 +370,14 @@ export function buildShippingInputView(
   const visitedDepSetsByProduct = new Map<string, Set<string>>();
   const actionDescriptions = new Map<Row, string>();
   const sharedDefinitions = new Map<Row, string>();
-  const physicalInputs = new Set<string>();
+  // Rank paths once so shared SDK closures sort as integers. Hashing still uses
+  // the same sorted, unique path strings, independently of artifact IDs/order.
+  const orderedPaths = [...new Set(artifactPaths.values())].sort();
+  const pathRanks = new Map(orderedPaths.map((path, rank) => [path, rank]));
+  const artifactRanks = new Map(
+    [...artifactPaths].map(([artifact, path]) => [artifact, required(pathRanks, path)]),
+  );
+  const physicalInputs = new Uint8Array(orderedPaths.length);
   const captureInputs = new Set<string>();
   const virtualOutputs = new Set<string>();
   const describeAction = (action: Row) => ({
@@ -397,8 +404,16 @@ export function buildShippingInputView(
   const actionDescription = (action: Row, inputs: Set<string>) => {
     const cached = actionDescriptions.get(action);
     if (cached !== undefined) return cached;
-    const paths = [...new Set([...inputs].map((input) => required(artifactPaths, input)))].sort();
-    for (const path of paths) physicalInputs.add(path);
+    const ranks = Uint32Array.from(inputs, (input) => required(artifactRanks, input)).sort();
+    const paths: string[] = [];
+    let previous = -1;
+    for (const rank of ranks) {
+      if (rank !== previous) {
+        paths.push(orderedPaths[rank]);
+        physicalInputs[rank] = 1;
+      }
+      previous = rank;
+    }
     if (action.mnemonic === 'Middleman')
       for (const output of array(action.outputIds ?? []))
         virtualOutputs.add(required(artifactPaths, id(output)));
@@ -606,7 +621,9 @@ export function buildShippingInputView(
   return {
     schema: 'oliphaunt-bazel-construction-inputs-v2',
     products,
-    physicalInputs: [...physicalInputs].filter((path) => !virtualOutputs.has(path)).sort(),
+    physicalInputs: orderedPaths.filter(
+      (path, rank) => physicalInputs[rank] && !virtualOutputs.has(path),
+    ),
     captureInputs: [...captureInputs].sort(),
   };
 }

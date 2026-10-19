@@ -529,6 +529,40 @@ test('partial, substituted or cyclic graphs fail closed', () => {
   expect(() => buildShippingInputView(exported, graph)).toThrow('missing generated input producer');
 });
 
+test('input identities preserve path ordering and aliases independently of graph IDs and unrelated paths', () => {
+  const { exported, graph } = fixture();
+  graph.pathFragments.push(
+    { id: 8, parentId: 1, label: 'é.h' },
+    { id: 9, parentId: 1, label: 'Alpha.h' },
+    { id: 10, parentId: 1, label: '𐐀.h' },
+    { id: 11, parentId: 1, label: 'unused' },
+  );
+  graph.artifacts.push(
+    { id: 5, pathFragmentId: 8 },
+    { id: 4294967313, pathFragmentId: 9 },
+    { id: 7, pathFragmentId: 10 },
+    { id: 8, pathFragmentId: 2 },
+    { id: 9, pathFragmentId: 11 },
+  );
+  graph.depSetOfFiles[0].directArtifactIds = [7, 8, 1, 4294967313, 5];
+  const inputs = ['src/Alpha.h', 'src/alpha.c', 'src/é.h', 'src/𐐀.h'];
+  const view = buildShippingInputView(exported, graph);
+  const compile = view.products.alpha.actions
+    .map((action) => JSON.parse(action))
+    .find((action) => action.mnemonic === 'CppCompile');
+  expect(compile.inputs).toEqual({
+    count: inputs.length,
+    sha256: createHash('sha256').update(JSON.stringify(inputs)).digest('hex'),
+  });
+  expect(view.physicalInputs).toEqual(['bazel-out/alpha.o', ...inputs, 'tools/packager']);
+  expect(view.captureInputs).toEqual([...inputs, 'tools/packager']);
+  graph.pathFragments.at(-1)!.label = '!unused-first';
+  graph.pathFragments.reverse();
+  graph.artifacts.reverse();
+  graph.depSetOfFiles[0].directArtifactIds.reverse();
+  expect(buildShippingInputView(exported, graph)).toEqual(view);
+});
+
 test('compact descriptions bind exact sorted physical input sets and retain the full capture closure', () => {
   const { exported, graph } = fixture();
   const view = buildShippingInputView(exported, graph);

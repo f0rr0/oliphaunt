@@ -67,6 +67,13 @@ test('Apple construction floors project the public compatibility policy without 
   });
 });
 
+test('Android slice floors project the public compatibility policy without NDK acquisition', () => {
+  expect(importToolchainMetadata(...fixture()).android_platforms).toEqual({
+    'android-arm64-v8a': { api: 24 },
+    'android-x86_64': { api: 24 },
+  });
+});
+
 test.each([
   'Cargo version',
   'npm type',

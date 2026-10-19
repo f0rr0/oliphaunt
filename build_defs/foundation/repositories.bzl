@@ -173,6 +173,7 @@ def _toolchain_metadata_impl(ctx):
         fail("Cannot import pinned language tools: " + result.stderr)
     data = json.decode(result.stdout)
     ctx.file("apple-platforms.bzl", "APPLE_DEPLOYMENT_TARGETS = " + repr(data["apple_deployment_targets"]) + "\n")
+    ctx.file("android-platforms.bzl", "ANDROID_PLATFORMS = " + repr(data["android_platforms"]) + "\n")
     ctx.file("toolchains.json", json.encode(data["language_acquisition"]))
     ctx.file("node-version", data["node"] + "\n")
     ctx.file("typescript.json", json.encode({
@@ -183,7 +184,7 @@ def _toolchain_metadata_impl(ctx):
     ctx.file("query-package-type.bzl", "QUERY_PACKAGE_TYPE = " + repr(data["query_package_type"]) + "\nQUERY_NPM_NAME = " + repr(data["query_npm_name"]) + "\n")
     rust = data["query_rust"]
     ctx.file("query-rust.bzl", "QUERY_RUST_CRATE_NAME = " + repr(rust["crate_name"]) + "\nQUERY_RUST_EDITION = " + repr(rust["edition"]) + "\nQUERY_RUST_VERSION = " + repr(rust["version"]) + "\nQUERY_RUST_ENV = " + repr(rust["env"]) + "\n")
-    ctx.file("BUILD.bazel", 'exports_files(["toolchains.json", "node-version", "typescript.json", "query-package-type.bzl", "query-rust.bzl", "apple-platforms.bzl"], visibility = ["//visibility:public"])\n')
+    ctx.file("BUILD.bazel", 'exports_files(["toolchains.json", "node-version", "typescript.json", "query-package-type.bzl", "query-rust.bzl", "apple-platforms.bzl", "android-platforms.bzl"], visibility = ["//visibility:public"])\n')
     return ctx.repo_metadata(reproducible = True)
 
 toolchain_metadata_repository = repository_rule(

@@ -1,5 +1,8 @@
 import { readFileSync } from 'node:fs';
-import { platformCompatibilityContract } from '../../tools/release/platform-compatibility-policy.mts';
+import {
+  platformCompatibilityContract,
+  platformCompatibilityTargets,
+} from '../../tools/release/platform-compatibility-policy.mts';
 import { appleDeploymentTargets } from '../host/deployment-policy.mts';
 
 export function mobileRustTargets(): string[] {
@@ -159,6 +162,14 @@ export function importToolchainMetadata(
   };
   return {
     apple_deployment_targets: appleDeploymentTargets(),
+    android_platforms: Object.fromEntries(
+      platformCompatibilityTargets()
+        .filter((target) => target.startsWith('android-'))
+        .map((target) => [
+          target,
+          { api: platformCompatibilityContract(target).elf.androidApiLevel },
+        ]),
+    ),
     node: versions.node,
     bun: versions.bun,
     typescript: projection(typescript),
