@@ -40,6 +40,7 @@ import {
   stageExtensionNativeNpmFacade,
 } from '../../src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts';
 import {
+  COMPILER_RT_NATIVE_CONSTRUCTION_MEMBERS,
   extensionCarrierLegalContract,
   nativeExtensionConstructionLicenseInventory,
   PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS,
@@ -311,7 +312,7 @@ function expectedMember(spec: NativeCarrierSpec, target: string, selected?: any)
           )
         : [],
     nativeConstructionLicenseFiles:
-      (spec.sqlName === 'vector' &&
+      (COMPILER_RT_NATIVE_CONSTRUCTION_MEMBERS.includes(spec.sqlName) &&
         nativeModuleHostTarget(target) === 'linux-x64-gnu' &&
         (isDesktopNativeTarget(target) || selected?.nativeConstructionLicenseFiles?.length > 0)) ||
       (spec.contrib &&

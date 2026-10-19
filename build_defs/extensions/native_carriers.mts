@@ -24,6 +24,7 @@ import {
   stageExtensionNativeNpmPackages,
 } from '../../src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts';
 import {
+  COMPILER_RT_NATIVE_CONSTRUCTION_MEMBERS,
   extensionCarrierLegalContract,
   nativeExtensionConstructionLicenseInventory,
   stageExtensionUpstreamLicenses,
@@ -128,7 +129,8 @@ export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<strin
     'native dependency modules differ from the canonical recipe',
   );
   const nativeConstructionLicenseFiles =
-    (['vector', 'pg_textsearch'].includes(spec.sqlName) && spec.target === 'linux-x64-gnu') ||
+    (COMPILER_RT_NATIVE_CONSTRUCTION_MEMBERS.includes(spec.sqlName) &&
+      spec.target === 'linux-x64-gnu') ||
     (spec.contrib && spec.sqlName === 'pgcrypto')
       ? nativeExtensionConstructionLicenseInventory(spec.sqlName, spec.target)
       : [];

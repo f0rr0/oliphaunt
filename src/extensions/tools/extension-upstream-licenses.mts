@@ -55,6 +55,7 @@ export const PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS = Object.freeze([
   'macos-arm64',
   'windows-x64-msvc',
 ]);
+export const COMPILER_RT_NATIVE_CONSTRUCTION_MEMBERS = Object.freeze(['vector', 'pg_textsearch']);
 const OPENSSL_EMBEDDED_NATIVE_TARGETS = new Set([
   'android-arm64-v8a',
   'android-x86_64',
@@ -751,7 +752,7 @@ export function nativeExtensionConstructionLicenseInventory(sqlName, target) {
       ].map(Object.freeze),
     );
   }
-  if (!['vector', 'pg_textsearch'].includes(sqlName) || target !== 'linux-x64-gnu') {
+  if (!COMPILER_RT_NATIVE_CONSTRUCTION_MEMBERS.includes(sqlName) || target !== 'linux-x64-gnu') {
     fail('native construction legal closure has no declared source for this member/target');
   }
   const source = JSON.parse(
