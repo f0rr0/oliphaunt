@@ -41,10 +41,7 @@ export { cargoManifestPaths } from './release-please-transition.mts';
 
 const PREFIX = 'sync-release-pr.mts';
 const DEPENDENCY_TABLES = ['dependencies', 'dev-dependencies', 'build-dependencies'];
-const LOCKFILES = [
-  path.join(ROOT, 'Cargo.lock'),
-  path.join(ROOT, 'src/wasix/node-addon/Cargo.lock'),
-];
+const CARGO_LOCKFILE = path.join(ROOT, 'Cargo.lock');
 const BUN_LOCKFILE = path.join(ROOT, 'bun.lock');
 const RELEASE_PLEASE_CONFIG = path.join(ROOT, 'release-please-config.json');
 const RELEASE_PLEASE_MANIFEST = path.join(ROOT, '.release-please-manifest.json');
@@ -962,10 +959,7 @@ export function syncLockfile(lockfile, versions, changes, { write, observeUpdate
 
 function syncLockfiles(changes, { write, observeUpdate }) {
   const versions = localCargoPackageVersions();
-  for (const lockfile of LOCKFILES) {
-    if (lockfile !== LOCKFILES[0] && !existsSync(lockfile)) continue;
-    syncLockfile(lockfile, versions, changes, { write, observeUpdate });
-  }
+  syncLockfile(CARGO_LOCKFILE, versions, changes, { write, observeUpdate });
   // Bun can defer workspace dependency changes when their package versions also change.
   const lock = Bun.JSONC.parse(readText(BUN_LOCKFILE));
   const updated = [];
@@ -1109,7 +1103,7 @@ export function releaseDerivedPathInventory() {
   return [
     ...new Set(
       [
-        ...LOCKFILES,
+        CARGO_LOCKFILE,
         BUN_LOCKFILE,
         RELEASE_PLEASE_CONFIG,
         ELECTRON_EXAMPLE_PACKAGE,
