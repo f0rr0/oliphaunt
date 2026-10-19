@@ -11,6 +11,24 @@ reuses `rules_android_ndk`'s maintained C/C++ configuration and declares the
 compiler, headers, target libraries and link tools as action inputs. Small local
 registration targets keep unrelated platform analysis from acquiring the NDK.
 
+Released native slices and APK native dependencies use
+`rules_android`'s `android_split_transition`. The release producer sets its API
+floor from the compatibility policy before that split. Packaged archives and
+runtime data enter through `android_product_inputs`, which clears the consuming
+app's Android split settings and restores the Linux producer context. Executable
+tools retain `cfg = "exec"`. This keeps app configuration out of the released
+products without copying upstream's native transition or lowering the app's Java
+minimum SDK.
+`android_native_member` forwards registration and the C++ library together from
+that native context, and verifies that both reference the same archive. This
+also preserves reuse when the consuming app raises its minimum SDK.
+
+`//src/examples/native/react-native-expo:android_cpp_reuse_test` compares the actual
+selected release archive Files with the Files linked into the example APK for
+every declared ABI, at the app's minimum SDK and at a higher app SDK. Its
+inventory comes from the existing carrier metadata and selected extensions;
+adding an object file does not require updating the test.
+
 Run the acquisition-policy tests and actual cross-compiled ELF checks together:
 
 ```sh

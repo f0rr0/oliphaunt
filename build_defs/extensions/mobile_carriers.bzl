@@ -2,6 +2,8 @@
 
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_GITHUB_ARTIFACTS", "EXTENSION_RELEASE_METADATA", "NATIVE_COMPONENT_SOURCES", "NATIVE_MOBILE_COMPONENT_CLOSURES", "PUBLICATION_CARRIERS")
 load("@oliphaunt_toolchain_metadata//:apple-platforms.bzl", "APPLE_DEPLOYMENT_TARGETS")
+load("@rules_android//rules:android_split_transition.bzl", "android_split_transition")
+load("//build_defs/android:configuration.bzl", "ANDROID_TARGET_PLATFORMS", "android_native_inputs")
 load("@rules_apple//apple:apple.bzl", "apple_static_xcframework")
 load("@rules_apple//apple/internal:transition_support.bzl", "transition_support")
 load("//build_defs/apple:slices.bzl", "apple_slice_filegroup", "apple_slice_groups")
@@ -14,7 +16,6 @@ load(":mobile.bzl", "MobileComponentInfo", "MobileExtensionInfo")
 load(":mobile_members.bzl", "MOBILE_COMPONENT_ARCHIVE_OBJECTS", "MOBILE_COMPONENT_TARGETS", "MOBILE_MEMBER_ARCHIVE_OBJECTS", "MOBILE_MEMBER_TARGETS")
 load(":owner_carriers.bzl", "native_extension_final_contract_test", "native_final_leaf_files", "native_final_leaf_input", "native_owner_carrier_helpers", "native_owner_carrier_legal", "native_owner_carrier_metadata")
 
-_TARGET_PLATFORMS = {"android-arm64-v8a": "//build_defs/android:android_arm64", "android-x86_64": "//build_defs/android:android_x86_64", "macos-arm64": "//build_defs/host:apple_package_macos_arm64", "ios-device": "//build_defs/host:ios_device_arm64", "ios-simulator": "//build_defs/host:ios_simulator_arm64"}
 _APPLE_COHORTS = {
     transition_support.xcframework_split_attr_key(arch = "arm64", environment = environment, minimum_os_version = APPLE_DEPLOYMENT_TARGETS["package_macos" if platform == "macos" else "ios"], platform_type = platform): target
     for platform, environment, target in [("macos", "device", "macos-arm64"), ("ios", "device", "ios-device"), ("ios", "simulator", "ios-simulator")]
@@ -23,11 +24,19 @@ _TARGETS = ["android-arm64-v8a", "android-x86_64", "ios-xcframework"]
 _MAC = ["@platforms//os:macos", "@platforms//cpu:aarch64"]
 _LINUX = ["@platforms//os:linux", "@platforms//cpu:x86_64"]
 
-def _slices_impl(settings, attr):
-    targets = ["macos-arm64", "ios-device", "ios-simulator"] if attr.target == "ios-xcframework" else [attr.target]
-    return {target: {"//command_line_option:platforms": [str(Label(_TARGET_PLATFORMS[target]))]} for target in targets}
+_AndroidSlicesInfo = provider(fields = ["members", "dependencies"])
 
-_slices = transition(implementation = _slices_impl, inputs = [], outputs = ["//command_line_option:platforms"])
+def _android_slices_impl(ctx):
+    return [_AndroidSlicesInfo(members = ctx.attr.members, dependencies = ctx.attr.dependencies)]
+
+# Scope Android's upstream split to the compiled slices, keeping Linux host
+# archives in their original configuration and sharing objects with APK deps.
+_android_slices = rule(implementation = _android_slices_impl, cfg = android_native_inputs, attrs = {
+    "platform": attr.label(mandatory = True),
+    "members": attr.label_list(providers = [MobileExtensionInfo], cfg = android_split_transition),
+    "dependencies": attr.label_list(providers = [MobileComponentInfo], cfg = android_split_transition),
+    "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
+})
 
 def _host_impl(settings, attr):
     # Reused desktop dylibs retain the direct carrier contract, unlike XCFramework slices.
@@ -69,8 +78,13 @@ def _carriers_impl(ctx):
     if sorted(host.keys()) != expected or len(host) != len(host_members):
         fail("mobile final leaf must consume every canonical host member exactly once")
     compiled = sorted([member["sqlName"] for member in metadata["members"] if member["descriptor"].get("native-module-file")])
-    member_slices = {_APPLE_COHORTS.get(target, target): rows for target, rows in ctx.split_attr.members.items()}
-    dependency_slices = {_APPLE_COHORTS.get(target, target): rows for target, rows in ctx.split_attr.dependencies.items()}
+    if ctx.attr.target == "ios-xcframework":
+        member_slices = {_APPLE_COHORTS[target]: rows for target, rows in ctx.split_attr.members.items()}
+        dependency_slices = {_APPLE_COHORTS[target]: rows for target, rows in ctx.split_attr.dependencies.items()}
+    else:
+        slices = ctx.attr.slices[_AndroidSlicesInfo]
+        member_slices = {ctx.attr.target: slices.members}
+        dependency_slices = {ctx.attr.target: slices.dependencies}
     statics = {target: {member[MobileExtensionInfo].sql_name: member[MobileExtensionInfo] for member in members} for target, members in member_slices.items()}
     dependencies = {target: {item[MobileComponentInfo].identity: item[MobileComponentInfo] for item in rows} for target, rows in dependency_slices.items()}
     inputs = [ctx.file._components] + ctx.files.legal
@@ -134,16 +148,16 @@ def _carriers_impl(ctx):
         slice_groups[name] = depset(files, transitive = [slice_groups[name]] if name in slice_groups else [])
     return [DefaultInfo(files = depset([github, frozen, manifest])), ExtensionFinalLeafInfo(product = metadata["product"], owner = metadata["owner"], version = metadata["version"], family = "native", target = ctx.attr.target, metadata = spec,
             github = [github], npm = [], cargo = [], manifest = manifest, frozen = frozen, spec = specification, validation = None, receipt = None, origin = None),
-            OutputGroupInfo(github = depset([github]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([specification]), **slice_groups)]
+            OutputGroupInfo(github = depset([github]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([specification]), mobile_static_archives = depset([member.archive for rows in statics.values() for member in rows.values()]), **slice_groups)]
 
-def _carrier_attributes(slices, host = mobile_host_transition):
+def _carrier_attributes(slices = None, host = mobile_host_transition):
     return {
         "product": attr.string(mandatory = True), "target": attr.string(mandatory = True, values = _TARGETS), "host": attr.label_list(mandatory = True, providers = [ExtensionMemberInfo], cfg = host),
-        "members": attr.label_list(providers = [MobileExtensionInfo], cfg = slices), "dependencies": attr.label_list(providers = [MobileComponentInfo], cfg = slices), "frameworks": attr.label_keyed_string_dict(allow_files = True), "legal": attr.label_list(allow_files = True),
+        "frameworks": attr.label_keyed_string_dict(allow_files = True), "legal": attr.label_list(allow_files = True),
         "_tool": attr.label(default = "//build_defs/extensions:mobile_carriers.mts", allow_single_file = True), "_helpers": attr.label_list(default = mobile_carrier_helpers(), allow_files = True), "_components": attr.label(default = "//src/extensions/catalog:native-components.toml", allow_single_file = True), "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
-    }
+    } | ({"members": attr.label_list(providers = [MobileExtensionInfo], cfg = slices), "dependencies": attr.label_list(providers = [MobileComponentInfo], cfg = slices)} if slices else {"slices": attr.label(providers = [_AndroidSlicesInfo], mandatory = True)})
 
-_mobile_carriers = rule(implementation = _carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS, attrs = _carrier_attributes(_slices))
+_mobile_carriers = rule(implementation = _carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS, attrs = _carrier_attributes())
 # Raw inventories and XCFrameworks consume the same configured object Files.
 _mobile_ios_carriers = rule(implementation = _carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS, cfg = _apple_package, attrs = _carrier_attributes(transition_support.xcframework_transition, host = _ios_carrier_host) | {
     "ios": attr.string_list_dict(default = {"device": ["arm64"], "simulator": ["arm64"]}),
@@ -157,9 +171,13 @@ def mobile_native_carriers(name, product, target, frameworks = {}):
     hosts = {row.name: row.label for row in desktop_member_inventory(include_postgis = True)}
     units = sorted({identity: True for sql_name in names for identity in NATIVE_MOBILE_COMPONENT_CLOSURES[sql_name][target]["linkUnits"]}.keys())
     compatible = _MAC if target == "ios-xcframework" else _LINUX
+    slices = {"members": [MOBILE_MEMBER_TARGETS[sql_name] for sql_name in names if sql_name in MOBILE_MEMBER_TARGETS], "dependencies": [MOBILE_COMPONENT_TARGETS[identity] for identity in units]}
+    if target != "ios-xcframework":
+        _android_slices(name = name + "_slices", platform = ANDROID_TARGET_PLATFORMS[target], **slices)
+        slices = {"slices": ":" + name + "_slices"}
     carrier = _mobile_ios_carriers if target == "ios-xcframework" else _mobile_carriers
-    carrier(name = name, product = product, target = target, host = [hosts[sql_name] for sql_name in names], members = [MOBILE_MEMBER_TARGETS[sql_name] for sql_name in names if sql_name in MOBILE_MEMBER_TARGETS],
-                     dependencies = [MOBILE_COMPONENT_TARGETS[identity] for identity in units], frameworks = frameworks, legal = native_owner_carrier_legal(product), target_compatible_with = compatible)
+    carrier(name = name, product = product, target = target, host = [hosts[sql_name] for sql_name in names],
+            frameworks = frameworks, legal = native_owner_carrier_legal(product), target_compatible_with = compatible, **slices)
     owner = extension_identity(names[0])
     packages = []
     github_files = name + "_github_files"

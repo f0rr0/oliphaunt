@@ -2,6 +2,7 @@
 
 load("@aspect_rules_js//npm:providers.bzl", "NpmPackageInfo")
 load("@rules_android//providers:providers.bzl", "AndroidSdkInfo", "ApkInfo")
+load("@rules_android//rules:android_split_transition.bzl", "android_split_transition")
 load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
@@ -10,6 +11,7 @@ load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRY
 load("//build_defs/extensions:mobile.bzl", "MobileExtensionInfo")
 load("//build_defs/extensions:final_leaf.bzl", "ExtensionFinalLeafInfo")
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS")
+load(":configuration.bzl", "android_native_inputs", "android_product_inputs")
 
 _DESCRIPTORS = {row["sql-name"]: row for row in EXTENSIONS.values()}
 
@@ -274,7 +276,8 @@ def _final_aar_impl(ctx):
     return [DefaultInfo(files = depset([output]))]
 
 android_final_aar = rule(implementation = _final_aar_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
-    attrs = dict(_RUNNER, **{"source": attr.label(mandatory = True, allow_files = True, cfg = "exec"),
+    attrs = dict(_RUNNER, **{"source": attr.label(mandatory = True, allow_files = True, cfg = android_product_inputs),
+        "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
         "kind": attr.string(default = "aar", values = ["aar", "runtime", "seed"]),
         "catalog_profile": attr.string(default = "standard", values = ["standard", "icu"]),
         "package": attr.string(), "abi": attr.string(default = "", values = ["", "arm64-v8a", "x86_64"])}))
@@ -307,17 +310,38 @@ def _exec_npm_impl(ctx):
                            src = ctx.file.archive, npm_package_store_infos = depset())]
 
 android_workspace_npm = rule(implementation = _exec_npm_impl, attrs = {
-    "archive": attr.label(allow_single_file = [".tgz"], cfg = "exec"),
+    "archive": attr.label(allow_single_file = [".tgz"], cfg = android_product_inputs),
+    "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
     "error": attr.string(),
     "package_name": attr.string(mandatory = True), "version": attr.string(mandatory = True),
 })
 
+def _native_member_impl(ctx):
+    member = ctx.attr.member[0][MobileExtensionInfo]
+    library = ctx.attr.library[0][CcInfo]
+    archives = [archive for item in library.linking_context.linker_inputs.to_list() for linked in item.libraries for archive in [linked.static_library, linked.pic_static_library] if archive]
+    if member.archive not in archives:
+        fail("Android registration and C++ link must consume the same configured member archive")
+    return [ctx.attr.member[0][DefaultInfo], member, library]
+
+# A released native product keeps its compatibility floor when an app raises
+# its Java/Dex floor. Forward both registration and the actual C++ link provider
+# from the same upstream ABI split, including the library's transitive deps.
+android_native_member = rule(implementation = _native_member_impl, cfg = android_native_inputs, attrs = {
+    "platform": attr.label(mandatory = True),
+    "member": attr.label(mandatory = True, providers = [MobileExtensionInfo], cfg = android_split_transition),
+    "library": attr.label(mandatory = True, providers = [CcInfo], cfg = android_split_transition),
+    "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
+})
+
 def _link_receipt_impl(ctx):
     members, inputs = [], [ctx.file.library, ctx.file.registry]
+    archives = []
     for target in ctx.attr.members:
         member = target[MobileExtensionInfo]
         members.append({"archive": member.archive.path, "registration": member.registration.path})
         inputs += [member.archive, member.registration]
+        archives.append(member.archive)
     nm = [file for file in ctx.files._nm if file.basename == "llvm-nm"]
     if len(nm) != 1:
         fail("Static extension proof needs the actual pinned NDK nm tool")
@@ -325,7 +349,7 @@ def _link_receipt_impl(ctx):
     _action(ctx, "extension-receipt", {"library": ctx.file.library.path, "registry": ctx.file.registry.path,
         "members": members, "selectedExtensions": ctx.attr.selected_extensions, "moduleStems": _module_stems(ctx.attr.selected_extensions), "abi": ctx.attr.abi, "nm": nm[0].path, "output": output.path},
         inputs + ctx.files._nm, [output], "AndroidSelectedStaticExtensionLink")
-    return [DefaultInfo(files = depset([output]))]
+    return [DefaultInfo(files = depset([output])), OutputGroupInfo(mobile_static_archives = depset(archives))]
 
 android_extension_receipt = rule(implementation = _link_receipt_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = dict(_RUNNER, **{
@@ -347,13 +371,16 @@ def _runtime_assets_impl(ctx):
     output = ctx.actions.declare_directory(ctx.label.name + "/assets")
     if len(ctx.files.payload) != 1 or not ctx.files.payload[0].is_directory:
         fail("App runtime assets need the actual declared native payload tree")
-    leaves, inputs = [], []
+    leaves, inputs, archives = [], [], []
     target = "android-" + ctx.attr.abi
     for dependency in ctx.attr.leaves:
         leaf = dependency[ExtensionFinalLeafInfo]
         if leaf.family != "native" or leaf.target != target or leaf.metadata["runtimeVersion"] != ctx.attr.version:
             fail("App selected carrier differs from the declared Android ABI or native version")
         members = leaf.metadata.get("members", [leaf.metadata])
+        selected = [row["archive"] for member in members if member["sqlName"] in ctx.attr.selected_extensions for row in member.get("staticArchives", []) if row["target"] == target]
+        # Retain the actual producer Files for the configured reuse regression.
+        archives += [file for file in dependency[OutputGroupInfo].mobile_static_archives.to_list() if file.path in selected]
         leaves.append({"product": leaf.product, "owner": leaf.owner, "version": leaf.version, "target": leaf.target,
             "runtimeVersion": leaf.metadata["runtimeVersion"], "sqlNames": sorted([member["sqlName"] for member in members]),
             "github": [file.path for file in leaf.github], "frozen": leaf.frozen.path})
@@ -363,16 +390,17 @@ def _runtime_assets_impl(ctx):
         "icu": ctx.file.icu.path if ctx.file.icu else None,
         "receipt": ctx.file.receipt.path, "output": output.path},
         ctx.files.payload + [ctx.file.receipt] + ctx.files.icu + inputs, [output], "ExpoSelectedRuntimeAssets", tools = [ctx.attr._formatter[DefaultInfo].files_to_run])
-    return [DefaultInfo(files = depset([output]))]
+    return [DefaultInfo(files = depset([output])), OutputGroupInfo(mobile_raw_archives = depset(archives), mobile_linked_archives = ctx.attr.receipt[OutputGroupInfo].mobile_static_archives)]
 
 android_app_runtime_assets = rule(implementation = _runtime_assets_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = dict(_RUNNER, **{
-        "payload": attr.label(default = Label("//src/native/runtime:public_payload"), cfg = "exec", allow_files = True),
-        "icu": attr.label(allow_single_file = True, cfg = "exec"),
+        "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
+        "payload": attr.label(default = Label("//src/native/runtime:public_payload"), cfg = android_product_inputs, allow_files = True),
+        "icu": attr.label(allow_single_file = True, cfg = android_product_inputs),
         "version": attr.string(mandatory = True), "selected_extensions": attr.string_list(mandatory = True),
         "mobile_static_modules": attr.string_list(mandatory = True), "receipt": attr.label(mandatory = True, allow_single_file = [".json"]),
         "abi": attr.string(mandatory = True, values = ["arm64-v8a", "x86_64"]),
-        "leaves": attr.label_list(mandatory = True, providers = [ExtensionFinalLeafInfo], cfg = "exec"),
+        "leaves": attr.label_list(mandatory = True, providers = [ExtensionFinalLeafInfo], cfg = android_product_inputs),
         "_helpers": attr.label_list(default = _STATIC_CARRIER_HELPERS, allow_files = True),
         "_formatter": attr.label(default = Label("//src/native/runtime/packaging:resources"), cfg = "exec", executable = True),
     }))

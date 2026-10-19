@@ -818,6 +818,9 @@ for (const selection of ['explicit', 'export'])
         `--profile=${path.join(f.outputDirectory, 'diagnostics/build-profile.json.gz')}`,
       );
       expect(builds[0]).toContain('//fixture:shipping');
+      expect(builds[0]).toContain(
+        `--execution_log_compact_file=${path.join(f.outputDirectory, 'diagnostics/execution-log.binpb.zst')}`,
+      );
       expect(builds[0]).toContain('//fixture:consumer');
       expect(builds[0]).toContain(
         '--output_groups=+shipping_manifest,+shipping_policy,+observation_inputs',
@@ -1365,6 +1368,10 @@ test('caller query substitution is rejected before any process even beyond OS ar
     expect(existsSync(f.outputDirectory)).toBe(false);
     f.request.configuration.pop();
     f.request.configuration.push('--output_file=/tmp/substituted-query.json');
+    await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow('cannot override');
+    expect(f.calls()).toEqual([]);
+    f.request.configuration.pop();
+    f.request.configuration.push('--execution_log_compact_file=/tmp/substituted-log');
     await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow('cannot override');
     expect(f.calls()).toEqual([]);
   } finally {

@@ -5,6 +5,8 @@ load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES")
 load("@rules_cc//cc:cc_toolchain_config_lib.bzl", "feature", "flag_group", "flag_set")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/toolchains:cc_toolchain_config_info.bzl", "CcToolchainConfigInfo")
+load("@rules_android//rules:android_split_transition.bzl", "android_split_transition")
+load(":configuration.bzl", "android_native_inputs")
 
 def _android_cc_config_impl(ctx):
     # This is a qualification bound, not a second version authority. An SDK or
@@ -70,11 +72,6 @@ android_cc_config = rule(
     provides = [CcToolchainConfigInfo],
 )
 
-def _platform_impl(settings, attr):
-    return {"//command_line_option:platforms": [str(attr.platform)]}
-
-_android_platform = transition(implementation = _platform_impl, inputs = [], outputs = ["//command_line_option:platforms"])
-
 def _android_artifact_impl(ctx):
     files = ctx.attr.artifact[0][DefaultInfo].files
     if ctx.attr.output:
@@ -88,8 +85,9 @@ def _android_artifact_impl(ctx):
 
 android_artifact = rule(
     implementation = _android_artifact_impl,
+    cfg = android_native_inputs,
     attrs = {
-        "artifact": attr.label(mandatory = True, cfg = _android_platform),
+        "artifact": attr.label(mandatory = True, cfg = android_split_transition),
         "platform": attr.label(mandatory = True),
         "output": attr.string(default = ""),
         "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),

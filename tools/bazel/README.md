@@ -64,6 +64,20 @@ XCFrameworks, so both consume the same configured object files. The desktop
 member transition preserves its native deployment contract. On macOS,
 `//build_defs/extensions:mobile_cpp_reuse_test` checks actual object-file reuse
 across the macOS, iOS device and simulator inventories and frameworks.
+It requires each branch to expose all three profiles before comparing their
+object files, so losing framework traversal cannot produce a passing test.
+
+Full native qualifications and configured CI requests retain compact Bazel
+execution logs in `diagnostics/execution-log.binpb.zst`. The workflow uploads
+these beside the existing profiles, including on failure. Use the
+[upstream execution-log parser/converter](https://github.com/bazelbuild/bazel/tree/8.8.1/src/tools/execlog)
+from the pinned Bazel version to compare runs. Match actions by their outputs and
+compare command, environment and complete input digests before attributing cache
+misses to retention. An `aquery` ActionKey does not include input contents.
+To check disk-cache reuse independently of Bazel's in-memory action cache, repeat
+the identical request in a fresh output base with the same disk cache and retain
+both execution logs. GitHub cache restore keys, source commits, runner context and
+cache size before/after collection are also needed for a CI comparison.
 
 Installed SDK checks also consume the completed dependencies declared by their
 manifests. With an existing GitHub CLI login, acquire their source-bound public

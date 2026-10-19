@@ -265,6 +265,9 @@ test('plain full and ordinary requests use the real shared capture, source guard
       expect(receipt.mode).toBe(mode);
       expect(f.calls().filter((args) => args.includes('test'))).toHaveLength(1);
       if (mode === 'full') {
+        expect(f.calls()[0]).toContain(
+          `--execution_log_compact_file=${path.join(f.output, 'diagnostics/execution-log.binpb.zst')}`,
+        );
         expect(f.calls()).toHaveLength(3);
         expect(receipt.projection.files).toEqual(['fixture/input.rs']);
         expect(receipt.projection.analysisInputs).toEqual(['fixture/BUILD']);
