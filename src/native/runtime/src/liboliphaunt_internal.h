@@ -141,6 +141,7 @@ struct OliphauntHandle {
     char *postgres_path;
     char *previous_pgdata_env;
     char *previous_proj_data_env;
+    char *previous_gdal_data_env;
     char *previous_icu_data_env;
     char *previous_skip_system_collation_discovery_env;
     char *previous_skip_icu_collation_discovery_env;
@@ -152,6 +153,8 @@ struct OliphauntHandle {
     bool pgdata_env_overridden;
     bool had_previous_proj_data_env;
     bool proj_data_env_overridden;
+    bool had_previous_gdal_data_env;
+    bool gdal_data_env_overridden;
     bool had_previous_icu_data_env;
     bool icu_data_env_overridden;
     bool had_previous_skip_system_collation_discovery_env;

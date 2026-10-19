@@ -277,6 +277,40 @@ static int set_backend_proj_data_env(OliphauntHandle *handle) {
     return rc;
 }
 
+static int set_backend_gdal_data_env(OliphauntHandle *handle) {
+    if (handle->runtime_dir == NULL || handle->runtime_dir[0] == '\0') {
+        return 0;
+    }
+    char *gdal_dir = oliphaunt_join_path(handle->runtime_dir, "share/postgresql/gdal");
+    if (gdal_dir == NULL) {
+        set_error(handle, "out of memory resolving PostGIS GDAL data directory");
+        return -1;
+    }
+    char *gdal_schema = oliphaunt_join_path(gdal_dir, "gdalvrt.xsd");
+    if (gdal_schema == NULL) {
+        free(gdal_dir);
+        set_error(handle, "out of memory resolving PostGIS gdalvrt.xsd path");
+        return -1;
+    }
+    int has_gdal_schema = oliphaunt_path_exists(gdal_schema);
+    free(gdal_schema);
+    if (!has_gdal_schema) {
+        free(gdal_dir);
+        return 0;
+    }
+
+    int rc = set_backend_env_var(
+        handle,
+        "GDAL_DATA",
+        gdal_dir,
+        &handle->previous_gdal_data_env,
+        &handle->had_previous_gdal_data_env,
+        &handle->gdal_data_env_overridden,
+        "PostGIS GDAL data");
+    free(gdal_dir);
+    return rc;
+}
+
 static int set_backend_embedded_module_dir_env(OliphauntHandle *handle) {
     char *module_dir = oliphaunt_resolve_embedded_module_dir(handle->module_dir, handle->runtime_dir);
     if (module_dir == NULL) {
@@ -311,6 +345,9 @@ static int set_backend_runtime_env(OliphauntHandle *handle) {
     if (set_backend_proj_data_env(handle) != 0) {
         return -1;
     }
+    if (set_backend_gdal_data_env(handle) != 0) {
+        return -1;
+    }
     if (set_backend_embedded_module_dir_env(handle) != 0) {
         return -1;
     }
@@ -326,6 +363,11 @@ static void restore_backend_runtime_env(OliphauntHandle *handle) {
         &handle->previous_module_dir_env,
         &handle->had_previous_module_dir_env,
         &handle->module_dir_env_overridden);
+    restore_backend_env_var(
+        "GDAL_DATA",
+        &handle->previous_gdal_data_env,
+        &handle->had_previous_gdal_data_env,
+        &handle->gdal_data_env_overridden);
     restore_backend_env_var(
         "PROJ_DATA",
         &handle->previous_proj_data_env,
@@ -791,6 +833,7 @@ int32_t oliphaunt_close_claimed_global_instance(OliphauntHandle *handle) {
     free(handle->postgres_path);
     free(handle->previous_pgdata_env);
     free(handle->previous_proj_data_env);
+    free(handle->previous_gdal_data_env);
     free(handle->previous_icu_data_env);
     free(handle->previous_skip_system_collation_discovery_env);
     free(handle->previous_skip_icu_collation_discovery_env);

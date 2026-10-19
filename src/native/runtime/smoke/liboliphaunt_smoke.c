@@ -280,13 +280,14 @@ static int verify_global_contract(void) {
     return 0;
 }
 
-static int expect_pgdata_env(const char *context, const char *expected) {
-    const char *actual = getenv("PGDATA");
+static int expect_backend_env(const char *context, const char *name, const char *expected) {
+    const char *actual = getenv(name);
     if ((expected == NULL && actual != NULL) ||
         (expected != NULL && (actual == NULL || strcmp(actual, expected) != 0))) {
         fprintf(stderr,
-                "%s left unexpected PGDATA environment: expected %s, got %s\n",
+                "%s left unexpected %s environment: expected %s, got %s\n",
                 context,
+                name,
                 expected ? expected : "(unset)",
                 actual ? actual : "(unset)");
         return 1;
@@ -2776,7 +2777,7 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         oliphaunt_close(db);
         return 1;
     }
-    if (expect_pgdata_env("oliphaunt_init active backend", pgdata) != 0) {
+    if (expect_backend_env("oliphaunt_init active backend", "PGDATA", pgdata) != 0) {
         oliphaunt_close(db);
         return 1;
     }
@@ -2950,7 +2951,7 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         oliphaunt_close(db);
         return 1;
     }
-    if (expect_pgdata_env("oliphaunt_detach resident backend", pgdata) != 0) {
+    if (expect_backend_env("oliphaunt_detach resident backend", "PGDATA", pgdata) != 0) {
         oliphaunt_close(db);
         return 1;
     }
@@ -3052,19 +3053,26 @@ int main(int argc, char **argv) {
     }
 
     const char *host_pgdata = "/tmp/oliphaunt-host-pgdata-sentinel";
+    const char *host_gdal_data = "/tmp/oliphaunt-host-gdal-data-sentinel";
+    if (setenv("GDAL_DATA", host_gdal_data, 1) != 0) {
+        perror("set smoke GDAL_DATA environment");
+        return 1;
+    }
     if (set_pgdata_env_for_smoke(host_pgdata) != 0) {
         return 1;
     }
     if (run_cycle(argv[1], argv[2]) != 0) {
         return 1;
     }
-    if (expect_pgdata_env("oliphaunt_close", host_pgdata) != 0) {
+    if (expect_backend_env("oliphaunt_close", "PGDATA", host_pgdata) != 0 ||
+        expect_backend_env("oliphaunt_close", "GDAL_DATA", host_gdal_data) != 0) {
         return 1;
     }
     if (expect_terminal_shutdown_reopen_rejected(argv[1], argv[2]) != 0) {
         return 1;
     }
-    if (expect_pgdata_env("rejected oliphaunt_init", host_pgdata) != 0) {
+    if (expect_backend_env("rejected oliphaunt_init", "PGDATA", host_pgdata) != 0 ||
+        expect_backend_env("rejected oliphaunt_init", "GDAL_DATA", host_gdal_data) != 0) {
         return 1;
     }
 

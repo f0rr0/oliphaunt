@@ -293,6 +293,16 @@ fn run_direct_extension_child(
     if let Some(path) = backup_path {
         command.env(DIRECT_CHILD_BACKUP_ENV, path);
     }
+    if extension == Extension::POSTGIS {
+        match action {
+            DirectExtensionChildAction::InstallBackup => {
+                command.env("GDAL_DATA", "oliphaunt-test-inherited-gdal-data");
+            }
+            DirectExtensionChildAction::AssertExisting => {
+                command.env_remove("GDAL_DATA");
+            }
+        }
+    }
 
     let output = command
         .output()
@@ -344,13 +354,16 @@ fn run_direct_extension_child_install_backup(
             .extension(extension)
             .open(),
     )?);
+    assert_direct_extension_runtime_data(extension);
     install_or_load_extension(&db, TestMode::Direct, extension)?;
     assert_repeated_create_extension_error_recovers(&db, TestMode::Direct, extension)?;
     assert_extension_visible(&db, TestMode::Direct, extension)?;
     run_extension_functional_smoke(&db, TestMode::Direct, extension, false)?;
     let archive = block_on(db.backup())?;
     fs::write(backup_path, &archive).expect("failed to write direct extension backup artifact");
-    block_on(db.close())
+    block_on(db.close())?;
+    assert_direct_extension_runtime_data(extension);
+    Ok(())
 }
 
 fn run_direct_extension_child_assert_existing(extension: Extension, root: &Path) -> Result<()> {
@@ -361,9 +374,28 @@ fn run_direct_extension_child_assert_existing(extension: Extension, root: &Path)
             .extension(extension)
             .open(),
     )?);
+    assert_direct_extension_runtime_data(extension);
     assert_extension_visible(&db, TestMode::Direct, extension)?;
     run_extension_functional_smoke(&db, TestMode::Direct, extension, true)?;
-    block_on(db.close())
+    block_on(db.close())?;
+    assert_direct_extension_runtime_data(extension);
+    Ok(())
+}
+
+fn assert_direct_extension_runtime_data(extension: Extension) {
+    if extension != Extension::POSTGIS {
+        return;
+    }
+    let proj_data = std::env::var_os("PROJ_DATA").expect("PostGIS requires its staged PROJ data");
+    let gdal_data = Path::new(&proj_data)
+        .parent()
+        .expect("PROJ data must belong to the runtime share directory")
+        .join("gdal");
+    assert_eq!(
+        std::env::var_os("GDAL_DATA"),
+        Some(gdal_data.clone().into_os_string())
+    );
+    assert!(gdal_data.join("gdalvrt.xsd").is_file());
 }
 
 fn run_extension_smoke(mode: TestMode, broker: Option<&str>, extension: Extension) -> Result<()> {
