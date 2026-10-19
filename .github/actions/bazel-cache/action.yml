@@ -132,7 +132,9 @@ runs:
           fi
           printf 'Bazel cache disk: allocated_kib=%s limit_kib=%s\n' \
             "$cache_kib" "$cache_limit_kib"
-          if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib <= cache_limit_kib )); then
+          # An unused directory must not replace a useful fallback snapshot.
+          if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib <= cache_limit_kib )) &&
+             [[ -n "$(find "$cache_root" -type f -print -quit)" ]]; then
             printf 'disk=true\n' >> "$GITHUB_OUTPUT"
           fi
         else

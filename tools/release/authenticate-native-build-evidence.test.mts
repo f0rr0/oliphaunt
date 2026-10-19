@@ -1,7 +1,16 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -228,6 +237,13 @@ async function fixture(run: (root: string) => Promise<void>, kind = '') {
     'FAKE_GH_STATE',
     'FAKE_MODE',
     'FAKE_RUN_CONCLUSION',
+    'FAKE_AMBIENT_BUN_LOG',
+    'OLIPHAUNT_PINNED_TOOL_ROOT',
+    'OLIPHAUNT_PINNED_TOOL_PROTO_FILE',
+    'OLIPHAUNT_BUN_TOOLCHAIN_MANIFEST',
+    'OLIPHAUNT_PINNED_TOOL_TARGET',
+    'OLIPHAUNT_PINNED_TOOL_CACHE_ROOT',
+    'OLIPHAUNT_PINNED_TOOL_CURL',
     'OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR',
   ];
   const before = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
@@ -651,9 +667,56 @@ test('reviewed producer requires producing-analysis shipping and complete succes
   }
 });
 
-test('native origin uses the existing exact-ID/digest transport and selected successful job, ignoring inherited fixture caches', async () => {
+test('native origin uses pinned Bun without ambient Bun for exact-ID/digest transport, ignoring inherited fixture caches', async () => {
   await fixture(async (root) => {
+    const repository = path.resolve(import.meta.dir, '../..');
+    const platform = process.platform === 'win32' ? 'windows' : process.platform;
+    const target = `${platform}-${process.arch === 'arm64' ? 'aarch64' : process.arch}`;
+    const manifest = path.join(repository, 'tools/dev/bun.toml');
+    const proto = path.join(repository, '.prototools');
+    const pin = Bun.TOML.parse(readFileSync(manifest, 'utf8')).assets[target];
+    const version = Bun.TOML.parse(readFileSync(proto, 'utf8')).bun;
+    expect(Bun.version).toBe(version);
+    expect(createHash('sha256').update(readFileSync(process.execPath)).digest('hex')).toBe(
+      pin.binary_sha256,
+    );
+    const cache = path.join(root, 'pinned-tools');
+    const envelope = path.join(cache, 'bun', `v${version}`, target);
+    const binary = path.join(envelope, 'bin', process.platform === 'win32' ? 'bun.exe' : 'bun');
+    mkdirSync(path.dirname(binary), { recursive: true, mode: 0o700 });
+    copyFileSync(process.execPath, binary);
+    chmodSync(binary, 0o555);
+    writeFileSync(
+      path.join(envelope, 'receipt'),
+      `tool=bun\nversion=${version}\ntarget=${target}\narchive_sha256=${pin.sha256}\nbinary_sha256=${pin.binary_sha256}\n`,
+      { mode: 0o444 },
+    );
+    const unavailable = path.join(root, 'unavailable');
+    mkdirSync(unavailable);
+    const ambient = path.join(unavailable, 'bun');
+    writeFileSync(
+      ambient,
+      '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$FAKE_AMBIENT_BUN_LOG"\necho "ambient Bun unavailable" >&2\nexit 127\n',
+      { mode: 0o755 },
+    );
+    Object.assign(process.env, {
+      PATH: `${unavailable}${path.delimiter}${process.env.PATH}`,
+      FAKE_AMBIENT_BUN_LOG: path.join(root, 'ambient-bun.log'),
+      OLIPHAUNT_PINNED_TOOL_ROOT: repository,
+      OLIPHAUNT_PINNED_TOOL_PROTO_FILE: proto,
+      OLIPHAUNT_BUN_TOOLCHAIN_MANIFEST: manifest,
+      OLIPHAUNT_PINNED_TOOL_TARGET: target,
+      OLIPHAUNT_PINNED_TOOL_CACHE_ROOT: cache,
+      // A bad cache must fail locally rather than acquire a runtime over the network.
+      OLIPHAUNT_PINNED_TOOL_CURL: ambient,
+    });
     const origin = await authenticateNativeBuildEvidence(path.join(root, 'evidence'), expected);
+    // Each real wrapper phase probes ambient Bun, then runs the validated cached binary.
+    expect(readFileSync(path.join(root, 'ambient-bun.log'), 'utf8').trim().split('\n')).toEqual([
+      '--version',
+      '--version',
+      '--version',
+    ]);
     expect(assertAuthenticatedNativeBuildOrigin(origin)).toBe(origin);
     expect(() => assertAuthenticatedNativeBuildOrigin(JSON.parse(JSON.stringify(origin)))).toThrow(
       /authenticated producer transport/u,

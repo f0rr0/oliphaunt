@@ -64,6 +64,9 @@ function fixture(run: (directory: string, env: FixtureEnvironment) => void) {
   const bin = path.join(directory, 'bin');
   mkdirSync(home);
   mkdirSync(bin);
+  const disk = path.join(home, '.cache/oliphaunt/bazel-ci/disk/cas');
+  mkdirSync(disk, { recursive: true });
+  writeFileSync(path.join(disk, 'retained-result'), 'completed partial cache entry');
   mkdirSync(path.join(directory, 'tools/dev'), { recursive: true });
   writeFileSync(path.join(directory, '.bazelversion'), '8.8.1\r\n');
   writeFileSync(path.join(home, '.bazelrc'), '# existing hosted configuration\n');
@@ -296,19 +299,28 @@ test('cache freeze stops exactly the configured writer before the action archive
     { name: 'action oversize', disk: '3145729', expected: [] },
     { name: 'malformed action size', disk: 'invalid', expected: [] },
     { name: 'missing action cache', disk: '1', missing: true, expected: [] },
+    { name: 'allocated empty cache', disk: '4', empty: true, expected: [] },
+    { name: 'directory-only cache', disk: '8', empty: true, nested: true, expected: [] },
+    { name: 'unused macOS cache', disk: '4', empty: true, os: 'macOS', expected: [] },
+    { name: 'unused Windows cache', disk: '4', empty: true, os: 'Windows', expected: [] },
     { name: 'failed shutdown', disk: '1', shutdown: '1', expected: [] },
   ]) {
     fixture((directory, env) => {
-      execute(directory, env, script('Configure standard hosted Bazel caches'));
-      if (scenario.missing)
-        rmSync(path.join(env.HOME, '.cache/oliphaunt/bazel-ci/disk'), { recursive: true });
+      const hosted = { ...env, RUNNER_OS: scenario.os ?? env.RUNNER_OS };
+      execute(directory, hosted, script('Configure standard hosted Bazel caches'));
+      const disk = path.join(env.HOME, '.cache/oliphaunt/bazel-ci/disk');
+      if (scenario.empty) {
+        rmSync(disk, { recursive: true });
+        mkdirSync(scenario.nested ? path.join(disk, 'cas/empty') : disk, { recursive: true });
+      }
+      if (scenario.missing) rmSync(disk, { recursive: true });
       const explicit = scenario.name !== 'default base';
       const outputBase = explicit ? path.join(directory, 'selected output base') : '';
       const serverLog = explicit ? path.join(directory, 'server output.log') : '';
       execute(
         directory,
         {
-          ...env,
+          ...hosted,
           OUTPUT_BASE: outputBase,
           JVM_ARGS: explicit ? '-Xmx3g' : '',
           SERVER_LOG: serverLog,
