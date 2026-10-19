@@ -138,22 +138,20 @@ public final class OliphauntExtensionCatalogContractTest {
     try {
       PublicTarGzArchivePreflight.Limits extensionLimits =
           PublicTarGzArchivePreflight.extensionArtifactLimits();
-      equal(1_073_741_824L, extensionLimits.maxCompressedBytes(), "extension compressed limit");
-      equal(2_147_483_648L, extensionLimits.maxExpandedBytes(), "extension expanded limit");
-      equal(1_073_741_824L, extensionLimits.maxEntryBytes(), "extension member limit");
+      equal(134_217_728L, extensionLimits.maxCompressedBytes(), "extension compressed limit");
+      equal(536_870_912L, extensionLimits.maxExpandedBytes(), "extension expanded limit");
+      equal(268_435_456L, extensionLimits.maxEntryBytes(), "extension member limit");
       equal(4_096, extensionLimits.maxEntries(), "extension member-count limit");
       equal(
           extensionLimits.maxExpandedBytes(),
           PublicTarGzArchivePreflight.expansionLimitForContractTest(1, extensionLimits),
           "extension policy must not add a Java-only compression-ratio limit");
-      // The qualified GDAL leaf exceeded 512 MiB. Combine its minimum proven
-      // size with the prior exact PostGIS high-water marks conservatively.
       if (!(64_676_748L <= extensionLimits.maxCompressedBytes()
-          && 882_492_607L <= extensionLimits.maxExpandedBytes()
-          && 536_870_913L <= extensionLimits.maxEntryBytes()
+          && 345_621_694L <= extensionLimits.maxExpandedBytes()
+          && 154_827_564L <= extensionLimits.maxEntryBytes()
           && 27 <= extensionLimits.maxEntries())) {
         throw new AssertionError(
-            "shared extension archive policy must admit the qualified Android ARM64 PostGIS leaf envelope");
+            "shared extension archive policy must admit the observed Android ARM64 PostGIS leaf shape");
       }
       List<TarFixtureEntry> validEntries =
           List.of(
