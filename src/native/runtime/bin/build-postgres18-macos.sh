@@ -1428,6 +1428,7 @@ native_postgis_dependency_required_outputs=(
   "$native_postgis_dependency_root/gdal/bin/gdal-config"
   "$native_postgis_dependency_root/gdal/include/gdal.h"
   "$native_postgis_dependency_root/gdal/lib/libgdal.a"
+  "$native_postgis_dependency_root/gdal/share/gdal/gdalvrt.xsd"
   "$native_postgis_dependency_root/json-c/lib/libjson-c.a"
   "$native_postgis_dependency_root/sqlite/lib/libsqlite3.a"
   "$native_postgis_dependency_root/geos/lib/libgeos_c.a"
