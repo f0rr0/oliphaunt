@@ -26,6 +26,8 @@ const PROPERTY_KEYS = Object.freeze([
   'staticSymbolAliases',
   'licenseFiles',
   'licenseProfile',
+  'sqlMembers',
+  'nativeModuleStems',
   'files',
 ]);
 const LEGAL_MEMBERS_BY_PROFILE = Object.freeze({
@@ -140,11 +142,7 @@ function normalizeCanonicalRow(row, label) {
   }
   return {
     sqlName,
-    sqlMembers: canonicalList(
-      row?.['sql-members'] ?? (createsExtension ? [sqlName] : []),
-      `${label}.sql-members`,
-      portable,
-    ),
+    sqlMembers: canonicalList(row?.['sql-members'], `${label}.sql-members`, portable),
     product,
     releaseProduct,
     createsExtension,
@@ -176,16 +174,9 @@ function normalizeFrozenRuntimeContract(row, label) {
   if (typeof row?.createsExtension !== 'boolean') fail(label, 'createsExtension must be boolean');
   const nativeModuleStem = row?.nativeModuleStem ?? null;
   if (nativeModuleStem !== null) portable(nativeModuleStem, `${label}.nativeModuleStem`);
-  const closureDeclared = row.sqlMembers !== undefined;
-  if (closureDeclared !== (row.nativeModuleStems !== undefined))
-    fail(label, 'sqlMembers and nativeModuleStems must be declared together');
-  const sqlMembers = canonicalList(
-    row.sqlMembers ?? (row.createsExtension ? [sqlName] : []),
-    `${label}.sqlMembers`,
-    portable,
-  );
+  const sqlMembers = canonicalList(row.sqlMembers, `${label}.sqlMembers`, portable);
   const nativeModuleStems = canonicalList(
-    row.nativeModuleStems ?? (nativeModuleStem === null ? [] : [nativeModuleStem]),
+    row.nativeModuleStems,
     `${label}.nativeModuleStems`,
     portable,
   );
@@ -218,7 +209,6 @@ function normalizeFrozenRuntimeContract(row, label) {
     fail(label, 'extensionSqlFilePrefixes must contain dot-free portable basename prefixes');
   }
   return {
-    closureDeclared,
     sqlMembers,
     nativeModuleStems,
     createsExtension: row.createsExtension,
@@ -306,13 +296,7 @@ function parseProperties(text, label) {
     if (properties.has(key)) fail(label, `repeats property ${key}`);
     properties.set(key, line.slice(separator + 1));
   }
-  const closureKeys = ['sqlMembers', 'nativeModuleStems'];
-  if (properties.has(closureKeys[0]) !== properties.has(closureKeys[1]))
-    fail(label, 'sqlMembers and nativeModuleStems must be declared together');
-  const expectedKeys = properties.has(closureKeys[0])
-    ? [...PROPERTY_KEYS.slice(0, -1), ...closureKeys, 'files']
-    : PROPERTY_KEYS;
-  if (JSON.stringify([...properties.keys()]) !== JSON.stringify(expectedKeys)) {
+  if (JSON.stringify([...properties.keys()]) !== JSON.stringify(PROPERTY_KEYS)) {
     fail(
       label,
       `must contain the exact canonical fields in canonical order: ${PROPERTY_KEYS.join(',')}`,
@@ -674,6 +658,12 @@ export async function validateSwiftExtensionResourceArtifact({
 }) {
   assertSwiftExtensionMatchesCanonical(extension, canonical, label);
   const contract = normalizeFrozenRuntimeContract(extension, `${label} frozen carrier contract`);
+  for (const field of canonical.sqlMembers.length > 1
+    ? ['sqlMembers', 'dependencies']
+    : ['sqlMembers']) {
+    if (JSON.stringify(contract[field]) !== JSON.stringify(canonical[field]))
+      fail(label, `${field} must match generated canonical metadata`);
+  }
   if (
     nativeRuntime?.product !== 'liboliphaunt-native' ||
     !STABLE_SEMVER.test(nativeRuntime?.version ?? '')
@@ -712,12 +702,8 @@ export async function validateSwiftExtensionResourceArtifact({
     ['mobilePrebuilt', contract.nativeModuleStem === null ? 'no' : 'yes'],
     ['files', 'files'],
   ]);
-  if (properties.has('sqlMembers') !== contract.closureDeclared)
-    fail(label, 'manifest SQL closure declaration differs from the frozen carrier contract');
-  if (contract.closureDeclared) {
-    expected.set('sqlMembers', contract.sqlMembers.join(','));
-    expected.set('nativeModuleStems', contract.nativeModuleStems.join(','));
-  }
+  expected.set('sqlMembers', contract.sqlMembers.join(','));
+  expected.set('nativeModuleStems', contract.nativeModuleStems.join(','));
   for (const [key, value] of expected) {
     if (properties.get(key) !== value)
       fail(label, `manifest ${key} must be ${JSON.stringify(value)}`);

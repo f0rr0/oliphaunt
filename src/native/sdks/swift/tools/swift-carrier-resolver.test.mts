@@ -286,20 +286,6 @@ async function productionExtensionResource(sqlName, stem, nativeDependencies) {
       'mobileStaticDependencyArchives=\n',
       `mobileStaticDependencyArchives=${mobileStaticDependencyArchives.join(',')}\n`,
     );
-  if (sqlName === 'postgis') {
-    const sqlMembers = canonicalCatalog.get(sqlName).sqlMembers;
-    manifest = manifest.replace(
-      'files=files\n',
-      `sqlMembers=${sqlMembers.join(',')}\nnativeModuleStems=${stem}\nfiles=files\n`,
-    );
-    for (const member of sqlMembers.filter((name) => name !== sqlName)) {
-      for (const name of [`${member}.control`, `${member}--1.0.sql`])
-        await fs.writeFile(
-          path.join(stage, 'files/share/postgresql/extension', name),
-          '-- companion fixture\n',
-        );
-    }
-  }
   await fs.writeFile(manifestFile, manifest);
   for (const row of [...mobileStaticArchives, ...mobileStaticDependencyArchives]) {
     const relative = row.slice(row.lastIndexOf(':') + 1);
@@ -311,6 +297,7 @@ async function productionExtensionResource(sqlName, stem, nativeDependencies) {
 }
 
 async function extension(sqlName, stem, dependencies = [], nativeDependencies = []) {
+  dependencies = canonicalCatalog.get(sqlName).dependencies;
   const resource = await productionExtensionResource(sqlName, stem, nativeDependencies);
   const runtime = path.join(root, 'archives', `${sqlName}-runtime.tar.gz`);
   await fs.mkdir(path.dirname(runtime), { recursive: true });
@@ -335,7 +322,7 @@ async function extension(sqlName, stem, dependencies = [], nativeDependencies = 
   }
   const prefix =
     stem === null ? null : `oliphaunt_static_${stem.replaceAll(/[^A-Za-z0-9_]/gu, '_')}`;
-  const product = new Set(['cube', 'earthdistance', 'pg_trgm']).has(sqlName)
+  const product = new Set(['cube', 'earthdistance', 'fuzzystrmatch', 'pg_trgm']).has(sqlName)
     ? 'oliphaunt-extension-contrib-pg18'
     : `oliphaunt-extension-${sqlName.replaceAll('_', '-')}`;
   const releaseProduct =
@@ -353,9 +340,8 @@ async function extension(sqlName, stem, dependencies = [], nativeDependencies = 
     tag: `${releaseProduct}-v${version}`,
     sqlName,
     createsExtension: true,
-    ...(sqlName === 'postgis'
-      ? { sqlMembers: canonicalCatalog.get(sqlName).sqlMembers, nativeModuleStems: [stem] }
-      : {}),
+    sqlMembers: canonicalCatalog.get(sqlName).sqlMembers,
+    nativeModuleStems: stem === null ? [] : [stem],
     dataFiles: content.dataFiles,
     dependencies,
     extensionSqlFileNames: content.extensionSqlFileNames,
@@ -503,6 +489,7 @@ async function main() {
   await fs.mkdir(root, { recursive: true });
   const carrierized = carrierize([
     await extension('cube', 'cube'),
+    await extension('fuzzystrmatch', 'fuzzystrmatch'),
     await extension('earthdistance', 'earthdistance', ['cube']),
     await extension('pgtap', null),
     await extension(
@@ -551,6 +538,7 @@ async function main() {
             'artifact-product': 'oliphaunt-extension-pgtap',
             'release-product': 'oliphaunt-extension-pgtap',
             'creates-extension': false,
+            'sql-members': ['pgtap'],
             'native-module-stem': 'future_pgtap',
             'selected-extension-dependencies': ['cube'],
             'runtime-share-data-files': ['future/data.dat'],
@@ -655,7 +643,7 @@ async function main() {
   });
   assert.deepEqual(
     products.selected.map(({ sqlName }) => sqlName),
-    ['cube', 'earthdistance', 'pgtap', 'postgis'],
+    ['cube', 'earthdistance', 'fuzzystrmatch', 'pgtap', 'postgis'],
   );
   assert.equal(products.selected.find(({ sqlName }) => sqlName === 'pgtap').version, '1.1.0');
   const selectedPostgis = products.selected.find(({ sqlName }) => sqlName === 'postgis');
@@ -1342,7 +1330,7 @@ async function main() {
     'mismatched-creates-extension',
     mismatchedCreatesExtension,
     'pgtap',
-    /manifest createsExtension must be "no"/u,
+    /sqlMembers must contain the primary extension exactly when createsExtension is true/u,
   );
 
   const duplicateName = structuredClone(manifest);

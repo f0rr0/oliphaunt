@@ -784,7 +784,9 @@ public final class OliphauntExtensionCatalogContractTest {
       Path pgcryptoRoot = Files.createDirectories(root.resolve("pgcrypto"));
       Properties pgcrypto = cubeArtifactManifest();
       pgcrypto.setProperty("sqlName", "pgcrypto");
+      pgcrypto.setProperty("sqlMembers", String.join(",", OliphauntExtensionCatalog.require("pgcrypto").sqlMembers()));
       pgcrypto.setProperty("nativeModuleStem", "pgcrypto");
+      pgcrypto.setProperty("nativeModuleStems", "pgcrypto");
       pgcrypto.setProperty("nativeModuleFile", "pgcrypto.so");
       pgcrypto.setProperty("staticSymbolPrefix", "oliphaunt_static_pgcrypto");
       pgcrypto.setProperty(
@@ -830,7 +832,9 @@ public final class OliphauntExtensionCatalogContractTest {
       Path postgisRoot = Files.createDirectories(root.resolve("postgis"));
       Properties postgis = cubeArtifactManifest();
       postgis.setProperty("sqlName", "postgis");
+      postgis.setProperty("sqlMembers", String.join(",", OliphauntExtensionCatalog.require("postgis").sqlMembers()));
       postgis.setProperty("nativeModuleStem", "postgis-3");
+      postgis.setProperty("nativeModuleStems", "postgis-3");
       postgis.setProperty("nativeModuleFile", "postgis-3.so");
       postgis.setProperty("staticSymbolPrefix", "oliphaunt_static_postgis_3");
       postgis.setProperty(
@@ -852,14 +856,6 @@ public final class OliphauntExtensionCatalogContractTest {
           "mobile-static/android-arm64-v8a/extensions/postgis-3/liboliphaunt_extension_postgis-3.a",
           "archive\n");
       stageCanonicalLegalFiles(postgisRoot, "postgis", "android-arm64-v8a");
-      ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
-          "oliphaunt-extension-postgis",
-          "postgis",
-          "android-arm64-v8a",
-          postgis,
-          "1.2.3");
-      ResolveOliphauntAndroidAssetsTask.validateExtensionArtifactInventoryForContractTest(
-          postgisRoot.toFile(), postgis);
       List<String> postgisMembers = OliphauntExtensionCatalog.require("postgis").sqlMembers();
       if (!postgisMembers.contains("postgis_topology") || !postgisMembers.contains("postgis_tiger_geocoder")) {
         throw new AssertionError("generated PostGIS SQL closure must include topology and tiger");
@@ -876,6 +872,26 @@ public final class OliphauntExtensionCatalogContractTest {
       ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
           "oliphaunt-extension-postgis", "postgis", "android-arm64-v8a", postgis, "1.2.3");
       ResolveOliphauntAndroidAssetsTask.validateExtensionArtifactInventoryForContractTest(postgisRoot.toFile(), postgis);
+      for (String field : List.of("sqlMembers", "nativeModuleStems")) {
+        Properties incomplete = new Properties();
+        incomplete.putAll(postgis);
+        incomplete.remove(field);
+        expectFailure(() -> ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
+            "oliphaunt-extension-postgis", "postgis", "android-arm64-v8a", incomplete, "1.2.3"), "property fields must be exactly");
+      }
+      Properties incompletePostgis = new Properties();
+      incompletePostgis.putAll(postgis);
+      incompletePostgis.setProperty("sqlMembers", "postgis");
+      expectFailure(() -> ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
+          "oliphaunt-extension-postgis", "postgis", "android-arm64-v8a", incompletePostgis, "1.2.3"), "sqlMembers must identify the owned SQL closure");
+      incompletePostgis.setProperty("sqlMembers", String.join(",", postgisMembers));
+      incompletePostgis.setProperty("dependencies", "");
+      expectFailure(() -> ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
+          "oliphaunt-extension-postgis", "postgis", "android-arm64-v8a", incompletePostgis, "1.2.3"), "must declare dependencies=fuzzystrmatch");
+      incompletePostgis.setProperty("dependencies", String.join(",", OliphauntExtensionCatalog.require("postgis").dependencies()));
+      incompletePostgis.setProperty("nativeModuleStems", "postgis-3,postgis_raster-3,postgis_topology-3");
+      expectFailure(() -> ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
+          "oliphaunt-extension-postgis", "postgis", "android-arm64-v8a", incompletePostgis, "1.2.3"), "nativeModuleStems must contain only the merged primary mobile module");
       Path topologyControl = postgisRoot.resolve("files/share/postgresql/extension/postgis_topology.control");
       Files.delete(topologyControl);
       expectFailure(() -> ResolveOliphauntAndroidAssetsTask.validateExtensionArtifactInventoryForContractTest(postgisRoot.toFile(), postgis), "postgis_topology.control and a canonical install SQL file");
@@ -1098,7 +1114,9 @@ public final class OliphauntExtensionCatalogContractTest {
     Path root = Files.createTempDirectory("oliphaunt-ancillary-sql-inventory-");
     Properties manifest = cubeArtifactManifest();
     manifest.setProperty("sqlName", "pgtap");
+    manifest.setProperty("sqlMembers", String.join(",", OliphauntExtensionCatalog.require("pgtap").sqlMembers()));
     manifest.setProperty("nativeModuleStem", "");
+    manifest.setProperty("nativeModuleStems", "");
     manifest.setProperty("nativeModuleFile", "");
     manifest.setProperty("mobilePrebuilt", "no");
     manifest.setProperty("mobileStaticArchives", "");
@@ -1955,6 +1973,7 @@ public final class OliphauntExtensionCatalogContractTest {
       throws Exception {
     Properties manifest = cubeArtifactManifest();
     manifest.setProperty("sqlName", sqlName);
+    manifest.setProperty("sqlMembers", String.join(",", OliphauntExtensionCatalog.require(sqlName).sqlMembers()));
     manifest.setProperty("nativeTarget", target);
     applyCanonicalLegalManifest(manifest, sqlName, target);
     manifest.setProperty("extensionSqlFileNames", extensionSqlFileNames);
@@ -1962,6 +1981,7 @@ public final class OliphauntExtensionCatalogContractTest {
     List<TarFixtureEntry> entries = new ArrayList<>();
     if (nativeModuleStem == null) {
       manifest.setProperty("nativeModuleStem", "");
+      manifest.setProperty("nativeModuleStems", "");
       manifest.setProperty("nativeModuleFile", "");
       manifest.setProperty("mobilePrebuilt", "no");
       manifest.setProperty("mobileStaticArchives", "");
@@ -1970,6 +1990,7 @@ public final class OliphauntExtensionCatalogContractTest {
       manifest.setProperty("staticSymbolAliases", "");
     } else {
       manifest.setProperty("nativeModuleStem", nativeModuleStem);
+      manifest.setProperty("nativeModuleStems", nativeModuleStem);
       manifest.setProperty("nativeModuleFile", nativeModuleStem + ".so");
       manifest.setProperty("staticSymbolPrefix", "oliphaunt_static_" + nativeModuleStem);
       manifest.setProperty(
@@ -2055,8 +2076,10 @@ public final class OliphauntExtensionCatalogContractTest {
     try {
       Properties manifest = cubeArtifactManifest();
       manifest.setProperty("sqlName", "auto_explain");
+      manifest.setProperty("sqlMembers", String.join(",", OliphauntExtensionCatalog.require("auto_explain").sqlMembers()));
       manifest.setProperty("createsExtension", "no");
       manifest.setProperty("nativeModuleStem", "auto_explain");
+      manifest.setProperty("nativeModuleStems", "auto_explain");
       manifest.setProperty("nativeModuleFile", "auto_explain.so");
       manifest.setProperty("staticSymbolPrefix", "oliphaunt_static_auto_explain");
       manifest.setProperty(
@@ -2803,8 +2826,10 @@ public final class OliphauntExtensionCatalogContractTest {
     Properties result = new Properties();
     result.putAll(template);
     result.setProperty("sqlName", sqlName);
+    result.setProperty("sqlMembers", String.join(",", OliphauntExtensionCatalog.require(sqlName).sqlMembers()));
     result.setProperty("dependencies", dependencies);
     result.setProperty("nativeModuleStem", sqlName);
+    result.setProperty("nativeModuleStems", sqlName);
     result.setProperty("nativeModuleFile", sqlName + ".so");
     result.setProperty("staticSymbolPrefix", "oliphaunt_static_" + sqlName);
     result.setProperty(
@@ -2944,8 +2969,10 @@ public final class OliphauntExtensionCatalogContractTest {
     manifest.setProperty("packageLayout", "oliphaunt-extension-artifact-v1");
     manifest.setProperty("pgMajor", "18");
     manifest.setProperty("sqlName", "cube");
+    manifest.setProperty("sqlMembers", String.join(",", OliphauntExtensionCatalog.require("cube").sqlMembers()));
     manifest.setProperty("createsExtension", "yes");
     manifest.setProperty("nativeModuleStem", "cube");
+    manifest.setProperty("nativeModuleStems", "cube");
     manifest.setProperty("nativeModuleFile", "cube.so");
     manifest.setProperty("nativeTarget", "android-arm64-v8a");
     manifest.setProperty("nativeRuntimeProduct", "liboliphaunt-native");
@@ -3325,6 +3352,7 @@ public final class OliphauntExtensionCatalogContractTest {
                 "extension.alpha.mavenGroup=dev.oliphaunt.extensions",
                 "extension.alpha.mavenArtifact=oliphaunt-extension-alpha",
                 "extension.alpha.runtimeBound=false",
+                "extension.alpha.sqlMembers=alpha",
                 "extension.alpha.dependencies=missing")
             + "\n";
     expectFailure(

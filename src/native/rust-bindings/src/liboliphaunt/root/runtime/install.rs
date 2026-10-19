@@ -12,9 +12,8 @@ use super::super::files::{
 };
 use super::super::{NATIVE_RUNTIME_TOOLS, existing_native_tool_path, native_tool_path};
 use super::extension_artifact_root_for;
-use super::extension_files::{extension_files, write_cache_extension_files};
 use crate::error::{Error, Result};
-use crate::extension::Extension;
+use crate::extension::{Extension, extension_data_files};
 
 #[cfg(test)]
 pub(super) fn install_cached_runtime(
@@ -159,20 +158,18 @@ fn install_native_share_tree(
         let extension_root =
             extension_artifact_root_for(install_dir, extension_artifact_dirs, *extension);
         let extension_share = extension_root.join("share/postgresql");
-        let files = extension_files(install_dir, extension_root, *extension)?;
         copy_extension_sql_files(&extension_share, &target_share, *extension)?;
-        for member in &files.sql_members {
-            if member != extension.sql_name() {
+        for member in extension.sql_members() {
+            if *member != extension.sql_name() {
                 copy_named_extension_sql_files(&extension_share, &target_share, member, true)?;
             }
         }
-        for relative in &files.data_files {
+        for relative in extension_data_files(*extension) {
             copy_file_preserving_permissions(
                 &extension_share.join(relative),
                 &target_share.join(relative),
             )?;
         }
-        write_cache_extension_files(runtime_dir, *extension, &files)?;
     }
     Ok(())
 }
@@ -550,16 +547,13 @@ mod tests {
             write_file(&embedded_modules.join(module), b"core embedded module");
         }
         let artifacts = [artifact_dir.clone(), contrib_dir];
-        let selected = Extension::POSTGIS.with_package(crate::extension::package_tests::postgis_package(Some(
-            "sqlName=postgis\ndependencies=fuzzystrmatch\nsqlMembers=postgis,postgis_raster,postgis_tiger_geocoder,postgis_topology\nnativeModuleStems=postgis-3,postgis_raster-3,postgis_topology-3\n",
-        )));
-        let extensions = resolve_extensions(&[selected]).unwrap();
+        let extensions = resolve_extensions(&[Extension::POSTGIS]).unwrap();
         let missing_dependency = install_cached_runtime(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
             std::slice::from_ref(&artifact_dir),
-            &temp.path().join("missing-frozen-dependency"),
+            &temp.path().join("missing-dependency"),
             &extensions,
         )
         .unwrap_err();
@@ -676,98 +670,42 @@ mod tests {
     }
 
     #[test]
-    fn legacy_separate_postgis_artifact_keeps_its_primary_only_contract() {
-        let temp = TempTree::new("legacy-postgis-artifact");
+    fn separate_core_only_postgis_artifact_is_incomplete() {
+        let temp = TempTree::new("incomplete-postgis-artifact");
         let install_dir = temp.path().join("install");
         let artifact_dir = temp.path().join("extension/postgis");
+        let contrib_dir = temp.path().join("extension/contrib");
         write_minimal_install(&install_dir);
+        write_extension_assets(&contrib_dir, Extension::FUZZYSTRMATCH);
         write_file(
             &artifact_dir.join("share/postgresql/extension/postgis.control"),
-            b"default_version = '3.5.0'\n",
+            b"default_version = '3.6.4'\n",
         );
         write_file(
-            &artifact_dir.join("share/postgresql/extension/postgis--3.5.0.sql"),
-            b"select 'legacy postgis';\n",
+            &artifact_dir.join("share/postgresql/extension/postgis--3.6.4.sql"),
+            b"select 'core-only postgis';\n",
         );
         write_file(
             &artifact_dir
                 .join("lib/postgresql")
                 .join(Extension::POSTGIS.native_module_file().unwrap()),
-            b"legacy primary module",
+            b"primary module",
         );
-        // Frozen from main 5daf457e, before raster/GDAL joined the product.
-        let legacy_data = [
-            "contrib/postgis-3.6/legacy.sql",
-            "contrib/postgis-3.6/legacy_gist.sql",
-            "contrib/postgis-3.6/legacy_minimal.sql",
-            "contrib/postgis-3.6/postgis.sql",
-            "contrib/postgis-3.6/postgis_upgrade.sql",
-            "contrib/postgis-3.6/spatial_ref_sys.sql",
-            "contrib/postgis-3.6/uninstall_legacy.sql",
-            "contrib/postgis-3.6/uninstall_postgis.sql",
-            "proj/proj.db",
-        ];
-        for relative in legacy_data {
-            write_file(
-                &artifact_dir.join("share/postgresql").join(relative),
-                b"legacy data",
-            );
-        }
-        for preserved_manifest in [false, true] {
-            let text = format!(
-                "sqlName=postgis\ndependencies=\ndataFiles={}\n",
-                legacy_data.join(",")
-            );
-            let manifest = preserved_manifest.then_some(text.as_str());
-            let selected = Extension::POSTGIS
-                .with_package(crate::extension::package_tests::postgis_package(manifest));
-            let extensions = resolve_extensions(&[selected]).unwrap();
-            assert_eq!(extensions, [selected]);
-            if preserved_manifest {
-                write_file(
-                    &super::super::extension_files::manifest_path(
-                        &artifact_dir,
-                        Extension::POSTGIS,
-                    ),
-                    manifest.unwrap().as_bytes(),
-                );
-            }
-            let runtime_dir = temp.path().join(format!("legacy-{preserved_manifest}"));
-            install_cached_runtime(
-                NativeRuntimeProfile::PostgresServer,
-                &install_dir,
-                None,
-                std::slice::from_ref(&artifact_dir),
-                &runtime_dir,
-                &extensions,
-            )
-            .unwrap();
-            let files = super::super::extension_files::cache_extension_files(
-                &runtime_dir,
-                Extension::POSTGIS,
-            )
-            .unwrap();
-            assert_eq!(files.sql_members, ["postgis"]);
-            assert_eq!(files.data_files, legacy_data);
-            assert!(!runtime_dir.join("share/postgresql/gdal").exists());
-            for relative in legacy_data {
-                assert!(
-                    runtime_dir
-                        .join("share/postgresql")
-                        .join(relative)
-                        .is_file()
-                );
-            }
-            assert_eq!(
-                files.module_files,
-                [Extension::POSTGIS.native_module_file().unwrap()]
-            );
-            assert!(
-                !runtime_dir
-                    .join("share/postgresql/extension/postgis_topology.control")
-                    .exists()
-            );
-        }
+        let extensions = resolve_extensions(&[Extension::POSTGIS]).unwrap();
+        let error = install_cached_runtime(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            &[artifact_dir, contrib_dir],
+            &temp.path().join("runtime"),
+            &extensions,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("postgis_raster"), "{error}");
+        assert!(
+            error.to_string().contains("missing control file"),
+            "{error}"
+        );
     }
 
     struct TempTree {
@@ -849,8 +787,6 @@ mod tests {
                 b"extension data",
             );
         }
-        let files = extension_files(install_dir, install_dir, extension).unwrap();
-        write_cache_extension_files(install_dir, extension, &files).unwrap();
     }
 
     fn write_file(path: &Path, contents: &[u8]) {
@@ -920,7 +856,7 @@ fn install_native_library_tree(
         let extension_root =
             extension_artifact_root_for(install_dir, extension_artifact_dirs, *extension);
         let extension_lib = extension_root.join("lib/postgresql");
-        for module in extension_files(install_dir, extension_root, *extension)?.module_files {
+        for module in extension.native_module_files() {
             match profile {
                 NativeRuntimeProfile::OliphauntEmbedded => {
                     let embedded_extension_lib = extension_root.join("lib/modules");

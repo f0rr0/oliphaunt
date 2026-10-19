@@ -42,6 +42,8 @@ export const EXTENSION_ARTIFACT_PROPERTY_KEYS = Object.freeze([
   'staticSymbolAliases',
   'licenseFiles',
   'licenseProfile',
+  'sqlMembers',
+  'nativeModuleStems',
   'files',
 ]);
 
@@ -61,7 +63,6 @@ const DESKTOP_NATIVE_TARGETS = new Set([
   'macos-arm64',
   'windows-x64-msvc',
 ]);
-const FROZEN_CLOSURE_KEYS = ['sqlMembers', 'nativeModuleStems'];
 
 function inventoryError(label, message) {
   return new Error(`${label}: ${message}`);
@@ -146,10 +147,7 @@ export function parseExtensionArtifactProperties(text, label) {
     }
     properties.set(key, rawLine.slice(separator + 1));
   }
-  const hasClosure = FROZEN_CLOSURE_KEYS.some((key) => properties.has(key));
-  const orderedKeys = hasClosure
-    ? [...EXTENSION_ARTIFACT_PROPERTY_KEYS.slice(0, -1), ...FROZEN_CLOSURE_KEYS, 'files']
-    : EXTENSION_ARTIFACT_PROPERTY_KEYS;
+  const orderedKeys = EXTENSION_ARTIFACT_PROPERTY_KEYS;
   const actual = [...properties.keys()].sort(compareText);
   const expected = [...orderedKeys].sort(compareText);
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -444,6 +442,8 @@ function normalizeMetadata(row, label) {
     sqlName,
     createsExtension,
     nativeModuleStem,
+    sqlMembers: list('sqlMembers', 'sql-members'),
+    nativeModuleStems: list('nativeModuleStems', 'native-module-stems'),
     dependencies: (() => {
       const selected =
         row?.selectedExtensionDependencies ??
@@ -463,6 +463,8 @@ function normalizeMetadata(row, label) {
   for (const [field, values] of [
     ['selected-extension-dependencies', metadata.dependencies],
     ['shared-preload-libraries', metadata.sharedPreloadLibraries],
+    ['sql-members', metadata.sqlMembers],
+    ['native-module-stems', metadata.nativeModuleStems],
   ]) {
     if (values.some((item) => !PORTABLE_ID.test(item))) {
       throw inventoryError(label, `${field} contains a non-portable identifier`);
@@ -527,6 +529,35 @@ export function extensionNativeArtifactClosure(sqlName, target) {
     controls: [...new Set(controls)].sort(compareText),
     modules: [...new Set(modules)].sort(compareText),
   };
+}
+
+export function assertExtensionArtifactClosure(metadata, target, label) {
+  const closure = extensionNativeArtifactClosure(metadata.sqlName, target);
+  const mobile = target === 'ios-xcframework' || target.startsWith('android-');
+  const expected = {
+    sqlMembers: [
+      ...new Set([
+        ...(metadata.createsExtension ? [metadata.sqlName] : []),
+        ...closure.controls.map((name) => name.slice(0, -'.control'.length)),
+      ]),
+    ].sort(compareText),
+    nativeModuleStems: [
+      ...new Set([
+        ...(metadata.nativeModuleStem === null ? [] : [metadata.nativeModuleStem]),
+        ...(mobile ? [] : closure.modules).map((name) =>
+          name.slice(0, -moduleSuffix(target).length),
+        ),
+      ]),
+    ].sort(compareText),
+  };
+  for (const [field, values] of Object.entries(expected)) {
+    if (JSON.stringify(metadata[field]) !== JSON.stringify(values)) {
+      throw inventoryError(
+        label,
+        `${field} must match the current source-owned closure ${JSON.stringify(values)}`,
+      );
+    }
+  }
 }
 
 function sqlFileOwned(fileName, metadata) {
@@ -788,35 +819,14 @@ export function validateExtensionArtifactEntries({
     decodeUtf8(manifestEntry.data, `${label} manifest.properties`),
     `${label} manifest.properties`,
   );
-  // Old independently versioned artifacts only promised their primary member/module.
-  // A current SDK catalog must not silently add new requirements to those artifacts.
-  const sqlMembers = properties.has('sqlMembers')
-    ? csv(properties.get('sqlMembers'), `${label} sqlMembers`)
-    : metadata.createsExtension
-      ? [metadata.sqlName]
-      : [];
-  const nativeModuleStems = properties.has('nativeModuleStems')
-    ? csv(properties.get('nativeModuleStems'), `${label} nativeModuleStems`)
-    : metadata.nativeModuleStem === null
-      ? []
-      : [metadata.nativeModuleStem];
-  if (
-    [...sqlMembers, ...nativeModuleStems].some((name) => !PORTABLE_ID.test(name)) ||
-    (metadata.createsExtension && !sqlMembers.includes(metadata.sqlName)) ||
-    (!metadata.createsExtension && sqlMembers.length > 0) ||
-    (metadata.nativeModuleStem === null
-      ? nativeModuleStems.length > 0
-      : !nativeModuleStems.includes(metadata.nativeModuleStem))
-  )
-    throw inventoryError(label, 'invalid frozen SQL member or native module closure');
+  assertExtensionArtifactClosure(metadata, target, `${label} canonical metadata`);
+  const sqlMembers = csv(properties.get('sqlMembers'), `${label} sqlMembers`);
+  const nativeModuleStems = csv(properties.get('nativeModuleStems'), `${label} nativeModuleStems`);
   for (const [key, actual] of [
     ['sqlMembers', sqlMembers],
     ['nativeModuleStems', nativeModuleStems],
   ]) {
-    if (
-      rawMetadata[key] !== undefined &&
-      (!properties.has(key) || JSON.stringify(rawMetadata[key]) !== JSON.stringify(actual))
-    ) {
+    if (JSON.stringify(metadata[key]) !== JSON.stringify(actual)) {
       throw inventoryError(label, `manifest ${key} must match the frozen release inventory`);
     }
   }

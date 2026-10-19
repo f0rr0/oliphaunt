@@ -4,7 +4,6 @@ import {
   chmodSync,
   closeSync,
   copyFileSync,
-  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -68,7 +67,10 @@ import {
   extensionUpstreamLicenseFileInventory,
   stageExtensionUpstreamLicenses,
 } from '../../../tools/extension-upstream-licenses.mts';
-import { validateExtensionArtifactArchive } from './extension-artifact-inventory.mts';
+import {
+  assertExtensionArtifactClosure,
+  validateExtensionArtifactArchive,
+} from './extension-artifact-inventory.mts';
 import {
   extensionNpmPackageForProduct,
   extensionNpmTargetPackageForProduct,
@@ -465,14 +467,14 @@ const FROZEN_EXTENSION_INVENTORY_LIST_FIELDS = Object.freeze([
   'extensionSqlFileNames',
   'extensionSqlFilePrefixes',
   'sharedPreloadLibraries',
+  'sqlMembers',
+  'nativeModuleStems',
 ]);
 
 /**
  * Return the exact desktop inventory frozen into one product/member release row.
  *
- * Registry materialization deliberately does not consult the repository-wide
- * generated SDK catalog: independently versioned external products must remain
- * bound to the metadata that was qualified and versioned with that product.
+ * The release must include the complete current source-owned companion closure.
  */
 export function frozenExtensionMemberInventory(member, { product, version } = {}) {
   const owner = [product, version].every((value) => typeof value === 'string' && value.length > 0)
@@ -498,11 +500,7 @@ export function frozenExtensionMemberInventory(member, { product, version } = {}
     createsExtension: member.createsExtension,
     nativeModuleStem: member.nativeModuleStem,
   };
-  const closureFields =
-    member.sqlMembers === undefined && member.nativeModuleStems === undefined
-      ? []
-      : ['sqlMembers', 'nativeModuleStems'];
-  for (const field of [...FROZEN_EXTENSION_INVENTORY_LIST_FIELDS, ...closureFields]) {
+  for (const field of FROZEN_EXTENSION_INVENTORY_LIST_FIELDS) {
     const values = member[field];
     if (
       !Array.isArray(values) ||
@@ -519,6 +517,7 @@ export function frozenExtensionMemberInventory(member, { product, version } = {}
   if (inventory.dependencies.includes(sqlName)) {
     throw new Error(`${TOOL}: ${owner}/${sqlName} frozen dependencies must exclude itself`);
   }
+  assertExtensionArtifactClosure(inventory, 'linux-x64-gnu', `${owner}/${sqlName}`);
   return Object.freeze(inventory);
 }
 
@@ -1055,16 +1054,6 @@ export function extractExtensionRuntime(
     writeFileSync(destination, entry.data, { flag: 'wx', mode: entry.mode });
     chmodSync(destination, entry.mode);
   }
-  const manifestPath = path.join(
-    runtimeDir,
-    '.oliphaunt/extensions',
-    `${metadata.sqlName}.properties`,
-  );
-  mkdirSync(path.dirname(manifestPath), { recursive: true });
-  writeFileSync(manifestPath, validated.entries.get('manifest.properties').data, {
-    flag: 'wx',
-    mode: 0o644,
-  });
   return validated.runtimeFiles;
 }
 

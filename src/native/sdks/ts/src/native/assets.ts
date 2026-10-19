@@ -32,6 +32,7 @@ import {
 import {
   nativeModuleSuffixForTarget,
   type RuntimeFileHost,
+  selectedExtensionClosure,
   validatePreparedRuntimeExtensions,
 } from './extension-runtime.js';
 import { syncDirectory, syncRuntimeDirectoryTree } from './filesystem-durability.js';
@@ -101,7 +102,6 @@ type NpmExtensionMemberContract = {
   nativeModuleStem: string | null;
   nativeModuleStems: string[];
   sqlMembers: string[];
-  frozenClosure: boolean;
   dependencies: string[];
   dataFiles: string[];
   extensionSqlFileNames: string[];
@@ -144,7 +144,9 @@ const NPM_EXTENSION_CONTRACT_MEMBER_FIELDS = [
   'extensionSqlFilePrefixes',
   'licenseFiles',
   'nativeModuleStem',
+  'nativeModuleStems',
   'sharedPreloadLibraries',
+  'sqlMembers',
   'sqlName',
 ] as const;
 
@@ -228,42 +230,27 @@ export async function materializeExtensionInstall(
   extensions: ReadonlyArray<string> = [],
   descriptors: readonly NativeExtension[] = [],
 ): Promise<ResolvedNativeInstall> {
-  if (extensions.length === 0) {
+  const selected = selectedExtensionClosure(extensions);
+  if (selected.length === 0) {
     return install;
-  }
-  for (const sqlName of extensions) {
-    if (generatedExtensionBySqlName(sqlName) === undefined) {
-      throw new Error(`unknown Oliphaunt extension id '${sqlName}'`);
-    }
   }
   if (install.runtimeDirectory === undefined) {
     throw new Error(
-      `native extension packages require a package-managed runtime directory; selected extensions: ${extensions.join(', ')}`,
+      `native extension packages require a package-managed runtime directory; selected extensions: ${selected.join(', ')}`,
     );
   }
   const installRuntimeDirectory = install.runtimeDirectory;
   const versions = await packageVersions();
   const target = liboliphauntPackageTarget(platform(), arch());
-  const resolved = new Map<string, ResolvedExtensionPackage>();
-  let pending = [...new Set(extensions)].sort(compareText);
-  while (pending.length > 0) {
-    const batch = await Promise.all(
-      pending.map((sqlName) =>
-        resolveExtensionPackage(
-          sqlName,
-          target.id,
-          versions.liboliphauntVersion,
-          descriptors.find((value) => value.sqlName === sqlName),
-        ),
+  const packages = await Promise.all(
+    selected.map((sqlName) =>
+      resolveExtensionPackage(
+        sqlName,
+        target.id,
+        versions.liboliphauntVersion,
+        descriptors.find((value) => value.sqlName === sqlName),
       ),
-    );
-    for (const entry of batch) resolved.set(entry.sqlName, entry);
-    pending = [...new Set(batch.flatMap((entry) => entry.contract.dependencies))]
-      .filter((name) => !resolved.has(name))
-      .sort(compareText);
-  }
-  const packages = [...resolved.values()].sort((left, right) =>
-    compareText(left.sqlName, right.sqlName),
+    ),
   );
   const cacheKey = runtimeCacheKey({
     libraryPath: install.libraryPath,
@@ -621,11 +608,8 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
   }
   const row = value as Record<string, unknown>;
   if (
-    JSON.stringify(
-      Object.keys(row)
-        .filter((key) => key !== 'sqlMembers' && key !== 'nativeModuleStems')
-        .sort(compareText),
-    ) !== JSON.stringify(NPM_EXTENSION_CONTRACT_MEMBER_FIELDS)
+    JSON.stringify(Object.keys(row).sort(compareText)) !==
+    JSON.stringify(NPM_EXTENSION_CONTRACT_MEMBER_FIELDS)
   ) {
     throw new Error(
       `${label} fields must be exactly ${NPM_EXTENSION_CONTRACT_MEMBER_FIELDS.join(', ')}`,
@@ -644,22 +628,12 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
   ) {
     throw new Error(`${label}.nativeModuleStem must be null or a portable identifier`);
   }
-  if ((row.sqlMembers === undefined) !== (row.nativeModuleStems === undefined)) {
-    throw new Error(`${label} must freeze sqlMembers and nativeModuleStems together`);
-  }
-  const frozenClosure = row.sqlMembers !== undefined;
-  const sqlMembers =
-    row.sqlMembers === undefined
-      ? row.createsExtension
-        ? [row.sqlName]
-        : []
-      : parseExtensionContractStringList(row.sqlMembers, 'sqlMembers', label);
-  const nativeModuleStems =
-    row.nativeModuleStems === undefined
-      ? row.nativeModuleStem === null
-        ? []
-        : [row.nativeModuleStem as string]
-      : parseExtensionContractStringList(row.nativeModuleStems, 'nativeModuleStems', label);
+  const sqlMembers = parseExtensionContractStringList(row.sqlMembers, 'sqlMembers', label);
+  const nativeModuleStems = parseExtensionContractStringList(
+    row.nativeModuleStems,
+    'nativeModuleStems',
+    label,
+  );
   for (const [field, values] of [
     ['sqlMembers', sqlMembers],
     ['nativeModuleStems', nativeModuleStems],
@@ -722,7 +696,6 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
     nativeModuleStem: row.nativeModuleStem as string | null,
     nativeModuleStems,
     sqlMembers,
-    frozenClosure,
     dependencies,
     dataFiles,
     extensionSqlFileNames,
@@ -802,12 +775,15 @@ async function loadExtensionPackageContract(config: {
     if (
       current === undefined ||
       current.artifactProduct !== config.extension.artifactProduct ||
-      member.dependencies.some(
-        (dependency) => !current.selectedExtensionDependencies.includes(dependency),
-      )
+      member.createsExtension !== current.createsExtension ||
+      member.nativeModuleStem !== current.nativeModuleStem ||
+      JSON.stringify(member.dependencies) !==
+        JSON.stringify(current.selectedExtensionDependencies) ||
+      JSON.stringify(member.sqlMembers) !== JSON.stringify(current.sqlMembers) ||
+      JSON.stringify(member.nativeModuleStems) !== JSON.stringify(current.nativeModuleStems)
     ) {
       throw new Error(
-        `${config.packageName} extension contract member ${member.sqlName} is incompatible with the SDK dependency contract`,
+        `${config.packageName} extension contract member ${member.sqlName} is incompatible with the SDK extension contract`,
       );
     }
   }
@@ -1234,33 +1210,9 @@ async function requireExactExtensionRuntimeInventory(config: {
   const embeddedModuleFiles = config.contract.nativeModuleStems.map(
     (stem) => `lib/modules/${stem}${nativeModuleSuffixForTarget(config.target)}`,
   );
-  const frozenManifest = `.oliphaunt/extensions/${config.contract.sqlName}.properties`;
   const controls = new Set<string>();
   const installs = new Set<string>();
   for (const file of files) {
-    if (file === frozenManifest) {
-      const contents = await readFile(join(config.runtimeDirectory, file), 'utf8');
-      const fields = new Map<string, string>();
-      for (const line of contents.split(/\r?\n/u)) {
-        if (line === '' || line.startsWith('#')) continue;
-        const separator = line.indexOf('=');
-        if (separator <= 0 || fields.has(line.slice(0, separator))) {
-          throw new Error(`${config.source} contains invalid frozen extension metadata`);
-        }
-        fields.set(line.slice(0, separator), line.slice(separator + 1));
-      }
-      if (
-        fields.get('sqlName') !== config.contract.sqlName ||
-        fields.has('sqlMembers') !== fields.has('nativeModuleStems') ||
-        (config.contract.frozenClosure && !fields.has('sqlMembers')) ||
-        (fields.has('sqlMembers') &&
-          (fields.get('sqlMembers') !== config.contract.sqlMembers.join(',') ||
-            fields.get('nativeModuleStems') !== config.contract.nativeModuleStems.join(',')))
-      ) {
-        throw new Error(`${config.source} frozen extension metadata differs from its contract`);
-      }
-      continue;
-    }
     const extensionPrefix = 'share/postgresql/extension/';
     if (file.startsWith(extensionPrefix)) {
       const fileName = file.slice(extensionPrefix.length);
@@ -1341,9 +1293,6 @@ async function requireExactExtensionRuntimeInventory(config: {
         `${config.source} license file ${licenseFile.path} does not match declared SHA-256 ${licenseFile.sha256}`,
       );
     }
-  }
-  if (config.contract.frozenClosure && !files.includes(frozenManifest)) {
-    throw new Error(`${config.source} is missing frozen extension metadata ${frozenManifest}`);
   }
   for (const moduleFile of moduleFiles) {
     if (!files.includes(moduleFile))

@@ -168,11 +168,7 @@ function requireExactKeys(value, expected, context) {
     fail(`${context} must be an object`);
   }
   const actual = Object.keys(value).sort(compareText);
-  const canonical = [...expected]
-    .filter(
-      (key) => !['sqlMembers', 'nativeModuleStems'].includes(key) || Object.hasOwn(value, key),
-    )
-    .sort(compareText);
+  const canonical = [...expected].sort(compareText);
   if (!isDeepStrictEqual(actual, canonical)) {
     fail(`${context} fields must be exactly ${canonical.join(',')}; got ${actual.join(',')}`);
   }
@@ -426,9 +422,8 @@ async function loadRepositoryContract(root) {
     }
     const canonical = {
       sqlName,
-      sqlMembers: row['sql-members'] ?? (row['creates-extension'] ? [sqlName] : []),
-      nativeModuleStems:
-        row['native-module-stems'] ?? (nativeModuleStem === null ? [] : [nativeModuleStem]),
+      sqlMembers: row['sql-members'],
+      nativeModuleStems: row['native-module-stems'],
       createsExtension: row['creates-extension'],
       dependencies,
       dataFiles: canonicalStringList(
@@ -603,15 +598,9 @@ function validateExactMobileRoles(member, target, assets, context) {
 }
 
 function validateMemberContract(member, expected, context) {
-  if (Object.hasOwn(member, 'sqlMembers') !== Object.hasOwn(member, 'nativeModuleStems'))
-    fail(`${context} sqlMembers and nativeModuleStems must be declared together`);
-  if (member.sqlMembers !== undefined) {
-    for (const field of ['sqlMembers', 'nativeModuleStems']) {
-      if (!isDeepStrictEqual(member[field], expected[field]))
-        fail(`${context}.${field} must exactly match generated React Native extension metadata`);
-    }
-  }
   for (const field of [
+    'sqlMembers',
+    'nativeModuleStems',
     'sqlName',
     'createsExtension',
     'dependencies',

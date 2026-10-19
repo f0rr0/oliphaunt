@@ -646,8 +646,8 @@ function extensionCarrier(
     );
   }
   const sqlName = portableIdentifier(manifest.sqlName, `${manifestPath}.sqlName`);
-  if ((manifest.sqlMembers === undefined) !== (manifest.nativeModuleStems === undefined))
-    throw error(`${manifestPath} sqlMembers and nativeModuleStems must be declared together`);
+  const sqlMembers = canonicalStringList(manifest.sqlMembers, `${manifestPath}.sqlMembers`);
+  canonicalStringList(manifest.nativeModuleStems, `${manifestPath}.nativeModuleStems`);
   if (typeof manifest.createsExtension !== 'boolean') {
     throw error(`${manifestPath} ${sqlName}.createsExtension must be boolean`);
   }
@@ -846,15 +846,8 @@ function extensionCarrier(
       tag,
       sqlName,
       createsExtension: manifest.createsExtension,
-      ...(manifest.sqlMembers === undefined
-        ? {}
-        : {
-            sqlMembers: canonicalStringList(
-              manifest.sqlMembers,
-              `${manifestPath} ${sqlName}.sqlMembers`,
-            ),
-            nativeModuleStems: nativeModuleStem === null ? [] : [nativeModuleStem],
-          }),
+      sqlMembers,
+      nativeModuleStems: nativeModuleStem === null ? [] : [nativeModuleStem],
       dataFiles,
       dependencies,
       extensionSqlFileNames,

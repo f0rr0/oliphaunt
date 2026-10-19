@@ -138,18 +138,12 @@ function manifest(overrides = {}) {
     staticSymbolAliases: '',
     licenseFiles: legal.licenseFiles.join(','),
     licenseProfile: legal.profile,
+    sqlMembers: overrides.createsExtension === 'no' ? '' : sqlName,
+    nativeModuleStems: overrides.nativeModuleStem ?? '',
     files: 'files',
     ...overrides,
   };
-  const keys =
-    overrides.sqlMembers === undefined
-      ? EXTENSION_ARTIFACT_PROPERTY_KEYS
-      : [
-          ...EXTENSION_ARTIFACT_PROPERTY_KEYS.slice(0, -1),
-          'sqlMembers',
-          'nativeModuleStems',
-          'files',
-        ];
+  const keys = EXTENSION_ARTIFACT_PROPERTY_KEYS;
   return `${keys.map((key) => `${key}=${values[key]}`).join('\n')}\n`;
 }
 
@@ -187,6 +181,8 @@ const pgtapMetadata = {
   sqlName: 'pgtap',
   createsExtension: true,
   nativeModuleStem: null,
+  sqlMembers: ['pgtap'],
+  nativeModuleStems: [],
   dependencies: [],
   dataFiles: [],
   extensionSqlFileNames: ['uninstall_pgtap.sql'],
@@ -550,6 +546,8 @@ async function main() {
       sqlName: 'auto_explain',
       createsExtension: false,
       nativeModuleStem: 'auto_explain',
+      sqlMembers: [],
+      nativeModuleStems: ['auto_explain'],
       extensionSqlFileNames: [],
       extensionSqlFilePrefixes: [],
     };
@@ -655,10 +653,7 @@ async function main() {
       target: 'linux-x64-gnu',
       nativeRuntimeVersion: '1.2.3',
     });
-    assert.equal(
-      await fs.readFile(path.join(extracted, '.oliphaunt/extensions/postgis.properties'), 'utf8'),
-      postgis.get('manifest.properties'),
-    );
+    await assert.rejects(fs.access(path.join(extracted, '.oliphaunt')), { code: 'ENOENT' });
     assert.equal(
       await fs.readFile(path.join(extracted, 'lib/modules/postgis_topology-3.so'), 'utf8'),
       'embedded module',
@@ -691,20 +686,14 @@ async function main() {
         .join('\n'),
     );
     const legacyFile = await writeArchive(root, 'postgis-legacy-core-only.tar.gz', legacyPostgis);
-    validateExtensionArtifactArchive({
-      file: legacyFile,
-      metadata: { ...postgisMetadata, sqlMembers: undefined, nativeModuleStems: undefined },
-      target: 'linux-x64-gnu',
-      nativeRuntimeVersion: '1.2.3',
-      label: 'legacy PostGIS',
-    });
-    assert.equal(
-      frozenExtensionMemberInventory({
-        ...postgisMetadata,
-        sqlMembers: undefined,
-        nativeModuleStems: undefined,
-      }).sqlMembers,
-      undefined,
+    assert.throws(
+      () =>
+        frozenExtensionMemberInventory({
+          ...postgisMetadata,
+          sqlMembers: undefined,
+          nativeModuleStems: undefined,
+        }),
+      /sqlMembers/u,
     );
     assert.throws(
       () =>
@@ -715,7 +704,40 @@ async function main() {
           nativeRuntimeVersion: '1.2.3',
           label: 'new frozen PostGIS rejects incomplete legacy payload',
         }),
-      /frozen release inventory/u,
+      /property fields/u,
+    );
+    const incompleteMetadata = {
+      ...postgisMetadata,
+      sqlMembers: ['postgis'],
+      nativeModuleStems: ['postgis-3'],
+    };
+    assert.throws(
+      () => frozenExtensionMemberInventory(incompleteMetadata),
+      /current source-owned closure/u,
+    );
+    assert.throws(
+      () =>
+        frozenExtensionMemberInventory({ ...postgisMetadata, nativeModuleStems: ['postgis-3'] }),
+      /nativeModuleStems must match the current source-owned closure/u,
+    );
+    const incompletePostgis = new Map(legacyPostgis);
+    incompletePostgis.set(
+      'manifest.properties',
+      manifest({
+        sqlName: 'postgis',
+        nativeModuleStem: 'postgis-3',
+        nativeModuleFile: 'postgis-3.so',
+        dataFiles: postgisMetadata.dataFiles.join(','),
+        extensionSqlFileNames: '',
+        extensionSqlFilePrefixes: postgisMetadata.extensionSqlFilePrefixes.join(','),
+      }),
+    );
+    await expectArchiveFailure(
+      root,
+      'postgis-incomplete-closure.tar.gz',
+      incompletePostgis,
+      incompleteMetadata,
+      /current source-owned closure/u,
     );
 
     const missingEmbeddedPostgis = new Map(postgis);

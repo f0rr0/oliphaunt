@@ -123,22 +123,55 @@ async function main() {
   assert.ok(
     sqlMembers.includes('postgis_topology') && sqlMembers.includes('postgis_tiger_geocoder'),
   );
-  const expandedPostgis = { ...postgis, sqlMembers, nativeModuleStems: ['postgis-3'] };
-  await fs.writeFile(
-    postgisManifest,
-    postgisManifestText.replace(
-      'files=files\n',
-      `sqlMembers=${sqlMembers.join(',')}\nnativeModuleStems=postgis-3\nfiles=files\n`,
-    ),
-  );
-  const companionFiles = [];
-  for (const member of sqlMembers.filter((name) => name !== 'postgis')) {
-    for (const name of [`${member}.control`, `${member}--1.0.sql`]) {
-      const file = path.join(postgis.resourceRoot, 'files/share/postgresql/extension', name);
-      await fs.writeFile(file, '-- companion fixture\n');
-      companionFiles.push(file);
-    }
+  for (const missing of ['sqlMembers', 'nativeModuleStems']) {
+    const incomplete = { ...postgis };
+    delete incomplete[missing];
+    await assert.rejects(
+      () =>
+        validateSwiftExtensionResourceArtifact({
+          extension: incomplete,
+          canonical: catalog.get('postgis'),
+          nativeRuntime: document.nativeRuntime,
+        }),
+      /must be a string array/u,
+    );
   }
+  await assert.rejects(
+    () =>
+      validateSwiftExtensionResourceArtifact({
+        extension: { ...postgis, sqlMembers: ['postgis'] },
+        canonical: catalog.get('postgis'),
+        nativeRuntime: document.nativeRuntime,
+      }),
+    /sqlMembers must match generated canonical metadata/u,
+  );
+  await assert.rejects(
+    () =>
+      validateSwiftExtensionResourceArtifact({
+        extension: { ...postgis, dependencies: [] },
+        canonical: catalog.get('postgis'),
+        nativeRuntime: document.nativeRuntime,
+      }),
+    /dependencies must match generated canonical metadata/u,
+  );
+  await assert.rejects(
+    () =>
+      validateSwiftExtensionResourceArtifact({
+        extension: {
+          ...postgis,
+          nativeModuleStems: ['postgis-3', 'postgis_raster-3', 'postgis_topology-3'],
+        },
+        canonical: catalog.get('postgis'),
+        nativeRuntime: document.nativeRuntime,
+      }),
+    /mobile nativeModuleStems must contain only the merged primary module/u,
+  );
+  const expandedPostgis = postgis;
+  const companionFiles = sqlMembers
+    .filter((name) => name !== 'postgis')
+    .map((member) =>
+      path.join(postgis.resourceRoot, 'files/share/postgresql/extension', `${member}.control`),
+    );
   const expandedResources = await validateSwiftExtensionResourceArtifact({
     extension: expandedPostgis,
     canonical: catalog.get('postgis'),
@@ -177,7 +210,7 @@ async function main() {
       }),
     /undeclared extension SQL\/control file/u,
   );
-  await Promise.all([...companionFiles, foreignControl].map((file) => fs.rm(file)));
+  await fs.rm(foreignControl);
   await fs.writeFile(postgisManifest, postgisManifestText);
   await assert.rejects(
     () =>

@@ -202,6 +202,9 @@ final class OliphauntExtensionCatalog {
             "bundled Oliphaunt extension catalog has invalid Maven coordinates for " + sqlName);
       }
       List<String> dependencies = portableList(properties.getProperty(prefix + "dependencies", ""));
+      if (!properties.containsKey(prefix + "sqlMembers")) {
+        throw new GradleException("bundled Oliphaunt extension catalog is missing " + prefix + "sqlMembers");
+      }
       entries.put(
           sqlName,
           new Entry(
@@ -212,7 +215,7 @@ final class OliphauntExtensionCatalog {
               mavenArtifact,
               runtimeBound,
               dependencies,
-              portableList(properties.getProperty(prefix + "sqlMembers", sqlName))));
+              portableList(properties.getProperty(prefix + "sqlMembers"))));
     }
     for (Entry entry : entries.values()) {
       for (String dependency : entry.dependencies()) {

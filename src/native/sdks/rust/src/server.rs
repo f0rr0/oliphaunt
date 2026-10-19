@@ -848,28 +848,6 @@ mod tests {
                 .map(PathBuf::from),
             Some(proj_data)
         );
-        assert_eq!(
-            present
-                .get_envs()
-                .find(|(key, _)| *key == std::ffi::OsStr::new("GDAL_DATA")),
-            None,
-            "legacy core-only PostGIS needs PROJ data without requiring GDAL"
-        );
-
-        let gdal_data = runtime_dir.join("share/postgresql/gdal");
-        std::fs::create_dir_all(&gdal_data).expect("create GDAL data dir");
-        std::fs::write(gdal_data.join("gdalvrt.xsd"), b"fixture").expect("write gdalvrt.xsd");
-        let mut raster = Command::new("postgres");
-        configure_extension_runtime_env(&mut raster, &runtime_dir, &[Extension::POSTGIS]);
-        assert_eq!(
-            raster
-                .get_envs()
-                .find(|(key, _)| *key == std::ffi::OsStr::new("GDAL_DATA"))
-                .and_then(|(_, value)| value)
-                .map(PathBuf::from),
-            Some(gdal_data)
-        );
-
         let mut unselected = Command::new("postgres");
         configure_extension_runtime_env(&mut unselected, &runtime_dir, &[]);
         assert_eq!(

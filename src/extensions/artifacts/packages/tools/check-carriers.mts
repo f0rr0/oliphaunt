@@ -41,6 +41,7 @@ import {
   assertExtensionUpstreamLicensesInArchive,
   extensionCarrierLegalContract,
 } from '../../../tools/extension-upstream-licenses.mts';
+import { assertExtensionArtifactClosure } from './extension-artifact-inventory.mts';
 import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
 
 export const EXTENSION_ROOT = path.resolve(
@@ -67,6 +68,8 @@ const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
   'extensionSqlFileNames',
   'extensionSqlFilePrefixes',
   'nativeModuleStem',
+  'sqlMembers',
+  'nativeModuleStems',
   'iosNativeDependencies',
   'iosRegistration',
   'wasixInstall',
@@ -94,6 +97,8 @@ const EXTENSION_BUNDLE_MEMBER_KEYS = new Set([
   'extensionSqlFileNames',
   'extensionSqlFilePrefixes',
   'nativeModuleStem',
+  'sqlMembers',
+  'nativeModuleStems',
   'iosNativeDependencies',
   'iosRegistration',
   'wasixInstall',
@@ -242,9 +247,6 @@ function requireExactKeys(value, expected, context) {
   if (value === null || Array.isArray(value) || typeof value !== 'object') {
     fail(`${context} must be an object`);
   }
-  if (expected.has('nativeModuleStem') && expected.has('sqlName')) {
-    expected = new Set([...expected, ...Object.keys(optionalFrozenClosure(value, context))]);
-  }
   const actual = new Set(Object.keys(value));
   if (!setEquals(actual, expected)) {
     fail(
@@ -253,21 +255,13 @@ function requireExactKeys(value, expected, context) {
   }
 }
 
-function optionalFrozenClosure(member, context) {
-  if (member.sqlMembers === undefined && member.nativeModuleStems === undefined) return {};
+function extensionClosure(member, context) {
   for (const key of ['sqlMembers', 'nativeModuleStems']) {
     requireSortedUniqueStrings(member[key], `${context}.${key}`);
     if (member[key].some((name) => !/^[A-Za-z0-9._-]{1,128}$/u.test(name)))
       fail(`${context}.${key} must contain portable identifiers`);
   }
-  if (member.createsExtension && !member.sqlMembers.includes(member.sqlName))
-    fail(`${context}.sqlMembers must include its primary SQL extension`);
-  if (
-    member.nativeModuleStem === null
-      ? member.nativeModuleStems.length > 0
-      : !member.nativeModuleStems.includes(member.nativeModuleStem)
-  )
-    fail(`${context}.nativeModuleStems must include its primary native module`);
+  assertExtensionArtifactClosure(member, 'linux-x64-gnu', context);
   return { sqlMembers: member.sqlMembers, nativeModuleStems: member.nativeModuleStems };
 }
 
@@ -382,6 +376,7 @@ function validateBundleMemberMetadata(member, manifest, stagedTargets) {
     );
   }
   validateMemberWasixInstall(member, `${rel(manifest)} member ${member.sqlName}`);
+  extensionClosure(member, `${rel(manifest)} member ${member.sqlName}`);
   const stagesIos = stagedTargets.has('ios-xcframework');
   if (member.nativeModuleStem === null) {
     if (member.iosNativeDependencies.length > 0 || member.iosRegistration !== null) {
@@ -875,7 +870,7 @@ async function checkExtensionBundleProduct(
     expectedProperties[`${prefix}.extensionSqlFilePrefixes`] =
       member.extensionSqlFilePrefixes.join(',');
     expectedProperties[`${prefix}.nativeModuleStem`] = member.nativeModuleStem ?? '';
-    for (const [key, values] of Object.entries(optionalFrozenClosure(member, prefix)))
+    for (const [key, values] of Object.entries(extensionClosure(member, prefix)))
       expectedProperties[`${prefix}.${key}`] = values.join(',');
     expectedProperties[`${prefix}.iosNativeDependencies`] = member.iosNativeDependencies.join(',');
     expectedProperties[`${prefix}.sharedPreloadLibraries`] =
@@ -1138,7 +1133,7 @@ async function checkExtensionProductVariant(
     extensionSqlFileNames: data.extensionSqlFileNames,
     extensionSqlFilePrefixes: data.extensionSqlFilePrefixes,
     nativeModuleStem: data.nativeModuleStem,
-    ...optionalFrozenClosure(data, rel(manifest)),
+    ...extensionClosure(data, rel(manifest)),
     iosNativeDependencies: data.iosNativeDependencies,
     iosRegistration: data.iosRegistration,
     wasixInstall: data.wasixInstall,
@@ -1211,7 +1206,7 @@ async function checkExtensionProductVariant(
     extensionSqlFilePrefixes: data.extensionSqlFilePrefixes.join(','),
     nativeModuleStem: data.nativeModuleStem ?? '',
     ...Object.fromEntries(
-      Object.entries(optionalFrozenClosure(data, rel(manifest))).map(([key, values]) => [
+      Object.entries(extensionClosure(data, rel(manifest))).map(([key, values]) => [
         key,
         values.join(','),
       ]),

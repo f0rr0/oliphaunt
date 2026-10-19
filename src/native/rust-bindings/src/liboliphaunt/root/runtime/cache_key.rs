@@ -14,11 +14,8 @@ use super::super::fingerprint::{
 };
 use super::super::{NATIVE_RUNTIME_TOOLS, existing_native_tool_path, native_tool_path};
 use super::extension_artifact_root_for;
-use super::extension_files::{cache_extension_files, extension_files, manifest_path};
 use crate::error::{Error, Result};
-use crate::extension::Extension;
-#[cfg(test)]
-use crate::extension::extension_data_files as data_files;
+use crate::extension::{Extension, extension_data_files as data_files};
 
 const RUNTIME_CACHE_VERSION: &str = "pg18-runtime-cache-v8";
 
@@ -93,20 +90,14 @@ pub(super) fn runtime_cache_key_with_icu(
         let extension_root =
             extension_artifact_root_for(install_dir, extension_artifact_dirs, *extension);
         let extension_share = extension_root.join("share/postgresql");
-        let files = extension_files(install_dir, extension_root, *extension)?;
-        fingerprint_optional_file(
-            &mut state,
-            extension_root,
-            &manifest_path(extension_root, *extension),
-        )?;
         fingerprint_named_extension_sql_files(&mut state, &extension_share, extension.sql_name())?;
-        for member in &files.sql_members {
+        for member in extension.sql_members() {
             hash_str(&mut state, member);
-            if member != extension.sql_name() {
+            if *member != extension.sql_name() {
                 fingerprint_named_extension_sql_files(&mut state, &extension_share, member)?;
             }
         }
-        for relative in &files.data_files {
+        for relative in data_files(*extension) {
             fingerprint_optional_file(
                 &mut state,
                 &extension_share,
@@ -156,8 +147,7 @@ pub(super) fn runtime_cache_key_with_icu(
             for extension in extensions {
                 let extension_root =
                     extension_artifact_root_for(install_dir, extension_artifact_dirs, *extension);
-                for module in extension_files(install_dir, extension_root, *extension)?.module_files
-                {
+                for module in extension.native_module_files() {
                     let extension_lib = extension_root.join("lib/modules");
                     if extension_root != install_dir || extension_lib.join(&module).is_file() {
                         fingerprint_optional_file(
@@ -179,8 +169,7 @@ pub(super) fn runtime_cache_key_with_icu(
             for extension in extensions {
                 let extension_root =
                     extension_artifact_root_for(install_dir, extension_artifact_dirs, *extension);
-                for module in extension_files(install_dir, extension_root, *extension)?.module_files
-                {
+                for module in extension.native_module_files() {
                     let extension_lib = extension_root.join("lib/postgresql");
                     fingerprint_optional_file(
                         &mut state,
@@ -255,10 +244,7 @@ pub(super) fn cached_runtime_is_valid_with_icu(
     }
 
     for extension in extensions {
-        let Ok(files) = cache_extension_files(cache_dir, *extension) else {
-            return false;
-        };
-        for sql_name in &files.sql_members {
+        for sql_name in extension.sql_members() {
             if !cache_dir
                 .join("share/postgresql/extension")
                 .join(format!("{sql_name}.control"))
@@ -268,12 +254,12 @@ pub(super) fn cached_runtime_is_valid_with_icu(
                 return false;
             }
         }
-        for module in &files.module_files {
+        for module in extension.native_module_files() {
             if !cache_dir.join("lib/postgresql").join(module).is_file() {
                 return false;
             }
         }
-        for relative in &files.data_files {
+        for relative in data_files(*extension) {
             if !cache_dir.join("share/postgresql").join(relative).is_file() {
                 return false;
             }
@@ -693,7 +679,6 @@ mod tests {
             );
         }
         required.push(cache_dir.join("share/postgresql/proj/proj.db"));
-        required.push(manifest_path(&cache_dir, Extension::POSTGIS));
         for file in required {
             let bytes = fs::read(&file).unwrap();
             fs::remove_file(&file).unwrap();
@@ -831,14 +816,6 @@ mod tests {
         let temp = TempTree::new("validation");
         let cache_dir = temp.path().join("cache");
         write_minimal_cache_dir(&cache_dir, "cache-key");
-        let files = extension_files(&cache_dir, &cache_dir, Extension::HSTORE).unwrap();
-        super::super::extension_files::write_cache_extension_files(
-            &cache_dir,
-            Extension::HSTORE,
-            &files,
-        )
-        .unwrap();
-
         assert!(
             cached_runtime_is_valid(
                 NativeRuntimeProfile::PostgresServer,
@@ -860,12 +837,6 @@ mod tests {
 
         let sql_without_module = temp.path().join("cache-sql-without-module");
         write_minimal_cache_dir(&sql_without_module, "cache-key");
-        super::super::extension_files::write_cache_extension_files(
-            &sql_without_module,
-            Extension::HSTORE,
-            &files,
-        )
-        .unwrap();
         write_file(
             &sql_without_module.join("share/postgresql/extension/hstore.control"),
             b"comment = 'hstore'\n",
@@ -1050,13 +1021,6 @@ mod tests {
                 b"runtime data",
             );
         }
-        let files = extension_files(root, root, Extension::POSTGIS).unwrap();
-        super::super::extension_files::write_cache_extension_files(
-            root,
-            Extension::POSTGIS,
-            &files,
-        )
-        .unwrap();
     }
 
     fn write_minimal_cache_dir(cache_dir: &Path, key: &str) {

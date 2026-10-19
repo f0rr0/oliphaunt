@@ -463,7 +463,8 @@ function validateExtension(value, label, carriers) {
       'sqlName',
       'tag',
       'version',
-      ...['sqlMembers', 'nativeModuleStems'].filter((key) => Object.hasOwn(row, key)),
+      'sqlMembers',
+      'nativeModuleStems',
     ],
     label,
   );
@@ -483,15 +484,9 @@ function validateExtension(value, label, carriers) {
   const dependencies = canonicalIds(row.dependencies, `${label}.dependencies`);
   if (dependencies.includes(sqlName))
     fail(`${label}.dependencies must not include ${sqlName} itself`);
-  if (Object.hasOwn(row, 'sqlMembers') !== Object.hasOwn(row, 'nativeModuleStems'))
-    fail(`${label} sqlMembers and nativeModuleStems must be declared together`);
   return {
-    ...(Object.hasOwn(row, 'sqlMembers')
-      ? {
-          sqlMembers: canonicalIds(row.sqlMembers, `${label}.sqlMembers`),
-          nativeModuleStems: canonicalIds(row.nativeModuleStems, `${label}.nativeModuleStems`),
-        }
-      : {}),
+    sqlMembers: canonicalIds(row.sqlMembers, `${label}.sqlMembers`),
+    nativeModuleStems: canonicalIds(row.nativeModuleStems, `${label}.nativeModuleStems`),
     assets: assetLocators(row.assets, `${label}.assets`, carriers),
     createsExtension: row.createsExtension,
     dataFiles: canonicalRelativeFiles(row.dataFiles, `${label}.dataFiles`),
@@ -1038,12 +1033,8 @@ export async function resolveSwiftCarrierSelection({
       version: row.version,
       sqlName: row.sqlName,
       createsExtension: row.createsExtension,
-      ...(row.sqlMembers === undefined
-        ? {}
-        : {
-            sqlMembers: row.sqlMembers,
-            nativeModuleStems: row.nativeModuleStems,
-          }),
+      sqlMembers: row.sqlMembers,
+      nativeModuleStems: row.nativeModuleStems,
       dataFiles: row.dataFiles,
       dependencies: row.dependencies,
       extensionSqlFileNames: row.extensionSqlFileNames,

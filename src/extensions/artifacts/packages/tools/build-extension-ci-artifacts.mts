@@ -881,12 +881,8 @@ export function extensionReleasePropertiesText({
       `extensionSqlFileNames=${propertiesCsv(manifest.extensionSqlFileNames)}\n`,
       `extensionSqlFilePrefixes=${propertiesCsv(manifest.extensionSqlFilePrefixes)}\n`,
       `nativeModuleStem=${manifest.nativeModuleStem || ''}\n`,
-      ...(manifest.sqlMembers === undefined
-        ? []
-        : [
-            `sqlMembers=${propertiesCsv(manifest.sqlMembers)}\n`,
-            `nativeModuleStems=${propertiesCsv(manifest.nativeModuleStems)}\n`,
-          ]),
+      `sqlMembers=${propertiesCsv(manifest.sqlMembers)}\n`,
+      `nativeModuleStems=${propertiesCsv(manifest.nativeModuleStems)}\n`,
       `iosNativeDependencies=${propertiesCsv(manifest.iosNativeDependencies)}\n`,
       `sharedPreloadLibraries=${propertiesCsv(manifest.sharedPreloadLibraries)}\n`,
     );
@@ -913,12 +909,8 @@ export function extensionReleasePropertiesText({
         `${prefix}.extensionSqlFileNames=${propertiesCsv(member.extensionSqlFileNames)}\n`,
         `${prefix}.extensionSqlFilePrefixes=${propertiesCsv(member.extensionSqlFilePrefixes)}\n`,
         `${prefix}.nativeModuleStem=${member.nativeModuleStem || ''}\n`,
-        ...(member.sqlMembers === undefined
-          ? []
-          : [
-              `${prefix}.sqlMembers=${propertiesCsv(member.sqlMembers)}\n`,
-              `${prefix}.nativeModuleStems=${propertiesCsv(member.nativeModuleStems)}\n`,
-            ]),
+        `${prefix}.sqlMembers=${propertiesCsv(member.sqlMembers)}\n`,
+        `${prefix}.nativeModuleStems=${propertiesCsv(member.nativeModuleStems)}\n`,
         `${prefix}.iosNativeDependencies=${propertiesCsv(member.iosNativeDependencies)}\n`,
         `${prefix}.sharedPreloadLibraries=${propertiesCsv(member.sharedPreloadLibraries)}\n`,
       );

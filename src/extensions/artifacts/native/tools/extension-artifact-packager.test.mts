@@ -4,7 +4,10 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { validateExtensionArtifactEntries } from '../../packages/tools/extension-artifact-inventory.mts';
+import {
+  assertExtensionArtifactClosure,
+  validateExtensionArtifactEntries,
+} from '../../packages/tools/extension-artifact-inventory.mts';
 import { writeArtifactDirectory } from './extension-artifact-packager.mts';
 
 const repo = path.resolve(import.meta.dir, '../../../../..');
@@ -111,6 +114,15 @@ for (const [target, suffix] of [
       assert(manifest.includes(`sqlMembers=${[...controls].sort().join(',')}\n`));
       if (mobile) {
         assert(manifest.includes('nativeModuleStems=postgis-3\n'));
+        assertExtensionArtifactClosure(
+          { ...metadata, nativeModuleStems: ['postgis-3'] },
+          target,
+          target,
+        );
+        assert.throws(
+          () => assertExtensionArtifactClosure(metadata, target, target),
+          /source-owned closure/,
+        );
         for (const name of controls)
           assert(entries.has(`files/share/postgresql/extension/${name}.control`));
         assert(entries.has(`files/lib/postgresql/postgis-3${suffix}`));

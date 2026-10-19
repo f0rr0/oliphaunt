@@ -245,6 +245,11 @@ function generatedExtensionCatalog(value) {
       artifactProduct,
       releaseProduct,
       runtimeBound: row['runtime-bound'],
+      sqlMembers: canonicalPortableList(row['sql-members'], `${sqlName}.sql-members`),
+      dependencies: canonicalPortableList(
+        row['selected-extension-dependencies'],
+        `${sqlName}.selected-extension-dependencies`,
+      ),
     });
   }
   return rows;
@@ -698,7 +703,8 @@ function validateExtension(value, label, carriers) {
       'sqlName',
       'tag',
       'version',
-      ...['sqlMembers', 'nativeModuleStems'].filter((key) => Object.hasOwn(root, key)),
+      'sqlMembers',
+      'nativeModuleStems',
     ],
     label,
   );
@@ -743,14 +749,9 @@ function validateExtension(value, label, carriers) {
     root.nativeModuleStem === null
       ? null
       : portable(root.nativeModuleStem, `${label}.nativeModuleStem`);
-  if (Object.hasOwn(root, 'sqlMembers') !== Object.hasOwn(root, 'nativeModuleStems'))
-    fail(`${label} sqlMembers and nativeModuleStems must be declared together`);
-  const sqlMembers = canonicalPortableList(
-    root.sqlMembers ?? (root.createsExtension ? [sqlName] : []),
-    `${label}.sqlMembers`,
-  );
+  const sqlMembers = canonicalPortableList(root.sqlMembers, `${label}.sqlMembers`);
   const nativeModuleStems = canonicalPortableList(
-    root.nativeModuleStems ?? (nativeModuleStem === null ? [] : [nativeModuleStem]),
+    root.nativeModuleStems,
     `${label}.nativeModuleStems`,
   );
   if (root.createsExtension ? !sqlMembers.includes(sqlName) : sqlMembers.length !== 0)
@@ -762,6 +763,12 @@ function validateExtension(value, label, carriers) {
     JSON.stringify(nativeModuleStem === null ? [] : [nativeModuleStem])
   )
     fail(`${label}.nativeModuleStems must contain only the merged primary mobile module`);
+  for (const [field, value] of Object.entries(
+    generated.sqlMembers.length > 1 ? { sqlMembers, dependencies } : { sqlMembers },
+  )) {
+    if (JSON.stringify(value) !== JSON.stringify(generated[field]))
+      fail(`${label}.${field} must match generated canonical metadata`);
+  }
   const sharedPreloadLibraries = canonicalPortableList(
     root.sharedPreloadLibraries,
     `${label}.sharedPreloadLibraries`,
@@ -828,7 +835,6 @@ function validateExtension(value, label, carriers) {
   return {
     assets: { dependencyFrameworks, extension, runtime },
     createsExtension: root.createsExtension,
-    closureDeclared: Object.hasOwn(root, 'sqlMembers'),
     sqlMembers,
     nativeModuleStems,
     dataFiles,
@@ -1924,22 +1930,8 @@ async function extensionResourceRoot(carrier, base, cacheDir) {
   const manifestFile = path.join(root, 'manifest.properties');
   const manifest = parseProperties(await fs.readFile(manifestFile, 'utf8'), manifestFile);
   rejectUnsupportedProperties(manifest, EXTENSION_ARTIFACT_PROPERTY_KEYS, manifestFile);
-  if (
-    manifest.has('sqlMembers') !== manifest.has('nativeModuleStems') ||
-    manifest.has('sqlMembers') !== carrier.closureDeclared
-  )
-    fail(
-      `${manifestFile} sqlMembers and nativeModuleStems must match the frozen carrier declaration`,
-    );
-  if (carrier.closureDeclared) {
-    requireProperty(manifest, 'sqlMembers', carrier.sqlMembers.join(','), manifestFile);
-    requireProperty(
-      manifest,
-      'nativeModuleStems',
-      carrier.nativeModuleStems.join(','),
-      manifestFile,
-    );
-  }
+  requireProperty(manifest, 'sqlMembers', carrier.sqlMembers.join(','), manifestFile);
+  requireProperty(manifest, 'nativeModuleStems', carrier.nativeModuleStems.join(','), manifestFile);
   requireProperty(manifest, 'packageLayout', 'oliphaunt-extension-artifact-v1', manifestFile);
   requireProperty(manifest, 'pgMajor', '18', manifestFile);
   requireProperty(manifest, 'sqlName', carrier.sqlName, manifestFile);
@@ -2031,13 +2023,7 @@ async function extensionResourceRoot(carrier, base, cacheDir) {
       `${manifestFile} dataFiles must exactly match the frozen carrier contract for ${carrier.sqlName}`,
     );
   }
-  requireExactPropertySet(
-    manifest,
-    [...EXTENSION_ARTIFACT_PROPERTY_KEYS].filter(
-      (key) => carrier.closureDeclared || !['sqlMembers', 'nativeModuleStems'].includes(key),
-    ),
-    manifestFile,
-  );
+  requireExactPropertySet(manifest, [...EXTENSION_ARTIFACT_PROPERTY_KEYS], manifestFile);
   const mobileStaticArchives = mobileStaticArchivePaths(manifest, carrier, manifestFile);
   const mobileStaticDependencyArchives = mobileStaticDependencyArchivePaths(
     manifest,

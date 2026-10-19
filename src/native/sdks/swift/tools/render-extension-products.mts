@@ -438,7 +438,8 @@ export function validateSelection(
         'sharedPreloadLibraries',
         'sqlName',
         'version',
-        ...['sqlMembers', 'nativeModuleStems'].filter((key) => Object.hasOwn(row, key)),
+        'sqlMembers',
+        'nativeModuleStems',
       ],
       `extensions[${index}]`,
     );
@@ -499,9 +500,11 @@ export function validateSelection(
       cFunction: nativeModuleStem === null ? null : `oliphaunt_extension_${cModuleStem}_descriptor`,
       cTarget: nativeModuleStem === null ? null : `COliphauntExtension${suffix}`,
       createsExtension: row.createsExtension,
-      ...(row.sqlMembers === undefined
-        ? {}
-        : { sqlMembers: row.sqlMembers, nativeModuleStems: row.nativeModuleStems }),
+      sqlMembers: uniquePortableList(row.sqlMembers, `extensions[${index}].sqlMembers`),
+      nativeModuleStems: uniquePortableList(
+        row.nativeModuleStems,
+        `extensions[${index}].nativeModuleStems`,
+      ),
       dataFiles: frozenDataFiles(row.dataFiles, `extensions[${index}].dataFiles`),
       dependencies,
       extensionSqlFileNames: frozenSqlFileNames(

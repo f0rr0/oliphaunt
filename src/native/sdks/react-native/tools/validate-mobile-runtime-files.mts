@@ -81,10 +81,8 @@ function extensionContracts(document, label) {
     }
     contracts.push({
       createsExtension: row['creates-extension'],
-      sqlMembers: canonicalStringList(
-        row['sql-members'] ?? (row['creates-extension'] ? [sqlName] : []),
-        `${rowLabel}.sql-members`,
-        (value) => PORTABLE_SQL_NAME.test(value),
+      sqlMembers: canonicalStringList(row['sql-members'], `${rowLabel}.sql-members`, (value) =>
+        PORTABLE_SQL_NAME.test(value),
       ),
       dataFiles: canonicalStringList(
         row['data-files'],

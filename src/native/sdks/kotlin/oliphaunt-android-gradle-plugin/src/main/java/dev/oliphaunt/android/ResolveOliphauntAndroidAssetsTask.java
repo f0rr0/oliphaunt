@@ -109,9 +109,9 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
           "staticSymbolAliases",
           "licenseFiles",
           "licenseProfile",
+          "sqlMembers",
+          "nativeModuleStems",
           "files");
-  private static final Set<String> OPTIONAL_EXTENSION_CLOSURE_KEYS =
-      Set.of("sqlMembers", "nativeModuleStems");
   private static final List<String> TARGET_INVARIANT_EXTENSION_PROPERTY_KEYS =
       List.of(
           "packageLayout",
@@ -132,6 +132,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
           "staticSymbolAliases",
           "licenseFiles",
           "licenseProfile",
+          "sqlMembers",
+          "nativeModuleStems",
           "files");
   private final ArchiveOperations archiveOperations;
   private final FileSystemOperations fileSystemOperations;
@@ -1203,7 +1205,6 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     for (String key : TARGET_INVARIANT_EXTENSION_PROPERTY_KEYS) {
       result.put(key, manifest.getProperty(key, ""));
     }
-    for (String key : OPTIONAL_EXTENSION_CLOSURE_KEYS) result.put(key, manifest.getProperty(key, ""));
     return Collections.unmodifiableMap(result);
   }
 
@@ -1298,7 +1299,6 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
       String expectedRuntimeVersion) {
     TreeSet<String> actualKeys = new TreeSet<>(manifest.stringPropertyNames());
     TreeSet<String> expectedKeys = new TreeSet<>(EXTENSION_ARTIFACT_PROPERTY_KEYS);
-    if (manifest.containsKey("sqlMembers")) expectedKeys.addAll(OPTIONAL_EXTENSION_CLOSURE_KEYS);
     if (!actualKeys.equals(expectedKeys)) {
       throw new GradleException(
           product
@@ -1333,13 +1333,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
               + catalogEntry.artifactProduct());
     }
     String expectedDependencies = String.join(",", catalogEntry.dependencies());
-    // Older primary-only releases predate companion SQL and its dependencies.
-    // Owner resolution already selects the current dependency closure, so a
-    // historical subset is safe while undeclared dependencies still fail closed.
-    boolean legacyCompanionRelease = !manifest.containsKey("sqlMembers")
-        && catalogEntry.sqlMembers().size() > 1
-        && catalogEntry.dependencies().containsAll(strictManifestCsv(manifest, "dependencies", assetName));
-    if (!expectedDependencies.equals(manifest.getProperty("dependencies")) && !legacyCompanionRelease) {
+    if (!expectedDependencies.equals(manifest.getProperty("dependencies"))) {
       throw new GradleException(
           product
               + " Android artifact "
@@ -1964,18 +1958,11 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
 
   private static List<String> extensionSqlMembers(Properties manifest, String source) {
     String sqlName = manifest.getProperty("sqlName");
-    boolean creates = "yes".equals(manifest.getProperty("createsExtension"));
-    boolean declared = manifest.containsKey("sqlMembers");
-    if (declared != manifest.containsKey("nativeModuleStems")) {
-      throw new GradleException(source + " sqlMembers and nativeModuleStems must be declared together");
-    }
-    if (!declared) return creates ? List.of(sqlName) : List.of();
     List<String> members = strictManifestCsv(manifest, "sqlMembers", source);
     List<String> modules = strictManifestCsv(manifest, "nativeModuleStems", source);
     requireSortedManifestList(members, source, "sqlMembers");
     requireSortedManifestList(modules, source, "nativeModuleStems");
-    if ((creates ? !members.contains(sqlName) : !members.isEmpty())
-        || !OliphauntExtensionCatalog.require(sqlName).sqlMembers().containsAll(members)) {
+    if (!OliphauntExtensionCatalog.require(sqlName).sqlMembers().equals(members)) {
       throw new GradleException(source + " sqlMembers must identify the owned SQL closure");
     }
     String stem = manifest.getProperty("nativeModuleStem", "");
@@ -3713,7 +3700,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
                 + " has a malformed property key "
                 + key);
       }
-      if (!EXTENSION_ARTIFACT_PROPERTY_KEYS.contains(key) && !OPTIONAL_EXTENSION_CLOSURE_KEYS.contains(key)) {
+      if (!EXTENSION_ARTIFACT_PROPERTY_KEYS.contains(key)) {
         throw new GradleException(
             source + " physical line " + lineNumber + " has unknown property key " + key);
       }

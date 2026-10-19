@@ -121,6 +121,8 @@ function writeManifest(root, product, body) {
         version: currentProductVersionSync(product, 'ios-carrier-manifest.test'),
         compatibility: compatibility(),
         createsExtension: true,
+        sqlMembers: [body.sqlName],
+        nativeModuleStems: body.nativeModuleStem === null ? [] : [body.nativeModuleStem],
         dataFiles: [],
         dependencies: [],
         extensionSqlFileNames: [],
@@ -526,6 +528,8 @@ test('bundle carriers verify exact nested bytes ', async () => {
       extensions.push({
         sqlName,
         createsExtension: true,
+        sqlMembers: [sqlName],
+        nativeModuleStems: [],
         dataFiles: [],
         dependencies: [],
         extensionSqlFileNames: [],

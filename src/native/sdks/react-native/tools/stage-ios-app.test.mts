@@ -532,18 +532,14 @@ async function extensionRow(root, config) {
       `staticSymbolAliases=${staticSymbolAliases.join(',')}`,
       `licenseFiles=${licenseFiles.join(',')}`,
       `licenseProfile=${profile}`,
-      ...(config.sqlMembers === undefined
-        ? []
-        : [
-            `sqlMembers=${config.sqlMembers.join(',')}`,
-            `nativeModuleStems=${config.nativeModuleStem ?? ''}`,
-          ]),
+      `sqlMembers=${config.sqlMembers.join(',')}`,
+      `nativeModuleStems=${config.nativeModuleStem ?? ''}`,
       'files=files',
       '',
     ].join('\n'),
   );
   if (createsExtension) {
-    for (const member of (config.sqlMembers ?? []).filter((name) => name !== config.sqlName)) {
+    for (const member of config.sqlMembers.filter((name) => name !== config.sqlName)) {
       await write(
         path.join(source, 'files/share/postgresql/extension', `${member}.control`),
         "default_version = '1.0'\n",
@@ -692,12 +688,8 @@ async function extensionRow(root, config) {
     extension: {
       assets: logicalAssets.map(({ locator }) => locator),
       createsExtension,
-      ...(config.sqlMembers === undefined
-        ? {}
-        : {
-            sqlMembers: config.sqlMembers,
-            nativeModuleStems: config.nativeModuleStem === null ? [] : [config.nativeModuleStem],
-          }),
+      sqlMembers: config.sqlMembers,
+      nativeModuleStems: config.nativeModuleStem === null ? [] : [config.nativeModuleStem],
       dataFiles,
       dependencies: config.dependencies,
       extensionSqlFileNames: config.extensionSqlFileNames,
@@ -825,7 +817,7 @@ async function createFixture(root) {
     const config = {
       ...fixture,
       createsExtension: generated['creates-extension'],
-      ...(fixture.sqlName === 'postgis' ? { sqlMembers: generated['sql-members'] } : {}),
+      sqlMembers: generated['sql-members'],
       dataFiles: generated['runtime-share-data-files'],
       dependencies: generated['selected-extension-dependencies'],
       extensionSqlFileNames: generated['extension-sql-file-names'],
@@ -1579,6 +1571,43 @@ async function main() {
       missingLogicalEnvelopeField,
       ['auto_explain'],
       /fields must be exactly bytes,carrier,format,member,path,role,sha256; got bytes,carrier,format,path,role,sha256/u,
+    );
+
+    for (const field of ['sqlMembers', 'nativeModuleStems']) {
+      const incomplete = structuredClone(carrier);
+      delete incomplete.extensions.find(({ sqlName }) => sqlName === 'postgis')[field];
+      await expectCarrierFailure(
+        `missing-${field}`,
+        incomplete,
+        ['postgis'],
+        /fields must be exactly/u,
+      );
+    }
+    for (const [field, value] of [
+      ['sqlMembers', ['postgis']],
+      ['dependencies', []],
+    ]) {
+      const incomplete = structuredClone(carrier);
+      incomplete.extensions.find(({ sqlName }) => sqlName === 'postgis')[field] = value;
+      await expectCarrierFailure(
+        `incomplete-postgis-${field}`,
+        incomplete,
+        ['postgis'],
+        /must match generated canonical metadata/u,
+      );
+    }
+
+    const unmergedPostgis = structuredClone(carrier);
+    unmergedPostgis.extensions.find(({ sqlName }) => sqlName === 'postgis').nativeModuleStems = [
+      'postgis-3',
+      'postgis_raster-3',
+      'postgis_topology-3',
+    ];
+    await expectCarrierFailure(
+      'unmerged-postgis-modules',
+      unmergedPostgis,
+      ['postgis'],
+      /nativeModuleStems must contain only the merged primary mobile module/u,
     );
 
     const missingFrozenContentField = structuredClone(carrier);

@@ -36,8 +36,8 @@ type FixtureExtensionContract = {
   sqlName: string;
   createsExtension: boolean;
   nativeModuleStem: string | null;
-  sqlMembers?: string[];
-  nativeModuleStems?: string[];
+  sqlMembers: string[];
+  nativeModuleStems: string[];
   dependencies: string[];
   dataFiles: string[];
   extensionSqlFileNames: string[];
@@ -72,6 +72,8 @@ function fixtureExtensionContract(
     sqlName: extension.sqlName,
     createsExtension: extension.createsExtension,
     nativeModuleStem: extension.nativeModuleStem,
+    sqlMembers: [...extension.sqlMembers],
+    nativeModuleStems: [...extension.nativeModuleStems],
     dependencies: [...extension.selectedExtensionDependencies],
     dataFiles: [...extension.runtimeShareDataFiles],
     extensionSqlFileNames: [...extension.extensionSqlFileNames],
@@ -400,7 +402,7 @@ async function nodeExtensionMaterializationAcceptsBuiltInPostgresDependency(): P
         nodeAssets.materializeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
           'pgtap',
         ]),
-      /member pgtap is incompatible with the SDK dependency contract/,
+      /member pgtap is incompatible with the SDK extension contract/,
     );
   } finally {
     if (installedRuntime !== undefined) {
@@ -798,7 +800,7 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
         nodeAssets.materializeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
           'hstore',
         ]),
-      /member hstore is incompatible with the SDK dependency contract/,
+      /member hstore is incompatible with the SDK extension contract/,
     );
     await writeFile(
       join(targetRoot, 'extension-contract.json'),
@@ -1168,41 +1170,24 @@ async function nodePostgisCompanionClosureInstall(
   const suffix = nativeModuleSuffixForTarget(target.id);
   const contractPath = join(targetRoot, 'extension-contract.json');
   const roots = new Set<string>();
-  const writeContract = async (contract: FixtureExtensionContract) =>
+  const writeContract = async (contract: Partial<FixtureExtensionContract>) =>
     writeFile(
       contractPath,
       JSON.stringify(
-        fixtureExtensionContractManifest(extension.artifactProduct, version, target.id, [contract]),
+        fixtureExtensionContractManifest(extension.artifactProduct, version, target.id, [
+          contract as FixtureExtensionContract,
+        ]),
       ),
     );
-  const legacy = fixtureExtensionContract(extension, {
-    dependencies: [],
-    // Main 5daf457e's core-only PostGIS contract, before raster/GDAL.
-    dataFiles: [
-      'contrib/postgis-3.6/legacy.sql',
-      'contrib/postgis-3.6/legacy_gist.sql',
-      'contrib/postgis-3.6/legacy_minimal.sql',
-      'contrib/postgis-3.6/postgis.sql',
-      'contrib/postgis-3.6/postgis_upgrade.sql',
-      'contrib/postgis-3.6/spatial_ref_sys.sql',
-      'contrib/postgis-3.6/uninstall_legacy.sql',
-      'contrib/postgis-3.6/uninstall_postgis.sql',
-      'proj/proj.db',
-    ],
-    extensionSqlFileNames: [],
-    extensionSqlFilePrefixes: [],
-  });
+  const complete = fixtureExtensionContract(extension);
   await mkdir(sqlRoot, { recursive: true });
-  await writeFile(join(sqlRoot, 'postgis.control'), "default_version='3.6.2'\n");
-  await writeFile(join(sqlRoot, 'postgis--3.6.2.sql'), 'install');
-  for (const file of legacy.dataFiles) {
+  for (const file of complete.dataFiles) {
     const destination = join(runtime, 'share/postgresql', file);
     await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, `legacy data:${file}`);
+    await writeFile(destination, `data:${file}`);
   }
   for (const profile of ['postgresql', 'modules']) {
     await mkdir(join(runtime, 'lib', profile), { recursive: true });
-    await writeFile(join(runtime, 'lib', profile, `postgis-3${suffix}`), 'legacy core');
   }
   const materialize = async () => {
     const result = await nodeAssets.materializeExtensionInstall(install, ['postgis']);
@@ -1210,30 +1195,24 @@ async function nodePostgisCompanionClosureInstall(
     return result;
   };
   try {
-    await writeContract(legacy);
-    const oldInstall = await materialize();
-    assert.equal(
-      await readFile(join(oldInstall.moduleDirectory!, `postgis-3${suffix}`), 'utf8'),
-      'legacy core',
-    );
-    await assert.rejects(
-      readFile(join(oldInstall.moduleDirectory!, `fuzzystrmatch${suffix}`)),
-      /ENOENT/,
-    );
-    assert.equal(
-      await readFile(join(oldInstall.runtimeDirectory!, 'share/postgresql/proj/proj.db'), 'utf8'),
-      'legacy data:proj/proj.db',
-    );
-    await assert.rejects(
-      readFile(join(oldInstall.runtimeDirectory!, 'share/postgresql/gdal/gdalvrt.xsd')),
-      /ENOENT/,
-    );
-    const complete = {
-      ...legacy,
-      dependencies: [...extension.selectedExtensionDependencies],
-      sqlMembers: [...extension.sqlMembers],
-      nativeModuleStems: [...extension.nativeModuleStems],
-    };
+    for (const omitted of [
+      ['sqlMembers'],
+      ['nativeModuleStems'],
+      ['sqlMembers', 'nativeModuleStems'],
+    ] as const) {
+      const incomplete: Partial<FixtureExtensionContract> = { ...complete };
+      for (const field of omitted) delete incomplete[field];
+      await writeContract(incomplete);
+      await assert.rejects(materialize, /fields must be exactly/);
+    }
+    for (const incomplete of [
+      { ...complete, dependencies: [] },
+      { ...complete, sqlMembers: ['postgis'] },
+      { ...complete, nativeModuleStems: ['postgis-3'] },
+    ]) {
+      await writeContract(incomplete);
+      await assert.rejects(materialize, /incompatible with the SDK extension contract/);
+    }
     await writeContract(complete);
     for (const member of extension.sqlMembers) {
       await writeFile(
@@ -1249,12 +1228,6 @@ async function nodePostgisCompanionClosureInstall(
         await writeFile(join(runtime, 'lib', profile, `${stem}${suffix}`), `complete:${stem}`);
       }
     }
-    const sidecar = join(runtime, '.oliphaunt/extensions/postgis.properties');
-    await mkdir(dirname(sidecar), { recursive: true });
-    await writeFile(
-      sidecar,
-      `sqlName=postgis\nsqlMembers=${complete.sqlMembers.join(',')}\nnativeModuleStems=${complete.nativeModuleStems.join(',')}\n`,
-    );
     for (const [file, expected] of [
       [join(sqlRoot, 'postgis_topology.control'), /postgis_topology\.control and canonical/],
       [join(sqlRoot, 'postgis_topology--3.6.4.sql'), /postgis_topology\.control and canonical/],
@@ -1272,11 +1245,12 @@ async function nodePostgisCompanionClosureInstall(
       await assert.rejects(materialize, expected);
       await writeFile(file, bytes);
     }
-    await writeContract({ ...complete, dependencies: [] });
-    await assert.rejects(materialize, /requires undeclared dependency fuzzystrmatch/);
-    await writeContract(complete);
+    const tigerControl = join(sqlRoot, 'postgis_tiger_geocoder.control');
+    const controlBytes = await readFile(tigerControl);
+    await writeFile(tigerControl, "default_version='3.6.4'\nrequires='cube'\n");
+    await assert.rejects(materialize, /requires undeclared dependency cube/);
+    await writeFile(tigerControl, controlBytes);
     const installed = await materialize();
-    assert.notEqual(installed.runtimeDirectory, oldInstall.runtimeDirectory);
     assert.equal(
       await readFile(join(installed.moduleDirectory!, `postgis_topology-3${suffix}`), 'utf8'),
       'complete:postgis_topology-3',
