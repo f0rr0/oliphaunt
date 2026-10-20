@@ -288,8 +288,8 @@ export function projectNativeExtensionFinalInputs(value: unknown) {
       ],
       'extension final input',
     );
-    for (const id of [input.product, input.owner, input.target])
-      assert.match(id, /^[a-z0-9][a-z0-9-]*$/u);
+    for (const id of [input.product, input.owner]) assert.match(id, /^[a-z0-9][a-z0-9-]*$/u);
+    assert.match(input.target, /^[a-z0-9][a-z0-9_-]*$/u);
     assert.match(input.version, /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/u);
     assert.ok(['native', 'wasix'].includes(input.family));
     assert.ok(input.family !== 'wasix' || input.target === 'wasix-portable');

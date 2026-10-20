@@ -177,6 +177,12 @@ test('rejects unknown fields, duplicate constructor slots and repeated original 
   const { directory, leaf } = fixture();
   try {
     expect(() => projectNativeExtensionFinalInputs([{ ...leaf, qualified: true }])).toThrow();
+    for (const changed of [
+      { ...leaf, product: 'oliphaunt_extension_pgtap' },
+      { ...leaf, owner: 'oliphaunt_extension_pgtap' },
+      { ...leaf, target: '../android-x86_64' },
+    ])
+      expect(() => projectNativeExtensionFinalInputs([changed])).toThrow();
     expect(() => projectNativeExtensionFinalInputs([leaf, leaf])).toThrow(/duplicate/);
     expect(() => projectNativeExtensionFinalInputs([{ ...leaf, npm: leaf.github }])).toThrow(
       /repeats/,
@@ -202,7 +208,7 @@ test('rejects corrupt bytes, path traversal and incomplete original producer ref
   }
 });
 
-test('requires GH Files for mobile and all registry groups for desktop/WASIX', () => {
+test('requires GH Files for every mobile target and all registry groups for desktop/WASIX', () => {
   const { directory, leaf } = fixture();
   try {
     expect(() => projectNativeExtensionFinalInputs([{ ...leaf, npm: [] }])).toThrow();
@@ -211,16 +217,14 @@ test('requires GH Files for mobile and all registry groups for desktop/WASIX', (
         { ...leaf, family: 'wasix', target: 'wasix-portable', cargo: [] },
       ]),
     ).toThrow();
-    expect(() =>
-      projectNativeExtensionFinalInputs([
-        { ...leaf, target: 'android-arm64-v8a', github: [], npm: [], cargo: [] },
-      ]),
-    ).toThrow();
-    expect(
-      projectNativeExtensionFinalInputs([
-        { ...leaf, target: 'android-arm64-v8a', npm: [], cargo: [] },
-      ]).files,
-    ).toHaveLength(3);
+    for (const target of ['android-arm64-v8a', 'android-x86_64', 'ios-xcframework']) {
+      expect(() =>
+        projectNativeExtensionFinalInputs([{ ...leaf, target, github: [], npm: [], cargo: [] }]),
+      ).toThrow();
+      expect(
+        projectNativeExtensionFinalInputs([{ ...leaf, target, npm: [], cargo: [] }]).files,
+      ).toHaveLength(3);
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

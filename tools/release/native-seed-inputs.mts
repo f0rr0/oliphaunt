@@ -39,7 +39,7 @@ export function projectNativeSeedInputs(
     fields(raw, ['family', 'target', 'profile', operation], 'native seed control');
     assert.ok(['native', 'wasix'].includes(raw.family));
     assert.ok(['standard', 'icu'].includes(raw.profile));
-    assert.match(raw.target, /^[a-z0-9][a-z0-9-]*$/u);
+    assert.match(raw.target, /^[a-z0-9][a-z0-9_-]*$/u);
     assert.ok(
       raw.family !== 'wasix' || raw.target === 'portable',
       'WASIX seed target must be portable',

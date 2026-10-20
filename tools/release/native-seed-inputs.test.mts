@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
 import { projectNativeSeedInputs } from './native-seed-inputs.mts';
 
 const publication = {
@@ -34,6 +35,67 @@ function fixture() {
 
 test('empty native input snapshot preserves construction defaults and grants no public origin', () => {
   expect(projectNativeSeedInputs([])).toEqual({ controls: {}, files: [] });
+});
+
+test('public seed slots and concrete Android constructor slots project without renaming', () => {
+  const f = fixture();
+  try {
+    const slots = [
+      ...seedCarrierIdentities(),
+      ...['standard', 'icu'].map((profile) => ({
+        family: 'native',
+        target: 'android-x86_64',
+        profile,
+      })),
+    ].map(({ family, target, profile }) => ({ family, target, profile }));
+    const reuse = {
+      operation: 'reuse',
+      publication,
+      archive: f.archive,
+      manifest: f.manifest,
+      metadata: f.metadata,
+    };
+    const promotion = {
+      source,
+      evidenceDigest: `sha256:${'3'.repeat(64)}`,
+      invocationId: 'original-android-constructor',
+      frozen: f.archive,
+      receipt: f.metadata,
+      transition: { source, updatesSha256: '4'.repeat(64) },
+    };
+    for (const operation of [{ reuse }, { promotion }]) {
+      const projected = projectNativeSeedInputs(
+        slots.map((slot) => ({ ...slot, ...operation })),
+        source,
+      );
+      expect(Object.keys(projected.controls)).toEqual(
+        slots.map(({ family, target, profile }) => `${family}/${target}/${profile}`),
+      );
+      for (const profile of ['standard', 'icu']) {
+        const control = projected.controls[`native/android-x86_64/${profile}`];
+        expect(JSON.parse(control.reuse_control ?? control.promotion_control)).toEqual(
+          'reuse' in operation ? reuse : promotion,
+        );
+      }
+    }
+    for (const target of [
+      '',
+      '../android-x86_64',
+      'android/x86_64',
+      'android\\x86_64',
+      'android x86_64',
+    ])
+      expect(() =>
+        projectNativeSeedInputs([{ family: 'native', target, profile: 'standard', reuse }]),
+      ).toThrow();
+    expect(() =>
+      projectNativeSeedInputs([
+        { family: 'wasix', target: 'android-x86_64', profile: 'standard', reuse },
+      ]),
+    ).toThrow('WASIX seed target must be portable');
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
 });
 
 test('one per-run completed snapshot projects exact File identities and deduplicates shared metadata', () => {
