@@ -272,6 +272,11 @@ test('action keys retain source, cohort and platform separation', () => {
 });
 
 test('hosted cache configuration preserves user rc and quotes portable native paths', () => {
+  const cacheConfiguration = readFileSync(path.join(root, '.bazelrc'), 'utf8')
+    .split('\n')
+    .filter((line) => /^build:ci-cache\s/u.test(line))
+    .join('\n');
+  assert.doesNotMatch(cacheConfiguration, /--experimental_disk_cache_gc_/u);
   for (const runnerOS of ['Linux', 'macOS', 'Windows']) {
     fixture((directory, env) => {
       execute(
@@ -287,6 +292,7 @@ test('hosted cache configuration preserves user rc and quotes portable native pa
           : `${env.HOME}/.cache/oliphaunt/bazel-ci`;
       assert.ok(rc.includes(`build --disk_cache="${cacheRoot}/disk"\n`));
       assert.ok(rc.includes(`common --repository_cache="${cacheRoot}/repositories"\n`));
+      assert.doesNotMatch(rc, /--experimental_disk_cache_gc_/u);
     });
   }
 });
@@ -461,11 +467,6 @@ test('measured cohorts retain their observed cache population within a bounded a
         } else {
           assert.equal(commands, 'shutdown\n', label);
         }
-        assert.ok(
-          readFileSync(path.join(env.HOME, '.bazelrc'), 'utf8').includes(
-            'build --experimental_disk_cache_gc_max_size=4G\n',
-          ),
-        );
       });
     }
   }
@@ -480,11 +481,6 @@ test('other Apple cohorts keep the standard hosted cache budget', () => {
       COHORT: 'react-native',
     };
     execute(directory, other, script('Configure standard hosted Bazel caches'));
-    assert.ok(
-      readFileSync(path.join(env.HOME, '.bazelrc'), 'utf8').includes(
-        'build --experimental_disk_cache_gc_max_size=2G\n',
-      ),
-    );
     execute(directory, { ...other, DISK_KIB: '3565159', GC_DISK_KIB: '2118144' }, script('ready'));
     assert.equal(readFileSync(env.GC_ARGS, 'utf8').trim().split('\n').at(-1), '--max_size=2G');
     assert.equal(readFileSync(env.GITHUB_OUTPUT, 'utf8'), 'disk=true\n');

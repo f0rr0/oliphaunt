@@ -69,8 +69,6 @@ runs:
     - name: Configure standard hosted Bazel caches
       if: inputs.phase == 'restore'
       shell: bash
-      env:
-        GC_MAX_SIZE: ${{ steps.identity.outputs.gc_max_size }}
       run: |
         set -euo pipefail
         cache_root="$HOME/.cache/oliphaunt/bazel-ci"
@@ -80,8 +78,8 @@ runs:
           cache_root="$(cygpath -m "$cache_root")"
         fi
         # Hosted user configuration stays outside source and cache transport.
-        printf '\nbuild --config=ci-cache\nbuild --disk_cache="%s/disk"\ncommon --repository_cache="%s/repositories"\nbuild --experimental_disk_cache_gc_max_size=%s\n' \
-          "$cache_root" "$cache_root" "$GC_MAX_SIZE" >> "$HOME/.bazelrc"
+        printf '\nbuild --config=ci-cache\nbuild --disk_cache="%s/disk"\ncommon --repository_cache="%s/repositories"\n' \
+          "$cache_root" "$cache_root" >> "$HOME/.bazelrc"
 
     - name: Freeze, collect and bound cache transport
       id: ready
@@ -107,8 +105,8 @@ runs:
           fi
           printf 'Bazel cache writer shutdown: success\n'
         }
-        # Shutdown can interrupt idle GC. A frozen snapshot already within the
-        # allocated budget needs no additional tool construction or collection.
+        # Later commands can need lazy outputs from this cache. Collect only
+        # after final qualification; snapshots within the budget need no GC.
         freeze_writer || exit 0
         cache_limit_kib="$CACHE_LIMIT_KIB"
         cache_root="$HOME/.cache/oliphaunt/bazel-ci/disk"

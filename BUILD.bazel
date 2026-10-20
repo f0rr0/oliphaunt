@@ -32,6 +32,7 @@ ts_project(
 )
 
 exports_files([
+    ".bazelrc",
     ".bazelversion",
     ".gitignore",
     "biome.json",

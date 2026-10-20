@@ -63,7 +63,7 @@ bun_script_test(
 bun_test(
     name = "workflow_bazel_cache_test",
     entry_point = "workflow-bazel-cache.test.mts",
-    data = ["//:workflow_policy_sources"],
+    data = ["//:.bazelrc", "//:workflow_policy_sources"],
     tags = ["source-check"],
     size = "small",
 )
