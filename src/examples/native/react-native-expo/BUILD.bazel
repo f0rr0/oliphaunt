@@ -302,7 +302,7 @@ ios_application(
     frameworks = ["@expo_android_sources//:ExpoModulesJSI"],
     infoplists = [_IOS["app/Info.plist"]],
     entitlements = _IOS["app/reactnativeoliphauntexpo.entitlements"],
-    app_icons = [_IOS[relative] for relative in IOS_GENERATED_FILES if "/expo.icon/" in relative or "/AppIcon.appiconset/" in relative],
+    app_icons = [_IOS[relative] for relative in IOS_GENERATED_FILES if "/expo.icon/" in relative],
     resources = [_IOS[relative] for relative in IOS_GENERATED_FILES if "/Images.xcassets/" in relative and "/AppIcon.appiconset/" not in relative] +
         [_IOS["app/SplashScreen.storyboard"], _IOS["app/Supporting/Expo.plist"], ":ios_bundle", ":ios_bundle_assets"],
     deps = [

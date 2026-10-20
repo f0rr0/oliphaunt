@@ -1216,6 +1216,33 @@ try {
     'removing scoped current artifacts restores ordinary package loading',
   );
   assert.equal(domain(), domainBefore, 'removing scoped inputs restores exact domain metadata');
+  const iosPackage = '//src/examples/native/react-native-expo';
+  assert.equal(
+    JSON.parse(
+      readFileSync(path.join(workspace, 'src/examples/native/react-native-expo/app.json'), 'utf8'),
+    ).expo.ios.icon,
+    './assets/expo.icon',
+  );
+  for (const attribute of ['app_icons', 'resources']) {
+    const labels = bazel('query', [
+      `labels(${attribute}, ${iosPackage}:ios_release)`,
+      '--output=label',
+      '--noshow_progress',
+    ])
+      .stdout.trim()
+      .split('\n')
+      .sort();
+    assert.ok(
+      !labels.some((file) => file.includes('AppIcon_appiconset')),
+      `${attribute} must not mix legacy icons with Icon Composer`,
+    );
+    if (attribute === 'app_icons')
+      assert.deepEqual(labels, [
+        `${iosPackage}:ios_app_expo_icon_Assets_expo_symbol_2_svg`,
+        `${iosPackage}:ios_app_expo_icon_Assets_grid_png`,
+        `${iosPackage}:ios_app_expo_icon_icon_json`,
+      ]);
+  }
   const lockedAcquisition = () =>
     bazel('query', ['@pgvector//:all', '--lockfile_mode=error', '--noshow_progress']);
   lockedAcquisition();
