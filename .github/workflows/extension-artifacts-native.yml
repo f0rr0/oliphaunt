@@ -32,13 +32,13 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(inputs.matrix) }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 135
+    timeout-minutes: ${{ matrix.target == 'ios-xcframework' && 195 || 135 }}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ci-cache/ccache/native-extension/${{ matrix.target }}
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPILERCHECK: content
       CCACHE_COMPRESS: "true"
-      OLIPHAUNT_CCACHE_MAX_SIZE: ${{ matrix.target == 'ios-xcframework' && '512M' || '2G' }}
+      OLIPHAUNT_CCACHE_MAX_SIZE: 2G
       OLIPHAUNT_CCACHE_ZERO_STATS: "1"
     steps:
       - name: Checkout repository
@@ -116,7 +116,7 @@ jobs:
           tar -xzf target/extension-inputs/host/support.tar.gz
 
       - name: Build native exact-extension artifacts
-        timeout-minutes: 120
+        timeout-minutes: ${{ matrix.target == 'ios-xcframework' && 180 || 120 }}
         env:
           OLIPHAUNT_EXTENSION_PHASE: ${{ inputs.phase }}
           OLIPHAUNT_EXTENSION_PRODUCTS: ${{ matrix.extensions_csv }}

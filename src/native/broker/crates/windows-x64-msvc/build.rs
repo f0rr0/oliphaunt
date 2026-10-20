@@ -10,8 +10,12 @@ const KIND: &str = "broker-helper";
 const TARGET: &str = "x86_64-pc-windows-msvc";
 const RELATIVE: &str = "bin/oliphaunt-broker.exe";
 const VC_RUNTIME_RECEIPT: &str = "bin/windows-vc-runtime.sha256";
-const ALLOWED_VC_RUNTIME_DLLS: [&str; 3] =
-    ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"];
+const ALLOWED_VC_RUNTIME_DLLS: [&str; 4] = [
+    "msvcp140.dll",
+    "msvcp140_2.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+];
 
 fn main() {
     emit_manifest();

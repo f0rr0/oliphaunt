@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -508,6 +508,7 @@ describe('PE32+ architecture and self-contained runtime imports', () => {
         [
           entry('bin/oliphaunt.dll', pe()),
           entry('bin/msvcp140.dll', pe()),
+          entry('bin/msvcp140_2.dll', pe()),
           entry('bin/vcruntime140.dll', pe()),
           entry('bin/vcruntime140_1.dll', pe()),
         ],
@@ -519,7 +520,9 @@ describe('PE32+ architecture and self-contained runtime imports', () => {
         [entry('bin/oliphaunt.dll', pe()), entry('bin/vcruntime140.dll', pe())],
         { target: 'windows-x64-msvc', windowsVcRuntimeProfile: 'provider' },
       ),
-    ).toThrow(/provider VC runtime profile is missing msvcp140\.dll, vcruntime140_1\.dll/u);
+    ).toThrow(
+      /provider VC runtime profile is missing msvcp140\.dll, msvcp140_2\.dll, vcruntime140_1\.dll/u,
+    );
   });
 
   test('rejects x86, PE32, malformed import descriptors, and truncated files', () => {

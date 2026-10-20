@@ -19,6 +19,8 @@ pub(crate) struct CatalogExtension {
     pub(crate) sql_name: String,
     pub(crate) creates_extension: bool,
     pub(crate) native_module_stem: Option<String>,
+    pub(crate) native_module_stems: Vec<String>,
+    pub(crate) sql_members: Vec<String>,
     pub(crate) dependencies: Vec<String>,
     pub(crate) runtime_share_data_files: Vec<String>,
     pub(crate) extension_sql_file_names: Vec<String>,

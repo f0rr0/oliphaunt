@@ -398,6 +398,7 @@ dependency_archive() {
     json-c) printf '%s\n' "$mobile_static_dependency_root/json-c/lib/libjson-c.a" ;;
     libxml2) printf '%s\n' "$mobile_static_dependency_root/libxml2/lib/libxml2.a" ;;
     proj) printf '%s\n' "$mobile_static_dependency_root/proj/lib/libproj.a" ;;
+    gdal) printf '%s\n' "$mobile_static_dependency_root/gdal/lib/libgdal.a" ;;
     sqlite) printf '%s\n' "$mobile_static_dependency_root/sqlite/lib/libsqlite3.a" ;;
     *) fail "unsupported macOS extension dependency identity: $1" ;;
   esac

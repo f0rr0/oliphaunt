@@ -152,8 +152,8 @@ pub(super) fn validate_prebuilt_extension_leaf_inventory(
     }
 
     let extension_prefix = Path::new("files/share/postgresql/extension");
-    let mut has_control = false;
-    let mut has_install_sql = false;
+    let mut controls = BTreeSet::new();
+    let mut installs = BTreeSet::new();
     for relative in &actual {
         let Ok(file_name) = relative.strip_prefix(extension_prefix) else {
             continue;
@@ -180,20 +180,28 @@ pub(super) fn validate_prebuilt_extension_leaf_inventory(
             )));
         }
         expected.insert(relative.clone());
-        has_control |= file_name == format!("{}.control", extension.sql_name);
-        has_install_sql |= extension_install_sql_file_belongs(&extension.sql_name, file_name);
+        for member in &extension.sql_members {
+            if file_name == format!("{member}.control") {
+                controls.insert(member);
+            }
+            if extension_install_sql_file_belongs(member, file_name) {
+                installs.insert(member);
+            }
+        }
     }
-    if extension.creates_extension && (!has_control || !has_install_sql) {
-        return Err(Error::InvalidConfig(format!(
-            "prebuilt extension artifact {} for '{}' must include its control file and at least one canonical base install SQL file",
-            root.display(),
-            extension.sql_name
-        )));
+    for member in &extension.sql_members {
+        if !controls.contains(member) || !installs.contains(member) {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact {} for '{}' must include its control file and at least one canonical base install SQL file",
+                root.display(),
+                member
+            )));
+        }
     }
     for relative in &extension.data_files {
         expected.insert(PathBuf::from("files/share/postgresql").join(relative));
     }
-    if let Some(module) = &extension.native_module_file {
+    for module in &extension.native_module_files {
         expected.insert(PathBuf::from("files/lib/postgresql").join(module));
         let embedded = PathBuf::from("files/lib/modules").join(module);
         if extension

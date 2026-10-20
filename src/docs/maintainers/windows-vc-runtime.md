@@ -32,7 +32,7 @@ relicense Microsoft's DLLs.
 
 - `liboliphaunt-native` is the one shared provider for native extensions. Its
   `provider` profile is the exact union required by the base runtime and every
-  supported Windows extension: `msvcp140.dll`, `vcruntime140.dll`, and
+  supported Windows extension: `msvcp140.dll`, `msvcp140_2.dll`, `vcruntime140.dll`, and
   `vcruntime140_1.dll`. Separately versioned extension packages depend on the
   exact native-runtime product/version and do not duplicate these bytes.
 - `oliphaunt-tools` and `oliphaunt-broker` are independently installable. Each
@@ -51,6 +51,12 @@ named profile requires the full supported-extension union even when an affected
 PR builds only a subset of extensions.
 
 ## Release evidence
+
+The PostGIS 3.6.4 Windows build on commit `4dafd0325d05930636f0530276a3a40f3284cb68`
+imports `MSVCP140_2.dll` from `postgis-3.dll`, as recorded in
+[the extension build](https://github.com/f0rr0/oliphaunt/actions/runs/39249410590/job/118130472350).
+The provider profile includes this production runtime; import-derived staging
+still verifies its transitive closure and preserves the original DLL bytes.
 
 The MSVC setup step fails before a long build unless `VCToolsRedistDir` resolves
 the exact x64 VC145 directory and all audited production files. Windows build

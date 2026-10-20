@@ -115,6 +115,29 @@ if (['prepare', 'verify'].includes(process.argv[2])) {
 }
 
 describe('Windows VC runtime dependency closure', () => {
+  test('stages the PostGIS C++ math runtime and its transitive imports', () => {
+    const { root, redist, source } = fixture();
+    try {
+      const carrier = path.join(root, 'carrier');
+      const bin = path.join(carrier, 'bin');
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(path.join(carrier, 'postgis-3.dll'), pe({ imports: ['MSVCP140_2.dll'] }));
+      writeFileSync(path.join(source, 'msvcp140_2.dll'), pe({ imports: ['VCRUNTIME140.dll'] }));
+      const result = stageWindowsVcRuntime({
+        root: carrier,
+        redistRoot: redist,
+        destinations: [bin],
+      });
+      assert.deepEqual(result.required, ['msvcp140_2.dll', 'vcruntime140.dll']);
+      assert.deepEqual(
+        verifyWindowsVcRuntimeClosure({ root: carrier, searchRoots: [bin] }).required,
+        result.required,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('parses normal and delay-load imports without an external Windows tool', () => {
     const parsed = inspectPortableExecutable(
       pe({
@@ -151,7 +174,7 @@ describe('Windows VC runtime dependency closure', () => {
       );
       assert.throws(
         () => verifyWindowsVcRuntimeClosure({ root: carrier, searchRoots: [bin] }),
-        /extra \[msvcp140\.dll, vcruntime140_1\.dll\]/u,
+        /extra \[msvcp140\.dll, msvcp140_2\.dll, vcruntime140_1\.dll\]/u,
       );
       assert.deepEqual(
         verifyWindowsVcRuntimeClosure({ root: carrier, searchRoots: [bin], profile: 'provider' })

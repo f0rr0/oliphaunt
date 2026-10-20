@@ -67,7 +67,7 @@ use static_registry::*;
 const RUNTIME_RESOURCES_SCHEMA: &str = "oliphaunt-runtime-resources-v1";
 const EXTENSION_ARTIFACT_LAYOUT: &str = "oliphaunt-extension-artifact-v1";
 const EXTENSION_ARTIFACT_NATIVE_RUNTIME_PRODUCT: &str = "liboliphaunt-native";
-const EXTENSION_ARTIFACT_MANIFEST_KEYS: [&str; 22] = [
+const EXTENSION_ARTIFACT_MANIFEST_KEYS: [&str; 24] = [
     "packageLayout",
     "pgMajor",
     "sqlName",
@@ -89,6 +89,8 @@ const EXTENSION_ARTIFACT_MANIFEST_KEYS: [&str; 22] = [
     "staticSymbolAliases",
     "licenseFiles",
     "licenseProfile",
+    "sqlMembers",
+    "nativeModuleStems",
     "files",
 ];
 const RUNTIME_FILES_LAYOUT: &str = "postgres-runtime-files-v1";
@@ -442,8 +444,9 @@ struct RuntimeResourceExtension {
     sql_name: String,
     native_runtime_version: Option<String>,
     creates_extension: bool,
+    sql_members: Vec<String>,
     native_module_stem: Option<String>,
-    native_module_file: Option<String>,
+    native_module_files: Vec<String>,
     native_target: Option<String>,
     dependencies: Vec<String>,
     data_files: Vec<PathBuf>,
@@ -758,11 +761,9 @@ fn built_in_runtime_resource_extension(extension: Extension) -> RuntimeResourceE
         sql_name: catalog.sql_name.clone(),
         native_runtime_version: None,
         creates_extension: catalog.creates_extension,
+        sql_members: catalog.sql_members.clone(),
         native_module_stem: catalog.native_module_stem.clone(),
-        native_module_file: catalog
-            .native_module_stem
-            .as_deref()
-            .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX)),
+        native_module_files: extension.native_module_files(),
         native_target: None,
         dependencies: catalog.dependencies.clone(),
         data_files: catalog
@@ -896,6 +897,63 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
             manifest_path.display()
         )));
     }
+    let sql_members = parse_manifest_id_list(&manifest_path, &manifest, "sqlMembers")?;
+    let native_module_stems =
+        parse_manifest_id_list(&manifest_path, &manifest, "nativeModuleStems")?;
+    if creates_extension != sql_members.contains(&sql_name)
+        || (!creates_extension && !sql_members.is_empty())
+        || native_module_stem
+            .as_ref()
+            .is_some_and(|stem| !native_module_stems.contains(stem))
+        || (native_module_stem.is_none() && !native_module_stems.is_empty())
+    {
+        return Err(Error::InvalidConfig(format!(
+            "manifest {} SQL/module members disagree with its primary extension",
+            manifest_path.display()
+        )));
+    }
+    let mobile = native_target
+        .as_deref()
+        .is_some_and(|target| target == "ios-xcframework" || target.starts_with("android-"));
+    let primary_stems = native_module_stem.iter().cloned().collect::<Vec<_>>();
+    if let Some(catalog) = catalog::by_sql_name(&sql_name) {
+        let expected_stems = if mobile {
+            &primary_stems
+        } else {
+            &catalog.native_module_stems
+        };
+        if sql_members != catalog.sql_members
+            || native_module_stem != catalog.native_module_stem
+            || native_module_stems != *expected_stems
+        {
+            return Err(Error::InvalidConfig(format!(
+                "manifest {} sqlMembers/nativeModuleStems must identify the owned SQL/module closure",
+                manifest_path.display()
+            )));
+        }
+    } else if mobile && native_module_stems != primary_stems {
+        return Err(Error::InvalidConfig(format!(
+            "manifest {} nativeModuleStems must contain only the merged primary mobile module",
+            manifest_path.display()
+        )));
+    }
+    let native_module_files = if let Some(stem) = &native_module_stem {
+        let suffix = native_module_file
+            .as_deref()
+            .and_then(|file| file.strip_prefix(stem));
+        let Some(suffix @ (".so" | ".dylib" | ".dll")) = suffix else {
+            return Err(Error::InvalidConfig(format!(
+                "manifest {} nativeModuleFile must match nativeModuleStem and a native module suffix",
+                manifest_path.display()
+            )));
+        };
+        native_module_stems
+            .iter()
+            .map(|stem| format!("{stem}{suffix}"))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let dependencies = parse_manifest_id_list(&manifest_path, &manifest, "dependencies")?;
     let data_files = parse_manifest_relative_path_list(&manifest_path, &manifest, "dataFiles")?;
     let extension_sql_file_names =
@@ -968,8 +1026,9 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
         sql_name,
         native_runtime_version: Some(native_runtime_version),
         creates_extension,
+        sql_members,
         native_module_stem,
-        native_module_file,
+        native_module_files,
         native_target,
         dependencies,
         data_files,
@@ -1002,15 +1061,14 @@ fn runtime_extension_sql_file_belongs(
     extension: &RuntimeResourceExtension,
     file_name: &str,
 ) -> bool {
-    (extension.creates_extension
-        && (file_name == format!("{}.control", extension.sql_name)
-            || file_name == format!("{}.sql", extension.sql_name)
-            || (file_name.starts_with(&format!("{}--", extension.sql_name))
-                && file_name.ends_with(".sql"))))
-        || extension
-            .extension_sql_file_names
-            .iter()
-            .any(|name| name == file_name)
+    extension.sql_members.iter().any(|member| {
+        file_name == format!("{member}.control")
+            || file_name == format!("{member}.sql")
+            || (file_name.starts_with(&format!("{member}--")) && file_name.ends_with(".sql"))
+    }) || extension
+        .extension_sql_file_names
+        .iter()
+        .any(|name| name == file_name)
         || (file_name.ends_with(".sql")
             && extension
                 .extension_sql_file_prefixes
@@ -1033,6 +1091,153 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tar::EntryType;
+
+    #[test]
+    fn postgis_artifact_stages_complete_sql_and_platform_module_closures() {
+        for mobile in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let artifact = temp.path().join("postgis");
+            let target = if mobile {
+                "ios-xcframework"
+            } else {
+                "linux-x64-gnu"
+            };
+            write_prebuilt_extension_artifact(
+                &artifact,
+                "postgis",
+                "postgis-3",
+                "oliphaunt_static_postgis_3",
+                "data/postgis.rules",
+                mobile,
+            );
+            let catalog = catalog::for_extension(Extension::POSTGIS);
+            let stems = if mobile {
+                vec!["postgis-3".to_owned()]
+            } else {
+                catalog.native_module_stems.clone()
+            };
+            let manifest_path = artifact.join("manifest.properties");
+            let manifest = fs::read_to_string(&manifest_path)
+                .unwrap()
+                .replace(
+                    "nativeTarget=test-target",
+                    &format!("nativeTarget={target}"),
+                )
+                .replace(
+                    "sqlMembers=postgis\n",
+                    &format!("sqlMembers={}\n", catalog.sql_members.join(",")),
+                )
+                .replace(
+                    "nativeModuleStems=postgis-3\n",
+                    &format!("nativeModuleStems={}\n", stems.join(",")),
+                );
+            fs::write(&manifest_path, &manifest).unwrap();
+            for member in &catalog.sql_members {
+                for suffix in [".control", "--1.0.sql"] {
+                    write_file(
+                        &artifact
+                            .join(format!("files/share/postgresql/extension/{member}{suffix}")),
+                        b"fixture\n",
+                    );
+                }
+            }
+            for stem in &stems {
+                for directory in ["postgresql", "modules"] {
+                    write_file(
+                        &artifact.join(format!(
+                            "files/lib/{directory}/{stem}{}",
+                            std::env::consts::DLL_SUFFIX
+                        )),
+                        b"fixture-module\n",
+                    );
+                }
+            }
+            let extension = load_prebuilt_extension_artifact(&artifact).unwrap();
+            let extensions = vec![extension];
+            let registered = if mobile {
+                vec!["postgis-3".to_owned()]
+            } else {
+                vec![]
+            };
+            let metadata = mobile_static_registry_metadata(&extensions, &registered).unwrap();
+            let runtime_files = temp.path().join("runtime");
+            copy_prebuilt_extension_artifacts(&runtime_files, &extensions, Some(target), &metadata)
+                .unwrap();
+            for member in &catalog.sql_members {
+                assert!(
+                    runtime_files
+                        .join(format!("share/postgresql/extension/{member}.control"))
+                        .is_file()
+                );
+                assert!(
+                    runtime_files
+                        .join(format!("share/postgresql/extension/{member}--1.0.sql"))
+                        .is_file()
+                );
+            }
+            for stem in &stems {
+                assert_eq!(
+                    runtime_files
+                        .join(format!(
+                            "lib/postgresql/{stem}{}",
+                            std::env::consts::DLL_SUFFIX
+                        ))
+                        .is_file(),
+                    !mobile
+                );
+            }
+            for (field, incomplete) in [
+                ("sqlMembers", "postgis"),
+                (
+                    "nativeModuleStems",
+                    if mobile {
+                        "postgis-3,postgis_raster-3"
+                    } else {
+                        "postgis-3"
+                    },
+                ),
+            ] {
+                let current = manifest
+                    .lines()
+                    .find(|line| line.starts_with(&format!("{field}=")))
+                    .unwrap();
+                fs::write(
+                    &manifest_path,
+                    manifest.replace(current, &format!("{field}={incomplete}")),
+                )
+                .unwrap();
+                assert!(load_prebuilt_extension_artifact(&artifact).is_err());
+                fs::write(
+                    &manifest_path,
+                    manifest.replace(&format!("{current}\n"), ""),
+                )
+                .unwrap();
+                assert!(load_prebuilt_extension_artifact(&artifact).is_err());
+            }
+            fs::write(&manifest_path, &manifest).unwrap();
+            for suffix in [".control", "--1.0.sql"] {
+                let file = artifact.join(format!(
+                    "files/share/postgresql/extension/postgis_raster{suffix}"
+                ));
+                fs::remove_file(&file).unwrap();
+                assert!(
+                    load_prebuilt_extension_artifact(&artifact)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("postgis_raster")
+                );
+                write_file(&file, b"fixture\n");
+            }
+            if !mobile {
+                fs::remove_file(artifact.join(format!(
+                    "files/lib/modules/postgis_raster-3{}",
+                    std::env::consts::DLL_SUFFIX
+                )))
+                .unwrap();
+                assert!(load_prebuilt_extension_artifact(&artifact).is_err());
+            }
+        }
+    }
 
     #[test]
     fn logical_tree_digest_uses_portable_path_order() {
@@ -2875,6 +3080,8 @@ staticSymbolPrefix={static_symbol_prefix}
 staticSymbolAliases=
 licenseFiles=share/licenses/{sql_name}/LICENSE
 licenseProfile=external-native
+sqlMembers={sql_name}
+nativeModuleStems={module_stem}
 files=files
 ",
                 if mobile_prebuilt { "yes" } else { "no" }
@@ -2946,6 +3153,9 @@ files=files
     ) {
         let module_file = format!("{module_stem}.so");
         let license_value = license_files.join(",");
+        let catalog = catalog::by_sql_name(sql_name).unwrap();
+        let sql_members = catalog.sql_members.join(",");
+        let native_module_stems = catalog.native_module_stems.join(",");
         write_file(
             &root.join("manifest.properties"),
             format!(
@@ -2971,6 +3181,8 @@ staticSymbolPrefix=
 staticSymbolAliases=
 licenseFiles={license_value}
 licenseProfile={}
+sqlMembers={sql_members}
+nativeModuleStems={native_module_stems}
 files=files
 ",
                 profile.as_str()
@@ -3004,26 +3216,30 @@ files=files
                 format!("fixture upstream license {license}\n").as_bytes(),
             );
         }
-        write_file(
-            &root
-                .join("files/share/postgresql/extension")
-                .join(format!("{sql_name}.control")),
-            b"comment = 'profile fixture'\n",
-        );
-        write_file(
-            &root
-                .join("files/share/postgresql/extension")
-                .join(format!("{sql_name}--1.0.sql")),
-            b"SELECT 1;\n",
-        );
-        write_file(
-            &root.join("files/lib/postgresql").join(&module_file),
-            b"fixture server module\n",
-        );
-        write_file(
-            &root.join("files/lib/modules").join(module_file),
-            b"fixture embedded module\n",
-        );
+        for member in &catalog.sql_members {
+            write_file(
+                &root
+                    .join("files/share/postgresql/extension")
+                    .join(format!("{member}.control")),
+                b"comment = 'profile fixture'\n",
+            );
+            write_file(
+                &root
+                    .join("files/share/postgresql/extension")
+                    .join(format!("{member}--1.0.sql")),
+                b"SELECT 1;\n",
+            );
+        }
+        for stem in &catalog.native_module_stems {
+            write_file(
+                &root.join("files/lib/postgresql").join(format!("{stem}.so")),
+                b"fixture server module\n",
+            );
+            write_file(
+                &root.join("files/lib/modules").join(format!("{stem}.so")),
+                b"fixture embedded module\n",
+            );
+        }
     }
 
     fn write_tar_archive_from_dir(archive_path: &Path, source: &Path, prefix: &str) {
