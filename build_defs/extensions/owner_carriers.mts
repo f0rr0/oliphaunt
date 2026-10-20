@@ -837,7 +837,7 @@ export function mergeNativeFinalMembers(spec: NativeOwnerSpec, cohorts: { member
     const ios = rows.find((member: any) =>
       member.assets.some((asset: any) => asset.target === 'ios-xcframework'),
     );
-    const base = { ...(ios ?? rows[0]) };
+    const base = { iosNativeDependencies: [], iosRegistration: null, ...(ios ?? rows[0]) };
     const wasix = rows.filter((member) => member.wasixInstall != null);
     assert(wasix.length <= 1, 'final member repeats its original WASIX install contract');
     base.wasixInstall = wasix[0]?.wasixInstall ?? null;

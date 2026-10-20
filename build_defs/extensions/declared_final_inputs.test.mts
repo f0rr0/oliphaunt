@@ -3,7 +3,10 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { composeExtensionReleaseDocuments } from '../../src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts';
+import {
+  composeExtensionReleaseDocuments,
+  writeReleaseControls,
+} from '../../src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts';
 import { archiveDirectory } from '../../tools/packaging/archive-directory.mts';
 import { releaseNoticeDeclaration } from '../../tools/packaging/release-notices.mts';
 import type { ExtensionFinalInput } from '../../tools/release/native-extension-final-inputs.mts';
@@ -324,6 +327,86 @@ test('merge keeps distinct genuine Apple and WASIX contracts and rejects common 
   ).toThrow();
   wasix.member.dependencies = ['different'] as never[];
   expect(() => mergeNativeFinalMembers(native.spec, cohorts)).toThrow('differs across original');
+});
+
+test('final single and bundle controls supply absent Apple fields without changing frozen cohorts', () => {
+  const native = fixture(),
+    wasix = fixture('wasix');
+  const compact = ({ iosNativeDependencies, iosRegistration, ...member }: typeof native.member) =>
+    member;
+  const ios = {
+    ...native.member,
+    iosNativeDependencies: ['actual-link-unit'],
+    iosRegistration: { symbolPrefix: 'pgtap' },
+    assets: native.member.assets.map((asset) => ({ ...asset, target: 'ios-xcframework' })),
+  };
+  for (const count of [1, 2]) {
+    for (const rows of [
+      [compact(native.member)],
+      [compact(wasix.member)],
+      [compact(native.member), compact(wasix.member)],
+      [compact(native.member), ios, compact(wasix.member)],
+    ]) {
+      const cohorts = rows.map((row) => ({
+        members: Array.from({ length: count }, (_, index) => ({
+          ...row,
+          sqlName: `member${index}`,
+        })),
+      }));
+      const before = structuredClone(cohorts);
+      const members = mergeNativeFinalMembers(
+        {
+          ...native.spec,
+          members: cohorts[0].members.map(({ sqlName }) => ({ sqlName })),
+        } as NativeOwnerSpec,
+        cohorts,
+      );
+      const hasIos = rows.includes(ios);
+      for (const member of members) {
+        expect(member.iosNativeDependencies).toEqual(hasIos ? ios.iosNativeDependencies : []);
+        expect(member.iosRegistration).toEqual(hasIos ? ios.iosRegistration : null);
+        expect(member.wasixInstall).toEqual(
+          rows.length === 1 && rows[0].wasixInstall === null ? null : wasix.member.wasixInstall,
+        );
+      }
+      const inputs = {
+        product: count === 1 ? product : 'oliphaunt-extension-contrib-pg18',
+        releaseProduct:
+          count === 1
+            ? product
+            : rows[0].assets[0].family === 'wasix'
+              ? 'liboliphaunt-wasix'
+              : 'liboliphaunt-native',
+        family: rows.length === 1 ? rows[0].assets[0].family : null,
+        version: native.spec.version,
+        members,
+        directAssets: [],
+        releaseMetadata: {
+          class: count === 1 ? 'external' : 'contrib',
+          versioning: count === 1 ? 'upstream-bound' : 'runtime-bound',
+          sourceIdentity,
+          compatibility,
+        },
+      };
+      const productRoot = path.join(native.root, `controls-${count}-${rows.length}-${hasIos}`);
+      mkdirSync(path.join(productRoot, 'release-assets'), { recursive: true });
+      const controls = writeReleaseControls({
+        ...inputs,
+        ...composeExtensionReleaseDocuments(inputs),
+        productRoot,
+        root: native.root,
+      });
+      const release = JSON.parse(readFileSync(controls.releaseManifest, 'utf8'));
+      for (const member of release.extensions ?? [release]) {
+        expect(member.iosNativeDependencies).toEqual(hasIos ? ios.iosNativeDependencies : []);
+        expect(member.iosRegistration).toEqual(hasIos ? ios.iosRegistration : null);
+      }
+      expect(readFileSync(controls.propertiesManifest, 'utf8')).toContain(
+        `iosNativeDependencies=${hasIos ? 'actual-link-unit' : ''}\n`,
+      );
+      expect(cohorts).toEqual(before);
+    }
+  }
 });
 
 test('completed Apple archive factory accepts its actual empty document record and rejects malformed original documents', async () => {
