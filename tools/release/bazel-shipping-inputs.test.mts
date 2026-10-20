@@ -570,6 +570,40 @@ test('input-set factoring, ordering and query-local ID changes do not change nor
   expect(buildShippingInputView(exported, graph)).toEqual(before);
 });
 
+test('input digests preserve lexical path order and collapse aliases across a shared prefix', () => {
+  const { exported, graph } = fixture();
+  const names = [
+    'z.h',
+    'a.h',
+    'aa.h',
+    'A.h',
+    'header-2.h',
+    'header-10.h',
+    'é.h',
+    'Ω.h',
+    '😀.h',
+    '\ue000.h',
+  ];
+  for (const [index, label] of names.entries()) {
+    const id = 100 + index;
+    graph.pathFragments.push({ id, parentId: 1, label });
+    graph.artifacts.push({ id, pathFragmentId: id });
+    graph.depSetOfFiles[0].directArtifactIds.unshift(id);
+  }
+  graph.artifacts.push({ id: 999, pathFragmentId: 2 });
+  graph.depSetOfFiles[0].directArtifactIds.push(999);
+  const paths = ['src/alpha.c', ...names.map((name) => `src/${name}`)].sort();
+  const view = buildShippingInputView(exported, graph);
+  const compile = view.products.alpha.actions
+    .map((action) => JSON.parse(action))
+    .find((action) => action.target === '//:compile');
+  expect(compile.inputs).toEqual({
+    count: paths.length,
+    sha256: createHash('sha256').update(JSON.stringify(paths)).digest('hex'),
+  });
+  expect(view.captureInputs).toEqual([...paths, 'tools/packager'].sort());
+});
+
 test('same-count input edge swaps and command changes remain visible with identical source and capture unions', () => {
   const { exported, graph } = fixture();
   const before = buildShippingInputView(exported, graph);

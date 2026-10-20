@@ -353,6 +353,9 @@ export function buildShippingInputView(
     throw new Error('shipping export must declare construction scope');
   const { graph, targets, configurations, artifactPaths, depSets, directInputs, inputsOf } =
     aqueryFileGraph(aqueryValue);
+  // Compare long shared SDK prefixes once; each action retains the same lexical path order.
+  const rankedPaths = [...new Set(artifactPaths.values())].sort();
+  const pathRanks = new Map(rankedPaths.map((file, rank) => [file, rank]));
   const producers = new Map<string, Row>();
   const products: ShippingInputView['products'] = {};
   const identities = new Set<string>();
@@ -388,7 +391,11 @@ export function buildShippingInputView(
   const actionDescription = (action: Row, inputs: Set<string>) => {
     const cached = actionDescriptions.get(action);
     if (cached !== undefined) return cached;
-    const paths = [...new Set([...inputs].map((input) => required(artifactPaths, input)))].sort();
+    const paths = [
+      ...new Set([...inputs].map((input) => required(pathRanks, required(artifactPaths, input)))),
+    ]
+      .sort((left, right) => left - right)
+      .map((rank) => rankedPaths[rank]!);
     for (const path of paths) physicalInputs.add(path);
     if (action.mnemonic === 'Middleman')
       for (const output of array(action.outputIds ?? []))
