@@ -385,6 +385,7 @@ export async function qualifyNativeShipping(
   };
   let roots: string[];
   let shippingExport: string | undefined;
+  let sliceGroups: string[] = [];
   let requiredTests: NativeRequiredTest[] = [];
   let requiredLabels: string[] = [];
   const sourceOnly = request.ci?.mode === 'source' && !request.ci.handoff;
@@ -398,11 +399,11 @@ export async function qualifyNativeShipping(
         ...configuration,
         `--universe_scope=${owner}`,
         '--output=starlark',
-        '--starlark:expr=json.encode({"roots": [str(value.label) for value in providers(target)["//build_defs/release:shipping.bzl%ShippingExportInfo"].packages], "qualification": [str(value.label) for value in providers(target)["//build_defs/release:shipping.bzl%ShippingExportInfo"].qualification]})',
+        '--starlark:expr=json.encode({"roots": [str(value.label) for value in providers(target)["//build_defs/release:shipping.bzl%ShippingExportInfo"].packages], "qualification": [str(value.label) for value in providers(target)["//build_defs/release:shipping.bzl%ShippingExportInfo"].qualification], "sliceGroups": [name for name in dir(providers(target)["OutputGroupInfo"]) if name.startswith("apple_slice_")]})',
       ],
       file('selected-owner.json'),
     );
-    let selected: { roots: unknown; qualification: unknown };
+    let selected: { roots: unknown; qualification: unknown; sliceGroups: unknown };
     try {
       selected = json(file('selected-owner.json')) as typeof selected;
     } catch (cause) {
@@ -423,10 +424,16 @@ export async function qualifyNativeShipping(
       !selected ||
       typeof selected !== 'object' ||
       Array.isArray(selected) ||
-      Object.keys(selected).sort().join(',') !== 'qualification,roots'
+      Object.keys(selected).sort().join(',') !== 'qualification,roots,sliceGroups'
     )
       throw new Error('shipping qualification requires its configured export provider');
     roots = argv(selected.roots, 'source-owned shipping roots').map(label);
+    sliceGroups = argv(selected.sliceGroups, 'Apple slice output groups').sort();
+    if (
+      new Set(sliceGroups).size !== sliceGroups.length ||
+      sliceGroups.some((group) => !/^apple_slice_[a-z0-9_-]+$/u.test(group))
+    )
+      throw new Error('Apple slice output groups must be unique SDK identifiers');
     const tests = argv(selected.qualification, 'source-owned qualification').map(label);
     requiredLabels = tests;
     if (new Set(tests).size !== tests.length)
@@ -482,6 +489,20 @@ export async function qualifyNativeShipping(
     outputDirectory: output,
     workspaceRoot: workspace,
   };
+  // Finish each SDK's existing actions before changing its sandbox population.
+  // The final test invocation still qualifies the complete requested scope once.
+  for (const group of sliceGroups) {
+    bazel([
+      'build',
+      ...roots,
+      ...configuration,
+      ...metadata,
+      `--output_groups=${group}`,
+      '--run_validations=false',
+      `--profile=${diagnosticFile(`${group}-profile.json.gz`)}`,
+    ]);
+    assertSource();
+  }
   if (sourceOnly) {
     bazel(['test', ...buildTargets, ...configuration, ...metadata]);
     return writeConfiguredCiSuccessReceipt(ciIdentity!);

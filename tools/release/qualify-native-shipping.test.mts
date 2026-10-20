@@ -442,6 +442,14 @@ if(args[0]==='test') {
   writeFileSync(args.find((arg:string)=>arg.startsWith('--build_event_json_file=')).slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
   if(state.mode!=='dump-missing') writeFileSync(args.find((arg:string)=>arg.startsWith('--output_file=')).slice(14),JSON.stringify(state.aquery)+'\\n');
 } else if(args[0]==='build') {
+  const group=args.find((arg:string)=>arg.startsWith('--output_groups=apple_slice_'))?.slice(16);
+  if(group) {
+    if(group===state.interruptedSliceGroup) {
+      if(state.mode==='slice-failure') process.exit(1);
+      if(state.mode==='slice-race') writeFileSync('src/input.mts','changed during slice build');
+    }
+    process.exit(0);
+  }
   if(args.at(-1)!=='--nobuild') throw new Error('failure diagnosis must not construct targets');
   if(state.mode==='incompatible-owner') {
     console.error('Target //fixture:shipping_export is incompatible because dependency //fixture:host_library is incompatible');
@@ -467,7 +475,7 @@ else {
   } else if(expression.startsWith('set(')) {
     if(state.mode==='incompatible-policy') process.exit(1);
     console.log(JSON.stringify(state.qualification));
-  } else console.log(JSON.stringify({roots:['@@//fixture:shipping'],qualification:(state.qualification.results??[]).map((result:any)=>result.target.rule.name)}));
+  } else console.log(JSON.stringify({roots:['@@//fixture:shipping'],qualification:(state.qualification.results??[]).map((result:any)=>result.target.rule.name),sliceGroups:state.sliceGroups??[]}));
 }
 `,
   );
@@ -961,35 +969,120 @@ test('scoped action capture binds full requested scope, output, source and confi
   }
 });
 
-test('shipping exports use one canonical qualification with the same roots, base and configuration', async () => {
+test('SDK phases preserve one canonical qualification with the same roots, base and configuration', async () => {
   for (const sourceOnly of [false, true]) {
+    for (const sliceGroups of [[], ['apple_slice_macos-arm64', 'apple_slice_ios-arm64']]) {
+      const f = fixture();
+      try {
+        f.request.shipping = { export: '//fixture:shipping_export' };
+        f.request.startup = ['--output_base=/same-bazel-server'];
+        f.update((state) => {
+          state.sliceGroups = sliceGroups;
+        });
+        if (sourceOnly)
+          f.request.ci = {
+            id: 'portable/macos/apple',
+            job: 'portable/macos',
+            mode: 'source',
+            requires: [],
+          };
+        const output = await qualifyNativeShipping(f.request, f.workspace);
+        expect(existsSync(output)).toBe(true);
+        const calls = f.calls().map((call) => call.slice(1));
+        const batches = calls.filter((call) => call[0] === 'build');
+        expect(batches).toHaveLength(sliceGroups.length);
+        expect(f.calls().every((call) => call[0] === '--output_base=/same-bazel-server')).toBe(
+          true,
+        );
+        const producing = calls.filter((call) => call[0] === 'test');
+        expect(producing).toHaveLength(1);
+        expect(producing[0].filter((arg) => arg.startsWith('//'))).toEqual([
+          '//fixture:shipping',
+          '//fixture:shipping_export',
+          '//fixture:mandatory_test',
+          '//fixture:consumer',
+        ]);
+        for (const flag of f.request.configuration) expect(producing[0]).toContain(flag);
+        expect(producing[0]).not.toContain('--run_validations=false');
+        for (const [index, group] of [...sliceGroups].sort().entries()) {
+          const profile = path.join(f.outputDirectory, 'diagnostics', `${group}-profile.json.gz`);
+          expect(batches[index]).toEqual([
+            'build',
+            '//fixture:shipping',
+            ...f.request.configuration,
+            ...producing[0].filter((arg) => arg.startsWith('--build_metadata=')),
+            `--output_groups=${group}`,
+            '--run_validations=false',
+            `--profile=${profile}`,
+          ]);
+          expect(readFileSync(profile, 'utf8')).toBe('fixture profile');
+          expect(calls.indexOf(batches[index])).toBeLessThan(calls.indexOf(producing[0]));
+        }
+        expect(calls.filter((call) => call[0] === 'aquery')).toHaveLength(sourceOnly ? 0 : 1);
+        if (!sourceOnly) {
+          const query = calls.find((call) => call[0] === 'aquery')!;
+          expect(query[1]).toBe(
+            nativeAqueryExpression(producing[0].filter((arg) => arg.startsWith('//'))),
+          );
+          expect(calls.indexOf(query)).toBeGreaterThan(calls.indexOf(producing[0]));
+        }
+      } finally {
+        f.cleanup();
+      }
+    }
+  }
+});
+
+for (const failure of ['slice-failure', 'slice-race'])
+  test(`SDK phases never qualify or capture after ${failure}`, async () => {
+    for (const sourceOnly of [false, true]) {
+      const f = fixture(failure);
+      try {
+        f.request.shipping = { export: '//fixture:shipping_export' };
+        if (sourceOnly)
+          f.request.ci = {
+            id: 'portable/macos/apple',
+            job: 'portable/macos',
+            mode: 'source',
+            requires: [],
+          };
+        f.update((state) => {
+          state.sliceGroups = ['apple_slice_macos-arm64', 'apple_slice_ios-arm64'];
+          state.interruptedSliceGroup = 'apple_slice_macos-arm64';
+        });
+        await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow(
+          failure === 'slice-failure' ? /failed/u : /clean checkout/u,
+        );
+        expect(f.calls().map((call) => call[0])).toEqual([
+          'cquery',
+          ...(sourceOnly ? [] : ['cquery']),
+          'build',
+          'build',
+        ]);
+        for (const file of ['ci-request.json', 'aquery.json', 'evidence'])
+          expect(existsSync(path.join(f.outputDirectory, file))).toBe(false);
+      } finally {
+        f.cleanup();
+      }
+    }
+  });
+
+test('SDK phase discovery rejects duplicate or noncanonical output groups before construction', async () => {
+  for (const sliceGroups of [
+    ['apple_slice_ios-arm64', 'apple_slice_ios-arm64'],
+    ['apple_slice_ios-arm64,+default'],
+    ['apple_slice_'],
+  ]) {
     const f = fixture();
     try {
       f.request.shipping = { export: '//fixture:shipping_export' };
-      f.request.startup = ['--output_base=/same-bazel-server'];
-      if (sourceOnly)
-        f.request.ci = {
-          id: 'portable/macos/apple',
-          job: 'portable/macos',
-          mode: 'source',
-          requires: [],
-        };
-      const output = await qualifyNativeShipping(f.request, f.workspace);
-      expect(existsSync(output)).toBe(true);
-      const calls = f.calls().map((call) => call.slice(1));
-      expect(calls.filter((call) => call[0] === 'build')).toHaveLength(0);
-      expect(f.calls().every((call) => call[0] === '--output_base=/same-bazel-server')).toBe(true);
-      const producing = calls.filter((call) => call[0] === 'test');
-      expect(producing).toHaveLength(1);
-      expect(producing[0].filter((arg) => arg.startsWith('//'))).toEqual([
-        '//fixture:shipping',
-        '//fixture:shipping_export',
-        '//fixture:mandatory_test',
-        '//fixture:consumer',
-      ]);
-      for (const flag of f.request.configuration) expect(producing[0]).toContain(flag);
-      expect(producing[0]).not.toContain('--run_validations=false');
-      expect(calls.filter((call) => call[0] === 'aquery')).toHaveLength(sourceOnly ? 0 : 1);
+      f.update((state) => {
+        state.sliceGroups = sliceGroups;
+      });
+      await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow(
+        'Apple slice output groups must be unique SDK identifiers',
+      );
+      expect(f.calls().map((call) => call[0])).toEqual(['cquery']);
     } finally {
       f.cleanup();
     }
