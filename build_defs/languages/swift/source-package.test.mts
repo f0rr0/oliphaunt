@@ -392,7 +392,10 @@ test.skipIf(process.platform === 'win32')(
       );
       const trace = path.join(scratch, 'swiftpm-phases');
       const runRoot = path.join(scratch, 'test-root');
-      mkdirSync(runRoot);
+      const physicalRunRoot = path.join(scratch, 'physical-test-root');
+      mkdirSync(physicalRunRoot);
+      // Exercise canonical paths on Linux too, like macOS's /var -> /private/var.
+      symlinkSync(physicalRunRoot, runRoot, 'dir');
       const installedRuntime = path.join(
         runRoot,
         'build/debug/liboliphaunt.framework/Resources/oliphaunt/runtime/files',
@@ -421,7 +424,7 @@ console.log('installed-swift-' + process.argv[2] + '-42');
           `
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 ${checkHome}
 const args = process.argv.slice(2);
@@ -444,7 +447,7 @@ if (args[0] === 'build') {
   assert(args.includes('--disable-xctest'));
   assert.equal(args[args.indexOf('--filter') + 1], 'NativeRuntimeTests');
   assert.equal(process.env.OLIPHAUNT_SWIFT_REQUIRE_NATIVE, '1');
-  assert.equal(process.env.OLIPHAUNT_INSTALL_DIR, ${JSON.stringify(installedRuntime)}, 'the native suite must use its installed framework runtime');
+  assert.equal(process.env.OLIPHAUNT_INSTALL_DIR, realpathSync(${JSON.stringify(installedRuntime)}), 'the native suite must use its installed framework runtime');
   assert.equal(readFileSync(path.join(process.env.OLIPHAUNT_INSTALL_DIR, '../manifest.properties'), 'utf8'), 'installed framework runtime fixture');
   console.log('Test run with 1 test passed');
 }
