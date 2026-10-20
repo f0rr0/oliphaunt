@@ -3,6 +3,7 @@ import { PostgresError, type OliphauntDatabase, type QueryResult } from '@olipha
 export type MobileReleaseExtensionProof = {
   readonly sqlName: string;
   readonly createsExtension: boolean;
+  readonly sqlMembers: readonly string[];
   readonly selectedExtensionDependencies: readonly string[];
   readonly activationSql: readonly string[];
   readonly smokeStatements: readonly string[];
@@ -304,7 +305,7 @@ export async function runMobileReleaseExtensionProof(
     async () => {
       const expected = plan
         .filter((extension) => extension.createsExtension)
-        .map((extension) => extension.sqlName)
+        .flatMap((extension) => extension.sqlMembers)
         .sort()
         .join(',');
       const actual = await scalar(

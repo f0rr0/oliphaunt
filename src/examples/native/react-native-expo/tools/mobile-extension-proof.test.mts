@@ -1,5 +1,6 @@
-import assert from 'node:assert/strict';
 import { mock, test } from 'bun:test';
+import assert from 'node:assert/strict';
+import { GENERATED_MOBILE_EXTENSION_PLAN } from '../src/generated/extension-smoke.ts';
 
 class FixturePostgresError extends Error {}
 
@@ -51,6 +52,7 @@ test('the successful pg_textsearch producer supplies every semantic PASS fact', 
     {
       sqlName: 'pg_textsearch',
       createsExtension: true,
+      sqlMembers: ['pg_textsearch'],
       nativeModuleStem: 'pg_textsearch',
       selectedExtensionDependencies: [],
       activationSql: ['CREATE EXTENSION pg_textsearch'],
@@ -101,4 +103,35 @@ test('the successful pg_textsearch producer supplies every semantic PASS fact', 
   assert.equal(receipt.allExtensionsActivated, true);
   assert.equal(receipt.extensionCatalogComplete, true);
   assert.equal(receipt.pgTextsearchEnglishBm25, true);
+});
+
+test('mobile catalog completeness requires all declared PostGIS SQL members', async () => {
+  const postgis = GENERATED_MOBILE_EXTENSION_PLAN.find((row) => row.sqlName === 'postgis');
+  assert(postgis);
+  const members = ['postgis', 'postgis_raster', 'postgis_tiger_geocoder', 'postgis_topology'];
+  assert.deepEqual(postgis.sqlMembers, members);
+  const plan = [{ ...postgis, activationSql: ['CREATE EXTENSION postgis'], smokeStatements: [] }];
+  const prove = (installed) =>
+    runMobileReleaseExtensionProof(
+      {
+        async execute() {},
+        async query(sql) {
+          if (sql.includes('WHERE extname = $1')) {
+            return queryResult({ name: 'postgis', version: '3.6.4' });
+          }
+          if (sql.includes('string_agg')) return queryResult({ value: installed });
+          throw new Error(`unexpected extension-proof query: ${sql}`);
+        },
+      },
+      plan,
+    );
+  assert.equal((await prove(members.join(','))).extensionCatalogComplete, true);
+  await assert.rejects(
+    prove(members.filter((member) => member !== 'postgis_raster').join(',')),
+    /installed mobile extension catalog/,
+  );
+  await assert.rejects(
+    prove([...members, 'unexpected'].join(',')),
+    /installed mobile extension catalog/,
+  );
 });

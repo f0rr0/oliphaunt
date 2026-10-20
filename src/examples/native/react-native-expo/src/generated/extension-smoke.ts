@@ -4,6 +4,7 @@
 export type GeneratedMobileExtensionProof = {
   readonly sqlName: string;
   readonly createsExtension: boolean;
+  readonly sqlMembers: readonly string[];
   readonly selectedExtensionDependencies: readonly string[];
 };
 
@@ -13,51 +14,79 @@ export const GENERATED_MOBILE_EXTENSION_PLAN = [
   {
     "sqlName": "amcheck",
     "createsExtension": true,
+    "sqlMembers": [
+      "amcheck"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "auto_explain",
     "createsExtension": false,
+    "sqlMembers": [],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "bloom",
     "createsExtension": true,
+    "sqlMembers": [
+      "bloom"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "btree_gin",
     "createsExtension": true,
+    "sqlMembers": [
+      "btree_gin"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "btree_gist",
     "createsExtension": true,
+    "sqlMembers": [
+      "btree_gist"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "citext",
     "createsExtension": true,
+    "sqlMembers": [
+      "citext"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "cube",
     "createsExtension": true,
+    "sqlMembers": [
+      "cube"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "dict_int",
     "createsExtension": true,
+    "sqlMembers": [
+      "dict_int"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "dict_xsyn",
     "createsExtension": true,
+    "sqlMembers": [
+      "dict_xsyn"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "earthdistance",
     "createsExtension": true,
+    "sqlMembers": [
+      "earthdistance"
+    ],
     "selectedExtensionDependencies": [
       "cube"
     ]
@@ -65,106 +94,172 @@ export const GENERATED_MOBILE_EXTENSION_PLAN = [
   {
     "sqlName": "file_fdw",
     "createsExtension": true,
+    "sqlMembers": [
+      "file_fdw"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "fuzzystrmatch",
     "createsExtension": true,
+    "sqlMembers": [
+      "fuzzystrmatch"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "hstore",
     "createsExtension": true,
+    "sqlMembers": [
+      "hstore"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "intarray",
     "createsExtension": true,
+    "sqlMembers": [
+      "intarray"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "isn",
     "createsExtension": true,
+    "sqlMembers": [
+      "isn"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "lo",
     "createsExtension": true,
+    "sqlMembers": [
+      "lo"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "ltree",
     "createsExtension": true,
+    "sqlMembers": [
+      "ltree"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pageinspect",
     "createsExtension": true,
+    "sqlMembers": [
+      "pageinspect"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pg_buffercache",
     "createsExtension": true,
+    "sqlMembers": [
+      "pg_buffercache"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pg_freespacemap",
     "createsExtension": true,
+    "sqlMembers": [
+      "pg_freespacemap"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pg_hashids",
     "createsExtension": true,
+    "sqlMembers": [
+      "pg_hashids"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pg_ivm",
     "createsExtension": true,
+    "sqlMembers": [
+      "pg_ivm"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pg_surgery",
     "createsExtension": true,
+    "sqlMembers": [
+      "pg_surgery"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pg_textsearch",
     "createsExtension": true,
+    "sqlMembers": [
+      "pg_textsearch"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pg_trgm",
     "createsExtension": true,
+    "sqlMembers": [
+      "pg_trgm"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pg_uuidv7",
     "createsExtension": true,
+    "sqlMembers": [
+      "pg_uuidv7"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pg_visibility",
     "createsExtension": true,
+    "sqlMembers": [
+      "pg_visibility"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pg_walinspect",
     "createsExtension": true,
+    "sqlMembers": [
+      "pg_walinspect"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pgcrypto",
     "createsExtension": true,
+    "sqlMembers": [
+      "pgcrypto"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "pgtap",
     "createsExtension": true,
+    "sqlMembers": [
+      "pgtap"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "postgis",
     "createsExtension": true,
+    "sqlMembers": [
+      "postgis",
+      "postgis_raster",
+      "postgis_tiger_geocoder",
+      "postgis_topology"
+    ],
     "selectedExtensionDependencies": [
       "fuzzystrmatch"
     ]
@@ -172,41 +267,65 @@ export const GENERATED_MOBILE_EXTENSION_PLAN = [
   {
     "sqlName": "seg",
     "createsExtension": true,
+    "sqlMembers": [
+      "seg"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "tablefunc",
     "createsExtension": true,
+    "sqlMembers": [
+      "tablefunc"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "tcn",
     "createsExtension": true,
+    "sqlMembers": [
+      "tcn"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "tsm_system_rows",
     "createsExtension": true,
+    "sqlMembers": [
+      "tsm_system_rows"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "tsm_system_time",
     "createsExtension": true,
+    "sqlMembers": [
+      "tsm_system_time"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "unaccent",
     "createsExtension": true,
+    "sqlMembers": [
+      "unaccent"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "uuid-ossp",
     "createsExtension": true,
+    "sqlMembers": [
+      "uuid-ossp"
+    ],
     "selectedExtensionDependencies": []
   },
   {
     "sqlName": "vector",
     "createsExtension": true,
+    "sqlMembers": [
+      "vector"
+    ],
     "selectedExtensionDependencies": []
   }
 ] as const satisfies readonly GeneratedMobileExtensionProof[];

@@ -529,7 +529,7 @@ function requiredPublicEnvironment(name: string, value: string | undefined): str
 }
 
 function mobileReleaseExtensionProofPlan() {
-  if (packagedExtensions === undefined) {
+  if (typeof packagedExtensions !== 'string') {
     throw new Error('installed mobile qualification requires EXPO_PUBLIC_OLIPHAUNT_EXTENSIONS');
   }
   const requested = packagedExtensions
@@ -544,7 +544,9 @@ function mobileReleaseExtensionProofPlan() {
     selected.has(extension.sqlName),
   );
   if (plan.length !== selected.size) {
-    const known = new Set(GENERATED_MOBILE_EXTENSION_PLAN.map((extension) => extension.sqlName));
+    const known = new Set<string>(
+      GENERATED_MOBILE_EXTENSION_PLAN.map((extension) => extension.sqlName),
+    );
     const unknown = requested.filter((extension) => !known.has(extension));
     throw new Error(`unknown packaged mobile extensions: ${unknown.join(',')}`);
   }
@@ -558,6 +560,7 @@ function mobileReleaseExtensionProofPlan() {
     return {
       sqlName: extension.sqlName,
       createsExtension: extension.createsExtension,
+      sqlMembers: extension.sqlMembers,
       selectedExtensionDependencies: extension.selectedExtensionDependencies,
       activationSql: activationSqlForExtension(extension),
       smokeStatements,
