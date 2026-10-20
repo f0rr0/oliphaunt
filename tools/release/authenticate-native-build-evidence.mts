@@ -9,7 +9,7 @@ import path from 'node:path';
 import { isDeepStrictEqual, parseArgs, promisify } from 'node:util';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import { githubJobArtifact, latestGithubJob, matchesGithubWorkflowRef } from './github-read.mts';
-import { readNativeBuildFinalFiles } from './native-build-files.mts';
+import { readNativeBuildFinalFilesBatch } from './native-build-files.mts';
 import {
   assertNativeBuildGithub,
   type NativeBuildEvidence,
@@ -344,19 +344,14 @@ async function readAuthenticatedNativeBuildEvidence(
     const producingBazelVersion = evidence.cohorts?.[0]?.buildEvents?.find(
       (event) => event.started !== undefined,
     )?.started?.buildToolVersion;
-    const finalFiles = hasFiles(downloaded)
-      ? readNativeBuildFinalFiles(evidenceRoot, evidence, {
+    const [finalFiles, downloadedFiles] = hasFiles(downloaded)
+      ? readNativeBuildFinalFilesBatch([evidenceRoot, downloaded], evidence, {
           source: expected.source,
           github,
           bazelVersion: producingBazelVersion,
         })
-      : undefined;
+      : [];
     if (finalFiles) {
-      const downloadedFiles = readNativeBuildFinalFiles(downloaded, evidence, {
-        source: expected.source,
-        github,
-        bazelVersion: producingBazelVersion,
-      });
       deepStrictEqual(finalFiles.files, downloadedFiles.files, 'authenticated native final files');
       finalFiles.assertUnchanged?.();
     }

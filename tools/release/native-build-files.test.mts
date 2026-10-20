@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -24,7 +25,10 @@ import {
   writeNativeBuildEvidence,
 } from './capture-native-build-evidence.mts';
 import { fixture } from './completed-native-publication.fixture.mts';
-import { readNativeBuildFinalFiles } from './native-build-files.mts';
+import {
+  readNativeBuildFinalFiles,
+  readNativeBuildFinalFilesBatch,
+} from './native-build-files.mts';
 import {
   captureNativeOutputMembers,
   captureNativePublicationOutputs,
@@ -135,6 +139,57 @@ test('actual packed public files survive transport with exact members and held d
       { name: '@fixture/beta', version: '2.0.0' },
     ]);
     expect(registry[0].dependencies['@fixture/held-runtime']).toBe('=0.3.2');
+  });
+});
+
+test('packet copies independently verify both physical transports against the same evidence', async () => {
+  await fixture(async (f) => {
+    const first = path.join(f.directory, 'first-packet');
+    const file = writeNativeBuildEvidence(f.capture, first);
+    const second = path.join(f.directory, 'second-packet');
+    cpSync(first, second, { recursive: true });
+    const evidence = JSON.parse(readFileSync(file, 'utf8'));
+    const directories = [first, second];
+    const packets = readNativeBuildFinalFilesBatch(directories, evidence, constraints(f));
+    expect(packets).toHaveLength(2);
+    expect(packets[0].files).toEqual(packets[1].files);
+    for (const packet of packets) {
+      expect(packet.qualification.source).toEqual(evidence.source);
+      const target = packet.artifactRoots[0];
+      const original = readFileSync(target);
+      writeFileSync(target, 'corrupted transport copy');
+      expect(() => readNativeBuildFinalFilesBatch(directories, evidence, constraints(f))).toThrow(
+        'native final transport bytes',
+      );
+      writeFileSync(target, original);
+    }
+    writeFileSync(path.join(second, 'files', 'unexpected'), 'extra transport file');
+    expect(() => readNativeBuildFinalFilesBatch(directories, evidence, constraints(f))).toThrow(
+      'native final file transport inventory',
+    );
+  });
+});
+
+test('packet copies reject malformed evidence and a different expected source', async () => {
+  await fixture(async (f) => {
+    const first = path.join(f.directory, 'qualified-packet');
+    const file = writeNativeBuildEvidence(f.capture, first);
+    const second = path.join(f.directory, 'qualified-copy');
+    cpSync(first, second, { recursive: true });
+    const evidence = JSON.parse(readFileSync(file, 'utf8'));
+    expect(() =>
+      readNativeBuildFinalFilesBatch(
+        [first, second],
+        { ...evidence, schema: 'invalid' },
+        constraints(f),
+      ),
+    ).toThrow('unsupported native build evidence');
+    expect(() =>
+      readNativeBuildFinalFilesBatch([first, second], evidence, {
+        ...constraints(f),
+        source: { ...evidence.source, tree: 'f'.repeat(40) },
+      }),
+    ).toThrow('native build source mismatch');
   });
 });
 

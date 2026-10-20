@@ -117,7 +117,30 @@ export function readNativeBuildFinalFiles(
   evidence: NativeBuildEvidence,
   expected: Parameters<typeof validateNativeBuildEvidence>[1],
 ) {
+  return readPhysicalNativeBuildFinalFiles(
+    directory,
+    evidence,
+    validateNativeBuildEvidence(evidence, expected),
+  );
+}
+
+/** Qualify one packet, then independently bind each physical copy to its captured Files. */
+export function readNativeBuildFinalFilesBatch(
+  directories: string[],
+  evidence: NativeBuildEvidence,
+  expected: Parameters<typeof validateNativeBuildEvidence>[1],
+) {
   const qualification = validateNativeBuildEvidence(evidence, expected);
+  return directories.map((directory) =>
+    readPhysicalNativeBuildFinalFiles(directory, evidence, qualification),
+  );
+}
+
+function readPhysicalNativeBuildFinalFiles(
+  directory: string,
+  evidence: NativeBuildEvidence,
+  qualification: ReturnType<typeof validateNativeBuildEvidence>,
+) {
   const root = requireSafeDirectoryChain(path.resolve(directory), { label: 'native file packet' });
   const { supportedRoots, artifactFileKeys, ...inventory } = finalFiles(evidence);
   const qualificationInputs = qualification.cohorts.flatMap((value, cohort) =>
