@@ -48,6 +48,7 @@ for (const [target, suffix] of [
   ['macos-arm64', '.dylib'],
   ['windows-x64-msvc', '.dll'],
   ['android-arm64-v8a', '.so'],
+  ['android-x86_64', '.so'],
   ['ios-xcframework', '.dylib'],
 ]) {
   test(`PostGIS ${target} freezes and stages its declared companion closure`, async () => {
@@ -86,13 +87,17 @@ for (const [target, suffix] of [
     };
     try {
       for (const name of controls) {
+        const module = stems.find((stem) => stem === `${name}-3`);
         await write(
           path.join(runtime, `share/postgresql/extension/${name}.control`),
-          `default_version = '${version}'\n`,
+          `default_version = '${version}'\n` +
+            (module ? `module_pathname = '$libdir/${module}'\n` : ''),
         );
         await write(
           path.join(runtime, `share/postgresql/extension/${name}--${version}.sql`),
-          `-- ${name} install\n`,
+          module
+            ? `CREATE FUNCTION ${name}_fixture() RETURNS text AS '$libdir/${module}', '${name}_fixture' LANGUAGE C;\n`
+            : `-- ${name} install\n`,
         );
       }
       for (const stem of stems) {
@@ -112,6 +117,20 @@ for (const [target, suffix] of [
       const entries = await entriesAt(artifact);
       const manifest = entries.get('manifest.properties').data.toString();
       assert(manifest.includes(`sqlMembers=${[...controls].sort().join(',')}\n`));
+      for (const name of controls) {
+        const module = stems.find((stem) => stem === `${name}-3`);
+        for (const suffix of ['.control', `--${version}.sql`]) {
+          const relative = `share/postgresql/extension/${name}${suffix}`;
+          const original = await fs.readFile(path.join(runtime, relative), 'utf8');
+          assert.equal(
+            entries.get(`files/${relative}`).data.toString(),
+            mobile && module
+              ? original.replaceAll(`'$libdir/${module}'`, "'$libdir/postgis-3'")
+              : original,
+          );
+          if (module) assert(original.includes(`'$libdir/${module}'`));
+        }
+      }
       if (mobile) {
         assert(manifest.includes('nativeModuleStems=postgis-3\n'));
         assertExtensionArtifactClosure(

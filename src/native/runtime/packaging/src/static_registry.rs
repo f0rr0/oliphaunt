@@ -244,7 +244,6 @@ pub(super) fn collect_extension_sql_symbols(
         return Ok(Vec::new());
     }
     let extension_dir = runtime_dir.join("share/postgresql/extension");
-    let prefix = format!("{}--", extension.sql_name);
     let module_stem = extension.native_module_stem.as_deref().ok_or_else(|| {
         Error::InvalidConfig(format!(
             "selected extension {} has no native module stem for static SQL symbol collection",
@@ -261,7 +260,9 @@ pub(super) fn collect_extension_sql_symbols(
         })?;
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
-        if !file_name.starts_with(&prefix) || !file_name.ends_with(".sql") {
+        if !file_name.ends_with(".sql")
+            || !runtime_extension_sql_file_belongs(extension, &file_name)
+        {
             continue;
         }
         found_sql_file = true;

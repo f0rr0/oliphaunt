@@ -1140,6 +1140,24 @@ mod tests {
                         b"fixture\n",
                     );
                 }
+                let symbol = match member.as_str() {
+                    "postgis" => Some("postgis_version"),
+                    "postgis_raster" => Some("RASTER_in"),
+                    "postgis_topology" => Some("Topology_LoadTopoGeometry"),
+                    _ => None,
+                };
+                if let Some(symbol) = symbol {
+                    let stem = if mobile { "postgis" } else { member };
+                    write_file(
+                        &artifact.join(format!(
+                            "files/share/postgresql/extension/{member}--1.0.sql"
+                        )),
+                        format!(
+                            "CREATE FUNCTION {symbol}() RETURNS text AS '$libdir/{stem}-3', '{symbol}' LANGUAGE C;\n"
+                        )
+                        .as_bytes(),
+                    );
+                }
             }
             for stem in &stems {
                 for directory in ["postgresql", "modules"] {
@@ -1163,6 +1181,15 @@ mod tests {
             let runtime_files = temp.path().join("runtime");
             copy_prebuilt_extension_artifacts(&runtime_files, &extensions, Some(target), &metadata)
                 .unwrap();
+            if mobile {
+                let modules =
+                    static_registry_modules(&runtime_files, &extensions, &metadata).unwrap();
+                assert_eq!(modules.len(), 1);
+                assert_eq!(
+                    modules[0].sql_symbols,
+                    ["RASTER_in", "Topology_LoadTopoGeometry", "postgis_version"]
+                );
+            }
             for member in &catalog.sql_members {
                 assert!(
                     runtime_files

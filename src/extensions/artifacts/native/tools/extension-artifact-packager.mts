@@ -817,8 +817,6 @@ async function extensionSqlMetadata(sqlName, target) {
     }
   }
   const closure = extensionNativeArtifactClosure(sqlName, target);
-  // Mobile combines companion objects into its primary static module.
-  if (!DESKTOP_NATIVE_TARGETS.has(target)) closure.modules = [];
   return { names, prefixes, ...closure };
 }
 
@@ -867,6 +865,12 @@ async function copySqlFiles(args, artifactRoot, artifactFiles, extraSql) {
   let copiedControl = false;
   let copiedSql = false;
   const copiedFileNames = [];
+  const mergedModuleStems =
+    MOBILE_NATIVE_TARGETS.has(args.nativeTarget) && args.nativeModuleStem
+      ? extraSql.modules
+          .map((module) => module.replace(/\.(so|dylib|dll)$/u, ''))
+          .filter((stem) => stem !== args.nativeModuleStem)
+      : [];
   const entries = (await fs.readdir(sourceDir)).sort();
   for (const entry of entries) {
     if (!extensionSqlFileBelongs(args.sqlName, entry, extraSql, args.createsExtension)) {
@@ -879,7 +883,17 @@ async function copySqlFiles(args, artifactRoot, artifactFiles, extraSql) {
     } else if (isCanonicalExtensionInstallSql(entry, args.sqlName)) {
       copiedSql = true;
     }
-    await copyFileChecked(args.runtime, path.join(sourceDir, entry), path.join(targetDir, entry));
+    const destination = path.join(targetDir, entry);
+    await copyFileChecked(args.runtime, path.join(sourceDir, entry), destination);
+    if (mergedModuleStems.length > 0) {
+      // Mobile artifacts use host SQL but merge companion code into one static module.
+      const original = await fs.readFile(destination, 'utf8');
+      let sql = original;
+      for (const stem of mergedModuleStems) {
+        sql = sql.replaceAll(`'$libdir/${stem}'`, `'$libdir/${args.nativeModuleStem}'`);
+      }
+      if (sql !== original) await fs.writeFile(destination, sql);
+    }
   }
   if (args.createsExtension && (!copiedControl || !copiedSql)) {
     fail(
@@ -1005,7 +1019,7 @@ export async function writeArtifactDirectory(artifactRoot, args) {
   for (const dataFile of metadata.dataFiles) {
     await copyRuntimeRelativeFile(args.runtime, filesRoot, `share/postgresql/${dataFile}`);
   }
-  const modules = new Set(extraSql.modules);
+  const modules = new Set(DESKTOP_NATIVE_TARGETS.has(args.nativeTarget) ? extraSql.modules : []);
   if (metadata.nativeModuleFile.length > 0) modules.add(metadata.nativeModuleFile);
   for (const module of modules) {
     await copyRuntimeRelativeFile(args.runtime, filesRoot, `lib/postgresql/${module}`);
