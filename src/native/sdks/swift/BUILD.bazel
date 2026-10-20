@@ -164,6 +164,7 @@ swift_test(
         "//conditions:default": [],
     }),
     copts = ["-swift-version", "6"],
+    env = {"LIBDISPATCH_COOPERATIVE_POOL_STRICT": "1"},
     target_compatible_with = SOURCE_COMPATIBILITY,
     size = "small",
     tags = ["no-remote"],
