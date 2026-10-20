@@ -56,7 +56,8 @@ tasks:
   test-aot:
     command: "bash src/wasix/pgwire-server/tools/test-aot.sh"
     tags: ["runtime", "integration", "requires-rust", "ci-liboliphaunt-wasix-aot"]
-    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-aot", "extension-artifacts-wasix:build-aot"]
+    # Windows cannot rebuild the CLI with extension features while integration tests run it.
+    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-aot", "extension-artifacts-wasix:build-aot", "oliphaunt-pgwire-server:test-integration"]
     inputs: ["@group(sources)", "tools/test-aot.sh", "/Cargo.toml", "/Cargo.lock"]
     options:
       cache: false

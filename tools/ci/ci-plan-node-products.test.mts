@@ -437,7 +437,7 @@ test('WASIX SDK changes select artifact consumption without invalidating AOT com
 test('pgwire runtime consumers execute in the AOT job with their required producers', () => {
   for (const target of [
     'oliphaunt-pgwire-server:test-integration',
-    'oliphaunt-pgwire-server:test-aot',
+    taskRoots.oliphauntPgwireServerTestAot,
   ]) {
     const selected = new Set([target]);
     const tasks = requiredTasksForAffected(selected);
@@ -447,6 +447,10 @@ test('pgwire runtime consumers execute in the AOT job with their required produc
     assert(tasks.has('liboliphaunt-wasix:runtime-aot'));
     if (target.endsWith(':test-aot')) {
       assert(tasks.has('extension-artifacts-wasix:build-aot'));
+      assert(
+        actionTargets(target).has('oliphaunt-pgwire-server:test-integration'),
+        'finish CLI integration before AOT tests rebuild the running Windows executable',
+      );
     }
   }
 });

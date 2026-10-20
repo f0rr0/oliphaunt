@@ -115,6 +115,7 @@ export const paths = {
 };
 export const taskRoots = {
   oliphauntWasixRustTestAot: 'oliphaunt-wasix-rust:test-aot',
+  oliphauntPgwireServerTestAot: 'oliphaunt-pgwire-server:test-aot',
   liboliphauntWasixRuntimeAot: 'liboliphaunt-wasix:runtime-aot',
   liboliphauntWasixRuntimePortable: 'liboliphaunt-wasix:runtime-portable',
   oliphauntSwiftPackageBindings: 'oliphaunt-swift:package-bindings',
