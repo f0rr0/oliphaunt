@@ -253,6 +253,7 @@ async function fixture(run, mode = 'current', targets = [configuration]) {
       roots,
       cohort,
       observation,
+      authenticateCompleted,
       readCount: () => reads,
       executionRoot,
     });
@@ -856,7 +857,7 @@ test('mixed compiled origins reject instead of unioning configurations', async (
   });
 });
 
-async function importedFixture(run) {
+async function importedFixture(run, wholeArchive = false) {
   await fixture(async (context) => {
     const { roots, cohort, observation, executionRoot } = context;
     const tree = path.join(executionRoot, 'imported-current-source');
@@ -954,6 +955,14 @@ async function importedFixture(run) {
         files: [{ path: heldFile, member: 'modules/native.so' }],
       },
     ];
+    if (wholeArchive) {
+      delete roots[2].package.supplierInputs[0].files[0].member;
+      writeFileSync(path.join(executionRoot, heldFile), readFileSync(packetArchive));
+      cohort.inputs.find(({ path: file }) => file === heldFile).members = captureNativeInputMembers(
+        executionRoot,
+        heldFile,
+      ).members;
+    }
     await run({
       ...context,
       original,
@@ -976,90 +985,100 @@ test('imported current member binds the qualified invocation without inventing a
   });
 });
 
-test('missing original current evidence or transported bytes stays unknown', async () => {
-  await importedFixture(async ({ project, build, supplier }) => {
-    supplier.origin.producer.evidenceDigest = `sha256:${'8'.repeat(64)}`;
-    expect((await project()).buildBound).toBeUndefined();
-    supplier.origin.producer.evidenceDigest = build.origin.evidenceDigest;
-    delete build.origin.finalFiles;
-    const result = await project();
-    expect(result.buildBound).toBeUndefined();
-    expect(result.unknowns).toContain('missing authenticated original current supplier transport');
-  });
-});
-
-test('current import rejects root/configuration/member/source/run substitution', async () => {
-  for (const mutate of [
-    ({ supplier }) => {
-      supplier.origin.producer.root = '//runtime:another_shipping';
-    },
-    ({ supplier }) => {
-      supplier.origin.producer.configuration = '8'.repeat(64);
-    },
-    ({ supplier }) => {
-      supplier.origin.producer.invocationId = 'another-invocation';
-    },
-    ({ supplier }) => {
-      supplier.origin.producer.output = 'bazel-out/producer/bin/runtime/other.tar.gz';
-    },
-    ({ supplier }) => {
-      supplier.files[0].member = 'modules/other.so';
-    },
-    ({ build }) => {
-      build.evidence.source.commit = 'c'.repeat(40);
-    },
-    ({ build }) => {
-      build.origin.github = { ...build.origin.github, runAttempt: 2 };
-    },
-  ])
-    await importedFixture(async (context) => {
-      mutate(context);
-      await expect(context.project()).rejects.toThrow(
-        /mismatch|exact original regular|original public final/,
+for (const wholeArchive of [false, true]) {
+  const kind = wholeArchive ? 'whole archive' : 'member';
+  test(`missing original current ${kind} evidence or transported bytes stays unknown`, async () => {
+    await importedFixture(async ({ project, build, supplier }) => {
+      supplier.origin.producer.evidenceDigest = `sha256:${'8'.repeat(64)}`;
+      expect((await project()).buildBound).toBeUndefined();
+      supplier.origin.producer.evidenceDigest = build.origin.evidenceDigest;
+      delete build.origin.finalFiles;
+      const result = await project();
+      expect(result.buildBound).toBeUndefined();
+      expect(result.unknowns).toContain(
+        'missing authenticated original current supplier transport',
       );
-    });
-});
-
-test('imported current transport and consumed File byte substitutions reject', async () => {
-  await importedFixture(async ({ project, packetArchive }) => {
-    writeFileSync(packetArchive, 'substituted final archive');
-    await expect(project()).rejects.toThrow(/physical archive/);
+    }, wholeArchive);
   });
-  await importedFixture(async ({ project, cohort, executionRoot }) => {
-    writeFileSync(path.join(executionRoot, heldFile), 'substituted consumer input');
-    cohort.inputs.find((input) => input.path === heldFile).members = captureNativeInputMembers(
-      executionRoot,
-      heldFile,
-    ).members;
-    await expect(project()).rejects.toThrow(/original current member bytes/);
-  });
-});
 
-test('whole imported current archive retains original provenance without compiled adoption', async () => {
-  await importedFixture(async ({ project, supplier, cohort, executionRoot, packetArchive }) => {
-    supplier.binding = 'abi-contract';
+  test(`current ${kind} import rejects root/configuration/member/source/run substitution`, async () => {
+    for (const mutate of [
+      ({ supplier }) => {
+        supplier.origin.producer.root = '//runtime:another_shipping';
+      },
+      ({ supplier }) => {
+        supplier.origin.producer.configuration = '8'.repeat(64);
+      },
+      ({ supplier }) => {
+        supplier.origin.producer.invocationId = 'another-invocation';
+      },
+      ({ supplier }) => {
+        supplier.origin.producer.output = 'bazel-out/producer/bin/runtime/other.tar.gz';
+      },
+      ({ supplier }) => {
+        supplier.files[0].member = 'modules/other.so';
+      },
+      ({ build }) => {
+        build.evidence.source.commit = 'c'.repeat(40);
+      },
+      ({ build }) => {
+        build.origin.github = { ...build.origin.github, runAttempt: 2 };
+      },
+    ])
+      await importedFixture(async (context) => {
+        mutate(context);
+        await expect(context.project()).rejects.toThrow(
+          /mismatch|exact original regular|original public final/,
+        );
+      }, wholeArchive);
+  });
+
+  test(`imported current ${kind} transport and consumed File byte substitutions reject`, async () => {
+    await importedFixture(async ({ project, packetArchive }) => {
+      writeFileSync(packetArchive, 'substituted final archive');
+      await expect(project()).rejects.toThrow(/physical archive/);
+    }, wholeArchive);
+    await importedFixture(async ({ project, cohort, executionRoot }) => {
+      writeFileSync(path.join(executionRoot, heldFile), 'substituted consumer input');
+      cohort.inputs.find((input) => input.path === heldFile).members = captureNativeInputMembers(
+        executionRoot,
+        heldFile,
+      ).members;
+      await expect(project()).rejects.toThrow(
+        wholeArchive ? /original current outer archive bytes/ : /original current member bytes/,
+      );
+    }, wholeArchive);
+  });
+}
+
+for (const binding of ['abi-contract', 'compiled-input'] as const)
+  test(`whole imported current ${binding} archive retains original provenance and adoption semantics`, async () => {
+    await importedFixture(async ({ project, supplier }) => {
+      supplier.binding = binding;
+      const result = await project();
+      expect(result.unknowns).toEqual([]);
+      expect([...result.buildBound!.get(consumer)!]).toEqual(
+        binding === 'compiled-input' ? [product] : [],
+      );
+      expect(
+        result.suppliers.find(({ origin }) => origin.kind === 'current-source' && origin.producer)!
+          .origin,
+      ).toEqual(supplier.origin);
+    }, true);
+  });
+
+test('an extracted current member cannot stand in for the whole original archive', async () => {
+  await importedFixture(async ({ project, supplier }) => {
     delete supplier.files[0].member;
-    writeFileSync(path.join(executionRoot, heldFile), readFileSync(packetArchive));
-    const capture = cohort.inputs.find(({ path: name }) => name === heldFile)!;
-    capture.members = captureNativeInputMembers(executionRoot, heldFile).members;
-    const result = await project();
-    expect(result.unknowns).toEqual([]);
-    expect([...result.buildBound!.get(consumer)!]).toEqual([]);
-    expect(
-      result.suppliers.find(({ origin }) => origin.kind === 'current-source' && origin.producer)!
-        .origin,
-    ).toEqual(supplier.origin);
-    writeFileSync(path.join(executionRoot, heldFile), 'substituted outer archive');
-    capture.members = captureNativeInputMembers(executionRoot, heldFile).members;
     await expect(project()).rejects.toThrow(/original current outer archive bytes/);
   });
 });
 
-test('compiled imported current File still requires its exact archive member', async () => {
-  await importedFixture(async ({ project, supplier }) => {
-    delete supplier.files[0].member;
-    await expect(project()).rejects.toThrow(/exact typed fields/);
-  });
+test('a whole compiled current archive must reach its own consumer action', async () => {
+  await importedFixture(async ({ project, cohort }) => {
+    cohort.aquery.depSetOfFiles[2].directArtifactIds.shift();
+    await expect(project()).rejects.toThrow(/supplier File is not consumed/);
+  }, true);
 });
 
 async function importedAppleFixture(run) {
@@ -1178,13 +1197,19 @@ async function importedTreeFixture(run) {
   });
 }
 
-test('whole imported Tree archive binds the original canonical regular leaf', async () => {
-  await importedTreeFixture(async ({ project }) => {
-    const result = await project();
-    expect(result.unknowns).toEqual([]);
-    expect([...result.buildBound!.get(consumer)!]).toEqual([]);
+for (const binding of ['abi-contract', 'compiled-input'] as const)
+  test(`whole imported Tree ${binding} archive binds the original canonical regular leaf`, async () => {
+    await importedTreeFixture(async ({ project, supplier }) => {
+      supplier.binding = binding;
+      expect(supplier.origin.producer.member).toBe('liboliphaunt-0.3.3-android-arm64-v8a.tar.gz');
+      expect(supplier.files).toEqual([{ path: heldFile }]);
+      const result = await project();
+      expect(result.unknowns).toEqual([]);
+      expect([...result.buildBound!.get(consumer)!]).toEqual(
+        binding === 'compiled-input' ? [product] : [],
+      );
+    });
   });
-});
 
 test('imported Tree archive rejects root, member, canonical identity and byte substitutions', async () => {
   for (const mutate of [
@@ -1208,40 +1233,60 @@ test('imported Tree archive rejects root, member, canonical identity and byte su
     },
   ])
     await importedTreeFixture(async (context) => {
+      context.supplier.binding = 'compiled-input';
       mutate(context);
       await expect(context.project()).rejects.toThrow();
     });
 });
 
-test('whole completed ABI archive binds exact outer bytes without compiled adoption', async () => {
-  await fixture(async ({ project, roots, cohort, input, executionRoot }) => {
-    const supplier = roots[2].package.supplierInputs[0];
-    supplier.binding = 'abi-contract';
-    delete supplier.files[0].member;
-    writeFileSync(
-      path.join(executionRoot, heldFile),
-      readFileSync(input.completed[0].files[0].file),
+for (const binding of ['abi-contract', 'compiled-input'] as const)
+  test(`whole completed ${binding} archive binds authenticated outer bytes and stays held`, async () => {
+    await fixture(
+      async ({ project, roots, cohort, input, executionRoot, authenticateCompleted }) => {
+        const supplier = roots[2].package.supplierInputs[0];
+        supplier.binding = binding;
+        delete supplier.files[0].member;
+        writeFileSync(
+          path.join(executionRoot, heldFile),
+          readFileSync(input.completed[0].files[0].file),
+        );
+        cohort.inputs.find((row) => row.path === heldFile).members = captureNativeInputMembers(
+          executionRoot,
+          heldFile,
+        ).members;
+        const result = await project();
+        expect(result.unknowns).toEqual([]);
+        expect([...result.buildBound!.get(consumer)!]).toEqual([]);
+        expect(
+          result.suppliers.find(({ origin }) => origin.kind === 'completed-publication')!.origin,
+        ).toEqual(supplier.origin);
+        await expect(
+          projectNativeBuildBoundSuppliers(input, {
+            authenticateCompleted: async (request) => {
+              const origin = await authenticateCompleted(request);
+              for (const archive of origin.archives) {
+                delete (archive as any).size;
+                delete (archive as any).sha256;
+              }
+              return origin;
+            },
+          }),
+        ).rejects.toThrow(/authenticated outer bytes/);
+        writeFileSync(path.join(executionRoot, heldFile), 'different archive bytes');
+        cohort.inputs.find((row) => row.path === heldFile).members = captureNativeInputMembers(
+          executionRoot,
+          heldFile,
+        ).members;
+        await expect(project()).rejects.toThrow(/published outer archive bytes/);
+      },
+      'held',
     );
-    cohort.inputs.find((row) => row.path === heldFile).members = captureNativeInputMembers(
-      executionRoot,
-      heldFile,
-    ).members;
-    const result = await project();
-    expect(result.unknowns).toEqual([]);
-    expect([...result.buildBound!.get(consumer)!]).toEqual([]);
-    writeFileSync(path.join(executionRoot, heldFile), 'different archive bytes');
-    cohort.inputs.find((row) => row.path === heldFile).members = captureNativeInputMembers(
-      executionRoot,
-      heldFile,
-    ).members;
-    await expect(project()).rejects.toThrow(/published outer archive bytes/);
-  }, 'held');
-});
+  });
 
-test('compiled held File cannot omit its exact archive member', async () => {
+test('an extracted held member cannot stand in for the whole published archive', async () => {
   await fixture(async ({ project, roots }) => {
     delete roots[2].package.supplierInputs[0].files[0].member;
-    await expect(project()).rejects.toThrow(/exact typed fields/);
+    await expect(project()).rejects.toThrow(/published outer archive bytes/);
   }, 'held');
 });
 

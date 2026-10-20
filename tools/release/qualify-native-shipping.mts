@@ -19,7 +19,10 @@ import {
 } from '../ci/configured-scope.mts';
 import { completedCiRequestRoots } from '../ci/run-configured-request.mts';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
-import { canonicalShippingLabel } from './bazel-shipping-inputs.mts';
+import {
+  canonicalShippingLabel,
+  validateNativeShippingSuppliers,
+} from './bazel-shipping-inputs.mts';
 import {
   NATIVE_AQUERY_FLAGS,
   type NativeBuildEvidence,
@@ -399,11 +402,16 @@ export async function qualifyNativeShipping(
         ...configuration,
         `--universe_scope=${owner}`,
         '--output=starlark',
-        '--starlark:expr=json.encode({"roots": [str(value.label) for value in providers(target)["//build_defs/release:shipping.bzl%ShippingExportInfo"].packages], "qualification": [str(value.label) for value in providers(target)["//build_defs/release:shipping.bzl%ShippingExportInfo"].qualification], "sliceGroups": [name for name in dir(providers(target)["OutputGroupInfo"]) if name.startswith("apple_slice_")]})',
+        '--starlark:expr=json.encode({"roots": [str(value.label) for value in providers(target)["//build_defs/release:shipping.bzl%ShippingExportInfo"].packages], "qualification": [str(value.label) for value in providers(target)["//build_defs/release:shipping.bzl%ShippingExportInfo"].qualification], "sliceGroups": [name for name in dir(providers(target)["OutputGroupInfo"]) if name.startswith("apple_slice_")], "suppliers": [providers(value)["//build_defs/release:shipping.bzl%ShippingInfo"].supplier_inputs for value in providers(target)["//build_defs/release:shipping.bzl%ShippingExportInfo"].packages if providers(value)["//build_defs/release:shipping.bzl%ShippingInfo"].supplier_inputs != None]})',
       ],
       file('selected-owner.json'),
     );
-    let selected: { roots: unknown; qualification: unknown; sliceGroups: unknown };
+    let selected: {
+      roots: unknown;
+      qualification: unknown;
+      sliceGroups: unknown;
+      suppliers: unknown;
+    };
     try {
       selected = json(file('selected-owner.json')) as typeof selected;
     } catch (cause) {
@@ -424,9 +432,12 @@ export async function qualifyNativeShipping(
       !selected ||
       typeof selected !== 'object' ||
       Array.isArray(selected) ||
-      Object.keys(selected).sort().join(',') !== 'qualification,roots,sliceGroups'
+      Object.keys(selected).sort().join(',') !== 'qualification,roots,sliceGroups,suppliers' ||
+      !Array.isArray(selected.suppliers)
     )
       throw new Error('shipping qualification requires its configured export provider');
+    // Carriers may share suppliers, so duplicate checks stay local to each package.
+    for (const suppliers of selected.suppliers) validateNativeShippingSuppliers(suppliers);
     roots = argv(selected.roots, 'source-owned shipping roots').map(label);
     sliceGroups = argv(selected.sliceGroups, 'Apple slice output groups').sort();
     if (

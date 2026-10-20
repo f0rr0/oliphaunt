@@ -157,8 +157,6 @@ def _file_supplier_impl(ctx):
         declaration = {"path": file.path}
         if member:
             declaration["member"] = member
-        elif ctx.attr.binding != "abi-contract":
-            fail("compiled imported supplier requires its exact archive member")
         declarations.append(declaration)
     if not files:
         fail("supplier requires nonempty actual File inputs")
@@ -182,7 +180,7 @@ file_shipping_supplier = rule(
     implementation = _file_supplier_impl,
     attrs = {
         "inputs": attr.label_keyed_string_dict(allow_files = True, mandatory = True,
-            doc = "Actual single File targets mapped to original archive member paths; empty member means an ABI contract for the whole published archive."),
+            doc = "Actual single File targets mapped to original archive member paths; empty member means the whole authenticated archive."),
         "owner": attr.label(providers = [ReleaseIdentityInfo], mandatory = True),
         "configuration": attr.string(mandatory = True),
         "binding": attr.string(values = ["compiled-input", "abi-contract"], mandatory = True),

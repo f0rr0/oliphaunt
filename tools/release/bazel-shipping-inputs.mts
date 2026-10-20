@@ -18,10 +18,12 @@ export type NativeShippingSupplier = {
           root: string;
           configuration: string;
           output: string;
+          /** Original archive's leaf path when its producer output is a Tree. */
           member?: string;
         };
       }
     | { kind: 'completed-publication'; publication: CompletedPublication; artifact: string };
+  /** Imported Files bind the authenticated outer File, or one of its archive members. */
   files: { path: string; member?: string }[];
 };
 
@@ -213,25 +215,14 @@ export function validateNativeShippingSuppliers(value: unknown): NativeShippingS
     if (!files.length) throw new Error('native supplier requires actual consumed Files');
     const names = new Set<string>();
     for (const rawFile of files) {
-      const wholeArchive =
-        supplier.binding === 'abi-contract' &&
+      const archiveMember =
         (origin.kind === 'completed-publication' || Object.hasOwn(origin, 'producer')) &&
-        !Object.hasOwn(row(rawFile), 'member');
-      const file = exactFields(
-        rawFile,
-        !wholeArchive &&
-          (origin.kind === 'completed-publication' || Object.hasOwn(origin, 'producer'))
-          ? ['path', 'member']
-          : ['path'],
-      );
+        Object.hasOwn(row(rawFile), 'member');
+      const file = exactFields(rawFile, archiveMember ? ['path', 'member'] : ['path']);
       const path = relative(file.path);
       if (names.has(path)) throw new Error('duplicate native supplier File');
       names.add(path);
-      if (
-        !wholeArchive &&
-        (origin.kind === 'completed-publication' || Object.hasOwn(origin, 'producer'))
-      )
-        relative(file.member);
+      if (archiveMember) relative(file.member);
     }
     return structuredClone(supplier) as NativeShippingSupplier;
   });

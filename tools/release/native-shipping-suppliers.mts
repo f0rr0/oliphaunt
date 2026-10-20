@@ -399,7 +399,7 @@ export async function projectNativeBuildBoundSuppliers(
     equal(fileIdentity(archives[0]), before, 'original current supplier archive after read');
     transport.assertUnchanged?.();
     for (const { declaration, member } of files) {
-      if (supplier.binding === 'abi-contract' && declaration.member === undefined) {
+      if (declaration.member === undefined) {
         equal(
           { sha256: member.sha256, size: member.size },
           { sha256: output.sha256, size: output.size },
@@ -487,7 +487,7 @@ export async function projectNativeBuildBoundSuppliers(
     if (archives.length !== 1)
       throw new Error('completed supplier requires its exact configured public archive');
     for (const { declaration, member } of files) {
-      if (supplier.binding === 'abi-contract' && declaration.member === undefined) {
+      if (declaration.member === undefined) {
         const archive = archives[0];
         const identity =
           archive.size !== undefined && archive.sha256 !== undefined
@@ -496,11 +496,11 @@ export async function projectNativeBuildBoundSuppliers(
               ? { size: archive.artifacts[0].size, sha256: archive.artifacts[0].sha256 }
               : undefined;
         if (!identity)
-          throw new Error('whole archive ABI supplier requires its authenticated outer bytes');
+          throw new Error('whole archive supplier requires its authenticated outer bytes');
         equal(
           { size: member.size, sha256: member.sha256 },
           identity,
-          'captured ABI supplier/published outer archive bytes',
+          'captured supplier/published outer archive bytes',
         );
         continue;
       }

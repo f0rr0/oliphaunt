@@ -475,7 +475,7 @@ else {
   } else if(expression.startsWith('set(')) {
     if(state.mode==='incompatible-policy') process.exit(1);
     console.log(JSON.stringify(state.qualification));
-  } else console.log(JSON.stringify({roots:['@@//fixture:shipping'],qualification:(state.qualification.results??[]).map((result:any)=>result.target.rule.name),sliceGroups:state.sliceGroups??[]}));
+  } else console.log(JSON.stringify({roots:['@@//fixture:shipping'],qualification:(state.qualification.results??[]).map((result:any)=>result.target.rule.name),sliceGroups:state.sliceGroups??[],suppliers:state.root.package.supplierInputs==null?[]:[state.root.package.supplierInputs]}));
 }
 `,
   );
@@ -1083,6 +1083,62 @@ test('SDK phase discovery rejects duplicate or noncanonical output groups before
         'Apple slice output groups must be unique SDK identifiers',
       );
       expect(f.calls().map((call) => call[0])).toEqual(['cquery']);
+    } finally {
+      f.cleanup();
+    }
+  }
+});
+
+test('configured supplier declarations are checked before constructing shipping products', async () => {
+  const supplier = {
+    product: 'liboliphaunt-wasix',
+    version: '0.3.3',
+    configuration: 'portable',
+    binding: 'compiled-input',
+    origin: {
+      kind: 'current-source',
+      producer: {
+        evidenceDigest: `sha256:${'7'.repeat(64)}`,
+        invocationId: 'original-wasix-invocation',
+        root: '//src/wasix/runtime/crates/assets:shipping_package',
+        configuration: '9'.repeat(64),
+        output: 'bazel-out/original/bin/liboliphaunt-wasix-portable-0.3.3.crate',
+      },
+    },
+    files: [{ path: 'external/current/liboliphaunt-wasix-portable-0.3.3.crate' }],
+  };
+  for (const malformed of [false, true]) {
+    const f = fixture();
+    try {
+      f.request.shipping = { export: '//fixture:shipping_export' };
+      const declared = [{ ...supplier, binding: malformed ? 'untyped' : supplier.binding }];
+      f.update((state) => {
+        state.root.package.supplierInputs = declared;
+        state.sliceGroups = malformed ? ['apple_slice_ios-arm64'] : [];
+      });
+      if (malformed) {
+        await expect(qualifyNativeShipping(f.request, f.workspace)).rejects.toThrow(
+          'native supplier has invalid binding',
+        );
+        expect(f.calls().map((call) => call[0])).toEqual(['cquery']);
+      } else {
+        f.request.ci = {
+          id: 'portable/linux/napi',
+          job: 'portable/linux',
+          mode: 'source',
+          requires: [],
+        };
+        const output = await qualifyNativeShipping(f.request, f.workspace);
+        expect(JSON.parse(readFileSync(output, 'utf8')).mode).toBe('source');
+        expect(f.calls().map((call) => call[0])).toEqual(['cquery', 'test']);
+      }
+      const discovery = f.calls()[0].find((arg) => arg.startsWith('--starlark:expr='))!;
+      expect(discovery).toContain('//build_defs/release:shipping.bzl%ShippingInfo');
+      expect(discovery).toContain('.supplier_inputs');
+      expect(
+        JSON.parse(readFileSync(path.join(f.outputDirectory, 'selected-owner.json'), 'utf8'))
+          .suppliers,
+      ).toEqual([declared]);
     } finally {
       f.cleanup();
     }
