@@ -88,27 +88,34 @@ contrib_extensions=(
   lo
   ltree
   pageinspect
+  passwordcheck
   pg_buffercache
   pg_freespacemap
-  pgcrypto
-  uuid-ossp
+  pg_logicalinspect
+  pg_overexplain
+  pg_stat_statements
   pg_surgery
   pg_trgm
   pg_visibility
   pg_walinspect
+  pgcrypto
   seg
+  spi
   tablefunc
   tcn
   tsm_system_rows
   tsm_system_time
   unaccent
+  uuid-ossp
 )
 
 external_extensions=(
   pg_ivm
   pg_hashids
   pg_uuidv7
+  pg_partman
   pgtap
+  pgmq
   pgvector
   pg_textsearch
   postgis
@@ -116,6 +123,7 @@ external_extensions=(
 
 required_extension_controls=(
   amcheck
+  autoinc
   bloom
   btree_gin
   btree_gist
@@ -127,24 +135,31 @@ required_extension_controls=(
   file_fdw
   fuzzystrmatch
   hstore
+  insert_username
   intarray
   isn
   lo
   ltree
+  moddatetime
   pageinspect
   pg_buffercache
   pg_freespacemap
   pg_hashids
   pg_ivm
-  pgcrypto
-  postgis
+  pg_logicalinspect
+  pg_stat_statements
   pg_surgery
   pg_textsearch
   pg_trgm
   pg_uuidv7
   pg_visibility
   pg_walinspect
+  pgcrypto
+  pg_partman
   pgtap
+  pgmq
+  postgis
+  refint
   seg
   tablefunc
   tcn
@@ -159,6 +174,7 @@ required_extension_modules=(
   _int
   amcheck
   auto_explain
+  autoinc
   bloom
   btree_gin
   btree_gist
@@ -170,22 +186,29 @@ required_extension_modules=(
   file_fdw
   fuzzystrmatch
   hstore
+  insert_username
   isn
   lo
   ltree
+  moddatetime
   pageinspect
+  passwordcheck
   pg_buffercache
   pg_freespacemap
   pg_hashids
   pg_ivm
-  pgcrypto
-  postgis-3
+  pg_logicalinspect
+  pg_overexplain
+  pg_stat_statements
   pg_surgery
   pg_textsearch
   pg_trgm
   pg_uuidv7
   pg_visibility
   pg_walinspect
+  pgcrypto
+  postgis-3
+  refint
   seg
   tablefunc
   tcn
@@ -211,7 +234,7 @@ native_extensions_include_postgis() {
 
 native_extension_has_control_artifacts() {
   case "$1" in
-    auto_explain) return 1 ;;
+    auto_explain|passwordcheck|pg_overexplain) return 1 ;;
     *) return 0 ;;
   esac
 }
@@ -1921,6 +1944,9 @@ pgxs_extension_link_args() {
   local link_flags="$3"
   local be_dllibs="$link_flags"
   case "$extension" in
+    pg_partman)
+      printf '%s\n' "NO_BGW=1" "SCRIPTS=" "DOCS="
+      ;;
     pg_textsearch|pgvector|vector)
       if [ -n "$be_dllibs" ]; then
         be_dllibs="$be_dllibs -lm"
@@ -1981,12 +2007,17 @@ build_pgxs_extension() {
   make -C "$build_checkout" \
     PG_CONFIG="$install_dir/bin/pg_config" \
     clean
-  make -C "$build_checkout" \
-    PG_CONFIG="$install_dir/bin/pg_config" \
-    CC="$CC" \
-    OPTFLAGS="" \
-    "${normal_link_args[@]}" \
-    install
+  # PGXS freezes DATA before building; generated SQL must exist before the
+  # separate install invocation (PGMQ derives its default-version script).
+  local target
+  for target in all install; do
+    make -C "$build_checkout" \
+      PG_CONFIG="$install_dir/bin/pg_config" \
+      CC="$CC" \
+      OPTFLAGS="" \
+      "${normal_link_args[@]}" \
+      "$target"
+  done
   make -C "$build_checkout" \
     PG_CONFIG="$install_dir/bin/pg_config" \
     clean

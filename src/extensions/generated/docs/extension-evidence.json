@@ -73,6 +73,40 @@
       "evidence-required": [
         "wasix-full-lifecycle-v1"
       ],
+      "extension": "autoinc",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "autoinc"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
       "extension": "bloom",
       "latest-accepted-evidence": [],
       "missing-current-evidence": [
@@ -447,6 +481,40 @@
       "evidence-required": [
         "wasix-full-lifecycle-v1"
       ],
+      "extension": "insert_username",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "insert_username"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
       "extension": "intarray",
       "latest-accepted-evidence": [],
       "missing-current-evidence": [
@@ -583,6 +651,40 @@
       "evidence-required": [
         "wasix-full-lifecycle-v1"
       ],
+      "extension": "moddatetime",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "moddatetime"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
       "extension": "pageinspect",
       "latest-accepted-evidence": [],
       "missing-current-evidence": [
@@ -611,6 +713,40 @@
         "materialization"
       ],
       "sql-name": "pageinspect"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
+      "extension": "passwordcheck",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "passwordcheck"
     },
     {
       "artifact-family": "wasix-runtime",
@@ -747,6 +883,142 @@
         "materialization"
       ],
       "sql-name": "pg_ivm"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
+      "extension": "pg_logicalinspect",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "pg_logicalinspect"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
+      "extension": "pg_overexplain",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "pg_overexplain"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
+      "extension": "pg_partman",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "pg_partman"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
+      "extension": "pg_stat_statements",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "pg_stat_statements"
     },
     {
       "artifact-family": "wasix-runtime",
@@ -991,6 +1263,40 @@
       "evidence-required": [
         "wasix-full-lifecycle-v1"
       ],
+      "extension": "pgmq",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "pgmq"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
       "extension": "pgtap",
       "latest-accepted-evidence": [],
       "missing-current-evidence": [
@@ -1053,6 +1359,40 @@
         "materialization"
       ],
       "sql-name": "postgis"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "wasix-full-lifecycle-v1"
+      ],
+      "extension": "refint",
+      "latest-accepted-evidence": [],
+      "missing-current-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "wasix-full-lifecycle-v1",
+          "platform-target": "portable",
+          "runtime-modes": [
+            "direct",
+            "server",
+            "restart",
+            "backup-restore",
+            "materialization"
+          ]
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "backup-restore",
+        "materialization"
+      ],
+      "sql-name": "refint"
     },
     {
       "artifact-family": "wasix-runtime",
@@ -1346,7 +1686,7 @@
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:9bd5bb09681d1ca3f0057fc0e91cddd2b1516d87940544ae17eb9ea4f1ddffa3",
+  "source-digest": "sha256:04e5ff53f5a967c2ab54efc0cafdfbd6d8b14db12e51e53bd4010fd79b177132",
   "source-digest-inputs": [
     "src/third-party/postgres/source.toml",
     "src/extensions/catalog/extensions.source.json",
@@ -1358,9 +1698,11 @@
     "src/database-resources/icu/source.toml",
     "src/extensions/external/pg_hashids/source.toml",
     "src/extensions/external/pg_ivm/source.toml",
+    "src/extensions/external/pg_partman/source.toml",
     "src/extensions/external/pg_textsearch/source.toml",
     "src/extensions/external/pg_textsearch/tests/upgrade/source.toml",
     "src/extensions/external/pg_uuidv7/source.toml",
+    "src/extensions/external/pgmq/source.toml",
     "src/extensions/external/pgtap/source.toml",
     "src/extensions/external/postgis/dependencies/geos/source.toml",
     "src/extensions/external/postgis/dependencies/json-c/source.toml",
@@ -1377,11 +1719,21 @@
     "src/extensions/external/pg_hashids/upstream-license-data.json",
     "src/extensions/external/pg_ivm/targets/native-static-registry.toml",
     "src/extensions/external/pg_ivm/upstream-license-data.json",
+    "src/extensions/external/pg_partman/recipe.toml",
+    "src/extensions/external/pg_partman/targets/native-static-registry.toml",
+    "src/extensions/external/pg_partman/targets/native.toml",
+    "src/extensions/external/pg_partman/targets/wasix.toml",
+    "src/extensions/external/pg_partman/upstream-license-data.json",
     "src/extensions/external/pg_textsearch/recipe.toml",
     "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
     "src/extensions/external/pg_textsearch/tests/qualify.sh",
     "src/extensions/external/pg_textsearch/upstream-license-data.json",
     "src/extensions/external/pg_uuidv7/upstream-license-data.json",
+    "src/extensions/external/pgmq/recipe.toml",
+    "src/extensions/external/pgmq/targets/native-static-registry.toml",
+    "src/extensions/external/pgmq/targets/native.toml",
+    "src/extensions/external/pgmq/targets/wasix.toml",
+    "src/extensions/external/pgmq/upstream-license-data.json",
     "src/extensions/external/pgtap/recipe.toml",
     "src/extensions/external/pgtap/targets/native-static-registry.toml",
     "src/extensions/external/pgtap/targets/native.toml",
@@ -1406,6 +1758,7 @@
     "src/test-fixtures/extensions/manifest.json",
     "src/test-fixtures/extensions/amcheck.sql",
     "src/test-fixtures/extensions/auto_explain.sql",
+    "src/test-fixtures/extensions/autoinc.sql",
     "src/test-fixtures/extensions/bloom.sql",
     "src/test-fixtures/extensions/btree_gin.sql",
     "src/test-fixtures/extensions/btree_gist.sql",
@@ -1417,15 +1770,22 @@
     "src/test-fixtures/extensions/file_fdw.sql",
     "src/test-fixtures/extensions/fuzzystrmatch.sql",
     "src/test-fixtures/extensions/hstore.sql",
+    "src/test-fixtures/extensions/insert_username.sql",
     "src/test-fixtures/extensions/intarray.sql",
     "src/test-fixtures/extensions/isn.sql",
     "src/test-fixtures/extensions/lo.sql",
     "src/test-fixtures/extensions/ltree.sql",
+    "src/test-fixtures/extensions/moddatetime.sql",
     "src/test-fixtures/extensions/pageinspect.sql",
+    "src/test-fixtures/extensions/passwordcheck.sql",
     "src/test-fixtures/extensions/pg_buffercache.sql",
     "src/test-fixtures/extensions/pg_freespacemap.sql",
     "src/test-fixtures/extensions/pg_hashids.sql",
     "src/test-fixtures/extensions/pg_ivm.sql",
+    "src/test-fixtures/extensions/pg_logicalinspect.sql",
+    "src/test-fixtures/extensions/pg_overexplain.sql",
+    "src/test-fixtures/extensions/pg_partman.sql",
+    "src/test-fixtures/extensions/pg_stat_statements.sql",
     "src/test-fixtures/extensions/pg_surgery.sql",
     "src/test-fixtures/extensions/pg_textsearch.sql",
     "src/test-fixtures/extensions/pg_trgm.sql",
@@ -1433,8 +1793,10 @@
     "src/test-fixtures/extensions/pg_visibility.sql",
     "src/test-fixtures/extensions/pg_walinspect.sql",
     "src/test-fixtures/extensions/pgcrypto.sql",
+    "src/test-fixtures/extensions/pgmq.sql",
     "src/test-fixtures/extensions/pgtap.sql",
     "src/test-fixtures/extensions/postgis.sql",
+    "src/test-fixtures/extensions/refint.sql",
     "src/test-fixtures/extensions/seg.sql",
     "src/test-fixtures/extensions/tablefunc.sql",
     "src/test-fixtures/extensions/tcn.sql",

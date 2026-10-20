@@ -16,6 +16,8 @@ enum ExtensionId {
     Amcheck,
     /// PostgreSQL `auto_explain`.
     AutoExplain,
+    /// PostgreSQL `autoinc`.
+    Autoinc,
     /// PostgreSQL `bloom`.
     Bloom,
     /// PostgreSQL `btree_gin`.
@@ -38,6 +40,8 @@ enum ExtensionId {
     Fuzzystrmatch,
     /// PostgreSQL `hstore`.
     Hstore,
+    /// PostgreSQL `insert_username`.
+    InsertUsername,
     /// PostgreSQL `intarray`.
     Intarray,
     /// PostgreSQL `isn`.
@@ -46,8 +50,12 @@ enum ExtensionId {
     Lo,
     /// PostgreSQL `ltree`.
     Ltree,
+    /// PostgreSQL `moddatetime`.
+    Moddatetime,
     /// PostgreSQL `pageinspect`.
     Pageinspect,
+    /// PostgreSQL `passwordcheck`.
+    Passwordcheck,
     /// PostgreSQL `pg_buffercache`.
     PgBuffercache,
     /// PostgreSQL `pg_freespacemap`.
@@ -56,6 +64,14 @@ enum ExtensionId {
     PgHashids,
     /// PostgreSQL `pg_ivm`.
     PgIvm,
+    /// PostgreSQL `pg_logicalinspect`.
+    PgLogicalinspect,
+    /// PostgreSQL `pg_overexplain`.
+    PgOverexplain,
+    /// PostgreSQL `pg_partman`.
+    PgPartman,
+    /// PostgreSQL `pg_stat_statements`.
+    PgStatStatements,
     /// PostgreSQL `pg_surgery`.
     PgSurgery,
     /// PostgreSQL `pg_textsearch`.
@@ -70,10 +86,14 @@ enum ExtensionId {
     PgWalinspect,
     /// PostgreSQL `pgcrypto`.
     Pgcrypto,
+    /// PostgreSQL `pgmq`.
+    Pgmq,
     /// PostgreSQL `pgtap`.
     Pgtap,
     /// PostgreSQL `postgis`.
     Postgis,
+    /// PostgreSQL `refint`.
+    Refint,
     /// PostgreSQL `seg`.
     Seg,
     /// PostgreSQL `tablefunc`.
@@ -101,6 +121,11 @@ impl Extension {
     /// Select the `auto_explain` artifact.
     pub const AUTO_EXPLAIN: Self = Self {
         id: ExtensionId::AutoExplain,
+        package: None,
+    };
+    /// Select the `autoinc` artifact.
+    pub const AUTOINC: Self = Self {
+        id: ExtensionId::Autoinc,
         package: None,
     };
     /// Select the `bloom` artifact.
@@ -158,6 +183,11 @@ impl Extension {
         id: ExtensionId::Hstore,
         package: None,
     };
+    /// Select the `insert_username` artifact.
+    pub const INSERT_USERNAME: Self = Self {
+        id: ExtensionId::InsertUsername,
+        package: None,
+    };
     /// Select the `intarray` artifact.
     pub const INTARRAY: Self = Self {
         id: ExtensionId::Intarray,
@@ -178,9 +208,19 @@ impl Extension {
         id: ExtensionId::Ltree,
         package: None,
     };
+    /// Select the `moddatetime` artifact.
+    pub const MODDATETIME: Self = Self {
+        id: ExtensionId::Moddatetime,
+        package: None,
+    };
     /// Select the `pageinspect` artifact.
     pub const PAGEINSPECT: Self = Self {
         id: ExtensionId::Pageinspect,
+        package: None,
+    };
+    /// Select the `passwordcheck` artifact.
+    pub const PASSWORDCHECK: Self = Self {
+        id: ExtensionId::Passwordcheck,
         package: None,
     };
     /// Select the `pg_buffercache` artifact.
@@ -201,6 +241,26 @@ impl Extension {
     /// Select the `pg_ivm` artifact.
     pub const PG_IVM: Self = Self {
         id: ExtensionId::PgIvm,
+        package: None,
+    };
+    /// Select the `pg_logicalinspect` artifact.
+    pub const PG_LOGICALINSPECT: Self = Self {
+        id: ExtensionId::PgLogicalinspect,
+        package: None,
+    };
+    /// Select the `pg_overexplain` artifact.
+    pub const PG_OVEREXPLAIN: Self = Self {
+        id: ExtensionId::PgOverexplain,
+        package: None,
+    };
+    /// Select the `pg_partman` artifact.
+    pub const PG_PARTMAN: Self = Self {
+        id: ExtensionId::PgPartman,
+        package: None,
+    };
+    /// Select the `pg_stat_statements` artifact.
+    pub const PG_STAT_STATEMENTS: Self = Self {
+        id: ExtensionId::PgStatStatements,
         package: None,
     };
     /// Select the `pg_surgery` artifact.
@@ -238,6 +298,11 @@ impl Extension {
         id: ExtensionId::Pgcrypto,
         package: None,
     };
+    /// Select the `pgmq` artifact.
+    pub const PGMQ: Self = Self {
+        id: ExtensionId::Pgmq,
+        package: None,
+    };
     /// Select the `pgtap` artifact.
     pub const PGTAP: Self = Self {
         id: ExtensionId::Pgtap,
@@ -246,6 +311,11 @@ impl Extension {
     /// Select the `postgis` artifact.
     pub const POSTGIS: Self = Self {
         id: ExtensionId::Postgis,
+        package: None,
+    };
+    /// Select the `refint` artifact.
+    pub const REFINT: Self = Self {
+        id: ExtensionId::Refint,
         package: None,
     };
     /// Select the `seg` artifact.
@@ -293,6 +363,7 @@ impl Extension {
     pub const ALL: &'static [Self] = &[
         Extension::AMCHECK,
         Extension::AUTO_EXPLAIN,
+        Extension::AUTOINC,
         Extension::BLOOM,
         Extension::BTREE_GIN,
         Extension::BTREE_GIST,
@@ -304,15 +375,22 @@ impl Extension {
         Extension::FILE_FDW,
         Extension::FUZZYSTRMATCH,
         Extension::HSTORE,
+        Extension::INSERT_USERNAME,
         Extension::INTARRAY,
         Extension::ISN,
         Extension::LO,
         Extension::LTREE,
+        Extension::MODDATETIME,
         Extension::PAGEINSPECT,
+        Extension::PASSWORDCHECK,
         Extension::PG_BUFFERCACHE,
         Extension::PG_FREESPACEMAP,
         Extension::PG_HASHIDS,
         Extension::PG_IVM,
+        Extension::PG_LOGICALINSPECT,
+        Extension::PG_OVEREXPLAIN,
+        Extension::PG_PARTMAN,
+        Extension::PG_STAT_STATEMENTS,
         Extension::PG_SURGERY,
         Extension::PG_TEXTSEARCH,
         Extension::PG_TRGM,
@@ -320,8 +398,10 @@ impl Extension {
         Extension::PG_VISIBILITY,
         Extension::PG_WALINSPECT,
         Extension::PGCRYPTO,
+        Extension::PGMQ,
         Extension::PGTAP,
         Extension::POSTGIS,
+        Extension::REFINT,
         Extension::SEG,
         Extension::TABLEFUNC,
         Extension::TCN,
@@ -338,6 +418,7 @@ pub(super) const fn sql_name(extension: Extension) -> &'static str {
     match extension.id {
         ExtensionId::Amcheck => "amcheck",
         ExtensionId::AutoExplain => "auto_explain",
+        ExtensionId::Autoinc => "autoinc",
         ExtensionId::Bloom => "bloom",
         ExtensionId::BtreeGin => "btree_gin",
         ExtensionId::BtreeGist => "btree_gist",
@@ -349,15 +430,22 @@ pub(super) const fn sql_name(extension: Extension) -> &'static str {
         ExtensionId::FileFdw => "file_fdw",
         ExtensionId::Fuzzystrmatch => "fuzzystrmatch",
         ExtensionId::Hstore => "hstore",
+        ExtensionId::InsertUsername => "insert_username",
         ExtensionId::Intarray => "intarray",
         ExtensionId::Isn => "isn",
         ExtensionId::Lo => "lo",
         ExtensionId::Ltree => "ltree",
+        ExtensionId::Moddatetime => "moddatetime",
         ExtensionId::Pageinspect => "pageinspect",
+        ExtensionId::Passwordcheck => "passwordcheck",
         ExtensionId::PgBuffercache => "pg_buffercache",
         ExtensionId::PgFreespacemap => "pg_freespacemap",
         ExtensionId::PgHashids => "pg_hashids",
         ExtensionId::PgIvm => "pg_ivm",
+        ExtensionId::PgLogicalinspect => "pg_logicalinspect",
+        ExtensionId::PgOverexplain => "pg_overexplain",
+        ExtensionId::PgPartman => "pg_partman",
+        ExtensionId::PgStatStatements => "pg_stat_statements",
         ExtensionId::PgSurgery => "pg_surgery",
         ExtensionId::PgTextsearch => "pg_textsearch",
         ExtensionId::PgTrgm => "pg_trgm",
@@ -365,8 +453,10 @@ pub(super) const fn sql_name(extension: Extension) -> &'static str {
         ExtensionId::PgVisibility => "pg_visibility",
         ExtensionId::PgWalinspect => "pg_walinspect",
         ExtensionId::Pgcrypto => "pgcrypto",
+        ExtensionId::Pgmq => "pgmq",
         ExtensionId::Pgtap => "pgtap",
         ExtensionId::Postgis => "postgis",
+        ExtensionId::Refint => "refint",
         ExtensionId::Seg => "seg",
         ExtensionId::Tablefunc => "tablefunc",
         ExtensionId::Tcn => "tcn",
@@ -383,6 +473,7 @@ pub(super) const fn artifact_product(extension: Extension) -> &'static str {
     match extension.id {
         ExtensionId::Amcheck => "oliphaunt-extension-contrib-pg18",
         ExtensionId::AutoExplain => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Autoinc => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Bloom => "oliphaunt-extension-contrib-pg18",
         ExtensionId::BtreeGin => "oliphaunt-extension-contrib-pg18",
         ExtensionId::BtreeGist => "oliphaunt-extension-contrib-pg18",
@@ -394,15 +485,22 @@ pub(super) const fn artifact_product(extension: Extension) -> &'static str {
         ExtensionId::FileFdw => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Fuzzystrmatch => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Hstore => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::InsertUsername => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Intarray => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Isn => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Lo => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Ltree => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Moddatetime => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Pageinspect => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Passwordcheck => "oliphaunt-extension-contrib-pg18",
         ExtensionId::PgBuffercache => "oliphaunt-extension-contrib-pg18",
         ExtensionId::PgFreespacemap => "oliphaunt-extension-contrib-pg18",
         ExtensionId::PgHashids => "oliphaunt-extension-pg-hashids",
         ExtensionId::PgIvm => "oliphaunt-extension-pg-ivm",
+        ExtensionId::PgLogicalinspect => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::PgOverexplain => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::PgPartman => "oliphaunt-extension-pg-partman",
+        ExtensionId::PgStatStatements => "oliphaunt-extension-contrib-pg18",
         ExtensionId::PgSurgery => "oliphaunt-extension-contrib-pg18",
         ExtensionId::PgTextsearch => "oliphaunt-extension-pg-textsearch",
         ExtensionId::PgTrgm => "oliphaunt-extension-contrib-pg18",
@@ -410,8 +508,10 @@ pub(super) const fn artifact_product(extension: Extension) -> &'static str {
         ExtensionId::PgVisibility => "oliphaunt-extension-contrib-pg18",
         ExtensionId::PgWalinspect => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Pgcrypto => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Pgmq => "oliphaunt-extension-pgmq",
         ExtensionId::Pgtap => "oliphaunt-extension-pgtap",
         ExtensionId::Postgis => "oliphaunt-extension-postgis",
+        ExtensionId::Refint => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Seg => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Tablefunc => "oliphaunt-extension-contrib-pg18",
         ExtensionId::Tcn => "oliphaunt-extension-contrib-pg18",
@@ -428,6 +528,7 @@ pub(super) const fn native_module_stem(extension: Extension) -> Option<&'static 
     match extension.id {
         ExtensionId::Amcheck => Some("amcheck"),
         ExtensionId::AutoExplain => Some("auto_explain"),
+        ExtensionId::Autoinc => Some("autoinc"),
         ExtensionId::Bloom => Some("bloom"),
         ExtensionId::BtreeGin => Some("btree_gin"),
         ExtensionId::BtreeGist => Some("btree_gist"),
@@ -439,15 +540,22 @@ pub(super) const fn native_module_stem(extension: Extension) -> Option<&'static 
         ExtensionId::FileFdw => Some("file_fdw"),
         ExtensionId::Fuzzystrmatch => Some("fuzzystrmatch"),
         ExtensionId::Hstore => Some("hstore"),
+        ExtensionId::InsertUsername => Some("insert_username"),
         ExtensionId::Intarray => Some("_int"),
         ExtensionId::Isn => Some("isn"),
         ExtensionId::Lo => Some("lo"),
         ExtensionId::Ltree => Some("ltree"),
+        ExtensionId::Moddatetime => Some("moddatetime"),
         ExtensionId::Pageinspect => Some("pageinspect"),
+        ExtensionId::Passwordcheck => Some("passwordcheck"),
         ExtensionId::PgBuffercache => Some("pg_buffercache"),
         ExtensionId::PgFreespacemap => Some("pg_freespacemap"),
         ExtensionId::PgHashids => Some("pg_hashids"),
         ExtensionId::PgIvm => Some("pg_ivm"),
+        ExtensionId::PgLogicalinspect => Some("pg_logicalinspect"),
+        ExtensionId::PgOverexplain => Some("pg_overexplain"),
+        ExtensionId::PgPartman => None,
+        ExtensionId::PgStatStatements => Some("pg_stat_statements"),
         ExtensionId::PgSurgery => Some("pg_surgery"),
         ExtensionId::PgTextsearch => Some("pg_textsearch"),
         ExtensionId::PgTrgm => Some("pg_trgm"),
@@ -455,8 +563,10 @@ pub(super) const fn native_module_stem(extension: Extension) -> Option<&'static 
         ExtensionId::PgVisibility => Some("pg_visibility"),
         ExtensionId::PgWalinspect => Some("pg_walinspect"),
         ExtensionId::Pgcrypto => Some("pgcrypto"),
+        ExtensionId::Pgmq => None,
         ExtensionId::Pgtap => None,
         ExtensionId::Postgis => Some("postgis-3"),
+        ExtensionId::Refint => Some("refint"),
         ExtensionId::Seg => Some("seg"),
         ExtensionId::Tablefunc => Some("tablefunc"),
         ExtensionId::Tcn => Some("tcn"),
@@ -473,6 +583,7 @@ pub(super) const fn creates_extension(extension: Extension) -> bool {
     match extension.id {
         ExtensionId::Amcheck => true,
         ExtensionId::AutoExplain => false,
+        ExtensionId::Autoinc => true,
         ExtensionId::Bloom => true,
         ExtensionId::BtreeGin => true,
         ExtensionId::BtreeGist => true,
@@ -484,15 +595,22 @@ pub(super) const fn creates_extension(extension: Extension) -> bool {
         ExtensionId::FileFdw => true,
         ExtensionId::Fuzzystrmatch => true,
         ExtensionId::Hstore => true,
+        ExtensionId::InsertUsername => true,
         ExtensionId::Intarray => true,
         ExtensionId::Isn => true,
         ExtensionId::Lo => true,
         ExtensionId::Ltree => true,
+        ExtensionId::Moddatetime => true,
         ExtensionId::Pageinspect => true,
+        ExtensionId::Passwordcheck => false,
         ExtensionId::PgBuffercache => true,
         ExtensionId::PgFreespacemap => true,
         ExtensionId::PgHashids => true,
         ExtensionId::PgIvm => true,
+        ExtensionId::PgLogicalinspect => true,
+        ExtensionId::PgOverexplain => false,
+        ExtensionId::PgPartman => true,
+        ExtensionId::PgStatStatements => true,
         ExtensionId::PgSurgery => true,
         ExtensionId::PgTextsearch => true,
         ExtensionId::PgTrgm => true,
@@ -500,8 +618,10 @@ pub(super) const fn creates_extension(extension: Extension) -> bool {
         ExtensionId::PgVisibility => true,
         ExtensionId::PgWalinspect => true,
         ExtensionId::Pgcrypto => true,
+        ExtensionId::Pgmq => true,
         ExtensionId::Pgtap => true,
         ExtensionId::Postgis => true,
+        ExtensionId::Refint => true,
         ExtensionId::Seg => true,
         ExtensionId::Tablefunc => true,
         ExtensionId::Tcn => true,
@@ -518,6 +638,7 @@ pub(super) const fn dependencies(extension: Extension) -> &'static [Extension] {
     match extension.id {
         ExtensionId::Amcheck => &[],
         ExtensionId::AutoExplain => &[],
+        ExtensionId::Autoinc => &[],
         ExtensionId::Bloom => &[],
         ExtensionId::BtreeGin => &[],
         ExtensionId::BtreeGist => &[],
@@ -529,15 +650,22 @@ pub(super) const fn dependencies(extension: Extension) -> &'static [Extension] {
         ExtensionId::FileFdw => &[],
         ExtensionId::Fuzzystrmatch => &[],
         ExtensionId::Hstore => &[],
+        ExtensionId::InsertUsername => &[],
         ExtensionId::Intarray => &[],
         ExtensionId::Isn => &[],
         ExtensionId::Lo => &[],
         ExtensionId::Ltree => &[],
+        ExtensionId::Moddatetime => &[],
         ExtensionId::Pageinspect => &[],
+        ExtensionId::Passwordcheck => &[],
         ExtensionId::PgBuffercache => &[],
         ExtensionId::PgFreespacemap => &[],
         ExtensionId::PgHashids => &[],
         ExtensionId::PgIvm => &[],
+        ExtensionId::PgLogicalinspect => &[],
+        ExtensionId::PgOverexplain => &[],
+        ExtensionId::PgPartman => &[],
+        ExtensionId::PgStatStatements => &[],
         ExtensionId::PgSurgery => &[],
         ExtensionId::PgTextsearch => &[],
         ExtensionId::PgTrgm => &[],
@@ -545,8 +673,10 @@ pub(super) const fn dependencies(extension: Extension) -> &'static [Extension] {
         ExtensionId::PgVisibility => &[],
         ExtensionId::PgWalinspect => &[],
         ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgmq => &[],
         ExtensionId::Pgtap => &[],
         ExtensionId::Postgis => &[],
+        ExtensionId::Refint => &[],
         ExtensionId::Seg => &[],
         ExtensionId::Tablefunc => &[],
         ExtensionId::Tcn => &[],
@@ -563,6 +693,7 @@ pub(super) const fn required_shared_preload_library(extension: Extension) -> Opt
     match extension.id {
         ExtensionId::Amcheck => None,
         ExtensionId::AutoExplain => None,
+        ExtensionId::Autoinc => None,
         ExtensionId::Bloom => None,
         ExtensionId::BtreeGin => None,
         ExtensionId::BtreeGist => None,
@@ -574,15 +705,22 @@ pub(super) const fn required_shared_preload_library(extension: Extension) -> Opt
         ExtensionId::FileFdw => None,
         ExtensionId::Fuzzystrmatch => None,
         ExtensionId::Hstore => None,
+        ExtensionId::InsertUsername => None,
         ExtensionId::Intarray => None,
         ExtensionId::Isn => None,
         ExtensionId::Lo => None,
         ExtensionId::Ltree => None,
+        ExtensionId::Moddatetime => None,
         ExtensionId::Pageinspect => None,
+        ExtensionId::Passwordcheck => None,
         ExtensionId::PgBuffercache => None,
         ExtensionId::PgFreespacemap => None,
         ExtensionId::PgHashids => None,
         ExtensionId::PgIvm => None,
+        ExtensionId::PgLogicalinspect => None,
+        ExtensionId::PgOverexplain => None,
+        ExtensionId::PgPartman => None,
+        ExtensionId::PgStatStatements => Some("pg_stat_statements"),
         ExtensionId::PgSurgery => None,
         ExtensionId::PgTextsearch => Some("pg_textsearch"),
         ExtensionId::PgTrgm => None,
@@ -590,8 +728,10 @@ pub(super) const fn required_shared_preload_library(extension: Extension) -> Opt
         ExtensionId::PgVisibility => None,
         ExtensionId::PgWalinspect => None,
         ExtensionId::Pgcrypto => None,
+        ExtensionId::Pgmq => None,
         ExtensionId::Pgtap => None,
         ExtensionId::Postgis => None,
+        ExtensionId::Refint => None,
         ExtensionId::Seg => None,
         ExtensionId::Tablefunc => None,
         ExtensionId::Tcn => None,
@@ -608,6 +748,7 @@ pub(super) const fn extension_data_files(extension: Extension) -> &'static [&'st
     match extension.id {
         ExtensionId::Amcheck => &[],
         ExtensionId::AutoExplain => &[],
+        ExtensionId::Autoinc => &[],
         ExtensionId::Bloom => &[],
         ExtensionId::BtreeGin => &[],
         ExtensionId::BtreeGist => &[],
@@ -619,15 +760,22 @@ pub(super) const fn extension_data_files(extension: Extension) -> &'static [&'st
         ExtensionId::FileFdw => &[],
         ExtensionId::Fuzzystrmatch => &[],
         ExtensionId::Hstore => &[],
+        ExtensionId::InsertUsername => &[],
         ExtensionId::Intarray => &[],
         ExtensionId::Isn => &[],
         ExtensionId::Lo => &[],
         ExtensionId::Ltree => &[],
+        ExtensionId::Moddatetime => &[],
         ExtensionId::Pageinspect => &[],
+        ExtensionId::Passwordcheck => &[],
         ExtensionId::PgBuffercache => &[],
         ExtensionId::PgFreespacemap => &[],
         ExtensionId::PgHashids => &[],
         ExtensionId::PgIvm => &[],
+        ExtensionId::PgLogicalinspect => &[],
+        ExtensionId::PgOverexplain => &[],
+        ExtensionId::PgPartman => &[],
+        ExtensionId::PgStatStatements => &[],
         ExtensionId::PgSurgery => &[],
         ExtensionId::PgTextsearch => &[],
         ExtensionId::PgTrgm => &[],
@@ -635,6 +783,7 @@ pub(super) const fn extension_data_files(extension: Extension) -> &'static [&'st
         ExtensionId::PgVisibility => &[],
         ExtensionId::PgWalinspect => &[],
         ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgmq => &[],
         ExtensionId::Pgtap => &[],
         ExtensionId::Postgis => &[
             "contrib/postgis-3.6/legacy.sql",
@@ -647,6 +796,7 @@ pub(super) const fn extension_data_files(extension: Extension) -> &'static [&'st
             "contrib/postgis-3.6/uninstall_postgis.sql",
             "proj/proj.db",
         ],
+        ExtensionId::Refint => &[],
         ExtensionId::Seg => &[],
         ExtensionId::Tablefunc => &[],
         ExtensionId::Tcn => &[],
@@ -663,6 +813,7 @@ pub(super) const fn extension_sql_file_prefixes(extension: Extension) -> &'stati
     match extension.id {
         ExtensionId::Amcheck => &[],
         ExtensionId::AutoExplain => &[],
+        ExtensionId::Autoinc => &[],
         ExtensionId::Bloom => &[],
         ExtensionId::BtreeGin => &[],
         ExtensionId::BtreeGist => &[],
@@ -674,15 +825,22 @@ pub(super) const fn extension_sql_file_prefixes(extension: Extension) -> &'stati
         ExtensionId::FileFdw => &[],
         ExtensionId::Fuzzystrmatch => &[],
         ExtensionId::Hstore => &[],
+        ExtensionId::InsertUsername => &[],
         ExtensionId::Intarray => &[],
         ExtensionId::Isn => &[],
         ExtensionId::Lo => &[],
         ExtensionId::Ltree => &[],
+        ExtensionId::Moddatetime => &[],
         ExtensionId::Pageinspect => &[],
+        ExtensionId::Passwordcheck => &[],
         ExtensionId::PgBuffercache => &[],
         ExtensionId::PgFreespacemap => &[],
         ExtensionId::PgHashids => &[],
         ExtensionId::PgIvm => &[],
+        ExtensionId::PgLogicalinspect => &[],
+        ExtensionId::PgOverexplain => &[],
+        ExtensionId::PgPartman => &[],
+        ExtensionId::PgStatStatements => &[],
         ExtensionId::PgSurgery => &[],
         ExtensionId::PgTextsearch => &[],
         ExtensionId::PgTrgm => &[],
@@ -690,12 +848,14 @@ pub(super) const fn extension_sql_file_prefixes(extension: Extension) -> &'stati
         ExtensionId::PgVisibility => &[],
         ExtensionId::PgWalinspect => &[],
         ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgmq => &[],
         ExtensionId::Pgtap => &["pgtap-core", "pgtap-schema"],
         ExtensionId::Postgis => &[
             "postgis_comments",
             "postgis_proc_set_search_path",
             "rtpostgis",
         ],
+        ExtensionId::Refint => &[],
         ExtensionId::Seg => &[],
         ExtensionId::Tablefunc => &[],
         ExtensionId::Tcn => &[],
@@ -712,6 +872,7 @@ pub(super) const fn extension_sql_file_names(extension: Extension) -> &'static [
     match extension.id {
         ExtensionId::Amcheck => &[],
         ExtensionId::AutoExplain => &[],
+        ExtensionId::Autoinc => &[],
         ExtensionId::Bloom => &[],
         ExtensionId::BtreeGin => &[],
         ExtensionId::BtreeGist => &[],
@@ -723,15 +884,22 @@ pub(super) const fn extension_sql_file_names(extension: Extension) -> &'static [
         ExtensionId::FileFdw => &[],
         ExtensionId::Fuzzystrmatch => &[],
         ExtensionId::Hstore => &[],
+        ExtensionId::InsertUsername => &[],
         ExtensionId::Intarray => &[],
         ExtensionId::Isn => &[],
         ExtensionId::Lo => &[],
         ExtensionId::Ltree => &[],
+        ExtensionId::Moddatetime => &[],
         ExtensionId::Pageinspect => &[],
+        ExtensionId::Passwordcheck => &[],
         ExtensionId::PgBuffercache => &[],
         ExtensionId::PgFreespacemap => &[],
         ExtensionId::PgHashids => &[],
         ExtensionId::PgIvm => &[],
+        ExtensionId::PgLogicalinspect => &[],
+        ExtensionId::PgOverexplain => &[],
+        ExtensionId::PgPartman => &[],
+        ExtensionId::PgStatStatements => &[],
         ExtensionId::PgSurgery => &[],
         ExtensionId::PgTextsearch => &[],
         ExtensionId::PgTrgm => &[],
@@ -739,8 +907,10 @@ pub(super) const fn extension_sql_file_names(extension: Extension) -> &'static [
         ExtensionId::PgVisibility => &[],
         ExtensionId::PgWalinspect => &[],
         ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgmq => &[],
         ExtensionId::Pgtap => &["uninstall_pgtap.sql"],
         ExtensionId::Postgis => &["uninstall_postgis.sql"],
+        ExtensionId::Refint => &[],
         ExtensionId::Seg => &[],
         ExtensionId::Tablefunc => &[],
         ExtensionId::Tcn => &[],
@@ -759,6 +929,7 @@ pub(super) const fn runtime_environment(
     match extension.id {
         ExtensionId::Amcheck => &[],
         ExtensionId::AutoExplain => &[],
+        ExtensionId::Autoinc => &[],
         ExtensionId::Bloom => &[],
         ExtensionId::BtreeGin => &[],
         ExtensionId::BtreeGist => &[],
@@ -770,15 +941,22 @@ pub(super) const fn runtime_environment(
         ExtensionId::FileFdw => &[],
         ExtensionId::Fuzzystrmatch => &[],
         ExtensionId::Hstore => &[],
+        ExtensionId::InsertUsername => &[],
         ExtensionId::Intarray => &[],
         ExtensionId::Isn => &[],
         ExtensionId::Lo => &[],
         ExtensionId::Ltree => &[],
+        ExtensionId::Moddatetime => &[],
         ExtensionId::Pageinspect => &[],
+        ExtensionId::Passwordcheck => &[],
         ExtensionId::PgBuffercache => &[],
         ExtensionId::PgFreespacemap => &[],
         ExtensionId::PgHashids => &[],
         ExtensionId::PgIvm => &[],
+        ExtensionId::PgLogicalinspect => &[],
+        ExtensionId::PgOverexplain => &[],
+        ExtensionId::PgPartman => &[],
+        ExtensionId::PgStatStatements => &[],
         ExtensionId::PgSurgery => &[],
         ExtensionId::PgTextsearch => &[],
         ExtensionId::PgTrgm => &[],
@@ -786,12 +964,14 @@ pub(super) const fn runtime_environment(
         ExtensionId::PgVisibility => &[],
         ExtensionId::PgWalinspect => &[],
         ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgmq => &[],
         ExtensionId::Pgtap => &[],
         ExtensionId::Postgis => &[ExtensionRuntimeEnvironment {
             name: "PROJ_DATA",
             relative_path: "share/postgresql/proj",
             required_file: "proj.db",
         }],
+        ExtensionId::Refint => &[],
         ExtensionId::Seg => &[],
         ExtensionId::Tablefunc => &[],
         ExtensionId::Tcn => &[],

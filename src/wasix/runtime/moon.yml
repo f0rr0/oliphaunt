@@ -107,10 +107,15 @@ tasks:
     tags:
       - quality
       - unit
-    script: "set -e\nbash src/wasix/runtime/tools/check-shim-abi.sh\nbash src/wasix/runtime/assets/build/docker/install-pinned-apt-packages.test.sh\nbash src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.test.sh\n"
+    script: "set -e\nbash src/wasix/runtime/tools/check-shim-abi.sh\nbash src/wasix/runtime/assets/build/docker/install-pinned-apt-packages.test.sh\nbash src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.test.sh\nbash src/wasix/runtime/assets/build/docker_pgxs_extensions.test.sh\n"
     inputs:
       - /tools/dev/acquisition.sh
       - assets/build/docker/**/*
+      - assets/build/docker_pgxs_extensions.sh
+      - assets/build/docker_pgxs_extensions.test.sh
+      - assets/build/wasix_third_party.sh
+      - assets/build/source_lane.sh
+      - /src/extensions/generated/pgxs-build.tsv
       - assets/build/wasix_shim/**/*
       - tools/check-shim-abi.sh
     options:

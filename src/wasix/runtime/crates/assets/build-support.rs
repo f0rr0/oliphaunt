@@ -108,6 +108,13 @@ const EXTENSION_PACKAGES: &[ExtensionPackage] = &[
         crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
+        feature: "extension-autoinc",
+        env: "CARGO_FEATURE_EXTENSION_AUTOINC",
+        product: "oliphaunt-extension-contrib-pg18",
+        sql_name: "autoinc",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
+    },
+    ExtensionPackage {
         feature: "extension-bloom",
         env: "CARGO_FEATURE_EXTENSION_BLOOM",
         product: "oliphaunt-extension-contrib-pg18",
@@ -185,6 +192,13 @@ const EXTENSION_PACKAGES: &[ExtensionPackage] = &[
         crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
+        feature: "extension-insert-username",
+        env: "CARGO_FEATURE_EXTENSION_INSERT_USERNAME",
+        product: "oliphaunt-extension-contrib-pg18",
+        sql_name: "insert_username",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
+    },
+    ExtensionPackage {
         feature: "extension-intarray",
         env: "CARGO_FEATURE_EXTENSION_INTARRAY",
         product: "oliphaunt-extension-contrib-pg18",
@@ -213,10 +227,24 @@ const EXTENSION_PACKAGES: &[ExtensionPackage] = &[
         crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
+        feature: "extension-moddatetime",
+        env: "CARGO_FEATURE_EXTENSION_MODDATETIME",
+        product: "oliphaunt-extension-contrib-pg18",
+        sql_name: "moddatetime",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
+    },
+    ExtensionPackage {
         feature: "extension-pageinspect",
         env: "CARGO_FEATURE_EXTENSION_PAGEINSPECT",
         product: "oliphaunt-extension-contrib-pg18",
         sql_name: "pageinspect",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
+    },
+    ExtensionPackage {
+        feature: "extension-passwordcheck",
+        env: "CARGO_FEATURE_EXTENSION_PASSWORDCHECK",
+        product: "oliphaunt-extension-contrib-pg18",
+        sql_name: "passwordcheck",
         crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
@@ -231,6 +259,27 @@ const EXTENSION_PACKAGES: &[ExtensionPackage] = &[
         env: "CARGO_FEATURE_EXTENSION_PG_FREESPACEMAP",
         product: "oliphaunt-extension-contrib-pg18",
         sql_name: "pg_freespacemap",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
+    },
+    ExtensionPackage {
+        feature: "extension-pg-logicalinspect",
+        env: "CARGO_FEATURE_EXTENSION_PG_LOGICALINSPECT",
+        product: "oliphaunt-extension-contrib-pg18",
+        sql_name: "pg_logicalinspect",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
+    },
+    ExtensionPackage {
+        feature: "extension-pg-overexplain",
+        env: "CARGO_FEATURE_EXTENSION_PG_OVEREXPLAIN",
+        product: "oliphaunt-extension-contrib-pg18",
+        sql_name: "pg_overexplain",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
+    },
+    ExtensionPackage {
+        feature: "extension-pg-stat-statements",
+        env: "CARGO_FEATURE_EXTENSION_PG_STAT_STATEMENTS",
+        product: "oliphaunt-extension-contrib-pg18",
+        sql_name: "pg_stat_statements",
         crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
@@ -266,6 +315,13 @@ const EXTENSION_PACKAGES: &[ExtensionPackage] = &[
         env: "CARGO_FEATURE_EXTENSION_PGCRYPTO",
         product: "oliphaunt-extension-contrib-pg18",
         sql_name: "pgcrypto",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
+    },
+    ExtensionPackage {
+        feature: "extension-refint",
+        env: "CARGO_FEATURE_EXTENSION_REFINT",
+        product: "oliphaunt-extension-contrib-pg18",
+        sql_name: "refint",
         crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
@@ -330,6 +386,20 @@ const EXTENSION_PACKAGES: &[ExtensionPackage] = &[
         product: "oliphaunt-extension-pg-ivm",
         sql_name: "pg_ivm",
         crate_ident: "oliphaunt_extension_pg_ivm",
+    },
+    ExtensionPackage {
+        feature: "extension-pgmq",
+        env: "CARGO_FEATURE_EXTENSION_PGMQ",
+        product: "oliphaunt-extension-pgmq",
+        sql_name: "pgmq",
+        crate_ident: "oliphaunt_extension_pgmq",
+    },
+    ExtensionPackage {
+        feature: "extension-pg-partman",
+        env: "CARGO_FEATURE_EXTENSION_PG_PARTMAN",
+        product: "oliphaunt-extension-pg-partman",
+        sql_name: "pg_partman",
+        crate_ident: "oliphaunt_extension_pg_partman",
     },
     ExtensionPackage {
         feature: "extension-pg-textsearch",

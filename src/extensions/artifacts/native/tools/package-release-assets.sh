@@ -616,11 +616,13 @@ package_ios_target() {
   ios_device_root="$mobile_extension_work_root/$target_id/ios-device"
   macos_archive_root="$mobile_extension_work_root/$target_id/macos-extension-archives"
   ios_xcframework_root="$mobile_extension_work_root/$target_id/ios-extension-xcframeworks"
-  require_dir "$ios_xcframework_root/out" "iOS extension XCFramework output"
-  tools/dev/bun.sh tools/packaging/platform-binary-contract.mts \
-    --target "$target_id" \
-    --root "$ios_xcframework_root/out" \
-    --required-apple-platforms macos,ios,ios-simulator
+  if [ -n "$mobile_extensions" ]; then
+    require_dir "$ios_xcframework_root/out" "iOS extension XCFramework output"
+    tools/dev/bun.sh tools/packaging/platform-binary-contract.mts \
+      --target "$target_id" \
+      --root "$ios_xcframework_root/out" \
+      --required-apple-platforms macos,ios,ios-simulator
+  fi
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact ios_artifact static_prefix registration_artifact dependency dependency_xcframework dependency_artifact
   while IFS=$'\t' read -r sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy; do
     [ -n "$sql_name" ] || continue
@@ -763,6 +765,9 @@ package_android_target() {
     append_legacy_index_row "$sql_name" "$creates_extension" "$stem" "$dependencies" "$shared_preload" "$mobile_prebuilt" "$android_static_target" "$runtime_artifact" "-" "-" "-" "$data_files"
   done < <(catalog_rows)
 }
+
+# Tests can call the real packaging functions with independently produced inputs.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
 
 phase="${OLIPHAUNT_EXTENSION_PHASE:-all}"
 case "$phase:$target_id" in

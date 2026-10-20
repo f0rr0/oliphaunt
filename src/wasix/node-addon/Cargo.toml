@@ -22,6 +22,7 @@ release = [
   "tools",
   "extension-amcheck",
   "extension-auto-explain",
+  "extension-autoinc",
   "extension-bloom",
   "extension-btree-gin",
   "extension-btree-gist",
@@ -33,18 +34,25 @@ release = [
   "extension-file-fdw",
   "extension-fuzzystrmatch",
   "extension-hstore",
+  "extension-insert-username",
   "extension-intarray",
   "extension-isn",
   "extension-lo",
   "extension-ltree",
+  "extension-moddatetime",
   "extension-pageinspect",
+  "extension-passwordcheck",
   "extension-pg-buffercache",
   "extension-pg-freespacemap",
+  "extension-pg-logicalinspect",
+  "extension-pg-overexplain",
+  "extension-pg-stat-statements",
   "extension-pg-surgery",
   "extension-pg-trgm",
   "extension-pg-visibility",
   "extension-pg-walinspect",
   "extension-pgcrypto",
+  "extension-refint",
   "extension-seg",
   "extension-tablefunc",
   "extension-tcn",
@@ -55,6 +63,7 @@ release = [
 ]
 extension-amcheck = ["extensions", "oliphaunt-wasix/extension-amcheck"]
 extension-auto-explain = ["extensions", "oliphaunt-wasix/extension-auto-explain"]
+extension-autoinc = ["extensions", "oliphaunt-wasix/extension-autoinc"]
 extension-bloom = ["extensions", "oliphaunt-wasix/extension-bloom"]
 extension-btree-gin = ["extensions", "oliphaunt-wasix/extension-btree-gin"]
 extension-btree-gist = ["extensions", "oliphaunt-wasix/extension-btree-gist"]
@@ -66,15 +75,22 @@ extension-earthdistance = ["extensions", "oliphaunt-wasix/extension-earthdistanc
 extension-file-fdw = ["extensions", "oliphaunt-wasix/extension-file-fdw"]
 extension-fuzzystrmatch = ["extensions", "oliphaunt-wasix/extension-fuzzystrmatch"]
 extension-hstore = ["extensions", "oliphaunt-wasix/extension-hstore"]
+extension-insert-username = ["extensions", "oliphaunt-wasix/extension-insert-username"]
 extension-intarray = ["extensions", "oliphaunt-wasix/extension-intarray"]
 extension-isn = ["extensions", "oliphaunt-wasix/extension-isn"]
 extension-lo = ["extensions", "oliphaunt-wasix/extension-lo"]
 extension-ltree = ["extensions", "oliphaunt-wasix/extension-ltree"]
+extension-moddatetime = ["extensions", "oliphaunt-wasix/extension-moddatetime"]
 extension-pageinspect = ["extensions", "oliphaunt-wasix/extension-pageinspect"]
+extension-passwordcheck = ["extensions", "oliphaunt-wasix/extension-passwordcheck"]
 extension-pg-buffercache = ["extensions", "oliphaunt-wasix/extension-pg-buffercache"]
 extension-pg-freespacemap = ["extensions", "oliphaunt-wasix/extension-pg-freespacemap"]
 extension-pg-hashids = ["extensions", "oliphaunt-wasix/extension-pg-hashids"]
 extension-pg-ivm = ["extensions", "oliphaunt-wasix/extension-pg-ivm"]
+extension-pg-logicalinspect = ["extensions", "oliphaunt-wasix/extension-pg-logicalinspect"]
+extension-pg-overexplain = ["extensions", "oliphaunt-wasix/extension-pg-overexplain"]
+extension-pg-partman = ["extensions", "oliphaunt-wasix/extension-pg-partman"]
+extension-pg-stat-statements = ["extensions", "oliphaunt-wasix/extension-pg-stat-statements"]
 extension-pg-surgery = ["extensions", "oliphaunt-wasix/extension-pg-surgery"]
 extension-pg-textsearch = ["extensions", "oliphaunt-wasix/extension-pg-textsearch"]
 extension-pg-trgm = ["extensions", "oliphaunt-wasix/extension-pg-trgm"]
@@ -82,8 +98,10 @@ extension-pg-uuidv7 = ["extensions", "oliphaunt-wasix/extension-pg-uuidv7"]
 extension-pg-visibility = ["extensions", "oliphaunt-wasix/extension-pg-visibility"]
 extension-pg-walinspect = ["extensions", "oliphaunt-wasix/extension-pg-walinspect"]
 extension-pgcrypto = ["extensions", "oliphaunt-wasix/extension-pgcrypto"]
+extension-pgmq = ["extensions", "oliphaunt-wasix/extension-pgmq"]
 extension-pgtap = ["extensions", "oliphaunt-wasix/extension-pgtap"]
 extension-postgis = ["extensions", "oliphaunt-wasix/extension-postgis"]
+extension-refint = ["extensions", "oliphaunt-wasix/extension-refint"]
 extension-seg = ["extensions", "oliphaunt-wasix/extension-seg"]
 extension-tablefunc = ["extensions", "oliphaunt-wasix/extension-tablefunc"]
 extension-tcn = ["extensions", "oliphaunt-wasix/extension-tcn"]

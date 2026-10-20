@@ -66,6 +66,37 @@
       "notes": []
     },
     {
+      "id": "autoinc",
+      "sql-name": "autoinc",
+      "rust-constant": "AUTOINC",
+      "display-name": "autoinc",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "autoinc",
+      "package-export": "./contrib/autoinc",
+      "tags": ["postgres extension", "postgres/contrib"],
+      "control-file": "src/third-party/postgres/contrib/spi/autoinc.control",
+      "control": {
+        "module-pathname": "$libdir/autoinc",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": ["src/test-fixtures/extensions/autoinc.sql"],
+      "native-module-file": "autoinc.so",
+      "notes": []
+    },
+    {
       "id": "bloom",
       "sql-name": "bloom",
       "rust-constant": "BLOOM",
@@ -428,6 +459,37 @@
       "notes": []
     },
     {
+      "id": "insert_username",
+      "sql-name": "insert_username",
+      "rust-constant": "INSERT_USERNAME",
+      "display-name": "insert_username",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "insert_username",
+      "package-export": "./contrib/insert_username",
+      "tags": ["postgres extension", "postgres/contrib"],
+      "control-file": "src/third-party/postgres/contrib/spi/insert_username.control",
+      "control": {
+        "module-pathname": "$libdir/insert_username",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": ["src/test-fixtures/extensions/insert_username.sql"],
+      "native-module-file": "insert_username.so",
+      "notes": []
+    },
+    {
       "id": "intarray",
       "sql-name": "intarray",
       "rust-constant": "INTARRAY",
@@ -556,6 +618,37 @@
       "notes": []
     },
     {
+      "id": "moddatetime",
+      "sql-name": "moddatetime",
+      "rust-constant": "MODDATETIME",
+      "display-name": "moddatetime",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "moddatetime",
+      "package-export": "./contrib/moddatetime",
+      "tags": ["postgres extension", "postgres/contrib"],
+      "control-file": "src/third-party/postgres/contrib/spi/moddatetime.control",
+      "control": {
+        "module-pathname": "$libdir/moddatetime",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": ["src/test-fixtures/extensions/moddatetime.sql"],
+      "native-module-file": "moddatetime.so",
+      "notes": []
+    },
+    {
       "id": "pageinspect",
       "sql-name": "pageinspect",
       "rust-constant": "PAGEINSPECT",
@@ -588,6 +681,32 @@
       ],
       "native-module-file": "pageinspect.so",
       "notes": []
+    },
+    {
+      "id": "passwordcheck",
+      "sql-name": "passwordcheck",
+      "rust-constant": "PASSWORDCHECK",
+      "display-name": "passwordcheck",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "passwordcheck",
+      "package-export": "./contrib/passwordcheck",
+      "tags": ["postgres extension", "postgres/contrib"],
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": false,
+        "load-sql": ["LOAD 'passwordcheck';"],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": ["src/test-fixtures/extensions/passwordcheck.sql"],
+      "native-module-file": "passwordcheck.so",
+      "notes": [
+        "LOAD enables password checks for the current session. Use shared_preload_libraries to enforce checks across postmaster sessions."
+      ]
     },
     {
       "id": "pg_buffercache",
@@ -721,6 +840,123 @@
       "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/pg_ivm.test.ts"],
       "native-module-file": "pg_ivm.so",
       "notes": []
+    },
+    {
+      "id": "pg_logicalinspect",
+      "sql-name": "pg_logicalinspect",
+      "rust-constant": "PG_LOGICALINSPECT",
+      "display-name": "pg_logicalinspect",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "pg_logicalinspect",
+      "package-export": "./contrib/pg_logicalinspect",
+      "tags": ["postgres extension", "postgres/contrib"],
+      "control-file": "src/third-party/postgres/contrib/pg_logicalinspect/pg_logicalinspect.control",
+      "control": {
+        "module-pathname": "$libdir/pg_logicalinspect",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": ["src/test-fixtures/extensions/pg_logicalinspect.sql"],
+      "native-module-file": "pg_logicalinspect.so",
+      "notes": []
+    },
+    {
+      "id": "pg_overexplain",
+      "sql-name": "pg_overexplain",
+      "rust-constant": "PG_OVEREXPLAIN",
+      "display-name": "pg_overexplain",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "pg_overexplain",
+      "package-export": "./contrib/pg_overexplain",
+      "tags": ["postgres extension", "postgres/contrib"],
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": false,
+        "load-sql": ["LOAD 'pg_overexplain';"],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": ["src/test-fixtures/extensions/pg_overexplain.sql"],
+      "native-module-file": "pg_overexplain.so",
+      "notes": []
+    },
+    {
+      "id": "pg_stat_statements",
+      "sql-name": "pg_stat_statements",
+      "rust-constant": "PG_STAT_STATEMENTS",
+      "display-name": "pg_stat_statements",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "pg_stat_statements",
+      "package-export": "./contrib/pg_stat_statements",
+      "tags": ["postgres extension", "postgres/contrib"],
+      "control-file": "src/third-party/postgres/contrib/pg_stat_statements/pg_stat_statements.control",
+      "control": {
+        "module-pathname": "$libdir/pg_stat_statements",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": ["shared_preload_libraries=pg_stat_statements"],
+        "preload-required": true,
+        "restart-required": true,
+        "shared-memory-required": true
+      },
+      "tests": ["src/test-fixtures/extensions/pg_stat_statements.sql"],
+      "native-module-file": "pg_stat_statements.so",
+      "notes": []
+    },
+    {
+      "id": "pg_partman",
+      "sql-name": "pg_partman",
+      "rust-constant": "PG_PARTMAN",
+      "display-name": "pg_partman",
+      "source-kind": "oliphaunt-other-extension",
+      "upstream-import-name": "pg_partman",
+      "package-export": "./pg_partman",
+      "tags": ["postgres extension"],
+      "control-file": "target/oliphaunt-sources/checkouts/pg_partman/pg_partman.control",
+      "control": {
+        "requires": ["plpgsql"],
+        "relocatable": "false",
+        "superuser": "false"
+      },
+      "dependencies": ["plpgsql"],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "partman",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": ["src/test-fixtures/extensions/pg_partman.sql"],
+      "notes": [
+        "SQL-only build without pg_partman_bgw or Python utilities. Applications invoke maintenance explicitly."
+      ]
     },
     {
       "id": "pg_surgery",
@@ -952,6 +1188,38 @@
       "notes": []
     },
     {
+      "id": "pgmq",
+      "sql-name": "pgmq",
+      "rust-constant": "PGMQ",
+      "display-name": "PGMQ",
+      "source-kind": "oliphaunt-other-extension",
+      "upstream-import-name": "pgmq",
+      "package-export": "./pgmq",
+      "tags": ["postgres extension"],
+      "control-file": "target/oliphaunt-sources/checkouts/pgmq/pgmq-extension/pgmq.control",
+      "control": {
+        "module-pathname": "$libdir/pgmq",
+        "requires": [],
+        "relocatable": "false",
+        "schema": "pgmq",
+        "superuser": "false"
+      },
+      "dependencies": ["plpgsql"],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pgmq",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": ["src/test-fixtures/extensions/pgmq.sql"],
+      "notes": ["Partitioned queues additionally require pg_partman; basic queues do not."]
+    },
+    {
       "id": "pgtap",
       "sql-name": "pgtap",
       "rust-constant": "PGTAP",
@@ -1009,6 +1277,37 @@
       },
       "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/postgis/postgis.test.ts"],
       "native-module-file": "postgis-3.so",
+      "notes": []
+    },
+    {
+      "id": "refint",
+      "sql-name": "refint",
+      "rust-constant": "REFINT",
+      "display-name": "refint",
+      "source-kind": "postgres-contrib",
+      "upstream-import-name": "refint",
+      "package-export": "./contrib/refint",
+      "tags": ["postgres extension", "postgres/contrib"],
+      "control-file": "src/third-party/postgres/contrib/spi/refint.control",
+      "control": {
+        "module-pathname": "$libdir/refint",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": ["src/test-fixtures/extensions/refint.sql"],
+      "native-module-file": "refint.so",
       "notes": []
     },
     {

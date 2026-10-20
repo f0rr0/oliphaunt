@@ -1,9 +1,72 @@
 import { test } from 'bun:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { pgxsSources, prepareSimple } from './windows-extension-sources.mts';
+import {
+  installPartman,
+  installPgmq,
+  pgxsSources,
+  prepareSimple,
+} from './windows-extension-sources.mts';
+
+test('PGMQ SQL packaging includes the current installation and upgrades, without unrelated files', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'pgmq-windows-'));
+  const source = path.join(root, 'target/oliphaunt-sources/checkouts/pgmq/pgmq-extension');
+  const install = path.join(root, 'install');
+  try {
+    mkdirSync(path.join(source, 'sql'), { recursive: true });
+    writeFileSync(path.join(source, 'pgmq.control'), "default_version = '1.13.0'\n");
+    writeFileSync(path.join(source, 'sql/pgmq.sql'), '-- current SQL\n');
+    writeFileSync(path.join(source, 'sql/pgmq--1.12.0--1.13.0.sql'), '-- upgrade SQL\n');
+    writeFileSync(path.join(source, 'sql/unrelated.sql'), '-- foreign SQL\n');
+    installPgmq({ repo: root, work: root, postgres: root, install });
+    const destination = path.join(install, 'share/postgresql/extension');
+    assert.deepEqual(readdirSync(destination).sort(), [
+      'pgmq--1.12.0--1.13.0.sql',
+      'pgmq--1.13.0.sql',
+      'pgmq.control',
+    ]);
+    assert.equal(
+      readFileSync(path.join(destination, 'pgmq--1.13.0.sql'), 'utf8'),
+      '-- current SQL\n',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('SQL-only pg_partman stages ordered install SQL and upgrades without workers or tools', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'partman-windows-'));
+  try {
+    const source = path.join(root, 'target/oliphaunt-sources/checkouts/pg_partman');
+    for (const group of ['types', 'tables', 'functions', 'procedures']) {
+      mkdirSync(path.join(source, 'sql', group), { recursive: true });
+      writeFileSync(path.join(source, 'sql', group, 'b.sql'), `${group}-b\n`);
+      writeFileSync(path.join(source, 'sql', group, 'a.sql'), `${group}-a\n`);
+    }
+    mkdirSync(path.join(source, 'updates'));
+    writeFileSync(path.join(source, 'updates', 'pg_partman--5.4.0--5.5.0.sql'), 'upgrade\n');
+    writeFileSync(path.join(source, 'updates', 'foreign.sql'), 'excluded\n');
+    writeFileSync(path.join(source, 'pg_partman.control'), "default_version = '5.5.0'\n");
+    const install = path.join(root, 'install');
+    installPartman({ repo: root, work: root, postgres: root, install });
+    const destination = path.join(install, 'share/postgresql/extension');
+    assert.equal(
+      readFileSync(path.join(destination, 'pg_partman--5.5.0.sql'), 'utf8'),
+      ['types', 'tables', 'functions', 'procedures']
+        .map((group) => `${group}-a\n${group}-b\n`)
+        .join(''),
+    );
+    assert.deepEqual([...new Bun.Glob('**/*').scanSync({ cwd: install, onlyFiles: true })].sort(), [
+      'share/postgresql/extension/pg_partman--5.4.0--5.5.0.sql',
+      'share/postgresql/extension/pg_partman--5.5.0.sql',
+      'share/postgresql/extension/pg_partman.control',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('Windows textsearch compiles upstream layout checks and installs the upgrade chain', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'textsearch-windows-'));

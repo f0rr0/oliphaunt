@@ -406,13 +406,9 @@ for (const scenario of [
     files: [`${native}/src/liboliphaunt.c`, 'src/extensions/external/vector/source.toml'],
     products: [
       'liboliphaunt-native',
-      'oliphaunt-extension-vector',
-      'oliphaunt-extension-pg-hashids',
-      'oliphaunt-extension-pg-ivm',
-      'oliphaunt-extension-pg-textsearch',
-      'oliphaunt-extension-pg-uuidv7',
-      'oliphaunt-extension-pgtap',
-      'oliphaunt-extension-postgis',
+      ...Object.keys(graph.products).filter(
+        (id) => graph.products[id].extension?.class === 'external',
+      ),
       'oliphaunt-js',
       'oliphaunt-kotlin',
       'oliphaunt-swift',
@@ -466,13 +462,9 @@ for (const scenario of [
     files: ['src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts'],
     products: [
       'liboliphaunt-native',
-      'oliphaunt-extension-pg-hashids',
-      'oliphaunt-extension-pg-ivm',
-      'oliphaunt-extension-pg-textsearch',
-      'oliphaunt-extension-pg-uuidv7',
-      'oliphaunt-extension-pgtap',
-      'oliphaunt-extension-postgis',
-      'oliphaunt-extension-vector',
+      ...Object.keys(graph.products).filter(
+        (id) => graph.products[id].extension?.class === 'external',
+      ),
       'oliphaunt-js',
       'oliphaunt-kotlin',
       'oliphaunt-swift',

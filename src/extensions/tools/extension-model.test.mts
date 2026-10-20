@@ -10,9 +10,24 @@ import {
   sourceDigest,
   sourceDigestInputs,
 } from './extension-evidence.mts';
-import { discoverCatalog, extensionProjections, readJson } from './extension-projections.mts';
+import {
+  discoverCatalog,
+  extensionProjections,
+  pgxsSourceDirectory,
+  readJson,
+} from './extension-projections.mts';
 
 const identity = { commit: '1'.repeat(40), tree: '2'.repeat(40) };
+
+test('nested PGXS roots remain inside the immutable source checkout', () => {
+  assert.equal(
+    pgxsSourceDirectory('pgmq', 'pgmq-extension'),
+    'target/oliphaunt-sources/checkouts/pgmq/pgmq-extension',
+  );
+  assert.equal(pgxsSourceDirectory('pgtap'), 'target/oliphaunt-sources/checkouts/pgtap');
+  for (const value of ['', '.', '..', '../outside', '/absolute', 'a/../b', 'a//b', 'a\\b', 12])
+    assert.throws(() => pgxsSourceDirectory('pgmq', value), /within the pinned checkout/);
+});
 const catalog = { extensions: [{ id: 'vector', 'sql-name': 'vector' }] };
 const matrix = () => Bun.TOML.parse(evidenceMatrix(catalog));
 function run() {
@@ -148,4 +163,19 @@ test('extension projections retain dependency and runtime data while deriving mo
   )!;
   assert(updated.includes('-DPG_TEXTSEARCH_VERSION="9.8.7"'));
   assert(!updated.includes('@EXTVERSION@'));
+});
+
+test('SPI modules compile only their own C source in mobile static registries', () => {
+  const rows = readFileSync('src/extensions/generated/mobile/static-extensions.tsv', 'utf8')
+    .trimEnd()
+    .split('\n')
+    .slice(2)
+    .map((line) => line.split('\t'));
+  for (const name of ['autoinc', 'insert_username', 'moddatetime', 'refint']) {
+    const row = rows.find((fields) => fields[0] === name);
+    assert(row, `missing SPI module ${name}`);
+    assert.equal(row[3], 'contrib/spi');
+    assert.equal(row[14], `${name}.c`);
+    assert(!row[15], 'SPI members must not also compile recursive source directories');
+  }
 });

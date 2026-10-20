@@ -18,15 +18,19 @@ if bun "$contract" unsupported > /dev/null 2>&1; then
 fi
 bash tools/dev/bun.sh test ./src/wasix/runtime/tools
 node src/wasix/runtime/tools/wasix-runtime-npm.test-consumer.mts
-for scenario in nested-owner aggregate independent-extension; do
+for scenario in all-members nested-owner aggregate independent-extension; do
   root="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/$scenario"
   # Keep registry dependencies at the qualified workspace versions; this
   # disposable consumer only changes local carrier paths and feature selection.
   cp Cargo.lock "$root/app/Cargo.lock"
   cargo fetch --manifest-path "$root/app/Cargo.toml"
+  if [[ "$scenario" == all-members ]]; then
+    artifact_env=(-u OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT)
+  else
+    artifact_env=("OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT=$root")
+  fi
   CARGO_TARGET_DIR="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/cargo-target" \
-    OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$root" \
-    cargo run --locked --offline --manifest-path "$root/app/Cargo.toml"
+    env "${artifact_env[@]}" cargo run --locked --offline --manifest-path "$root/app/Cargo.toml"
 done
 root="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/independent-extension"
 manifest="$root/oliphaunt-extension-pg-hashids/extension-artifacts.json"

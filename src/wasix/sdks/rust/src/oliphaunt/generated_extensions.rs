@@ -22,6 +22,16 @@ const DEFINITION_AUTO_EXPLAIN: Extension = Extension {
     package: None,
 };
 
+const DEFINITION_AUTOINC: Extension = Extension {
+    sql_name: "autoinc",
+    native_support_modules: &[],
+    native_module_file: Some("autoinc.so"),
+    aot_name: Some("extension:autoinc"),
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
 const DEFINITION_BLOOM: Extension = Extension {
     sql_name: "bloom",
     native_support_modules: &[],
@@ -132,6 +142,16 @@ const DEFINITION_HSTORE: Extension = Extension {
     package: None,
 };
 
+const DEFINITION_INSERT_USERNAME: Extension = Extension {
+    sql_name: "insert_username",
+    native_support_modules: &[],
+    native_module_file: Some("insert_username.so"),
+    aot_name: Some("extension:insert_username"),
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
 const DEFINITION_INTARRAY: Extension = Extension {
     sql_name: "intarray",
     native_support_modules: &[],
@@ -172,11 +192,31 @@ const DEFINITION_LTREE: Extension = Extension {
     package: None,
 };
 
+const DEFINITION_MODDATETIME: Extension = Extension {
+    sql_name: "moddatetime",
+    native_support_modules: &[],
+    native_module_file: Some("moddatetime.so"),
+    aot_name: Some("extension:moddatetime"),
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
 const DEFINITION_PAGEINSPECT: Extension = Extension {
     sql_name: "pageinspect",
     native_support_modules: &[],
     native_module_file: Some("pageinspect.so"),
     aot_name: Some("extension:pageinspect"),
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
+const DEFINITION_PASSWORDCHECK: Extension = Extension {
+    sql_name: "passwordcheck",
+    native_support_modules: &[],
+    native_module_file: Some("passwordcheck.so"),
+    aot_name: Some("extension:passwordcheck"),
     dependencies: &[],
     startup_config: &[],
     package: None,
@@ -219,6 +259,46 @@ const DEFINITION_PG_IVM: Extension = Extension {
     aot_name: Some("extension:pg_ivm"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
+};
+
+const DEFINITION_PG_LOGICALINSPECT: Extension = Extension {
+    sql_name: "pg_logicalinspect",
+    native_support_modules: &[],
+    native_module_file: Some("pg_logicalinspect.so"),
+    aot_name: Some("extension:pg_logicalinspect"),
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
+const DEFINITION_PG_OVEREXPLAIN: Extension = Extension {
+    sql_name: "pg_overexplain",
+    native_support_modules: &[],
+    native_module_file: Some("pg_overexplain.so"),
+    aot_name: Some("extension:pg_overexplain"),
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
+const DEFINITION_PG_PARTMAN: Extension = Extension {
+    sql_name: "pg_partman",
+    native_support_modules: &[],
+    native_module_file: None,
+    aot_name: None,
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
+const DEFINITION_PG_STAT_STATEMENTS: Extension = Extension {
+    sql_name: "pg_stat_statements",
+    native_support_modules: &[],
+    native_module_file: Some("pg_stat_statements.so"),
+    aot_name: Some("extension:pg_stat_statements"),
+    dependencies: &[],
+    startup_config: &["shared_preload_libraries=pg_stat_statements"],
     package: None,
 };
 
@@ -292,6 +372,16 @@ const DEFINITION_PGCRYPTO: Extension = Extension {
     package: None,
 };
 
+const DEFINITION_PGMQ: Extension = Extension {
+    sql_name: "pgmq",
+    native_support_modules: &[],
+    native_module_file: None,
+    aot_name: None,
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
 const DEFINITION_PGTAP: Extension = Extension {
     sql_name: "pgtap",
     native_support_modules: &[],
@@ -310,6 +400,16 @@ const DEFINITION_POSTGIS: Extension = Extension {
     }],
     native_module_file: Some("postgis-3.so"),
     aot_name: Some("extension:postgis"),
+    dependencies: &[],
+    startup_config: &[],
+    package: None,
+};
+
+const DEFINITION_REFINT: Extension = Extension {
+    sql_name: "refint",
+    native_support_modules: &[],
+    native_module_file: Some("refint.so"),
+    aot_name: Some("extension:refint"),
     dependencies: &[],
     startup_config: &[],
     package: None,
@@ -402,6 +502,9 @@ impl Extension {
     /// Select the `auto_explain` artifact.
 
     pub const AUTO_EXPLAIN: Self = DEFINITION_AUTO_EXPLAIN;
+    /// Select the `autoinc` artifact.
+
+    pub const AUTOINC: Self = DEFINITION_AUTOINC;
     /// Select the `bloom` artifact.
 
     pub const BLOOM: Self = DEFINITION_BLOOM;
@@ -435,6 +538,9 @@ impl Extension {
     /// Select the `hstore` artifact.
 
     pub const HSTORE: Self = DEFINITION_HSTORE;
+    /// Select the `insert_username` artifact.
+
+    pub const INSERT_USERNAME: Self = DEFINITION_INSERT_USERNAME;
     /// Select the `intarray` artifact.
 
     pub const INTARRAY: Self = DEFINITION_INTARRAY;
@@ -447,9 +553,15 @@ impl Extension {
     /// Select the `ltree` artifact.
 
     pub const LTREE: Self = DEFINITION_LTREE;
+    /// Select the `moddatetime` artifact.
+
+    pub const MODDATETIME: Self = DEFINITION_MODDATETIME;
     /// Select the `pageinspect` artifact.
 
     pub const PAGEINSPECT: Self = DEFINITION_PAGEINSPECT;
+    /// Select the `passwordcheck` artifact.
+
+    pub const PASSWORDCHECK: Self = DEFINITION_PASSWORDCHECK;
     /// Select the `pg_buffercache` artifact.
 
     pub const PG_BUFFERCACHE: Self = DEFINITION_PG_BUFFERCACHE;
@@ -462,6 +574,18 @@ impl Extension {
     /// Select the `pg_ivm` artifact.
 
     pub const PG_IVM: Self = DEFINITION_PG_IVM;
+    /// Select the `pg_logicalinspect` artifact.
+
+    pub const PG_LOGICALINSPECT: Self = DEFINITION_PG_LOGICALINSPECT;
+    /// Select the `pg_overexplain` artifact.
+
+    pub const PG_OVEREXPLAIN: Self = DEFINITION_PG_OVEREXPLAIN;
+    /// Select the `pg_partman` artifact.
+
+    pub const PG_PARTMAN: Self = DEFINITION_PG_PARTMAN;
+    /// Select the `pg_stat_statements` artifact.
+
+    pub const PG_STAT_STATEMENTS: Self = DEFINITION_PG_STAT_STATEMENTS;
     /// Select the `pg_surgery` artifact.
 
     pub const PG_SURGERY: Self = DEFINITION_PG_SURGERY;
@@ -483,12 +607,18 @@ impl Extension {
     /// Select the `pgcrypto` artifact.
 
     pub const PGCRYPTO: Self = DEFINITION_PGCRYPTO;
+    /// Select the `pgmq` artifact.
+
+    pub const PGMQ: Self = DEFINITION_PGMQ;
     /// Select the `pgtap` artifact.
 
     pub const PGTAP: Self = DEFINITION_PGTAP;
     /// Select the `postgis` artifact.
 
     pub const POSTGIS: Self = DEFINITION_POSTGIS;
+    /// Select the `refint` artifact.
+
+    pub const REFINT: Self = DEFINITION_REFINT;
     /// Select the `seg` artifact.
 
     pub const SEG: Self = DEFINITION_SEG;
@@ -518,6 +648,7 @@ impl Extension {
     pub const ALL: &'static [Self] = &[
         Self::AMCHECK,
         Self::AUTO_EXPLAIN,
+        Self::AUTOINC,
         Self::BLOOM,
         Self::BTREE_GIN,
         Self::BTREE_GIST,
@@ -529,15 +660,22 @@ impl Extension {
         Self::FILE_FDW,
         Self::FUZZYSTRMATCH,
         Self::HSTORE,
+        Self::INSERT_USERNAME,
         Self::INTARRAY,
         Self::ISN,
         Self::LO,
         Self::LTREE,
+        Self::MODDATETIME,
         Self::PAGEINSPECT,
+        Self::PASSWORDCHECK,
         Self::PG_BUFFERCACHE,
         Self::PG_FREESPACEMAP,
         Self::PG_HASHIDS,
         Self::PG_IVM,
+        Self::PG_LOGICALINSPECT,
+        Self::PG_OVEREXPLAIN,
+        Self::PG_PARTMAN,
+        Self::PG_STAT_STATEMENTS,
         Self::PG_SURGERY,
         Self::PG_TEXTSEARCH,
         Self::PG_TRGM,
@@ -545,8 +683,10 @@ impl Extension {
         Self::PG_VISIBILITY,
         Self::PG_WALINSPECT,
         Self::PGCRYPTO,
+        Self::PGMQ,
         Self::PGTAP,
         Self::POSTGIS,
+        Self::REFINT,
         Self::SEG,
         Self::TABLEFUNC,
         Self::TCN,
@@ -564,6 +704,8 @@ pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
         "amcheck" => true,
 
         "auto_explain" => false,
+
+        "autoinc" => true,
 
         "bloom" => true,
 
@@ -587,6 +729,8 @@ pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
 
         "hstore" => true,
 
+        "insert_username" => true,
+
         "intarray" => true,
 
         "isn" => true,
@@ -595,7 +739,11 @@ pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
 
         "ltree" => true,
 
+        "moddatetime" => true,
+
         "pageinspect" => true,
+
+        "passwordcheck" => false,
 
         "pg_buffercache" => true,
 
@@ -604,6 +752,14 @@ pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
         "pg_hashids" => true,
 
         "pg_ivm" => true,
+
+        "pg_logicalinspect" => true,
+
+        "pg_overexplain" => false,
+
+        "pg_partman" => true,
+
+        "pg_stat_statements" => true,
 
         "pg_surgery" => true,
 
@@ -619,9 +775,13 @@ pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
 
         "pgcrypto" => true,
 
+        "pgmq" => true,
+
         "pgtap" => true,
 
         "postgis" => true,
+
+        "refint" => true,
 
         "seg" => true,
 
@@ -653,6 +813,8 @@ pub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'stati
             "SET auto_explain.log_analyze = 'true';",
             "SET auto_explain.log_level = 'NOTICE';",
         ],
+
+        "autoinc" => &["CREATE EXTENSION IF NOT EXISTS \"autoinc\" WITH SCHEMA \"pg_catalog\";"],
 
         "bloom" => &["CREATE EXTENSION IF NOT EXISTS \"bloom\" WITH SCHEMA \"pg_catalog\";"],
 
@@ -686,6 +848,10 @@ pub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'stati
 
         "hstore" => &["CREATE EXTENSION IF NOT EXISTS \"hstore\" WITH SCHEMA \"pg_catalog\";"],
 
+        "insert_username" => {
+            &["CREATE EXTENSION IF NOT EXISTS \"insert_username\" WITH SCHEMA \"pg_catalog\";"]
+        }
+
         "intarray" => &["CREATE EXTENSION IF NOT EXISTS \"intarray\" WITH SCHEMA \"pg_catalog\";"],
 
         "isn" => &["CREATE EXTENSION IF NOT EXISTS \"isn\" WITH SCHEMA \"pg_catalog\";"],
@@ -694,9 +860,15 @@ pub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'stati
 
         "ltree" => &["CREATE EXTENSION IF NOT EXISTS \"ltree\" WITH SCHEMA \"pg_catalog\";"],
 
+        "moddatetime" => {
+            &["CREATE EXTENSION IF NOT EXISTS \"moddatetime\" WITH SCHEMA \"pg_catalog\";"]
+        }
+
         "pageinspect" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pageinspect\" WITH SCHEMA \"pg_catalog\";"]
         }
+
+        "passwordcheck" => &["LOAD 'passwordcheck';"],
 
         "pg_buffercache" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_buffercache\" WITH SCHEMA \"pg_catalog\";"]
@@ -711,6 +883,19 @@ pub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'stati
         }
 
         "pg_ivm" => &["CREATE EXTENSION IF NOT EXISTS \"pg_ivm\" WITH SCHEMA \"pg_catalog\";"],
+
+        "pg_logicalinspect" => {
+            &["CREATE EXTENSION IF NOT EXISTS \"pg_logicalinspect\" WITH SCHEMA \"pg_catalog\";"]
+        }
+
+        "pg_overexplain" => &["LOAD 'pg_overexplain';"],
+
+        "pg_partman" => &[
+            "CREATE SCHEMA IF NOT EXISTS \"partman\";",
+            "CREATE EXTENSION IF NOT EXISTS \"pg_partman\" WITH SCHEMA \"partman\";",
+        ],
+
+        "pg_stat_statements" => &["CREATE EXTENSION IF NOT EXISTS \"pg_stat_statements\";"],
 
         "pg_surgery" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_surgery\" WITH SCHEMA \"pg_catalog\";"]
@@ -736,9 +921,16 @@ pub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'stati
 
         "pgcrypto" => &["CREATE EXTENSION IF NOT EXISTS \"pgcrypto\";"],
 
+        "pgmq" => &[
+            "CREATE SCHEMA IF NOT EXISTS \"pgmq\";",
+            "CREATE EXTENSION IF NOT EXISTS \"pgmq\" WITH SCHEMA \"pgmq\";",
+        ],
+
         "pgtap" => &["CREATE EXTENSION IF NOT EXISTS \"pgtap\" WITH SCHEMA \"pg_catalog\";"],
 
         "postgis" => &["CREATE EXTENSION IF NOT EXISTS \"postgis\";"],
+
+        "refint" => &["CREATE EXTENSION IF NOT EXISTS \"refint\" WITH SCHEMA \"pg_catalog\";"],
 
         "seg" => &["CREATE EXTENSION IF NOT EXISTS \"seg\" WITH SCHEMA \"pg_catalog\";"],
 

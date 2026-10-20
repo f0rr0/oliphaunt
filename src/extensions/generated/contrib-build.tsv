@@ -1,6 +1,7 @@
 # id	sql_name	contrib_dir	module_file	archive
 amcheck	amcheck	amcheck	amcheck.so	extensions/amcheck.tar.zst
 auto_explain	auto_explain	auto_explain	auto_explain.so	extensions/auto_explain.tar.zst
+autoinc	autoinc	spi	autoinc.so	extensions/autoinc.tar.zst
 bloom	bloom	bloom	bloom.so	extensions/bloom.tar.zst
 btree_gin	btree_gin	btree_gin	btree_gin.so	extensions/btree_gin.tar.zst
 btree_gist	btree_gist	btree_gist	btree_gist.so	extensions/btree_gist.tar.zst
@@ -12,18 +13,25 @@ earthdistance	earthdistance	earthdistance	earthdistance.so	extensions/earthdista
 file_fdw	file_fdw	file_fdw	file_fdw.so	extensions/file_fdw.tar.zst
 fuzzystrmatch	fuzzystrmatch	fuzzystrmatch	fuzzystrmatch.so	extensions/fuzzystrmatch.tar.zst
 hstore	hstore	hstore	hstore.so	extensions/hstore.tar.zst
+insert_username	insert_username	spi	insert_username.so	extensions/insert_username.tar.zst
 intarray	intarray	intarray	_int.so	extensions/intarray.tar.zst
 isn	isn	isn	isn.so	extensions/isn.tar.zst
 lo	lo	lo	lo.so	extensions/lo.tar.zst
 ltree	ltree	ltree	ltree.so	extensions/ltree.tar.zst
+moddatetime	moddatetime	spi	moddatetime.so	extensions/moddatetime.tar.zst
 pageinspect	pageinspect	pageinspect	pageinspect.so	extensions/pageinspect.tar.zst
+passwordcheck	passwordcheck	passwordcheck	passwordcheck.so	extensions/passwordcheck.tar.zst
 pg_buffercache	pg_buffercache	pg_buffercache	pg_buffercache.so	extensions/pg_buffercache.tar.zst
 pg_freespacemap	pg_freespacemap	pg_freespacemap	pg_freespacemap.so	extensions/pg_freespacemap.tar.zst
+pg_logicalinspect	pg_logicalinspect	pg_logicalinspect	pg_logicalinspect.so	extensions/pg_logicalinspect.tar.zst
+pg_overexplain	pg_overexplain	pg_overexplain	pg_overexplain.so	extensions/pg_overexplain.tar.zst
+pg_stat_statements	pg_stat_statements	pg_stat_statements	pg_stat_statements.so	extensions/pg_stat_statements.tar.zst
 pg_surgery	pg_surgery	pg_surgery	pg_surgery.so	extensions/pg_surgery.tar.zst
 pg_trgm	pg_trgm	pg_trgm	pg_trgm.so	extensions/pg_trgm.tar.zst
 pg_visibility	pg_visibility	pg_visibility	pg_visibility.so	extensions/pg_visibility.tar.zst
 pg_walinspect	pg_walinspect	pg_walinspect	pg_walinspect.so	extensions/pg_walinspect.tar.zst
 pgcrypto	pgcrypto	pgcrypto	pgcrypto.so	extensions/pgcrypto.tar.zst
+refint	refint	spi	refint.so	extensions/refint.tar.zst
 seg	seg	seg	seg.so	extensions/seg.tar.zst
 tablefunc	tablefunc	tablefunc	tablefunc.so	extensions/tablefunc.tar.zst
 tcn	tcn	tcn	tcn.so	extensions/tcn.tar.zst

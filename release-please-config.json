@@ -245,6 +245,13 @@
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },
+    "src/extensions/external/pg_partman": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-partman",
+      "package-name": "oliphaunt-extension-pg-partman",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
     "src/extensions/external/pg_textsearch": {
       "release-type": "simple",
       "component": "oliphaunt-extension-pg-textsearch",
@@ -256,6 +263,13 @@
       "release-type": "simple",
       "component": "oliphaunt-extension-pg-uuidv7",
       "package-name": "oliphaunt-extension-pg-uuidv7",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/pgmq": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pgmq",
+      "package-name": "oliphaunt-extension-pgmq",
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },

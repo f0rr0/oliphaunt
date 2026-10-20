@@ -1,7 +1,9 @@
 # id	sql_name	source_dir	module_file	archive	make_args
 pg_hashids	pg_hashids	target/oliphaunt-sources/checkouts/pg_hashids	pg_hashids.so	extensions/pg_hashids.tar.zst	-
 pg_ivm	pg_ivm	target/oliphaunt-sources/checkouts/pg_ivm	pg_ivm.so	extensions/pg_ivm.tar.zst	-
+pg_partman	pg_partman	target/oliphaunt-sources/checkouts/pg_partman	-	extensions/pg_partman.tar.zst	NO_BGW=1 SCRIPTS= DOCS=
 pg_textsearch	pg_textsearch	target/oliphaunt-sources/checkouts/pg_textsearch	pg_textsearch.so	extensions/pg_textsearch.tar.zst	-
 pg_uuidv7	pg_uuidv7	target/oliphaunt-sources/checkouts/pg_uuidv7	pg_uuidv7.so	extensions/pg_uuidv7.tar.zst	-
+pgmq	pgmq	target/oliphaunt-sources/checkouts/pgmq/pgmq-extension	-	extensions/pgmq.tar.zst	-
 pgtap	pgtap	target/oliphaunt-sources/checkouts/pgtap	-	extensions/pgtap.tar.zst	-
-vector	vector	target/oliphaunt-sources/checkouts/pgvector	vector.so	extensions/vector.tar.zst	-
+vector	vector	target/oliphaunt-sources/checkouts/pgvector	vector.so	extensions/vector.tar.zst	OPTFLAGS=-mno-relaxed-simd

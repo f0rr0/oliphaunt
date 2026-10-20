@@ -17,10 +17,10 @@ import { createDeterministicTar } from '../../../../tools/packaging/cargo-source
 import { canonicalGzipSync } from '../../../../tools/packaging/portable-archive.mts';
 import { stageReleaseNotices } from '../../../../tools/packaging/release-notices.mts';
 import {
+  exactExtensionProducts,
   extensionReleaseProduct,
   extensionReleaseVersion,
   extensionSqlNames,
-  exactExtensionProducts,
 } from '../../../../tools/release/release-artifact-targets.mts';
 import {
   extractArchiveMemberToFile,
@@ -218,6 +218,36 @@ function aggregateFixture(root, { nestedOwner = false } = {}) {
 }
 
 describe('aggregate WASIX Cargo artifact packaging', () => {
+  test('source consumers select every catalog member through the asset build script', () => {
+    const manifest = JSON.parse(
+      readFileSync(path.join(ROOT, 'src/extensions/generated/wasix/extensions.json'), 'utf8'),
+    );
+    const sqlNames = manifest.extensions.map((extension) => extension['sql-name']).sort();
+    const features = sqlNames.map((sqlName) => `extension-${sqlName.replaceAll('_', '-')}`);
+    const app = path.join(scratch, 'all-members', 'app');
+    mkdirSync(path.join(app, 'src'), { recursive: true });
+    writeFileSync(
+      path.join(app, 'Cargo.toml'),
+      `[package]
+name = "wasix-all-members-proof"
+version = "0.0.0"
+edition = "2024"
+[dependencies]
+liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/wasix/runtime/crates/assets'))}, features = ${JSON.stringify(features)} }
+[workspace]
+`,
+    );
+    writeFileSync(
+      path.join(app, 'src/main.rs'),
+      `fn main() {
+    let mut selected = liboliphaunt_wasix_portable::SELECTED_EXTENSION_SQL_NAMES.to_vec();
+    selected.sort_unstable();
+    assert_eq!(selected, ${JSON.stringify(sqlNames)});
+}
+`,
+    );
+  });
+
   test('runtime source builds use every external extension product version independently of the runtime', () => {
     const root = path.join(scratch, 'independent-extension');
     const host = supportedRustcHostTriple();

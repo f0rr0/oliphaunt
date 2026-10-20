@@ -236,6 +236,25 @@ async function provePgTextsearchEnglishSnowball(db: OliphauntDatabase): Promise<
   }
 }
 
+export function activationSqlForExtension(extension: {
+  readonly sqlName: string;
+  readonly createsExtension: boolean;
+}): readonly string[] {
+  if (extension.createsExtension) {
+    return [`CREATE EXTENSION "${extension.sqlName}"`];
+  }
+  if (extension.sqlName === 'auto_explain') {
+    return [
+      "LOAD 'auto_explain'",
+      "SET auto_explain.log_min_duration = '0'",
+      "SET auto_explain.log_analyze = 'true'",
+      "SET auto_explain.log_level = 'NOTICE'",
+    ];
+  }
+  // Other LOAD-only modules are activated by their canonical smoke recipes.
+  return [];
+}
+
 export async function runMobileReleaseExtensionProof(
   db: OliphauntDatabase,
   plan: readonly MobileReleaseExtensionProof[],
@@ -277,12 +296,15 @@ export async function runMobileReleaseExtensionProof(
           return `${extension.sqlName} ${version}; dependency closure ${extension.selectedExtensionDependencies.join(',') || 'none'}`;
         }
 
-        const configured = await scalar(
-          db,
-          "SELECT current_setting('auto_explain.log_min_duration')::text AS value",
-        );
-        assertEqual(configured, '0', 'auto_explain load/configuration proof');
-        return 'auto_explain loaded and configured in the installed app session';
+        if (extension.sqlName === 'auto_explain') {
+          const configured = await scalar(
+            db,
+            "SELECT current_setting('auto_explain.log_min_duration')::text AS value",
+          );
+          assertEqual(configured, '0', 'auto_explain load/configuration proof');
+          return 'auto_explain loaded and configured in the installed app session';
+        }
+        return `${extension.sqlName} canonical LOAD-only smoke proof completed in the installed app session`;
       },
       onCheckStage,
     );

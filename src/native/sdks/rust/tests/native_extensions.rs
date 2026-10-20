@@ -561,7 +561,7 @@ fn assert_repeated_create_extension_error_recovers(
     mode: TestMode,
     extension: Extension,
 ) -> Result<()> {
-    if extension == Extension::AUTO_EXPLAIN {
+    if !extension.creates_extension() {
         return Ok(());
     }
 
@@ -596,7 +596,7 @@ fn assert_repeated_create_extension_error_recovers(
 }
 
 fn assert_extension_visible(db: &TestDatabase, mode: TestMode, extension: Extension) -> Result<()> {
-    if extension != Extension::AUTO_EXPLAIN {
+    if extension.creates_extension() {
         let response = block_on(db.exec_protocol_raw(raw_query_message(&format!(
             "SELECT extname FROM pg_extension WHERE extname = '{}'",
             extension.sql_name()
@@ -616,12 +616,27 @@ fn assert_extension_visible(db: &TestDatabase, mode: TestMode, extension: Extens
 }
 
 fn install_sql(extension: Extension) -> String {
-    if extension != Extension::AUTO_EXPLAIN {
+    if extension.creates_extension() {
         let sql_name = extension.sql_name().replace('"', "\"\"");
         format!("CREATE EXTENSION \"{sql_name}\" CASCADE")
     } else {
         let sql_name = extension.sql_name().replace('\'', "''");
         format!("LOAD '{sql_name}'")
+    }
+}
+
+#[test]
+fn native_extension_installation_respects_module_only_contracts() {
+    for (extension, expected) in [
+        (Extension::AUTO_EXPLAIN, "LOAD 'auto_explain'"),
+        (Extension::PASSWORDCHECK, "LOAD 'passwordcheck'"),
+        (Extension::PG_OVEREXPLAIN, "LOAD 'pg_overexplain'"),
+        (
+            Extension::PG_STAT_STATEMENTS,
+            "CREATE EXTENSION \"pg_stat_statements\" CASCADE",
+        ),
+    ] {
+        assert_eq!(install_sql(extension), expected);
     }
 }
 

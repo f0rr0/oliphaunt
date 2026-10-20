@@ -10,9 +10,11 @@ source-digest-inputs = [
   "src/database-resources/icu/source.toml",
   "src/extensions/external/pg_hashids/source.toml",
   "src/extensions/external/pg_ivm/source.toml",
+  "src/extensions/external/pg_partman/source.toml",
   "src/extensions/external/pg_textsearch/source.toml",
   "src/extensions/external/pg_textsearch/tests/upgrade/source.toml",
   "src/extensions/external/pg_uuidv7/source.toml",
+  "src/extensions/external/pgmq/source.toml",
   "src/extensions/external/pgtap/source.toml",
   "src/extensions/external/postgis/dependencies/geos/source.toml",
   "src/extensions/external/postgis/dependencies/json-c/source.toml",
@@ -29,11 +31,21 @@ source-digest-inputs = [
   "src/extensions/external/pg_hashids/upstream-license-data.json",
   "src/extensions/external/pg_ivm/targets/native-static-registry.toml",
   "src/extensions/external/pg_ivm/upstream-license-data.json",
+  "src/extensions/external/pg_partman/recipe.toml",
+  "src/extensions/external/pg_partman/targets/native-static-registry.toml",
+  "src/extensions/external/pg_partman/targets/native.toml",
+  "src/extensions/external/pg_partman/targets/wasix.toml",
+  "src/extensions/external/pg_partman/upstream-license-data.json",
   "src/extensions/external/pg_textsearch/recipe.toml",
   "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
   "src/extensions/external/pg_textsearch/tests/qualify.sh",
   "src/extensions/external/pg_textsearch/upstream-license-data.json",
   "src/extensions/external/pg_uuidv7/upstream-license-data.json",
+  "src/extensions/external/pgmq/recipe.toml",
+  "src/extensions/external/pgmq/targets/native-static-registry.toml",
+  "src/extensions/external/pgmq/targets/native.toml",
+  "src/extensions/external/pgmq/targets/wasix.toml",
+  "src/extensions/external/pgmq/upstream-license-data.json",
   "src/extensions/external/pgtap/recipe.toml",
   "src/extensions/external/pgtap/targets/native-static-registry.toml",
   "src/extensions/external/pgtap/targets/native.toml",
@@ -58,6 +70,7 @@ source-digest-inputs = [
   "src/test-fixtures/extensions/manifest.json",
   "src/test-fixtures/extensions/amcheck.sql",
   "src/test-fixtures/extensions/auto_explain.sql",
+  "src/test-fixtures/extensions/autoinc.sql",
   "src/test-fixtures/extensions/bloom.sql",
   "src/test-fixtures/extensions/btree_gin.sql",
   "src/test-fixtures/extensions/btree_gist.sql",
@@ -69,15 +82,22 @@ source-digest-inputs = [
   "src/test-fixtures/extensions/file_fdw.sql",
   "src/test-fixtures/extensions/fuzzystrmatch.sql",
   "src/test-fixtures/extensions/hstore.sql",
+  "src/test-fixtures/extensions/insert_username.sql",
   "src/test-fixtures/extensions/intarray.sql",
   "src/test-fixtures/extensions/isn.sql",
   "src/test-fixtures/extensions/lo.sql",
   "src/test-fixtures/extensions/ltree.sql",
+  "src/test-fixtures/extensions/moddatetime.sql",
   "src/test-fixtures/extensions/pageinspect.sql",
+  "src/test-fixtures/extensions/passwordcheck.sql",
   "src/test-fixtures/extensions/pg_buffercache.sql",
   "src/test-fixtures/extensions/pg_freespacemap.sql",
   "src/test-fixtures/extensions/pg_hashids.sql",
   "src/test-fixtures/extensions/pg_ivm.sql",
+  "src/test-fixtures/extensions/pg_logicalinspect.sql",
+  "src/test-fixtures/extensions/pg_overexplain.sql",
+  "src/test-fixtures/extensions/pg_partman.sql",
+  "src/test-fixtures/extensions/pg_stat_statements.sql",
   "src/test-fixtures/extensions/pg_surgery.sql",
   "src/test-fixtures/extensions/pg_textsearch.sql",
   "src/test-fixtures/extensions/pg_trgm.sql",
@@ -85,8 +105,10 @@ source-digest-inputs = [
   "src/test-fixtures/extensions/pg_visibility.sql",
   "src/test-fixtures/extensions/pg_walinspect.sql",
   "src/test-fixtures/extensions/pgcrypto.sql",
+  "src/test-fixtures/extensions/pgmq.sql",
   "src/test-fixtures/extensions/pgtap.sql",
   "src/test-fixtures/extensions/postgis.sql",
+  "src/test-fixtures/extensions/refint.sql",
   "src/test-fixtures/extensions/seg.sql",
   "src/test-fixtures/extensions/tablefunc.sql",
   "src/test-fixtures/extensions/tcn.sql",
@@ -107,6 +129,14 @@ evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
 extension = "auto_explain"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "autoinc"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
@@ -202,6 +232,14 @@ runtime-modes = ["direct","server","restart","backup-restore","materialization"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
+extension = "insert_username"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
 extension = "intarray"
 postgres-major = 18
 artifact-family = "wasix-runtime"
@@ -234,7 +272,23 @@ runtime-modes = ["direct","server","restart","backup-restore","materialization"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
+extension = "moddatetime"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
 extension = "pageinspect"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "passwordcheck"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
@@ -267,6 +321,38 @@ evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
 extension = "pg_ivm"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "pg_logicalinspect"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "pg_overexplain"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "pg_partman"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "pg_stat_statements"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
@@ -330,6 +416,14 @@ runtime-modes = ["direct","server","restart","backup-restore","materialization"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
+extension = "pgmq"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
 extension = "pgtap"
 postgres-major = 18
 artifact-family = "wasix-runtime"
@@ -339,6 +433,14 @@ evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
 extension = "postgis"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct","server","restart","backup-restore","materialization"]
+evidence-required = ["wasix-full-lifecycle-v1"]
+
+[[claims]]
+extension = "refint"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]

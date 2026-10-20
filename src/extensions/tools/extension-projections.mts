@@ -393,7 +393,7 @@ ${metadataRows.map((row) => `    public static let ${row.id.replace(/[-_]([a-z])
       dependencies('sources', ['ios-xcframework']),
       dependencies('sources', ['android-arm64-v8a', 'android-x86_64']),
       list('hash_dirs', 'mobile-static-hash-dirs'),
-      list('source_files'),
+      list('source_files', 'mobile-static-source-files'),
       list('source_recursive_dirs'),
     ]
       .map((value) => (Array.isArray(value) ? value.join(',') : value))
@@ -638,14 +638,24 @@ export function catalogProjections(catalog: Row): Map<string, string> {
       );
     } else if (row['source-kind'] === 'oliphaunt-other-extension') {
       const source = readToml(`${externalRoot}/${row['sql-name']}/source.toml`);
+      const recipePath = `${externalRoot}/${row['sql-name']}/recipe.toml`;
+      const recipe = existsSync(recipePath) ? readToml(recipePath) : {};
       pgxs.push(
         [
           row.id,
           row['sql-name'],
-          `target/oliphaunt-sources/checkouts/${source.name}`,
+          pgxsSourceDirectory(source.name, recipe.build?.source_subdirectory),
           row['native-module-file'] ?? '-',
           archive,
-          row.id === 'age' ? 'SIZEOF_DATUM=4' : '-',
+          row.id === 'age'
+            ? 'SIZEOF_DATUM=4'
+            : row.id === 'pg_partman'
+              ? 'NO_BGW=1 SCRIPTS= DOCS='
+              : row.id === 'vector'
+                ? // Upstream contracts floating-point operations; keep its SIMD within
+                  // the pinned Wasmer runtime's supported, non-relaxed instruction set.
+                  'OPTFLAGS=-mno-relaxed-simd'
+                : '-',
         ].join('\t'),
       );
     } else assert.equal(row['source-kind'], 'postgis', 'unsupported extension build kind');
@@ -657,6 +667,18 @@ export function catalogProjections(catalog: Row): Map<string, string> {
     wasixRustModule(catalog.extensions),
   );
   return outputs;
+}
+
+export function pgxsSourceDirectory(sourceName: string, subdirectory?: unknown): string {
+  assert(/^[a-zA-Z0-9_-]+$/.test(sourceName), 'invalid PGXS source name');
+  const root = `target/oliphaunt-sources/checkouts/${sourceName}`;
+  if (subdirectory === undefined) return root;
+  assert(
+    typeof subdirectory === 'string' &&
+      subdirectory.split('/').every((part) => /^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$/.test(part)),
+    'PGXS source subdirectory must stay within the pinned checkout',
+  );
+  return `${root}/${subdirectory}`;
 }
 
 function wasixRustModule(rows: Row[]): string {

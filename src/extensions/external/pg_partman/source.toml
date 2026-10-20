@@ -1,0 +1,9 @@
+name = "pg_partman"
+url = "https://github.com/pgpartman/pg_partman.git"
+branch = "pinned"
+commit = "f7e83b9c441c7e97066d815bbe14e02a9dc5ff94"
+
+[extension-control]
+sql-name = "pg_partman"
+source-path = "pg_partman.control"
+default-version = "5.5.0"
