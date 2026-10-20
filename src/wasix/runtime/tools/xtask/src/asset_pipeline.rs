@@ -45,6 +45,7 @@ pub(crate) struct BuildOutputs {
     source_dir: PathBuf,
     package_stage: PathBuf,
     modules: Vec<BuildModuleOutput>,
+    _packaged_inputs: Option<TemporaryDirectory>,
 }
 
 struct BuildModuleOutput {
@@ -331,6 +332,7 @@ impl BuildOutputs {
             source_dir,
             package_stage,
             modules,
+            _packaged_inputs: None,
         };
         outputs.ensure_required_files()?;
         Ok(outputs)
@@ -364,11 +366,9 @@ impl BuildOutputs {
         )?;
         ensure_packaged_asset_matches_source_lane(&manifest, source_lane)?;
         let canonical_source_lane = canonical_source_lane(source_lane)?;
-        let base = product.root().join("aot-inputs");
-        if base.exists() {
-            fs::remove_dir_all(&base).with_context(|| format!("remove {}", base.display()))?;
-        }
-        fs::create_dir_all(&base).with_context(|| format!("create {}", base.display()))?;
+        // Concurrent checks and serializers must retain their own extracted modules.
+        let inputs = TemporaryDirectory::new(&product.root(), "aot-inputs")?;
+        let base = inputs.0.clone();
 
         let assets_base = product.root().join("assets");
         let runtime_archive =
@@ -506,6 +506,7 @@ impl BuildOutputs {
             source_dir: base.clone(),
             package_stage: base,
             modules,
+            _packaged_inputs: Some(inputs),
         })
     }
 
@@ -1320,8 +1321,14 @@ pub(crate) fn prepare_aot_artifacts(
         .filter(|module| module.requires_aot && product.owns(&module.name))
     {
         let output = source_dir.join(aot_file(module, target));
-        let input = fs::canonicalize(&module.path)
-            .with_context(|| format!("canonicalize {}", module.path.display()))?;
+        // The shell invokes the serializer after this command releases its scratch inputs.
+        let input = source_dir.join("inputs").join(format!(
+            "{}.wasm",
+            module.aot_file.trim_end_matches(".bin.zst")
+        ));
+        copy_file(&module.path, &input)?;
+        let input = fs::canonicalize(&input)
+            .with_context(|| format!("canonicalize {}", input.display()))?;
         let input = input.to_str().context("AOT input path is not UTF-8")?;
         let output = output.to_str().context("AOT output path is not UTF-8")?;
         ensure!(
