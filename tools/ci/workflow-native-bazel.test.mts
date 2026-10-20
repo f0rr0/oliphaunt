@@ -1270,13 +1270,14 @@ while [[ "$#" -gt 1 ]]; do
 done
 jq -nc --arg id "$id" --arg command "$command" --slurpfile targets "$targets" --slurpfile config "$configuration" --slurpfile startup "$startup" \\
   '{id:$id,command:$command,targets:$targets[0],configuration:$config[0],startup:$startup[0]}' >> "$ABI_CALLS"
-if [[ "\${ABI_STATUS:-0}" != 0 ]]; then exit "$ABI_STATUS"; fi
+if [[ "\${ABI_STATUS:-0}" != 0 && ( -z "\${ABI_FAIL_ID:-}" || "$id" == "$ABI_FAIL_ID" ) ]]; then exit "$ABI_STATUS"; fi
 mkdir -p "$output"
 printf '{}\\n' > "$output/ci-request.json"
 `,
     );
-    const execute = (selected: string[], status = '0') => {
+    const execute = (selected: string[], status = '0', failId = '') => {
       rmSync(calls, { force: true });
+      rmSync(path.join(env.RUNNER_TEMP, 'ci-requests'), { recursive: true, force: true });
       const result = spawnSync('bash', ['-eu', '-c', step.run], {
         cwd: directory,
         env: {
@@ -1284,6 +1285,7 @@ printf '{}\\n' > "$output/ci-request.json"
           CI_SELECTED_REQUESTS: JSON.stringify(selected),
           ABI_CALLS: calls,
           ABI_STATUS: status,
+          ABI_FAIL_ID: failId,
         },
       });
       const records = existsSync(calls)
@@ -1300,6 +1302,11 @@ printf '{}\\n' > "$output/ci-request.json"
       selected.records.map((value) => value.id),
       [ids[1]],
     );
+    for (const id of ids)
+      assert.equal(
+        existsSync(path.join(env.RUNNER_TEMP, 'ci-requests', id, 'ci-request.json')),
+        id === ids[1],
+      );
     const full = execute(ids);
     assert.equal(full.result.status, 0, full.result.stderr.toString());
     assert.deepEqual(
@@ -1331,10 +1338,108 @@ printf '{}\\n' > "$output/ci-request.json"
       false,
     );
     const failed = execute(ids, '7');
-    assert.equal(failed.result.status, 7);
-    assert.equal(failed.records.length, 1, 'failure must stop subsequent ABI requests');
+    assert.equal(failed.result.status, 1);
+    assert.deepEqual(
+      failed.records.map((value) => value.id),
+      ids,
+    );
+    const partial = execute(ids, '7', ids[1]);
+    assert.equal(partial.result.status, 1, 'a failed profile must keep qualification failed');
+    assert.deepEqual(
+      partial.records.map((value) => value.id),
+      ids,
+    );
+    for (const id of ids)
+      assert.equal(
+        existsSync(path.join(env.RUNNER_TEMP, 'ci-requests', id, 'ci-request.json')),
+        id !== ids[1],
+        `retain only the successful profile receipts: ${id}`,
+      );
     assert.deepEqual(execute([]).records, []);
   });
+});
+
+test('macOS collects independent qualifications after sibling failures while preserving setup and capture gates', () => {
+  const steps = jobs.portable.steps;
+  const sdk = steps.find((step: any) => step.id === 'apple_sdk');
+  assert.equal(sdk.if, "matrix.platform == 'macos-arm64'");
+  const packages = steps.find(
+    (step: any) => step.name === 'Qualify packages and native host behavior',
+  );
+  const abi = steps.find(
+    (step: any) => step.name === 'Construct native iOS device and simulator ABI consumers',
+  );
+  const native = steps.find((step: any) => step.id === 'native_qualification');
+  const evaluate = (
+    step: any,
+    {
+      platform = 'macos-arm64',
+      succeeded = false,
+      sdkOutcome = 'success',
+      cancelled = false,
+      selected = true,
+      capture = true,
+      mode = 'source',
+      qualifierOutcome = 'success',
+    } = {},
+  ) =>
+    runInNewContext(
+      step.if.replace(/^\$\{\{\s*|\s*\}\}$/gu, '').replaceAll('needs.release-inputs', 'inputs'),
+      {
+        matrix: { platform },
+        inputs: {
+          outputs: {
+            ci_mode: mode,
+            ci_selected_requests: JSON.stringify(
+              selected
+                ? [`portable/${platform}/packages`, `portable/${platform}/native-carriers`]
+                : [],
+            ),
+            ci_capture_requests: JSON.stringify(
+              capture
+                ? [`portable/${platform}/apple-packages`, `portable/${platform}/native-carriers`]
+                : [],
+            ),
+          },
+        },
+        env: requestEnvironment(step, {}, platform),
+        steps: {
+          apple_sdk: { outcome: sdkOutcome },
+          apple_qualification: { outcome: qualifierOutcome },
+          native_qualification: { outcome: qualifierOutcome },
+        },
+        success: () => succeeded,
+        cancelled: () => cancelled,
+        contains: (values: string[], value: string) => values.includes(value),
+        fromJSON: JSON.parse,
+        format: (template: string, value: string) => template.replace('{0}', value),
+      },
+    );
+  for (const step of [packages, abi, native]) {
+    assert.equal(step['continue-on-error'], undefined);
+    assert.equal(evaluate(step), true, `${step.name}: finish after a sibling failure`);
+    for (const sdkOutcome of ['failure', 'skipped'])
+      assert.equal(evaluate(step, { sdkOutcome }), false, `${step.name}: setup ${sdkOutcome}`);
+    assert.equal(evaluate(step, { cancelled: true, succeeded: true }), false);
+  }
+  for (const step of [packages, native]) {
+    assert.equal(evaluate(step, { selected: false }), false);
+    assert.equal(evaluate(step, { platform: 'windows-x64' }), false);
+    assert.equal(evaluate(step, { platform: 'windows-x64', succeeded: true }), true);
+  }
+  assert.equal(evaluate(abi, { platform: 'windows-x64', succeeded: true }), false);
+  for (const name of [
+    'Upload iOS extension construction evidence',
+    'Upload native construction evidence',
+  ]) {
+    const step = steps.find((step: any) => step.name === name);
+    assert.equal(evaluate(step), true, `${name}: retain a successful sibling's evidence`);
+    for (const qualifierOutcome of ['failure', 'skipped'])
+      assert.equal(evaluate(step, { qualifierOutcome }), false);
+    assert.equal(evaluate(step, { capture: false }), false);
+    assert.equal(evaluate(step, { capture: false, mode: 'full' }), true);
+    assert.equal(evaluate(step, { cancelled: true }), false);
+  }
 });
 
 test('full module preflight follows source planning and retains strict failure propagation', () => {

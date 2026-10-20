@@ -240,12 +240,14 @@ jobs:
         run: bash tools/dev/bazel-bootstrap.test.sh
 
       - name: Select declared Apple SDK
+        id: apple_sdk
         if: matrix.platform == 'macos-arm64'
         uses: ./.github/actions/setup-apple
         with:
           install-build-dependencies: "false"
 
       - name: Qualify complete Apple runtime, resources, SDK and extension packages
+        id: apple_qualification
         if: (matrix.platform == 'macos-arm64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))
         env:
           CI_REQUEST_IDS: '{"macos-arm64":["portable/macos-arm64/apple-packages"]}'
@@ -290,7 +292,7 @@ jobs:
           cp "$RUNNER_TEMP/ios-extension-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
 
       - name: Upload iOS extension construction evidence
-        if: (matrix.platform == 'macos-arm64') && (needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('portable/{0}/apple-packages', matrix.platform)))
+        if: ${{ !cancelled() && steps.apple_qualification.outcome == 'success' && (needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('portable/{0}/apple-packages', matrix.platform))) }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: native-build-evidence-mobile-ios
@@ -303,7 +305,9 @@ jobs:
         uses: ./.github/actions/setup-msvc
 
       - name: Qualify packages and native host behavior
-        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        # Finish independent macOS requests after a sibling fails. Each Bazel
+        # request still resolves its own prerequisites, and failures stay failed.
+        if: ${{ !cancelled() && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID) && (success() || (matrix.platform == 'macos-arm64' && steps.apple_sdk.outcome == 'success')) }}
         timeout-minutes: ${{ matrix.platform == 'macos-arm64' && 180 || 150 }}
         env:
           CI_REQUEST_ID: portable/${{ matrix.platform }}/packages
@@ -465,10 +469,11 @@ jobs:
           exit "$qualifier_status"
 
       - name: Construct native iOS device and simulator ABI consumers
-        if: matrix.platform == 'macos-arm64'
+        if: ${{ !cancelled() && matrix.platform == 'macos-arm64' && steps.apple_sdk.outcome == 'success' }}
         env:
           CI_REQUEST_IDS: '{"macos-arm64":["portable/macos-arm64/abi-ios_device_arm64","portable/macos-arm64/abi-ios_simulator_arm64","portable/macos-arm64/abi-apple_package_macos_arm64"]}'
         run: |
+          qualification_status=0
           while IFS= read -r CI_REQUEST_ID; do
             if ! jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_SELECTED_REQUESTS" >/dev/null; then continue; fi
             profile="${CI_REQUEST_ID##*/abi-}"
@@ -486,15 +491,19 @@ jobs:
             jq -nc --args '$ARGS.positional' -- "${ci_targets[@]}" > "$ci_input_root/targets.json"
             jq -nc --args '$ARGS.positional' -- "${ci_configuration[@]}" > "$ci_input_root/configuration.json"
             jq -nc --args '$ARGS.positional' -- "${ci_startup[@]}" > "$ci_input_root/startup.json"
-            bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/run-configured-request.mts \
+            if ! bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/run-configured-request.mts \
               --id "$CI_REQUEST_ID" --job "$CI_REQUEST_JOB" --mode "$CI_MODE" --command "$ci_command" \
               --targets-json "$ci_input_root/targets.json" --configuration-json "$ci_input_root/configuration.json" \
               --startup-json "$ci_input_root/startup.json" \
-              --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+              --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"; then
+              qualification_status=1
+            fi
           done < <(jq -r --arg platform "$CI_PLATFORM" '.[$platform][]' <<< "$CI_REQUEST_IDS")
+          exit "$qualification_status"
 
       - name: Qualify final native carriers and frozen resources
-        if: (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))
+        id: native_qualification
+        if: ${{ !cancelled() && (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64') && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]) && (success() || (matrix.platform == 'macos-arm64' && steps.apple_sdk.outcome == 'success')) }}
         env:
           CI_REQUEST_IDS: '{"macos-arm64":["portable/macos-arm64/native-carriers"],"windows-x64":["portable/windows-x64/native-carriers"]}'
           TARGET_PLATFORM: ${{ matrix.platform }}
@@ -542,7 +551,7 @@ jobs:
           cp "$RUNNER_TEMP/native-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
 
       - name: Upload native construction evidence
-        if: (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64') && (needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('portable/{0}/native-carriers', matrix.platform)))
+        if: ${{ !cancelled() && steps.native_qualification.outcome == 'success' && (needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('portable/{0}/native-carriers', matrix.platform))) }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: native-build-evidence-native-${{ matrix.platform }}
