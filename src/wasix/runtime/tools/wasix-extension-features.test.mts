@@ -9,7 +9,7 @@ import { extensionFeatures, fullEvidenceFeatures } from './wasix-extension-featu
 
 const ROOT = path.resolve(import.meta.dirname, '../../../..');
 
-test('every catalog extension has matching Rust asset, SDK, and server features', () => {
+test('every catalog extension has matching Rust asset, SDK, server, and Node-API features', () => {
   const manifest = JSON.parse(
     readFileSync(path.join(ROOT, 'src/extensions/generated/wasix/extensions.json'), 'utf8'),
   );
@@ -19,6 +19,7 @@ test('every catalog extension has matching Rust asset, SDK, and server features'
     'src/wasix/runtime/crates/assets/Cargo.toml',
     'src/wasix/sdks/rust/Cargo.toml',
     'src/wasix/pgwire-server/Cargo.toml',
+    'src/wasix/node-addon/Cargo.toml',
   ]) {
     const cargo = Bun.TOML.parse(readFileSync(path.join(ROOT, relative), 'utf8'));
     assert.deepEqual(
@@ -31,11 +32,11 @@ test('every catalog extension has matching Rust asset, SDK, and server features'
     for (const extension of manifest.extensions) {
       const feature = `extension-${extension['sql-name'].replaceAll('_', '-')}`;
       // plpgsql ships in the core runtime rather than an extension carrier.
-      const server = relative.includes('/pgwire-server/');
-      const dependencies = (server ? [] : extension.dependencies)
+      const forwardsSdk = relative.includes('/pgwire-server/') || relative.includes('/node-addon/');
+      const dependencies = (forwardsSdk ? [] : extension.dependencies)
         .filter((sqlName) => sqlName !== 'plpgsql')
         .map((sqlName) => `extension-${sqlName.replaceAll('_', '-')}`);
-      const forwarding = server
+      const forwarding = forwardsSdk
         ? ['extensions', `oliphaunt-wasix/${feature}`]
         : relative.includes('/sdks/')
           ? ['extensions', `liboliphaunt-wasix-portable/${feature}`]
@@ -47,6 +48,21 @@ test('every catalog extension has matching Rust asset, SDK, and server features'
       );
     }
   }
+});
+
+test('the Node-API release embeds the complete contrib catalog', () => {
+  const catalog = JSON.parse(
+    readFileSync(path.join(ROOT, 'src/extensions/generated/extensions.catalog.json'), 'utf8'),
+  );
+  const cargo = Bun.TOML.parse(
+    readFileSync(path.join(ROOT, 'src/wasix/node-addon/Cargo.toml'), 'utf8'),
+  );
+  const contrib = extensionFeatures({
+    extensions: catalog.extensions.filter(
+      (extension) => extension['source-kind'] === 'postgres-contrib',
+    ),
+  });
+  assert.deepEqual(cargo.features.release.toSorted(), ['tools', ...contrib].sort());
 });
 
 test('full WASIX evidence enables every extension feature', () => {
