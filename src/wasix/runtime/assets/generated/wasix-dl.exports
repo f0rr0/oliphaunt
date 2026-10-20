@@ -899,6 +899,7 @@ list_oid_cmp
 list_sort
 llround
 log
+log_newpage_buffer
 log_newpage_range
 lookup_rowtype_tupdesc
 lookup_rowtype_tupdesc_domain
