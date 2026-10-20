@@ -341,6 +341,7 @@ jobs:
           fi
           if [[ "$TARGET_PLATFORM" == linux-x64 ]]; then
             host_tests+=(
+              //build_defs/host:rust_dependency_paths_tests
               //tools/ci:source_checks
               //tools/dev:source_checks
               //:packaging_contract_test

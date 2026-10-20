@@ -1,0 +1,134 @@
+diff --git a/rust/private/rustc.bzl b/rust/private/rustc.bzl
+--- a/rust/private/rustc.bzl
++++ b/rust/private/rustc.bzl
+@@ -984,7 +984,8 @@
+         require_explicit_unstable_features = False,
+         error_format = None,
+         allowed_unstable_rust_features = None,
+-        link_std_dylib = False):
++        link_std_dylib = False,
++        dependency_files = None):
+     """Builds an Args object containing common rustc flags
+ 
+     Args:
+@@ -1057,6 +1058,7 @@
+         error_format (str, optional): Error format to pass to the `--error-format` command line argument. If set to None, uses the "_error_format" entry in `attr`.
+         allowed_unstable_rust_features (list, optional): List of unstable Rust language features allowed for this target.
+         link_std_dylib (bool): Whether to dynamically link the Rust standard library using `--prefer-dynamic`.
++        dependency_files (list[File], optional): Files providing the dependency search directories.
+ 
+     Returns:
+         tuple: A tuple of the following items
+@@ -1397,7 +1399,7 @@
+     use_metadata = _depend_on_metadata(crate_info, force_depend_on_objects)
+ 
+     # These always need to be added, even if not linking this crate.
+-    add_crate_link_flags(rustc_flags, dep_info, force_all_deps_direct, use_metadata)
++    add_crate_link_flags(rustc_flags, dep_info, force_all_deps_direct, use_metadata, dependency_files)
+ 
+     needs_extern_proc_macro_flag = _is_proc_macro(crate_info) and crate_info.edition != "2015"
+     if needs_extern_proc_macro_flag:
+@@ -1669,6 +1671,35 @@
+ 
+     return profiling_dir, profiling_flags
+ 
++def _windows_dependency_files(ctx, toolchain, crate_info, dep_info):
++    """Consolidates static crate search paths on Windows compiler hosts."""
++    if toolchain.exec_triple.system != "windows":
++        return None
++
++    # https://github.com/bazelbuild/rules_rust/issues/3767: rustc extends PATH with -L directories.
++    # Remove after upgrading to upstream Windows dependency path consolidation that preserves configured artifacts.
++    use_metadata = _depend_on_metadata(crate_info, False)
++    dependency_files = []
++    for index, crate in enumerate(dep_info.transitive_crates.to_list()):
++        artifact = crate.metadata if use_metadata else crate.output
++        if not artifact or (use_metadata and not crate.metadata_supports_pipelining):
++            artifact = crate.output
++        if artifact.extension in ("rlib", "rmeta"):
++            # Keep the crate prefix; the ordinal preserves same-basename configured artifacts.
++            stem = artifact.basename[:-len(artifact.extension) - 1]
++            alias = ctx.actions.declare_file("_rust_deps/{}/{}-{}.{}".format(
++                crate_info.output.basename,
++                stem,
++                index,
++                artifact.extension,
++            ))
++            ctx.actions.symlink(output = alias, target_file = artifact)
++            dependency_files.append(alias)
++        else:
++            # DLLs retain their original directories for native dependency lookup.
++            dependency_files.append(artifact)
++    return dependency_files
++
+ def rustc_compile_action(
+         *,
+         ctx,
+@@ -1781,6 +1812,10 @@
+         stamp = stamp,
+         experimental_use_cc_common_link = experimental_use_cc_common_link,
+     )
++
++    dependency_files = _windows_dependency_files(ctx, toolchain, crate_info, dep_info)
++    if dependency_files != None:
++        compile_inputs = depset(dependency_files, transitive = [compile_inputs])
+ 
+     # The types of rustc outputs to emit.
+     # If we build metadata, we need to keep the command line of the two invocations
+@@ -1880,6 +1915,7 @@
+         require_explicit_unstable_features = require_explicit_unstable_features,
+         allowed_unstable_rust_features = allowed_unstable_rust_features,
+         link_std_dylib = link_std_dylib,
++        dependency_files = dependency_files,
+     )
+ 
+     args_metadata = None
+@@ -1909,6 +1945,7 @@
+             require_explicit_unstable_features = require_explicit_unstable_features,
+             allowed_unstable_rust_features = allowed_unstable_rust_features,
+             link_std_dylib = link_std_dylib,
++            dependency_files = dependency_files,
+         )
+ 
+     env = dict(ctx.configuration.default_shell_env)
+@@ -2706,7 +2743,7 @@
+         dirs[f.dirname] = None
+     return dirs.keys()
+ 
+-def add_crate_link_flags(args, dep_info, force_all_deps_direct = False, use_metadata = False):
++def add_crate_link_flags(args, dep_info, force_all_deps_direct = False, use_metadata = False, dependency_files = None):
+     """Adds link flags to an Args object reference
+ 
+     Args:
+@@ -2715,6 +2752,7 @@
+         force_all_deps_direct (bool, optional): Whether to pass the transitive rlibs with --extern
+             to the commandline as opposed to -L.
+         use_metadata (bool, optional): Build command line arguments using metadata for crates that provide it.
++        dependency_files (list[File], optional): Files providing the dependency search directories.
+     """
+ 
+     direct_crates = depset(
+@@ -2728,7 +2766,7 @@
+     args.add_all(direct_crates, uniquify = True, map_each = crate_to_link_flags)
+ 
+     args.add_all(
+-        dep_info.transitive_crates,
++        dep_info.transitive_crates if dependency_files == None else dependency_files,
+         map_each = _get_crate_dirname,
+         uniquify = True,
+         format_each = "-Ldependency=%s",
+@@ -2780,12 +2818,12 @@
+     """A helper macro used by `add_crate_link_flags` for getting the directory name of the current crate's output path
+ 
+     Args:
+-        crate (CrateInfo): A CrateInfo provider from the current rule
++        crate (CrateInfo|File): A crate provider or dependency artifact from the current rule
+ 
+     Returns:
+         str: The directory name of the the output File that will be produced.
+     """
+-    return crate.output.dirname
++    return getattr(crate, "output", crate).dirname
+ 
+ def portable_link_flags(
+         lib,

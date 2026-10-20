@@ -5,6 +5,7 @@ startup --host_jvm_args=-Xmx2048m
 common --repo_env=DO_NOT_TRACK=1
 common --lockfile_mode=error
 build --incompatible_strict_action_env
+build --verbose_failures
 # Compiler and quality tools use the runtime acquired by pinned rules_java.
 build --java_runtime_version=remotejdk_17
 build --tool_java_runtime_version=remotejdk_17

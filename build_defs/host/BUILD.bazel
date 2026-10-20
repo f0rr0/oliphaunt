@@ -5,6 +5,7 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_swift//swift:swift.bzl", "swift_binary")
 load("@rules_swift//swift/toolchains:xcode_swift_toolchain.bzl", "xcode_swift_toolchain")
 load(":profile-test.bzl", "profile_test")
+load(":rust-dependency-paths-test.bzl", "rust_dependency_paths_tests")
 load(":cc-profiles.bzl", "host_cc_profiles")
 
 package(default_visibility = ["//visibility:public"])
@@ -25,6 +26,7 @@ bun_test(name = "host_sdk_test", entry_point = "host-sdk.test.mts", data = ["hos
 bun_test(name = "apple_app_tools_test", entry_point = "apple-app-tools.test.mts", data = ["apple-app-tools.mts"], size = "small")
 bun_binary(name = "sdk_tree_conformance", entry_point = "sdk-tree-conformance.mts", data = ["sdk-tree.bzl"], tags = ["manual"])
 profile_test(name = "profile_analysis_test", size = "small")
+rust_dependency_paths_tests()
 
 xcode_swift_toolchain(
     name = "xcode_swift_base",
