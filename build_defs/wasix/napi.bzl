@@ -52,6 +52,8 @@ def release_sql_names(facts):
     return sorted(names)
 
 def _inputs_impl(ctx):
+    if not ctx.file.contrib_frozen:
+        fail("WASIX addon is missing its original current contrib frozen File")
     inputs = [ctx.file.sdk_manifest, ctx.file.contrib_frozen]
     archives, suppliers = {}, []
     for target, role in ctx.attr.archives.items():
@@ -90,7 +92,7 @@ _inputs = rule(implementation = _inputs_impl, toolchains = BUN_SOURCE_TOOLCHAINS
     "sdk_version": attr.string(mandatory = True),
     "runtime_version": attr.string(mandatory = True),
     "sdk_manifest": attr.label(default = "//src/wasix/sdks/rust:Cargo.toml", allow_single_file = True),
-    "contrib_frozen": attr.label(allow_single_file = True, mandatory = True, cfg = WASIX_PAYLOAD_PROFILE),
+    "contrib_frozen": attr.label(allow_single_file = True, cfg = WASIX_PAYLOAD_PROFILE),
     "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
     "_stager": attr.label(default = "//build_defs/wasix:napi-inputs.mts", allow_single_file = True),
     "_helpers": attr.label_list(default = NAPI_HELPERS, allow_files = True),

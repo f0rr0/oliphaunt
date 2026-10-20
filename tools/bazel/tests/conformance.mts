@@ -1167,6 +1167,55 @@ try {
     return readFileSync(path.join(executionRoot, file), 'utf8');
   };
   const domainBefore = domain();
+  const partialNativeInputs = path.join(scratch, 'partial-native-inputs.json');
+  writeFileSync(
+    partialNativeInputs,
+    JSON.stringify({
+      source: { commit: 'a'.repeat(40), tree: 'b'.repeat(40) },
+      nativeCurrentArtifacts: [],
+    }),
+  );
+  const scopedLabels = [
+    '//build_defs/languages:source_package_test',
+    '//src/wasix/node-addon:tools/carrier-contract.mts',
+  ];
+  const scopedQuery = `set(${scopedLabels.join(' ')})`;
+  for (const state of ['cold', 'warm'])
+    assert.deepEqual(
+      bazel('query', [
+        scopedQuery,
+        `--repo_env=OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=${partialNativeInputs}`,
+        '--output=label',
+        '--noshow_progress',
+      ])
+        .stdout.trim()
+        .split('\n')
+        .sort(),
+      scopedLabels,
+      `${state} scoped current artifacts must not require unrelated WASIX archives at package loading`,
+    );
+  assert.match(
+    bazel(
+      'cquery',
+      [
+        '//src/wasix/node-addon:release_inputs',
+        `--repo_env=OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=${partialNativeInputs}`,
+        '--noshow_progress',
+      ],
+      true,
+    ).stderr,
+    /WASIX addon is missing its original current contrib frozen File/,
+    'selected WASIX construction still requires the original frozen File',
+  );
+  assert.deepEqual(
+    bazel('query', [scopedQuery, '--output=label', '--noshow_progress'])
+      .stdout.trim()
+      .split('\n')
+      .sort(),
+    scopedLabels,
+    'removing scoped current artifacts restores ordinary package loading',
+  );
+  assert.equal(domain(), domainBefore, 'removing scoped inputs restores exact domain metadata');
   const lockedAcquisition = () =>
     bazel('query', ['@pgvector//:all', '--lockfile_mode=error', '--noshow_progress']);
   lockedAcquisition();

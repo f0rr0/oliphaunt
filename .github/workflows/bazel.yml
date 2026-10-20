@@ -1470,7 +1470,7 @@ jobs:
     if: ${{ !cancelled() && needs.release-inputs.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), 'release-families') }}
     needs: [portable, linux, wasix, postmaster, postmaster-host, wasix-host, release-inputs]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     permissions:
       contents: read
       actions: read

@@ -162,7 +162,12 @@ def napi_artifact_tests():
         condition = "@rules_rust//rust/platform:" + row["triple"]
         packages = ["liboliphaunt-wasix-portable", "liboliphaunt-wasix-aot-" + row["triple"],
                     "oliphaunt-extension-contrib-pg18-wasix", "oliphaunt-extension-contrib-pg18-aot-" + row["target"].removesuffix("-gnu").removesuffix("-msvc")]
-        archives[condition] = [NATIVE_CURRENT_ARTIFACTS["liboliphaunt-wasix/" + version + "/cargo:" + package]["file"]["path"] for package in packages] if NATIVE_CURRENT_ARTIFACTS != None else [
+        archives[condition] = [
+            original["file"]["path"]
+            for package in packages
+            for original in [NATIVE_CURRENT_ARTIFACTS.get("liboliphaunt-wasix/" + version + "/cargo:" + package)]
+            if original
+        ] if NATIVE_CURRENT_ARTIFACTS != None else [
             "//src/wasix/runtime/crates/assets:crate", "//src/wasix/runtime/crates/aot/" + row["triple"] + ":crate", "//build_defs/extensions/wasix:contrib",
         ]
         names[condition] = [package + "-" + version + ".crate" for package in packages]
