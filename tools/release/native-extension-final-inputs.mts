@@ -124,12 +124,13 @@ export function projectNativeCurrentArtifacts(
     assert.deepEqual(row.source, source, 'current native artifact source differs');
     const match = row.artifact.match(/^(cargo|github-release):([A-Za-z0-9][A-Za-z0-9._-]*)$/u);
     assert.ok(match, 'current native artifact needs a canonical carrier identity');
-    const expected = match[1] === 'cargo' ? `${match[2]}-${row.version}.crate` : match[2];
-    assert.equal(
-      path.basename(row.file.path),
-      expected,
-      'current native artifact filename differs',
-    );
+    if (match[1] === 'github-release')
+      assert.equal(
+        path.basename(row.file.path),
+        match[2],
+        'current native artifact filename differs',
+      );
+    else assert.ok(row.file.path.endsWith('.crate'), 'current native Cargo File needs .crate');
     const key = `${row.product}/${row.version}/${row.artifact}`;
     assert.ok(!Object.hasOwn(artifacts, key), 'current native artifact repeats');
     const projected = projectOriginalNativeFinalFile(

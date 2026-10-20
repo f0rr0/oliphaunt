@@ -226,7 +226,7 @@ test('requires GH Files for mobile and all registry groups for desktop/WASIX', (
   }
 });
 
-test('current payload aliases retain exact source/File tuples and reject source, identity and byte substitutions', () => {
+test('current payload aliases retain exact source/File tuples and reject invalid carriers, source and bytes', () => {
   const { directory, file } = fixture();
   try {
     const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
@@ -237,8 +237,8 @@ test('current payload aliases retain exact source/File tuples and reject source,
       configuration: 'linux-x64-gnu',
       source,
       file: {
-        ...file('liboliphaunt-native-linux-x64-gnu-0.3.3.crate'),
-        member: 'liboliphaunt-native-linux-x64-gnu-0.3.3.crate',
+        ...file('native_cargo_export.crate'),
+        member: 'native_cargo_export.crate',
       },
     };
     const projected = projectNativeCurrentArtifacts([row], source);
@@ -249,11 +249,13 @@ test('current payload aliases retain exact source/File tuples and reject source,
       '@oliphaunt_metadata//:native-current-artifacts/',
     );
     expect(projected.files[0].source).toBe(row.file.path);
+    expect(projected.artifacts[key].file.path).toEndWith('/native_cargo_export.crate');
     expect(projectNativeCurrentArtifacts([], source).artifacts).toEqual({});
     for (const change of [
       (value) => (value.source.commit = 'c'.repeat(40)),
-      (value) => (value.version = '0.3.4'),
-      (value) => (value.artifact = 'cargo:wrong-name'),
+      (value) => (value.version = 'not-a-version'),
+      (value) => (value.artifact = 'cargo:invalid/name'),
+      (value) => (value.file.path = value.file.path.replace(/\.crate$/u, '.tgz')),
       (value) => (value.file.sha256 = '0'.repeat(64)),
       (value) => (value.file.producer.output = '../output'),
       (value) => (value.authenticated = true),
@@ -263,6 +265,9 @@ test('current payload aliases retain exact source/File tuples and reject source,
       expect(() => projectNativeCurrentArtifacts([changed], source)).toThrow();
     }
     expect(() => projectNativeCurrentArtifacts([row, row], source)).toThrow('repeats');
+    expect(() =>
+      projectNativeCurrentArtifacts([{ ...row, artifact: 'github-release:other.crate' }], source),
+    ).toThrow('filename differs');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

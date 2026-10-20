@@ -11,11 +11,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { cargoPayloadPool } from '../../build_defs/languages/installed/consumer.mts';
 import {
   captureSeedConstructionIntent,
   writeSeedConstructionReceipt,
 } from '../../build_defs/resources/seed_construction.mts';
 import { createDeterministicTar } from '../packaging/archive-directory.mts';
+import { tarArchive } from '../packaging/testdata/tar-fixture.mts';
 import { loadReleaseMetadata } from './bazel-release-metadata.mts';
 import type { ExtensionFinalInputFile } from './native-extension-final-inputs.mts';
 import { fileIdentity } from './native-file-identity.mts';
@@ -41,6 +43,7 @@ import {
   commitNativeVersionUpdates,
 } from './native-version-source.mts';
 import { isNativeCurrentCargoRoot } from './qualified-native-extension-final-inputs.mts';
+import { discoverPublicationArtifacts } from './publication-lock.mts';
 import { loadProducts } from './release-graph.mts';
 
 async function fixture() {
@@ -1170,13 +1173,21 @@ for (const fault of [
     }
   });
 
-test('same final source constructor facts replace stale tuples and survive the existing source snapshot transport', async () => {
+test('current Cargo identity survives arbitrary producer filenames and snapshot transport into installed staging', async () => {
   const f = await fixture();
   try {
     const finalInputs = finalInputsFixture(f.root);
-    const name = 'liboliphaunt-native-linux-x64-gnu-0.3.3.crate';
+    const name = 'native_cargo_export.crate';
     const currentFile = path.join(f.root, name);
-    writeFileSync(currentFile, 'original current carrier protocol fixture');
+    writeFileSync(
+      currentFile,
+      tarArchive([
+        {
+          name: 'liboliphaunt-native-linux-x64-gnu-0.3.3/Cargo.toml',
+          data: '[package]\nname = "liboliphaunt-native-linux-x64-gnu"\nversion = "0.3.3"\n',
+        },
+      ]),
+    );
     const identity = fileIdentity(currentFile);
     finalInputs.nativeCurrentArtifacts = [
       {
@@ -1249,6 +1260,48 @@ test('same final source constructor facts replace stale tuples and survive the e
       expect(fileIdentity(file.path).sha256).toBe(originalFiles[index].sha256);
       expect(file.producer).toEqual(originalFiles[index].producer);
       expect(file.member).toEqual(originalFiles[index].member);
+    }
+    const importedCurrent = imported.nativeCurrentArtifacts[0];
+    expect(path.basename(importedCurrent.file.path)).toBe(name);
+    expect(discoverPublicationArtifacts([importedCurrent.file.path])).toMatchObject([
+      { ecosystem: 'cargo', name: 'liboliphaunt-native-linux-x64-gnu', version: '0.3.3' },
+    ]);
+    expect(importedCurrent.file.producer).toEqual(current.nativeCurrentArtifacts[0].file.producer);
+    for (const fault of ['none', 'name', 'version', 'owner']) {
+      const row = structuredClone(importedCurrent);
+      if (fault === 'name') row.artifact = 'cargo:other-cargo-package';
+      if (fault === 'version') row.version = '0.3.4';
+      if (fault === 'owner') row.product = 'other-product';
+      const staging = path.join(f.root, `cargo-consumer-${fault}`);
+      mkdirSync(staging);
+      const read = () => {
+        const owners =
+          fault === 'owner'
+            ? {
+                'liboliphaunt-native-linux-x64-gnu': {
+                  product: 'liboliphaunt-native',
+                  version: '0.3.3',
+                },
+              }
+            : {};
+        const pool = cargoPayloadPool(
+          { completed: [], current: [row], owners },
+          {},
+          (file) => file,
+          staging,
+        );
+        return pool.read(pool.current[0]);
+      };
+      if (fault === 'none')
+        expect(read()).toMatchObject({
+          name: 'liboliphaunt-native-linux-x64-gnu',
+          version: '0.3.3',
+          sha256: importedCurrent.file.sha256,
+        });
+      else
+        expect(read).toThrow(
+          fault === 'owner' ? 'Payload owner differs' : `Payload package ${fault} differs`,
+        );
     }
     const wrongCurrent = structuredClone(written);
     wrongCurrent.nativeCurrentArtifacts[0].source.commit = 'f'.repeat(40);

@@ -302,11 +302,6 @@ function collectNativeFinalInputs(
             const record = discovered[0];
             assert.equal(record.ecosystem, 'cargo');
             assert.equal(record.version, pkg.version, 'current Cargo package version differs');
-            assert.equal(
-              path.basename(file.path),
-              `${record.name}-${record.version}.crate`,
-              'current Cargo package filename differs',
-            );
             const carrier = resolveActualCarrier(catalog, 'cargo', record.name);
             assert.equal(carrier.product, pkg.product, 'current Cargo package owner differs');
             if (indexed) {
