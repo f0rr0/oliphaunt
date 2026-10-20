@@ -1686,7 +1686,7 @@
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:adefd1b31d2e0587e279b640fa7f254e6f17eac6130d23b74a98ffe79dfe2d8f",
+  "source-digest": "sha256:04e5ff53f5a967c2ab54efc0cafdfbd6d8b14db12e51e53bd4010fd79b177132",
   "source-digest-inputs": [
     "src/third-party/postgres/source.toml",
     "src/extensions/catalog/extensions.source.json",
@@ -1700,6 +1700,7 @@
     "src/extensions/external/pg_ivm/source.toml",
     "src/extensions/external/pg_partman/source.toml",
     "src/extensions/external/pg_textsearch/source.toml",
+    "src/extensions/external/pg_textsearch/tests/upgrade/source.toml",
     "src/extensions/external/pg_uuidv7/source.toml",
     "src/extensions/external/pgmq/source.toml",
     "src/extensions/external/pgtap/source.toml",
@@ -1725,6 +1726,7 @@
     "src/extensions/external/pg_partman/upstream-license-data.json",
     "src/extensions/external/pg_textsearch/recipe.toml",
     "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
+    "src/extensions/external/pg_textsearch/tests/qualify.sh",
     "src/extensions/external/pg_textsearch/upstream-license-data.json",
     "src/extensions/external/pg_uuidv7/upstream-license-data.json",
     "src/extensions/external/pgmq/recipe.toml",

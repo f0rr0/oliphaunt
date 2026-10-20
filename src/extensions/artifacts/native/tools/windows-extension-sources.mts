@@ -68,45 +68,6 @@ export function pgxsSources(root: string) {
   return values.map((value) => value.slice(0, -2) + '.c');
 }
 
-export function patchTextsearch(root: string) {
-  write(
-    path.join(root, 'src/oliphaunt_windows_compat.h'),
-    '#ifdef _MSC_VER\n#ifndef __attribute__\n#define __attribute__(x)\n#endif\n#endif\n',
-  );
-  write(
-    path.join(root, 'src/unistd.h'),
-    '#ifndef OLIPHAUNT_WINDOWS_UNISTD_H\n#define OLIPHAUNT_WINDOWS_UNISTD_H\n#endif\n',
-  );
-  for (const [file, name, attribute, pack, size, alignment] of [
-    ['segment/segment.h', 'TpDictEntryV3', 'aligned(4)', 4, 12, 4],
-    ['segment/segment.h', 'TpDictEntry', 'aligned(8)', 8, 16, 8],
-    ['segment/segment.h', 'TpSegmentPosting', 'packed', 1, 14, 1],
-    ['segment/segment.h', 'TpSkipEntryV3', 'packed', 1, 16, 1],
-    ['segment/segment.h', 'TpSkipEntry', 'packed', 1, 20, 1],
-    ['segment/segment.h', 'TpCtidMapEntry', 'packed', 1, 6, 1],
-    ['memtable/expull.h', 'TpExpullEntry', 'packed', 1, 7, 1],
-  ] as const) {
-    const target = path.join(root, 'src', file);
-    replace(
-      target,
-      new RegExp(`typedef struct ${name}\\b`),
-      `#ifdef _MSC_VER\n#pragma pack(push, ${pack})\n#endif\ntypedef struct ${name}`,
-    );
-    replace(
-      target,
-      `} __attribute__((${attribute})) ${name};`,
-      `} ${name};\n#ifdef _MSC_VER\n#pragma pack(pop)\nStaticAssertDecl(sizeof(${name}) == ${size}, "${name} size");\nStaticAssertDecl(__alignof(${name}) == ${alignment}, "${name} alignment");\n#endif`,
-    );
-  }
-  for (const file of ['src/am/am.h', 'src/types/vector.h', 'src/types/query.h']) {
-    replace(
-      path.join(root, file),
-      /^Datum (\w+)\(PG_FUNCTION_ARGS\);/gm,
-      'extern PGDLLEXPORT Datum $1(PG_FUNCTION_ARGS);',
-    );
-  }
-}
-
 type Config = { repo: string; work: string; postgres: string; install: string };
 function moduleRecipe(
   config: Config,
@@ -186,11 +147,11 @@ export function prepareSimple(config: Config, extension: string) {
       `${extension}.control`,
     ];
     if (extension === 'pg_textsearch') {
-      patchTextsearch(destination);
+      // PostgreSQL supplies the Windows APIs; upstream still includes unistd.h.
+      write(path.join(destination, 'src/unistd.h'), '/* Provided by PostgreSQL on Windows. */\n');
       cArgs.push(
         '/D_CRT_SECURE_NO_WARNINGS',
         `/DPG_TEXTSEARCH_VERSION="${version(destination, extension)}"`,
-        `/FI${path.join(destination, 'src/oliphaunt_windows_compat.h')}`,
       );
       includes.push('src');
     }
