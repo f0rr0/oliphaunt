@@ -1100,6 +1100,108 @@ test('family staging joins unique original host assets with a separate checksum 
   }
 });
 
+test('family staging selects each declared iOS asset from its shared original Tree', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'native-shared-family-'));
+  const finalDirectory = path.join(ROOT, 'target', path.basename(directory));
+  try {
+    const rows = expectedProductArtifactRows(
+      loadPublicationCatalog('shared iOS family staging test').products,
+    ).filter(
+      (row) =>
+        row.product === 'oliphaunt-extension-pg-uuidv7' &&
+        /-native-ios-(runtime\.tar\.gz|xcframework\.zip)$/u.test(row.name),
+    );
+    expect(rows).toHaveLength(2);
+    const evidenceRoot = path.join(directory, 'producer');
+    const originals = rows.map((row) => producer(evidenceRoot, row, `qualified ${row.name}`));
+    const output = path.posix.dirname(originals[0].origin.evidence.cohorts[0].outputs[0].path);
+    const members = originals.map((value, index) => ({
+      ...value.origin.evidence.cohorts[0].outputs[0].members[0],
+      path: rows[index].name,
+    }));
+    const roots = originals.map((value, index) => ({
+      ...value.origin.evidence.cohorts[0].roots[0],
+      label: `//fixture:ios_asset_${index}`,
+      package: {
+        ...value.origin.evidence.cohorts[0].roots[0].package,
+        outputs: [{ path: output }],
+      },
+    }));
+    const origin = originals[0].origin;
+    origin.evidence.cohorts[0] = { roots, outputs: [{ path: output, members }] };
+    origin.finalFiles = {
+      files: originals.flatMap((value) => value.origin.finalFiles.files),
+      assertUnchanged() {
+        for (const [index, value] of originals.entries()) {
+          const actual = fileIdentity(value.file);
+          expect({ size: actual.size, sha256: actual.sha256 }).toEqual({
+            size: members[index].size,
+            sha256: members[index].sha256,
+          });
+        }
+      },
+    };
+    const origins = new Map([[evidenceRoot, origin]]);
+    const original = structuredClone(origin.evidence);
+    const inputs = stageNativeReleaseArchives(origins, source, path.join(directory, 'input'));
+    expect(inputs).toEqual([path.join(directory, 'input', rows[0].product)]);
+    const final = stageNativeReleaseFamilies(origins, source, finalDirectory);
+    expect(final).toEqual([path.join(finalDirectory, rows[0].product, 'release-assets')]);
+    for (const row of rows)
+      for (const family of [...inputs, ...final])
+        expect(readFileSync(path.join(family, row.name), 'utf8')).toBe(`qualified ${row.name}`);
+    expect(origin.evidence).toEqual(original);
+
+    for (const [label, change, message] of [
+      [
+        'missing',
+        (value: any) => value.evidence.cohorts[0].outputs[0].members.shift(),
+        'exact original regular File',
+      ],
+      [
+        'ambiguous',
+        (value: any) =>
+          value.evidence.cohorts[0].outputs[0].members.push({
+            ...members[0],
+            path: `nested/${members[0].path}`,
+          }),
+        'exact original regular File',
+      ],
+      [
+        'duplicate',
+        (value: any) => value.evidence.cohorts[0].roots.push(structuredClone(roots[0])),
+        'repeats an observed public File',
+      ],
+      [
+        'owner',
+        (value: any) => {
+          value.evidence.cohorts[0].roots[0].package.product = 'database-resources';
+        },
+        'unique canonical public owner',
+      ],
+      [
+        'hash',
+        (value: any) => {
+          value.evidence.cohorts[0].outputs[0].members[0].sha256 = '0'.repeat(64);
+        },
+        'changed during relocation',
+      ],
+    ] as const) {
+      const changed = { ...origin, evidence: structuredClone(original) };
+      change(changed);
+      const destination = path.join(directory, label);
+      expect(() =>
+        stageNativeReleaseArchives(new Map([[evidenceRoot, changed]]), source, destination),
+      ).toThrow(message);
+      expect(existsSync(destination)).toBe(false);
+      expect(origin.evidence).toEqual(original);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(finalDirectory, { recursive: true, force: true });
+  }
+});
+
 test('PR family construction uses finite completed producer transport and never admits release assurance', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'native-family-pr-'));
   try {

@@ -2188,49 +2188,63 @@ function collateNativeReleaseFiles(
             ),
         )) {
           const outputPaths = new Set(root.package.outputs.map((output) => output.path));
-          for (const output of value.outputs.filter((output) => outputPaths.has(output.path)))
-            for (const member of output.members.filter((member) => member.type === 'file')) {
-              const name = path.posix.basename(member.path || output.path);
-              assert.equal(
-                expected.filter((row) => row.product === root.package.product && row.name === name)
-                  .length,
-                1,
-                `native family ${name} has no unique canonical public owner`,
-              );
-              const key = `${root.package.product}/${name}`;
-              assert.ok(!copied.has(key), `native family repeats an observed public File ${key}`);
-              copied.add(key);
-              const file = member.path ? `${output.path}/${member.path}` : output.path;
-              assert.equal(
-                origin.finalFiles.files.filter(
-                  (captured) => captured.cohort === cohort && captured.path === file,
-                ).length,
-                1,
-                'native family File is absent from authenticated transport',
-              );
-              const family = path.join(
-                destination,
-                root.package.product,
-                ...(finalFamily ? ['release-assets'] : []),
-              );
-              requireSafeDirectoryChain(family, { create: true, label: 'native release family' });
-              const target = path.join(family, name);
-              copyFileSync(path.join(evidenceRoot, 'files', String(cohort), file), target);
-              assert.ok(
-                (member.mode & 0o400) !== 0 &&
-                  (member.mode & 0o002) === 0 &&
-                  !((member.mode & 0o111) !== 0 && (member.mode & 0o020) !== 0),
-                'native family File has an unsafe captured mode',
-              );
-              chmodSync(target, member.mode);
-              const identity = fileIdentity(target);
-              assert.deepEqual(
-                { size: identity.size, sha256: identity.sha256 },
-                { size: member.size, sha256: member.sha256 },
-                'native family File changed during relocation',
-              );
-              families.add(family);
-            }
+          const files = value.outputs
+            .filter((output) => outputPaths.has(output.path))
+            .flatMap((output) =>
+              output.members
+                .filter(
+                  (member) =>
+                    member.type === 'file' &&
+                    path.posix.basename(member.path || output.path) === root.package.name,
+                )
+                .map((member) => ({ output, member })),
+            );
+          assert.equal(
+            files.length,
+            1,
+            'native family identity needs its exact original regular File',
+          );
+          const [{ output, member }] = files;
+          const name = root.package.name;
+          assert.equal(
+            expected.filter((row) => row.product === root.package.product && row.name === name)
+              .length,
+            1,
+            `native family ${name} has no unique canonical public owner`,
+          );
+          const key = `${root.package.product}/${name}`;
+          assert.ok(!copied.has(key), `native family repeats an observed public File ${key}`);
+          copied.add(key);
+          const file = member.path ? `${output.path}/${member.path}` : output.path;
+          assert.equal(
+            origin.finalFiles.files.filter(
+              (captured) => captured.cohort === cohort && captured.path === file,
+            ).length,
+            1,
+            'native family File is absent from authenticated transport',
+          );
+          const family = path.join(
+            destination,
+            root.package.product,
+            ...(finalFamily ? ['release-assets'] : []),
+          );
+          requireSafeDirectoryChain(family, { create: true, label: 'native release family' });
+          const target = path.join(family, name);
+          copyFileSync(path.join(evidenceRoot, 'files', String(cohort), file), target);
+          assert.ok(
+            (member.mode & 0o400) !== 0 &&
+              (member.mode & 0o002) === 0 &&
+              !((member.mode & 0o111) !== 0 && (member.mode & 0o020) !== 0),
+            'native family File has an unsafe captured mode',
+          );
+          chmodSync(target, member.mode);
+          const identity = fileIdentity(target);
+          assert.deepEqual(
+            { size: identity.size, sha256: identity.sha256 },
+            { size: member.size, sha256: member.sha256 },
+            'native family File changed during relocation',
+          );
+          families.add(family);
         }
       origin.finalFiles.assertUnchanged?.();
     }
