@@ -560,6 +560,26 @@ class OliphauntModuleJSIBindings
                         });
                     return promiseConstructor.callAsConstructor(runtime, std::move(executor));
                   }));
+          installBackupToFile(runtime, transport, callInvoker, owner,
+              [owner, moduleGlobal](int64_t handle, const std::string &destination,
+                  double deadline, PendingPromise pending) {
+                const int64_t token = gNextToken.fetch_add(1);
+                owner->storePendingPromise(token, std::move(pending));
+                try {
+                  static const auto callbackConstructor = OliphauntJsiPromiseCallback::javaClassStatic()
+                      ->getConstructor<OliphauntJsiPromiseCallback::javaobject(jlong, jlong)>();
+                  auto callback = OliphauntJsiPromiseCallback::javaClassStatic()
+                      ->newObject(callbackConstructor, static_cast<jlong>(owner->id), static_cast<jlong>(token));
+                  auto path = jni::make_jstring(destination);
+                  static const auto backupToFile = OliphauntModuleJSIBindings::javaClassStatic()
+                      ->getMethod<void(jlong, jstring, jlong, OliphauntJsiPromiseCallback::javaobject)>("backupToFile");
+                  backupToFile(moduleGlobal, static_cast<jlong>(handle), path.get(),
+                      static_cast<jlong>(deadline), callback.get());
+                } catch (...) {
+                  owner->takePendingPromise(token);
+                  throw;
+                }
+              });
           transport.setProperty(
               runtime,
               "backup",
@@ -658,6 +678,8 @@ class OliphauntModuleJSIBindings
                         "restore storageName");
                     const auto startup = static_cast<jlong>(copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "startupTimeoutMs")));
                     const auto operation = static_cast<jlong>(copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "operationTimeoutMs")));
+                    const auto recovery = static_cast<jlong>(copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "recoveryTimeoutMs")));
+                    const auto shutdown = static_cast<jlong>(copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "shutdownTimeoutMs")));
                     std::vector<uint8_t> artifact = copyBinaryArgument(runtime, args[1]);
                     auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
                     auto executor = jsi::Function::createFromHostFunction(
@@ -666,7 +688,7 @@ class OliphauntModuleJSIBindings
                         2,
                         [owner, moduleGlobal,
                          callInvoker,
-                         startup, operation,
+                         startup, operation, recovery, shutdown,
                          storageKind = std::move(storageKind),
                          storagePath = std::move(storagePath),
                          storageName = std::move(storageName),
@@ -697,7 +719,7 @@ class OliphauntModuleJSIBindings
                                         jni::JString::javaobject,
                                         jni::JString::javaobject,
                                         jni::JString::javaobject,
-                                        jlong, jlong,
+                                        jlong, jlong, jlong, jlong,
                                         jbyteArray,
                                         OliphauntJsiPromiseCallback::javaobject)>("restoreBytes");
                             restoreBytes(
@@ -705,7 +727,7 @@ class OliphauntModuleJSIBindings
                                 storageKindString.get(),
                                 storagePathString.get(),
                                 storageNameString.get(),
-                                startup, operation,
+                                startup, operation, recovery, shutdown,
                                 artifactArray.get(),
                                 callback.get());
                           } catch (const std::exception &error) {

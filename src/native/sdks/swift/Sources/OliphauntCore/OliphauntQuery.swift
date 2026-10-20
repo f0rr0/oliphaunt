@@ -1154,8 +1154,9 @@ public extension OliphauntDatabase {
         parameters: [OliphauntQueryParam] = []
     ) async throws -> OliphauntCommandResult {
         try rejectOliphauntStructuredSQL(sql)
-        let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
-        return try await runTypedOperation(request, transactionToken: nil) { response in
+        let retainedBytes: @Sendable () throws -> Int = { try OliphauntProtocol.extendedQueryAllowance(sql, parameters: parameters) }
+        let request: @Sendable () throws -> Data = { try OliphauntProtocol.extendedQuery(sql, parameters: parameters) }
+        return try await runTypedOperation(request, retainedBytes: retainedBytes, transactionToken: nil) { response in
             let result = try parseOliphauntCommandResponse(response, expectedProtocol: .extended)
             return (result, result.readyStatus)
         }
@@ -1166,8 +1167,9 @@ public extension OliphauntDatabase {
         parameters: [OliphauntQueryParam] = []
     ) async throws -> OliphauntQueryResult {
         try rejectOliphauntStructuredSQL(sql)
-        let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
-        return try await runTypedOperation(request, transactionToken: nil) { response in
+        let retainedBytes: @Sendable () throws -> Int = { try OliphauntProtocol.extendedQueryAllowance(sql, parameters: parameters) }
+        let request: @Sendable () throws -> Data = { try OliphauntProtocol.extendedQuery(sql, parameters: parameters) }
+        return try await runTypedOperation(request, retainedBytes: retainedBytes, transactionToken: nil) { response in
             let result = try parseOliphauntQueryResponse(response, expectedProtocol: .extended)
             return (result, result.readyStatus)
         }
@@ -1175,8 +1177,9 @@ public extension OliphauntDatabase {
 
     func exec(_ sql: String) async throws -> OliphauntExecResult {
         try rejectOliphauntStructuredSQL(sql)
-        let request = try OliphauntProtocol.simpleQuery(sql)
-        return try await runTypedOperation(request, transactionToken: nil) { response in
+        let retainedBytes: @Sendable () throws -> Int = { try OliphauntProtocol.requestAllowance(sql, framingBytes: 6) }
+        let request: @Sendable () throws -> Data = { try OliphauntProtocol.simpleQuery(sql) }
+        return try await runTypedOperation(request, retainedBytes: retainedBytes, transactionToken: nil) { response in
             let result = try parseOliphauntExecResponse(response)
             return (result, result.readyStatus)
         }
@@ -1186,8 +1189,9 @@ public extension OliphauntDatabase {
         _ sql: String,
         parameterTypes: [OliphauntPostgresOID] = []
     ) async throws -> OliphauntQueryDescription {
-        let request = try OliphauntProtocol.describeQuery(sql, parameterTypes: parameterTypes)
-        return try await runTypedOperation(request, transactionToken: nil) { response in
+        let retainedBytes: @Sendable () throws -> Int = { try OliphauntProtocol.requestAllowance(sql, framingBytes: 21, typeCount: parameterTypes.count) }
+        let request: @Sendable () throws -> Data = { try OliphauntProtocol.describeQuery(sql, parameterTypes: parameterTypes) }
+        return try await runTypedOperation(request, retainedBytes: retainedBytes, transactionToken: nil) { response in
             let result = try parseOliphauntDescribeResponse(response)
             return (result, result.readyStatus)
         }
@@ -1200,8 +1204,9 @@ public extension OliphauntTransaction {
         parameters: [OliphauntQueryParam] = []
     ) async throws -> OliphauntCommandResult {
         try rejectOliphauntStructuredSQL(sql, managedTransaction: true)
-        let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
-        return try await runTypedOperation(request) { response in
+        let retainedBytes: @Sendable () throws -> Int = { try OliphauntProtocol.extendedQueryAllowance(sql, parameters: parameters) }
+        let request: @Sendable () throws -> Data = { try OliphauntProtocol.extendedQuery(sql, parameters: parameters) }
+        return try await runTypedOperation(request, retainedBytes: retainedBytes) { response in
             let result = try parseOliphauntCommandResponse(response, expectedProtocol: .extended)
             return (result, result.readyStatus)
         }
@@ -1212,8 +1217,9 @@ public extension OliphauntTransaction {
         parameters: [OliphauntQueryParam] = []
     ) async throws -> OliphauntQueryResult {
         try rejectOliphauntStructuredSQL(sql, managedTransaction: true)
-        let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
-        return try await runTypedOperation(request) { response in
+        let retainedBytes: @Sendable () throws -> Int = { try OliphauntProtocol.extendedQueryAllowance(sql, parameters: parameters) }
+        let request: @Sendable () throws -> Data = { try OliphauntProtocol.extendedQuery(sql, parameters: parameters) }
+        return try await runTypedOperation(request, retainedBytes: retainedBytes) { response in
             let result = try parseOliphauntQueryResponse(response, expectedProtocol: .extended)
             return (result, result.readyStatus)
         }
@@ -1221,8 +1227,9 @@ public extension OliphauntTransaction {
 
     func exec(_ sql: String) async throws -> OliphauntExecResult {
         try rejectOliphauntStructuredSQL(sql, managedTransaction: true)
-        let request = try OliphauntProtocol.simpleQuery(sql)
-        return try await runTypedOperation(request) { response in
+        let retainedBytes: @Sendable () throws -> Int = { try OliphauntProtocol.requestAllowance(sql, framingBytes: 6) }
+        let request: @Sendable () throws -> Data = { try OliphauntProtocol.simpleQuery(sql) }
+        return try await runTypedOperation(request, retainedBytes: retainedBytes) { response in
             let result = try parseOliphauntExecResponse(response)
             return (result, result.readyStatus)
         }
@@ -1232,8 +1239,9 @@ public extension OliphauntTransaction {
         _ sql: String,
         parameterTypes: [OliphauntPostgresOID] = []
     ) async throws -> OliphauntQueryDescription {
-        let request = try OliphauntProtocol.describeQuery(sql, parameterTypes: parameterTypes)
-        return try await runTypedOperation(request) { response in
+        let retainedBytes: @Sendable () throws -> Int = { try OliphauntProtocol.requestAllowance(sql, framingBytes: 21, typeCount: parameterTypes.count) }
+        let request: @Sendable () throws -> Data = { try OliphauntProtocol.describeQuery(sql, parameterTypes: parameterTypes) }
+        return try await runTypedOperation(request, retainedBytes: retainedBytes) { response in
             let result = try parseOliphauntDescribeResponse(response)
             return (result, result.readyStatus)
         }
@@ -1255,6 +1263,31 @@ enum OliphauntProtocol {
         message.append(UInt8(length & 0xff))
         message.append(body)
         return message
+    }
+
+    // Complete frontend framing plus retained parameter payloads, without allocating packets.
+    static func requestAllowance(_ sql: String, framingBytes: Int, typeCount: Int = 0) throws -> Int {
+        let (types, typeOverflow) = typeCount.multipliedReportingOverflow(by: 4)
+        let (base, baseOverflow) = framingBytes.addingReportingOverflow(sql.utf8.count)
+        let (total, totalOverflow) = base.addingReportingOverflow(types)
+        guard !typeOverflow, !baseOverflow, !totalOverflow else {
+            throw OliphauntError.engine("request allowance overflow")
+        }
+        return total
+    }
+
+    static func extendedQueryAllowance(_ sql: String, parameters: [OliphauntQueryParam]) throws -> Int {
+        // Parse/Bind/Describe/Execute/Sync: 46 fixed bytes and 10 framing bytes per parameter.
+        var total = try requestAllowance(sql, framingBytes: 46)
+        for parameter in parameters {
+            let (payload, payloadOverflow) = (parameter.bytes?.count ?? 0).addingReportingOverflow(10)
+            let (next, totalOverflow) = total.addingReportingOverflow(payload)
+            guard !payloadOverflow, !totalOverflow else {
+                throw OliphauntError.engine("request allowance overflow")
+            }
+            total = next
+        }
+        return total
     }
 
     static func extendedQuery(
@@ -1456,7 +1489,7 @@ func parseOliphauntCommandResponse(
 
         try rejectBackendMessageAfterError(tag, postgresError: postgresError, operation: "execute()")
 
-        if phase == .complete, ![UInt8(0x53), 0x4e, 0x41, 0x5a].contains(tag) {
+        if phase == .complete, ![UInt8(0x45), 0x53, 0x4e, 0x41, 0x5a].contains(tag) {
             throw OliphauntError.engine("execute() received backend message after statement completion")
         }
 
@@ -1574,7 +1607,7 @@ func parseOliphauntQueryResponse(
         }
         let body = try cursor.readData(count: Int(length - 4), label: "backend message body")
         try rejectBackendMessageAfterError(tag, postgresError: postgresError, operation: "query()")
-        if phase == .complete, ![UInt8(0x53), 0x4e, 0x41, 0x5a].contains(tag) {
+        if phase == .complete, ![UInt8(0x45), 0x53, 0x4e, 0x41, 0x5a].contains(tag) {
             throw OliphauntError.engine("query() received backend message after statement completion")
         }
         var bodyCursor = OliphauntByteCursor(body)
@@ -1823,7 +1856,7 @@ func parseOliphauntDescribeResponse(_ data: Data) throws -> OliphauntQueryDescri
         }
         let body = try cursor.readData(count: Int(length - 4), label: "backend message body")
         try rejectBackendMessageAfterError(tag, postgresError: postgresError, operation: "describe()")
-        if sawDescription, ![UInt8(0x53), 0x4e, 0x41, 0x5a].contains(tag) {
+        if sawDescription, ![UInt8(0x45), 0x53, 0x4e, 0x41, 0x5a].contains(tag) {
             throw OliphauntError.engine(
                 "describe() received backend message after statement description"
             )

@@ -12,7 +12,6 @@ source_root="$root/src/native/runtime"
 "${CC:-cc}" -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror \
   -pthread -ffunction-sections -fdata-sections "$strip_unused" \
   -I "$source_root/src" \
-  "$source_root/src/liboliphaunt_archive_tar.c" \
   "$source_root/src/liboliphaunt_fs.c" \
   "$source_root/src/liboliphaunt_error.c" \
   "$source_root/smoke/liboliphaunt_archive_stream.c" \

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { workspaceCarrierManifest } from './workspace-runtime-contract.mts';
+import { wasixNapiNoticeProfile, workspaceCarrierManifest } from './workspace-runtime-contract.mts';
 import { finalizeHelperAssets } from '../../../../tools/packaging/finalize-helper-assets.mts';
 import { inspectPlatformBinaryEntries } from '../../../../tools/packaging/platform-binary-contract.mts';
 import { readPortableArchiveEntries } from '../../../../tools/packaging/portable-archive.mts';
@@ -37,8 +37,6 @@ import {
 const PREFIX = 'check-wasix-napi-release-assets.mts';
 const PRODUCT = 'oliphaunt-wasix-napi';
 const KIND = 'wasix-napi-addon';
-const PROFILE = 'wasix-napi-addon';
-const PACKAGE_LICENSE = releaseProfilePackageLicense(PROFILE).spdx;
 const BINARY = 'oliphaunt_wasix_napi.node';
 const PRODUCT_MANIFEST = JSON.parse(
   readFileSync(path.join(ROOT, 'src/wasix/node-addon/package.json'), 'utf8'),
@@ -217,9 +215,10 @@ export function assertWasixNapiCarrierManifest(
   if (manifest.name !== target.npmPackage || manifest.version !== version) {
     throw new Error(`${label} must identify ${target.npmPackage}@${version}`);
   }
-  if (manifest.license !== PACKAGE_LICENSE) {
+  const packageLicense = releaseProfilePackageLicense(wasixNapiNoticeProfile(target.target)).spdx;
+  if (manifest.license !== packageLicense) {
     throw new Error(
-      `${label} package license must be ${PACKAGE_LICENSE}, got ${JSON.stringify(manifest.license)}`,
+      `${label} package license must be ${packageLicense}, got ${JSON.stringify(manifest.license)}`,
     );
   }
   if (
@@ -328,7 +327,11 @@ export function assertWasixNapiPlatformEntries(
 }
 
 function assertPayload(entries, { prefix = '', label, target, version, npm = false, contract }) {
-  assertReleaseNoticesInEntries(entries, { profile: PROFILE, prefix, label });
+  assertReleaseNoticesInEntries(entries, {
+    profile: wasixNapiNoticeProfile(target.target),
+    prefix,
+    label,
+  });
   const member = (name) => (prefix ? `${prefix}/${name}` : name);
   const provenance = archiveJson(entries, member('artifact-provenance.json'), label);
   if (

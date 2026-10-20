@@ -6,6 +6,8 @@ mod client;
 mod watchdog;
 mod worker;
 
+pub use oliphaunt_broker::config::BrokerTimeouts;
+
 pub use client::{Connection, connect, restore};
 pub use oliphaunt_broker::mobile::{Completion, Epoch, Execution, Reason};
 pub use worker::{Ready, Retirement, Worker};

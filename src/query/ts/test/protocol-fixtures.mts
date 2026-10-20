@@ -15,10 +15,36 @@ export function assertSharedProtocolFixtures(options) {
   for (const fixture of corpus.cases) {
     assert.equal(names.has(fixture.name), false, `duplicate fixture ${fixture.name}`);
     names.add(fixture.name);
+    const bytes = hexToBytes(fixture.responseHex);
+    const modeParsers = {
+      simpleCommand: options.parseSimpleCommandResponse,
+      extendedCommand: options.parseExtendedCommandResponse,
+      extendedQuery: options.parseExtendedQueryResponse,
+    };
+    for (const [mode, expected] of Object.entries(fixture.protocolModeExpectation ?? {})) {
+      const parse = modeParsers[mode];
+      assert.equal(typeof parse, 'function', `${fixture.name} unknown protocol mode ${mode}`);
+      if (expected.outcome === 'ok') {
+        assert.equal(
+          parse(bytes).commandTag ?? null,
+          expected.commandTag,
+          `${fixture.name} ${mode}`,
+        );
+      } else if (expected.outcome === 'engineError') {
+        const error = thrownBy(() => parse(bytes));
+        assert.ok(error instanceof Error, `${fixture.name} ${mode} should fail`);
+        assert.equal(
+          options.isPostgresError(error),
+          false,
+          `${fixture.name} ${mode} protocol error`,
+        );
+      } else {
+        assert.fail(`${fixture.name} ${mode} unknown outcome ${expected.outcome}`);
+      }
+    }
     const expectation = fixture.queryExpectation;
     if (expectation === undefined) continue;
 
-    const bytes = hexToBytes(fixture.responseHex);
     const parseQueryResponse = parserForFixture(fixture, options);
     if (expectation.ok !== undefined) {
       assertOk(fixture.name, expectation.ok, parseQueryResponse(bytes));

@@ -29,12 +29,23 @@ import java.util.concurrent.atomic.AtomicBoolean
 public data class OliphauntBrokerOptions(
     val startupTimeoutMillis: Long = 30_000,
     val operationTimeoutMillis: Long? = null,
+    /** Grace after cancellation/worker loss before forced retirement. */
+    val recoveryTimeoutMillis: Long = 3_000,
+    /** Grace from destructive close to forced retirement. */
+    val shutdownTimeoutMillis: Long = 3_000,
 ) {
     init {
+        require(recoveryTimeoutMillis in 1..Int.MAX_VALUE.toLong())
+        require(shutdownTimeoutMillis in 1..Int.MAX_VALUE.toLong())
         require(startupTimeoutMillis in 1..Long.MAX_VALUE / 2)
         require(operationTimeoutMillis == null || operationTimeoutMillis in 1..Long.MAX_VALUE / 2)
     }
 }
+
+private fun OliphauntBrokerOptions.nativeTimeouts() = dev.oliphaunt.bindings.BrokerTimeoutOptions(
+    recoveryTimeoutMillis.toULong(),
+    shutdownTimeoutMillis.toULong(),
+)
 
 /** One app-owned handle. Recovery is an explicit new open after closing it. */
 public object OliphauntBroker {
@@ -69,6 +80,7 @@ public object OliphauntBroker {
                                 binding.generation,
                                 binding,
                                 options.operationTimeoutMillis?.toULong(),
+                                options.nativeTimeouts(),
                             )
                         }
                         binding.attach(database)
@@ -120,6 +132,7 @@ public object OliphauntBroker {
                         binding.generation,
                         binding,
                         options.operationTimeoutMillis?.toULong(),
+                        options.nativeTimeouts(),
                         input.fd,
                     )
                 }
@@ -222,6 +235,7 @@ private class BrokerBinding(
                 client, pair[1], name, legacy, restore,
                 config.startupGucs.map { it.name }.toTypedArray(), config.startupGucs.map { it.value }.toTypedArray(),
                 config.username, config.database, config.extensions.toTypedArray(), remaining,
+                options.recoveryTimeoutMillis, options.shutdownTimeoutMillis,
             )
         } finally {
             pair[1].close()

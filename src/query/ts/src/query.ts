@@ -441,10 +441,14 @@ export function planQuery(
   sql: string,
   parameters: ReadonlyArray<QueryParam> = [],
   options: ParameterOptions = {},
+  retain?: (bytes: number) => void,
+  reserveBeforeEncoding = false,
 ): QueryPlan {
   validateStatementInput(sql, parameters);
   assertNoTopLevelCopy(sql);
-  const snapshot = Array.from(parameters, snapshotQueryParam);
+  // UTF-16 code units need at most three UTF-8 bytes each; reserve scratch before encoding.
+  if (reserveBeforeEncoding) retain?.(sql.length * 3);
+  const snapshot = Array.from(parameters, (parameter) => snapshotQueryParam(parameter, retain));
   const encoders =
     options.encoders === undefined ? undefined : Object.freeze({ ...options.encoders });
   const declaredTypeOids = snapshot.map(parameterDeclaredTypeOid);
@@ -452,14 +456,18 @@ export function planQuery(
     const normalized = snapshot.map((parameter, index) =>
       normalizeQueryParam(parameter, declaredTypeOids[index]!, encoders),
     );
-    return {
-      kind: 'complete',
-      input: encodeParseBindExecute(sql, declaredTypeOids, normalized),
-    };
+    if (reserveBeforeEncoding)
+      retain?.(parseBindExecuteLength(sql.length * 3, declaredTypeOids.length, normalized));
+    const input = encodeParseBindExecute(sql, declaredTypeOids, normalized);
+    if (!reserveBeforeEncoding) retain?.(input.byteLength);
+    return { kind: 'complete', input };
   }
+  if (reserveBeforeEncoding) retain?.(sql.length * 3 + 21 + declaredTypeOids.length * 4);
+  const input = describeQuery(sql, declaredTypeOids);
+  if (!reserveBeforeEncoding) retain?.(input.byteLength);
   return {
     kind: 'describe',
-    input: describeQuery(sql, declaredTypeOids),
+    input,
     bind(parameterTypeOids: ReadonlyArray<number>): Uint8Array {
       if (parameterTypeOids.length !== snapshot.length) {
         throw new Error(
@@ -472,6 +480,8 @@ export function planQuery(
       const normalized = snapshot.map((parameter, index) =>
         normalizeQueryParam(parameter, parameterTypeOids[index]!, encoders),
       );
+      if (reserveBeforeEncoding)
+        retain?.(parseBindExecuteLength(sql.length * 3, parameterTypeOids.length, normalized));
       return encodeParseBindExecute(sql, parameterTypeOids, normalized);
     },
   };
@@ -507,15 +517,25 @@ export function describeQuery(
   return packet.finish();
 }
 
+// Share Parse/Bind/Describe/Execute/Sync framing between admission and allocation.
+function parseBindExecuteLength(
+  sqlBytes: number,
+  typeCount: number,
+  parameters: ReadonlyArray<NormalizedParam>,
+): number {
+  const parseBodyBytes = sqlBytes + 4 + typeCount * 4;
+  return parseBodyBytes + bindLength(parameters) + 32;
+}
+
 function encodeParseBindExecute(
   sql: string,
   parameterTypeOids: ReadonlyArray<number>,
   parameters: ReadonlyArray<NormalizedParam>,
 ): Uint8Array {
   const sqlBytes = utf8Encoder.encode(sql);
-  const parseBodyLength = sqlBytes.length + 4 + parameterTypeOids.length * 4;
-  const bindBodyLength = bindLength(parameters);
-  const packet = new ByteWriter(parseBodyLength + bindBodyLength + 32);
+  const packet = new ByteWriter(
+    parseBindExecuteLength(sqlBytes.length, parameterTypeOids.length, parameters),
+  );
   writeParse(packet, sqlBytes, parameterTypeOids);
   writeBindExecute(packet, parameters);
   return packet.finish();
@@ -812,18 +832,7 @@ export function parseDescribeResponse(bytes: Uint8Array): DescribeResult {
           break;
         case 0x45: {
           const postgresFailure = parseErrorResponse(body, notices);
-          if (
-            sawParseComplete &&
-            parameterTypeOids !== undefined &&
-            (fields !== undefined || sawNoData)
-          ) {
-            failure ??= withCause(
-              new Error('ErrorResponse arrived after describe completion'),
-              postgresFailure,
-            );
-          } else {
-            failure ??= postgresFailure;
-          }
+          failure ??= postgresFailure;
           sawErrorResponse = true;
           break;
         }
@@ -977,14 +986,7 @@ function parseOperation<Statement>(
         }
         case 0x45: {
           const postgresFailure = parseErrorResponse(body, notices);
-          if (mode !== 'simple-exec' && completionCount > 0) {
-            failure ??= withCause(
-              new Error('ErrorResponse arrived after statement completion'),
-              postgresFailure,
-            );
-          } else {
-            failure ??= postgresFailure;
-          }
+          failure ??= postgresFailure;
           sawErrorResponse = true;
           break;
         }
@@ -1412,7 +1414,7 @@ function parameterDeclaredTypeOid(parameter: QueryParam): number {
   return 0;
 }
 
-function snapshotQueryParam(parameter: QueryParam): QueryParam {
+function snapshotQueryParam(parameter: QueryParam, retain?: (bytes: number) => void): QueryParam {
   if (
     parameter === null ||
     typeof parameter === 'string' ||
@@ -1420,6 +1422,7 @@ function snapshotQueryParam(parameter: QueryParam): QueryParam {
     typeof parameter === 'bigint' ||
     typeof parameter === 'boolean'
   ) {
+    if (typeof parameter === 'string') retain?.(parameter.length * 2);
     return parameter;
   }
   if (parameter === undefined) throw new TypeError('query parameters must not be undefined');
@@ -1427,14 +1430,21 @@ function snapshotQueryParam(parameter: QueryParam): QueryParam {
   if (wrapper !== undefined) {
     if (wrapper.format === 'null') return typedNull(wrapper.typeOid);
     if (wrapper.format === 'binary') {
-      return binary(toUint8Array(wrapper.value).slice(), wrapper.typeOid);
+      const bytes = toUint8Array(wrapper.value);
+      retain?.(bytes.byteLength);
+      return binary(bytes.slice(), wrapper.typeOid);
     }
+    retain?.(wrapper.value.length * 2);
     return text(wrapper.value, wrapper.typeOid);
   }
   if (parameter instanceof Date) return new Date(parameter.getTime());
-  if (isQueryBinaryInput(parameter)) return toUint8Array(parameter).slice();
+  if (isQueryBinaryInput(parameter)) {
+    const bytes = toUint8Array(parameter);
+    retain?.(bytes.byteLength);
+    return bytes.slice();
+  }
   if (Array.isArray(parameter))
-    return Array.from(parameter, (value) => snapshotQueryParam(value as QueryParam));
+    return Array.from(parameter, (value) => snapshotQueryParam(value as QueryParam, retain));
   if (isPlainRecord(parameter)) {
     let encoded: string | undefined;
     try {
@@ -1447,6 +1457,7 @@ function snapshotQueryParam(parameter: QueryParam): QueryParam {
     }
     if (encoded === undefined)
       throw new TypeError('plain-object query parameters must be JSON-serializable');
+    retain?.(encoded.length * 2);
     return JSON.parse(encoded) as Readonly<Record<string, unknown>>;
   }
   throw new TypeError('query parameter is unsupported; use an explicit parameter helper');

@@ -12,4 +12,13 @@ test('native mode entrypoints reject contradictory configuration before opening'
   const helper = { brokerExecutable: '/unused/broker' };
   // @ts-expect-error direct execution has no broker helper
   await assert.rejects(direct.open(helper), /does not accept topology or brokerExecutable/);
+  const brokerOptions = { storage: { kind: 'temporaryDirectory' as const }, broker: {} };
+  // @ts-expect-error direct execution has no broker connection controls, including widened variables
+  await assert.rejects(direct.open(brokerOptions), /broker options require topology/);
+  const timeouts = {
+    storage: { kind: 'temporaryDirectory' as const },
+    timeouts: { shutdownTimeoutMs: 1000 },
+  };
+  // @ts-expect-error direct execution has no owned process lifecycle deadline
+  await assert.rejects(direct.open(timeouts), /timeouts require broker or server placement/);
 });

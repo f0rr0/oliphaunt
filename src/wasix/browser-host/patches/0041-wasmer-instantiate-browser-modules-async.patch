@@ -1,0 +1,139 @@
+From: Sid Jain <sid_26@outlook.com>
+Date: Sun, 4 Oct 2026 00:00:00 +0000
+Subject: [PATCH] Instantiate large browser modules asynchronously
+
+WebAssembly.instantiate avoids the synchronous main-realm size limit. Share
+import validation and retain table-function annotations for indirect calls.
+Enabled non-JavaScript backends keep their synchronous instantiation.
+
+diff --git a/lib/api/src/backend/js/entities/instance.rs b/lib/api/src/backend/js/entities/instance.rs
+index 22a7a71..e847fd4 100644
+--- a/lib/api/src/backend/js/entities/instance.rs
++++ b/lib/api/src/backend/js/entities/instance.rs
+@@ -19,6 +19,21 @@ pub struct Instance {
+ // unsafe impl Send for Instance {}
+ 
+ impl Instance {
++    #[cfg(target_arch = "wasm32")]
++    pub(crate) async fn new_async(
++        mut store: &mut impl AsStoreMut,
++        module: &Module,
++        imports: &Imports,
++    ) -> Result<(Self, Exports), InstantiationError> {
++        let instance = module
++            .as_js()
++            .instantiate_async(&mut store, imports)
++            .await
++            .map_err(InstantiationError::Start)?;
++
++        Self::from_module_and_instance(store, module, instance)
++    }
++
+     pub(crate) fn new(
+         mut store: &mut impl AsStoreMut,
+         module: &Module,
+diff --git a/lib/api/src/backend/js/entities/module.rs b/lib/api/src/backend/js/entities/module.rs
+index ce0884d..c5e8f2e 100644
+--- a/lib/api/src/backend/js/entities/module.rs
++++ b/lib/api/src/backend/js/entities/module.rs
+@@ -230,6 +230,38 @@ impl Module {
+         store: &mut impl AsStoreMut,
+         imports: &Imports,
+     ) -> Result<VMInstance, RuntimeError> {
++        let (imports_object, _import_externs) = self.imports_object(store, imports)?;
++        let instance = WebAssembly::Instance::new(&self.local_module(), &imports_object)
++            .map_err(|e: JsValue| -> RuntimeError { e.into() })?;
++        #[cfg(feature = "wasm-types-polyfill")]
++        self.annotate_table_functions(store, imports, &instance);
++        Ok(instance)
++    }
++
++    #[cfg(target_arch = "wasm32")]
++    pub(crate) async fn instantiate_async(
++        &self,
++        store: &mut impl AsStoreMut,
++        imports: &Imports,
++    ) -> Result<VMInstance, RuntimeError> {
++        let (imports_object, _import_externs) = self.imports_object(store, imports)?;
++        let instance = JsFuture::from(WebAssembly::instantiate_module(
++            &self.local_module(),
++            &imports_object,
++        ))
++        .await
++        .map_err(|e: JsValue| -> RuntimeError { e.into() })?;
++        let instance = instance.unchecked_into();
++        #[cfg(feature = "wasm-types-polyfill")]
++        self.annotate_table_functions(store, imports, &instance);
++        Ok(instance)
++    }
++
++    fn imports_object(
++        &self,
++        store: &mut impl AsStoreMut,
++        imports: &Imports,
++    ) -> Result<(js_sys::Object, Vec<Extern>), RuntimeError> {
+         // Ensure all imports come from the same store.
+         if imports
+             .into_iter()
+@@ -296,11 +328,7 @@ impl Module {
+             // in case the import is not found, the JS Wasm VM will handle
+             // the error for us, so we don't need to handle it
+         }
+-        let instance = WebAssembly::Instance::new(&self.local_module(), &imports_object)
+-            .map_err(|e: JsValue| -> RuntimeError { e.into() })?;
+-        #[cfg(feature = "wasm-types-polyfill")]
+-        self.annotate_table_functions(store, imports, &instance);
+-        Ok(instance)
++        Ok((imports_object, import_externs))
+     }
+ 
+     #[cfg(feature = "wasm-types-polyfill")]
+diff --git a/lib/api/src/entities/instance.rs b/lib/api/src/entities/instance.rs
+index edea32f..ae5033e 100644
+--- a/lib/api/src/entities/instance.rs
++++ b/lib/api/src/entities/instance.rs
+@@ -20,6 +20,44 @@ pub struct Instance {
+ }
+ 
+ impl Instance {
++    /// Asynchronously creates a new JavaScript-backed WebAssembly instance.
++    ///
++    /// This uses `WebAssembly.instantiate()` so browsers can instantiate large
++    /// modules without hitting the synchronous constructor's size limit. Other
++    /// enabled backends retain their regular synchronous instantiation path.
++    #[cfg(all(feature = "js", target_arch = "wasm32"))]
++    #[allow(clippy::result_large_err)]
++    pub async fn new_async(
++        store: &mut impl AsStoreMut,
++        module: &Module,
++        imports: &Imports,
++    ) -> Result<Self, InstantiationError> {
++        let (_inner, exports) = match &store.as_store_mut().inner.store {
++            #[cfg(feature = "sys")]
++            crate::BackendStore::Sys(_) => {
++                let (i, e) = crate::backend::sys::instance::Instance::new(store, module, imports)?;
++                (crate::BackendInstance::Sys(i), e)
++            }
++            #[cfg(feature = "v8")]
++            crate::BackendStore::V8(_) => {
++                let (i, e) = crate::backend::v8::instance::Instance::new(store, module, imports)?;
++                (crate::BackendInstance::V8(i), e)
++            }
++            crate::BackendStore::Js(_) => {
++                let (i, e) =
++                    crate::backend::js::instance::Instance::new_async(store, module, imports)
++                        .await?;
++                (crate::BackendInstance::Js(i), e)
++            }
++        };
++
++        Ok(Self {
++            _inner,
++            module: module.clone(),
++            exports,
++        })
++    }
++
+     /// Creates a new `Instance` from a WebAssembly [`Module`] and a
+     /// set of imports using [`Imports`] or the [`imports!`] macro helper.
+     ///

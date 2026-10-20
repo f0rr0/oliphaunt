@@ -2,11 +2,36 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 use zstd::stream::write::Encoder as ZstdEncoder;
+
+pub(crate) struct TemporaryDirectory(pub(crate) PathBuf);
+
+impl TemporaryDirectory {
+    pub(crate) fn new(parent: &Path, prefix: &str) -> Result<Self> {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        loop {
+            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let path = parent.join(format!("{prefix}-{}-{id}", std::process::id()));
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(Self(path)),
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(err) => return Err(err).with_context(|| format!("create {}", path.display())),
+            }
+        }
+    }
+}
+
+impl Drop for TemporaryDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
 
 pub(crate) fn archive_entry_bytes(archive_path: &Path, entry_name: &str) -> Result<Vec<u8>> {
     let file =
@@ -335,29 +360,25 @@ mod tests {
     use super::*;
 
     use std::collections::BTreeMap;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    struct TestDirectory(PathBuf);
+    #[test]
+    fn temporary_directories_keep_overlapping_users_isolated_and_clean_up() {
+        let first = TemporaryDirectory::new(&std::env::temp_dir(), "oliphaunt-xtask").unwrap();
+        let first_path = first.0.clone();
+        let module = first_path.join("module");
+        fs::write(&module, b"first module").unwrap();
 
-    impl TestDirectory {
-        fn new(label: &str) -> Self {
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system clock after Unix epoch")
-                .as_nanos();
-            let path = std::env::temp_dir().join(format!(
-                "oliphaunt-xtask-{label}-{}-{nonce}",
-                std::process::id()
-            ));
-            fs::create_dir(&path).expect("create test directory");
-            Self(path)
-        }
-    }
+        let second = TemporaryDirectory::new(&std::env::temp_dir(), "oliphaunt-xtask").unwrap();
+        let second_path = second.0.clone();
+        assert_ne!(first_path, second_path);
+        fs::write(second_path.join("module"), b"second module").unwrap();
+        assert_eq!(fs::read(&module).unwrap(), b"first module");
 
-    impl Drop for TestDirectory {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.0).ok();
-        }
+        drop(second);
+        assert!(!second_path.exists());
+        assert_eq!(fs::read(&module).unwrap(), b"first module");
+        drop(first);
+        assert!(!first_path.exists());
     }
 
     #[derive(Debug, Eq, PartialEq)]
@@ -408,7 +429,8 @@ mod tests {
 
     #[test]
     fn deterministic_tar_zst_emits_portable_type_markers_and_ustar_paths() {
-        let fixture = TestDirectory::new("portable-tar");
+        let fixture =
+            TemporaryDirectory::new(&std::env::temp_dir(), "oliphaunt-xtask-portable-tar").unwrap();
         let source = fixture.0.join("source");
         let licenses = source.join("THIRD_PARTY_LICENSES");
         let long_parent = source
@@ -482,7 +504,11 @@ mod tests {
     fn deterministic_tar_zst_rejects_file_and_directory_symlinks() {
         use std::os::unix::fs::symlink;
 
-        let fixture = TestDirectory::new("portable-tar-symlinks");
+        let fixture = TemporaryDirectory::new(
+            &std::env::temp_dir(),
+            "oliphaunt-xtask-portable-tar-symlinks",
+        )
+        .unwrap();
         let outside_file = fixture.0.join("outside.txt");
         let outside_directory = fixture.0.join("outside-directory");
         fs::write(&outside_file, b"outside\n").expect("write external file");

@@ -9,6 +9,7 @@ import {
   readWasixByteChannel,
   wasixByteChannelProtocolOutcomeUnknown,
   wasixByteChannelProtocolStarted,
+  writeWasixByteChannel,
 } from '../protocol/byte-channel.js';
 import { WasixDatabaseImpl, type WasixDatabaseSession } from '../core/database.js';
 import {
@@ -38,6 +39,178 @@ const runnableTool = {
 };
 
 describe('persistent WASIX tool worker lifecycle', () => {
+  it('holds the database FIFO until the final destination write is accepted', async () => {
+    const port = new FakeToolWorkerPort();
+    const database = workerDatabase();
+    let release!: () => void;
+    let entered!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const writing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const running = runWasixToolProcess(
+      database,
+      {
+        runtimeVersion: '0.1.1',
+        tool,
+        args: [],
+        output: {
+          async stdout() {
+            entered();
+            await hold;
+          },
+        },
+      },
+      () => port,
+    );
+    const prepare = await port.request(0);
+    port.respond({ id: prepare.id, ok: true, kind: 'prepared' });
+    const request = await port.request(1);
+    if (request.kind !== 'run' || request.output === undefined)
+      throw new Error('missing output channel');
+    await writeWasixByteChannel(request.output.stdout, Uint8Array.of(1));
+    closeWasixByteChannel(request.output.stdout);
+    closeWasixByteChannel(request.frontend);
+    port.respond({
+      id: request.id,
+      ok: true,
+      kind: 'completed',
+      exitCode: 0,
+      stdout: new Uint8Array(),
+      stderr: new Uint8Array(),
+      stdoutBytes: 1,
+      stderrTruncated: false,
+    });
+    await writing;
+    let executed = false;
+    const query = database.execProtocolRaw(new Uint8Array()).then(() => {
+      executed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(executed).toBe(false);
+    release();
+    await running;
+    await query;
+    expect(executed).toBe(true);
+    await database.close();
+  });
+  it('streams both tools through bounded independent output channels and drains failed destinations', async () => {
+    for (const name of ['pg_dump', 'psql'] as const) {
+      const port = new FakeToolWorkerPort();
+      const database = protocolLifecycleDatabase();
+      let release!: () => void;
+      let entered!: () => void;
+      const hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const writing = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let writes = 0;
+      let diagnostics = 0;
+      const running = runWasixToolProcess(
+        database,
+        {
+          runtimeVersion: '0.1.1',
+          tool: { ...tool, name },
+          args: [],
+          output: {
+            async stdout() {
+              writes++;
+              entered();
+              await hold;
+              throw new Error('sink failed');
+            },
+            async stderr(chunk) {
+              diagnostics += chunk.length;
+            },
+          },
+        },
+        () => port,
+      );
+      const prepare = await port.request(0);
+      port.respond({ id: prepare.id, ok: true, kind: 'prepared' });
+      const request = await port.request(1);
+      if (request.kind !== 'run' || request.output === undefined)
+        throw new Error('missing output channels');
+      expect(request.tool).toBe(name);
+      let produced = false;
+      const producing = writeWasixByteChannel(
+        request.output.stdout,
+        new Uint8Array(1024 * 1024),
+      ).then(() => {
+        produced = true;
+      });
+      await writing;
+      await writeWasixByteChannel(request.output.stderr!, Uint8Array.of(1, 2));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(produced).toBe(false);
+      expect(diagnostics).toBe(2);
+      expect(writes).toBe(1);
+      release();
+      await producing;
+      closeWasixByteChannel(request.output.stdout);
+      closeWasixByteChannel(request.output.stderr!);
+      markWasixByteChannelProtocolComplete(request.frontend);
+      closeWasixByteChannel(request.frontend);
+      port.respond({
+        id: request.id,
+        ok: true,
+        kind: 'completed',
+        exitCode: 0,
+        stdout: new Uint8Array(),
+        stderr: new Uint8Array(),
+        stdoutBytes: 1024 * 1024,
+        stderrTruncated: false,
+      });
+      await expect(running).resolves.toMatchObject({
+        stdoutBytes: 1024 * 1024,
+        stdout: new Uint8Array(),
+      });
+      expect(writes).toBe(1);
+      await database.execProtocolRaw(new Uint8Array());
+      await database.close();
+    }
+  });
+
+  it('a tool-worker crash wakes a stalled output consumer and makes an unknown protocol terminal', async () => {
+    const port = new FakeToolWorkerPort();
+    const database = protocolLifecycleDatabase();
+    let entered!: () => void;
+    const writing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const running = runWasixToolProcess(
+      database,
+      {
+        runtimeVersion: '0.1.1',
+        tool,
+        args: [],
+        output: {
+          stdout() {
+            entered();
+            return new Promise<void>(() => {});
+          },
+        },
+      },
+      () => port,
+    );
+    const prepare = await port.request(0);
+    port.respond({ id: prepare.id, ok: true, kind: 'prepared' });
+    const request = await port.request(1);
+    if (request.kind !== 'run' || request.output === undefined)
+      throw new Error('missing output channels');
+    markWasixByteChannelProtocolStarted(request.frontend);
+    await writeWasixByteChannel(request.output.stdout, Uint8Array.of(1));
+    await writing;
+    const rejected = rejects(running, /worker crashed/);
+    port.crash(new Error('worker crashed'));
+    await rejected;
+    await expect(database.execProtocolRaw(new Uint8Array())).rejects.toThrow(/unknown/);
+    await database.close();
+  });
   it('closes pre-protocol failures cleanly and fails post-protocol failures', async () => {
     let enterProtocol = false;
     const dispatch = createWasixToolWorkerDispatcher(

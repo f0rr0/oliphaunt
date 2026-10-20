@@ -87,40 +87,56 @@ caller-realm native placement, or `@oliphaunt/wasix-ts/worker` for a separate
 JavaScript Worker realm on every runtime. Browser execution requires
 cross-origin isolation.
 
+The browser host builds the engine and worker scheduler from the pinned
+Wasmer SDK source in `src/wasix/browser-host/source.toml`. Its repo-owned
+`adapter/` supplies our direct PostgreSQL and frontend-tool interfaces, not
+Wasmer's PostgreSQL example or registry packages. Shared-memory host workers
+require the browser-only nightly pinned in that project's `rust-toolchain.toml`;
+normal Rust builds retain the workspace toolchain. Browser host updates do not
+change Rust/Node-API or Postmaster engines.
+
+Browser PostgreSQL installs its fast clock through Wasmer's import hook; tools
+use ordinary WASIX clocks. Fast reads return through WASIX after 16 observed
+milliseconds or 1,024 reads per clock domain to service pending work. A guest
+clock-setting call switches all readers sharing that database's memory to
+ordinary WASIX reads before entering the setter, including readers in extensions
+loaded later. Importing a setter alone does not disable fast reads. The switch
+lasts until that guest is destroyed, even when the setter returns an error;
+Wasmer remains the sole owner of virtual clock adjustments. No public flag is
+needed. This optimization is restricted to the enforced single execution realm.
+
+The pinned SDK has a
+[Modified MIT license](https://github.com/wasmerio/wasmer-sdk/blob/wasmer-sdk-js-v0.19.0/LICENSE),
+including a prominent Wasmer UI attribution requirement for commercial
+products above one million monthly active users or US$1 million monthly revenue;
+it must not be described as plain MIT.
+
 Memory is the default. Persistent providers are selective imports:
 
 - `storage/indexed-db` and `storage/opfs` in browsers;
 - `storage/node`, `storage/bun`, and `storage/deno` on those runtimes.
 
 IndexedDB hydrates a Wasmer memory directory and publishes journaled changes.
-OPFS Worker execution uses synchronous access handles for exact-range I/O to an
-opaque backing-file pool; the root direct entry point and browsers without that
-facility publish the same journal to that same format.
+Worker OPFS uses direct range I/O with a synchronous recovery journal. The
+portable provider retains memory-backed copy-on-write publication. Both read
+the same private pool format and replay committed recovery records before
+mounting. Direct acquisition upgrades legacy metadata to v2 under the existing
+exclusive lock; older SDKs reject that format.
 Node, Bun, Deno, and Electron directory providers publish below the managed root's
 `pgdata` child. Ordinary operations complete a provider boundary after
 `ReadyForQuery`; callback transactions do so once after confirmed `COMMIT` or
-`ROLLBACK`. A new persistent direct-OPFS database uses one separate internal
-full-publication boundary after initialization. That boundary is not a public
-operation or option. Applications that need a PostgreSQL checkpoint issue
-`execute("CHECKPOINT")`; it completes the same ordinary provider boundary as
-another successful statement.
+`ROLLBACK`. Initialization publishes only after its full boundary succeeds.
+Applications that need a PostgreSQL checkpoint issue `execute("CHECKPOINT")`;
+it completes the same ordinary provider boundary as another successful statement.
 
-IndexedDB publication is one transaction. OPFS honors guest file flushes,
-drains WAL at operation boundaries, and flushes all dirty files in PostgreSQL
-order for checkpoint, close, or namespace publication. Its portable path uses
-copy-on-write file backings and publishes namespace state last. A publication
-failure poisons the handle because the live guest may be ahead of durable
-storage. PostgreSQL statement errors that recover through `ReadyForQuery` do
-not poison storage.
-
-The synchronous OPFS path reserves a bounded set of preopened backing files for the
-synchronous hot path. A larger creation burst is staged only until the mandatory
-host boundary. That boundary allocates, writes, and flushes every staged file
-before publishing namespace state; failure poisons the live handle and leaves
-the previous namespace authoritative. Reserve replenishment after a successful
-boundary is best-effort housekeeping and cannot change that boundary's reported
-commit state; initial capacity failure selects the portable path. Reserve size
-is an internal performance detail, not a database-capacity setting.
+IndexedDB publication is one transaction. Direct OPFS journals names and staged
+overflow contents before dependent mutations or a successful guest flush; it
+flushes written WAL before publishing ordinary overflow contents. It relies on
+PostgreSQL WAL recovery rather than byte-identical snapshot rollback. Portable
+OPFS writes changed WAL before ordinary files and `global/pg_control`, then
+publishes namespace state last. Persistence failures poison the handle and
+report an unknown outcome. PostgreSQL statement errors that recover through
+`ReadyForQuery` do not poison storage.
 
 `backup()` produces the exact WASIX physical archive. `Oliphaunt.restore()`
 accepts that archive and new or empty persistent storage. Restore rejects
@@ -153,6 +169,19 @@ This compatibility endpoint remains distinct from the concurrent
 TypeScript still has no cancellation or dedicated typed COPY API. Those
 absences are recorded in the SDK parity policy rather than represented as
 capability flags.
+
+Both bindings use PostgreSQL's timeout queue for SQL `statement_timeout`.
+Expiry cancels CPU work at PostgreSQL interrupt points and shortens PostgreSQL
+waits, returning SQLSTATE `57014`. Propagating that error from a managed
+transaction rolls it back; an ordinary canceled statement leaves the session
+usable. Resetting the setting to zero disarms it, and changing it replaces the
+previous deadline.
+
+WASIX delivery is cooperative: it cannot interrupt an inactive guest or an
+arbitrary blocked host call. Dormant idle deadlines are serviced on guest
+re-entry. A caller-side future timeout does not stop guest execution. These
+settings are separate from the stack, buffer, queue and output limits in
+[resource budgets](runtime-resource-budgets.md).
 
 Across both bindings, selecting extensions supplies exact runtime artifacts,
 dependencies, and required pre-start preload/GUC configuration only. Open and

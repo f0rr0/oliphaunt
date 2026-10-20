@@ -131,6 +131,7 @@ describe('WASIX storage descriptors', () => {
       exitCode: 0,
       stdout: Uint8Array.of(0xff, 0),
       stderr: Uint8Array.of(0x80, 0xfe),
+      stderrTruncated: true,
     });
 
     const roundTrip = deserializeWorkerError(serializeWorkerError(original));
@@ -144,6 +145,7 @@ describe('WASIX storage descriptors', () => {
       exitCode: 0,
       stdout: Uint8Array.of(0xff, 0),
       stderr: Uint8Array.of(0x80, 0xfe),
+      stderrTruncated: true,
     });
   });
 
@@ -178,4 +180,41 @@ describe('WASIX storage descriptors', () => {
       stack: original.stack,
     });
   });
+});
+
+it('OPFS concurrency snapshots and serializes without changing omitted descriptors', () => {
+  const options = { maxConcurrentIO: 2 };
+  const storage = opfs('tuned', options);
+  options.maxConcurrentIO = 99;
+  expect(serializeWasixStorage(storage)).toEqual({
+    schema: 'oliphaunt-wasix-storage-v1',
+    kind: 'opfs',
+    name: 'tuned',
+    maxConcurrentIO: 2,
+  });
+  for (const value of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    expect(() => opfs('invalid', { maxConcurrentIO: value })).toThrow(/positive safe integer/);
+  }
+  expect(() => opfs('invalid', { typo: 2 } as never)).toThrow(/unknown OPFS option/);
+});
+
+it('snapshots and validates the OPFS spare reserve without making it a file limit', () => {
+  const options = { spareFileCount: 0 };
+  const storage = opfs('reserve', options);
+  options.spareFileCount = 20;
+  expect(serializeWasixStorage(storage)).toEqual({
+    schema: 'oliphaunt-wasix-storage-v1',
+    kind: 'opfs',
+    name: 'reserve',
+    spareFileCount: 0,
+  });
+  for (const value of [
+    -1,
+    0.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER + 1,
+  ]) {
+    expect(() => opfs('invalid', { spareFileCount: value })).toThrow(/non-negative safe integer/);
+  }
 });

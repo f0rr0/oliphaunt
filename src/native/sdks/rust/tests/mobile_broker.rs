@@ -123,7 +123,13 @@ fn mobile_broker_native_roundtrip() {
 fn child(action: &str, root: &Path) {
     let (host, socket) = std::os::unix::net::UnixStream::pair().unwrap();
     let retired = Arc::new(Retired(AtomicBool::new(false)));
-    let worker = Worker::new(socket, retired.clone(), Duration::from_secs(30)).unwrap();
+    let worker = Worker::new(
+        socket,
+        retired.clone(),
+        Duration::from_secs(30),
+        oliphaunt_broker::config::BrokerTimeouts::default(),
+    )
+    .unwrap();
     let control = Arc::new(Platform(worker.clone()));
     let library = PathBuf::from(std::env::var_os("LIBOLIPHAUNT_PATH").unwrap());
     let archive = root.join("backup.tar");
@@ -137,6 +143,7 @@ fn child(action: &str, root: &Path) {
             epoch,
             control,
             Some(Duration::from_secs(30)),
+            oliphaunt_broker::config::BrokerTimeouts::default(),
             fs::File::open(&archive).unwrap(),
         ))
         .unwrap();
@@ -161,8 +168,14 @@ fn child(action: &str, root: &Path) {
         assert_eq!(ready.abi, 12);
         assert!(!ready.runtime_version.is_empty());
         let serving = std::thread::spawn(move || block_on(worker.serve()));
-        let (database, connection) =
-            block_on(broker::connect(host, ready.epoch, control, None)).unwrap();
+        let (database, connection) = block_on(broker::connect(
+            host,
+            ready.epoch,
+            control,
+            None,
+            oliphaunt_broker::config::BrokerTimeouts::default(),
+        ))
+        .unwrap();
         if action == "produce" {
             block_on(Request::new(&database).execute(query("CREATE TABLE broker_probe(value text); INSERT INTO broker_probe VALUES ('roundtrip')"))).unwrap();
             let large =

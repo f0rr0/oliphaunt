@@ -17,11 +17,13 @@ import {
 import { resolveExactNativeRuntimeProfile } from '../native/runtime-profile.js';
 import {
   type BrokerResponseFrame,
+  readBrokerBackup,
   readBrokerResponse,
   writeBrokerRequest,
 } from './broker-frames.js';
 import { type ByteStream, withStreamDeadline } from './byte-stream.js';
-import { PostgresWireClient } from './pgwire.js';
+import { authenticatePostgresStream } from './pgwire.js';
+import { BrokerExchangeClient, BrokerExchangeError } from './broker-exchange.js';
 import { throwCollectedCloseFailures } from './close.js';
 import { createForgottenRuntimeHandleCleanup } from './forgotten-handle.js';
 import {
@@ -30,6 +32,7 @@ import {
   createTempDir,
   type FailedManagedLaunch,
   type ManagedChild,
+  type LocalEndpoint,
   parseReadyEndpoint,
   randomHexToken,
   readReadyLine,
@@ -82,7 +85,10 @@ export function createBrokerRuntimeBinding(
       return asBrokerHandle(handle).execProtocolRaw(simpleQuery(sql));
     },
     backup(handle: RuntimeHandle): Promise<Uint8Array> {
-      return asBrokerHandle(handle).requestOk({ kind: 'backup' });
+      return asBrokerHandle(handle).backup();
+    },
+    backupStream(handle: RuntimeHandle, onChunk: (chunk: Uint8Array) => void): Promise<void> {
+      return asBrokerHandle(handle).backupTo(onChunk);
     },
     cancel(handle: RuntimeHandle): Promise<void> {
       return asBrokerHandle(handle).cancel();
@@ -115,7 +121,9 @@ export function createBrokerRuntimeBinding(
 export class BrokerHandle {
   #child: ManagedChild | undefined;
   #stream: ByteStream | undefined;
-  #client: PostgresWireClient | undefined;
+  #client: BrokerExchangeClient | undefined;
+  readonly #controlEndpoint: LocalEndpoint | undefined;
+  readonly #authToken: string | undefined;
   #ipcDir: string | undefined;
   #temporaryInstanceDirectory: string | undefined;
   #failed = false;
@@ -130,6 +138,8 @@ export class BrokerHandle {
     this.#child = launch.child;
     this.#stream = launch.stream;
     this.#client = launch.client;
+    this.#controlEndpoint = launch.controlEndpoint;
+    this.#authToken = launch.authToken;
     this.#ipcDir = launch.ipcDir;
     this.#temporaryInstanceDirectory = config.temporaryDirectory
       ? config.instanceDirectory
@@ -144,6 +154,44 @@ export class BrokerHandle {
       case 'error':
         throw new Error(response.message);
     }
+  }
+
+  async backup(): Promise<Uint8Array> {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    await this.backupTo((chunk) => {
+      chunks.push(chunk);
+      size += chunk.length;
+    });
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return bytes;
+  }
+
+  async backupTo(onChunk: (chunk: Uint8Array) => void | Promise<void>): Promise<void> {
+    const stream = await this.ensureStream();
+    let result: Awaited<ReturnType<typeof readBrokerBackup>>;
+    try {
+      await writeBrokerRequest(stream, { kind: 'backup-stream' });
+      result = await readBrokerBackup(stream, onChunk);
+    } catch (error) {
+      await this.markFailed(error);
+      throw error;
+    }
+    if (result.response.kind === 'error') {
+      const error = new Error(result.response.message);
+      if (result.destinationFailure !== undefined)
+        throw new AggregateError(
+          [error, result.destinationFailure.error],
+          'backup and destination both failed',
+        );
+      throw error;
+    }
+    if (result.destinationFailure !== undefined) throw result.destinationFailure.error;
   }
 
   async execProtocolRaw(request: Uint8Array): Promise<Uint8Array> {
@@ -170,30 +218,66 @@ export class BrokerHandle {
     await this.ensureStream();
     const client = this.#client;
     if (!client) throw new Error('native broker SQL connection is unavailable');
-    let callbackFailed = false;
-    let callbackError: unknown;
+    let callbackFailure: { error: unknown } | undefined;
     try {
       await client.execProtocolStream(request, (chunk) => {
-        if (!callbackFailed) {
-          try {
-            onChunk(chunk);
-          } catch (error) {
-            callbackFailed = true;
-            callbackError = error;
-          }
+        try {
+          onChunk(chunk);
+        } catch (error) {
+          callbackFailure = { error };
+          throw error;
         }
       });
     } catch (error) {
-      await this.markFailed(error);
+      if (
+        (callbackFailure === undefined || !Object.is(error, callbackFailure.error)) &&
+        (!(error instanceof BrokerExchangeError) || error.requiresReopen)
+      )
+        await this.markFailed(error);
       throw error;
     }
-    if (callbackFailed) throw callbackError;
   }
 
   async cancel(): Promise<void> {
+    // Capture before connecting: a delayed cancel can never target the next exchange.
+    const active = this.#client?.activeRequest;
+    if (active === undefined) return;
     await this.ensureStream();
-    if (!this.#client) throw new Error('native broker SQL connection is unavailable');
-    await this.#client.cancel(this.shutdownTimeoutMs);
+    if (this.#controlEndpoint === undefined || this.#authToken === undefined)
+      throw new Error('native broker cancellation credential is unavailable');
+    const controller = new AbortController();
+    const deadline = performance.now() + this.shutdownTimeoutMs;
+    const timer = setTimeout(() => controller.abort(), this.shutdownTimeoutMs);
+    let stream: ByteStream | undefined;
+    const failures: unknown[] = [];
+    try {
+      stream = await connectEndpoint(this.#controlEndpoint, controller.signal);
+      const connection = stream;
+      await withStreamDeadline(
+        connection,
+        deadline,
+        async () => {
+          await writeBrokerRequest(connection, {
+            kind: 'cancel',
+            token: this.#authToken!,
+            ...active,
+          });
+          const response = await readBrokerResponse(connection);
+          if (response.kind === 'error') throw new Error(response.message);
+        },
+        'native broker cancellation',
+      );
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      clearTimeout(timer);
+      try {
+        await stream?.close();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    throwCollectedCloseFailures(failures, 'native broker cancellation and close failed');
   }
 
   async detach(): Promise<void> {
@@ -204,9 +288,7 @@ export class BrokerHandle {
     const client = this.#client;
     if (client) {
       try {
-        if (firstAttempt && !this.#failed)
-          await client.terminate(Math.max(0, deadline - performance.now()));
-        else await client.close();
+        await client.close();
         this.#client = undefined;
       } catch (error) {
         failures.push(error);
@@ -247,7 +329,7 @@ export class BrokerHandle {
     const child = this.#child;
     if (child !== undefined) {
       try {
-        let exited = await waitForManagedChild(child, this.shutdownTimeoutMs);
+        let exited = await waitForManagedChild(child, Math.max(0, deadline - performance.now()));
         if (!exited) {
           failures.push(new Error(`native broker did not stop within ${this.shutdownTimeoutMs}ms`));
           child.kill('SIGKILL');
@@ -399,7 +481,9 @@ const retainedFailedBrokerHandles = new Set<BrokerHandle>();
 type BrokerLaunch = {
   child: ManagedChild;
   stream: ByteStream;
-  client: PostgresWireClient;
+  client: BrokerExchangeClient;
+  controlEndpoint?: LocalEndpoint;
+  authToken?: string;
   ipcDir?: string;
 };
 
@@ -412,11 +496,12 @@ async function openBrokerHandle(
     paths: [undefined, config.temporaryDirectory ? config.instanceDirectory : undefined],
   };
   try {
-    controlTimeoutMs = lifecycleTimeoutMs(CONTROL_TIMEOUT_MS_ENV, DEFAULT_CONTROL_TIMEOUT_MS);
-    const startupTimeoutMs = lifecycleTimeoutMs(
-      OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS_ENV,
-      DEFAULT_STARTUP_TIMEOUT_MS,
-    );
+    controlTimeoutMs =
+      config.timeouts?.shutdownTimeoutMs ??
+      lifecycleTimeoutMs(CONTROL_TIMEOUT_MS_ENV, DEFAULT_CONTROL_TIMEOUT_MS);
+    const startupTimeoutMs =
+      config.timeouts?.startupTimeoutMs ??
+      lifecycleTimeoutMs(OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS_ENV, DEFAULT_STARTUP_TIMEOUT_MS);
     const authToken = randomHexToken();
     const resolvedExecutable = await resolveBrokerExecutable(executable);
     const endpoint = await allocateBrokerEndpoint(config);
@@ -441,19 +526,49 @@ async function openBrokerHandle(
         }),
       ]).finally(() => readiness.abort());
       const ready = parseBrokerReadyLine(line);
-      const stream = await connectEndpoint(parseReadyEndpoint(ready.control), startup.signal);
+      const controlEndpoint = parseReadyEndpoint(ready.control);
+      const stream = await connectEndpoint(controlEndpoint, startup.signal);
       failedLaunch.stream = stream;
-      await authenticateBroker(stream, authToken);
-      const client = await PostgresWireClient.connect(
-        parseReadyEndpoint(ready.primary),
-        config.username,
-        config.database,
-        Math.max(0, deadline - performance.now()),
-        authToken,
+      await withStreamDeadline(
+        stream,
+        deadline,
+        () => authenticateBroker(stream, authToken),
+        'native broker authentication',
       );
+      const sqlStream = await connectEndpoint(parseReadyEndpoint(ready.primary), startup.signal);
+      let client: BrokerExchangeClient;
+      try {
+        client = await withStreamDeadline(
+          sqlStream,
+          deadline,
+          async () => {
+            await authenticatePostgresStream(
+              sqlStream,
+              config.username,
+              config.database,
+              authToken,
+              {
+                '_pq_.oliphaunt_exchange': '1',
+              },
+            );
+            return BrokerExchangeClient.open(sqlStream);
+          },
+          'native broker SQL startup',
+        );
+      } catch (error) {
+        try {
+          await sqlStream.close();
+        } catch (closeError) {
+          throw new AggregateError(
+            [error, closeError],
+            'native broker SQL startup and close failed',
+          );
+        }
+        throw error;
+      }
       return new BrokerHandle(
         config,
-        { child, stream, client, ipcDir: endpoint.ipcDir },
+        { child, stream, client, controlEndpoint, authToken, ipcDir: endpoint.ipcDir },
         controlTimeoutMs,
       );
     } finally {
@@ -487,8 +602,8 @@ async function resolveBrokerNativeInstall(config: {
   runtimeDirectory?: string;
   extensions?: readonly string[];
   extensionDescriptors?: readonly import('../extensions.js').NativeExtension[];
-  seed?: import('../types.js').NativeResourceDirectory;
-  icuData?: import('../types.js').NativeResourceDirectory;
+  seed?: import('../config.js').NormalizedResourceDirectory;
+  icuData?: import('../config.js').NormalizedResourceDirectory;
 }): Promise<BrokerNativeInstall> {
   const extensions = config.extensions ?? [];
   const assets = await import('../native/assets.js');
@@ -590,7 +705,10 @@ async function allocateBrokerEndpoint(config: NormalizedOpenConfig): Promise<Bro
   return { kind: 'tcp', listen: '127.0.0.1:0', controlListen: '127.0.0.1:0' };
 }
 
-function brokerSpawnArgs(config: NormalizedOpenConfig, endpoint: BrokerEndpointPlan): string[] {
+export function brokerSpawnArgs(
+  config: NormalizedOpenConfig,
+  endpoint: BrokerEndpointPlan,
+): string[] {
   const args = [
     '--root',
     config.instanceDirectory,
@@ -603,6 +721,13 @@ function brokerSpawnArgs(config: NormalizedOpenConfig, endpoint: BrokerEndpointP
     args.push('--socket', endpoint.socket, '--control-socket', endpoint.controlSocket);
   } else {
     args.push('--listen', endpoint.listen, '--control-listen', endpoint.controlListen);
+  }
+  if (config.brokerRecoveryTimeoutMs !== undefined)
+    args.push('--recovery-timeout-ms', String(config.brokerRecoveryTimeoutMs));
+  if (config.brokerMaxPendingHandshakes !== undefined)
+    args.push('--max-pending-handshakes', String(config.brokerMaxPendingHandshakes));
+  if (config.brokerHandshakeTimeoutMs !== undefined) {
+    args.push('--handshake-timeout-ms', String(config.brokerHandshakeTimeoutMs));
   }
   if (config.seed !== undefined)
     args.push(

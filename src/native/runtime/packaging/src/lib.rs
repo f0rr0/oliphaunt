@@ -1429,6 +1429,88 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
     }
 
     #[test]
+    fn module_symbol_parser_ignores_nested_comments_and_quoted_bodies() {
+        let sql = r#"
+/* outer /* CREATE FUNCTION ignored() AS 'MODULE_PATHNAME', 'decoy' LANGUAGE C; */ */
+CREATE FUNCTION real_f() RETURNS int
+  /* AS 'MODULE_PATHNAME', 'decoy' */
+  AS $$MODULE_PATHNAME$$, $sym$actual_c_symbol$sym$ LANGUAGE C;
+CREATE FUNCTION sql_body() RETURNS text LANGUAGE sql AS $body$
+  SELECT 'LANGUAGE C; AS MODULE_PATHNAME';
+$body$;
+CREATE FUNCTION "AS"."quoted_name"() RETURNS int AS 'MODULE_PATHNAME' LANGUAGE 'c';
+"#;
+        assert_eq!(
+            module_c_symbols(sql, "vector").unwrap(),
+            vec!["actual_c_symbol", "quoted_name"]
+        );
+        assert!(module_c_symbols("/* unfinished", "vector").is_err());
+        assert!(module_c_symbols("CREATE FUNCTION f() AS $body$unfinished", "vector").is_err());
+    }
+
+    #[test]
+    fn static_symbols_follow_primary_and_target_version_control_metadata() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("share/postgresql/extension");
+        write_file(
+            &dir.join("vector.control"),
+            b"module_pathname = '$libdir/foreign' # ignored 'quote\n",
+        );
+        write_file(
+            &dir.join("vector--2.control"),
+            b"module_pathname = '$libdir/vector'\n",
+        );
+        write_file(&dir.join("vector--1.sql"), b"CREATE FUNCTION f() RETURNS int AS 'MODULE_PATHNAME', 'foreign_symbol' LANGUAGE C;\nCREATE FUNCTION direct() RETURNS int AS '$libdir/vector', 'direct_symbol' LANGUAGE C;");
+        write_file(
+            &dir.join("vector--1--2.sql"),
+            b"CREATE FUNCTION f() RETURNS int AS 'MODULE_PATHNAME', 'target_symbol' LANGUAGE C;",
+        );
+        let extension = runtime_resource_extensions(&[Extension::VECTOR]).remove(0);
+        assert_eq!(
+            collect_extension_sql_symbols(root.path(), &extension).unwrap(),
+            vec!["direct_symbol", "target_symbol"]
+        );
+        write_file(
+            &dir.join("vector--2.control"),
+            b"module_pathname = '$libdir/foreign'\n",
+        );
+        assert_eq!(
+            collect_extension_sql_symbols(root.path(), &extension).unwrap(),
+            vec!["direct_symbol"]
+        );
+        write_file(
+            &dir.join("vector.control"),
+            b"comment = 'no module pathname'\n",
+        );
+        assert!(
+            collect_extension_sql_symbols(root.path(), &extension)
+                .unwrap_err()
+                .to_string()
+                .contains("without control-file module_pathname")
+        );
+    }
+
+    #[test]
+    fn static_symbol_lexer_rejects_unsupported_relevant_escapes_and_ignores_argument_keywords() {
+        assert!(
+            module_c_symbols(
+                r"CREATE FUNCTION f() RETURNS int AS 'MODULE_PATHNAME', E'foo\x5fbar' LANGUAGE C;",
+                "vector"
+            )
+            .is_err()
+        );
+        assert_eq!(module_c_symbols(r"CREATE FUNCTION f(language c) RETURNS int AS 'MODULE_PATHNAME', E'foo\x5fbar' LANGUAGE sql;", "vector").unwrap(), Vec::<String>::new());
+        assert!(
+            module_c_symbols(
+                "CREATE FUNCTION f() RETURNS int AS 'module_pathname', 'wrong_case' LANGUAGE C;",
+                "vector"
+            )
+            .unwrap()
+            .is_empty()
+        );
+    }
+
+    #[test]
     fn static_registry_source_declares_magic_init_and_sql_symbols() {
         let modules = vec![StaticRegistryModule {
             extension_sql_name: "vector".to_owned(),
@@ -2885,7 +2967,8 @@ files=files
             &root
                 .join("files/share/postgresql/extension")
                 .join(format!("{sql_name}.control")),
-            b"comment = 'acme extension'\n",
+            format!("comment = 'acme extension'\nmodule_pathname = '$libdir/{module_stem}'\n")
+                .as_bytes(),
         );
         write_file(
             &root

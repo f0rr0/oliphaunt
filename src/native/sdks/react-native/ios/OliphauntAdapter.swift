@@ -68,7 +68,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
                         configuration: parsed.configuration,
                         options: .init(
                             startupTimeout: .milliseconds(parsed.startupTimeoutMs),
-                            operationTimeout: parsed.operationTimeoutMs.map { .milliseconds($0) }))
+                            operationTimeout: parsed.operationTimeoutMs.map { .milliseconds($0) },
+                            recoveryTimeout: .milliseconds(parsed.recoveryTimeoutMs),
+                            shutdownTimeout: .milliseconds(parsed.shutdownTimeoutMs)))
                 #else
                     database = try await OliphauntDatabase.open(configuration: parsed.configuration)
                 #endif
@@ -112,7 +114,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
                             storage: parsed.configuration.storage, from: archive,
                             options: .init(
                                 startupTimeout: .milliseconds(parsed.startupTimeoutMs),
-                                operationTimeout: parsed.operationTimeoutMs.map { .milliseconds($0) }))
+                                operationTimeout: parsed.operationTimeoutMs.map { .milliseconds($0) },
+                                recoveryTimeout: .milliseconds(parsed.recoveryTimeoutMs),
+                                shutdownTimeout: .milliseconds(parsed.shutdownTimeoutMs)))
                     #else
                         try await OliphauntDatabase.restore(storage: parsed.configuration.storage, bytes: backupData)
                     #endif
@@ -196,6 +200,26 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         }
     }
 
+    @objc(backupToFile:deadline:completion:)
+    public func backupToFile(
+        _ destination: String,
+        deadline: Double,
+        completion: @escaping (NSError?) -> Void
+    ) {
+        let completionBox = CompletionBox(completion)
+        let destination = URL(fileURLWithPath: destination)
+        Task(priority: .userInitiated) { [database] in
+            do {
+                try await Self.withOperationDeadline(deadline) {
+                    try await database.backup(to: destination)
+                }
+                completionBox.value(nil)
+            } catch {
+                completionBox.value(Self.nsError(error))
+            }
+        }
+    }
+
     @objc(cancelWithCompletion:)
     public func cancel(completion: @escaping (NSError?) -> Void) {
         let completionBox = CompletionBox(completion)
@@ -258,6 +282,8 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
     private struct ParsedOpenConfig {
         let startupTimeoutMs: Int64
         let operationTimeoutMs: Int64?
+        let recoveryTimeoutMs: Int64
+        let shutdownTimeoutMs: Int64
         var configuration: OliphauntConfiguration
     }
 
@@ -268,27 +294,37 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         let extensions = try stringArray(config, "extensions").map {
             try OliphauntExtension(sqlName: $0)
         }
+        func positiveInteger(_ key: String) throws -> Int64? {
+            guard let raw = config[key] else { return nil }
+            guard let number = raw as? NSNumber, number.doubleValue.isFinite,
+                number.doubleValue > 0, number.doubleValue <= 9_007_199_254_740_991,
+                number.doubleValue.rounded(.towardZero) == number.doubleValue
+            else { throw adapterError("invalid positive integer for \(key)") }
+            return number.int64Value
+        }
+        let admission: OliphauntAdmissionLimits?
+        if config["admissionMaxPendingOperations"] != nil || config["admissionHighWaterMarkBytes"] != nil {
+            guard let count = try positiveInteger("admissionMaxPendingOperations"),
+                  let bytes = try positiveInteger("admissionHighWaterMarkBytes")
+            else { throw adapterError("both admission limits are required") }
+            admission = .init(maxPendingOperations: Int(count), highWaterMarkBytes: Int(bytes))
+        } else { admission = nil }
         let configuration = OliphauntConfiguration(
             storage: storage,
             startupGUCs: try startupGUCs(config, "startupGUCs"),
             username: username,
             database: database,
-            extensions: extensions
+            extensions: extensions,
+            admission: admission
         )
-        if topology() == "direct", config["startupTimeoutMs"] != nil || config["operationTimeoutMs"] != nil {
+        if topology() == "direct", ["startupTimeoutMs", "operationTimeoutMs", "recoveryTimeoutMs", "shutdownTimeoutMs"].contains(where: { config[$0] != nil }) {
             throw adapterError("broker timeouts require a broker native build")
         }
-        func timeout(_ key: String) throws -> Int64? {
-            guard let raw = config[key] else { return nil }
-            guard let number = raw as? NSNumber, number.doubleValue.isFinite,
-                number.doubleValue > 0, number.doubleValue <= 9_007_199_254_740_991,
-                number.doubleValue.rounded(.towardZero) == number.doubleValue
-            else { throw adapterError("invalid broker timeout") }
-            return number.int64Value
-        }
         return ParsedOpenConfig(
-            startupTimeoutMs: try timeout("startupTimeoutMs") ?? 30_000,
-            operationTimeoutMs: try timeout("operationTimeoutMs"), configuration: configuration)
+            startupTimeoutMs: try positiveInteger("startupTimeoutMs") ?? 30_000,
+            operationTimeoutMs: try positiveInteger("operationTimeoutMs"),
+            recoveryTimeoutMs: try positiveInteger("recoveryTimeoutMs") ?? 3_000,
+            shutdownTimeoutMs: try positiveInteger("shutdownTimeoutMs") ?? 3_000, configuration: configuration)
     }
 
     private static func string(_ dictionary: NSDictionary, _ key: String) throws -> String? {

@@ -15,8 +15,7 @@ const directHost: DirectWasixHost = {
   prepareOliphauntTool: host.prepareOliphauntTool,
   runOliphauntToolDirect: host.runOliphauntToolDirect,
 };
-// This package worker is the isolation boundary. Opening the direct session
-// here keeps PostgreSQL and synchronous OPFS handles in the same realm.
+// This package worker owns PostgreSQL and its storage publication boundaries.
 const dispatch = createWorkerSessionDispatcher(
   (options) => openBrowserWorkerSession(options, directHost),
   respond,

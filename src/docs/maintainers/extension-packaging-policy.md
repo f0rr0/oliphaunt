@@ -463,15 +463,15 @@ PROJ, SQLite, json-c, and libxml2 dependency stack, links the generated
 `postgis-3` module against those static archives, and stages the matching
 extension SQL plus `proj/proj.db`.
 
-## Target-Specific PG18.4 Support
+## Target-Specific PG18.6 Support
 
-The generated catalog is a derived view of Oliphaunt-compatible PG18.4
+The generated catalog is a derived view of Oliphaunt-compatible PG18.6
 extension metadata. WASIX, native desktop, and mobile support can differ when
 their artifacts or platform constraints differ. The invariant is strict: a
 public selection surface may advertise only the exact extensions that the
 selected target can actually package and run.
 
-PostgreSQL 18.4 can build `uuid-ossp` only with
+PostgreSQL 18.6 can build `uuid-ossp` only with
 `--with-uuid=bsd`, `--with-uuid=e2fs`, or `--with-uuid=ossp`. Oliphaunt carries
 a first-party portable UUID compatibility source for the e2fs API under
 `src/extensions/contrib/portable-uuid`; the WASIX, Linux/macOS native,

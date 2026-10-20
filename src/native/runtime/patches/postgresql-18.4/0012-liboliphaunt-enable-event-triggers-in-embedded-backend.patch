@@ -5,29 +5,45 @@ Subject: [PATCH] liboliphaunt: enable event triggers in embedded backend
  sessions
 
 PostgreSQL disables event triggers when !IsUnderPostmaster so standalone
-single-user recovery has an escape hatch. liboliphaunt direct mode is not a
-postmaster child, but it is also not a standalone recovery shell: it runs a
-normal embedded backend session behind the frontend/backend protocol.
+single-user recovery has an escape hatch. liboliphaunt's dedicated entrypoint
+also starts from standalone infrastructure, but then serves a normal
+frontend/backend protocol session and identifies it as B_BACKEND.
 
-Keep upstream standalone behavior unchanged, but allow OLIPHAUNT_EMBEDDED builds
-to fire event triggers when the event_triggers GUC is enabled.
+Use private write-once admission state in the dedicated entrypoint before
+PostgreSQL initialization. A compare-and-swap makes duplicate concurrent
+entrypoint attempts race-free and admits exactly one backend. Once admitted,
+even a startup failure consumes this PostgreSQL process lifetime; the state is
+deliberately never reset. A rejected duplicate enters the existing embedded
+cleanup path without claiming a cwd mutation or clearing PostgreSQL-global
+resources it never owned. Successful admission is recorded in the heap
+lifecycle before any FATAL-capable initialization so later cleanup can
+distinguish the owner after a non-local exit.
+
+Admission is not a session capability and event-trigger hot paths do not read
+it. In embedded builds, event triggers instead accept either an ordinary
+postmaster child or PostgreSQL's existing regular-backend identity. The
+dedicated entrypoint sets MyBackendType to B_BACKEND before PostgresMain, so
+Native Direct and Broker sessions enable DDL and login event triggers while
+bootstrap and genuine standalone single-user invocations keep the upstream
+escape hatch.
 ---
- src/backend/commands/event_trigger.c | 20 +++++++++++++++-----
- 1 file changed, 15 insertions(+), 5 deletions(-)
+ src/backend/commands/event_trigger.c | 20 +++++++++++++-----
+ src/backend/tcop/postgres.c          | 36 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 51 insertions(+), 5 deletions(-)
 
 diff --git a/src/backend/commands/event_trigger.c b/src/backend/commands/event_trigger.c
-index 074c476..af3c678 100644
+index 074c476..4defe1b 100644
 --- a/src/backend/commands/event_trigger.c
 +++ b/src/backend/commands/event_trigger.c
 @@ -85,6 +85,16 @@ static EventTriggerQueryState *currentEventTriggerState = NULL;
  /* GUC parameter */
  bool		event_triggers = true;
-
+ 
 +static bool
 +EventTriggersHaveRunnableBackend(void)
 +{
 +#ifdef OLIPHAUNT_EMBEDDED
-+	return true;
++	return IsUnderPostmaster || AmRegularBackendProcess();
 +#else
 +	return IsUnderPostmaster;
 +#endif
@@ -43,7 +59,7 @@ index 074c476..af3c678 100644
 -	if (!IsUnderPostmaster || !event_triggers)
 +	if (!EventTriggersHaveRunnableBackend() || !event_triggers)
  		return;
-
+ 
  	runlist = EventTriggerCommonSetup(parsetree,
 @@ -782,7 +792,7 @@ EventTriggerDDLCommandEnd(Node *parsetree)
  	 * See EventTriggerDDLCommandStart for a discussion about why event
@@ -52,7 +68,7 @@ index 074c476..af3c678 100644
 -	if (!IsUnderPostmaster || !event_triggers)
 +	if (!EventTriggersHaveRunnableBackend() || !event_triggers)
  		return;
-
+ 
  	/*
 @@ -830,7 +840,7 @@ EventTriggerSQLDrop(Node *parsetree)
  	 * See EventTriggerDDLCommandStart for a discussion about why event
@@ -61,7 +77,7 @@ index 074c476..af3c678 100644
 -	if (!IsUnderPostmaster || !event_triggers)
 +	if (!EventTriggersHaveRunnableBackend() || !event_triggers)
  		return;
-
+ 
  	/*
 @@ -904,7 +914,7 @@ EventTriggerOnLogin(void)
  	 * triggers are disabled in single user mode or via a GUC.  We also need a
@@ -71,7 +87,7 @@ index 074c476..af3c678 100644
 +	if (!EventTriggersHaveRunnableBackend() || !event_triggers ||
  		!OidIsValid(MyDatabaseId) || !MyDatabaseHasLoginEventTriggers)
  		return;
-
+ 
 @@ -1009,7 +1019,7 @@ EventTriggerTableRewrite(Node *parsetree, Oid tableOid, int reason)
  	 * See EventTriggerDDLCommandStart for a discussion about why event
  	 * triggers are disabled in single user mode or via a GUC.
@@ -79,5 +95,73 @@ index 074c476..af3c678 100644
 -	if (!IsUnderPostmaster || !event_triggers)
 +	if (!EventTriggersHaveRunnableBackend() || !event_triggers)
  		return;
-
+ 
  	/*
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 2e6a788..86c4a89 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -61,6 +61,9 @@
+ #include "pg_getopt.h"
+ #include "pg_trace.h"
+ #include "pgstat.h"
++#ifdef OLIPHAUNT_EMBEDDED
++#include "port/atomics.h"
++#endif
+ #include "postmaster/interrupt.h"
+ #include "postmaster/postmaster.h"
+ #include "replication/logicallauncher.h"
+@@ -4181,6 +4184,32 @@ PostgresSingleUserMain(int argc, char *argv[],
+ }
+ 
+ #ifdef OLIPHAUNT_EMBEDDED
++enum
++{
++	OLIPHAUNT_EMBEDDED_ENTRYPOINT_UNCLAIMED = 0,
++	OLIPHAUNT_EMBEDDED_ENTRYPOINT_CLAIMED = 1,
++};
++
++/*
++ * PG18's pg_atomic_uint32 implementations are zero-initializable wrappers.
++ * Static initialization is intentional: lazy pg_atomic_init_u32() would itself
++ * race when duplicate entrypoint calls arrive concurrently.
++ */
++static pg_atomic_uint32 embedded_entrypoint_admission = {0};
++
++static bool
++AdmitEmbeddedEntrypoint(void)
++{
++	uint32		expected = OLIPHAUNT_EMBEDDED_ENTRYPOINT_UNCLAIMED;
++
++	if (IsPostmasterEnvironment || IsUnderPostmaster)
++		return false;
++
++	return pg_atomic_compare_exchange_u32(&embedded_entrypoint_admission,
++										 &expected,
++										 OLIPHAUNT_EMBEDDED_ENTRYPOINT_CLAIMED);
++}
++
+ /*
+  * Keep every value read by cleanup behind an unchanged pointer.  Automatic
+  * objects modified after sigsetjmp() would be indeterminate after siglongjmp().
+@@ -4197,6 +4226,7 @@ typedef struct OliphauntEmbeddedLifecycle
+ #endif
+ 	bool		cwd_restore_required;
+ 	bool		proc_exit_handler_armed;
++	bool		entrypoint_admitted;
+ } OliphauntEmbeddedLifecycle;
+ 
+ static void
+@@ -4332,6 +4362,12 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 		goto embedded_cleanup;
+ 	}
+ 	lifecycle->proc_exit_handler_armed = true;
++	if (!AdmitEmbeddedEntrypoint())
++	{
++		lifecycle->rc = -1;
++		goto embedded_cleanup;
++	}
++	lifecycle->entrypoint_admitted = true;
+ 
+ 	if (progname == NULL)
+ 		progname = get_progname(argv[0]);

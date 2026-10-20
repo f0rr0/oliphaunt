@@ -1,3 +1,5 @@
+import { normalizeRuntimeTimeouts } from '@oliphaunt/ts-query/internal/resource-options';
+import { normalizeAdmissionLimits } from '@oliphaunt/ts-query/internal/operation-budget';
 import defaultWasixRuntime from '@oliphaunt/liboliphaunt-wasix';
 
 import { serializeWasixExtensionDescriptors } from '../resources/extension-descriptor.js';
@@ -12,11 +14,15 @@ export function serializeOpenConfig(
   config: OpenConfig = {},
   runtimeDescriptor: WasixRuntimeDescriptor = defaultWasixRuntime,
 ): SerializedOpenOptions {
+  const admission = normalizeAdmissionLimits(config.admission);
+  const timeouts = normalizeRuntimeTimeouts(config.timeouts);
   const extensions = serializeWasixExtensionDescriptors(config.extensions ?? []);
   const runtime = serializeWasixRuntimeDescriptor(runtimeDescriptor);
   const storage = serializeWasixStorage(config.storage);
   return {
     runtime,
+    ...(timeouts === undefined ? {} : { timeouts }),
+    ...(admission === undefined ? {} : { admission }),
     ...(config.seed === undefined ? {} : { seed: serializeWasixSeed(config.seed) }),
     ...(config.icu === undefined ? {} : { icu: serializeWasixIcuDescriptor(config.icu) }),
     extensionCarriers: extensions.carriers,
@@ -34,5 +40,16 @@ export function requireBrowserStorage(options: SerializedOpenOptions): void {
     throw new TypeError(
       '@oliphaunt/wasix-ts/browser directory storage is native-only; use memory, IndexedDB, or OPFS',
     );
+  }
+}
+
+/** Native actor permits use a u32 count; reject before loading an addon or starting its Worker. */
+export function validateNativeOwnerAdmission(options: SerializedOpenOptions): void {
+  const limits = options.admission;
+  if (
+    limits !== undefined &&
+    (limits.maxPendingOperations > 0xffff_ffff || limits.highWaterMarkBytes > 0xffff_ffff)
+  ) {
+    throw new RangeError('admission limits exceed the WASIX owner semaphore range');
   }
 }

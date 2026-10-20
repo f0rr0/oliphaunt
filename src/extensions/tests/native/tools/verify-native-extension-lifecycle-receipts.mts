@@ -10,6 +10,22 @@ import {
   extensionSqlNames,
 } from '../../../../../tools/release/release-artifact-targets.mts';
 
+export const NATIVE_EXTENSION_LIFECYCLE_BY_MODE = {
+  direct: ['install', 'load', 'restart', 'backup', 'restore'],
+  broker: ['install', 'load', 'restart', 'backup', 'restore'],
+  server: ['install', 'load', 'restart'],
+};
+
+export function assertLifecycleByMode(value) {
+  if (
+    Object.keys(value ?? {}).join(',') !== 'direct,broker,server' ||
+    Object.entries(NATIVE_EXTENSION_LIFECYCLE_BY_MODE).some(
+      ([mode, lifecycle]) => value[mode]?.join(',') !== lifecycle.join(','),
+    )
+  )
+    fail('incomplete lifecycle by mode');
+}
+
 function fail(message) {
   throw new Error(`verify-native-extension-lifecycle-receipts.mts: ${message}`);
 }
@@ -133,7 +149,7 @@ export function verifyReceipts(options) {
     const { receiptSha256, ...core } = receipt;
     if (receiptSha256 !== sha256(JSON.stringify(core)))
       fail(`shard ${receipt.shardIndex} receipt digest mismatch`);
-    if (receipt.schema !== 'oliphaunt-native-extension-lifecycle-shard-receipt-v1')
+    if (receipt.schema !== 'oliphaunt-native-extension-lifecycle-shard-receipt-v2')
       fail('unknown shard receipt schema');
     if (
       receipt.candidateSha !== options['candidate-sha'] ||
@@ -167,12 +183,9 @@ export function verifyReceipts(options) {
     if (consumedArtifacts === undefined) consumedArtifacts = artifactJson;
     else if (consumedArtifacts !== artifactJson)
       fail('shard receipts consumed different artifact envelopes');
-    if (
-      receipt.modes.join(',') !== 'direct,broker,server' ||
-      receipt.lifecycle.join(',') !== 'install,load,restart,backup,restore'
-    ) {
-      fail(`shard ${receipt.shardIndex} has incomplete modes or lifecycle`);
-    }
+    if (receipt.modes?.join(',') !== 'direct,broker,server')
+      fail(`shard ${receipt.shardIndex} has incomplete modes`);
+    assertLifecycleByMode(receipt.lifecycleByMode);
     const expectedShardExtensions = expected.filter(
       (_, index) => index % expectedShardCount === receipt.shardIndex,
     );
@@ -182,17 +195,21 @@ export function verifyReceipts(options) {
       !Array.isArray(receipt.extensions) ||
       receipt.extensions.join('\0') !== expectedShardExtensions.join('\0') ||
       !Array.isArray(receipt.passRecords) ||
-      receipt.passRecords.length !== expectedShardExtensions.length
+      receipt.passRecords.length !== expectedShardExtensions.length * receipt.modes.length
     ) {
       fail(`shard ${receipt.shardIndex} PASS record count drift`);
     }
+    const expectedRecords = expectedShardExtensions.flatMap((extension) =>
+      receipt.modes.map((mode) => ({ extension, mode })),
+    );
     for (const [index, record] of receipt.passRecords.entries()) {
+      const expectedRecord = expectedRecords[index];
       if (
         record.shardIndex !== receipt.shardIndex ||
         record.shardCount !== expectedShardCount ||
-        record.extension !== expectedShardExtensions[index] ||
-        record.modes?.join(',') !== 'direct,broker,server' ||
-        record.lifecycle?.join(',') !== 'install,load,restart,backup,restore'
+        record.extension !== expectedRecord.extension ||
+        record.mode !== expectedRecord.mode ||
+        record.lifecycle?.join(',') !== NATIVE_EXTENSION_LIFECYCLE_BY_MODE[record.mode]?.join(',')
       )
         fail(`shard ${receipt.shardIndex} has a malformed or misordered extension PASS record`);
     }
@@ -236,7 +253,7 @@ export function verifyReceipts(options) {
     };
   }
   const aggregateCore = {
-    schema: 'oliphaunt-native-extension-lifecycle-aggregate-v1',
+    schema: 'oliphaunt-native-extension-lifecycle-aggregate-v2',
     candidateSha: options['candidate-sha'],
     candidateTree: options['candidate-tree'],
     target: 'linux-x64-gnu',
@@ -245,7 +262,7 @@ export function verifyReceipts(options) {
     extensionCount: expected.length,
     extensions: expected,
     modes: ['direct', 'broker', 'server'],
-    lifecycle: ['install', 'load', 'restart', 'backup', 'restore'],
+    lifecycleByMode: NATIVE_EXTENSION_LIFECYCLE_BY_MODE,
     inputEnvelopeSha256: [...inputDigests][0],
     consumedArtifacts: JSON.parse(consumedArtifacts),
     shardReceipts: receipts

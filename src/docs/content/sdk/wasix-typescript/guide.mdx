@@ -38,7 +38,7 @@ Only one live owner may use a persistent root or browser storage name. Close the
 
 The available placements return the same promise-based query API. An async signature alone does not mean that execution is off the calling thread. Use `/worker` in a browser UI that must remain responsive.
 
-OPFS uses synchronous file access where the browser provides it in a Dedicated Worker. In a Window or a host without those handles, the adapter uses its portable persistence path automatically.
+OPFS uses direct file access in workers with synchronous OPFS handles. Other browser placements use an in-memory working directory and publish changed files. Both wait for their storage boundary before reporting success. After a persistence failure, close and reopen the database; the failed operation may have reached storage. Opening through direct OPFS upgrades its private storage format, which older SDKs cannot reopen.
 
 ## Query and transact
 
@@ -109,6 +109,26 @@ try {
 
 Tools exclusively use and reset the session. Reapply session settings and prepared statements after a tool run. Interactive psql, custom archives, parallel jobs, and `pg_restore` are outside this tools API.
 
+For large output, desktop root, direct, and Worker handles support `pgDumpToFile(db, path)` and `psqlToFile(db, path, options)`. The path must name a new file in an existing host directory. Publication follows tool success and database cleanup; existing files are preserved. Ordinary flush does not guarantee persistence across power loss.
+
+Use `pgDumpToStream` or `psqlToStream` for a standard `WritableStream<Uint8Array>`. Desktop root and Worker handles support async streams; browsers require a Worker handle. Direct handles reject async streams before execution.
+
+```ts
+import OliphauntWorker from '@oliphaunt/wasix-ts/worker';
+import { pgDumpToStream } from '@oliphaunt/wasix-tools';
+
+async function exportDump(destination: WritableStream<Uint8Array>) {
+  const source = await OliphauntWorker.open();
+  try {
+    return await pgDumpToStream(source, destination);
+  } finally {
+    await source.close();
+  }
+}
+```
+
+Writes are awaited and streams remain caller-owned. Options accept a separate `stderr` stream and an `AbortSignal`; the result includes `stdoutBytes`, an 8 KiB diagnostic tail, and `stderrTruncated`. Sink failure or cancellation drains the tool and preserves its actual exit code and committed SQL effects. Cancellation releases output waits and does not interrupt CPU-bound SQL. A destination callback must not await another operation on the same database. Script input remains buffered.
+
 ## Open a local endpoint
 
 On Node.js, Bun, Deno, or Electron, use the `/server` entry point:
@@ -139,5 +159,7 @@ The Worker placement does not require process-spawn permission. Electron packagi
 ## Errors and shutdown
 
 Handle SQL failures using `PostgresError` and SQLSTATE. Transaction aggregates preserve callback and rollback/database failures. Await `close()` to observe cleanup; even a failed teardown makes the handle terminal. Close after a transaction callback settles, not from inside it.
+
+Use SQL `statement_timeout` for a cooperative statement deadline. It cancels CPU work at PostgreSQL interrupt points and PostgreSQL waits with SQLSTATE `57014`. Propagate the error from a transaction callback to roll back. It cannot interrupt an inactive guest or an arbitrary blocked host call.
 
 There is no public direct-query cancellation API. Keep transactions and queries bounded, and select an execution placement that preserves application responsiveness.

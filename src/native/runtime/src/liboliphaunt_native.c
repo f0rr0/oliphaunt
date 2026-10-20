@@ -6,7 +6,6 @@
 #include "liboliphaunt_internal.h"
 
 #include <errno.h>
-#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -24,14 +23,10 @@ extern int oliphaunt_embedded_main(
     char **argv,
     const char *dbname,
     const char *username,
-    OliphauntEmbeddedIO *io);
+    OliphauntEmbeddedIO *io,
+    int *cwd_capture_errno);
 
-typedef struct Latch Latch;
-
-extern volatile sig_atomic_t InterruptPending;
-extern volatile sig_atomic_t QueryCancelPending;
-extern Latch *MyLatch;
-extern void SetLatch(Latch *latch);
+extern void RequestTrustedEmbeddedQueryCancel(void);
 
 static int32_t close_unpublished_handle(OliphauntHandle *handle);
 
@@ -388,16 +383,19 @@ static void *backend_thread_main(void *arg) {
         return NULL;
     }
 
+    int cwd_capture_errno = 0;
     int rc = oliphaunt_embedded_main(
         backend_argv.argc,
         backend_argv.argv,
         handle->database,
         handle->username,
-        &handle->io);
+        &handle->io,
+        &cwd_capture_errno);
     restore_backend_runtime_env(handle);
     oliphaunt_free_backend_argv(&backend_argv);
 
     pthread_mutex_lock(&handle->mutex);
+    handle->cwd_capture_errno = cwd_capture_errno;
     handle->backend_status = rc;
     handle->backend_exited = true;
     handle->closing = true;
@@ -414,9 +412,15 @@ static int start_backend(OliphauntHandle *handle) {
         return -1;
     }
 
+    handle->io.abi_version = OLIPHAUNT_EMBEDDED_IO_ABI_VERSION;
+    handle->io.struct_size = (uint32_t)sizeof(handle->io);
     handle->io.context = handle;
     handle->io.read = oliphaunt_embedded_read;
     handle->io.write = oliphaunt_embedded_write;
+    handle->io.set_timeout = oliphaunt_embedded_set_timeout;
+    handle->io.set_interrupt_wakeup = oliphaunt_embedded_set_interrupt_wakeup;
+    handle->io.protocol_checkpoint = oliphaunt_embedded_protocol_checkpoint;
+    handle->io.copy_input = oliphaunt_embedded_copy_input;
 
     pthread_attr_t attr;
     int rc = pthread_attr_init(&attr);
@@ -452,6 +456,17 @@ static int start_backend(OliphauntHandle *handle) {
 
     pthread_mutex_lock(&handle->mutex);
     rc = oliphaunt_wait_for_ready_locked(handle, oliphaunt_startup_timeout_ms());
+    if (rc != 0 && handle->cwd_capture_errno != 0) {
+        /* Capture happens before PostgreSQL can emit a protocol error. Keep
+         * its cause confined to startup, not ordinary query readiness waits. */
+        char message[OLIPHAUNT_ERROR_CAPACITY];
+        snprintf(
+            message,
+            sizeof(message),
+            "could not retain caller working directory: %s",
+            strerror(handle->cwd_capture_errno));
+        set_error(handle, message);
+    }
     if (rc == 0) {
         handle->output_len = 0;
         handle->output_scan_off = 0;
@@ -896,15 +911,12 @@ static int32_t oliphaunt_cancel_impl(OliphauntHandle *handle) {
         return -1;
     }
 
-    InterruptPending = true;
-    QueryCancelPending = true;
-    if (MyLatch != NULL) {
-        SetLatch(MyLatch);
-    }
+    RequestTrustedEmbeddedQueryCancel();
+    int wake_rc = oliphaunt_wake_backend_locked(handle);
     pthread_cond_broadcast(&handle->input_cond);
     pthread_cond_broadcast(&handle->output_cond);
     pthread_mutex_unlock(&handle->mutex);
-    return 0;
+    return wake_rc;
 }
 
 int32_t oliphaunt_cancel(OliphauntHandle *handle) {

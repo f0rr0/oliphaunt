@@ -17,18 +17,21 @@ Import `Oliphaunt` from `@oliphaunt/ts`. The package exports TypeScript declarat
 
 | Option | Type / default | Meaning |
 | --- | --- | --- |
-| `storage` | `DatabaseStorage`; temporary directory | `{ kind: 'directory', path: string }` persists data |
+| `storage` | `DatabaseStorage`; temporary directory | `{ kind: 'directory', path: FilePathInput }` persists data; paths accept strings or file URLs |
 | `topology` | `'direct'` or `'broker'`; direct | Execution mode |
 | `extensions` | `readonly NativeExtension[]`; empty | Imported extension descriptors |
 | `seed`, `icuData` | Optional `NativeResourceDirectory` | Initialization seed or ICU resources |
 | `startupGUCs` | `Record<string, string>` | PostgreSQL settings applied at startup |
 | `username`, `database` | Optional strings | Existing PostgreSQL identity; fresh roots use `postgres` |
-| `libraryPath`, `runtimeDirectory` | Optional strings | Advanced native resource overrides |
-| `brokerExecutable` | Optional string | Broker executable override |
+| `libraryPath`, `runtimeDirectory` | Optional `FilePathInput` | Advanced native resource overrides |
+| `brokerExecutable` | Optional `FilePathInput` | Broker executable override |
+| `broker.handshakeTimeoutMs` | Positive whole milliseconds; 5000 | Deadline for each accepted broker connection to complete login. Requires broker topology; ends before queries and backups |
 
-Restore accepts `{ kind: 'directory', path: string }`.
+Restore accepts `{ kind: 'directory', path: FilePathInput }`.
 
-Server configuration replaces `topology`, `brokerExecutable`, `libraryPath`, and `seed` with `serverExecutable` and `listen`. TCP listen accepts an optional port; Unix listen requires a socket directory and accepts a port.
+Server configuration replaces `topology`, `broker`, `brokerExecutable`, `libraryPath`, and `seed` with `serverExecutable` and `listen`. TCP listen accepts an optional port; Unix listen requires a socket directory and accepts a port.
+
+`BrokerOptions` is exported for typed broker configuration. See [broker login settings](/docs/reference/performance#configure-broker-login) for the accepted range and tradeoff.
 
 ## Query methods
 
@@ -45,13 +48,19 @@ Parameters are positional values corresponding to `$1`, `$2`, and so on. Explici
 
 ## Database lifecycle
 
-`backup()` returns `Promise<Uint8Array>`. `cancel()` requests interruption of active work. `close()` returns `Promise<void>` and `closed` reports terminal state. The handle also implements `Symbol.asyncDispose` for `await using` in runtimes that support it.
+`backup()` returns `Promise<Uint8Array>`. `backupToFile(destination: FilePathInput)`
+returns `Promise<void>` and writes a physical archive without collecting it in
+JavaScript memory. The parent directory must exist; an existing destination is
+preserved. Successful completion includes backup cleanup and file close, without
+a power-loss durability guarantee. Both methods require an idle transaction.
+
+`cancel()` requests interruption of active work. `close()` returns `Promise<void>` and `closed` reports terminal state. The handle also implements `Symbol.asyncDispose` for `await using` in runtimes that support it.
 
 The transaction object exposes the typed query methods and `rollback()`. It expires when the callback settles and cannot escape into later application work. It has no raw-protocol or backup methods.
 
-Desktop broker startup and authentication, cancellation transport, and close-control I/O have deadlines. These deadlines do not limit ordinary SQL execution. PostgreSQL cancellation sends a request without waiting for an acknowledgement.
+Desktop broker startup and authentication, cancellation transport, and close-control I/O have deadlines. These deadlines do not limit ordinary SQL execution. Broker cancellation targets the request active when `cancel()` is called; delayed delivery cannot cancel a later request. `cancel()` acknowledges a best-effort attempt; wait for the operation's result to observe cancellation or normal completion.
 
-Set `OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS` or `OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS` to tune startup (default 60,000 ms). `OLIPHAUNT_CONTROL_TIMEOUT_MS` tunes cancellation transport, close-control I/O, and each graceful or forced process-reaping phase (default 5,000 ms). Values must be integer milliseconds from 1 through 2,147,483,647; an unset or empty value uses the default. Each desktop session captures these settings at open, so later environment changes do not alter its cleanup budget.
+Set `OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS` or `OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS` to tune startup (default 60,000 ms). `OLIPHAUNT_CONTROL_TIMEOUT_MS` tunes cancellation transport and the graceful shutdown allowance (default 5,000 ms), followed by a separate forced-reap allowance of the same length. Stop commands, control receipts and process waiting share the graceful deadline. Values must be integer milliseconds from 1 through 2,147,483,647; an unset or empty value uses the default. Each desktop session captures these settings at open, so later environment changes do not alter its cleanup budget. These allowances do not bound filesystem cleanup or prove that an unreaped process has stopped.
 
 The server handle exposes `connectionString`, `closed`, `close()`, and `Symbol.asyncDispose`. SQL, cancellation, and backup through a server use your PostgreSQL driver or tools.
 

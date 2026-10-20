@@ -15,7 +15,13 @@ scope.addEventListener('message', (event: MessageEvent<ProbeRequest>) => {
 });
 
 async function prepareDurableState(name: string): Promise<void> {
-  database = await Oliphaunt.open({ seed: standardSeed, storage: opfs(name) });
+  // This probe requires checkpoint file barriers, not the embedded fsync=off default.
+  database = await Oliphaunt.open({
+    seed: standardSeed,
+    // Force the overflow path so this probe cannot pass only on spare handles.
+    storage: opfs(name, { spareFileCount: 0 }),
+    startupGUCs: { fsync: 'on' },
+  });
   await database.queryRaw('CREATE TABLE opfs_crash_probe (answer integer NOT NULL)');
   await database.queryRaw('INSERT INTO opfs_crash_probe VALUES (73)');
   await database.queryRaw(`
@@ -27,6 +33,7 @@ async function prepareDurableState(name: string): Promise<void> {
     END
     $oliphaunt$
   `);
+  await database.queryRaw('SELECT pg_switch_wal()');
   await database.execute('CHECKPOINT');
   // Deliberately remain open. The parent terminates this Worker to prove that
   // flushed caller-owned OPFS state does not depend on the clean-close path.

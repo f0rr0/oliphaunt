@@ -53,8 +53,35 @@ class SharedProtocolFixtureTest {
         val names = mutableSetOf<String>()
         for (fixture in parseFixtures(corpus.requiredArray("cases"))) {
             assertTrue(names.add(fixture.name), "duplicate shared protocol fixture ${fixture.name}")
-            val expectation = fixture.queryExpectation ?: continue
             val bytes = hexToBytes(fixture.responseHex)
+            for ((mode, expected) in fixture.protocolModeExpectation) {
+                val parse: () -> String? = when (mode) {
+                    "simpleCommand" -> {
+                        { parseCommandResponse(bytes, ExpectedProtocol.Simple).commandTag }
+                    }
+
+                    "extendedCommand" -> {
+                        { parseCommandResponse(bytes, ExpectedProtocol.Extended).commandTag }
+                    }
+
+                    "extendedQuery" -> {
+                        { parseQueryResponse(bytes, ExpectedProtocol.Extended).commandTag }
+                    }
+
+                    else -> error("${fixture.name} has unknown protocol mode $mode")
+                }
+                when (expected.requiredString("outcome")) {
+                    "ok" -> assertEquals(expected["commandTag"]?.jsonPrimitive?.contentOrNull, parse(), "${fixture.name} $mode")
+
+                    "engineError" -> {
+                        val error = assertFailsWith<OliphauntException>("${fixture.name} $mode should fail") { parse() }
+                        assertTrue(error !is PostgresException, "${fixture.name} $mode must be a protocol error")
+                    }
+
+                    else -> error("${fixture.name} $mode has an unknown outcome")
+                }
+            }
+            val expectation = fixture.queryExpectation ?: continue
             when {
                 expectation.ok != null -> {
                     assertOkFixture(fixture, expectation.ok, bytes)
@@ -158,6 +185,7 @@ private fun parseFixtures(cases: JsonArray): List<SharedProtocolFixture> = cases
         name = obj.requiredString("name"),
         responseHex = obj.requiredString("responseHex"),
         queryExpectation = obj["queryExpectation"]?.jsonObject?.let(::parseQueryExpectation),
+        protocolModeExpectation = obj["protocolModeExpectation"]?.jsonObject?.mapValues { it.value.jsonObject } ?: emptyMap(),
     )
 }
 
@@ -216,6 +244,7 @@ private data class SharedProtocolFixture(
     val name: String,
     val responseHex: String,
     val queryExpectation: SharedProtocolQueryExpectation?,
+    val protocolModeExpectation: Map<String, JsonObject>,
 )
 
 private data class SharedProtocolQueryExpectation(

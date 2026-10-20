@@ -25,6 +25,9 @@
 #define O_BINARY 0
 #endif
 
+/* File-read scratch space; the complete returned archive still grows in memory. */
+#define ARCHIVE_FILE_READ_CHUNK_BYTES (64 * 1024)
+
 static int buffer_reserve(OliphauntByteBuffer *buffer, size_t additional) {
     if (additional > SIZE_MAX - buffer->len) {
         return -1;
@@ -237,15 +240,6 @@ static void free_string_list(char **items, size_t len) {
     free(items);
 }
 
-static int string_list_contains(char **items, size_t len, const char *value) {
-    for (size_t i = 0; i < len; i++) {
-        if (strcmp(items[i], value) == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
 static int has_component(const char *path, const char *component) {
     size_t component_len = strlen(component);
     const char *p = path;
@@ -340,95 +334,50 @@ static char *canonical_relative_archive_path(OliphauntHandle *handle, const char
     return out;
 }
 
-static int remember_archive_path(OliphauntHandle *handle, char ***paths, size_t *count, size_t *cap, const char *path) {
-    for (size_t i = 0; i < *count; i++) {
-        if (strcmp((*paths)[i], path) == 0) {
-            char message[1024];
-            snprintf(message, sizeof(message), "physical archive contains duplicate entry %s", path);
+typedef struct ArchiveEntry {
+    char *path;
+    bool directory;
+    size_t order;
+} ArchiveEntry;
+
+static int compare_archive_entries(const void *left, const void *right) {
+    return strcmp(((const ArchiveEntry *)left)->path, ((const ArchiveEntry *)right)->path);
+}
+
+/* Validate once before publication, while all files remain in private staging. */
+static int validate_archive_entries(OliphauntHandle *handle, ArchiveEntry *entries, size_t count) {
+    if (count == 0) return 0;
+    qsort(entries, count, sizeof(*entries), compare_archive_entries);
+    for (size_t i = 0; i < count; i++) {
+        char message[1024];
+        if (i > 0 && strcmp(entries[i - 1].path, entries[i].path) == 0) {
+            snprintf(message, sizeof(message), "physical archive contains duplicate entry %s", entries[i].path);
             set_error(handle, message);
             return -1;
         }
-    }
-    if (*count == *cap) {
-        size_t next = *cap == 0 ? 32 : *cap * 2;
-        char **grown = (char **)realloc(*paths, next * sizeof(char *));
-        if (grown == NULL) {
-            set_error(handle, "out of memory tracking physical archive paths");
+        char prefix[512];
+        size_t len = strlen(entries[i].path);
+        if (len >= sizeof(prefix)) {
+            set_error(handle, "physical archive path exceeds tar header bounds");
             return -1;
         }
-        *paths = grown;
-        *cap = next;
-    }
-    (*paths)[*count] = strdup(path);
-    if ((*paths)[*count] == NULL) {
-        set_error(handle, "out of memory tracking physical archive path");
-        return -1;
-    }
-    (*count)++;
-    return 0;
-}
-
-static int remember_archive_string_if_absent(
-    OliphauntHandle *handle,
-    char ***paths,
-    size_t *count,
-    size_t *cap,
-    const char *path,
-    size_t path_len,
-    const char *oom_message) {
-    for (size_t i = 0; i < *count; i++) {
-        if (strlen((*paths)[i]) == path_len && strncmp((*paths)[i], path, path_len) == 0) {
-            return 0;
-        }
-    }
-    if (*count == *cap) {
-        size_t next = *cap == 0 ? 32 : *cap * 2;
-        char **grown = (char **)realloc(*paths, next * sizeof(char *));
-        if (grown == NULL) {
-            set_error(handle, oom_message);
-            return -1;
-        }
-        *paths = grown;
-        *cap = next;
-    }
-    char *copy = (char *)malloc(path_len + 1);
-    if (copy == NULL) {
-        set_error(handle, oom_message);
-        return -1;
-    }
-    memcpy(copy, path, path_len);
-    copy[path_len] = '\0';
-    (*paths)[*count] = copy;
-    (*count)++;
-    return 0;
-}
-
-static const char *archive_file_ancestor(char **file_paths, size_t file_count, const char *path) {
-    for (size_t i = 0; i < file_count; i++) {
-        size_t len = strlen(file_paths[i]);
-        if (strncmp(path, file_paths[i], len) == 0 && path[len] == '/') {
-            return file_paths[i];
-        }
-    }
-    return NULL;
-}
-
-static int remember_archive_ancestors(
-    OliphauntHandle *handle,
-    char ***ancestors,
-    size_t *count,
-    size_t *cap,
-    const char *path) {
-    for (const char *slash = strchr(path, '/'); slash != NULL; slash = strchr(slash + 1, '/')) {
-        if (remember_archive_string_if_absent(
-                handle,
-                ancestors,
-                count,
-                cap,
-                path,
-                (size_t)(slash - path),
-                "out of memory tracking physical archive ancestors") != 0) {
-            return -1;
+        memcpy(prefix, entries[i].path, len + 1);
+        for (char *slash = strchr(prefix, '/'); slash != NULL; slash = strchr(slash + 1, '/')) {
+            *slash = '\0';
+            ArchiveEntry key = {.path = prefix};
+            const ArchiveEntry *ancestor = bsearch(&key, entries, count, sizeof(*entries), compare_archive_entries);
+            *slash = '/';
+            if (ancestor != NULL && !ancestor->directory) {
+                if (ancestor->order < entries[i].order) {
+                    snprintf(message, sizeof(message), "physical archive entry %s is nested under file entry %s",
+                             entries[i].path, ancestor->path);
+                } else {
+                    snprintf(message, sizeof(message), "physical archive file entry %s conflicts with existing child entries",
+                             ancestor->path);
+                }
+                set_error(handle, message);
+                return -1;
+            }
         }
     }
     return 0;
@@ -553,7 +502,7 @@ static int tar_append_file_contents(OliphauntByteBuffer *archive, OliphauntHandl
         set_error(handle, message);
         return -1;
     }
-    uint8_t chunk[64 * 1024];
+    uint8_t chunk[ARCHIVE_FILE_READ_CHUNK_BYTES];
     size_t remaining = size;
     while (remaining > 0) {
         size_t take = remaining < sizeof(chunk) ? remaining : sizeof(chunk);
@@ -1251,14 +1200,11 @@ static int archive_read_exact(OliphauntHandle *handle, ArchiveReader *reader, ui
 }
 
 static int unpack_tar_file(OliphauntHandle *handle, const char *path, ArchiveReader *reader, size_t len) {
-    int fd = -1;
-    if (path != NULL) {
-        if (ensure_parent_dir_for_path(handle, path) != 0) return -1;
-        fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, 0600);
-        if (fd < 0) {
-            set_error(handle, "cannot create physical archive file in restore staging");
-            return -1;
-        }
+    if (ensure_parent_dir_for_path(handle, path) != 0) return -1;
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, 0600);
+    if (fd < 0) {
+        set_error(handle, "cannot create physical archive file in restore staging");
+        return -1;
     }
     uint8_t data[64 * 1024];
     int result = -1;
@@ -1299,16 +1245,10 @@ cleanup:
     return result;
 }
 
-static int process_physical_archive(OliphauntHandle *handle, ArchiveReader *reader, const char *staging_root, bool write_entries) {
-    char **seen_paths = NULL;
-    size_t seen_count = 0;
-    size_t seen_cap = 0;
-    char **file_paths = NULL;
-    size_t file_count = 0;
-    size_t file_cap = 0;
-    char **entry_ancestors = NULL;
-    size_t ancestor_count = 0;
-    size_t ancestor_cap = 0;
+static int process_physical_archive(OliphauntHandle *handle, ArchiveReader *reader, const char *staging_root) {
+    ArchiveEntry *entries = NULL;
+    size_t entry_count = 0;
+    size_t entry_cap = 0;
     char *name = NULL;
     char *canonical_name = NULL;
     char *dest = NULL;
@@ -1334,7 +1274,7 @@ static int process_physical_archive(OliphauntHandle *handle, ArchiveReader *read
                 }
                 read_rc = archive_read_exact(handle, reader, header, sizeof(header));
                 if (read_rc == 1) {
-                    result = 0;
+                    result = validate_archive_entries(handle, entries, entry_count);
                     goto cleanup;
                 }
                 if (read_rc != 0) goto cleanup;
@@ -1373,9 +1313,6 @@ static int process_physical_archive(OliphauntHandle *handle, ArchiveReader *read
             set_error(handle, message);
             goto cleanup;
         }
-        if (remember_archive_path(handle, &seen_paths, &seen_count, &seen_cap, canonical_name) != 0) {
-            goto cleanup;
-        }
         if (size > SIZE_MAX) {
             set_error(handle, "physical archive entry size overflows");
             goto cleanup;
@@ -1412,40 +1349,28 @@ static int process_physical_archive(OliphauntHandle *handle, ArchiveReader *read
                 goto cleanup;
             }
         }
-        const char *ancestor = archive_file_ancestor(file_paths, file_count, canonical_name);
-        if (ancestor != NULL) {
-            char message[1024];
-            snprintf(message, sizeof(message),
-                     "physical archive entry %s is nested under file entry %s",
-                     canonical_name,
-                     ancestor);
-            set_error(handle, message);
-            goto cleanup;
-        }
-        if (type != '5') {
-            if (string_list_contains(entry_ancestors, ancestor_count, canonical_name)) {
-                char message[1024];
-                snprintf(message, sizeof(message),
-                         "physical archive file entry %s conflicts with existing child entries",
-                         canonical_name);
-                set_error(handle, message);
+        if (entry_count == entry_cap) {
+            size_t next = entry_cap == 0 ? 32 : entry_cap * 2;
+            if (next < entry_cap || next > SIZE_MAX / sizeof(*entries)) {
+                set_error(handle, "physical archive entry count overflows");
                 goto cleanup;
             }
-            if (remember_archive_string_if_absent(
-                    handle,
-                    &file_paths,
-                    &file_count,
-                    &file_cap,
-                    canonical_name,
-                    strlen(canonical_name),
-                    "out of memory tracking physical archive file paths") != 0) {
+            ArchiveEntry *grown = realloc(entries, next * sizeof(*entries));
+            if (grown == NULL) {
+                set_error(handle, "out of memory tracking physical archive entries");
                 goto cleanup;
             }
+            entries = grown;
+            entry_cap = next;
         }
-        if (remember_archive_ancestors(handle, &entry_ancestors, &ancestor_count, &ancestor_cap, canonical_name) != 0) {
+        char *entry_path = strdup(canonical_name);
+        if (entry_path == NULL) {
+            set_error(handle, "out of memory tracking physical archive path");
             goto cleanup;
         }
-        if (write_entries) {
+        entries[entry_count] = (ArchiveEntry){.path = entry_path, .directory = type == '5', .order = entry_count};
+        entry_count++;
+        {
             dest = oliphaunt_join_path(staging_root, canonical_name);
             if (dest == NULL) {
                 set_error(handle, "out of memory resolving restore destination");
@@ -1470,11 +1395,11 @@ static int process_physical_archive(OliphauntHandle *handle, ArchiveReader *read
             free(dest);
             dest = NULL;
             if (rc != 0) {
+                /* A duplicate or file/tree conflict can stop staging before EOF.
+                 * Validate this prefix once to retain the canonical diagnostic. */
+                (void)validate_archive_entries(handle, entries, entry_count);
                 goto cleanup;
             }
-        }
-        if (!write_entries && unpack_tar_file(handle, NULL, reader, (size_t)size) != 0) {
-            goto cleanup;
         }
         uint8_t padding[512];
         int padding_rc = archive_read_exact(handle, reader, padding, padded - (size_t)size);
@@ -1493,9 +1418,8 @@ cleanup:
     free(dest);
     free(canonical_name);
     free(name);
-    free_string_list(seen_paths, seen_count);
-    free_string_list(file_paths, file_count);
-    free_string_list(entry_ancestors, ancestor_count);
+    for (size_t i = 0; i < entry_count; i++) free(entries[i].path);
+    free(entries);
     return result;
 }
 
@@ -1510,19 +1434,7 @@ int32_t oliphaunt_archive_read_memory(void *context, uint8_t *data, size_t capac
     return 0;
 }
 
-int oliphaunt_unpack_physical_archive(OliphauntHandle *handle, const uint8_t *data, size_t len, const char *staging_root) {
-    if (data == NULL) {
-        set_error(handle, "physical archive data is null");
-        return -1;
-    }
-    OliphauntArchiveMemorySource source = {.data = data, .remaining = len};
-    ArchiveReader reader = {.read = oliphaunt_archive_read_memory, .context = &source};
-    if (process_physical_archive(handle, &reader, NULL, false) != 0) return -1;
-    source = (OliphauntArchiveMemorySource){.data = data, .remaining = len};
-    return process_physical_archive(handle, &reader, staging_root, true);
-}
-
 int oliphaunt_unpack_physical_archive_stream(OliphauntHandle *handle, OliphauntArchiveReadCallback read, void *context, const char *staging_root) {
     ArchiveReader reader = {.read = read, .context = context};
-    return process_physical_archive(handle, &reader, staging_root, true);
+    return process_physical_archive(handle, &reader, staging_root);
 }

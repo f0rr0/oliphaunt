@@ -8,10 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Native backend thread stack, not Wasmer's execution stack or a SQL memory
+ * budget. OLIPHAUNT_STACK_BYTES adjusts this allocation before thread creation. */
 #define DEFAULT_BACKEND_STACK_BYTES (8 * 1024 * 1024)
 
 static const char *const DEFAULT_BACKEND_ARGS[] = {
-    "-F",
     "-c",
     "search_path=public",
     "-c",
@@ -118,14 +119,6 @@ void oliphaunt_free_backend_argv(OliphauntBackendArgv *argv) {
 }
 
 size_t oliphaunt_backend_stack_size_bytes(void) {
-    const char *value = getenv("OLIPHAUNT_STACK_BYTES");
-    if (value == NULL || value[0] == '\0') {
-        return DEFAULT_BACKEND_STACK_BYTES;
-    }
-    char *end = NULL;
-    unsigned long long parsed = strtoull(value, &end, 10);
-    if (end == value || parsed < (unsigned long long)PTHREAD_STACK_MIN) {
-        return DEFAULT_BACKEND_STACK_BYTES;
-    }
-    return (size_t)parsed;
+    return oliphaunt_resource_size(getenv("OLIPHAUNT_STACK_BYTES"),
+                                  PTHREAD_STACK_MIN, SIZE_MAX, DEFAULT_BACKEND_STACK_BYTES);
 }

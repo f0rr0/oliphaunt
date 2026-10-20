@@ -22,14 +22,38 @@ through `OLIPHAUNT_BROKER_AUTH_TOKEN`; query results, incremental Flush/Sync,
 COPY and cancellation use PostgreSQL's protocol. This remains one embedded
 backend, not a concurrent PostgreSQL server.
 
+Desktop SDKs negotiate a private framed exchange on that SQL endpoint after
+PostgreSQL authentication. Desktop and mobile brokers share the record codec:
+each exchange has a generation, request ID, declared input extent, bounded Data
+records, input End, and an ordered terminal outcome. Data contains unchanged
+PostgreSQL bytes. The terminal reports native completion and connection health;
+clients do not predict completion by counting frontend Sync or backend
+ReadyForQuery messages. The
+[binding amendment](../../docs/architecture/repository-simplification-contracts.md#binding-amendment--native-broker-exchange-completion)
+defines this private transport contract.
+
 SDKs also hold a separate authenticated management connection for physical
-backup and process shutdown. Its EOF retires the helper when the owning
+backup and process shutdown. A one-shot authenticated management connection
+cancels the captured generation/request only, so a delayed cancel cannot reach
+the next operation. The broker acknowledges a best-effort attempt and ignores
+stale identities; the exchange terminal still determines execution and reuse.
+The owner connection's EOF retires the helper when the owning
 application dies. SQL Terminate resets the native session and permits a new
 SQL connection; it does not shut down the management owner. Backend cancellation
 keys change on each connection. If a disconnected client abandons an incomplete
 protocol batch that cannot drain within three seconds, the helper exits and the
 application must explicitly reopen its database. No request is replayed and no
-missing Sync is manufactured.
+missing Sync is manufactured. SDK callback failure drains through the matching
+terminal; uncertain execution or recovery requires reopening the database.
+
+`--handshake-timeout-ms` sets the deadline for each accepted SQL or management
+connection to complete login, including fragmented reads and writes. It defaults
+to 5000 and accepts whole milliseconds from 1 through 2147483647. A larger value
+allows slower handshakes but holds unauthenticated connections longer. Successful
+login clears both socket timeouts before ordinary operations and backup streams.
+This is separate from PostgreSQL startup GUCs and the SDK's process startup wait.
+An incomplete backup transport write closes the connection; its error cannot be
+encoded inside the unfinished archive frame.
 
 ## Release licensing
 

@@ -4,11 +4,11 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::child_process::reap_child_process;
+use crate::child_process::{reap_child_process, reap_child_process_until};
 use crate::config::{
     CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT, DEFAULT_STARTUP_TIMEOUT, EngineMode,
     NativeBrokerConfig, OpenConfig, lifecycle_timeout,
@@ -20,7 +20,7 @@ use crate::ipc::{RequestFrame, ResponseFrame, read_response, write_request};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 use crate::socket::LocalSocket;
 use crate::storage::DatabaseStorage;
-use oliphaunt_broker::pgwire;
+use oliphaunt_broker::{exchange, pgwire};
 
 const ENV_BROKER: &str = "OLIPHAUNT_BROKER";
 const ENV_BROKER_ASSET_DIR: &str = "OLIPHAUNT_BROKER_ASSET_DIR";
@@ -35,7 +35,7 @@ const BROKER_STARTUP_TIMEOUT_ENV: &str = "OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS";
 ///
 /// Broker mode is intentionally separate from direct mode. The helper process
 /// owns the native database instance and the direct PostgreSQL backend; the Rust SDK client
-/// uses PostgreSQL wire messages for SQL and a separate local management channel.
+/// frames raw PostgreSQL exchanges and uses a separate local management channel.
 #[derive(Debug, Clone)]
 pub(crate) struct NativeBrokerRuntime {
     executable: Option<PathBuf>,
@@ -66,9 +66,13 @@ impl NativeRuntime for NativeBrokerRuntime {
     fn open(&self, config: OpenConfig) -> Result<Box<dyn EngineSession>> {
         debug_assert_eq!(config.mode, EngineMode::Broker);
         config.validate()?;
-        let startup_timeout =
-            lifecycle_timeout(BROKER_STARTUP_TIMEOUT_ENV, DEFAULT_STARTUP_TIMEOUT)?;
-        let control_timeout = lifecycle_timeout(CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT)?;
+        let startup_timeout = config.startup_timeout.map(Ok).unwrap_or_else(|| {
+            lifecycle_timeout(BROKER_STARTUP_TIMEOUT_ENV, DEFAULT_STARTUP_TIMEOUT)
+        })?;
+        let control_timeout = config
+            .shutdown_timeout
+            .map(Ok)
+            .unwrap_or_else(|| lifecycle_timeout(CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT))?;
         let executable = self
             .executable
             .clone()
@@ -107,8 +111,9 @@ impl NativeRuntime for NativeBrokerRuntime {
         };
         let launch = launch_plan.launch(&mut open_guard)?;
         let cancel = Arc::new(BrokerCancel::new(
-            launch.sql_endpoint,
-            launch.cancel_key,
+            launch.control_endpoint,
+            launch.epoch,
+            launch.auth_token,
             control_timeout,
         ));
         let (child, temporary_root, ipc_cleanup) = open_guard.into_session_parts();
@@ -168,16 +173,37 @@ impl EngineSession for NativeBrokerSession {
         request: ProtocolRequest,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> ProtocolStreamOutcome {
-        if let Err(error) = pgwire::completion_count(request.as_bytes()) {
+        if let Err(error) = exchange::validate_input(request.as_bytes()) {
             return ProtocolStreamOutcome::ReadyForQuery(Err(Error::Engine(error.to_string())));
         }
+        let active = match self.cancel.start() {
+            Ok(active) => active,
+            Err(error) => return ProtocolStreamOutcome::ReadyForQuery(Err(error)),
+        };
         let transport = match self.ensure_transport() {
             Ok(transport) => transport,
             Err(error) => return ProtocolStreamOutcome::SessionStateUnknown(error),
         };
-        match pgwire::exchange(transport, request.as_bytes(), &mut |chunk| on_chunk(chunk)) {
-            Ok(Some(error)) => ProtocolStreamOutcome::ReadyForQuery(Err(error)),
-            Ok(None) => ProtocolStreamOutcome::ReadyForQuery(Ok(())),
+        let result = exchange::exchange(
+            transport,
+            active.cancel.epoch,
+            active.request,
+            request.as_bytes(),
+            &mut |chunk| on_chunk(chunk),
+        );
+        drop(active);
+        match result {
+            Ok((completion, callback_error)) if !completion.requires_reopen => {
+                let result = if completion.reason == exchange::Reason::Success {
+                    callback_error.map_or(Ok(()), Err)
+                } else {
+                    Err(Error::Engine(completion.detail))
+                };
+                ProtocolStreamOutcome::ReadyForQuery(result)
+            }
+            Ok((completion, _)) => ProtocolStreamOutcome::SessionStateUnknown(
+                self.mark_broker_failed(Error::Engine(completion.detail)),
+            ),
             Err(error) => ProtocolStreamOutcome::SessionStateUnknown(
                 self.mark_broker_failed(Error::Engine(error.to_string())),
             ),
@@ -185,13 +211,30 @@ impl EngineSession for NativeBrokerSession {
     }
 
     fn backup(&mut self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        self.backup_to(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    fn backup_to(&mut self, writer: &mut dyn Write) -> Result<()> {
         self.ensure_transport()?;
         let control = self.control.as_mut().ok_or(Error::EngineStopped)?;
-        let response =
-            write_request(control, RequestFrame::Backup).and_then(|()| read_response(control));
-        match self.read_response_or_mark_failed(response)? {
-            ResponseFrame::Ok(bytes) => Ok(bytes),
-            ResponseFrame::Error(message) => Err(Error::Engine(message)),
+        let response = write_request(control, RequestFrame::BackupStream).and_then(|()| {
+            oliphaunt_broker::ipc::read_backup_response(control, writer).map_err(Into::into)
+        });
+        let (response, destination_failure) = match response {
+            Ok(response) => response,
+            Err(error) => return Err(self.mark_broker_failed(error)),
+        };
+        match (response, destination_failure) {
+            (ResponseFrame::Ok(_), None) => Ok(()),
+            (ResponseFrame::Ok(_), Some(error)) => {
+                Err(Error::Engine(format!("write backup destination: {error}")))
+            }
+            (ResponseFrame::Error(message), None) => Err(Error::Engine(message)),
+            (ResponseFrame::Error(message), Some(error)) => Err(Error::Engine(format!(
+                "{message}; write backup destination: {error}"
+            ))),
         }
     }
 
@@ -213,8 +256,9 @@ struct BrokerLaunchPlan {
 struct BrokerLaunch {
     transport: LocalSocket,
     control: LocalSocket,
-    sql_endpoint: String,
-    cancel_key: [u8; 8],
+    control_endpoint: String,
+    epoch: exchange::Epoch,
+    auth_token: String,
 }
 
 impl BrokerLaunchPlan {
@@ -246,7 +290,7 @@ impl BrokerLaunchPlan {
         let mut control = connect_ready_endpoint(&ready.control, deadline)?;
         authenticate_broker(&mut control, &self.auth_token)?;
         let mut transport = self.endpoint.connect_primary(&ready, deadline)?;
-        let cancel_key = pgwire::authenticate(
+        let epoch = pgwire::authenticate_exchange(
             &mut transport,
             &self.config.username,
             &self.config.database,
@@ -262,8 +306,9 @@ impl BrokerLaunchPlan {
         Ok(BrokerLaunch {
             transport,
             control,
-            sql_endpoint: ready.primary,
-            cancel_key,
+            control_endpoint: ready.control,
+            epoch,
+            auth_token: self.auth_token.as_str().to_owned(),
         })
     }
 }
@@ -271,24 +316,96 @@ impl BrokerLaunchPlan {
 struct BrokerCancel {
     control_timeout: Duration,
     endpoint: String,
-    key: [u8; 8],
+    epoch: exchange::Epoch,
+    token: String,
+    state: Mutex<BrokerRequestState>,
+}
+
+#[derive(Default)]
+struct BrokerRequestState {
+    last: u64,
+    active: Option<u64>,
+}
+
+struct ActiveBrokerRequest {
+    cancel: Arc<BrokerCancel>,
+    request: u64,
+}
+
+impl Drop for ActiveBrokerRequest {
+    fn drop(&mut self) {
+        let mut state = self
+            .cancel
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if state.active == Some(self.request) {
+            state.active = None;
+        }
+    }
 }
 
 impl BrokerCancel {
-    fn new(endpoint: String, key: [u8; 8], control_timeout: Duration) -> Self {
+    fn new(
+        endpoint: String,
+        epoch: exchange::Epoch,
+        token: String,
+        control_timeout: Duration,
+    ) -> Self {
         Self {
             endpoint,
-            key,
+            epoch,
+            token,
             control_timeout,
+            state: Mutex::new(BrokerRequestState::default()),
         }
+    }
+
+    fn start(self: &Arc<Self>) -> Result<ActiveBrokerRequest> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::Engine("broker request lock poisoned".into()))?;
+        if state.active.is_some() {
+            return Err(Error::Engine("broker exchange already active".into()));
+        }
+        state.last = state
+            .last
+            .checked_add(1)
+            .ok_or_else(|| Error::Engine("broker request identity exhausted".into()))?;
+        state.active = Some(state.last);
+        Ok(ActiveBrokerRequest {
+            cancel: Arc::clone(self),
+            request: state.last,
+        })
     }
 }
 
 impl EngineCancel for BrokerCancel {
     fn cancel(&self) -> Result<()> {
+        let request = self
+            .state
+            .lock()
+            .map_err(|_| Error::Engine("broker request lock poisoned".into()))?
+            .active;
+        let Some(request) = request else {
+            return Ok(());
+        };
         let mut transport =
             connect_ready_endpoint(&self.endpoint, Instant::now() + self.control_timeout)?;
-        pgwire::cancel(&mut transport, &self.key).map_err(|error| Error::Engine(error.to_string()))
+        write_request(
+            &mut transport,
+            RequestFrame::Cancel {
+                token: self.token.clone(),
+                epoch: self.epoch,
+                request,
+            },
+        )?;
+        match read_response(&mut transport)? {
+            ResponseFrame::Ok(bytes) if bytes.is_empty() => Ok(()),
+            ResponseFrame::Error(message) => Err(Error::Engine(message)),
+            _ => Err(Error::Engine("invalid broker cancellation response".into())),
+        }
     }
 }
 
@@ -339,19 +456,6 @@ impl NativeBrokerSession {
             .expect("native broker transport was checked above"))
     }
 
-    fn read_response_or_mark_failed(
-        &mut self,
-        response: Result<ResponseFrame>,
-    ) -> Result<ResponseFrame> {
-        match response {
-            Ok(frame) => Ok(frame),
-            Err(error) => {
-                self.mark_broker_failed(error.clone());
-                Err(error)
-            }
-        }
-    }
-
     fn mark_broker_failed(&mut self, error: Error) -> Error {
         let first_error = self.failure.get_or_insert(error).clone();
         self.transport = None;
@@ -375,9 +479,14 @@ impl NativeBrokerSession {
     fn close_broker(&mut self) -> Result<()> {
         let first_attempt = !self.closed;
         self.closed = true;
+        let deadline = Instant::now()
+            + if first_attempt {
+                self.control_timeout
+            } else {
+                Duration::ZERO
+            };
         let mut cleanup_failures = Vec::new();
         if first_attempt {
-            let deadline = Instant::now() + self.control_timeout;
             if let Some(mut transport) = self.transport.take() {
                 let result = transport
                     .set_deadline(Some(deadline))
@@ -404,12 +513,8 @@ impl NativeBrokerSession {
             }
         }
         if let Some(child) = self.child.as_mut() {
-            let outcome = reap_child_process(
-                child,
-                self.control_timeout,
-                self.control_timeout,
-                "native broker",
-            );
+            let outcome =
+                reap_child_process_until(child, deadline, self.control_timeout, "native broker");
             cleanup_failures.extend(outcome.failures);
             if outcome.reaped {
                 self.child = None;
@@ -565,7 +670,7 @@ fn spawn_broker(
         command.env("OLIPHAUNT_RESOURCES_DIR", resources);
     }
     command
-        .args(broker_spawn_args(config, root, extensions, endpoint))
+        .args(broker_spawn_args(config, root, extensions, endpoint)?)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -583,13 +688,33 @@ fn broker_spawn_args(
     root: &Path,
     extensions: &[Extension],
     endpoint: &BrokerEndpoint,
-) -> Vec<OsString> {
+) -> Result<Vec<OsString>> {
     let mut args = vec![OsString::from("--root"), root.as_os_str().to_os_string()];
     args.push(OsString::from("--username"));
     args.push(OsString::from(&config.username));
     args.push(OsString::from("--database"));
     args.push(OsString::from(&config.database));
     endpoint.add_args_to(&mut args);
+    if let Some(timeout) = config.broker.recovery_timeout {
+        let millis = oliphaunt_broker::config::timeout_millis(timeout)
+            .map_err(|message| Error::InvalidConfig(message.into()))?;
+        args.extend([
+            OsString::from("--recovery-timeout-ms"),
+            OsString::from(millis.to_string()),
+        ]);
+    }
+    if let Some(count) = config.broker.max_pending_handshakes {
+        args.extend([
+            OsString::from("--max-pending-handshakes"),
+            OsString::from(count.to_string()),
+        ]);
+    }
+    if let Some(timeout) = config.broker.handshake_timeout {
+        let millis = oliphaunt_broker::config::handshake_timeout_millis(timeout)
+            .map_err(|message| Error::InvalidConfig(message.to_owned()))?;
+        args.push(OsString::from("--handshake-timeout-ms"));
+        args.push(OsString::from(millis.to_string()));
+    }
     if let Some(data) = &config.icu_data {
         args.push(OsString::from("--icu-data-directory"));
         args.push(data.directory.as_os_str().to_os_string());
@@ -604,7 +729,7 @@ fn broker_spawn_args(
         args.push(OsString::from("--startup-guc"));
         args.push(OsString::from(format!("{}={}", guc.name, guc.value)));
     }
-    args
+    Ok(args)
 }
 
 fn authenticate_broker(transport: &mut LocalSocket, auth_token: &BrokerAuthToken) -> Result<()> {
@@ -1031,7 +1156,8 @@ mod tests {
             control: Some(control),
             cancel: Arc::new(BrokerCancel::new(
                 "tcp:127.0.0.1:1".to_owned(),
-                [0; 8],
+                [0; 16],
+                String::new(),
                 control_timeout,
             )),
             temporary_root: Some(temporary_root.clone()),
@@ -1045,6 +1171,44 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(1));
         assert!(session.closed);
         assert!(!temporary_root.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn close_does_not_restart_child_grace_after_a_silent_control_peer() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let control = LocalSocket::tcp(
+            listener.local_addr().unwrap(),
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap();
+        let (_peer, _) = listener.accept().unwrap();
+        let child = Command::new("sh")
+            .args(["-c", "exec sleep 60"])
+            .spawn()
+            .unwrap();
+        let control_timeout = Duration::from_millis(200);
+        let mut session = NativeBrokerSession {
+            control_timeout,
+            child: Some(child),
+            transport: None,
+            control: Some(control),
+            cancel: Arc::new(BrokerCancel::new(
+                "tcp:127.0.0.1:1".to_owned(),
+                [0; 16],
+                String::new(),
+                control_timeout,
+            )),
+            temporary_root: None,
+            ipc_cleanup: None,
+            failure: None,
+            closed: false,
+        };
+        let start = Instant::now();
+        let error = session.close_broker().unwrap_err();
+        assert!(error.to_string().contains("close acknowledgement"));
+        assert!(start.elapsed() < Duration::from_millis(350));
+        assert!(session.child.is_none(), "forced reap must still complete");
     }
 
     #[test]
@@ -1075,7 +1239,8 @@ mod tests {
             control: Some(control),
             cancel: Arc::new(BrokerCancel::new(
                 "tcp:127.0.0.1:1".to_owned(),
-                [0; 8],
+                [0; 16],
+                String::new(),
                 DEFAULT_CONTROL_TIMEOUT,
             )),
             temporary_root: Some(temporary_root.clone()),
@@ -1116,7 +1281,8 @@ mod tests {
             control: None,
             cancel: Arc::new(BrokerCancel::new(
                 "tcp:127.0.0.1:1".to_owned(),
-                [0; 8],
+                [0; 16],
+                String::new(),
                 DEFAULT_CONTROL_TIMEOUT,
             )),
             temporary_root: Some(temporary_root.clone()),
@@ -1168,6 +1334,9 @@ mod tests {
         config.mode = EngineMode::Broker;
         config.username = "app_user".to_owned();
         config.database = "app_db".to_owned();
+        config.broker.handshake_timeout = Some(Duration::from_micros(12_001));
+        config.broker.recovery_timeout = Some(Duration::from_millis(27));
+        config.broker.max_pending_handshakes = Some(2);
         config.extensions = vec![Extension::PG_TEXTSEARCH, Extension::PG_TEXTSEARCH];
         let extensions = config.resolved_extensions().unwrap();
         let endpoint = BrokerEndpoint::Tcp {
@@ -1179,7 +1348,8 @@ mod tests {
             &PathBuf::from("/tmp/oliphaunt-broker-preload-root"),
             &extensions,
             &endpoint,
-        );
+        )
+        .unwrap();
         let args = args
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -1187,6 +1357,9 @@ mod tests {
 
         assert_arg_pair(&args, "--username", "app_user");
         assert_arg_pair(&args, "--database", "app_db");
+        assert_arg_pair(&args, "--handshake-timeout-ms", "13");
+        assert_arg_pair(&args, "--recovery-timeout-ms", "27");
+        assert_arg_pair(&args, "--max-pending-handshakes", "2");
         assert_arg_pair(&args, "--extension", "pg_textsearch");
         assert_eq!(
             args.windows(2)

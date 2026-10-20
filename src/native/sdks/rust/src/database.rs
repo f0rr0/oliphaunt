@@ -146,8 +146,9 @@ impl<'db, 'q> AsyncSql<'db, 'q> {
     /// Execute a single statement that must not return rows.
     pub async fn execute(mut self) -> Result<CommandResult> {
         self.reject_transaction_chain()?;
-        let request = extended_statement_request(&self.sql, &self.params, self.result_format)?;
-        let response = self.exchange(request, "execute()").await?;
+        let response = self
+            .exchange(extended_statement_request, "execute()")
+            .await?;
         let result = parse_extended_command_response(&response)?;
         self.validate_ready(result.ready_status(), "execute()")?;
         Ok(result)
@@ -159,8 +160,7 @@ impl<'db, 'q> AsyncSql<'db, 'q> {
     /// its command tag retained for ORM call sites that cannot classify SQL.
     pub async fn query(mut self) -> Result<QueryResult> {
         self.reject_transaction_chain()?;
-        let request = extended_statement_request(&self.sql, &self.params, self.result_format)?;
-        let response = self.exchange(request, "query()").await?;
+        let response = self.exchange(extended_statement_request, "query()").await?;
         let result = parse_extended_query_response(&response)?;
         self.validate_ready(result.ready_status(), "query()")?;
         Ok(result)
@@ -168,8 +168,12 @@ impl<'db, 'q> AsyncSql<'db, 'q> {
 
     /// Parse and describe a statement without executing it.
     pub async fn describe(mut self) -> Result<StatementDescription> {
-        let request = describe_statement_request(&self.sql, &self.params)?;
-        let response = self.exchange(request, "describe()").await?;
+        let response = self
+            .exchange(
+                |sql, params, _| describe_statement_request(sql, params),
+                "describe()",
+            )
+            .await?;
         let description = parse_statement_description(&response)?;
         self.validate_ready(description.ready_status(), "describe()")?;
         Ok(description)
@@ -184,15 +188,32 @@ impl<'db, 'q> AsyncSql<'db, 'q> {
 
     async fn exchange(
         &mut self,
-        request: ProtocolRequest,
+        encode: fn(&str, &[Parameter], ValueFormat) -> Result<ProtocolRequest>,
         operation: &str,
     ) -> Result<ProtocolResponse> {
+        // Conservative framing allowance, without allocating a second input
+        // snapshot. The queue accounts the actual encoded request after admission.
+        let bytes = self
+            .params
+            .iter()
+            .fold(
+                self.sql
+                    .len()
+                    .saturating_add(64)
+                    .saturating_add(self.params.len().saturating_mul(32)),
+                |bytes, parameter| bytes.saturating_add(parameter.value().map_or(0, <[u8]>::len)),
+            )
+            .saturating_mul(2);
+        let request = || encode(&self.sql, &self.params, self.result_format);
         match &mut self.target {
             SqlTarget::Database(database) => {
-                database.executor.exec_structured(request, operation).await
+                database
+                    .executor
+                    .exec_structured(bytes, request, operation)
+                    .await
             }
             SqlTarget::Transaction(transaction) => {
-                transaction.exec_request(request, operation).await
+                transaction.exec_request(bytes, request, operation).await
             }
         }
     }
@@ -272,7 +293,7 @@ impl AsyncOliphaunt {
     /// until close because its PostgreSQL boundary is unknown.
     pub async fn exec_protocol_raw(&self, request: impl AsRef<[u8]>) -> Result<Vec<u8>> {
         self.executor
-            .exec_protocol_raw(ProtocolRequest::new(request.as_ref().to_vec()))
+            .exec_protocol_raw(request.as_ref())
             .await
             .map(ProtocolResponse::into_bytes)
     }
@@ -303,7 +324,7 @@ impl AsyncOliphaunt {
         let outcome = self
             .executor
             .exec_protocol_raw_stream_outcome(
-                ProtocolRequest::new(request.as_ref().to_vec()),
+                request.as_ref(),
                 adapt_raw_stream_callback(on_chunk, Arc::clone(&callback_error)),
             )
             .await;
@@ -361,7 +382,11 @@ impl AsyncOliphaunt {
         reject_copy_statements(sql)?;
         let response = self
             .executor
-            .exec_structured(ProtocolRequest::simple_query(sql)?, "exec()")
+            .exec_structured(
+                sql.len().saturating_add(6),
+                || ProtocolRequest::simple_query(sql),
+                "exec()",
+            )
             .await?;
         let result = parse_exec_response(&response)?;
         if result.ready_status() != ReadyStatus::Idle {
@@ -457,6 +482,16 @@ impl AsyncOliphaunt {
     /// Create a backup.
     pub async fn backup(&self) -> Result<Vec<u8>> {
         self.executor.backup().await
+    }
+
+    /// Stream a physical backup on the database owner without retaining the archive.
+    ///
+    /// The owner flushes the destination before successful completion. A failed
+    /// writer may contain a partial archive; publish it only after success.
+    /// The writer moves to the serialized owner thread. Flushing does not imply
+    /// power-loss durability; the caller owns publication and synchronization.
+    pub async fn backup_to(&self, writer: impl std::io::Write + Send + 'static) -> Result<()> {
+        self.executor.backup_to(Box::new(writer)).await
     }
 
     /// Close the database.
@@ -616,7 +651,8 @@ impl AsyncTransaction {
 
     async fn exec_request(
         &mut self,
-        request: ProtocolRequest,
+        bytes: usize,
+        request: impl FnOnce() -> Result<ProtocolRequest>,
         operation: &str,
     ) -> Result<ProtocolResponse> {
         self.ensure_active()?;
@@ -625,7 +661,13 @@ impl AsyncTransaction {
             .as_ref()
             .expect("transaction pin is retained until the callback returns");
         pin.executor
-            .pinned_exec_structured(pin.token, request, operation, Arc::clone(&self.guard))
+            .pinned_exec_structured(
+                pin.token,
+                bytes,
+                request,
+                operation,
+                Arc::clone(&self.guard),
+            )
             .await
     }
 
@@ -671,7 +713,8 @@ impl AsyncTransaction {
         reject_transaction_chain(sql)?;
         let response = self
             .exec_request(
-                ProtocolRequest::simple_query(sql)?,
+                sql.len().saturating_add(6),
+                || ProtocolRequest::simple_query(sql),
                 "AsyncTransaction::exec()",
             )
             .await?;

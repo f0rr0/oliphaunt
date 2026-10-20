@@ -17,10 +17,10 @@ cd "$root"
 
 mode="${1:-smoke}"
 case "$mode" in
-  smoke|regression|core-smoke)
+  smoke|regression|core-smoke|tools)
     ;;
   *)
-    echo "usage: src/wasix/runtime/tools/runtime-smoke.sh [smoke|regression|core-smoke]" >&2
+    echo "usage: src/wasix/runtime/tools/runtime-smoke.sh [smoke|regression|core-smoke|tools]" >&2
     exit 2
     ;;
 esac
@@ -55,6 +55,8 @@ oliphaunt_wasix_cargo_test() {
     # needed by the separate extension and logical dump/restore proofs below.
     cargo test -p oliphaunt-wasix --locked --no-default-features \
       --features "$full_evidence_features" "$@"
+  elif [ "$mode" = "tools" ]; then
+    cargo test -p oliphaunt-wasix --locked --no-default-features --features tools "$@"
   else
     cargo test -p oliphaunt-wasix --locked --no-default-features "$@"
   fi
@@ -72,11 +74,23 @@ export OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR="$root/target/oliphaunt-wasix/assets
 export OLIPHAUNT_WASM_GENERATED_AOT_DIR="$root/target/oliphaunt-wasix/aot"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-full}"
 
+if [ "$mode" = tools ]; then
+  tools_filter="oliphaunt::tools::tests::public_tool_destinations_large_dump_restore_and_failure_recovery"
+  tools_command=(oliphaunt_wasix_cargo_test --lib "$tools_filter")
+  oliphaunt_require_cargo_test_filter "$tools_filter" "${tools_command[@]}"
+  "${tools_command[@]}" -- --ignored --exact --nocapture --test-threads=1
+  exit
+fi
+
 oliphaunt_wasix_cargo_test \
   --test runtime_smoke \
   --test extensions_smoke \
   --test postgres_regression \
   -- --nocapture --test-threads=1
+checkpoint_filter="oliphaunt::checkpoint_tests::deferred_checkpoint_write_error_recovers_and_retries_before_ready"
+checkpoint_command=(oliphaunt_wasix_cargo_test --lib "$checkpoint_filter")
+oliphaunt_require_cargo_test_filter "$checkpoint_filter" "${checkpoint_command[@]}"
+"${checkpoint_command[@]}" -- --ignored --exact --nocapture --test-threads=1
 if [ "$asset_mode" = "full" ]; then
   # Each extension must pass direct execution, restart, physical backup/restore,
   # server execution and materialization. Tests record only completed modes.

@@ -1,11 +1,11 @@
-import { composeWasixStorageFailure, WasixStorageError } from '../core/errors.js';
 import type { Directory } from '../host/index.mjs';
+import { composeWasixStorageFailure, WasixStorageError } from '../core/errors.js';
 import type {
   StorageDirectory,
+  WasixStorageSyncBoundary,
   WasixClusterSeedLoader,
   WasixPhysicalIdentity,
   WasixStorageLease,
-  WasixStorageSyncBoundary,
 } from './storage-provider.js';
 import type { StoredSnapshot } from './storage-snapshot.js';
 import { acquireIncrementalStorage, type ExclusiveStorageLock } from './incremental-storage.js';
@@ -20,32 +20,42 @@ import {
 import { releaseRestoreLock } from './restore-cleanup.js';
 import { acquireExclusiveWebLock } from './web-lock.js';
 
+// Bound individual bridge transfers independently of database size.
 const DIRECT_BRIDGE_CAPACITY = 1024 * 1024;
 
 export async function acquireOpfsStorage(
   name: string,
   loadClusterSeed: WasixClusterSeedLoader,
   physicalIdentity: WasixPhysicalIdentity,
+  maxConcurrentIO?: number,
+  spareFileCount?: number,
 ): Promise<WasixStorageLease> {
   const label = `OPFS storage ${JSON.stringify(name)}`;
   let lock: ExclusiveStorageLock | undefined;
   let lockHandedToFallback = false;
-  let directPool: DirectOpfsPool | undefined;
-  let directAttempted = false;
   try {
     lock = await acquireExclusiveWebLock(`@oliphaunt/wasix-ts:opfs:${name}`, label);
-    if (canUseDirectOpfsPool()) {
-      directAttempted = true;
+    if (typeof document === 'undefined') {
       try {
-        directPool = await DirectOpfsPool.open(name, loadClusterSeed, physicalIdentity);
+        const pool = await DirectOpfsPool.open(
+          name,
+          loadClusterSeed,
+          physicalIdentity,
+          maxConcurrentIO,
+          spareFileCount,
+        );
+        return new DirectOpfsLease(name, lock, pool);
       } catch (error) {
-        if (!isDirectPoolUnavailable(error)) throw normalizeOpfsOpenError(name, error);
+        // Selection is only an acquisition decision. Never switch providers
+        // after PostgreSQL has begun executing against a mounted filesystem.
+        if (
+          !['NotSupportedError', 'NoModificationAllowedError', 'QuotaExceededError'].includes(
+            errorName(error),
+          )
+        )
+          throw error;
       }
     }
-    if (directPool !== undefined) {
-      return new DirectOpfsLease(name, lock, directPool);
-    }
-
     const database = await openPooledDatabaseDirectory(name);
     let initializationState: 'new' | 'existing' = 'new';
     lockHandedToFallback = true;
@@ -55,16 +65,19 @@ export async function acquireOpfsStorage(
       async openStore() {
         return {
           async read() {
-            // A failed direct acquisition has already reset an unpublished
-            // generation. Placements that never attempted it reset here.
-            const opened = await (directAttempted
-              ? inspectPooledOpfsDatabase(database, name, physicalIdentity)
-              : preparePooledOpfsDatabase(database, name, loadClusterSeed, physicalIdentity));
+            const opened = await preparePooledOpfsDatabase(
+              database,
+              name,
+              loadClusterSeed,
+              physicalIdentity,
+              maxConcurrentIO,
+            );
             initializationState = opened.state;
             return opened.snapshot;
           },
           initializationState: () => initializationState,
-          apply: (delta) => applyPooledOpfsDelta(database, name, physicalIdentity, delta),
+          apply: (delta) =>
+            applyPooledOpfsDelta(database, name, physicalIdentity, delta, maxConcurrentIO),
           close() {},
         };
       },
@@ -86,6 +99,7 @@ export async function restoreOpfsStorage(
   name: string,
   snapshot: StoredSnapshot,
   physicalIdentity: WasixPhysicalIdentity,
+  maxConcurrentIO?: number,
 ): Promise<void> {
   const label = `OPFS storage ${JSON.stringify(name)}`;
   const lock = await acquireExclusiveWebLock(`@oliphaunt/wasix-ts:opfs:${name}`, label);
@@ -104,7 +118,12 @@ export async function restoreOpfsStorage(
       if (!isNotFound(error)) throw error;
       database = await root.getDirectoryHandle(name, { create: true });
     }
-    const destination = await inspectPooledOpfsDatabase(database, name, physicalIdentity);
+    const destination = await inspectPooledOpfsDatabase(
+      database,
+      name,
+      physicalIdentity,
+      maxConcurrentIO,
+    );
     if (destination.state === 'existing') {
       throw new WasixStorageError(`${label} already exists`, {
         code: 'incomplete',
@@ -119,11 +138,17 @@ export async function restoreOpfsStorage(
       database = await root.getDirectoryHandle(name, { create: true });
     }
     commitState = 'unknown';
-    await applyPooledOpfsDelta(database, name, physicalIdentity, {
-      directories: snapshot.directories,
-      files: snapshot.files,
-      deleted: [],
-    });
+    await applyPooledOpfsDelta(
+      database,
+      name,
+      physicalIdentity,
+      {
+        directories: snapshot.directories,
+        files: snapshot.files,
+        deleted: [],
+      },
+      maxConcurrentIO,
+    );
     cleanupDestination = false;
     commitState = 'persisted';
   } catch (error) {
@@ -216,7 +241,7 @@ class DirectOpfsLease implements WasixStorageLease {
       }
     }
     try {
-      await this.#pool.close(false);
+      this.#pool.close();
     } catch (error) {
       const cleanup = this.#unavailable(
         `could not close its pool: ${describeError(error)}`,
@@ -270,21 +295,6 @@ class DirectOpfsLease implements WasixStorageLease {
       ...(cause === undefined ? {} : { cause }),
     });
   }
-}
-
-function canUseDirectOpfsPool(): boolean {
-  return (
-    typeof document === 'undefined' && globalThis.navigator?.storage?.getDirectory !== undefined
-  );
-}
-
-function isDirectPoolUnavailable(error: unknown): boolean {
-  const name = errorName(error);
-  return (
-    name === 'NotSupportedError' ||
-    name === 'NoModificationAllowedError' ||
-    name === 'QuotaExceededError'
-  );
 }
 
 function normalizeOpfsOpenError(name: string, error: unknown): WasixStorageError {

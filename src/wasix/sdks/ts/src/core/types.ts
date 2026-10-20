@@ -165,8 +165,17 @@ export type WasixAssetManifest = {
   extensions: readonly [];
 };
 
+export type AdmissionLimits =
+  import('@oliphaunt/ts-query/internal/operation-budget').AdmissionLimits;
+
+export type RuntimeTimeouts =
+  import('@oliphaunt/ts-query/internal/resource-options').RuntimeTimeouts;
+export type ArchiveLimits = import('../resources/archive-limits.js').ArchiveLimits;
+export type BackupOptions = Readonly<{ archiveLimits?: ArchiveLimits }>;
+export type RestoreOptions = BackupOptions;
+
 export type OpenConfig<Kind extends WasixStorageKind = WasixStorageKind> = {
-  /** Existing PostgreSQL role selected after the fixed superuser bootstrap. */
+  /** Existing login role. Honors role defaults and LOGIN/CONNECT restrictions; the host authenticates the caller. */
   username?: string;
   database?: string;
   /** PostgreSQL `-c name=value` settings applied before the database opens. */
@@ -179,6 +188,9 @@ export type OpenConfig<Kind extends WasixStorageKind = WasixStorageKind> = {
   extensions?: readonly WasixExtensionDescriptor[];
   /** Fresh memory by default, or an explicitly imported host storage adapter. */
   storage?: WasixStorage<Kind>;
+  admission?: AdmissionLimits;
+  /** Browser startup (default 120s); /worker also accepts bounded close. Native hosts reject these. */
+  timeouts?: RuntimeTimeouts;
 };
 
 export type OliphauntDatabase = {
@@ -210,7 +222,7 @@ export type OliphauntDatabase = {
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
   execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   /** Create a session-preserving PostgreSQL online physical backup. */
-  backup(): Promise<Uint8Array>;
+  backup(options?: BackupOptions): Promise<Uint8Array>;
   /**
    * Own the session for one callback. Use callback return/throw or rollback()
    * for lifecycle; manual BEGIN/START/COMMIT/END/ABORT/PREPARE TRANSACTION and
@@ -259,5 +271,6 @@ export type OliphauntClient<Kind extends WasixStorageKind = WasixStorageKind> = 
   restore(
     storage: PersistentWasixStorage<Exclude<Kind, 'memory'>>,
     bytes: BinaryInput,
+    options?: RestoreOptions,
   ): Promise<void>;
 };

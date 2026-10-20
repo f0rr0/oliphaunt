@@ -29,9 +29,12 @@ export type JsiRawProtocolTransport = {
     deadline?: number,
   ) => Promise<void>;
   readonly backup: (handle: number, deadline?: number) => Promise<ArrayBuffer | ArrayBufferView>;
+  readonly backupToFile?: (handle: number, destination: string, deadline?: number) => Promise<void>;
   readonly restore: (
     destination: {
       startupTimeoutMs?: number;
+      recoveryTimeoutMs?: number;
+      shutdownTimeoutMs?: number;
       operationTimeoutMs?: number;
       storageKind: 'directory' | 'applicationData';
       storagePath?: string;

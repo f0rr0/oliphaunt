@@ -8,23 +8,20 @@ import { test } from 'bun:test';
 
 import { normalizeOpenConfig } from '../config.js';
 import { MemoryDuplexStream, withStreamDeadline } from '../runtime/byte-stream.js';
-import { BrokerHandle, createBrokerRuntimeBinding } from '../runtime/broker.js';
-import { encodeBrokerResponse } from '../runtime/broker-frames.js';
+import { BrokerHandle, brokerSpawnArgs, createBrokerRuntimeBinding } from '../runtime/broker.js';
+import { encodeBrokerResponse, encodeBrokerExchangeFrame } from '../runtime/broker-frames.js';
+import { BrokerExchangeClient } from '../runtime/broker-exchange.js';
 import { createForgottenRuntimeHandleCleanup } from '../runtime/forgotten-handle.js';
 import {
   cleanupFailedManagedLaunch,
   connectEndpoint,
-  spawnManagedChild,
   parseReadyEndpoint,
   randomHexToken,
   readReadyLine,
+  spawnManagedChild,
   unixSocketPathsFit,
 } from '../runtime/node-adapter.js';
-import {
-  cancelPostgresStream,
-  encodeStartupMessage,
-  PostgresWireClient,
-} from '../runtime/pgwire.js';
+import { encodeStartupMessage, PostgresWireClient } from '../runtime/pgwire.js';
 import {
   createServerRuntimeBinding,
   postgresServerArguments,
@@ -87,6 +84,118 @@ test('runtime adapters implement the shared internal operation boundary', async 
   assert.equal(serverFailure.state, 'terminal');
 });
 
+test('broker launch forwards explicitly selected connection controls', () => {
+  const storage = { instanceDirectory: '/broker/root', temporaryDirectory: false };
+  const endpoint = { kind: 'tcp', listen: '127.0.0.1:0', controlListen: '127.0.0.1:0' } as const;
+  const args = brokerSpawnArgs(
+    normalizeOpenConfig(
+      {
+        topology: 'broker',
+        broker: { handshakeTimeoutMs: 125, recoveryTimeoutMs: 45, maxPendingHandshakes: 2 },
+      },
+      storage,
+    ),
+    endpoint,
+  );
+  const index = args.indexOf('--handshake-timeout-ms');
+  assert.ok(index >= 0);
+  assert.equal(args[index + 1], '125');
+  assert.equal(args[args.indexOf('--recovery-timeout-ms') + 1], '45');
+  assert.equal(args[args.indexOf('--max-pending-handshakes') + 1], '2');
+  assert.ok(
+    !brokerSpawnArgs(normalizeOpenConfig({ topology: 'broker' }, storage), endpoint).includes(
+      '--handshake-timeout-ms',
+    ),
+  );
+});
+
+test('broker close expires stalled control I/O and reaches child reaping', async () => {
+  const config = normalizeOpenConfig(
+    { topology: 'broker' },
+    {
+      instanceDirectory: '/tmp/unused-broker-fixture',
+      temporaryDirectory: false,
+    },
+  );
+  let closeCount = 0;
+  let waited = false;
+  let rejectRead!: (error: Error) => void;
+  const read = new Promise<Uint8Array>((_, reject) => {
+    rejectRead = reject;
+  });
+  const stream = {
+    readExactly: () => read,
+    async writeAll() {},
+    async close() {
+      closeCount++;
+      rejectRead(new Error('owned control stream closed'));
+    },
+  };
+  const handle = new BrokerHandle(
+    config,
+    {
+      child: {
+        stdout: Readable.from([]),
+        kill() {},
+        async wait() {
+          waited = true;
+          return 0;
+        },
+        async exited() {
+          return 0;
+        },
+      },
+      stream,
+      client: new BrokerExchangeClient(new MemoryDuplexStream(), new Uint8Array(16)),
+    },
+    15,
+  );
+  await assert.rejects(handle.detach(), (error: unknown) => {
+    assert.ok(error instanceof AggregateError);
+    assert.ok(error.errors.some((cause) => String(cause).includes('deadline exceeded')));
+    assert.ok(error.errors.some((cause) => String(cause).includes('owned control stream closed')));
+    return true;
+  });
+  assert.ok(closeCount >= 1);
+  assert.equal(waited, true);
+});
+
+test('PostgreSQL startup deadline closes a connected peer that never becomes ready', async () => {
+  let peerClosed!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    peerClosed = resolve;
+  });
+  const server = createServer((socket) => {
+    socket.on('data', () => {});
+    socket.on('close', peerClosed);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  try {
+    await assert.rejects(
+      PostgresWireClient.connect(
+        parseReadyEndpoint(`tcp:127.0.0.1:${address.port}`),
+        'postgres',
+        'postgres',
+        25,
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        assert.ok(
+          error.errors.some((cause) => String(cause).includes('startup deadline exceeded')),
+        );
+        return true;
+      },
+    );
+    await closed;
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
 test('native server quotes one Unix socket directory as one PostgreSQL GUC-list item', () => {
   const directory = '/tmp/ application,"primary" ';
   const config = normalizeOpenConfig(
@@ -99,32 +208,6 @@ test('native server quotes one Unix socket directory as one PostgreSQL GUC-list 
 
   assert.notEqual(index, -1, `missing ${assignment} in ${JSON.stringify(args)}`);
   assert.equal(args[index - 1], '-c');
-});
-
-test('PostgreSQL cancellation preserves write and cleanup failures without reading a reply', async () => {
-  const stream = {
-    async readExactly(): Promise<Uint8Array> {
-      throw new Error('CancelRequest has no response');
-    },
-    async writeAll(): Promise<void> {
-      throw new Error('cancel write failed');
-    },
-    async close(): Promise<void> {
-      throw new Error('cancel close failed');
-    },
-  };
-  await assert.rejects(cancelPostgresStream(stream, new Uint8Array(8)), (error: unknown) => {
-    assert.ok(error instanceof AggregateError);
-    assert.deepEqual(error.errors.map(String), [
-      'Error: cancel write failed',
-      'Error: cancel close failed',
-    ]);
-    return true;
-  });
-  const wire = new MemoryDuplexStream();
-  const key = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
-  await cancelPostgresStream(wire, key);
-  assert.deepEqual(wire.output, [new Uint8Array([0, 0, 0, 16, 4, 210, 22, 46, ...key])]);
 });
 
 test('failed broker handles never relaunch and retain cleanup ownership for close', async () => {
@@ -169,7 +252,7 @@ test('failed broker handles never relaunch and retain cleanup ownership for clos
   const handle = new BrokerHandle(config, {
     child,
     stream,
-    client: new PostgresWireClient(new MemoryDuplexStream()),
+    client: new BrokerExchangeClient(new MemoryDuplexStream(), new Uint8Array(16)),
     ipcDir,
   });
   const firstFailure = new Error('fixture broker transport failed');
@@ -232,7 +315,7 @@ test('broker failure and detach stay bounded when SIGKILL never produces a reap'
     {
       child,
       stream,
-      client: new PostgresWireClient(new MemoryDuplexStream()),
+      client: new BrokerExchangeClient(new MemoryDuplexStream(), new Uint8Array(16)),
       ipcDir,
     },
     1,
@@ -304,7 +387,7 @@ test('terminal broker detach retains each cleanup owner until that resource is r
   const handle = new BrokerHandle(config, {
     child,
     stream,
-    client: new PostgresWireClient(new MemoryDuplexStream()),
+    client: new BrokerExchangeClient(new MemoryDuplexStream(), new Uint8Array(16)),
     ipcDir,
   });
 
@@ -427,6 +510,46 @@ test('terminal server detach retains child and path ownership for internal clean
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
+});
+
+test('server escalates while its shutdown command is still awaiting reap', async () => {
+  let reaped!: (code: number) => void;
+  const completion = new Promise<number>((resolve) => {
+    reaped = resolve;
+  });
+  let killed!: () => void;
+  const escalation = new Promise<void>((resolve) => {
+    killed = resolve;
+  });
+  const events: string[] = [];
+  const child = {
+    stdout: Readable.from([]),
+    kill(signal?: NodeJS.Signals) {
+      assert.equal(signal, 'SIGKILL');
+      events.push('server killed');
+      killed();
+      reaped(0);
+    },
+    wait: () => completion,
+    exited: () => completion,
+  };
+  const handle = new ServerHandle(
+    child,
+    '/unused',
+    '/unused/pgdata',
+    '/fixture/pg_ctl',
+    {},
+    undefined,
+    'postgresql://fixture',
+    false,
+    async () => {
+      await escalation;
+      events.push('shutdown command reaped');
+    },
+    10,
+  );
+  await assert.rejects(settleWithin(handle.detach(), 250), /did not stop within 10ms/);
+  assert.deepEqual(events, ['server killed', 'shutdown command reaped']);
 });
 
 test('server detach stays bounded and retains paths when SIGKILL never produces a reap', async () => {
@@ -755,7 +878,13 @@ test('server readiness times out and closes a peer that never answers startup', 
         ),
         5_000,
       ),
-      /abort/i,
+      (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        assert.ok(
+          error.errors.some((cause) => String(cause).includes('startup deadline exceeded')),
+        );
+        return true;
+      },
     );
     await settleWithin(closed, 5_000);
   } finally {
@@ -802,24 +931,23 @@ async function waitForMissingPath(path: string, timeoutMs: number): Promise<void
   );
 }
 
-test('broker drains every PostgreSQL query boundary after callback failure and remains usable', async () => {
-  const ready = new Uint8Array([0x5a, 0, 0, 0, 5, 0x49]);
+test('broker drains its terminal after callback failure and remains usable', async () => {
+  const epoch = new Uint8Array(16);
+  const record = (kind: 4 | 6, request: bigint, payload: Uint8Array) =>
+    encodeBrokerExchangeFrame({ kind, request, epoch, payload });
   const complete = new Uint8Array([0x43, 0, 0, 0, 5, 0]);
-  const query = new Uint8Array([0x51, 0, 0, 0, 5, 0]);
+  const ready = new Uint8Array([0x5a, 0, 0, 0, 5, 0x49]);
   const wire = new MemoryDuplexStream([
-    complete.subarray(0, 2),
-    complete.subarray(2),
-    ready,
-    ready,
-    complete,
-    ready,
+    record(4, 1n, complete),
+    record(4, 1n, ready),
+    record(6, 1n, Uint8Array.of(0, 1, 0)),
+    record(4, 2n, complete),
+    record(4, 2n, ready),
+    record(6, 2n, Uint8Array.of(0, 1, 0)),
   ]);
   const config = normalizeOpenConfig(
     { topology: 'broker' },
-    {
-      instanceDirectory: '/tmp/unused-broker-fixture',
-      temporaryDirectory: false,
-    },
+    { instanceDirectory: '/tmp/unused-broker-fixture', temporaryDirectory: false },
   );
   const child = {
     stdout: Readable.from([]),
@@ -834,13 +962,13 @@ test('broker drains every PostgreSQL query boundary after callback failure and r
   const handle = new BrokerHandle(config, {
     child,
     stream: new MemoryDuplexStream(),
-    client: new PostgresWireClient(wire),
-    ipcDir: undefined,
+    client: new BrokerExchangeClient(wire, epoch),
   });
+  const query = new Uint8Array([0x51, 0, 0, 0, 5, 0]);
   const callbackError = new Error('consumer stopped');
   let callbacks = 0;
   await assert.rejects(
-    handle.execProtocolStream(new Uint8Array([...query, ...query]), () => {
+    handle.execProtocolStream(query, () => {
       callbacks++;
       throw callbackError;
     }),
@@ -848,17 +976,20 @@ test('broker drains every PostgreSQL query boundary after callback failure and r
   );
   assert.equal(callbacks, 1);
   assert.deepEqual(await handle.execProtocolRaw(query), new Uint8Array([...complete, ...ready]));
-  assert.equal(wire.output.length, 2, 'a failed callback never replays SQL');
+  assert.equal(wire.output.length, 6, 'each invocation writes Query/Data/End once');
 });
 
 test('broker transport failure overrides callback failure when recovery is unconfirmed', async () => {
-  const frame = new Uint8Array([0x43, 0, 0, 0, 5, 0]);
+  const epoch = new Uint8Array(16);
+  const frame = encodeBrokerExchangeFrame({
+    kind: 4,
+    epoch,
+    request: 1n,
+    payload: Uint8Array.of(1),
+  });
   const config = normalizeOpenConfig(
     { topology: 'broker' },
-    {
-      instanceDirectory: '/tmp/unused-broker-fixture',
-      temporaryDirectory: false,
-    },
+    { instanceDirectory: '/tmp/unused-broker-fixture', temporaryDirectory: false },
   );
   const child = {
     stdout: Readable.from([]),
@@ -873,62 +1004,15 @@ test('broker transport failure overrides callback failure when recovery is uncon
   const handle = new BrokerHandle(config, {
     child,
     stream: new MemoryDuplexStream(),
-    client: new PostgresWireClient(new MemoryDuplexStream([frame])),
-    ipcDir: undefined,
+    client: new BrokerExchangeClient(new MemoryDuplexStream([frame]), epoch),
   });
   await assert.rejects(
-    handle.execProtocolStream(new Uint8Array([0x51, 0, 0, 0, 5, 0]), () => {
+    handle.execProtocolStream(Uint8Array.of(0x51, 0, 0, 0, 5, 0), () => {
       throw new Error('consumer stopped');
     }),
     /read stream ended/,
   );
-  await assert.rejects(
-    handle.execProtocolRaw(new Uint8Array([0x51, 0, 0, 0, 5, 0])),
-    /close and reopen/,
-  );
-});
-
-test('buffered PostgreSQL rejects incomplete requests before writing and malformed readiness before reuse', async () => {
-  const wire = new MemoryDuplexStream([new Uint8Array([0x5a, 0, 0, 0, 5, 0])]);
-  const client = new PostgresWireClient(wire);
-  await assert.rejects(
-    client.execProtocolStream(new Uint8Array([0x48, 0, 0, 0, 4]), () => {}),
-    /query or COPY boundary/,
-  );
-  await assert.rejects(
-    client.execProtocolStream(new Uint8Array([0x51, 0, 0, 0, 6, 0]), () => {}),
-    /frontend frame length/,
-  );
-  assert.equal(wire.output.length, 0);
-  await assert.rejects(
-    client.execProtocolStream(new Uint8Array([0x51, 0, 0, 0, 5, 0]), () => {}),
-    /invalid PostgreSQL ReadyForQuery/,
-  );
-});
-
-test('PostgreSQL drains pipelined results while a socket write is backpressured', async () => {
-  const ready = new Uint8Array([0x5a, 0, 0, 0, 5, 0x49]);
-  const input = new MemoryDuplexStream([ready]);
-  let releaseWrite!: () => void;
-  const write = new Promise<void>((resolve) => {
-    releaseWrite = resolve;
-  });
-  const client = new PostgresWireClient({
-    async writeAll() {
-      await write;
-    },
-    async readExactly(length) {
-      releaseWrite();
-      return input.readExactly(length);
-    },
-    async close() {
-      releaseWrite();
-    },
-  });
-  await settleWithin(
-    client.execProtocolStream(new Uint8Array([0x51, 0, 0, 0, 5, 0]), () => {}),
-    250,
-  );
+  await assert.rejects(handle.execProtocolRaw(Uint8Array.of(1)), /close and reopen/);
 });
 
 test('managed child spawn failures reject startup and confirm that no child needs reaping', async () => {
@@ -982,7 +1066,7 @@ test('control deadline interrupts actual socket reads and reaches broker cleanup
     {
       child,
       stream,
-      client: new PostgresWireClient(new MemoryDuplexStream()),
+      client: new BrokerExchangeClient(new MemoryDuplexStream(), new Uint8Array(16)),
       ipcDir: undefined,
     },
     30,
@@ -1001,6 +1085,33 @@ test('control deadline interrupts actual socket reads and reaches broker cleanup
     peer?.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test('control deadline rejects late success when a microtask beats its overdue timer', async () => {
+  let closed = false;
+  const stream = {
+    async readExactly() {
+      return new Uint8Array();
+    },
+    async writeAll() {},
+    async close() {
+      closed = true;
+    },
+  };
+  await assert.rejects(
+    withStreamDeadline(
+      stream,
+      performance.now() + 10,
+      async () => {
+        const unblock = performance.now() + 30;
+        while (performance.now() < unblock) {}
+        return await Promise.resolve('late');
+      },
+      'fixture',
+    ),
+    /deadline exceeded/,
+  );
+  assert.equal(closed, true);
 });
 
 test('control deadline preserves operation and cleanup failures', async () => {

@@ -1,3 +1,5 @@
+import { StartupBudget } from '../core/startup-budget.js';
+import { physicalArchiveOptions } from '../resources/archive-limits.js';
 import {
   WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES,
   WasixDatabaseImpl,
@@ -26,6 +28,7 @@ import type {
   WasixPgDumpProcessOptions,
   WasixToolProcessOptions,
   WasixToolProcessResult,
+  WasixToolOutputDestination,
 } from '../resources/tool-runtime.js';
 
 type WorkerResponseValue =
@@ -75,16 +78,24 @@ export async function restoreWasixWithWorker(
   storage: OpenConfig['storage'],
   bytes: BinaryInput,
   validate?: (options: SerializedOpenOptions) => void,
+  options?: import('../core/types.js').RestoreOptions,
 ): Promise<void> {
   if (storage === undefined) throw new TypeError('WASIX restore requires persistent storage');
   const openOptions = serializeOpenConfig({ storage });
   validate?.(openOptions);
+  const limits = physicalArchiveOptions(options);
   const input = toUint8Array(bytes).slice();
   const rpc = new WorkerRpc(createWorker(openOptions));
   try {
-    await rpc.request({ method: 'restore', storage: openOptions.storage, bytes: input }, [
-      input.buffer,
-    ]);
+    await rpc.request(
+      {
+        method: 'restore',
+        storage: openOptions.storage,
+        bytes: input,
+        ...(limits === undefined ? {} : { limits }),
+      },
+      [input.buffer],
+    );
   } catch (error) {
     return rethrowAfterWorkerTermination(
       rpc,
@@ -108,6 +119,7 @@ export class WorkerRpc {
       onChunk?: (chunk: Uint8Array) => void;
       control?: Int32Array;
       stream?: true;
+      toolOutput?: WasixToolOutputDestination;
     }
   >();
   #nextId = 1;
@@ -124,6 +136,19 @@ export class WorkerRpc {
         return;
       }
       if ('kind' in message) {
+        if (message.kind === 'toolChunk') {
+          const write = pending.toolOutput?.[message.stream];
+          void Promise.resolve()
+            .then(() => {
+              if (write === undefined) throw new Error('unexpected WASIX tool output stream');
+              return write(message.value);
+            })
+            .then(
+              () => this.#toolCredit(message),
+              () => this.#toolCredit(message, 'Oliphaunt WASIX tool destination failed'),
+            );
+          return;
+        }
         if (pending.control === undefined || Atomics.load(pending.control, STREAM_FAILED) === 0) {
           try {
             pending.onChunk?.(message.value);
@@ -168,13 +193,14 @@ export class WorkerRpc {
   request(
     request: WorkerRequestWithoutId,
     transfer: Transferable[] = [],
+    toolOutput?: WasixToolOutputDestination,
   ): Promise<WorkerResponseValue> {
     if (this.#fatal !== undefined) {
       return Promise.reject(this.#fatal);
     }
     const id = this.#nextId++;
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      this.#pending.set(id, { resolve, reject, toolOutput });
       try {
         this.#worker.postMessage({ ...request, id } satisfies WorkerRequest, transfer);
       } catch (error) {
@@ -182,6 +208,24 @@ export class WorkerRpc {
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
+  }
+
+  #toolCredit(message: Extract<WorkerResponse, { kind: 'toolChunk' }>, error?: string): void {
+    if (this.#fatal !== undefined || !this.#pending.has(message.id)) return;
+    try {
+      this.#worker.postMessage(
+        {
+          id: message.id,
+          method: 'toolOutputCredit',
+          stream: message.stream,
+          sequence: message.sequence,
+          ...(error === undefined ? {} : { error }),
+        },
+        [],
+      );
+    } catch (error) {
+      this.#fail(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
   stream(
@@ -238,6 +282,11 @@ export class WorkerRpc {
     }
   }
 
+  /** Native addon owners require quiescent exit before their realm can be destroyed. */
+  get supportsAbort(): boolean {
+    return this.#worker.expectSelfExit === undefined;
+  }
+
   #fail(error: Error): void {
     // A package-requested terminate is expected ownership teardown, not an
     // independently observed crash. The public close state remains governed
@@ -284,15 +333,24 @@ export async function openWorkerDatabase(
   transfer: Transferable[] = [],
 ): Promise<OliphauntDatabase> {
   const rpc = new WorkerRpc(worker);
+  const startup = new StartupBudget(options.timeouts?.startupTimeoutMs);
   try {
-    await rpc.request({ method: 'open', options }, transfer);
-    return new WasixDatabaseImpl(new WorkerDatabaseSession(rpc, options));
+    await startup.prepare(rpc.request({ method: 'open', options }, transfer));
+    startup.check();
+    return new WasixDatabaseImpl(
+      new WorkerDatabaseSession(rpc, options),
+      undefined,
+      options.admission,
+      options.timeouts?.shutdownTimeoutMs,
+    );
   } catch (error) {
     return rethrowAfterWorkerTermination(
       rpc,
       error,
       'Oliphaunt WASIX worker open and termination both failed',
     );
+  } finally {
+    startup.finish();
   }
 }
 
@@ -343,6 +401,7 @@ function appendAssetTransfer(
 }
 
 class WorkerDatabaseSession implements WasixDatabaseSession {
+  readonly abort?: () => Promise<void>;
   readonly supportsProtocolConnections: boolean;
   readonly identity: WasixDatabaseIdentity;
   readonly terminalState: WasixDatabaseSessionTerminalState;
@@ -352,6 +411,7 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
 
   constructor(rpc: WorkerRpc, options: SerializedOpenOptions) {
     this.#rpc = rpc;
+    if (rpc.supportsAbort) this.abort = () => rpc.terminate();
     this.supportsProtocolConnections = rpc.supportsSharedMemory;
     this.terminalState = rpc.terminalState;
     this.identity = normalizeWasixDatabaseIdentity(options.username, options.database);
@@ -407,9 +467,14 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     await this.#rpc.request({ method: 'sync', boundary });
   }
 
-  async backup(): Promise<Uint8Array> {
+  async backup(
+    limits?: import('../resources/archive-limits.js').ArchiveLimits,
+  ): Promise<Uint8Array> {
     this.#assertOpen();
-    const response = await this.#rpc.request({ method: 'backup' });
+    const response = await this.#rpc.request({
+      method: 'backup',
+      ...(limits === undefined ? {} : { limits }),
+    });
     if (!(response instanceof Uint8Array)) {
       throw new Error('Oliphaunt WASIX worker returned an invalid physical archive');
     }
@@ -420,6 +485,9 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     this.#assertOpen();
     const response = await this.#rpc.request({
       method: 'runPgDump',
+      ...(options.startupTimeoutMs === undefined
+        ? {}
+        : { startupTimeoutMs: options.startupTimeoutMs }),
       tool: options.tool,
       args: [...options.args],
     });
@@ -437,16 +505,22 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
       stdin.buffer instanceof ArrayBuffer &&
       stdin.byteOffset === 0 &&
       stdin.byteLength === stdin.buffer.byteLength;
+    const { output, ...serializable } = options;
+    const requestOptions = {
+      ...serializable,
+      args: [...options.args],
+      ...(stdin === undefined ? {} : { stdin }),
+    };
     const response = await this.#rpc.request(
-      {
-        method: 'runTool',
-        options: {
-          ...options,
-          args: [...options.args],
-          ...(stdin === undefined ? {} : { stdin }),
-        },
-      },
+      output === undefined
+        ? { method: 'runTool', options: requestOptions }
+        : {
+            method: 'runToolStream',
+            options: requestOptions,
+            stderr: output.stderr !== undefined,
+          },
       transferableStdin && stdin !== undefined ? [stdin.buffer as ArrayBuffer] : [],
+      output,
     );
     if (!isWasixToolProcessResult(response)) {
       throw new Error('Oliphaunt WASIX worker returned an invalid native tool result');

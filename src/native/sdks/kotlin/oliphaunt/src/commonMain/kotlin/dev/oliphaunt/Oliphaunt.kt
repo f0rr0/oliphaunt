@@ -9,6 +9,20 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+/** Pending preparation, queued and executing work for one database and its transactions. */
+public data class AdmissionLimits(
+    val maxPendingOperations: Int,
+    /** Conservative retained input allowance; a larger operation runs alone. */
+    val highWaterMarkBytes: Long,
+) {
+    internal fun validate() {
+        require(maxPendingOperations > 0 && highWaterMarkBytes > 0) { "admission limits must be positive" }
+    }
+}
+
+// More admitted work absorbs bursts while retaining more input; preserve the existing default.
+private val defaultAdmissionLimits = AdmissionLimits(64, 128L * 1024 * 1024)
+
 public data class PostgresStartupGuc(
     val name: String,
     val value: String,
@@ -25,6 +39,7 @@ internal sealed interface EngineStorage {
 }
 
 internal data class EngineConfig(
+    val admission: AdmissionLimits? = null,
     val storage: EngineStorage = EngineStorage.TemporaryDirectory,
     val startupGucs: List<PostgresStartupGuc> = emptyList(),
     val username: String? = null,
@@ -125,19 +140,6 @@ internal fun validateDirectoryPath(
     if (path.any { it.code == 0 }) throw OliphauntException("$label must not contain NUL bytes")
 }
 
-internal fun simpleQueryProtocol(sql: String): ByteArray {
-    if (sql.any { it.code == 0 }) throw OliphauntException("simple query SQL must not contain NUL bytes")
-    val body = sql.encodeToByteArray() + byteArrayOf(0)
-    val length = body.size + 4
-    return byteArrayOf(
-        'Q'.code.toByte(),
-        ((length ushr 24) and 0xff).toByte(),
-        ((length ushr 16) and 0xff).toByte(),
-        ((length ushr 8) and 0xff).toByte(),
-        (length and 0xff).toByte(),
-    ) + body
-}
-
 internal interface OliphauntEngine {
     suspend fun open(config: EngineConfig): OliphauntSession
 
@@ -222,6 +224,7 @@ public class PostgresException(
 
 public class OliphauntDatabase private constructor(
     private val session: OliphauntSession,
+    private val admissionLimits: AdmissionLimits?,
 ) {
     private sealed interface TransactionCompletion {
         data object Active : TransactionCompletion
@@ -276,6 +279,7 @@ public class OliphauntDatabase private constructor(
 
     private val stateMutex = Mutex()
     private var admissionTail: Deferred<Unit> = CompletableDeferred(Unit)
+    private val pendingOperations = mutableMapOf<CompletableDeferred<Unit>, Long>()
     private var closing = false
     private var closeTeardownStarted = false
     private var activeCancellationCount = 0
@@ -296,12 +300,24 @@ public class OliphauntDatabase private constructor(
 
     public val isClosed: Boolean get() = closed
 
-    public suspend fun execProtocolRaw(request: ByteArray): ByteArray = execProtocolRawOwned(request.copyOf())
+    public suspend fun execProtocolRaw(request: ByteArray): ByteArray {
+        val (admission, ownedRequest) = admitPreparedOperation(null) { retain ->
+            retain(request.size.toLong())
+            request.copyOf()
+        }
+        return execProtocolRawOwned(admission, ownedRequest)
+    }
 
     public suspend fun execProtocolRawStream(
         request: ByteArray,
         onChunk: (ByteArray) -> Unit,
-    ): Unit = execProtocolRawStreamOwned(request.copyOf(), onChunk)
+    ) {
+        val (admission, ownedRequest) = admitPreparedOperation(null) { retain ->
+            retain(request.size.toLong())
+            request.copyOf()
+        }
+        execProtocolRawStreamOwned(admission, ownedRequest, onChunk)
+    }
 
     public suspend fun backup(): ByteArray = runAdmitted(admitOperation(transactionToken = null)) {
         ensureAdmittedOperationUsable()
@@ -319,11 +335,20 @@ public class OliphauntDatabase private constructor(
                 ensureNoProtocolStreamCallbackReentry()
                 ensureOpenLocked()
                 if (activeTransaction != null) throw OliphauntException(sessionPinnedMessage)
+                // BEGIN is ordinary work; its completion releases before the callback.
+                val operation = if (admissionLimits == null) {
+                    enqueueOperationLocked()
+                } else {
+                    enqueuePreparedOperationLocked { retain ->
+                        retain("BEGIN".length.toLong() * 3 + 6)
+                        ByteArray(0)
+                    }.first
+                }
                 val allocated = nextTransactionToken
                 nextTransactionToken = if (nextTransactionToken == Long.MAX_VALUE) 1L else nextTransactionToken + 1
                 val lease = TransactionLease()
                 activeTransaction = ActiveTransaction(allocated, lease)
-                BeginAdmission(allocated, lease, enqueueOperationLocked())
+                BeginAdmission(allocated, lease, operation)
             }
         val token = beginAdmission.token
         val transaction = OliphauntTransaction(this, token, beginAdmission.lease)
@@ -741,41 +766,63 @@ public class OliphauntDatabase private constructor(
     }
 
     internal suspend fun <T> runTypedOperation(
-        request: ByteArray,
+        prepare: ((Long) -> Unit, Boolean) -> ByteArray,
         transactionToken: Long?,
         parser: (ByteArray) -> Pair<T, ReadyStatus>,
-    ): T = runAdmitted(admitOperation(transactionToken)) {
-        ensureAdmittedOperationUsable()
-        val response =
-            try {
-                session.execProtocolRaw(request)
-            } catch (error: Throwable) {
-                poisonUnknownOperation(transactionToken, error)
-                throw error
-            }
-        val transactionOutcome =
-            if (transactionToken == null) {
-                null
-            } else {
+    ): T {
+        val (admission, request) = admitPreparedOperation(transactionToken) { retain ->
+            prepare(retain, admissionLimits != null)
+        }
+        return runAdmitted(admission) {
+            ensureAdmittedOperationUsable()
+            val response =
                 try {
-                    inspectStructuredTransactionProtocolOutcome(response)
+                    session.execProtocolRaw(request)
                 } catch (error: Throwable) {
                     poisonUnknownOperation(transactionToken, error)
                     throw error
                 }
-            }
-        val terminalStatus =
-            transactionOutcome?.readyStatus ?: try {
-                inspectTerminalReadyStatus(response)
-            } catch (error: Throwable) {
-                poisonUnknownOperation(transactionToken, error)
-                throw error
-            }
-        val ownershipViolation = transactionOutcome?.ownershipViolationMessage()
-        val parsed =
-            try {
-                parser(response)
-            } catch (error: Throwable) {
+            val transactionOutcome =
+                if (transactionToken == null) {
+                    null
+                } else {
+                    try {
+                        inspectStructuredTransactionProtocolOutcome(response)
+                    } catch (error: Throwable) {
+                        poisonUnknownOperation(transactionToken, error)
+                        throw error
+                    }
+                }
+            val terminalStatus =
+                transactionOutcome?.readyStatus ?: try {
+                    inspectTerminalReadyStatus(response)
+                } catch (error: Throwable) {
+                    poisonUnknownOperation(transactionToken, error)
+                    throw error
+                }
+            val ownershipViolation = transactionOutcome?.ownershipViolationMessage()
+            val parsed =
+                try {
+                    parser(response)
+                } catch (error: Throwable) {
+                    if (transactionToken != null && ownershipViolation != null) {
+                        val lifecycleError = OliphauntException(
+                            "$ownershipViolation; response parsing also failed: $error",
+                            error,
+                        )
+                        poisonTransaction(
+                            transactionToken,
+                            requireNotNull(lifecycleError.message),
+                            lifecycleError,
+                        )
+                        throw lifecycleError
+                    } else {
+                        validateTypedFailureStatus(terminalStatus, transactionToken)
+                    }
+                    throw error
+                }
+            if (parsed.second != terminalStatus) {
+                val error = OliphauntException("typed response parser disagreed with terminal ReadyForQuery status")
                 if (transactionToken != null && ownershipViolation != null) {
                     val lifecycleError = OliphauntException(
                         "$ownershipViolation; response parsing also failed: $error",
@@ -792,31 +839,14 @@ public class OliphauntDatabase private constructor(
                 }
                 throw error
             }
-        if (parsed.second != terminalStatus) {
-            val error = OliphauntException("typed response parser disagreed with terminal ReadyForQuery status")
             if (transactionToken != null && ownershipViolation != null) {
-                val lifecycleError = OliphauntException(
-                    "$ownershipViolation; response parsing also failed: $error",
-                    error,
-                )
-                poisonTransaction(
-                    transactionToken,
-                    requireNotNull(lifecycleError.message),
-                    lifecycleError,
-                )
+                val lifecycleError = OliphauntException(ownershipViolation)
+                poisonTransaction(transactionToken, ownershipViolation, lifecycleError)
                 throw lifecycleError
-            } else {
-                validateTypedFailureStatus(terminalStatus, transactionToken)
             }
-            throw error
+            validateTypedSuccessStatus(terminalStatus, transactionToken)
+            parsed.first
         }
-        if (transactionToken != null && ownershipViolation != null) {
-            val lifecycleError = OliphauntException(ownershipViolation)
-            poisonTransaction(transactionToken, ownershipViolation, lifecycleError)
-            throw lifecycleError
-        }
-        validateTypedSuccessStatus(terminalStatus, transactionToken)
-        parsed.first
     }
 
     private fun StructuredTransactionProtocolOutcome.ownershipViolationMessage(): String? = when {
@@ -1006,8 +1036,9 @@ public class OliphauntDatabase private constructor(
     }
 
     private suspend fun execProtocolRawOwned(
+        admission: Admission,
         ownedRequest: ByteArray,
-    ): ByteArray = runAdmitted(admitOperation(transactionToken = null)) {
+    ): ByteArray = runAdmitted(admission) {
         ensureAdmittedOperationUsable()
         runRawProtocolOperation {
             session.execProtocolRaw(ownedRequest).copyOf()
@@ -1015,10 +1046,11 @@ public class OliphauntDatabase private constructor(
     }
 
     private suspend fun execProtocolRawStreamOwned(
+        admission: Admission,
         ownedRequest: ByteArray,
         onChunk: (ByteArray) -> Unit,
     ) {
-        runAdmitted(admitOperation(transactionToken = null)) {
+        runAdmitted(admission) {
             ensureAdmittedOperationUsable()
             val outcome =
                 runRawProtocolOperation {
@@ -1057,11 +1089,38 @@ public class OliphauntDatabase private constructor(
         }
     }
 
-    private suspend fun admitOperation(transactionToken: Long?): Admission = stateMutex.withLock {
+    private suspend fun admitOperation(transactionToken: Long?): Admission = admitPreparedOperation(transactionToken) { ByteArray(0) }.first
+
+    // Reserve before encoding; keep the input charged through its ordered completion.
+    private suspend fun admitPreparedOperation(
+        transactionToken: Long?,
+        prepare: ((Long) -> Unit) -> ByteArray,
+    ): Pair<Admission, ByteArray> = stateMutex.withLock {
         ensureNoProtocolStreamCallbackReentry()
         ensureOpenLocked()
         ensureTransactionAccessLocked(transactionToken)
-        enqueueOperationLocked()
+        enqueuePreparedOperationLocked(prepare)
+    }
+
+    private suspend fun enqueuePreparedOperationLocked(prepare: ((Long) -> Unit) -> ByteArray): Pair<Admission, ByteArray> {
+        pendingOperations.entries.removeAll { it.key.isCompleted }
+        val pendingBytes = pendingOperations.values.sum()
+        val byteLimit = (admissionLimits ?: defaultAdmissionLimits).highWaterMarkBytes
+        if (pendingOperations.size >= (admissionLimits ?: defaultAdmissionLimits).maxPendingOperations || pendingBytes >= byteLimit) {
+            throw OliphauntException("operation queue is full; wait for pending work to finish")
+        }
+        var retainedBytes = 0L
+        val request = prepare { bytes ->
+            require(bytes >= 0)
+            if (pendingOperations.isNotEmpty() && bytes > byteLimit - pendingBytes - retainedBytes) {
+                throw OliphauntException("operation queue is full; wait for pending work to finish")
+            }
+            require(bytes <= Long.MAX_VALUE - retainedBytes - pendingBytes) { "retained byte count overflow" }
+            retainedBytes += bytes
+        }
+        val admission = enqueueOperationLocked()
+        pendingOperations[admission.completion] = retainedBytes
+        return admission to request
     }
 
     private suspend fun enqueueOperationLocked(): Admission {
@@ -1174,6 +1233,7 @@ public class OliphauntDatabase private constructor(
             config: EngineConfig,
             engine: OliphauntEngine,
         ): OliphauntDatabase {
+            config.admission?.validate()
             val startupGucs = config.startupGucs.toList()
             val extensions = config.extensions.toList()
             validateDatabaseStorage(config.storage)
@@ -1185,7 +1245,7 @@ public class OliphauntDatabase private constructor(
                     startupGucs = startupGucs,
                     extensions = validateGeneratedExtensionIds(extensions),
                 )
-            return OliphauntDatabase(engine.open(normalized))
+            return OliphauntDatabase(engine.open(normalized), normalized.admission)
         }
 
         internal suspend fun restore(
@@ -1219,11 +1279,11 @@ public class OliphauntTransaction internal constructor(
     }
 
     internal suspend fun <T> runTypedOperation(
-        request: ByteArray,
+        prepare: ((Long) -> Unit, Boolean) -> ByteArray,
         parser: (ByteArray) -> Pair<T, ReadyStatus>,
     ): T {
         ensureActiveHandle()
-        return database.runTypedOperation(request, token, parser)
+        return database.runTypedOperation(prepare, token, parser)
     }
 
     private fun ensureActiveHandle() {

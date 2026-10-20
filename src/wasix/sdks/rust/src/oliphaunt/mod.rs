@@ -3,17 +3,21 @@ pub(crate) mod assets;
 pub(crate) mod backend;
 pub(crate) mod base;
 pub(crate) mod builder;
+#[cfg(test)]
+mod checkpoint_tests;
 pub(crate) mod client;
 pub(crate) mod config;
 pub(crate) mod data_dir;
 pub(crate) mod database_root_descriptor;
 #[cfg(feature = "extensions")]
 pub(crate) mod extensions;
+pub(crate) mod host_runtime;
 pub(crate) mod lifecycle;
+pub use host_runtime::{HostRuntimeOptions, configure_host_runtime};
 pub(crate) mod postgres_mod;
+pub(crate) mod protocol_limits_generated;
 pub(crate) mod query;
 pub(crate) use oliphaunt_query as query_core;
-pub(crate) mod sql;
 pub(crate) mod storage;
 pub(crate) mod sync_host_fs;
 #[cfg(test)]

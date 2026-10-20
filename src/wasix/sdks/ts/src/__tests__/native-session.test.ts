@@ -29,6 +29,7 @@ const nativeMocks = {
 
 vi.mock('../hosts/node-api/native-addon.js', () => ({
   loadNativeWasixAddon: nativeMocks.loadAddon,
+  supportsNativeWorkerOutput: () => false,
   nativeTarget: () => ({ id: 'linux-x64-gnu' }),
 }));
 
@@ -265,6 +266,62 @@ describe('WASIX native embedded payload compatibility', () => {
     }
   });
 
+  it('checks the residual tool budget after script preparation at native submission', async () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    nativeMocks.loadAddon.mockReturnValue({ ...addon(), toolOptionsVersion: () => 1 });
+    try {
+      for (const owner of [NativeWasixSession, NativeWasixActorSession]) {
+        now = 0;
+        const session = await owner.open(workerOpenOptions());
+        await expect(
+          session.runTool({
+            runtimeVersion: '0.1.1',
+            tool: { ...toolDescriptor, name: 'psql' },
+            args: [],
+            startupTimeoutMs: 10,
+            get stdin() {
+              now = 11;
+              return new TextEncoder().encode('select 1');
+            },
+          }),
+        ).rejects.toThrow('startup exceeded 10ms');
+        expect(nativeMocks.psql).not.toHaveBeenCalled();
+        await session.close();
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('allows execution beyond the tool startup budget after native ownership transfers', async () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    nativeMocks.loadAddon.mockReturnValue({ ...addon(), toolOptionsVersion: () => 1 });
+    nativeMocks.pgDump.mockImplementation((_args, input) => {
+      expect(input.startupTimeoutMs).toBe(10);
+      now = 100;
+      return { status: 0, stdout: Uint8Array.of(1), stderr: new Uint8Array() };
+    });
+    try {
+      for (const owner of [NativeWasixSession, NativeWasixActorSession]) {
+        now = 0;
+        const session = await owner.open(workerOpenOptions());
+        await expect(
+          session.runTool({
+            runtimeVersion: '0.1.1',
+            tool: toolDescriptor,
+            args: [],
+            startupTimeoutMs: 10,
+          }),
+        ).resolves.toMatchObject({ exitCode: 0, stdout: Uint8Array.of(1) });
+        await session.close();
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('passes an immutable profile to direct and actor opens', async () => {
     const options = workerOpenOptions();
 
@@ -281,6 +338,131 @@ describe('WASIX native embedded payload compatibility', () => {
         { kind: 'memory' },
       ).profile,
     ).toBe('icu');
+  });
+
+  it.each([
+    false,
+    true,
+  ])('acknowledges each actor destination after settlement (failure=%s)', async (failed) => {
+    const acknowledgements: string[] = [];
+    let release!: () => void;
+    let entered!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const writing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const handle = actorDatabaseHandle();
+    handle.pgDumpToStream = async (_args, _assets, destination) => {
+      await Promise.all(
+        ['stdout', 'stderr'].map(
+          (stream) =>
+            new Promise<void>((resolve, reject) => {
+              destination[stream as 'stdout' | 'stderr']!({
+                chunk: Uint8Array.of(stream === 'stdout' ? 1 : 2),
+                acknowledge(error) {
+                  acknowledgements.push(stream);
+                  if (error === undefined) resolve();
+                  else reject(new Error(error));
+                },
+              });
+            }),
+        ),
+      );
+      return { stdoutBytes: 1, stderr: 'tail', stderrTruncated: false };
+    };
+    nativeMocks.actorOpen.mockResolvedValue(handle);
+    const session = await NativeWasixActorSession.open(workerOpenOptions());
+    const running = session.runTool({
+      runtimeVersion: '0.1.1',
+      tool: toolDescriptor,
+      args: [],
+      output: {
+        async stdout(chunk) {
+          expect(chunk).toEqual(Uint8Array.of(1));
+          entered();
+          await hold;
+          if (failed) throw Object.create(null);
+        },
+        async stderr(chunk) {
+          expect(chunk).toEqual(Uint8Array.of(2));
+        },
+      },
+    });
+    await writing;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(acknowledgements).toEqual(['stderr']);
+    release();
+    if (failed) {
+      await expect(running).rejects.toThrow('Oliphaunt WASIX tool destination failed');
+    } else {
+      await expect(running).resolves.toMatchObject({ stdoutBytes: 1, stdout: new Uint8Array() });
+    }
+    expect(acknowledgements).toEqual(['stderr', 'stdout']);
+    expect(nativeMocks.pgDump).not.toHaveBeenCalled();
+    await session.close();
+  });
+
+  it('rejects async direct destinations before loading or executing a tool', async () => {
+    const session = await NativeWasixSession.open(workerOpenOptions());
+    await expect(
+      session.runTool({
+        runtimeVersion: '0.1.1',
+        tool: { ...toolDescriptor, source: 'file:///does-not-exist' },
+        args: [],
+        output: { async stdout() {} },
+      }),
+    ).rejects.toThrow(/root or \/worker/);
+    expect(nativeMocks.pgDump).not.toHaveBeenCalled();
+    await session.close();
+  });
+
+  it('routes direct and actor file destinations without collecting stdout', async () => {
+    const write = vi.fn(
+      (..._args: Parameters<NonNullable<NativeWasixDatabaseHandle['pgDumpToFile']>>) => ({
+        stdoutBytes: 70 * 1024 * 1024,
+        stderr: 'tail',
+        stderrTruncated: true,
+      }),
+    );
+    const directHandle = { ...databaseHandle(), pgDumpToFile: write, psqlToFile: write };
+    const actorHandle = {
+      ...actorDatabaseHandle(),
+      pgDumpToFile: async (...args: Parameters<typeof directHandle.pgDumpToFile>) => write(...args),
+      psqlToFile: async (...args: Parameters<typeof directHandle.psqlToFile>) => write(...args),
+    };
+    nativeMocks.open.mockReturnValue(directHandle);
+    nativeMocks.actorOpen.mockResolvedValue(actorHandle);
+    for (const session of [
+      await NativeWasixSession.open(workerOpenOptions()),
+      await NativeWasixActorSession.open(workerOpenOptions()),
+    ]) {
+      for (const name of ['pg_dump', 'psql'] as const) {
+        const result = await session.runTool({
+          runtimeVersion: '0.1.1',
+          tool: { ...toolDescriptor, name },
+          args: [],
+          script: name === 'psql' ? 'SELECT 1' : undefined,
+          outputFile: '/host/out.sql',
+        });
+        expect(result).toMatchObject({
+          stdoutBytes: 70 * 1024 * 1024,
+          stdout: new Uint8Array(),
+          stderrTruncated: true,
+        });
+        expect(write.mock.calls.at(-1)).toEqual([
+          [],
+          expect.anything(),
+          '/host/out.sql',
+          undefined,
+          name === 'psql' ? 'SELECT 1' : undefined,
+        ]);
+      }
+      await session.close();
+    }
+    expect(nativeMocks.pgDump).not.toHaveBeenCalled();
+    expect(nativeMocks.psql).not.toHaveBeenCalled();
   });
 
   it('preserves transferable direct and actor protocol, backup, and tool bytes', async () => {

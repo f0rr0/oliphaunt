@@ -53,6 +53,7 @@ export async function withStreamDeadline<T>(
   let expired = false;
   let closing: Promise<void> | undefined;
   const expire = () => {
+    if (expired) return;
     expired = true;
     closing = Promise.resolve()
       .then(() => stream.close())
@@ -60,12 +61,21 @@ export async function withStreamDeadline<T>(
         failures.push(error);
       });
   };
-  const remaining = deadline - performance.now();
-  const timer = remaining > 0 ? setTimeout(expire, remaining) : undefined;
-  if (remaining <= 0) expire();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const check = () => {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) expire();
+    else timer = setTimeout(check, Math.ceil(remaining));
+  };
+  check();
   const [outcome] = await Promise.allSettled([
-    expired ? Promise.reject(timeoutError) : Promise.resolve().then(operation),
+    Promise.resolve().then(() => {
+      if (performance.now() >= deadline) expire();
+      if (expired) throw timeoutError;
+      return operation();
+    }),
   ]);
+  if (performance.now() >= deadline) expire();
   clearTimeout(timer);
   await closing;
   if (expired) failures.unshift(timeoutError);

@@ -52,6 +52,20 @@ impl Default for OliphauntBuilder {
 }
 
 impl OliphauntBuilder {
+    /// Bound owned process startup, independently of login and SQL deadlines.
+    #[cfg(feature = "desktop")]
+    pub fn startup_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.startup_timeout(timeout);
+        self
+    }
+
+    /// Bound owned process teardown. Requires broker or server placement.
+    #[cfg(feature = "desktop")]
+    pub fn shutdown_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.shutdown_timeout(timeout);
+        self
+    }
+
     /// Select an explicit cluster seed for a new database.
     pub fn seed(mut self, seed: liboliphaunt_native_bindings::NativeClusterSeed) -> Self {
         self.inner = self.inner.seed(seed);
@@ -91,6 +105,29 @@ impl OliphauntBuilder {
     /// Use an explicit broker helper executable with `broker().open()`.
     pub fn broker_executable(mut self, path: impl Into<PathBuf>) -> Self {
         self.inner = self.inner.broker_executable(path);
+        self
+    }
+
+    /// Set the helper's deadline for each login handshake. Defaults to five seconds.
+    /// Rounded up to whole milliseconds; valid range is 1..=2147483647 milliseconds.
+    /// This requires broker mode and does not limit queries or backups.
+    #[cfg(feature = "desktop")]
+    pub fn broker_handshake_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.broker_handshake_timeout(timeout);
+        self
+    }
+
+    /// Grace for a cancelled disconnected stream to drain before helper retirement.
+    #[cfg(feature = "desktop")]
+    pub fn broker_recovery_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.broker_recovery_timeout(timeout);
+        self
+    }
+
+    /// Bound pending logins per endpoint; management has an independent allowance.
+    #[cfg(feature = "desktop")]
+    pub fn broker_max_pending_handshakes(mut self, count: u32) -> Self {
+        self.inner = self.inner.broker_max_pending_handshakes(count);
         self
     }
 
@@ -150,6 +187,20 @@ pub struct OliphauntServerBuilder {
 }
 
 impl OliphauntServerBuilder {
+    /// Bound owned process startup, independently of login and SQL deadlines.
+    #[cfg(feature = "desktop")]
+    pub fn startup_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.startup_timeout(timeout);
+        self
+    }
+
+    /// Bound owned process teardown. Requires broker or server placement.
+    #[cfg(feature = "desktop")]
+    pub fn shutdown_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.shutdown_timeout(timeout);
+        self
+    }
+
     /// Select independently packaged ICU data and its receipt.
     pub fn icu_data(mut self, data: liboliphaunt_native_bindings::NativeResourceDirectory) -> Self {
         self.inner = self.inner.icu_data(data);
@@ -531,6 +582,18 @@ impl Oliphaunt {
             .as_deref_mut()
             .ok_or(Error::EngineStopped)?
             .backup()
+    }
+
+    /// Stream a physical backup to a borrowed writer without retaining the archive.
+    ///
+    /// The caller owns flushing and publication. A failed destination may contain
+    /// a partial archive and must not be published as a successful backup.
+    pub fn backup_to(&mut self, writer: &mut dyn std::io::Write) -> Result<()> {
+        self.ensure_ready()?;
+        self.session
+            .as_deref_mut()
+            .ok_or(Error::EngineStopped)?
+            .backup_to(writer)
     }
 
     /// Close the database synchronously.

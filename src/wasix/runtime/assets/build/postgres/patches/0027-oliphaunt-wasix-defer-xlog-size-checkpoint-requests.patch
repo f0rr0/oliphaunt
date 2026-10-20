@@ -1,0 +1,21 @@
+From: Sid Jain <sid_26@outlook.com>
+Subject: [PATCH] Service deferred checkpoints at WASIX idle query boundaries
+
+The shared embedded-wal-pressure-checkpoint patch owns the pending request.
+Service it only outside transactions before the next ReadyForQuery response,
+while the loop step still owns its live ERROR recovery frame. The exported
+ReadyForQuery helper runs after that frame has returned to the host.
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -5037,6 +5037,9 @@ PostgresMainLoopOnce(void)
+ 	}
+ #ifdef OLIPHAUNT_WASM_SINGLE_USER
++	/* Checkpoint I/O may ERROR; retain this call's recovery frame. */
++	if (send_ready_for_query && !IsTransactionOrTransactionBlock())
++		OliphauntPerformDeferredCheckpoint();
+ 	PG_exception_stack = NULL;
+ 	return OLIPHAUNT_WASM_MAIN_LOOP_PROCESSED;
+ #endif
+ }

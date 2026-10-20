@@ -15,6 +15,15 @@ import { requireNodeStorage } from '../hosts/node-api/node-client-common.js';
 beforeEach(() => nativeMocks.open.mockReset());
 
 describe('WASIX Node actor routing', () => {
+  it('rejects lifecycle budgets before starting an uninterruptible native owner', () => {
+    for (const timeouts of [{ startupTimeoutMs: 10 }, { shutdownTimeoutMs: 10 }]) {
+      expect(() => requireNodeStorage({ ...workerOpenOptions(), timeouts })).toThrow(
+        'quiescent cleanup',
+      );
+    }
+    expect(nativeMocks.open).not.toHaveBeenCalled();
+  });
+
   it('opens one asynchronous native actor session for the root placement', async () => {
     const options = workerOpenOptions();
     const session = {} as NativeWasixActorSession;

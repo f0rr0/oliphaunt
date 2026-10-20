@@ -14,7 +14,9 @@ pub use error::{
     StorageCommitState, StorageErrorCode, StorageErrorDetails, StorageErrorPhase, TransactionError,
     TransactionResult,
 };
-pub use oliphaunt::{CatalogProfile, ClusterSeed, IcuData};
+pub use oliphaunt::{
+    CatalogProfile, ClusterSeed, HostRuntimeOptions, IcuData, configure_host_runtime,
+};
 pub use oliphaunt::{
     CommandResult, DatabaseStorage, DecodeError, ExecResult, FromSql, IntoParameter, Oliphaunt,
     OliphauntBuilder, Parameter, PostgresError, PostgresErrorField, PostgresNotice, QueryField,
@@ -26,8 +28,12 @@ pub use oliphaunt::{
 #[cfg(feature = "tools-execution")]
 pub mod tools {
     pub use crate::oliphaunt::tools::{
-        PgDumpOptions, PostgresToolError, PostgresToolOutput, PsqlOptions, ToolAssets,
+        PgDumpOptions, PostgresToolError, PostgresToolOutput, PostgresToolSummary, PsqlOptions,
+        ToolAssets,
     };
 }
 
 pub mod session;
+
+/// Admission policy shared by asynchronous database owners.
+pub use oliphaunt_query::AdmissionLimits;

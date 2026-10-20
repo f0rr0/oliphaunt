@@ -10,6 +10,7 @@ import com.facebook.react.bridge.ReadableType
 import com.facebook.react.turbomodule.core.interfaces.BindingsInstallerHolder
 import com.facebook.react.turbomodule.core.interfaces.TurboModuleWithJSIBindings
 import com.facebook.soloader.SoLoader
+import dev.oliphaunt.AdmissionLimits
 import dev.oliphaunt.DatabaseStorage
 import dev.oliphaunt.Oliphaunt
 import dev.oliphaunt.OliphauntBroker
@@ -18,6 +19,7 @@ import dev.oliphaunt.OliphauntBrokerOptions
 import dev.oliphaunt.OliphauntConfig
 import dev.oliphaunt.OliphauntDatabase
 import dev.oliphaunt.PostgresStartupGuc
+import dev.oliphaunt.backup
 import dev.oliphaunt.withOliphauntBridgeDeadline
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -41,6 +43,24 @@ private class ReactNativeProtocolStreamCallbackFailure(
 ) : RuntimeException(callbackError.message, callbackError)
 
 internal const val REACT_NATIVE_MAX_SAFE_INTEGER_HANDLE: Long = 9_007_199_254_740_991L
+
+internal fun ReadableMap.positiveInteger(key: String): Long? {
+  if (!hasKey(key) || isNull(key)) return null
+  require(getType(key) == ReadableType.Number) { "$key must be a number" }
+  val value = getDouble(key)
+  require(value.isFinite() && value > 0 && value <= 9_007_199_254_740_991.0 && value.toLong().toDouble() == value) {
+    "invalid positive integer for $key"
+  }
+  return value.toLong()
+}
+
+internal fun ReadableMap.admissionLimits(): AdmissionLimits? {
+  if (!hasKey("admissionMaxPendingOperations") && !hasKey("admissionHighWaterMarkBytes")) return null
+  val count = positiveInteger("admissionMaxPendingOperations") ?: throw IllegalArgumentException("missing admission count")
+  require(count <= Int.MAX_VALUE) { "admission count exceeds mobile integer range" }
+  val bytes = positiveInteger("admissionHighWaterMarkBytes") ?: throw IllegalArgumentException("missing admission watermark")
+  return AdmissionLimits(count.toInt(), bytes)
+}
 
 internal fun requireReactNativeHandle(handle: Double): Long {
   if (
@@ -259,6 +279,34 @@ class OliphauntModule(
     }
   }
 
+  @DoNotStrip
+  fun backupToFile(
+    handle: Long,
+    destination: String,
+    deadline: Long,
+    callback: OliphauntJsiPromiseCallback,
+  ) {
+    val key = try {
+      requireReactNativeHandle(handle)
+    } catch (error: IllegalArgumentException) {
+      callback.reject("liboliphaunt_invalid_handle", error.message)
+      return
+    }
+    val session = sessions[key]
+    if (session == null) {
+      callback.reject("liboliphaunt_unknown_handle", "unknown Oliphaunt handle")
+      return
+    }
+    scope.launch {
+      runCatching {
+        withOliphauntBridgeDeadline(deadline) { session.backup(File(destination)) }
+      }.fold(
+        onSuccess = { callback.resolveUnit() },
+        onFailure = { error -> callback.reject(error) },
+      )
+    }
+  }
+
   /** Best-effort cleanup for an exact forgotten JavaScript owner generation. */
   @DoNotStrip
   fun closeIfGeneration(generation: Long) {
@@ -356,6 +404,8 @@ class OliphauntModule(
     storageName: String?,
     startupTimeoutMs: Long,
     operationTimeoutMs: Long,
+    recoveryTimeoutMs: Long,
+    shutdownTimeoutMs: Long,
     artifact: ByteArray,
     callback: OliphauntJsiPromiseCallback,
   ) {
@@ -367,11 +417,11 @@ class OliphauntModule(
           try {
             archive.outputStream().use { it.write(artifact) }
             OliphauntBroker.restore(reactContext, DatabaseStorage.ApplicationData(validateApplicationDataName(storageName)), archive,
-              OliphauntBrokerOptions(startupTimeoutMs.takeIf { it > 0 } ?: 30_000, operationTimeoutMs.takeIf { it > 0 }))
+              OliphauntBrokerOptions(startupTimeoutMs.takeIf { it > 0 } ?: 30_000, operationTimeoutMs.takeIf { it > 0 }, recoveryTimeoutMs.takeIf { it > 0 } ?: 3_000, shutdownTimeoutMs.takeIf { it > 0 } ?: 3_000))
           } finally { archive.delete() }
           return@runCatching
         }
-        require(startupTimeoutMs == 0L && operationTimeoutMs == 0L) { "broker timeouts require a broker native build" }
+        require(startupTimeoutMs == 0L && operationTimeoutMs == 0L && recoveryTimeoutMs == 0L && shutdownTimeoutMs == 0L) { "broker timeouts require a broker native build" }
         val storage = when (storageKind) {
           "directory" -> DatabaseStorage.Directory(File(validatePath(storagePath, "restore destination directory")))
           "applicationData" -> DatabaseStorage.ApplicationData(validateApplicationDataName(storageName))
@@ -431,19 +481,14 @@ class OliphauntModule(
     val username = config.startupIdentity("username")
     val database = config.startupIdentity("database")
 
-    require(getTopology() == "broker" || (!config.hasKey("startupTimeoutMs") && !config.hasKey("operationTimeoutMs"))) {
+    require(getTopology() == "broker" || listOf("startupTimeoutMs", "operationTimeoutMs", "recoveryTimeoutMs", "shutdownTimeoutMs").none(config::hasKey)) {
       "broker timeouts require a broker native build"
     }
-    fun timeout(key: String): Long? {
-      if (!config.hasKey(key) || config.isNull(key)) return null
-      val value = config.getDouble(key)
-      require(value.isFinite() && value > 0 && value <= 9007199254740991.0 && value.toLong().toDouble() == value) { "invalid broker timeout" }
-      return value.toLong()
-    }
     return ReactNativeAndroidOpenConfig(
-      broker = OliphauntBrokerOptions(timeout("startupTimeoutMs") ?: 30000, timeout("operationTimeoutMs")),
+      broker = OliphauntBrokerOptions(config.positiveInteger("startupTimeoutMs") ?: 30000, config.positiveInteger("operationTimeoutMs"), config.positiveInteger("recoveryTimeoutMs") ?: 3_000, config.positiveInteger("shutdownTimeoutMs") ?: 3_000),
       config = OliphauntConfig(
         storage = storage,
+        admission = config.admissionLimits(),
         startupGucs = config.startupGucs("startupGUCs"),
         username = username,
         database = database,

@@ -271,3 +271,31 @@ mechanics under its own cpp directory with runtime-scoped ownership and thin
 platform adapters, retaining actual SDK integration. Final task20 and acceptance
 depend on these tasks. Generated bindings do not themselves implement mobile
 process isolation or replace platform-specific application integration.
+
+## Binding amendment — native broker exchange completion
+
+This amendment replaces the 10a/10b requirement that SDK query transport itself
+use an unframed PostgreSQL connection. Desktop and mobile native brokers share
+one private record codec around unchanged PostgreSQL bytes. A generation/request
+identity, declared input extent, bounded Data records and explicit End belong
+to one operation until its ordered terminal outcome. Native completion comes
+from PostgreSQL's synchronized read checkpoint with exhausted input, rather than
+predicted frontend Sync or ReadyForQuery counts. The finite C exchange accepts
+fragments on an independent producer and never manufactures a missing Sync.
+
+The standard PostgreSQL listener remains for external drivers, with normal
+Flush/Sync, COPY and CancelRequest behavior. SDK cancellation instead uses a
+bounded one-shot authenticated management request tied to the captured
+generation/request; stale cancellation cannot reach later work. Callback failure
+drains to the matching terminal, while unknown execution requires reopening.
+The broker acknowledges a best-effort cancellation attempt and ignores stale
+identities; the receipt does not settle execution. The exchange terminal remains
+the authority for execution and connection health.
+No new application SDK methods, resource options or replay behavior follow from
+this transport change.
+
+Lifecycle work follows the existing
+[owned deadline phases](resource-policy.md#lifecycle-deadline-boundaries).
+Expiry never proves resource release, rollback or safe replay. Qualification
+belongs to the affected runtime and final consumers; this amendment makes no
+benchmark or completed-test claim.

@@ -24,6 +24,12 @@ Async clones share one PostgreSQL session. They are not a connection pool.
 
 Server builders terminate with `start()`. Listener and server executable options belong to server builders; the broker executable option belongs to broker mode.
 
+Desktop broker builders accept `.broker_handshake_timeout(Duration)`, defaulting
+to five seconds per accepted SQL or management connection. The deadline ends
+after login and does not limit queries or backups. Both database builders expose
+it; direct and server modes do not accept it. See [broker login settings](/docs/reference/performance#configure-broker-login)
+for duration rounding, the accepted range and tradeoff.
+
 ## Queries and results
 
 | Operation | Purpose |
@@ -52,9 +58,9 @@ Use structured PostgreSQL error fields, including SQLSTATE, to classify database
 
 `close()` reports teardown errors and makes the handle terminal. `is_closed()` reports its state. Use `cancel_handle()` for out-of-thread cancellation of synchronous work, or `cancel().await` on the async type.
 
-Desktop broker startup and authentication, cancellation transport, and close-control I/O have deadlines. These deadlines do not limit ordinary SQL execution. PostgreSQL cancellation sends a request without waiting for an acknowledgement.
+Desktop broker startup and authentication, cancellation transport, and close-control I/O have deadlines. These deadlines do not limit ordinary SQL execution. Broker cancellation targets the request active when called; delayed delivery cannot cancel a later request. The cancellation receipt acknowledges a best-effort attempt; wait for the operation's result to observe cancellation or normal completion.
 
-Set `OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS` or `OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS` to tune startup (default 20,000 ms). `OLIPHAUNT_CONTROL_TIMEOUT_MS` tunes cancellation transport, close-control I/O, and each graceful or forced process-reaping phase (default 5,000 ms). Values must be integer milliseconds from 1 through 2,147,483,647; an unset or empty value uses the default. Each desktop session captures these settings at open, so later environment changes do not alter its cleanup budget.
+Set `OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS` or `OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS` to tune startup (default 20,000 ms). `OLIPHAUNT_CONTROL_TIMEOUT_MS` tunes cancellation transport and the graceful shutdown allowance (default 5,000 ms), followed by a separate forced-reap allowance of the same length. Stop commands, control receipts and process waiting share the graceful deadline. Values must be integer milliseconds from 1 through 2,147,483,647; an unset or empty value uses the default. Each desktop session captures these settings at open, so later environment changes do not alter its cleanup budget. These allowances do not bound filesystem cleanup or prove that an unreaped process has stopped.
 
 Server handles expose `connection_string()`, closed state, and close. Querying, pooling, and logical tools use ordinary PostgreSQL connections.
 

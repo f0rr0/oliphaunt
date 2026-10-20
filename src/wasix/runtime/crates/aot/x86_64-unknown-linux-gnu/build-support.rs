@@ -182,7 +182,7 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
 
 fn write_source_only_aot(out: &Path, target: &str) {
     let manifest = format!(
-        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"llvm-opta\",\"wasmer-version\":\"7.2.1\",\"wasmer-wasix-version\":\"0.702.1\",\"artifacts\":[]}}"
+        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"llvm-opta\",\"wasmer-version\":\"7.5.0\",\"wasmer-wasix-version\":\"0.705.0\",\"artifacts\":[]}}"
     );
     let text = format!(
         "pub const TARGET_TRIPLE: &str = {target:?};\n\
@@ -225,6 +225,11 @@ fn write_core_aot_manifest(source: &Path, destination: &Path) -> Vec<String> {
     let text = fs::read_to_string(source).expect("read generated WASIX AOT manifest");
     let mut manifest: serde_json::Value =
         serde_json::from_str(&text).expect("parse generated WASIX AOT manifest");
+    assert_eq!(
+        manifest.get("engine").and_then(serde_json::Value::as_str),
+        Some("llvm-opta"),
+        "stale WASIX AOT profile; rebuild artifacts before compiling the carrier"
+    );
     let artifacts = manifest
         .get_mut("artifacts")
         .and_then(|value| value.as_array_mut())

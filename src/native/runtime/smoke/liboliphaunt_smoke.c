@@ -33,6 +33,7 @@
 #else
 #include <dirent.h>
 #include <errno.h>
+#include <signal.h>
 #include <time.h>
 #include <unistd.h>
 #endif
@@ -103,6 +104,55 @@ static const char *last_error_message(OliphauntHandle *handle) {
     return last_error_buffer;
 }
 
+#ifndef _WIN32
+static volatile sig_atomic_t host_sigusr1_sentinel_calls = 0;
+
+static void host_sigusr1_sentinel(int signo) {
+    if (signo == SIGUSR1) {
+        host_sigusr1_sentinel_calls++;
+    }
+}
+
+static int install_host_sigusr1_sentinel(struct sigaction *previous) {
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = host_sigusr1_sentinel;
+    if (sigemptyset(&action.sa_mask) != 0 || sigaction(SIGUSR1, &action, previous) != 0) {
+        fprintf(stderr, "could not install host SIGUSR1 sentinel: %s\n", strerror(errno));
+        return 1;
+    }
+    return 0;
+}
+
+static int verify_host_sigusr1_sentinel(const struct sigaction *previous) {
+    struct sigaction current;
+
+    if (sigaction(SIGUSR1, NULL, &current) != 0) {
+        fprintf(stderr, "could not inspect host SIGUSR1 sentinel: %s\n", strerror(errno));
+        return 1;
+    }
+    if (current.sa_handler != host_sigusr1_sentinel) {
+        fprintf(stderr, "embedded PostgreSQL replaced the host SIGUSR1 handler\n");
+        return 1;
+    }
+    if (host_sigusr1_sentinel_calls != 0) {
+        fprintf(stderr, "embedded PostgreSQL emitted %d host SIGUSR1 signal(s)\n",
+                (int)host_sigusr1_sentinel_calls);
+        return 1;
+    }
+    if ((raise)(SIGUSR1) != 0 || host_sigusr1_sentinel_calls != 1) {
+        fprintf(stderr, "host SIGUSR1 sentinel was not callable after embedded shutdown\n");
+        return 1;
+    }
+    if (sigaction(SIGUSR1, previous, NULL) != 0) {
+        fprintf(stderr, "could not restore host SIGUSR1 handler: %s\n", strerror(errno));
+        return 1;
+    }
+    return 0;
+}
+#endif
+
 Datum liboliphaunt_smoke_static_answer(PG_FUNCTION_ARGS) {
     (void)fcinfo;
     PG_RETURN_INT32(2718);
@@ -123,6 +173,26 @@ static void push_query(unsigned char **buf, size_t *len, const char *sql) {
     (*buf)[3] = (unsigned char)((frame_len >> 8) & 0xff);
     (*buf)[4] = (unsigned char)(frame_len & 0xff);
     memcpy(*buf + 5, sql, sql_len);
+}
+
+static void push_extended_query(unsigned char **buf, size_t *len, const char *sql) {
+    static const unsigned char tail[] = {
+        'B', 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0,
+        'E', 0, 0, 0, 9, 0, 0, 0, 0, 0,
+        'S', 0, 0, 0, 4,
+    };
+    size_t sql_len = strlen(sql) + 1;
+    size_t parse_len = sql_len + 8;
+    size_t frame_len = parse_len - 1;
+    *len = parse_len + sizeof(tail);
+    *buf = (unsigned char *)calloc(*len, 1);
+    (*buf)[0] = 'P';
+    (*buf)[1] = (unsigned char)(frame_len >> 24);
+    (*buf)[2] = (unsigned char)(frame_len >> 16);
+    (*buf)[3] = (unsigned char)(frame_len >> 8);
+    (*buf)[4] = (unsigned char)frame_len;
+    memcpy(*buf + 6, sql, sql_len);
+    memcpy(*buf + parse_len, tail, sizeof(tail));
 }
 
 static int expect_error_contains(OliphauntHandle *db, const char *context, const char *needle) {
@@ -440,8 +510,9 @@ static int register_static_extension_fixture(void) {
     return 0;
 }
 
-static int contains_tag(const OliphauntResponse *response, unsigned char tag) {
+static int count_tag(const OliphauntResponse *response, unsigned char tag) {
     size_t off = 0;
+    int count = 0;
     while (off + 5 <= response->len) {
         unsigned char current = response->data[off];
         uint32_t len = ((uint32_t)response->data[off + 1] << 24) |
@@ -452,11 +523,15 @@ static int contains_tag(const OliphauntResponse *response, unsigned char tag) {
             return 0;
         }
         if (current == tag) {
-            return 1;
+            count++;
         }
         off += 1 + len;
     }
-    return 0;
+    return count;
+}
+
+static int contains_tag(const OliphauntResponse *response, unsigned char tag) {
+    return count_tag(response, tag) != 0;
 }
 
 static int contains_bytes(const OliphauntResponse *response, const char *needle) {
@@ -1155,6 +1230,7 @@ static int32_t finish_incremental_input(void *context, const uint8_t *data, size
     if (probe->token == 0) {
         static const uint8_t sync[] = {'S', 0, 0, 0, 4};
         static const uint8_t extra_sync[] = {'S', 0, 0, 0, 4, 'S', 0, 0, 0, 4};
+        static const uint8_t query[] = {'Q', 0, 0, 0, 5, 0};
         OliphauntErrorCapture error;
         probe->token = oliphaunt_protocol_stream_token(probe->db);
         if (probe->token == 0 || probe->token == probe->previous_token ||
@@ -1166,6 +1242,10 @@ static int32_t finish_incremental_input(void *context, const uint8_t *data, size
                 sync, sizeof(sync) - 1, &error) != -1 ||
             oliphaunt_feed_protocol_stream(probe->db, probe->token,
                 extra_sync, sizeof(extra_sync), &error) != -1) {
+            probe->failed = 1;
+        }
+        if (oliphaunt_feed_protocol_stream(probe->db, probe->token,
+                query, sizeof(query), &error) != -1) {
             probe->failed = 1;
         }
         if (oliphaunt_feed_protocol_stream(probe->db, probe->token,
@@ -1190,8 +1270,12 @@ static int exec_incremental_input(OliphauntHandle *db) {
         int rc = oliphaunt_exec_protocol_raw_stream(db, parse_flush, sizeof(parse_flush),
             finish_incremental_input, &probe);
         OliphauntResponse response = {.data = probe.response.data, .len = probe.response.len};
+        static const uint8_t sync[] = {'S', 0, 0, 0, 4};
+        OliphauntErrorCapture error = {0};
         int failed = rc != 0 || probe.failed || probe.token == 0 ||
             oliphaunt_protocol_stream_token(db) != 0 ||
+            oliphaunt_feed_protocol_stream_wait(db, probe.token, sync, sizeof(sync), &error) !=
+                OLIPHAUNT_STREAM_INPUT_FINISHED || error.length != 0 ||
             !contains_tag(&response, '1') || !contains_tag(&response, 'Z');
         free(probe.response.data);
         if (failed) {
@@ -1203,21 +1287,42 @@ static int exec_incremental_input(OliphauntHandle *db) {
     return 0;
 }
 
+static int feed_stream_when_available(
+    OliphauntHandle *db, uint64_t token, const uint8_t *data, size_t len) {
+    struct timespec deadline;
+    if (timespec_get(&deadline, TIME_UTC) != TIME_UTC) return 1;
+    deadline.tv_sec += 5;
+    OliphauntErrorCapture error;
+    for (;;) {
+        int32_t rc = oliphaunt_feed_protocol_stream(db, token, data, len, &error);
+        if (rc != OLIPHAUNT_STREAM_INPUT_BUSY) return rc != 0 || error.length != 0;
+        pthread_mutex_lock(&db->mutex);
+        while (db->input_len != 0) {
+            if (pthread_cond_timedwait(&db->input_cond, &db->mutex, &deadline) != 0) {
+                pthread_mutex_unlock(&db->mutex);
+                return 1;
+            }
+        }
+        pthread_mutex_unlock(&db->mutex);
+    }
+}
+
 static int32_t feed_copy_input(void *context, const uint8_t *data, size_t len) {
     IncrementalInputProbe *probe = context;
     int rc = append_stream_chunk(&probe->response, data, len);
     OliphauntResponse response = {.data = probe->response.data, .len = probe->response.len};
     if (probe->token == 0 && contains_tag(&response, 'G')) {
         static const uint8_t sync[] = {'S', 0, 0, 0, 4};
+        static const uint8_t flush[] = {'H', 0, 0, 0, 4};
         static const uint8_t copy[] = {'d', 0, 0, 0, 7, '4', '2', '\n', 'c', 0, 0, 0, 4};
         static const uint8_t fail[] = {'f', 0, 0, 0, 12, 'a', 'b', 'o', 'r', 't', 'e', 'd', 0};
         const uint8_t *input = probe->previous_token ? fail : copy;
         size_t input_len = probe->previous_token ? sizeof(fail) : sizeof(copy);
-        OliphauntErrorCapture error;
         probe->token = oliphaunt_protocol_stream_token(probe->db);
         if (probe->token == 0 ||
-            oliphaunt_feed_protocol_stream(probe->db, probe->token, sync, sizeof(sync), &error) != -1 ||
-            oliphaunt_feed_protocol_stream(probe->db, probe->token, input, input_len, &error) != 0 ||
+            feed_stream_when_available(probe->db, probe->token, flush, sizeof(flush)) != 0 ||
+            feed_stream_when_available(probe->db, probe->token, sync, sizeof(sync)) != 0 ||
+            feed_stream_when_available(probe->db, probe->token, input, input_len) != 0 ||
             oliphaunt_protocol_stream_token(probe->db) != 0) probe->failed = 1;
     }
     return rc;
@@ -1248,6 +1353,291 @@ static int exec_incremental_copy(OliphauntHandle *db) {
     return failed || exec_simple_query_expect_bytes(db, "SELECT count(*) FROM incremental_copy", "1");
 }
 
+static int exec_complete_copy_batches(OliphauntHandle *db) {
+    static const uint8_t copy_end[] = {
+        'd', 0, 0, 0, 7, '4', '2', '\n',
+        'c', 0, 0, 0, 4, 'S', 0, 0, 0, 4,
+    };
+    for (int backend_error = 0; backend_error <= 1; backend_error++) {
+        for (int streaming = 0; streaming <= 1; streaming++) {
+            unsigned char *query = NULL, *following = NULL;
+            size_t query_len = 0, following_len = 0;
+            push_extended_query(&query, &query_len, backend_error
+                ? "SELECT 1 / 0" : "COPY incremental_copy FROM STDIN");
+            push_query(&following, &following_len, "SELECT 'copy-batch-finished'");
+            query = realloc(query, query_len + sizeof(copy_end) + following_len);
+            memcpy(query + query_len, copy_end, sizeof(copy_end));
+            memcpy(query + query_len + sizeof(copy_end), following, following_len);
+            query_len += sizeof(copy_end) + following_len;
+            free(following);
+
+            StreamAccumulator acc = {0};
+            OliphauntResponse response = {0};
+            int rc = streaming
+                ? oliphaunt_exec_protocol_raw_stream(db, query, query_len, append_stream_chunk, &acc)
+                : oliphaunt_exec_protocol(db, query, query_len, &response);
+            free(query);
+            if (streaming) response = (OliphauntResponse){.data = acc.data, .len = acc.len};
+            int failed = rc != 0 || count_tag(&response, 'Z') != (backend_error ? 3 : 2) ||
+                contains_tag(&response, 'E') != backend_error ||
+                !contains_bytes(&response, "copy-batch-finished");
+            oliphaunt_free_response(&response);
+            if (failed) {
+                fprintf(stderr, "complete COPY batch failed: streaming=%d error=%d: %s\n",
+                        streaming, backend_error, last_error_message(db));
+                return 1;
+            }
+        }
+    }
+    return exec_simple_query_expect_bytes(db, "SELECT count(*) FROM incremental_copy", "3");
+}
+
+typedef struct CopyAbortProbe {
+    OliphauntHandle *db;
+    int waiting_after_copy_sync;
+} CopyAbortProbe;
+
+static int32_t fail_after_copy_sync(void *context, const uint8_t *data, size_t len) {
+    (void)data;
+    (void)len;
+    CopyAbortProbe *probe = context;
+    /* Wait until COPY consumed its initial input and is requesting more. */
+    for (int attempt = 0; attempt < 1000; attempt++) {
+        pthread_mutex_lock(&probe->db->mutex);
+        probe->waiting_after_copy_sync = probe->db->stream_copy_input &&
+            probe->db->protocol_waiting_input;
+        pthread_mutex_unlock(&probe->db->mutex);
+        if (probe->waiting_after_copy_sync) break;
+        smoke_sleep_millis(1);
+    }
+    return -1;
+}
+
+static int exec_copy_callback_failure_after_sync(OliphauntHandle *db) {
+    unsigned char *query = NULL;
+    size_t query_len = 0;
+    push_extended_query(&query, &query_len, "COPY incremental_copy FROM STDIN");
+    CopyAbortProbe probe = {.db = db};
+    int rc = oliphaunt_exec_protocol_raw_stream(db, query, query_len, fail_after_copy_sync, &probe);
+    free(query);
+    if (rc != OLIPHAUNT_STREAM_CALLBACK_ABORTED || !probe.waiting_after_copy_sync) return 1;
+    OliphauntResponse response = {0};
+    const char *sql = "SELECT 'copy-abort-recovered'";
+    rc = oliphaunt_exec_simple_query(db, sql, strlen(sql), &response);
+    int failed = rc != 0 || count_tag(&response, 'Z') != 1 ||
+        !contains_bytes(&response, "copy-abort-recovered") || contains_tag(&response, 'E');
+    oliphaunt_free_response(&response);
+    return failed;
+}
+
+typedef struct FiniteExchangeProbe {
+    OliphauntHandle *db;
+    const uint8_t *input;
+    size_t input_len;
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    uint64_t token;
+    bool operation_returned;
+    bool end_after_ready;
+    bool saw_ready;
+    bool reject_output;
+    int producer_failed;
+    size_t output_calls;
+    StreamAccumulator response;
+} FiniteExchangeProbe;
+
+static int32_t start_finite_exchange(void *context, uint64_t token) {
+    FiniteExchangeProbe *probe = context;
+    pthread_mutex_lock(&probe->mutex);
+    int failed = token == 0 || probe->token != 0;
+    probe->token = token;
+    pthread_cond_broadcast(&probe->condition);
+    pthread_mutex_unlock(&probe->mutex);
+    return failed ? -1 : 0;
+}
+
+static void *feed_finite_exchange(void *context) {
+    FiniteExchangeProbe *probe = context;
+    pthread_mutex_lock(&probe->mutex);
+    while (probe->token == 0 && !probe->operation_returned)
+        pthread_cond_wait(&probe->condition, &probe->mutex);
+    uint64_t token = probe->token;
+    pthread_mutex_unlock(&probe->mutex);
+    if (token == 0) {
+        probe->producer_failed = 1;
+        return NULL;
+    }
+
+    /* Split the first header and then repeatedly split message bodies. */
+    static const size_t fragments[] = {1, 2, 1, 3, 17, 65536};
+    size_t offset = 0, index = 0;
+    OliphauntErrorCapture error;
+    while (offset < probe->input_len) {
+        size_t length = fragments[index++ % (sizeof(fragments) / sizeof(fragments[0]))];
+        if (length > probe->input_len - offset) length = probe->input_len - offset;
+        if (oliphaunt_feed_protocol_exchange(probe->db, token,
+                probe->input + offset, length, &error) != 0 || error.length != 0) {
+            probe->producer_failed = 1;
+            return NULL;
+        }
+        offset += length;
+    }
+    if (probe->end_after_ready) {
+        struct timespec deadline;
+        if (timespec_get(&deadline, TIME_UTC) != TIME_UTC) {
+            probe->producer_failed = 1;
+            return NULL;
+        }
+        deadline.tv_sec += 5;
+        pthread_mutex_lock(&probe->mutex);
+        while (!probe->saw_ready && !probe->operation_returned) {
+            if (pthread_cond_timedwait(&probe->condition, &probe->mutex, &deadline) != 0) {
+                probe->producer_failed = 1;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&probe->mutex);
+    }
+    if (oliphaunt_finish_protocol_exchange(probe->db, token, &error) != 0 || error.length != 0)
+        probe->producer_failed = 1;
+    return NULL;
+}
+
+static int32_t collect_finite_exchange(void *context, const uint8_t *data, size_t len) {
+    FiniteExchangeProbe *probe = context;
+    probe->output_calls++;
+    if (probe->reject_output) return 47;
+    int32_t rc = append_stream_chunk(&probe->response, data, len);
+    OliphauntResponse response = {.data = probe->response.data, .len = probe->response.len};
+    if (contains_tag(&response, 'Z')) {
+        pthread_mutex_lock(&probe->mutex);
+        probe->saw_ready = true;
+        pthread_cond_broadcast(&probe->condition);
+        pthread_mutex_unlock(&probe->mutex);
+    }
+    return rc;
+}
+
+static void append_finite_query(unsigned char **input, size_t *input_len, const char *sql) {
+    unsigned char *query = NULL;
+    size_t query_len = 0;
+    push_query(&query, &query_len, sql);
+    *input = realloc(*input, *input_len + query_len);
+    memcpy(*input + *input_len, query, query_len);
+    *input_len += query_len;
+    free(query);
+}
+
+static int run_finite_exchange(FiniteExchangeProbe *probe, int32_t *result) {
+    if (pthread_mutex_init(&probe->mutex, NULL) != 0) return 1;
+    if (pthread_cond_init(&probe->condition, NULL) != 0) {
+        pthread_mutex_destroy(&probe->mutex);
+        return 1;
+    }
+    pthread_t feeder;
+    if (pthread_create(&feeder, NULL, feed_finite_exchange, probe) != 0) {
+        pthread_cond_destroy(&probe->condition);
+        pthread_mutex_destroy(&probe->mutex);
+        return 1;
+    }
+    OliphauntErrorCapture error;
+    *result = oliphaunt_exec_protocol_exchange_with_error(probe->db, probe->input_len,
+        start_finite_exchange, probe, collect_finite_exchange, probe, &error);
+    pthread_mutex_lock(&probe->mutex);
+    probe->operation_returned = true;
+    pthread_cond_broadcast(&probe->condition);
+    pthread_mutex_unlock(&probe->mutex);
+    pthread_join(feeder, NULL);
+    pthread_cond_destroy(&probe->condition);
+    pthread_mutex_destroy(&probe->mutex);
+    if ((*result == 0 && error.length != 0) || (*result != 0 && error.length == 0)) return 1;
+    return probe->producer_failed;
+}
+
+static int exec_finite_exchanges(OliphauntHandle *db) {
+    unsigned char *query = NULL;
+    size_t query_len = 0;
+    push_query(&query, &query_len, "SELECT repeat('x', 131072)");
+    append_finite_query(&query, &query_len, "SELECT 'finite-fragments-finished'");
+    FiniteExchangeProbe probe = {.db = db, .input = query, .input_len = query_len,
+                                .end_after_ready = true};
+    int32_t rc = -1;
+    int failed = run_finite_exchange(&probe, &rc);
+    OliphauntResponse response = {.data = probe.response.data, .len = probe.response.len};
+    failed |= rc != 0 || !probe.saw_ready || count_tag(&response, 'Z') != 2 ||
+        !contains_bytes(&response, "finite-fragments-finished");
+    OliphauntErrorCapture error;
+    failed |= oliphaunt_feed_protocol_exchange(db, probe.token, query, 1, &error) != -1 ||
+        oliphaunt_finish_protocol_exchange(db, probe.token, &error) != -1;
+    free(probe.response.data);
+    if (failed) {
+        free(query);
+        fprintf(stderr, "fragmented finite exchange or late End failed\n");
+        return 1;
+    }
+    probe = (FiniteExchangeProbe){.db = db, .input = query, .input_len = query_len,
+                                 .reject_output = true};
+    failed = run_finite_exchange(&probe, &rc);
+    free(query);
+    if (failed || rc != OLIPHAUNT_STREAM_CALLBACK_ABORTED || probe.output_calls != 1 ||
+        exec_simple_query_expect_bytes(db, "SELECT 'finite-callback-recovered'", "finite-callback-recovered")) {
+        fprintf(stderr, "finite callback rejection did not drain before reuse\n");
+        return 1;
+    }
+
+    static const uint8_t copy_end[] = {
+        'd', 0, 0, 0, 7, '4', '2', '\n', 'c', 0, 0, 0, 4, 'S', 0, 0, 0, 4,
+    };
+    for (int backend_error = 0; backend_error <= 1; backend_error++) {
+        query = NULL;
+        query_len = 0;
+        push_extended_query(&query, &query_len, backend_error
+            ? "SELECT 1 / 0" : "COPY incremental_copy FROM STDIN");
+        query = realloc(query, query_len + sizeof(copy_end));
+        memcpy(query + query_len, copy_end, sizeof(copy_end));
+        query_len += sizeof(copy_end);
+        append_finite_query(&query, &query_len, "SELECT 'finite-copy-finished'");
+        probe = (FiniteExchangeProbe){.db = db, .input = query, .input_len = query_len};
+        failed = run_finite_exchange(&probe, &rc);
+        response = (OliphauntResponse){.data = probe.response.data, .len = probe.response.len};
+        failed |= rc != 0 || count_tag(&response, 'Z') != (backend_error ? 3 : 2) ||
+            contains_tag(&response, 'E') != backend_error ||
+            !contains_bytes(&response, "finite-copy-finished");
+        free(probe.response.data);
+        if (!failed && !backend_error) {
+            probe = (FiniteExchangeProbe){.db = db, .input = query, .input_len = query_len,
+                                         .reject_output = true};
+            failed = run_finite_exchange(&probe, &rc);
+            failed |= rc != OLIPHAUNT_STREAM_CALLBACK_ABORTED || probe.output_calls != 1;
+        }
+        free(query);
+        if (failed || exec_simple_query_expect_bytes(db, "SELECT 'finite-copy-reused'", "finite-copy-reused")) {
+            fprintf(stderr, "finite COPY synchronization failed: backend_error=%d\n", backend_error);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int exec_incomplete_finite_exchange(OliphauntHandle *db) {
+    static const uint8_t parse_flush[] = {
+        'P', 0, 0, 0, 17, 0, 'S', 'E', 'L', 'E', 'C', 'T', ' ', '4', '2', 0, 0, 0,
+        'H', 0, 0, 0, 4,
+    };
+    FiniteExchangeProbe probe = {.db = db, .input = parse_flush, .input_len = sizeof(parse_flush)};
+    int32_t rc = -1;
+    int failed = run_finite_exchange(&probe, &rc);
+    free(probe.response.data);
+    OliphauntResponse response = {0};
+    int followup = oliphaunt_exec_simple_query(db, "SELECT 1", 8, &response);
+    oliphaunt_free_response(&response);
+    if (failed || rc == 0 || rc == OLIPHAUNT_STREAM_CALLBACK_ABORTED || followup == 0) {
+        fprintf(stderr, "incomplete finite exchange did not retire the session\n");
+        return 1;
+    }
+    return 0;
+}
+
 static int exec_stream_callback_failure_recovers(OliphauntHandle *db) {
     unsigned char *query = NULL;
     size_t query_len = 0;
@@ -1274,7 +1664,68 @@ static int exec_stream_callback_failure_recovers(OliphauntHandle *db) {
         return 1;
     }
     const unsigned char select_tags[] = {'T', 'D', 'C', 'Z'};
-    return exec_query_expect_tags(db, "SELECT 4 AS recovered_after_callback_failure", select_tags, sizeof(select_tags));
+    if (exec_query_expect_tags(db, "SELECT 4 AS recovered_after_callback_failure", select_tags, sizeof(select_tags))) return 1;
+    for (int extended_copy = 0; extended_copy < 2; extended_copy++) {
+        unsigned char *first = NULL, *copy = NULL;
+        size_t first_len = 0, copy_len = 0;
+        if (extended_copy) {
+            push_query(&first, &first_len, "SELECT 1");
+            push_extended_query(&copy, &copy_len, "COPY incremental_copy FROM STDIN");
+        } else {
+            push_extended_query(&first, &first_len, "SELECT 1");
+            push_query(&copy, &copy_len, "COPY incremental_copy FROM STDIN");
+        }
+        query_len = first_len + copy_len;
+        query = (unsigned char *)malloc(query_len);
+        memcpy(query, first, first_len);
+        memcpy(query + first_len, copy, copy_len);
+        free(first);
+        free(copy);
+        acc = (StreamAccumulator){0};
+        rc = oliphaunt_exec_protocol_raw_stream(db, query, query_len, fail_stream_chunk, &acc);
+        free(query);
+        free(acc.data);
+        if (rc != OLIPHAUNT_STREAM_CALLBACK_ABORTED ||
+            exec_query_expect_tags(db, "SELECT 4 AS recovered_after_copy_pipeline", select_tags, sizeof(select_tags))) {
+            fprintf(stderr, "COPY pipeline callback recovery failed: extended=%d rc=%d\n", extended_copy, rc);
+            return 1;
+        }
+    }
+    /* Reject CopyInResponse while an already admitted large body still owns
+     * the input slot. Recovery must drain it, not inject over queued bytes. */
+    if (exec_simple_query_expect_bytes(db, "CREATE TEMP TABLE callback_copy(value text)", "CREATE TABLE"))
+        return 1;
+    for (int extended_copy = 0; extended_copy < 2; extended_copy++) {
+        query = NULL;
+        query_len = 0;
+        if (extended_copy) push_extended_query(&query, &query_len, "COPY callback_copy FROM STDIN");
+        else push_query(&query, &query_len, "COPY callback_copy FROM STDIN");
+        const size_t copy_bytes = 64 * 1024 * 1024;
+        query = realloc(query, query_len + 5 + copy_bytes + 5);
+        uint32_t copy_length = (uint32_t)copy_bytes + 4;
+        query[query_len++] = 'd';
+        for (int shift = 24; shift >= 0; shift -= 8)
+            query[query_len++] = (uint8_t)(copy_length >> shift);
+        memset(query + query_len, 'a', copy_bytes);
+        query[query_len + copy_bytes - 1] = '\n';
+        query_len += copy_bytes;
+        static const uint8_t copy_done[] = {'c', 0, 0, 0, 4};
+        memcpy(query + query_len, copy_done, sizeof(copy_done));
+        query_len += sizeof(copy_done);
+        acc = (StreamAccumulator){0};
+        rc = oliphaunt_exec_protocol_raw_stream(db, query, query_len, fail_stream_chunk, &acc);
+        free(query);
+        free(acc.data);
+        const char *verify_copy = extended_copy
+            ? "SELECT CASE WHEN count(*) = 2 THEN 'queued-copy-preserved' END FROM callback_copy"
+            : "SELECT CASE WHEN count(*) = 1 THEN 'queued-copy-preserved' END FROM callback_copy";
+        if (rc != OLIPHAUNT_STREAM_CALLBACK_ABORTED ||
+            exec_simple_query_expect_bytes(db, verify_copy, "queued-copy-preserved")) {
+            fprintf(stderr, "queued COPY callback recovery failed: extended=%d rc=%d\n", extended_copy, rc);
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static int exec_stream_reentrancy_is_rejected(OliphauntHandle *db) {
@@ -1439,6 +1890,32 @@ static int exec_plpgsql_smoke(OliphauntHandle *db) {
         "$$; "
         "SELECT liboliphaunt_plpgsql_answer()",
         "31415");
+}
+
+static int exec_event_trigger_smoke(OliphauntHandle *db) {
+    return exec_simple_query_expect_bytes(
+        db,
+        "DROP EVENT TRIGGER IF EXISTS liboliphaunt_ddl_end; "
+        "DROP FUNCTION IF EXISTS liboliphaunt_record_event() CASCADE; "
+        "DROP TABLE IF EXISTS liboliphaunt_event_on; "
+        "DROP TABLE IF EXISTS liboliphaunt_event_off; "
+        "DROP TABLE IF EXISTS liboliphaunt_event_log; "
+        "CREATE TABLE liboliphaunt_event_log(tag text NOT NULL); "
+        "CREATE FUNCTION liboliphaunt_record_event() RETURNS event_trigger "
+        "LANGUAGE plpgsql AS $$ BEGIN "
+        "INSERT INTO liboliphaunt_event_log VALUES (TG_TAG); "
+        "END $$; "
+        "CREATE EVENT TRIGGER liboliphaunt_ddl_end ON ddl_command_end "
+        "EXECUTE FUNCTION liboliphaunt_record_event(); "
+        "SET event_triggers = off; "
+        "CREATE TABLE liboliphaunt_event_off(value integer); "
+        "SET event_triggers = on; "
+        "CREATE TABLE liboliphaunt_event_on(value integer); "
+        "SELECT count(*)::text || ':' || min(tag) FROM liboliphaunt_event_log; "
+        "DROP EVENT TRIGGER liboliphaunt_ddl_end; "
+        "DROP FUNCTION liboliphaunt_record_event(); "
+        "DROP TABLE liboliphaunt_event_on, liboliphaunt_event_off, liboliphaunt_event_log",
+        "1:CREATE TABLE");
 }
 
 static int file_exists(const char *path) {
@@ -2796,6 +3273,14 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         return 1;
     }
 
+    if (exec_simple_query_expect_bytes(
+            db,
+            "SELECT 'native-default-fsync-' || current_setting('fsync')",
+            "native-default-fsync-off") != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+
     if (exec_query_expect_bytes(
             db,
             "SELECT CASE WHEN "
@@ -2850,7 +3335,9 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         return 1;
     }
 
-    if (exec_incremental_input(db) != 0 || exec_incremental_copy(db) != 0 || exec_stream_callback_failure_recovers(db) != 0) {
+    if (exec_incremental_input(db) != 0 || exec_incremental_copy(db) != 0 ||
+        exec_complete_copy_batches(db) != 0 || exec_copy_callback_failure_after_sync(db) != 0 ||
+        exec_stream_callback_failure_recovers(db) != 0 || exec_finite_exchanges(db) != 0) {
         oliphaunt_close(db);
         return 1;
     }
@@ -2868,6 +3355,11 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
     }
 
     if (exec_plpgsql_smoke(db) != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+
+    if (exec_event_trigger_smoke(db) != 0) {
         oliphaunt_close(db);
         return 1;
     }
@@ -2938,6 +3430,15 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         oliphaunt_close(db);
         return 1;
     }
+    static const uint8_t detached_sync[] = {'S', 0, 0, 0, 4};
+    OliphauntErrorCapture detached_input_error = {0};
+    if (oliphaunt_feed_protocol_stream_wait(db, db->stream_token,
+            detached_sync, sizeof(detached_sync), &detached_input_error) >= 0 ||
+        detached_input_error.length == 0) {
+        fprintf(stderr, "detached logical handle accepted stream input\n");
+        oliphaunt_close(db);
+        return 1;
+    }
     OliphauntResponse detached_response = {0};
     if (oliphaunt_exec_simple_query(db, "SELECT 1", strlen("SELECT 1"), &detached_response) == 0) {
         fprintf(stderr, "detached logical handle unexpectedly accepted a query\n");
@@ -2989,6 +3490,11 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
     if (exec_incremental_input(reopened) != 0 ||
         exec_simple_query_expect_bytes(reopened, "SELECT to_regclass('pg_temp.reset_failure_fixture') IS NULL", "t") != 0 ||
         exec_query_expect_tags(reopened, "SELECT 42 AS reopened_after_stale_close", select_tags, sizeof(select_tags)) != 0) {
+        oliphaunt_close(reopened);
+        return 1;
+    }
+
+    if (exec_incomplete_finite_exchange(reopened) != 0) {
         oliphaunt_close(reopened);
         return 1;
     }
@@ -3051,6 +3557,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+#ifndef _WIN32
+    struct sigaction previous_sigusr1;
+    if (install_host_sigusr1_sentinel(&previous_sigusr1) != 0) {
+        return 1;
+    }
+#endif
+
     const char *host_pgdata = "/tmp/oliphaunt-host-pgdata-sentinel";
     if (set_pgdata_env_for_smoke(host_pgdata) != 0) {
         return 1;
@@ -3061,6 +3574,11 @@ int main(int argc, char **argv) {
     if (expect_pgdata_env("oliphaunt_close", host_pgdata) != 0) {
         return 1;
     }
+#ifndef _WIN32
+    if (verify_host_sigusr1_sentinel(&previous_sigusr1) != 0) {
+        return 1;
+    }
+#endif
     if (expect_terminal_shutdown_reopen_rejected(argv[1], argv[2]) != 0) {
         return 1;
     }

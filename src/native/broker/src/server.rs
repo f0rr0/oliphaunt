@@ -8,18 +8,44 @@ use std::sync::{
     mpsc,
 };
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use liboliphaunt_native_bindings::{
     DatabaseStorage, NativeConfig, NativeProtocolInput, NativeSession, PostgresStartupGuc,
-    ProtocolStreamOutcome,
+    ProtocolInputStatus, ProtocolStreamOutcome,
 };
+use oliphaunt_broker::exchange::{self as framed, Completion, Epoch, Execution, Kind, Reason};
 use oliphaunt_broker::ipc::{self, RequestFrame, ResponseFrame};
 use oliphaunt_query::{ExpectedProtocol, parse_query_response, wire};
 
 use crate::{BrokerArgs, BrokerListener};
 
-pub(super) enum Socket {
+pub(super) struct Socket {
+    inner: SocketStream,
+    deadline: Option<Instant>,
+    handshake: Option<PendingHandshake>,
+}
+
+struct PendingHandshake(Arc<AtomicUsize>);
+
+impl PendingHandshake {
+    fn acquire(count: &Arc<AtomicUsize>, limit: usize) -> Option<Self> {
+        count
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                (value < limit).then_some(value + 1)
+            })
+            .ok()
+            .map(|_| Self(Arc::clone(count)))
+    }
+}
+
+impl Drop for PendingHandshake {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+enum SocketStream {
     Tcp(TcpStream),
     #[cfg(unix)]
     Unix(UnixStream),
@@ -27,21 +53,43 @@ pub(super) enum Socket {
 
 macro_rules! socket_call {
     ($self:expr, $method:ident $(, $arg:expr)*) => {
-        match $self {
-            Socket::Tcp(stream) => stream.$method($($arg),*),
+        match &$self.inner {
+            SocketStream::Tcp(stream) => stream.$method($($arg),*),
             #[cfg(unix)]
-            Socket::Unix(stream) => stream.$method($($arg),*),
+            SocketStream::Unix(stream) => stream.$method($($arg),*),
         }
     };
 }
 
 impl Socket {
-    fn clone_socket(&self) -> io::Result<Self> {
-        match self {
-            Self::Tcp(stream) => stream.try_clone().map(Self::Tcp),
-            #[cfg(unix)]
-            Self::Unix(stream) => stream.try_clone().map(Self::Unix),
+    pub(super) fn tcp(stream: TcpStream) -> Self {
+        Self {
+            inner: SocketStream::Tcp(stream),
+            deadline: None,
+            handshake: None,
         }
+    }
+
+    #[cfg(unix)]
+    pub(super) fn unix(stream: UnixStream) -> Self {
+        Self {
+            inner: SocketStream::Unix(stream),
+            deadline: None,
+            handshake: None,
+        }
+    }
+
+    fn clone_socket(&self) -> io::Result<Self> {
+        let inner = match &self.inner {
+            SocketStream::Tcp(stream) => SocketStream::Tcp(stream.try_clone()?),
+            #[cfg(unix)]
+            SocketStream::Unix(stream) => SocketStream::Unix(stream.try_clone()?),
+        };
+        Ok(Self {
+            inner,
+            deadline: self.deadline,
+            handshake: None,
+        })
     }
     fn shutdown(&self) {
         let _ = socket_call!(self, shutdown, Shutdown::Both);
@@ -52,28 +100,89 @@ impl Socket {
     fn write_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
         socket_call!(self, set_write_timeout, timeout)
     }
+
+    fn set_deadline(&mut self, deadline: Option<Instant>) -> io::Result<()> {
+        if deadline.is_none() {
+            self.read_timeout(None)?;
+            self.write_timeout(None)?;
+            self.handshake.take();
+        }
+        self.deadline = deadline;
+        Ok(())
+    }
+
+    fn remaining(deadline: Instant) -> io::Result<Duration> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "broker handshake deadline exceeded",
+            ))
+        } else {
+            Ok(remaining)
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+impl std::os::fd::AsRawFd for Socket {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        socket_call!(self, as_raw_fd)
+    }
 }
 impl Read for Socket {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        socket_call!(self, read, bytes)
+        if let Some(deadline) = self.deadline {
+            self.read_timeout(Some(Self::remaining(deadline)?))?;
+        }
+        match &mut self.inner {
+            SocketStream::Tcp(stream) => stream.read(bytes),
+            #[cfg(unix)]
+            SocketStream::Unix(stream) => stream.read(bytes),
+        }
     }
 }
 impl Write for Socket {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        socket_call!(self, write, bytes)
+        if let Some(deadline) = self.deadline {
+            self.write_timeout(Some(Self::remaining(deadline)?))?;
+        }
+        match &mut self.inner {
+            SocketStream::Tcp(stream) => stream.write(bytes),
+            #[cfg(unix)]
+            SocketStream::Unix(stream) => stream.write(bytes),
+        }
     }
     fn flush(&mut self) -> io::Result<()> {
-        socket_call!(self, flush)
+        Ok(())
     }
 }
 
 type Reply<T> = mpsc::Sender<io::Result<T>>;
 enum Command {
-    Startup(String, Reply<Vec<u8>>),
-    Execute(Vec<u8>, Socket, Reply<()>),
+    Startup(Option<String>, Reply<Vec<u8>>),
+    Execute(Vec<u8>, Socket, mpsc::Sender<io::Result<u64>>, Reply<()>),
+    Exchange {
+        input_len: usize,
+        epoch: Epoch,
+        request: u64,
+        socket: Socket,
+        input_done: mpsc::Receiver<io::Result<()>>,
+        started: mpsc::Sender<io::Result<u64>>,
+        finished: Arc<AtomicBool>,
+        reply: Reply<()>,
+    },
     Reset(Reply<()>),
     Backup(Reply<Vec<u8>>),
+    BackupStream(Socket, Reply<()>),
     Shutdown(Reply<()>),
+}
+
+struct FramedSession {
+    epoch: Epoch,
+    completed: u64,
+    active: Option<u64>,
+    native_started: bool,
 }
 
 struct Shared {
@@ -87,8 +196,9 @@ struct Shared {
     stopping: AtomicBool,
     occupied: AtomicBool,
     owner_connected: AtomicBool,
-    connection_count: AtomicUsize,
+    recovery_timeout: Duration,
     active: Mutex<Option<(Socket, [u8; 8])>>,
+    framed: Mutex<Option<FramedSession>>,
     password: String,
     username: String,
     database: String,
@@ -131,8 +241,9 @@ pub(super) fn serve(args: BrokerArgs) -> io::Result<()> {
         stopping: AtomicBool::new(false),
         occupied: AtomicBool::new(false),
         owner_connected: AtomicBool::new(false),
-        connection_count: AtomicUsize::new(0),
+        recovery_timeout: args.recovery_timeout,
         active: Mutex::new(None),
+        framed: Mutex::new(None),
         password: args.auth_token,
         username: args.username,
         database: args.database,
@@ -147,15 +258,25 @@ pub(super) fn serve(args: BrokerArgs) -> io::Result<()> {
         control.ready_endpoint()
     );
     io::stdout().flush()?;
+    let sql_handshakes = Arc::new(AtomicUsize::new(0));
+    let control_handshakes = Arc::new(AtomicUsize::new(0));
     while !shared.stopping.load(Ordering::Acquire) {
         for (listener, management) in [(&control, true), (&sql, false)] {
             match listener.accept() {
-                Ok(socket) => {
-                    if shared.connection_count.fetch_add(1, Ordering::AcqRel) >= 16 {
-                        shared.connection_count.fetch_sub(1, Ordering::AcqRel);
+                Ok(mut socket) => {
+                    socket.set_deadline(Some(Instant::now() + args.handshake_timeout))?;
+                    let count = if management {
+                        &control_handshakes
+                    } else {
+                        &sql_handshakes
+                    };
+                    let Some(permit) =
+                        PendingHandshake::acquire(count, args.max_pending_handshakes)
+                    else {
                         socket.shutdown();
                         continue;
-                    }
+                    };
+                    socket.handshake = Some(permit);
                     let state = Arc::clone(&shared);
                     thread::Builder::new()
                         .name("oliphaunt-broker-client".into())
@@ -176,7 +297,6 @@ pub(super) fn serve(args: BrokerArgs) -> io::Result<()> {
                             {
                                 eprintln!("OLIPHAUNT_BROKER_CLIENT_ERROR {error}");
                             }
-                            state.connection_count.fetch_sub(1, Ordering::AcqRel);
                         })?;
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
@@ -222,19 +342,33 @@ fn run_backend(
     for command in receiver {
         match command {
             Command::Startup(application, reply) => {
-                let _ = reply.send(startup_parameters(&mut session, &application));
+                let _ = reply.send(startup_parameters(&mut session, application.as_deref()));
             }
-            Command::Execute(request, mut socket, reply) => {
+            Command::Execute(request, mut socket, started, reply) => {
                 if shared.closing.load(Ordering::Acquire) {
                     shared.executing.store(false, Ordering::Release);
                     let _ = reply.send(Err(other("broker is closing")));
                     continue;
                 }
-                let outcome = session.exec_protocol_raw_stream(&request, &mut |bytes| {
-                    socket.write_all(bytes).map_err(|error| {
-                        liboliphaunt_native_bindings::Error::Engine(error.to_string())
-                    })
-                });
+                let mut started = Some(started);
+                let outcome = session.exec_protocol_raw_stream_started(
+                    &request,
+                    &mut |token| {
+                        started.take().unwrap().send(Ok(token)).map_err(|_| {
+                            liboliphaunt_native_bindings::Error::Engine(
+                                "protocol input reader stopped".into(),
+                            )
+                        })
+                    },
+                    &mut |bytes| {
+                        socket.write_all(bytes).map_err(|error| {
+                            liboliphaunt_native_bindings::Error::Engine(error.to_string())
+                        })
+                    },
+                );
+                if let Some(started) = started {
+                    let _ = started.send(Err(other("native protocol stream did not start")));
+                }
                 let result = match outcome {
                     ProtocolStreamOutcome::ReadyForQuery(Ok(())) => Ok(()),
                     ProtocolStreamOutcome::ReadyForQuery(Err(error))
@@ -242,6 +376,129 @@ fn run_backend(
                 };
                 shared.executing.store(false, Ordering::Release);
                 let _ = reply.send(result);
+            }
+            Command::Exchange {
+                input_len,
+                epoch,
+                request,
+                mut socket,
+                input_done,
+                started,
+                finished,
+                reply,
+            } => {
+                {
+                    let state = shared.framed.lock().unwrap();
+                    let state = state
+                        .as_ref()
+                        .ok_or_else(|| other("exchange session disappeared"))?;
+                    if state.epoch != epoch || state.active != Some(request) {
+                        return Err(other("stale exchange command"));
+                    }
+                    shared.executing.store(true, Ordering::Release);
+                }
+                let mut started = Some(started);
+                let completion = if shared.closing.load(Ordering::Acquire) {
+                    Completion {
+                        reason: Reason::WorkerInterrupted,
+                        execution: Execution::NotStarted,
+                        requires_reopen: true,
+                        detail: "broker is closing".into(),
+                    }
+                } else {
+                    match session.exec_protocol_exchange(
+                        input_len,
+                        &mut |token| {
+                            {
+                                let mut state = shared.framed.lock().unwrap();
+                                let state = state.as_mut().ok_or_else(|| {
+                                    liboliphaunt_native_bindings::Error::Engine(
+                                        "exchange session disappeared".into(),
+                                    )
+                                })?;
+                                if state.epoch != epoch || state.active != Some(request) {
+                                    return Err(liboliphaunt_native_bindings::Error::Engine(
+                                        "stale exchange startup".into(),
+                                    ));
+                                }
+                                state.native_started = true;
+                            }
+                            started.take().unwrap().send(Ok(token)).map_err(|_| {
+                                liboliphaunt_native_bindings::Error::Engine(
+                                    "exchange input reader stopped".into(),
+                                )
+                            })
+                        },
+                        &mut |bytes: &[u8]| {
+                            for chunk in bytes.chunks(framed::CHUNK_BYTES) {
+                                if let Err(error) = framed::write_frame(
+                                    &mut socket,
+                                    Kind::Data,
+                                    epoch,
+                                    request,
+                                    chunk,
+                                ) {
+                                    // No terminal record can repair a partial Data record.
+                                    socket.shutdown();
+                                    return Err(liboliphaunt_native_bindings::Error::Engine(
+                                        error.to_string(),
+                                    ));
+                                }
+                            }
+                            Ok(())
+                        },
+                    ) {
+                        ProtocolStreamOutcome::ReadyForQuery(Ok(())) => Completion::success(),
+                        ProtocolStreamOutcome::ReadyForQuery(Err(error)) => Completion {
+                            reason: Reason::Database,
+                            execution: Execution::Completed,
+                            requires_reopen: false,
+                            detail: error.to_string(),
+                        },
+                        ProtocolStreamOutcome::SessionStateUnknown(error) => Completion {
+                            reason: Reason::Database,
+                            execution: Execution::Unknown,
+                            requires_reopen: true,
+                            detail: error.to_string(),
+                        },
+                    }
+                };
+                if let Some(started) = started {
+                    let _ = started.send(Err(other(&completion.detail)));
+                }
+                finished.store(true, Ordering::Release);
+                let result = input_done
+                    .recv()
+                    .map_err(other)
+                    .and_then(|result| result)
+                    .and_then(|()| {
+                        let mut state = shared.framed.lock().unwrap();
+                        if let Some(state) = state.as_mut() {
+                            state.completed = request;
+                            state.active = None;
+                            state.native_started = false;
+                        }
+                        drop(state);
+                        shared.executing.store(false, Ordering::Release);
+                        framed::write_frame(
+                            &mut socket,
+                            Kind::Terminal,
+                            epoch,
+                            request,
+                            &completion.encode(),
+                        )
+                    });
+                if result.is_err() || completion.requires_reopen {
+                    socket.shutdown();
+                }
+                let terminal = result.and_then(|()| {
+                    if completion.requires_reopen {
+                        Err(other("native exchange requires reopening the database"))
+                    } else {
+                        Ok(())
+                    }
+                });
+                let _ = reply.send(terminal);
             }
             Command::Reset(reply) => {
                 if shared.closing.load(Ordering::Acquire) {
@@ -266,6 +523,13 @@ fn run_backend(
             Command::Backup(reply) => {
                 let _ = reply.send(session.backup().map_err(other));
             }
+            Command::BackupStream(mut socket, reply) => {
+                let _ = reply.send(
+                    session
+                        .backup_to(&mut BackupWriter(&mut socket))
+                        .map_err(other),
+                );
+            }
             Command::Shutdown(reply) => {
                 let result = session.close_terminal().map_err(other);
                 let failed = result.is_err();
@@ -281,18 +545,25 @@ fn run_backend(
     session.close_terminal().map_err(other)
 }
 
-fn startup_parameters(session: &mut NativeSession, application: &str) -> io::Result<Vec<u8>> {
-    let request = oliphaunt_query::extended_statement(
-        "SELECT set_config('application_name', $1, false)",
-        &[oliphaunt_query::Parameter::text(application)],
-        0,
-    )
-    .map_err(other)?;
-    parse_query_response(
-        &session.exec_protocol_raw(&request).map_err(other)?,
-        ExpectedProtocol::Extended,
-    )
-    .map_err(other)?;
+fn startup_parameters(
+    session: &mut NativeSession,
+    application: Option<&str>,
+) -> io::Result<Vec<u8>> {
+    // Omission preserves PostgreSQL's configured default; an explicit empty
+    // string is still a client override, just like any other supplied value.
+    if let Some(application) = application {
+        let request = oliphaunt_query::extended_statement(
+            "SELECT set_config('application_name', $1, false)",
+            &[oliphaunt_query::Parameter::text(application)],
+            0,
+        )
+        .map_err(other)?;
+        parse_query_response(
+            &session.exec_protocol_raw(&request).map_err(other)?,
+            ExpectedProtocol::Extended,
+        )
+        .map_err(other)?;
+    }
     let bytes = session.exec_simple_query("SELECT name, setting FROM pg_settings WHERE name IN ('server_version','server_encoding','client_encoding','application_name','DateStyle','IntervalStyle','TimeZone','integer_datetimes','standard_conforming_strings')").map_err(other)?;
     let result = parse_query_response(&bytes, ExpectedProtocol::Simple).map_err(other)?;
     let mut response = backend_frame(b'R', &0_i32.to_be_bytes());
@@ -310,10 +581,34 @@ fn startup_parameters(session: &mut NativeSession, application: &str) -> io::Res
     Ok(response)
 }
 
+struct BackupWriter<'a>(&'a mut Socket);
+
+impl Write for BackupWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        ipc::write_backup_chunk(self.0, bytes).map_err(|error| {
+            // A partial frame cannot be followed by a terminal response frame.
+            self.0.shutdown();
+            other(error)
+        })?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
 fn management_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
-    socket.read_timeout(Some(Duration::from_secs(5)))?;
-    socket.write_timeout(Some(Duration::from_secs(5)))?;
     match ipc::read_request(&mut socket).map_err(other)? {
+        RequestFrame::Cancel {
+            token,
+            epoch,
+            request,
+        } if token == shared.password => {
+            socket.set_deadline(None)?;
+            cancel_exchange(shared, epoch, request)?;
+            return ipc::write_response(&mut socket, ResponseFrame::Ok(Vec::new())).map_err(other);
+        }
         RequestFrame::Authenticate(token) if token == shared.password => {}
         _ => {
             ipc::write_response(
@@ -334,7 +629,7 @@ fn management_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
     }
     let result = (|| {
         ipc::write_response(&mut socket, ResponseFrame::Ok(Vec::new())).map_err(other)?;
-        socket.read_timeout(None)?;
+        socket.set_deadline(None)?;
         loop {
             let command = ipc::read_request(&mut socket).map_err(other)?;
             match command {
@@ -346,6 +641,18 @@ fn management_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
                         .map_err(other)?;
                     let response = match done.recv().map_err(other)? {
                         Ok(bytes) => ResponseFrame::Ok(bytes),
+                        Err(error) => ResponseFrame::Error(error.to_string()),
+                    };
+                    ipc::write_response(&mut socket, response).map_err(other)?;
+                }
+                RequestFrame::BackupStream => {
+                    let (reply, done) = mpsc::channel();
+                    shared
+                        .commands
+                        .send(Command::BackupStream(socket.clone_socket()?, reply))
+                        .map_err(other)?;
+                    let response = match done.recv().map_err(other)? {
+                        Ok(()) => ResponseFrame::Ok(Vec::new()),
                         Err(error) => ResponseFrame::Error(error.to_string()),
                     };
                     ipc::write_response(&mut socket, response).map_err(other)?;
@@ -377,8 +684,6 @@ fn management_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
 }
 
 fn sql_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
-    socket.read_timeout(Some(Duration::from_secs(5)))?;
-    socket.write_timeout(Some(Duration::from_secs(5)))?;
     let mut startup = read_startup(&mut socket)?;
     while matches!(
         wire::classify_frontend_message(&startup)?,
@@ -423,10 +728,15 @@ fn sql_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
     for (key, value) in &parameters {
         if !matches!(
             *key,
-            "user" | "database" | "application_name" | "client_encoding"
-        ) || (*key == "client_encoding"
-            && !value.eq_ignore_ascii_case("UTF8")
-            && !value.eq_ignore_ascii_case("UTF-8"))
+            "user"
+                | "database"
+                | "application_name"
+                | "client_encoding"
+                | framed::STARTUP_PARAMETER
+        ) || (*key == framed::STARTUP_PARAMETER && *value != "1")
+            || (*key == "client_encoding"
+                && !value.eq_ignore_ascii_case("UTF8")
+                && !value.eq_ignore_ascii_case("UTF-8"))
         {
             socket.write_all(&wire::error_response(
                 "FATAL",
@@ -459,9 +769,14 @@ fn sql_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
     let result = connected_sql(
         &mut socket,
         shared,
-        parameters.get("application_name").copied().unwrap_or(""),
+        parameters.get("application_name").copied(),
+        parameters.contains_key(framed::STARTUP_PARAMETER),
     );
+    if result.is_err() {
+        socket.shutdown();
+    }
     shared.active.lock().unwrap().take();
+    shared.framed.lock().unwrap().take();
     let (reply, done) = mpsc::channel();
     if shared.commands.send(Command::Reset(reply)).is_ok() {
         let _ = done.recv();
@@ -470,13 +785,38 @@ fn sql_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
     result
 }
 
-fn connected_sql(socket: &mut Socket, shared: &Shared, application: &str) -> io::Result<()> {
+fn connected_sql(
+    socket: &mut Socket,
+    shared: &Shared,
+    application: Option<&str>,
+    private_exchange: bool,
+) -> io::Result<()> {
     let (reply, done) = mpsc::channel();
-    shared
-        .commands
-        .send(Command::Startup(application.to_owned(), reply))
-        .map_err(other)?;
-    let mut response = done.recv().map_err(other)??;
+    let deadline = socket
+        .deadline
+        .ok_or_else(|| other("missing broker handshake deadline"))?;
+    let mut command = Command::Startup(application.map(str::to_owned), reply);
+    loop {
+        let remaining = Socket::remaining(deadline)?;
+        match shared.commands.try_send(command) {
+            Ok(()) => break,
+            Err(mpsc::TrySendError::Full(pending)) => {
+                command = pending;
+                // Only a contended login polls; ordinary SQL retains its blocking handoff.
+                thread::sleep(remaining.min(Duration::from_millis(1)));
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => return Err(other("native worker stopped")),
+        }
+    }
+    let mut response =
+        done.recv_timeout(Socket::remaining(deadline)?)
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout => io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "broker handshake deadline exceeded",
+                ),
+                mpsc::RecvTimeoutError::Disconnected => other("native worker stopped"),
+            })??;
     let mut key = [0; 8];
     key[..4].copy_from_slice(&std::process::id().to_be_bytes());
     getrandom::fill(&mut key[4..]).map_err(other)?;
@@ -484,18 +824,186 @@ fn connected_sql(socket: &mut Socket, shared: &Shared, application: &str) -> io:
     response.extend(backend_frame(b'Z', b"I"));
     *shared.active.lock().unwrap() = Some((socket.clone_socket()?, key));
     socket.write_all(&response)?;
-    socket.read_timeout(None)?;
-    let result = exchange(socket, shared);
+    let epoch = if private_exchange {
+        let epoch = framed::new_epoch()?;
+        *shared.framed.lock().unwrap() = Some(FramedSession {
+            epoch,
+            completed: 0,
+            active: None,
+            native_started: false,
+        });
+        framed::write_frame(
+            socket,
+            Kind::Terminal,
+            epoch,
+            0,
+            &Completion::success().encode(),
+        )?;
+        Some(epoch)
+    } else {
+        None
+    };
+    socket.set_deadline(None)?;
+    let result = if let Some(epoch) = epoch {
+        framed_exchange(socket, shared, epoch)
+    } else {
+        exchange(socket, shared)
+    };
     if result.is_err() {
         cancel_execution(shared);
-        socket.shutdown();
     }
     result
 }
 
+fn cancel_exchange(shared: &Shared, epoch: Epoch, request: u64) -> io::Result<()> {
+    if request == 0 {
+        return Err(other("invalid exchange cancellation request"));
+    }
+    let deadline = Instant::now() + shared.recovery_timeout;
+    loop {
+        {
+            let mut state = shared.framed.lock().unwrap();
+            let Some(state) = state.as_mut().filter(|state| state.epoch == epoch) else {
+                return Ok(());
+            };
+            if request <= state.completed {
+                return Ok(());
+            }
+            if state.active != Some(request) {
+                if state.active.is_some() || state.completed.checked_add(1) != Some(request) {
+                    return Ok(());
+                }
+            } else {
+                // Keep identity validation and delivery under the admission lock:
+                // a delayed cancellation must never reach the next exchange.
+                if state.native_started {
+                    let cancel = shared.native.lock().unwrap().0.clone();
+                    cancel.cancel().map_err(other)?;
+                    return Ok(());
+                }
+            }
+        }
+        if Instant::now() >= deadline || shared.stopping.load(Ordering::Acquire) {
+            stop(shared);
+            return Err(other(
+                "exchange cancellation did not settle; reopen the database",
+            ));
+        }
+        // Only cancellation retries; ordinary input waits on native capacity.
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn framed_exchange(socket: &mut Socket, shared: &Shared, epoch: Epoch) -> io::Result<()> {
+    loop {
+        let begin = framed::read_frame(socket)?;
+        if begin.kind != Kind::Query || begin.epoch != epoch || begin.payload[8..] != [0; 8] {
+            return Err(other("invalid broker exchange start"));
+        }
+        let length = u64::from_be_bytes(begin.payload[..8].try_into().unwrap());
+        if length == 0 || length > framed::INPUT_BYTES as u64 {
+            return Err(other("invalid broker exchange input length"));
+        }
+        {
+            let mut state = shared.framed.lock().unwrap();
+            let state = state
+                .as_mut()
+                .ok_or_else(|| other("exchange session disappeared"))?;
+            if state.epoch != epoch
+                || state.active.is_some()
+                || state.completed.checked_add(1) != Some(begin.request)
+            {
+                return Err(other("out-of-order broker exchange"));
+            }
+            state.active = Some(begin.request);
+            state.native_started = false;
+        }
+        let (reply, done) = mpsc::channel();
+        let (input_done, input_end) = mpsc::channel();
+        let (started, start) = mpsc::channel();
+        let finished = Arc::new(AtomicBool::new(false));
+        shared
+            .commands
+            .send(Command::Exchange {
+                input_len: length as usize,
+                epoch,
+                request: begin.request,
+                socket: socket.clone_socket()?,
+                input_done: input_end,
+                started,
+                finished: Arc::clone(&finished),
+                reply,
+            })
+            .map_err(other)?;
+        let input = shared.native.lock().unwrap().1.clone();
+        let mut token = None;
+        let mut started = false;
+        let received = (|| {
+            let mut remaining = length;
+            let mut feeding = true;
+            let mut frame = framed::Frame::default();
+            loop {
+                framed::read_frame_into(socket, &mut frame)?;
+                if frame.epoch != epoch || frame.request != begin.request {
+                    return Err(other("stale broker exchange input"));
+                }
+                match frame.kind {
+                    Kind::Data if frame.payload.len() as u64 <= remaining => {
+                        remaining -= frame.payload.len() as u64;
+                        if feeding {
+                            if !started {
+                                token = start.recv().map_err(other)?.ok();
+                                started = true;
+                            }
+                            if let Some(token) = token {
+                                feeding = input.feed_exchange(token, &frame.payload).is_ok();
+                            }
+                        }
+                    }
+                    Kind::End if remaining == 0 => {
+                        if let Some(token) = token
+                            && !finished.load(Ordering::Acquire)
+                        {
+                            let _ = input.finish_exchange(token);
+                        }
+                        return Ok(());
+                    }
+                    _ => return Err(other("incomplete or oversized broker exchange input")),
+                }
+            }
+        })();
+        if received.is_err() {
+            if let Some(token) = token {
+                let _ = input.finish_exchange(token);
+            }
+            socket.shutdown();
+            cancel_execution(shared);
+        }
+        let failed = received.is_err();
+        let _ = input_done.send(received);
+        if failed {
+            match done.recv_timeout(shared.recovery_timeout) {
+                Ok(result) => result?,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    eprintln!("OLIPHAUNT_BROKER_ERROR exchange did not drain; reopen the database");
+                    std::process::exit(2);
+                }
+                Err(error) => return Err(other(error)),
+            }
+        } else {
+            done.recv().map_err(other)??;
+        }
+    }
+}
+
+struct RunningStream {
+    done: mpsc::Receiver<io::Result<()>>,
+    started: mpsc::Receiver<io::Result<u64>>,
+    token: Option<u64>,
+}
+
 fn exchange(socket: &mut Socket, shared: &Shared) -> io::Result<()> {
-    let mut running: Option<mpsc::Receiver<io::Result<()>>> = None;
-    let mut closed_input = false;
+    let mut running: Option<RunningStream> = None;
     let result = (|| {
         loop {
             let frame = read_frontend(socket)?;
@@ -506,8 +1014,8 @@ fn exchange(socket: &mut Socket, shared: &Shared) -> io::Result<()> {
                 }
                 return Ok(());
             }
-            if let Some(done) = running.as_ref() {
-                match done.try_recv() {
+            if let Some(current) = running.as_ref() {
+                match current.done.try_recv() {
                     Ok(result) => {
                         result?;
                         running = None;
@@ -518,56 +1026,54 @@ fn exchange(socket: &mut Socket, shared: &Shared) -> io::Result<()> {
                     Err(mpsc::TryRecvError::Empty) => {}
                 }
             }
-            if closed_input
-                && !matches!(tag, b'd' | b'c' | b'f')
-                && let Some(done) = running.take()
-            {
-                done.recv().map_err(other)??;
-            }
-            if running.is_none() {
-                let (reply, done) = mpsc::channel();
-                shared.executing.store(true, Ordering::Release);
-                shared
-                    .commands
-                    .send(Command::Execute(frame, socket.clone_socket()?, reply))
-                    .map_err(other)?;
-                running = Some(done);
-            } else {
-                loop {
-                    if shared.stopping.load(Ordering::Acquire) {
-                        return Err(other("broker shutting down"));
+            loop {
+                if running.is_none() {
+                    let (reply, done) = mpsc::channel();
+                    let (started, start) = mpsc::channel();
+                    shared.executing.store(true, Ordering::Release);
+                    shared
+                        .commands
+                        .send(Command::Execute(
+                            frame,
+                            socket.clone_socket()?,
+                            started,
+                            reply,
+                        ))
+                        .map_err(other)?;
+                    running = Some(RunningStream {
+                        done,
+                        started: start,
+                        token: None,
+                    });
+                    break;
+                }
+                if shared.stopping.load(Ordering::Acquire) {
+                    return Err(other("broker shutting down"));
+                }
+                let current = running.as_mut().unwrap();
+                let token = match current.token {
+                    Some(token) => token,
+                    None => {
+                        let token = current.started.recv().map_err(other)??;
+                        current.token = Some(token);
+                        token
                     }
-                    let input = shared.native.lock().unwrap().1.clone();
-                    if let Some(token) = input.active_token().map_err(other)?
-                        && input.feed(token, &frame).map_err(other)?
-                    {
-                        break;
+                };
+                let input = shared.native.lock().unwrap().1.clone();
+                match input.feed_wait(token, &frame).map_err(other)? {
+                    ProtocolInputStatus::Accepted => break,
+                    ProtocolInputStatus::Finished => {
+                        running.take().unwrap().done.recv().map_err(other)??;
                     }
-                    if let Some(done) = running.as_ref() {
-                        match done.try_recv() {
-                            Ok(result) => {
-                                result?;
-                                return Err(other(
-                                    "protocol stream completed before input was accepted",
-                                ));
-                            }
-                            Err(mpsc::TryRecvError::Disconnected) => {
-                                return Err(other("native worker stopped"));
-                            }
-                            Err(mpsc::TryRecvError::Empty) => {}
-                        }
-                    }
-                    thread::sleep(Duration::from_millis(1));
                 }
             }
-            closed_input = matches!(tag, b'Q' | b'S' | b'c' | b'f');
         }
     })();
-    if let Some(done) = running {
+    if let Some(current) = running {
         cancel_execution(shared);
         socket.shutdown();
         if matches!(
-            done.recv_timeout(Duration::from_secs(3)),
+            current.done.recv_timeout(shared.recovery_timeout),
             Err(mpsc::RecvTimeoutError::Timeout)
         ) {
             // A disconnected peer can abandon Parse/Flush or COPY before its
@@ -614,4 +1120,103 @@ fn backend_frame(tag: u8, body: &[u8]) -> Vec<u8> {
     frame.extend_from_slice(&((body.len() + 4) as u32).to_be_bytes());
     frame.extend_from_slice(body);
     frame
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    fn pair() -> (Socket, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        (Socket::tcp(stream), peer)
+    }
+
+    #[test]
+    fn handshake_reads_share_one_deadline_despite_peer_progress() {
+        let (mut socket, mut peer) = pair();
+        socket
+            .set_deadline(Some(Instant::now() + Duration::from_millis(60)))
+            .unwrap();
+        let writer = thread::spawn(move || {
+            for _ in 0..30 {
+                if peer.write_all(&[1]).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let error = socket.read_exact(&mut [0; 30]).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+        ));
+        socket.shutdown();
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn completing_handshake_clears_read_and_write_timeouts_on_clones() {
+        let (mut socket, mut peer) = pair();
+        socket
+            .set_deadline(Some(Instant::now() + Duration::from_millis(100)))
+            .unwrap();
+        peer.write_all(&[1]).unwrap();
+        socket.read_exact(&mut [0]).unwrap();
+        socket.write_all(&[2]).unwrap();
+        socket.set_deadline(None).unwrap();
+        assert!(socket_call!(socket, read_timeout).unwrap().is_none());
+        assert!(socket_call!(socket, write_timeout).unwrap().is_none());
+        let mut cloned = socket.clone_socket().unwrap();
+        assert!(cloned.deadline.is_none());
+        thread::sleep(Duration::from_millis(120));
+        cloned.write_all(&[3]).unwrap();
+        peer.write_all(&[4]).unwrap();
+        cloned.read_exact(&mut [0]).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_backup_frame_closes_the_transport_before_a_terminal_response() {
+        use std::os::fd::AsRawFd;
+        let (mut socket, mut peer) = pair();
+        let capacity: libc::c_int = 4096;
+        // Bound the kernel buffers so a stalled reader interrupts a chunk payload.
+        for (fd, option) in [
+            (socket.as_raw_fd(), libc::SO_SNDBUF),
+            (peer.as_raw_fd(), libc::SO_RCVBUF),
+        ] {
+            // SAFETY: both descriptors and the integer option remain valid for setsockopt.
+            assert_eq!(
+                unsafe {
+                    libc::setsockopt(
+                        fd,
+                        libc::SOL_SOCKET,
+                        option,
+                        (&capacity as *const libc::c_int).cast(),
+                        size_of::<libc::c_int>() as libc::socklen_t,
+                    )
+                },
+                0
+            );
+        }
+        socket
+            .write_timeout(Some(Duration::from_millis(30)))
+            .unwrap();
+        assert!(
+            BackupWriter(&mut socket)
+                .write_all(&vec![7; 1024 * 1024])
+                .is_err()
+        );
+        assert!(
+            ipc::write_response(&mut socket, ResponseFrame::Error("write failed".into())).is_err()
+        );
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut received = Vec::new();
+        peer.read_to_end(&mut received).unwrap();
+        assert!(!received.is_empty());
+        assert!(ipc::read_backup_response(&mut received.as_slice(), &mut Vec::new()).is_err());
+    }
 }

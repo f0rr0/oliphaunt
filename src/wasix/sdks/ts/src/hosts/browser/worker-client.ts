@@ -1,4 +1,5 @@
 import { requireBrowserStorage, serializeOpenConfig } from '../../core/open-config.js';
+import { DEFAULT_BROWSER_STARTUP_TIMEOUT_MS } from '../../core/startup-budget.js';
 import type { PersistentWasixStorage } from './browser-public.js';
 import type {
   BinaryInput,
@@ -15,6 +16,10 @@ import {
 /** Open PostgreSQL in a package-owned browser Worker. */
 export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatabase> {
   const openOptions = serializeOpenConfig(config);
+  openOptions.timeouts = {
+    startupTimeoutMs: DEFAULT_BROWSER_STARTUP_TIMEOUT_MS,
+    ...openOptions.timeouts,
+  };
   requireBrowserStorage(openOptions);
   assertBrowserWorkerEnvironment();
   return openWasixWithWorker(createBrowserWorker, openOptions, requireBrowserStorage);
@@ -23,9 +28,16 @@ export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatab
 async function restoreBrowserWasix(
   storage: PersistentWasixStorage,
   bytes: BinaryInput,
+  options?: import('../../core/types.js').RestoreOptions,
 ): Promise<void> {
   assertBrowserWorkerEnvironment();
-  return restoreWasixWithWorker(createBrowserWorker, storage, bytes, requireBrowserStorage);
+  return restoreWasixWithWorker(
+    createBrowserWorker,
+    storage,
+    bytes,
+    requireBrowserStorage,
+    options,
+  );
 }
 
 function assertBrowserWorkerEnvironment(): void {

@@ -7,6 +7,20 @@ import kotlin.test.assertEquals
 
 class OliphauntJavaTest {
     @Test
+    fun existingJavaConfigurationConstructorRemainsAvailable() {
+        val constructor = OliphauntConfig::class.java.getConstructor(
+            DatabaseStorage::class.java,
+            List::class.java,
+            String::class.java,
+            String::class.java,
+            List::class.java,
+        )
+        val config = constructor.newInstance(DatabaseStorage.TemporaryDirectory, emptyList<PostgresStartupGuc>(), null, null, emptyList<OliphauntExtension>())
+        assertEquals(DatabaseStorage.TemporaryDirectory, config.storage)
+        assertEquals(null, config.admission)
+    }
+
+    @Test
     fun blockingFacadeOwnsTheSessionAndSupportsUse() {
         var closed = 0
         var cancelled = 0

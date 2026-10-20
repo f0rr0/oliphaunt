@@ -1,3 +1,4 @@
+import { timeoutMilliseconds } from '@oliphaunt/ts-query/internal/resource-options';
 import { assertSha256 } from './extensions.js';
 import type { Directory, RunWasixOptions } from '../host/index.mjs';
 import { loadAsset } from './archive.js';
@@ -14,21 +15,68 @@ export type WasixToolDescriptor = Readonly<{
 
 export type WasixToolProcessOptions = Readonly<{
   runtimeVersion: string;
+  /** Budget until embedded protocol connection; excludes SQL and output delivery. Native hosts default to 30000 ms; browser hosts have no default limit. */
+  startupTimeoutMs?: number;
   tool: WasixToolDescriptor;
   args: readonly string[];
-  /** @internal An exact ArrayBuffer-backed view is transferred and consumed. */
+  /** @internal The admitted database-owned copy may be transferred to a worker. */
   stdin?: Uint8Array;
+  /** Buffered text input; encode only after database admission. */
+  script?: string;
   command?: string;
+  /** Host path published create-only after tool and database cleanup succeed. */
+  outputFile?: string;
+  /** @internal Owned chunks; returning settles only after destination acceptance. */
+  output?: WasixToolOutputDestination;
 }>;
+
+export type WasixToolOutputDestination = Readonly<{
+  /** @internal Same-process native Worker output, registered in its parent realm. */
+  nativeRegistration?: number;
+  stdout(chunk: Uint8Array): Promise<void>;
+  stderr?(chunk: Uint8Array): Promise<void>;
+}>;
+
+export type WasixToolProcessInput = WasixToolProcessOptions | (() => WasixToolProcessOptions);
+
+/** @internal Snapshot queued work only after the shared database budget admits it. */
+export function snapshotWasixToolProcessOptions(
+  input: WasixToolProcessInput,
+  retain: (bytes: number) => void,
+): WasixToolProcessOptions {
+  const options = typeof input === 'function' ? input() : input;
+  if (options.startupTimeoutMs !== undefined)
+    timeoutMilliseconds(options.startupTimeoutMs, 'tool startupTimeoutMs');
+  if (options.stdin !== undefined && options.script !== undefined) {
+    throw new TypeError('WASIX tools accept stdin or script, not both');
+  }
+  // Three UTF-8 bytes per UTF-16 unit also covers unpaired surrogates.
+  retain(
+    options.args.reduce((bytes, argument) => bytes + argument.length * 3, 0) +
+      (options.command?.length ?? 0) * 3 +
+      (options.script?.length ?? 0) * 3 +
+      (options.outputFile?.length ?? 0) * 3 +
+      (options.stdin?.byteLength ?? 0),
+  );
+  return {
+    ...options,
+    tool: { ...options.tool },
+    args: [...options.args],
+    ...(options.stdin === undefined ? {} : { stdin: Uint8Array.from(options.stdin) }),
+  };
+}
 
 export type WasixToolProcessResult = Readonly<{
   exitCode: number;
   stdout: Uint8Array;
   stderr: Uint8Array;
+  stdoutBytes?: number;
+  stderrTruncated?: boolean;
 }>;
 
 /** @internal The already-open database worker does not need carrier runtime metadata again. */
 export type WasixPgDumpProcessOptions = Readonly<{
+  startupTimeoutMs?: number;
   tool: WasixToolDescriptor;
   args: readonly string[];
 }>;
@@ -42,9 +90,10 @@ export type PreparedWasixToolAsset = Readonly<{
 /** @internal Verify and compile one immutable frontend program once per owning worker. */
 export async function prepareWasixToolAsset(
   descriptor: WasixToolDescriptor,
+  signal?: AbortSignal,
 ): Promise<PreparedWasixToolAsset> {
   validateWasixToolDescriptor(descriptor);
-  const loaded = await loadAsset(descriptor.source, `WASIX ${descriptor.name} module`);
+  const loaded = await loadAsset(descriptor.source, `WASIX ${descriptor.name} module`, signal);
   const bytes = standaloneBytes(loaded);
   if (bytes.length !== descriptor.size) {
     throw new Error(`WASIX ${descriptor.name} module size mismatch`);

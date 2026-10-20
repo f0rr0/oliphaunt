@@ -1,0 +1,17 @@
+From: Sid Jain <sid_26@outlook.com>
+Subject: [PATCH] Service embedded checkpoints outside transactions before readiness
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -4603,6 +4603,10 @@
+ 			{
+ 				long		stats_timeout;
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++				OliphauntPerformDeferredCheckpoint();
++#endif
++
+ 				/*
+ 				 * Process incoming notifies (including self-notifies), if
+ 				 * any, and send relevant messages to the client.  Doing it

@@ -560,7 +560,7 @@ public suspend fun OliphauntDatabase.execute(
     parameters: List<QueryParam> = emptyList(),
 ): CommandResult {
     rejectStructuredSql(sql)
-    return runTypedOperation(extendedQueryProtocol(sql, parameters), null) { response ->
+    return runTypedOperation({ retain, reserveBeforeEncoding -> extendedQueryProtocol(sql, parameters, retain, reserveBeforeEncoding) }, null) { response ->
         parseCommandResponse(response, ExpectedProtocol.Extended).let { it to it.readyStatus }
     }
 }
@@ -570,14 +570,14 @@ public suspend fun OliphauntDatabase.query(
     parameters: List<QueryParam> = emptyList(),
 ): QueryResult {
     rejectStructuredSql(sql)
-    return runTypedOperation(extendedQueryProtocol(sql, parameters), null) { response ->
+    return runTypedOperation({ retain, reserveBeforeEncoding -> extendedQueryProtocol(sql, parameters, retain, reserveBeforeEncoding) }, null) { response ->
         parseQueryResponse(response, ExpectedProtocol.Extended).let { it to it.readyStatus }
     }
 }
 
 public suspend fun OliphauntDatabase.exec(sql: String): ExecResult {
     rejectStructuredSql(sql)
-    return runTypedOperation(simpleQueryProtocol(sql), null) { response ->
+    return runTypedOperation({ retain, reserveBeforeEncoding -> simpleQueryProtocol(sql, retain, reserveBeforeEncoding) }, null) { response ->
         parseExecResponse(response).let { it to it.readyStatus }
     }
 }
@@ -585,7 +585,7 @@ public suspend fun OliphauntDatabase.exec(sql: String): ExecResult {
 public suspend fun OliphauntDatabase.describe(
     sql: String,
     parameterTypes: List<PostgresOid> = emptyList(),
-): QueryDescription = runTypedOperation(describeQueryProtocol(sql, parameterTypes), null) { response ->
+): QueryDescription = runTypedOperation({ retain, reserveBeforeEncoding -> describeQueryProtocol(sql, parameterTypes, retain, reserveBeforeEncoding) }, null) { response ->
     parseDescribeResponse(response).let { it to it.readyStatus }
 }
 
@@ -594,7 +594,7 @@ public suspend fun OliphauntTransaction.execute(
     parameters: List<QueryParam> = emptyList(),
 ): CommandResult {
     rejectStructuredSql(sql, managedTransaction = true)
-    return runTypedOperation(extendedQueryProtocol(sql, parameters)) { response ->
+    return runTypedOperation({ retain, reserveBeforeEncoding -> extendedQueryProtocol(sql, parameters, retain, reserveBeforeEncoding) }) { response ->
         parseCommandResponse(response, ExpectedProtocol.Extended).let { it to it.readyStatus }
     }
 }
@@ -604,14 +604,14 @@ public suspend fun OliphauntTransaction.query(
     parameters: List<QueryParam> = emptyList(),
 ): QueryResult {
     rejectStructuredSql(sql, managedTransaction = true)
-    return runTypedOperation(extendedQueryProtocol(sql, parameters)) { response ->
+    return runTypedOperation({ retain, reserveBeforeEncoding -> extendedQueryProtocol(sql, parameters, retain, reserveBeforeEncoding) }) { response ->
         parseQueryResponse(response, ExpectedProtocol.Extended).let { it to it.readyStatus }
     }
 }
 
 public suspend fun OliphauntTransaction.exec(sql: String): ExecResult {
     rejectStructuredSql(sql, managedTransaction = true)
-    return runTypedOperation(simpleQueryProtocol(sql)) { response ->
+    return runTypedOperation({ retain, reserveBeforeEncoding -> simpleQueryProtocol(sql, retain, reserveBeforeEncoding) }) { response ->
         parseExecResponse(response).let { it to it.readyStatus }
     }
 }
@@ -619,13 +619,32 @@ public suspend fun OliphauntTransaction.exec(sql: String): ExecResult {
 public suspend fun OliphauntTransaction.describe(
     sql: String,
     parameterTypes: List<PostgresOid> = emptyList(),
-): QueryDescription = runTypedOperation(describeQueryProtocol(sql, parameterTypes)) { response ->
+): QueryDescription = runTypedOperation({ retain, reserveBeforeEncoding -> describeQueryProtocol(sql, parameterTypes, retain, reserveBeforeEncoding) }) { response ->
     parseDescribeResponse(response).let { it to it.readyStatus }
+}
+
+internal fun simpleQueryProtocol(
+    sql: String,
+    retain: (Long) -> Unit = {},
+    reserveBeforeEncoding: Boolean = false,
+): ByteArray {
+    requireSqlWithoutNul(sql, "simple query")
+    if (reserveBeforeEncoding) retain(sqlRequestAllowance(sql, 6))
+    val sqlBytes = sql.encodeToByteArray()
+    val size = checkedFrontendPacketSize(6L + sqlBytes.size)
+    if (!reserveBeforeEncoding) retain(size.toLong())
+    val packet = FrontendPacket(size)
+    packet.message('Q', size - 1)
+    packet.bytes(sqlBytes)
+    packet.byte(0)
+    return packet.finish()
 }
 
 internal fun extendedQueryProtocol(
     sql: String,
     parameters: List<QueryParam>,
+    retain: (Long) -> Unit = {},
+    reserveBeforeEncoding: Boolean = false,
 ): ByteArray {
     requireParameterCount(parameters.size, "extended query")
     requireSqlWithoutNul(sql, "extended query")
@@ -637,11 +656,14 @@ internal fun extendedQueryProtocol(
             )
         }
     }
+    val payloadLength = parameters.sumOf { it.encodedBytes?.size?.toLong() ?: 0L }
+    if (reserveBeforeEncoding) retain(sqlRequestAllowance(sql, 46 + 10L * parameters.size + payloadLength))
     val sqlBytes = sql.encodeToByteArray()
     val parseLength = sqlBytes.size.toLong() + 8 + 4L * parameters.size
-    val payloadLength = parameters.sumOf { it.encodedBytes?.size?.toLong() ?: 0L }
     val bindLength = 14 + 6L * parameters.size + payloadLength
-    val packet = FrontendPacket(checkedFrontendPacketSize(parseLength + bindLength + 24))
+    val size = checkedFrontendPacketSize(parseLength + bindLength + 24)
+    if (!reserveBeforeEncoding) retain(size.toLong())
+    val packet = FrontendPacket(size)
     packet.parse(sqlBytes, parameters.size) { parameters[it].typeOid?.value ?: 0u }
     packet.message('B', checkedFrontendPacketSize(bindLength))
     packet.byte(0)
@@ -667,16 +689,26 @@ internal fun extendedQueryProtocol(
 internal fun describeQueryProtocol(
     sql: String,
     parameterTypes: List<PostgresOid>,
+    retain: (Long) -> Unit = {},
+    reserveBeforeEncoding: Boolean = false,
 ): ByteArray {
     requireParameterCount(parameterTypes.size, "describe")
     requireSqlWithoutNul(sql, "describe")
+    if (reserveBeforeEncoding) retain(sqlRequestAllowance(sql, 21 + 4L * parameterTypes.size))
     val sqlBytes = sql.encodeToByteArray()
     val parseLength = sqlBytes.size.toLong() + 8 + 4L * parameterTypes.size
-    val packet = FrontendPacket(checkedFrontendPacketSize(parseLength + 13))
+    val size = checkedFrontendPacketSize(parseLength + 13)
+    if (!reserveBeforeEncoding) retain(size.toLong())
+    val packet = FrontendPacket(size)
     packet.parse(sqlBytes, parameterTypes.size) { parameterTypes[it].value }
     packet.describe('S')
     packet.message('S', 4)
     return packet.finish()
+}
+
+private fun sqlRequestAllowance(sql: String, framingAndPayloadBytes: Long): Long {
+    // Three bytes per UTF-16 unit bounds UTF-8 without allocating the encoded SQL.
+    return sql.length.toLong() * 3 + framingAndPayloadBytes
 }
 
 internal enum class ExpectedProtocol {
@@ -710,7 +742,7 @@ internal fun parseCommandResponse(
         bytes,
         "execute()",
         validate = { tag ->
-            if (phase == SingleStatementPhase.Complete && tag !in postErrorTags) {
+            if (phase == SingleStatementPhase.Complete && tag != 0x45 && tag !in postErrorTags) {
                 throw OliphauntException("execute() received backend message after statement completion")
             }
         },
@@ -790,7 +822,7 @@ internal fun parseQueryResponse(
         bytes,
         "query()",
         validate = { tag ->
-            if (phase == SingleStatementPhase.Complete && tag !in postErrorTags) {
+            if (phase == SingleStatementPhase.Complete && tag != 0x45 && tag !in postErrorTags) {
                 throw OliphauntException("query() received backend message after statement completion")
             }
         },
@@ -964,7 +996,7 @@ internal fun parseDescribeResponse(bytes: ByteArray): QueryDescription {
         bytes,
         "describe()",
         validate = { tag ->
-            if (sawDescription && tag !in postErrorTags) {
+            if (sawDescription && tag != 0x45 && tag !in postErrorTags) {
                 throw OliphauntException("describe() received backend message after statement description")
             }
         },

@@ -1,4 +1,8 @@
+import { StartupBudget } from '../../core/startup-budget.js';
+import { extractTar } from '../../resources/archive.js';
+import type { ArchiveLimits } from '../../resources/archive-limits.js';
 import { createRequire } from 'node:module';
+import { validateNativeOwnerAdmission } from '../../core/open-config.js';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -20,7 +24,10 @@ import {
   type NativeWasixDatabaseHandle,
   type NativeWasixOpenOptions,
   type NativeWasixToolResult,
-  type NativeWasixToolAssets,
+  type NativeWasixToolInput,
+  type NativeWasixToolSummary,
+  type NativeWasixFileTool,
+  type NativeWasixToolChunk,
 } from './native-addon.js';
 import {
   normalizeWasixDatabaseIdentity,
@@ -127,10 +134,12 @@ export class NativeWasixSession implements WasixDatabaseSession {
     // synchronous protocol operation. Memory storage has no host boundary.
   }
 
-  async backup(): Promise<Uint8Array> {
+  async backup(limits?: ArchiveLimits): Promise<Uint8Array> {
     this.#assertOpen();
     try {
-      return binaryView(this.#handle.backup());
+      const bytes = binaryView(this.#handle.backup());
+      if (limits !== undefined) extractTar(bytes, limits);
+      return bytes;
     } catch (error) {
       throw this.#mapFailure(error);
     }
@@ -146,22 +155,53 @@ export class NativeWasixSession implements WasixDatabaseSession {
 
   async runTool(options: WasixToolProcessOptions): Promise<WasixToolProcessResult> {
     this.#assertOpen();
-    const assets = await loadNativeToolAssets(this.#runtimeVersion, options);
-    if (options.tool.name === 'pg_dump') {
-      try {
-        return toolProcessResult(this.#handle.pgDump(options.args, assets));
-      } catch (error) {
-        throw this.#mapFailure(error);
-      }
+    if (options.output !== undefined && options.output.nativeRegistration === undefined) {
+      throw new Error(
+        'async WASIX tool destinations require a root or /worker database; /direct supports host files',
+      );
     }
-    const script =
-      options.stdin === undefined
-        ? undefined
-        : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin);
+    const prepared = await loadNativeToolInput(this.#runtimeVersion, options);
     try {
-      return toolProcessResult(this.#handle.psql(options.args, assets, options.command, script));
+      if (options.output?.nativeRegistration !== undefined) {
+        const run =
+          options.tool.name === 'pg_dump'
+            ? this.#handle.pgDumpToRegisteredOutput
+            : this.#handle.psqlToRegisteredOutput;
+        if (run === undefined) throw new Error('this WASIX addon lacks native Worker output');
+        const script =
+          options.script ??
+          (options.stdin === undefined
+            ? undefined
+            : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin));
+        return toolSummaryResult(
+          run.call(
+            this.#handle,
+            options.args,
+            nativeToolInput(prepared),
+            options.output.nativeRegistration,
+            options.command,
+            script,
+          ),
+        );
+      }
+      if (options.outputFile !== undefined) {
+        return await runNativeToolFile(this.#handle, options, prepared);
+      }
+      if (options.tool.name === 'pg_dump') {
+        return toolProcessResult(this.#handle.pgDump(options.args, nativeToolInput(prepared)));
+      }
+      const script =
+        options.script ??
+        (options.stdin === undefined
+          ? undefined
+          : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin));
+      return toolProcessResult(
+        this.#handle.psql(options.args, nativeToolInput(prepared), options.command, script),
+      );
     } catch (error) {
       throw this.#mapFailure(error);
+    } finally {
+      prepared.startup.finish();
     }
   }
 
@@ -219,10 +259,12 @@ export class NativeWasixActorSession implements WasixDatabaseSession {
   }
 
   static async open(options: SerializedOpenOptions): Promise<NativeWasixActorSession> {
+    validateNativeOwnerAdmission(options);
     const addon = requireCompatibleNativeWasixAddon(options);
     try {
       const handle = await addon.NativeWasixActorDatabase.open({
         ...nativeWasixOpenOptions(options, nativeStorage(options)),
+        ...(options.admission === undefined ? {} : { admission: options.admission }),
         ...(await loadNativeResources(options)),
       });
       validateActorDatabaseHandle(handle);
@@ -268,10 +310,12 @@ export class NativeWasixActorSession implements WasixDatabaseSession {
     // Rust publishes host-directory storage at the operation boundary.
   }
 
-  async backup(): Promise<Uint8Array> {
+  async backup(limits?: ArchiveLimits): Promise<Uint8Array> {
     this.#assertOpen();
     try {
-      return binaryView(await this.#handle.backup());
+      const bytes = binaryView(await this.#handle.backup());
+      if (limits !== undefined) extractTar(bytes, limits);
+      return bytes;
     } catch (error) {
       throw this.#mapFailure(error);
     }
@@ -283,20 +327,31 @@ export class NativeWasixActorSession implements WasixDatabaseSession {
 
   async runTool(options: WasixToolProcessOptions): Promise<WasixToolProcessResult> {
     this.#assertOpen();
-    const assets = await loadNativeToolAssets(this.#runtimeVersion, options);
+    const prepared = await loadNativeToolInput(this.#runtimeVersion, options);
     try {
+      if (options.outputFile !== undefined) {
+        return await runNativeToolFile(this.#handle, options, prepared);
+      }
+      if (options.output !== undefined) {
+        return await runNativeToolStream(this.#handle, options, prepared);
+      }
       if (options.tool.name === 'pg_dump') {
-        return toolProcessResult(await this.#handle.pgDump(options.args, assets));
+        return toolProcessResult(
+          await this.#handle.pgDump(options.args, nativeToolInput(prepared)),
+        );
       }
       const script =
-        options.stdin === undefined
+        options.script ??
+        (options.stdin === undefined
           ? undefined
-          : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin);
+          : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin));
       return toolProcessResult(
-        await this.#handle.psql(options.args, assets, options.command, script),
+        await this.#handle.psql(options.args, nativeToolInput(prepared), options.command, script),
       );
     } catch (error) {
       throw this.#mapFailure(error);
+    } finally {
+      prepared.startup.finish();
     }
   }
 
@@ -532,26 +587,58 @@ function nativeStorage(options: SerializedOpenOptions): NativeWasixOpenOptions['
   throw new TypeError(`@oliphaunt/wasix-ts ${provider} storage is browser-only`);
 }
 
-async function loadNativeToolAssets(
+type PreparedNativeToolInput = {
+  input: NativeWasixToolInput;
+  startup: StartupBudget;
+};
+
+function nativeToolInput({ input, startup }: PreparedNativeToolInput): NativeWasixToolInput {
+  startup.check();
+  const remaining = startup.remaining;
+  if (remaining === 0) startup.check();
+  // Native code owns this residual budget from submission through virtual connect.
+  startup.finish();
+  return { ...input, startupTimeoutMs: remaining };
+}
+
+async function loadNativeToolInput(
   runtimeVersion: string,
   options: WasixToolProcessOptions,
-): Promise<NativeWasixToolAssets> {
+): Promise<PreparedNativeToolInput> {
   if (options.runtimeVersion !== '' && options.runtimeVersion !== runtimeVersion) {
     throw new Error(
       `WASIX tools runtime ${options.runtimeVersion} is incompatible with database runtime ${runtimeVersion}`,
     );
   }
   validateWasixToolDescriptor(options.tool);
+  if (options.startupTimeoutMs !== undefined && loadNativeWasixAddon().toolOptionsVersion?.() !== 1)
+    throw new Error(
+      'installed WASIX addon does not support tool startup budgets; update the addon',
+    );
   if (!options.tool.aot)
     throw new Error('WASIX native tools require the installed target AOT carrier');
-  const [wasm, aot, manifest] = await Promise.all([
-    loadAsset(options.tool.source, 'WASIX tool module'),
-    loadAsset(options.tool.aot.source, 'WASIX tool AOT'),
-    loadAsset(options.tool.aot.manifest, 'WASIX tools AOT manifest'),
-  ]);
-  if (wasm.length !== options.tool.size) throw new Error('WASIX tool module size mismatch');
-  await assertSha256(wasm, options.tool.sha256, 'WASIX tool module');
-  return { wasm, aot, manifest: new TextDecoder('utf-8', { fatal: true }).decode(manifest) };
+  const startup = new StartupBudget(options.startupTimeoutMs ?? 30_000, 'WASIX tool startup');
+  try {
+    const [wasm, aot, manifest] = await startup.prepare(
+      Promise.all([
+        loadAsset(options.tool.source, 'WASIX tool module', startup.signal),
+        loadAsset(options.tool.aot.source, 'WASIX tool AOT', startup.signal),
+        loadAsset(options.tool.aot.manifest, 'WASIX tools AOT manifest', startup.signal),
+      ]),
+    );
+    if (wasm.length !== options.tool.size) throw new Error('WASIX tool module size mismatch');
+    await assertSha256(wasm, options.tool.sha256, 'WASIX tool module');
+    const input = {
+      wasm,
+      aot,
+      manifest: new TextDecoder('utf-8', { fatal: true }).decode(manifest),
+    };
+    startup.check();
+    return { input, startup };
+  } catch (error) {
+    startup.finish();
+    throw error;
+  }
 }
 
 function validateDatabaseHandle(handle: NativeWasixDatabaseHandle): void {
@@ -589,6 +676,95 @@ function validateActorDatabaseHandle(handle: NativeWasixActorDatabaseHandle): vo
 function binaryView(value: Uint8Array): Uint8Array {
   if (value instanceof Uint8Array) return value;
   throw new TypeError('Oliphaunt WASIX native addon returned a non-binary value');
+}
+
+async function runNativeToolFile(
+  handle: NativeWasixDatabaseHandle | NativeWasixActorDatabaseHandle,
+  options: WasixToolProcessOptions,
+  prepared: PreparedNativeToolInput,
+): Promise<WasixToolProcessResult> {
+  const run:
+    | NativeWasixFileTool<NativeWasixToolSummary | Promise<NativeWasixToolSummary>>
+    | undefined = options.tool.name === 'pg_dump' ? handle.pgDumpToFile : handle.psqlToFile;
+  if (run === undefined) {
+    throw new Error(
+      'this WASIX addon does not support tool file destinations; update the native carrier',
+    );
+  }
+  const script =
+    options.script ??
+    (options.stdin === undefined
+      ? undefined
+      : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin));
+  const result = await run.call(
+    handle,
+    options.args,
+    nativeToolInput(prepared),
+    options.outputFile!,
+    options.command,
+    script,
+  );
+  return toolSummaryResult(result);
+}
+
+async function runNativeToolStream(
+  handle: NativeWasixActorDatabaseHandle,
+  options: WasixToolProcessOptions,
+  prepared: PreparedNativeToolInput,
+): Promise<WasixToolProcessResult> {
+  const run = options.tool.name === 'pg_dump' ? handle.pgDumpToStream : handle.psqlToStream;
+  if (run === undefined) {
+    throw new Error(
+      'this WASIX addon does not support async tool destinations; update the native carrier',
+    );
+  }
+  const acknowledgeAfterWrite =
+    (write: (chunk: Uint8Array) => Promise<void>) =>
+    (packet: NativeWasixToolChunk): void => {
+      void Promise.resolve()
+        .then(() => write(binaryView(packet.chunk)))
+        .then(
+          () => packet.acknowledge(),
+          () => packet.acknowledge('Oliphaunt WASIX tool destination failed'),
+        );
+    };
+  const output = options.output!;
+  const script =
+    options.script ??
+    (options.stdin === undefined
+      ? undefined
+      : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin));
+  return toolSummaryResult(
+    await run.call(
+      handle,
+      options.args,
+      nativeToolInput(prepared),
+      {
+        stdout: acknowledgeAfterWrite(output.stdout),
+        ...(output.stderr === undefined ? {} : { stderr: acknowledgeAfterWrite(output.stderr) }),
+      },
+      options.command,
+      script,
+    ),
+  );
+}
+
+function toolSummaryResult(result: NativeWasixToolSummary): WasixToolProcessResult {
+  if (
+    !Number.isSafeInteger(result.stdoutBytes) ||
+    result.stdoutBytes < 0 ||
+    typeof result.stderr !== 'string' ||
+    typeof result.stderrTruncated !== 'boolean'
+  ) {
+    throw new TypeError('Oliphaunt WASIX native tool returned an invalid output summary');
+  }
+  return {
+    exitCode: 0,
+    stdout: new Uint8Array(),
+    stderr: new TextEncoder().encode(result.stderr),
+    stdoutBytes: result.stdoutBytes,
+    stderrTruncated: result.stderrTruncated,
+  };
 }
 
 function toolProcessResult(result: NativeWasixToolResult): WasixToolProcessResult {

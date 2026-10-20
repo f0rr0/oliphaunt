@@ -1,4 +1,4 @@
-From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+From: Sid Jain <sid_26@outlook.com>
 Date: Fri, 21 Aug 2026 13:00:00 +0000
 Subject: [PATCH] oliphaunt-wasix: set libpq sockets nonblocking
 

@@ -3,13 +3,19 @@ const WRITE_OFFSET = 1;
 const CLOSED = 2;
 const FAILED = 3;
 const PROTOCOL_STATE = 4;
-const CONTROL_WORDS = 5;
+const WAKE_GENERATION = 5;
+const CONTROL_WORDS = 6;
 const PROTOCOL_IDLE = 0;
 const PROTOCOL_ACTIVE = 1;
 const PROTOCOL_COMPLETE = 2;
 
+// Read batching only; independent of the public protocol callback maximum.
 const WASIX_BYTE_CHANNEL_CHUNK_BYTES = 64 * 1024;
+// Fixed shared-memory allocation. One sentinel byte distinguishes full/empty,
+// leaving 256 KiB usable; writers wait for space rather than buffering the stream.
 const WASIX_CHANNEL_BYTES = 256 * 1024 + 1;
+export const WASIX_BYTE_CHANNEL_ALLOCATION_BYTES =
+  WASIX_CHANNEL_BYTES + Int32Array.BYTES_PER_ELEMENT * CONTROL_WORDS;
 
 /** @internal One bounded single-producer/single-consumer byte channel. */
 export type WasixByteChannel = Readonly<{
@@ -29,8 +35,8 @@ export function createWasixByteChannel(): WasixByteChannel {
 export function closeWasixByteChannel(channel: WasixByteChannel): void {
   const control = channelControl(channel);
   Atomics.store(control, CLOSED, 1);
-  Atomics.notify(control, READ_OFFSET);
-  Atomics.notify(control, WRITE_OFFSET);
+  Atomics.add(control, WAKE_GENERATION, 1);
+  Atomics.notify(control, WAKE_GENERATION);
 }
 
 /** @internal Signal an unrecoverable transport failure. */
@@ -38,8 +44,8 @@ export function failWasixByteChannel(channel: WasixByteChannel): void {
   const control = channelControl(channel);
   Atomics.store(control, FAILED, 1);
   Atomics.store(control, CLOSED, 1);
-  Atomics.notify(control, READ_OFFSET);
-  Atomics.notify(control, WRITE_OFFSET);
+  Atomics.add(control, WAKE_GENERATION, 1);
+  Atomics.notify(control, WAKE_GENERATION);
 }
 
 /** @internal Record that a tool has entered its PostgreSQL protocol callback. */
@@ -75,12 +81,13 @@ export function readWasixByteChannelSync(
   const control = channelControl(channel);
   const data = new Uint8Array(channel.data);
   for (;;) {
+    const generation = Atomics.load(control, WAKE_GENERATION);
     assertChannelHealthy(control);
     const read = Atomics.load(control, READ_OFFSET);
     const write = Atomics.load(control, WRITE_OFFSET);
     if (read !== write) return consume(control, data, read, write, maximumBytes);
     if (Atomics.load(control, CLOSED) !== 0) return new Uint8Array();
-    Atomics.wait(control, WRITE_OFFSET, write);
+    Atomics.wait(control, WAKE_GENERATION, generation);
   }
 }
 
@@ -90,12 +97,13 @@ export function writeWasixByteChannelSync(channel: WasixByteChannel, input: Uint
   const data = new Uint8Array(channel.data);
   let offset = 0;
   while (offset < input.length) {
+    const generation = Atomics.load(control, WAKE_GENERATION);
     assertChannelWritable(control);
     const read = Atomics.load(control, READ_OFFSET);
     const write = Atomics.load(control, WRITE_OFFSET);
     const writable = writableBytes(read, write, data.length);
     if (writable === 0) {
-      Atomics.wait(control, READ_OFFSET, read);
+      Atomics.wait(control, WAKE_GENERATION, generation);
       continue;
     }
     const copied = produce(control, data, write, input.subarray(offset), writable);
@@ -107,16 +115,28 @@ export function writeWasixByteChannelSync(channel: WasixByteChannel, input: Uint
 export async function readWasixByteChannel(
   channel: WasixByteChannel,
   maximumBytes = WASIX_BYTE_CHANNEL_CHUNK_BYTES,
+  accept?: (chunk: Uint8Array) => Promise<void>,
 ): Promise<Uint8Array> {
   const control = channelControl(channel);
   const data = new Uint8Array(channel.data);
   for (;;) {
+    const generation = Atomics.load(control, WAKE_GENERATION);
     assertChannelHealthy(control);
     const read = Atomics.load(control, READ_OFFSET);
     const write = Atomics.load(control, WRITE_OFFSET);
-    if (read !== write) return consume(control, data, read, write, maximumBytes);
+    if (read !== write) {
+      const output = consume(control, data, read, write, maximumBytes, accept === undefined);
+      if (accept !== undefined) {
+        try {
+          await accept(output);
+        } finally {
+          advanceRead(control, (read + output.length) % data.length);
+        }
+      }
+      return output;
+    }
     if (Atomics.load(control, CLOSED) !== 0) return new Uint8Array();
-    await waitForChange(control, WRITE_OFFSET, write);
+    await waitForChange(control, WAKE_GENERATION, generation);
   }
 }
 
@@ -129,12 +149,13 @@ export async function writeWasixByteChannel(
   const data = new Uint8Array(channel.data);
   let offset = 0;
   while (offset < input.length) {
+    const generation = Atomics.load(control, WAKE_GENERATION);
     assertChannelWritable(control);
     const read = Atomics.load(control, READ_OFFSET);
     const write = Atomics.load(control, WRITE_OFFSET);
     const writable = writableBytes(read, write, data.length);
     if (writable === 0) {
-      await waitForChange(control, READ_OFFSET, read);
+      await waitForChange(control, WAKE_GENERATION, generation);
       continue;
     }
     const copied = produce(control, data, write, input.subarray(offset), writable);
@@ -160,6 +181,7 @@ function consume(
   read: number,
   write: number,
   maximumBytes: number,
+  acknowledge = true,
 ): Uint8Array {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes <= 0) {
     throw new TypeError('maximum byte count must be a positive integer');
@@ -167,9 +189,14 @@ function consume(
   const available = write >= read ? write - read : data.length - read;
   const count = Math.min(available, maximumBytes);
   const output = data.slice(read, read + count);
-  Atomics.store(control, READ_OFFSET, (read + count) % data.length);
-  Atomics.notify(control, READ_OFFSET);
+  if (acknowledge) advanceRead(control, (read + count) % data.length);
   return output;
+}
+
+function advanceRead(control: Int32Array, offset: number): void {
+  Atomics.store(control, READ_OFFSET, offset);
+  Atomics.add(control, WAKE_GENERATION, 1);
+  Atomics.notify(control, WAKE_GENERATION);
 }
 
 function writableBytes(read: number, write: number, capacity: number): number {
@@ -188,7 +215,8 @@ function produce(
   const count = Math.min(writable, input.length, WASIX_BYTE_CHANNEL_CHUNK_BYTES);
   data.set(input.subarray(0, count), write);
   Atomics.store(control, WRITE_OFFSET, (write + count) % data.length);
-  Atomics.notify(control, WRITE_OFFSET);
+  Atomics.add(control, WAKE_GENERATION, 1);
+  Atomics.notify(control, WAKE_GENERATION);
   return count;
 }
 

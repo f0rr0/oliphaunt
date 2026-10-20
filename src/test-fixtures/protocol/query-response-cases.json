@@ -160,6 +160,22 @@
       }
     },
     {
+      "name": "postgres_error_after_command_complete",
+      "description": "A deferred constraint failure during implicit commit preserves ErrorResponse after CommandComplete and before ReadyForQuery.",
+      "responseHex": "430000000f494e5345525420302031004500000032534552524f5200433233353033004d646566657272656420636f6e73747261696e742076696f6c6174696f6e00005a0000000549",
+      "queryExpectation": {
+        "postgresError": {
+          "severity": "ERROR",
+          "localizedSeverity": "ERROR",
+          "sqlstate": "23503",
+          "message": "deferred constraint violation"
+        }
+      },
+      "wireExpectation": {
+        "messageNames": ["commandComplete", "error", "readyForQuery"]
+      }
+    },
+    {
       "name": "postgres_error_relation_missing",
       "description": "Structured PostgreSQL ErrorResponse with SQLSTATE and message fields.",
       "responseHex": "450000002c534552524f5200433432503031004d72656c6174696f6e20646f6573206e6f7420657869737400005a0000000549",

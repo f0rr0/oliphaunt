@@ -1,4 +1,4 @@
-From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+From: Sid Jain <sid_26@outlook.com>
 Date: Sun, 30 Aug 2026 00:00:00 +0000
 Subject: [PATCH] oliphaunt-wasix: cache jsonb_build_object metadata
 
@@ -92,11 +92,11 @@ index da94d42..b051693 100644
 +			 * A Param is stable only for one query, not for FmgrInfo's
 +			 * lifetime.
 +			 */
-+			if (IsA(arg, FuncExpr))
++			if (arg != NULL && IsA(arg, FuncExpr))
 +				arg = (Node *) list_nth(((FuncExpr *) arg)->args, i);
 +			else
 +				arg = NULL;
-+			if (IsA(arg, Const))
++			if (arg != NULL && IsA(arg, Const))
 +			{
 +				argstate->converted_unknown = true;
 +				argstate->converted_arg = PG_ARGISNULL(i) ? (Datum) 0 :

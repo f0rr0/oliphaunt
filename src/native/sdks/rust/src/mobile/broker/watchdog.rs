@@ -3,8 +3,6 @@ use std::time::Duration;
 
 use crate::{Error, Result};
 
-pub(super) const SETTLEMENT: Duration = Duration::from_secs(3);
-
 #[derive(Clone, Copy)]
 pub(super) enum Expiry {
     Cancel,
@@ -66,10 +64,14 @@ impl Watchdog {
     }
 
     pub(super) fn arm(&self, request: u64, budget: Duration, action: Expiry) {
+        self.arm_until(request, continuous_time().saturating_add(budget), action);
+    }
+
+    pub(super) fn arm_until(&self, request: u64, deadline: Duration, action: Expiry) {
         let (lock, changed) = &*self.shared;
         let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
         if !state.stopped {
-            state.deadline = Some((request, continuous_time().saturating_add(budget), action));
+            state.deadline = Some((request, deadline, action));
             changed.notify_one();
         }
     }

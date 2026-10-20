@@ -43,9 +43,9 @@ Native cancellation is the one admission exception after `close` has stopped
 accepting ordinary SQL. It remains available while already-admitted work drains,
 so callers can interrupt the operation that `close` is waiting for. The cancel
 gate closes atomically only when destructive teardown begins, and teardown waits
-for every admitted cancellation request to settle. This does not make
-cancellation query-scoped: without operation IDs it still targets the runtime's
-active operation.
+for every admitted cancellation request to settle. The public method selects
+the runtime's active operation and accepts no operation ID. Broker transport
+binds that selection to its private request identity before delivery.
 
 Language finalizers and cleaners are only best-effort forgotten-handle safety
 nets. They capture an exact private handle generation, never retain the public
@@ -125,6 +125,12 @@ There is no public checkpoint convenience. PostgreSQL already exposes
 `CHECKPOINT` as SQL, so a caller with a concrete need uses
 `execute("CHECKPOINT")` or the language-equivalent call. Runtime persistence
 and first-open publication boundaries remain internal.
+
+Embedded WAL pressure also schedules PostgreSQL's own checkpoint work at a safe
+idle boundary before readiness. CommandComplete alone is not operation success:
+implicit commit or deferred maintenance can still emit ErrorResponse before
+ReadyForQuery. Structured parsers preserve that PostgreSQL error and its
+SQLSTATE, while continuing to reject duplicate result completions.
 
 `describe` reports wire facts, not inferred SQL syntax or promised codec
 objects. An unsuccessful description still drains to the readiness boundary
@@ -220,6 +226,12 @@ C boundary enforces this explicitly while its mutex is released: same-handle
 query, backup, detach, close, and nested stream calls fail busy, while
 out-of-band cancellation remains permitted.
 
+Native broker SDKs use the private transport defined in the
+[broker exchange amendment](repository-simplification-contracts.md#binding-amendment--native-broker-exchange-completion).
+It preserves these public raw methods and their complete-input contract.
+Native completion requires a synchronized backend read checkpoint and exhausted
+input; counting frontend Sync or backend readiness messages is insufficient.
+
 A buffered raw-protocol execution or transport failure leaves the session
 outcome unknown and poisons the handle. The same is true when streamed
 execution, transport, or recovery fails. A stream callback failure is the one
@@ -309,7 +321,7 @@ Savepoints do not become a second core transaction API.
 | JavaScript decoded rows | Native TypeScript, WASIX TypeScript, and React Native expose decoded object/array modes plus `queryRaw`. Rust, Swift, and Kotlin expose typed getters over raw ordered rows and do not manufacture JavaScript-shaped maps. |
 | React Native transport | Swift and Kotlin own database behavior. The TurboModule transports complete results; JavaScript owns decoded row shaping. Operations remain FIFO. |
 | WASIX persistence | A successful logical operation does not settle before its provider publication boundary. A callback transaction publishes once after confirmed `COMMIT` or `ROLLBACK`; publication failure retains its WASIX storage and commit-state error. A new persistent direct-OPFS root has one private initialization/full-publication boundary that is not public API. |
-| Cancellation | Native SDKs may cancel the runtime's active operation and must recover through readiness. WASIX has no public direct-query cancellation contract. Cancellation is not presented as query-scoped until operation IDs exist. |
+| Cancellation | Native SDKs may cancel the runtime's active operation and must recover through readiness. WASIX has no public direct-query cancellation contract. The public method accepts no operation ID; broker transport binds the selected active request privately. |
 | Server handles | Server products exist only where local sockets are honest. Native/WASIX Rust, desktop TypeScript, and WASIX TypeScript server handles own only listener/process lifecycle plus a connection string; ORMs and external drivers own every database connection. Browser TypeScript has no server API. |
 | Physical backup | Embedded database handles use their runtime-family archive. Native server handles have no SDK backup method. Native and WASIX archives are not interchangeable. |
 | Raw streaming | Every embedded database/root SDK surface provides bounded callback response streaming as `execProtocolRawStream` or `exec_protocol_raw_stream`; transaction and server handles do not. Native streaming starts from complete frontend input; stronger WASIX guest streaming does not raise the native guarantee. |

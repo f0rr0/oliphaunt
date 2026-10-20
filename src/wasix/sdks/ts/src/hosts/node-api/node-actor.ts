@@ -12,5 +12,5 @@ export async function openNodeActorSession(
 
 /** @internal Open the public database contract over the native Rust owner. */
 export async function openNodeActor(options: SerializedOpenOptions): Promise<OliphauntDatabase> {
-  return new WasixDatabaseImpl(await openNodeActorSession(options));
+  return new WasixDatabaseImpl(await openNodeActorSession(options), undefined, options.admission);
 }

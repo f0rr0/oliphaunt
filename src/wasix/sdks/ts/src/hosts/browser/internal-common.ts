@@ -3,20 +3,27 @@ import {
   closeWasixByteChannel,
   createWasixByteChannel,
   failWasixByteChannel,
+  readWasixByteChannel,
   type WasixByteChannel,
+  WASIX_BYTE_CHANNEL_ALLOCATION_BYTES,
   wasixByteChannelProtocolOutcomeUnknown,
+  wasixByteChannelProtocolStarted,
 } from '../../protocol/byte-channel.js';
 import {
   assertWasixProtocolConnectionTarget,
+  admitWasixToolProcess,
   registerWasixDatabaseResource,
   reserveWasixProtocolConnection,
   runWasixPgDumpProcess,
   type WasixProtocolConnectionReservation,
+  WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES,
+  createWasixDeferred,
 } from '../../core/database.js';
 import type { OliphauntDatabase } from '../../core/types.js';
 import type { WasixToolWorkerRequest, WasixToolWorkerResponse } from './tool-worker-common.js';
 import {
   type WasixToolDescriptor,
+  type WasixToolProcessInput,
   type WasixToolProcessOptions,
   type WasixToolProcessResult,
   validateWasixToolDescriptor,
@@ -47,6 +54,10 @@ type ToolConnectionReservation = {
   serving?: Promise<{ ok: true } | { ok: false; error: unknown }>;
   started: boolean;
   failure?: Error;
+  output?: NonNullable<Extract<WasixToolWorkerRequest, { kind: 'run' }>['output']>;
+  outputStopped: AbortController;
+  outputDraining?: Promise<void>;
+  completed: ReturnType<typeof createWasixDeferred<void>>;
 };
 
 type ToolWorkerRequestWithoutId = WasixToolWorkerRequest extends infer Request
@@ -56,38 +67,58 @@ type ToolWorkerRequestWithoutId = WasixToolWorkerRequest extends infer Request
   : never;
 
 const controllers = new WeakMap<OliphauntDatabase, WasixToolController>();
-type PsqlToolDescriptor = WasixToolDescriptor & Readonly<{ name: 'psql' }>;
 
 /** @internal Shared browser/server tool orchestration; public API lives in the optional package. */
 export function runWasixToolProcess(
   database: OliphauntDatabase,
-  options: WasixToolProcessOptions,
+  input: WasixToolProcessInput,
   createWorker: () => WasixToolWorkerPort,
 ): Promise<WasixToolProcessResult> {
+  return admitWasixToolProcess(database, input, (options, retain) =>
+    runAdmittedTool(database, options, createWorker, retain),
+  );
+}
+
+function runAdmittedTool(
+  database: OliphauntDatabase,
+  options: WasixToolProcessOptions,
+  createWorker: () => WasixToolWorkerPort,
+  retain: (bytes: number) => void,
+): Promise<WasixToolProcessResult> {
+  if (options.outputFile !== undefined) {
+    throw new Error('WASIX tool file destinations require Node.js, Bun, Deno, or Electron');
+  }
   if (options.runtimeVersion !== defaultWasixRuntime.version) {
     throw new Error(
       `WASIX tools runtime ${options.runtimeVersion} is incompatible with database runtime ${defaultWasixRuntime.version}`,
     );
   }
   validateWasixToolDescriptor(options.tool);
-  if (options.tool.name === 'pg_dump') {
+  if (options.tool.name === 'pg_dump' && options.output === undefined) {
     return runWasixPgDumpProcess(database, options);
   }
-  assertWasixProtocolConnectionTarget(database);
+  try {
+    assertWasixProtocolConnectionTarget(database);
+  } catch (error) {
+    if (options.output === undefined) throw error;
+    throw new Error('browser async WASIX tool destinations require @oliphaunt/wasix-ts/worker', {
+      cause: error,
+    });
+  }
   let controller = controllers.get(database);
   if (controller === undefined) {
     controller = new WasixToolController(database, createWorker);
     registerWasixDatabaseResource(database, controller);
     controllers.set(database, controller);
   }
-  return controller.run(options);
+  return controller.run(options, retain);
 }
 
 class WasixToolController {
   readonly #database: OliphauntDatabase;
   readonly #createWorker: () => WasixToolWorkerPort;
   readonly #pending = new Map<number, PendingResponse>();
-  #preparedPsqlIdentity: string | undefined;
+  readonly #preparedIdentities = new Map<'pg_dump' | 'psql', string>();
   readonly #retiredWorkerTerminations = new Set<Promise<void>>();
   readonly #connections = new Set<ToolConnectionReservation>();
   #worker: WasixToolWorkerPort | undefined;
@@ -102,19 +133,19 @@ class WasixToolController {
     this.#createWorker = createWorker;
   }
 
-  run(options: WasixToolProcessOptions): Promise<WasixToolProcessResult> {
+  run(
+    options: WasixToolProcessOptions,
+    retain: (bytes: number) => void,
+  ): Promise<WasixToolProcessResult> {
     if (this.#closing) {
       return Promise.reject(new Error('Oliphaunt WASIX tool worker is closing'));
     }
     if (this.#fatal !== undefined) return Promise.reject(this.#fatal);
-    if (options.tool.name !== 'psql') {
-      return Promise.reject(new TypeError('the bounded tool worker supports only psql'));
-    }
     let connection: ToolConnectionReservation;
     try {
       // Reserve the database FIFO during the public call. Preparing a cold
       // tool must not let a later query or tool overtake this invocation.
-      connection = this.#reserveConnection();
+      connection = this.#reserveConnection(retain, options);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -136,7 +167,7 @@ class WasixToolController {
     this.#failConnections(error);
     const worker = this.#worker;
     this.#worker = undefined;
-    this.#preparedPsqlIdentity = undefined;
+    this.#preparedIdentities.clear();
     const terminations = [...this.#retiredWorkerTerminations];
     if (worker !== undefined) terminations.push(terminateWorker(worker));
     this.#termination = Promise.all(terminations).then(() => undefined);
@@ -148,11 +179,22 @@ class WasixToolController {
     connection: ToolConnectionReservation,
   ): Promise<WasixToolProcessResult> {
     const { frontend, backend } = connection;
+    let startupFailure: Error | undefined;
+    const startupTimer =
+      options.startupTimeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            if (wasixByteChannelProtocolStarted(frontend)) return;
+            startupFailure = new Error(
+              'WASIX tool startup deadline exceeded before protocol activity',
+            );
+            this.#handleFatal(startupFailure);
+          }, options.startupTimeoutMs);
     try {
       if (this.#closing) throw this.#fatal;
       if (this.#fatal !== undefined) throw this.#fatal;
       if (connection.failure !== undefined) throw connection.failure;
-      await this.#prepare(options.tool as PsqlToolDescriptor);
+      await this.#prepare(options.tool);
       if (this.#closing) throw this.#fatal;
       if (this.#fatal !== undefined) throw this.#fatal;
       if (connection.failure !== undefined) throw connection.failure;
@@ -162,25 +204,42 @@ class WasixToolController {
         () => ({ ok: true as const }),
         (error: unknown) => {
           connection.failure ??= asError(error);
-          failWasixByteChannel(frontend);
-          failWasixByteChannel(backend);
+          finishFailedToolChannels(connection);
           return { ok: false as const, error };
         },
       );
       connection.serving = serving;
+      if (connection.output !== undefined) {
+        const output = options.output!;
+        connection.outputDraining = Promise.all([
+          drainToolOutput(connection.output.stdout, output.stdout, connection.outputStopped.signal),
+          ...(connection.output.stderr === undefined
+            ? []
+            : [
+                drainToolOutput(
+                  connection.output.stderr,
+                  output.stderr!,
+                  connection.outputStopped.signal,
+                ),
+              ]),
+        ]).then(() => undefined);
+        void connection.outputDraining.catch(() => undefined);
+      }
 
-      const stdin = options.stdin;
+      const stdin =
+        options.script === undefined ? options.stdin : new TextEncoder().encode(options.script);
       let response: WasixToolWorkerResponse | undefined;
       let responseFailure: unknown;
       try {
         response = await this.#request(
           {
             kind: 'run',
-            tool: 'psql',
+            tool: options.tool.name,
             args: [...options.args],
             stdin,
             frontend,
             backend,
+            output: connection.output,
           },
           stdin === undefined ||
             !(stdin.buffer instanceof ArrayBuffer) ||
@@ -200,6 +259,8 @@ class WasixToolController {
       }
 
       if (responseFailure !== undefined) throw responseFailure;
+      await connection.outputDraining;
+      connection.completed.resolve();
       const served = await serving;
       if (!served.ok) throw served.error;
       if (response === undefined || !response.ok || response.kind !== 'completed') {
@@ -209,30 +270,68 @@ class WasixToolController {
         exitCode: response.exitCode,
         stdout: response.stdout,
         stderr: response.stderr,
+        ...(connection.output === undefined
+          ? {}
+          : { stdoutBytes: response.stdoutBytes, stderrTruncated: response.stderrTruncated }),
       };
     } finally {
+      clearTimeout(startupTimer);
+      connection.completed.resolve();
+      connection.outputStopped.abort();
+      if (connection.output !== undefined) {
+        failWasixByteChannel(connection.output.stdout);
+        if (connection.output.stderr !== undefined) failWasixByteChannel(connection.output.stderr);
+      }
+      await connection.outputDraining?.catch(() => undefined);
       closeWasixByteChannel(frontend);
       if (!connection.started) connection.database.cancel();
       if (connection.serving !== undefined && !this.#closing) await connection.serving;
       closeWasixByteChannel(backend);
       this.#connections.delete(connection);
+      if (startupFailure !== undefined) {
+        await Promise.all(this.#retiredWorkerTerminations).catch((error: unknown) => {
+          throw new AggregateError(
+            [startupFailure, error],
+            'WASIX tool startup and termination both failed',
+          );
+        });
+      }
     }
   }
 
-  #reserveConnection(): ToolConnectionReservation {
+  #reserveConnection(
+    retain: (bytes: number) => void,
+    options: WasixToolProcessOptions,
+  ): ToolConnectionReservation {
+    retain(
+      (2 + (options.output === undefined ? 0 : options.output.stderr === undefined ? 1 : 2)) *
+        WASIX_BYTE_CHANNEL_ALLOCATION_BYTES,
+    );
     const frontend = createWasixByteChannel();
     const backend = createWasixByteChannel();
     try {
+      const output =
+        options.output === undefined
+          ? undefined
+          : {
+              stdout: createWasixByteChannel(),
+              ...(options.output.stderr === undefined ? {} : { stderr: createWasixByteChannel() }),
+            };
+      const completed = createWasixDeferred<void>();
       const database = reserveWasixProtocolConnection(
         this.#database,
         { frontend, backend },
         'tool',
+        options.output === undefined ? undefined : completed.promise,
       );
       const connection: ToolConnectionReservation = {
         frontend,
         backend,
         database,
         started: false,
+        outputStopped: new AbortController(),
+        completed,
+        output,
       };
       this.#connections.add(connection);
       return connection;
@@ -251,9 +350,9 @@ class WasixToolController {
     }
   }
 
-  async #prepare(tool: PsqlToolDescriptor): Promise<void> {
+  async #prepare(tool: WasixToolDescriptor): Promise<void> {
     const identity = `${tool.sha256}:${tool.size}`;
-    if (this.#preparedPsqlIdentity === identity) return;
+    if (this.#preparedIdentities.get(tool.name) === identity) return;
     const response = await this.#request({
       kind: 'prepare',
       tool,
@@ -262,7 +361,7 @@ class WasixToolController {
     if (response.kind !== 'prepared') {
       throw new Error('Oliphaunt WASIX tool worker returned an invalid preparation response');
     }
-    this.#preparedPsqlIdentity = identity;
+    this.#preparedIdentities.set(tool.name, identity);
   }
 
   #request(
@@ -318,17 +417,60 @@ class WasixToolController {
       void termination.catch(() => undefined);
       this.#retiredWorkerTerminations.add(termination);
     }
-    this.#preparedPsqlIdentity = undefined;
+    this.#preparedIdentities.clear();
     if (protocolOutcomeUnknown || this.#closing) this.#fatal = error;
   }
 }
 
 function finishFailedToolChannels(connection: ToolConnectionReservation): void {
+  connection.outputStopped.abort();
+  if (connection.output !== undefined) {
+    failWasixByteChannel(connection.output.stdout);
+    if (connection.output.stderr !== undefined) failWasixByteChannel(connection.output.stderr);
+  }
   if (wasixByteChannelProtocolOutcomeUnknown(connection.frontend)) {
     failWasixByteChannel(connection.frontend);
     failWasixByteChannel(connection.backend);
   }
   closeWasixByteChannel(connection.frontend);
+}
+
+async function drainToolOutput(
+  channel: WasixByteChannel,
+  write: (chunk: Uint8Array) => Promise<void>,
+  stopped: AbortSignal,
+): Promise<void> {
+  let failed = false;
+  for (;;) {
+    const chunk = await readWasixByteChannel(
+      channel,
+      WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES,
+      async (chunk) => {
+        if (failed) return;
+        if (stopped.aborted) {
+          failed = true;
+          return;
+        }
+        failed = !(await new Promise<boolean>((resolve) => {
+          const abort = () => resolve(false);
+          stopped.addEventListener('abort', abort, { once: true });
+          void Promise.resolve()
+            .then(() => write(chunk))
+            .then(
+              () => {
+                stopped.removeEventListener('abort', abort);
+                resolve(true);
+              },
+              () => {
+                stopped.removeEventListener('abort', abort);
+                resolve(false);
+              },
+            );
+        }));
+      },
+    );
+    if (chunk.length === 0) return;
+  }
 }
 
 function terminateWorker(worker: WasixToolWorkerPort): Promise<void> {

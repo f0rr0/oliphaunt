@@ -1,5 +1,12 @@
+import {
+  normalizeRuntimeTimeouts,
+  optionRecord,
+  positiveInteger,
+  timeoutMilliseconds,
+} from '@oliphaunt/ts-query/internal/resource-options';
 import { normalizeExtensions, type NativeExtension } from './extensions.js';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   generatedExtensionBySqlName,
@@ -7,6 +14,8 @@ import {
 } from './generated/extensions.js';
 import type {
   NativeResourceDirectory,
+  BrokerOptions,
+  FilePathInput,
   OpenConfig,
   ServerListen,
   ServerOpenConfig,
@@ -22,6 +31,11 @@ export const DEFAULT_DATABASE = 'postgres';
 const SERVER_OWNED_STARTUP_GUCS = new Set(['listen_addresses', 'port', 'unix_socket_directories']);
 const STORAGE_OWNED_STARTUP_GUCS = new Set(['config_file', 'data_directory']);
 
+export type NormalizedResourceDirectory = { readonly [K in keyof NativeResourceDirectory]: string };
+export type NormalizedServerListen =
+  | { readonly transport: 'tcp'; readonly port?: number }
+  | { readonly transport: 'unix'; readonly directory: string; readonly port?: number };
+
 export type NormalizedOpenConfig = {
   topology: RuntimeTopology;
   instanceDirectory: string;
@@ -34,11 +48,15 @@ export type NormalizedOpenConfig = {
   extensionDescriptors?: NativeExtension[];
   libraryPath?: string;
   runtimeDirectory?: string;
-  seed?: NativeResourceDirectory;
-  icuData?: NativeResourceDirectory;
+  seed?: NormalizedResourceDirectory;
+  icuData?: NormalizedResourceDirectory;
   brokerExecutable?: string;
+  brokerHandshakeTimeoutMs?: number;
+  brokerRecoveryTimeoutMs?: number;
+  brokerMaxPendingHandshakes?: number;
+  timeouts?: import('./types.js').RuntimeTimeouts;
   serverExecutable?: string;
-  serverListen?: ServerListen;
+  serverListen?: NormalizedServerListen;
 };
 
 export function normalizeOpenConfig(
@@ -55,6 +73,10 @@ export function normalizeOpenConfig(
   const extensions = extensionDescriptors.map((extension) => extension.sqlName);
   const topology =
     config.topology === 'server' ? 'server' : normalizeDatabaseTopology(config.topology);
+  const broker = normalizeBrokerOptions('broker' in config ? config.broker : undefined, topology);
+  const timeouts = normalizeRuntimeTimeouts(config.timeouts);
+  if (topology === 'direct' && timeouts !== undefined)
+    throw new TypeError('timeouts require broker or server placement');
   validateNativeStartupGUCs(topology, config.startupGUCs ?? {});
   const startupArgs = buildStartupArgs({
     startupGUCs: config.startupGUCs ?? {},
@@ -97,19 +119,70 @@ export function normalizeOpenConfig(
       ? { icuData: validateResourceDirectory(config.icuData, 'icuData') }
       : {}),
     brokerExecutable,
+    ...(timeouts === undefined ? {} : { timeouts }),
+    ...(broker?.recoveryTimeoutMs === undefined
+      ? {}
+      : { brokerRecoveryTimeoutMs: broker.recoveryTimeoutMs }),
+    ...(broker?.maxPendingHandshakes === undefined
+      ? {}
+      : { brokerMaxPendingHandshakes: broker.maxPendingHandshakes }),
+    ...(broker?.handshakeTimeoutMs === undefined
+      ? {}
+      : { brokerHandshakeTimeoutMs: broker.handshakeTimeoutMs }),
     serverExecutable,
     serverListen,
   };
 }
 
-function validateResourceDirectory(
+export function normalizeBrokerOptions(
+  value: unknown,
+  topology: RuntimeTopology,
+): BrokerOptions | undefined {
+  if (value === undefined) return undefined;
+  if (topology !== 'broker') throw new TypeError('broker options require topology: "broker"');
+  const options = optionRecord(
+    value,
+    ['handshakeTimeoutMs', 'recoveryTimeoutMs', 'maxPendingHandshakes'],
+    'broker options',
+  );
+  return {
+    ...(options.handshakeTimeoutMs === undefined
+      ? {}
+      : {
+          handshakeTimeoutMs: timeoutMilliseconds(
+            options.handshakeTimeoutMs,
+            'broker handshakeTimeoutMs',
+          ),
+        }),
+    ...(options.recoveryTimeoutMs === undefined
+      ? {}
+      : {
+          recoveryTimeoutMs: timeoutMilliseconds(
+            options.recoveryTimeoutMs,
+            'broker recoveryTimeoutMs',
+          ),
+        }),
+    ...(options.maxPendingHandshakes === undefined
+      ? {}
+      : {
+          maxPendingHandshakes: positiveInteger(
+            options.maxPendingHandshakes,
+            'broker maxPendingHandshakes',
+            0xffff_ffff,
+          ),
+        }),
+  };
+}
+
+export function validateResourceDirectory(
   value: NativeResourceDirectory | undefined,
   label: string,
-): NativeResourceDirectory | undefined {
+): NormalizedResourceDirectory | undefined {
   if (value === undefined) return undefined;
-  validateDirectoryPath(value.directory, `${label} directory`);
-  validateDirectoryPath(value.manifestPath, `${label} manifestPath`);
-  return { directory: value.directory, manifestPath: value.manifestPath };
+  return {
+    directory: normalizeFilePath(value.directory, `${label} directory`),
+    manifestPath: normalizeFilePath(value.manifestPath, `${label} manifestPath`),
+  };
 }
 
 export function normalizeDatabaseTopology(value: unknown): DatabaseTopology {
@@ -120,7 +193,9 @@ export function normalizeDatabaseTopology(value: unknown): DatabaseTopology {
   );
 }
 
-function validateServerListen(listen: ServerListen | undefined): ServerListen | undefined {
+function validateServerListen(
+  listen: ServerListen | undefined,
+): NormalizedServerListen | undefined {
   if (listen === undefined) {
     return undefined;
   }
@@ -128,10 +203,10 @@ function validateServerListen(listen: ServerListen | undefined): ServerListen | 
   if (listen.transport === 'tcp') {
     return port === undefined ? { transport: 'tcp' } : { transport: 'tcp', port };
   }
-  validateDirectoryPath(listen.directory, 'server Unix socket directory');
+  const directory = normalizeFilePath(listen.directory, 'server Unix socket directory');
   return port === undefined
-    ? { transport: 'unix', directory: listen.directory }
-    : { transport: 'unix', directory: listen.directory, port };
+    ? { transport: 'unix', directory }
+    : { transport: 'unix', directory, port };
 }
 
 export function buildStartupArgs(options: {
@@ -220,19 +295,33 @@ export function validateStartupIdentity(value: string | undefined, label: string
 }
 
 export function validateOptionalPathOverride(
-  value: string | undefined,
+  value: FilePathInput | undefined,
   label: string,
 ): string | undefined {
   if (value === undefined) {
     return undefined;
   }
-  if (value.trim().length === 0) {
+  const path = filePathString(value, label);
+  if (path.trim().length === 0) {
     throw new Error(pathOverrideMessage(label, 'empty'));
   }
-  if (value.includes('\0')) {
+  if (path.includes('\0')) {
     throw new Error(pathOverrideMessage(label, 'nul'));
   }
-  return value;
+  return path;
+}
+
+/** Keep platform file-URL conversion at the public boundary, before serialization. */
+export function normalizeFilePath(value: FilePathInput, label: string): string {
+  const path = filePathString(value, label);
+  validateDirectoryPath(path, label);
+  return path;
+}
+
+export function filePathString(value: FilePathInput, label: string): string {
+  if (typeof value === 'string') return value;
+  if (value instanceof URL) return fileURLToPath(value);
+  throw new TypeError(`${label} must be a filesystem path or file URL`);
 }
 
 export function validateServerPort(value: number | undefined): number | undefined {

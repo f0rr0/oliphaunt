@@ -541,9 +541,13 @@ function liboliphauntWasixRows(prefix) {
       target,
       triple: platform.triple,
       runner: platform.runner,
-      llvm_url: platform.wasixLlvmUrl,
-      llvm_sha256: platform.wasixLlvmSha256,
-      llvm_bytes: platform.wasixLlvmBytes,
+      ...(target === 'windows-x64-msvc'
+        ? {}
+        : {
+            llvm_url: platform.wasixLlvmUrl,
+            llvm_sha256: platform.wasixLlvmSha256,
+            llvm_bytes: platform.wasixLlvmBytes,
+          }),
       asset: `liboliphaunt-wasix-{version}-runtime-aot-${target}.tar.zst`,
       surfaces: ['github-release'],
       _source_file: 'Moon release metadata',

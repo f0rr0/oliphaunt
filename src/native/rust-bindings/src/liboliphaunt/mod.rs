@@ -381,6 +381,14 @@ pub struct NativeCancel {
     handle: Arc<SharedNativeHandle>,
 }
 
+/// Result of attempting to supply complete frontend frames to one stream token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtocolInputStatus {
+    Accepted,
+    /// The named stream finished without accepting these bytes.
+    Finished,
+}
+
 /// Concurrent input for an executing PostgreSQL protocol stream.
 ///
 /// This keeps the native library and logical session alive, but does not keep a
@@ -391,6 +399,9 @@ pub struct NativeProtocolInput {
     handle: Arc<SharedNativeHandle>,
     token: ffi::StreamTokenFn,
     feed: ffi::FeedStreamFn,
+    feed_wait: Option<ffi::FeedStreamFn>,
+    feed_exchange: Option<ffi::FeedStreamFn>,
+    finish_exchange: Option<ffi::FinishExchangeFn>,
 }
 
 impl NativeProtocolInput {
@@ -431,6 +442,82 @@ impl NativeProtocolInput {
                 rc,
             ))),
         }
+    }
+
+    /// Supply complete frames, waiting for input capacity or stream completion.
+    ///
+    /// `Finished` means the named stream ended without accepting these bytes.
+    /// Wait for its owner result before dispatching those bytes elsewhere.
+    /// Use a producer independent of the output callback, since native input
+    /// can wait for that callback to return and output to drain.
+    pub fn feed_wait(&self, token: u64, request: &[u8]) -> Result<ProtocolInputStatus> {
+        let feed = ffi::require_symbol(self.feed_wait, "oliphaunt_feed_protocol_stream_wait")?;
+        let guard =
+            self.handle.handle.read().map_err(|_| {
+                Error::Engine("native liboliphaunt handle lock poisoned".to_owned())
+            })?;
+        if guard.is_null() {
+            return Err(Error::EngineStopped);
+        }
+        let mut error = NativeErrorCapture::zeroed();
+        let rc = unsafe { feed(*guard, token, request.as_ptr(), request.len(), &mut error) };
+        match rc {
+            0 => Ok(ProtocolInputStatus::Accepted),
+            2 => Ok(ProtocolInputStatus::Finished),
+            _ => Err(Error::Engine(captured_native_error(
+                &error,
+                "oliphaunt_feed_protocol_stream_wait",
+                rc,
+            ))),
+        }
+    }
+
+    /// Supply arbitrary frontend bytes to an exchange, waiting for native input capacity.
+    ///
+    /// Feed from an independent thread, never from the exchange's output callback:
+    /// input can block until that callback returns and output has drained.
+    pub fn feed_exchange(&self, token: u64, bytes: &[u8]) -> Result<()> {
+        let feed = ffi::require_symbol(self.feed_exchange, "oliphaunt_feed_protocol_exchange")?;
+        let guard =
+            self.handle.handle.read().map_err(|_| {
+                Error::Engine("native liboliphaunt handle lock poisoned".to_owned())
+            })?;
+        if guard.is_null() {
+            return Err(Error::EngineStopped);
+        }
+        let mut error = NativeErrorCapture::zeroed();
+        let rc = unsafe { feed(*guard, token, bytes.as_ptr(), bytes.len(), &mut error) };
+        if rc != 0 {
+            return Err(Error::Engine(captured_native_error(
+                &error,
+                "oliphaunt_feed_protocol_exchange",
+                rc,
+            )));
+        }
+        Ok(())
+    }
+
+    /// Finish the named exchange after supplying its declared number of input bytes.
+    pub fn finish_exchange(&self, token: u64) -> Result<()> {
+        let finish =
+            ffi::require_symbol(self.finish_exchange, "oliphaunt_finish_protocol_exchange")?;
+        let guard =
+            self.handle.handle.read().map_err(|_| {
+                Error::Engine("native liboliphaunt handle lock poisoned".to_owned())
+            })?;
+        if guard.is_null() {
+            return Err(Error::EngineStopped);
+        }
+        let mut error = NativeErrorCapture::zeroed();
+        let rc = unsafe { finish(*guard, token, &mut error) };
+        if rc != 0 {
+            return Err(Error::Engine(captured_native_error(
+                &error,
+                "oliphaunt_finish_protocol_exchange",
+                rc,
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -615,6 +702,9 @@ impl NativeSession {
             handle: Arc::clone(&self.handle),
             token,
             feed,
+            feed_wait: self.symbols.feed_protocol_stream_wait,
+            feed_exchange: self.symbols.feed_protocol_exchange,
+            finish_exchange: self.symbols.finish_protocol_exchange,
         })
     }
 
@@ -660,6 +750,104 @@ impl NativeSession {
         request: &[u8],
         on_chunk: &mut dyn FnMut(&[u8]) -> std::result::Result<(), E>,
     ) -> ProtocolStreamOutcome<E> {
+        let execute = self.symbols.exec_protocol_raw_stream_with_error;
+        self.exec_protocol_stream(
+            on_chunk,
+            None,
+            "oliphaunt_exec_protocol_raw_stream",
+            |handle, _, callback, context, error| unsafe {
+                execute(
+                    handle,
+                    request.as_ptr(),
+                    request.len(),
+                    callback,
+                    context,
+                    error,
+                )
+            },
+        )
+    }
+
+    /// Execute a raw stream, publishing its token after the initial input is queued.
+    ///
+    /// Use the start callback to wake an independent producer that calls `feed_wait`.
+    /// A failed start callback aborts the operation with unknown session state.
+    pub fn exec_protocol_raw_stream_started<E: From<Error>>(
+        &mut self,
+        request: &[u8],
+        on_started: &mut impl FnMut(u64) -> Result<()>,
+        on_chunk: &mut dyn FnMut(&[u8]) -> std::result::Result<(), E>,
+    ) -> ProtocolStreamOutcome<E> {
+        let execute = match ffi::require_symbol(
+            self.symbols.exec_protocol_raw_stream_started_with_error,
+            "oliphaunt_exec_protocol_raw_stream_started_with_error",
+        ) {
+            Ok(execute) => execute,
+            Err(error) => return ProtocolStreamOutcome::SessionStateUnknown(error),
+        };
+        self.exec_protocol_stream(
+            on_chunk,
+            Some(on_started),
+            "oliphaunt_exec_protocol_raw_stream_started",
+            |handle, started, callback, context, error| unsafe {
+                execute(
+                    handle,
+                    request.as_ptr(),
+                    request.len(),
+                    started,
+                    context,
+                    callback,
+                    context,
+                    error,
+                )
+            },
+        )
+    }
+
+    /// Execute a declared-length frontend exchange while an independent feeder supplies bytes.
+    ///
+    /// The start callback receives the active token before input is consumed. Use
+    /// it to wake a separate feeder, then call `feed_exchange` and `finish_exchange`
+    /// on that thread. Callback panics never unwind through native code; a failed
+    /// start callback aborts the exchange and leaves its session state unknown.
+    pub fn exec_protocol_exchange<E: From<Error>>(
+        &mut self,
+        input_len: usize,
+        on_started: &mut impl FnMut(u64) -> Result<()>,
+        on_chunk: &mut impl FnMut(&[u8]) -> std::result::Result<(), E>,
+    ) -> ProtocolStreamOutcome<E> {
+        let execute = match ffi::require_symbol(
+            self.symbols.exec_protocol_exchange_with_error,
+            "oliphaunt_exec_protocol_exchange_with_error",
+        ) {
+            Ok(execute) => execute,
+            Err(error) => return ProtocolStreamOutcome::SessionStateUnknown(error),
+        };
+        self.exec_protocol_stream(
+            on_chunk,
+            Some(on_started),
+            "oliphaunt_exec_protocol_exchange",
+            |handle, started, callback, context, error| unsafe {
+                execute(
+                    handle, input_len, started, context, callback, context, error,
+                )
+            },
+        )
+    }
+
+    fn exec_protocol_stream<E: From<Error>>(
+        &self,
+        on_chunk: &mut dyn FnMut(&[u8]) -> std::result::Result<(), E>,
+        on_started: Option<&mut dyn FnMut(u64) -> Result<()>>,
+        operation: &str,
+        execute: impl FnOnce(
+            *mut NativeHandle,
+            ffi::ProtocolStartCallbackFn,
+            ffi::StreamCallbackFn,
+            *mut std::ffi::c_void,
+            *mut NativeErrorCapture,
+        ) -> std::ffi::c_int,
+    ) -> ProtocolStreamOutcome<E> {
         let guard = match self.handle.handle.read() {
             Ok(guard) => guard,
             Err(_) => {
@@ -673,48 +861,12 @@ impl NativeSession {
             return ProtocolStreamOutcome::SessionStateUnknown(Error::EngineStopped);
         }
 
-        let bytes = request;
-        let mut context = StreamContext {
+        invoke_protocol_stream(
             on_chunk,
-            error: None,
-        };
-        let mut error = NativeErrorCapture::zeroed();
-        let rc = unsafe {
-            (self.symbols.exec_protocol_raw_stream_with_error)(
-                handle,
-                bytes.as_ptr(),
-                bytes.len(),
-                stream_callback::<E>,
-                (&mut context as *mut StreamContext<'_, E>).cast(),
-                &mut error,
-            )
-        };
-        if rc == STREAM_CALLBACK_ABORTED_STATUS {
-            return match context.error {
-                Some(error) => ProtocolStreamOutcome::ReadyForQuery(Err(error.into_consumer_error())),
-                None => ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(
-                    "native liboliphaunt reported a recovered callback abort without a callback error"
-                        .to_owned(),
-                )),
-            };
-        }
-        if rc != 0 {
-            let message = captured_native_error(&error, "oliphaunt_exec_protocol_raw_stream", rc);
-            // Every non-sentinel failure is independently authoritative: it
-            // may have interrupted recovery and must not be masked by a
-            // callback error (or by the original panic retained by the
-            // blocking API).
-            return ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(format!(
-                "native liboliphaunt protocol stream failed: {message}"
-            )));
-        }
-        if context.error.is_some() {
-            return ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(
-                "native liboliphaunt reported stream success after rejecting its callback"
-                    .to_owned(),
-            ));
-        }
-        ProtocolStreamOutcome::ReadyForQuery(Ok(()))
+            on_started,
+            operation,
+            |started, callback, context, error| execute(handle, started, callback, context, error),
+        )
     }
 
     pub fn exec_simple_query(&mut self, sql: &str) -> Result<Vec<u8>> {
@@ -1135,9 +1287,87 @@ impl<E: From<Error>> StreamCallbackFailure<E> {
         }
     }
 }
-struct StreamContext<'a, E> {
-    on_chunk: &'a mut dyn FnMut(&[u8]) -> std::result::Result<(), E>,
+struct StreamContext<'output, 'start, E> {
+    on_chunk: &'output mut dyn FnMut(&[u8]) -> std::result::Result<(), E>,
+    on_started: Option<&'start mut dyn FnMut(u64) -> Result<()>>,
     error: Option<StreamCallbackFailure<E>>,
+}
+
+fn invoke_protocol_stream<E: From<Error>>(
+    on_chunk: &mut dyn FnMut(&[u8]) -> std::result::Result<(), E>,
+    on_started: Option<&mut dyn FnMut(u64) -> Result<()>>,
+    operation: &str,
+    execute: impl FnOnce(
+        ffi::ProtocolStartCallbackFn,
+        ffi::StreamCallbackFn,
+        *mut std::ffi::c_void,
+        *mut NativeErrorCapture,
+    ) -> std::ffi::c_int,
+) -> ProtocolStreamOutcome<E> {
+    let mut context = StreamContext {
+        on_chunk,
+        on_started,
+        error: None,
+    };
+    let mut error = NativeErrorCapture::zeroed();
+    let rc = execute(
+        stream_started::<E>,
+        stream_callback::<E>,
+        (&mut context as *mut StreamContext<'_, '_, E>).cast(),
+        &mut error,
+    );
+    if rc == STREAM_CALLBACK_ABORTED_STATUS {
+        return match context.error {
+            Some(error) => ProtocolStreamOutcome::ReadyForQuery(Err(error.into_consumer_error())),
+            None => ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(
+                "native liboliphaunt reported a recovered callback abort without a callback error"
+                    .to_owned(),
+            )),
+        };
+    }
+    if rc != 0 {
+        let message = captured_native_error(&error, operation, rc);
+        // Every non-sentinel failure is independently authoritative: it
+        // may have interrupted recovery and must not be masked by a
+        // callback error (or by the original panic retained by the
+        // blocking API).
+        return ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(format!(
+            "native liboliphaunt protocol stream failed: {message}"
+        )));
+    }
+    if context.error.is_some() {
+        return ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(
+            "native liboliphaunt reported stream success after rejecting its callback".to_owned(),
+        ));
+    }
+    ProtocolStreamOutcome::ReadyForQuery(Ok(()))
+}
+
+unsafe extern "C" fn stream_started<E: From<Error>>(
+    context: *mut std::ffi::c_void,
+    token: u64,
+) -> std::ffi::c_int {
+    let context = unsafe { &mut *(context.cast::<StreamContext<'_, '_, E>>()) };
+    if context.error.is_some() {
+        return -1;
+    }
+    let Some(on_started) = context.on_started.as_mut() else {
+        context.error = Some(StreamCallbackFailure::Native(Error::Engine(
+            "native liboliphaunt reported exchange start without a callback".to_owned(),
+        )));
+        return -1;
+    };
+    match catch_unwind(AssertUnwindSafe(|| on_started(token))) {
+        Ok(Ok(())) => 0,
+        Ok(Err(error)) => {
+            context.error = Some(StreamCallbackFailure::Native(error));
+            -1
+        }
+        Err(payload) => {
+            context.error = Some(StreamCallbackFailure::Panic(payload));
+            -1
+        }
+    }
 }
 
 unsafe extern "C" fn stream_callback<E: From<Error>>(
@@ -1145,7 +1375,7 @@ unsafe extern "C" fn stream_callback<E: From<Error>>(
     data: *const std::ffi::c_uchar,
     len: usize,
 ) -> std::ffi::c_int {
-    let context = unsafe { &mut *(context.cast::<StreamContext<'_, E>>()) };
+    let context = unsafe { &mut *(context.cast::<StreamContext<'_, '_, E>>()) };
     if context.error.is_some() {
         return -1;
     }
@@ -1189,12 +1419,13 @@ mod callback_safety_tests {
         let mut callback = |_: &[u8]| Ok::<(), ConsumerError>(());
         let mut context = StreamContext {
             on_chunk: &mut callback,
+            on_started: None,
             error: None,
         };
         assert_eq!(
             unsafe {
                 stream_callback::<ConsumerError>(
-                    (&mut context as *mut StreamContext<'_, ConsumerError>).cast(),
+                    (&mut context as *mut StreamContext<'_, '_, ConsumerError>).cast(),
                     ptr::null(),
                     1,
                 )
@@ -1216,22 +1447,23 @@ mod callback_safety_tests {
         let mut callback = move |_: &[u8]| -> std::result::Result<(), ConsumerError> {
             std::panic::panic_any(payload.clone())
         };
-        let mut context = StreamContext {
-            on_chunk: &mut callback,
-            error: None,
-        };
-        assert_eq!(
-            unsafe {
-                stream_callback::<ConsumerError>(
-                    (&mut context as *mut StreamContext<'_, ConsumerError>).cast(),
-                    ptr::null(),
-                    0,
-                )
-            },
-            -1
+        let returned = std::cell::Cell::new(false);
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            invoke_protocol_stream(
+                &mut callback,
+                None,
+                "fixture_exchange",
+                |_, callback, context, _| {
+                    assert_eq!(unsafe { callback(context, ptr::null(), 0) }, -1);
+                    returned.set(true);
+                    STREAM_CALLBACK_ABORTED_STATUS
+                },
+            )
+        }));
+        assert!(
+            returned.get(),
+            "native recovery must return before unwinding"
         );
-        let failure = context.error.take().unwrap();
-        let panic = catch_unwind(AssertUnwindSafe(|| failure.into_consumer_error()));
         assert!(Arc::ptr_eq(
             &original,
             panic.err().unwrap().downcast_ref::<Arc<()>>().unwrap()
@@ -1247,24 +1479,95 @@ mod callback_safety_tests {
             calls += 1;
             Err(ConsumerError(error.clone()))
         };
-        let mut context = StreamContext {
-            on_chunk: &mut callback,
-            error: None,
+        let outcome = invoke_protocol_stream(
+            &mut callback,
+            None,
+            "fixture_exchange",
+            |_, callback, context, _| {
+                for _ in 0..2 {
+                    assert_eq!(unsafe { callback(context, ptr::null(), 0) }, -1);
+                }
+                STREAM_CALLBACK_ABORTED_STATUS
+            },
+        );
+        let ProtocolStreamOutcome::ReadyForQuery(Err(error)) = outcome else {
+            panic!("native recovery must preserve the consumer error");
         };
-        for _ in 0..2 {
-            assert_eq!(
-                unsafe {
-                    stream_callback::<ConsumerError>(
-                        (&mut context as *mut StreamContext<'_, ConsumerError>).cast(),
-                        ptr::null(),
-                        0,
-                    )
-                },
-                -1
-            );
-        }
-        let error = context.error.take().unwrap().into_consumer_error();
         assert!(Arc::ptr_eq(&original, &error.0));
         assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn start_callback_failure_is_captured_until_native_abort_returns() {
+        for panic in [false, true] {
+            let mut output_calls = 0;
+            let mut output = |_: &[u8]| {
+                output_calls += 1;
+                Ok::<(), ConsumerError>(())
+            };
+            let mut started = |token| -> Result<()> {
+                assert_eq!(token, 42);
+                if panic {
+                    std::panic::panic_any("start callback panicked");
+                }
+                Err(Error::Engine("start callback failed".to_owned()))
+            };
+            let mut returned = false;
+            let outcome = invoke_protocol_stream(
+                &mut output,
+                Some(&mut started),
+                "fixture_exchange",
+                |started, callback, context, _| {
+                    assert_eq!(unsafe { started(context, 42) }, -1);
+                    assert_eq!(unsafe { callback(context, ptr::null(), 0) }, -1);
+                    returned = true;
+                    -9
+                },
+            );
+            assert!(returned);
+            assert_eq!(output_calls, 0);
+            assert!(matches!(
+                outcome,
+                ProtocolStreamOutcome::SessionStateUnknown(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn callback_error_requires_independent_native_recovery_confirmation() {
+        for status in [0, -7] {
+            let mut callback = |_: &[u8]| Err(ConsumerError(Arc::new(())));
+            let outcome = invoke_protocol_stream(
+                &mut callback,
+                None,
+                "fixture_exchange",
+                |_, callback, context, _| {
+                    assert_eq!(unsafe { callback(context, ptr::null(), 0) }, -1);
+                    status
+                },
+            );
+            let ProtocolStreamOutcome::SessionStateUnknown(error) = outcome else {
+                panic!("an unconfirmed boundary must supersede the callback error");
+            };
+            assert!(if status == 0 {
+                error
+                    .to_string()
+                    .contains("success after rejecting its callback")
+            } else {
+                error
+                    .to_string()
+                    .contains("fixture_exchange failed with status -7")
+            });
+        }
+        let outcome = invoke_protocol_stream(
+            &mut |_: &[u8]| Ok::<(), ConsumerError>(()),
+            None,
+            "fixture_exchange",
+            |_, _, _, _| STREAM_CALLBACK_ABORTED_STATUS,
+        );
+        assert!(matches!(
+            outcome,
+            ProtocolStreamOutcome::SessionStateUnknown(_)
+        ));
     }
 }

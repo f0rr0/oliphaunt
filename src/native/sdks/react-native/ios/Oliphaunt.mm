@@ -257,6 +257,10 @@ static NSDictionary *OliphauntNativeOpenConfigToDictionary(
 {
   NSMutableDictionary *dictionary = [NSMutableDictionary new];
   dictionary[@"storageKind"] = config.storageKind();
+  if (config.admissionMaxPendingOperations()) dictionary[@"admissionMaxPendingOperations"] = @(*config.admissionMaxPendingOperations());
+  if (config.admissionHighWaterMarkBytes()) dictionary[@"admissionHighWaterMarkBytes"] = @(*config.admissionHighWaterMarkBytes());
+  if (config.recoveryTimeoutMs()) dictionary[@"recoveryTimeoutMs"] = @(*config.recoveryTimeoutMs());
+  if (config.shutdownTimeoutMs()) dictionary[@"shutdownTimeoutMs"] = @(*config.shutdownTimeoutMs());
   if (config.startupTimeoutMs()) dictionary[@"startupTimeoutMs"] = @(*config.startupTimeoutMs());
   if (config.operationTimeoutMs()) dictionary[@"operationTimeoutMs"] = @(*config.operationTimeoutMs());
   OliphauntSetIfPresent(dictionary, @"storagePath", config.storagePath());
@@ -752,6 +756,36 @@ RCT_EXPORT_MODULE(Oliphaunt)
                 });
             return promiseConstructor.callAsConstructor(runtime, std::move(executor));
           }));
+  installBackupToFile(runtime, transport, callInvoker, lifetime,
+      [weakSelf](int64_t handle, const std::string &destination, double deadline, PendingPromise pending) {
+        auto resolve = pending.resolve;
+        auto reject = pending.reject;
+        Oliphaunt *strongSelf = weakSelf;
+        OliphauntAdapterDatabase *database = strongSelf == nil ? nil : [strongSelf sessionForHandle:handle];
+        if (database == nil) {
+          const std::string message = strongSelf == nil ? "liboliphaunt native module is unavailable" : "unknown Oliphaunt handle";
+          reject->call([message](facebook::jsi::Runtime &runtime, facebook::jsi::Function &callback) {
+            callback.call(runtime, createError(runtime, message));
+          });
+          return;
+        }
+        NSString *path = [[NSString alloc] initWithBytes:destination.data() length:destination.size() encoding:NSUTF8StringEncoding];
+        if (path == nil) throw std::invalid_argument("backup destination is not valid UTF-8");
+        [database backupToFile:path deadline:deadline completion:^(NSError *_Nullable error) {
+          if (error != nil) {
+            const auto failure = OliphauntBrokerFailure(error);
+            const char *errorMessage = error.localizedDescription.UTF8String;
+            std::string message = errorMessage != nullptr ? errorMessage : "liboliphaunt file backup failed";
+            reject->call([message, failure](facebook::jsi::Runtime &runtime, facebook::jsi::Function &callback) {
+              callback.call(runtime, createError(runtime, message, failure));
+            });
+            return;
+          }
+          resolve->call([](facebook::jsi::Runtime &runtime, facebook::jsi::Function &callback) {
+            callback.call(runtime, facebook::jsi::Value::undefined());
+          });
+        }];
+      });
   transport.setProperty(
       runtime,
       "backup",
@@ -849,7 +883,11 @@ RCT_EXPORT_MODULE(Oliphaunt)
                 "restore storageName");
             const double startup = copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "startupTimeoutMs"));
             const double operation = copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "operationTimeoutMs"));
+            const double recovery = copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "recoveryTimeoutMs"));
+            const double shutdown = copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "shutdownTimeoutMs"));
             NSMutableDictionary *options = [NSMutableDictionary dictionary];
+            if (recovery != 0) options[@"recoveryTimeoutMs"] = @(recovery);
+            if (shutdown != 0) options[@"shutdownTimeoutMs"] = @(shutdown);
             if (startup != 0) options[@"startupTimeoutMs"] = @(startup);
             if (operation != 0) options[@"operationTimeoutMs"] = @(operation);
             std::vector<uint8_t> artifact = copyBinaryArgument(runtime, args[1]);

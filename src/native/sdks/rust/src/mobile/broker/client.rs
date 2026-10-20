@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use oliphaunt_broker::mobile::{self as wire, Kind};
 
-use super::watchdog::{Expiry, SETTLEMENT, Watchdog};
-use super::{Completion, Control, Epoch, Execution, Reason, failure};
+use super::watchdog::{Expiry, Watchdog};
+use super::{BrokerTimeouts, Completion, Control, Epoch, Execution, Reason, failure};
 use crate::engine::{EngineCancel, EngineSession, ProtocolStreamOutcome};
 use crate::executor::EngineExecutor;
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
@@ -27,6 +27,7 @@ struct State {
 
 pub struct Connection {
     epoch: Epoch,
+    timeouts: BrokerTimeouts,
     control: Arc<dyn Control>,
     socket: UnixStream,
     state: Mutex<State>,
@@ -41,10 +42,7 @@ impl Connection {
         state.failed = true;
         state.reason = Some(Reason::WorkerInterrupted);
         if state.active != 0 {
-            self.watchdog
-                .get()
-                .unwrap()
-                .arm(state.active, SETTLEMENT, Expiry::Retire);
+            self.arm_recovery(&state);
         } else {
             let _ = self.socket.shutdown(Shutdown::Both);
         }
@@ -62,12 +60,21 @@ impl Connection {
         }
         state.cancellation_sent = true;
         state.reason = Some(reason);
+        self.arm_recovery(&state);
+        drop(state);
+        self.control.cancel(self.epoch, request)
+    }
+
+    fn arm_recovery(&self, state: &State) {
+        let deadline =
+            super::watchdog::continuous_time().saturating_add(self.timeouts.recovery_timeout);
+        let deadline = state
+            .close_deadline
+            .map_or(deadline, |close| close.min(deadline));
         self.watchdog
             .get()
             .unwrap()
-            .arm(request, SETTLEMENT, Expiry::Retire);
-        drop(state);
-        self.control.cancel(self.epoch, request)
+            .arm_until(state.active, deadline, Expiry::Retire);
     }
 
     fn expired(&self, request: u64, action: Expiry) {
@@ -103,11 +110,13 @@ impl Connection {
             return;
         }
         state.closing = true;
-        state.close_deadline = Some(super::watchdog::continuous_time().saturating_add(SETTLEMENT));
+        let deadline =
+            super::watchdog::continuous_time().saturating_add(self.timeouts.shutdown_timeout);
+        state.close_deadline = Some(deadline);
         self.watchdog
             .get()
             .unwrap()
-            .arm(state.active, SETTLEMENT, Expiry::Retire);
+            .arm_until(state.active, deadline, Expiry::Retire);
         drop(state);
         let _ = self.control.close(self.epoch);
     }
@@ -167,11 +176,10 @@ impl Connection {
         state.failed |= requires_reopen;
         self.watchdog.get().unwrap().clear(request);
         if let Some(deadline) = state.close_deadline {
-            self.watchdog.get().unwrap().arm(
-                0,
-                deadline.saturating_sub(super::watchdog::continuous_time()),
-                Expiry::Retire,
-            );
+            self.watchdog
+                .get()
+                .unwrap()
+                .arm_until(0, deadline, Expiry::Retire);
         }
         state.operation_deadline = None;
     }
@@ -199,8 +207,9 @@ pub async fn connect(
     epoch: Epoch,
     control: Arc<dyn Control>,
     timeout: Option<Duration>,
+    timeouts: BrokerTimeouts,
 ) -> Result<(AsyncOliphaunt, Arc<Connection>)> {
-    let session = Session::new(socket, epoch, control, timeout)?;
+    let session = Session::new(socket, epoch, control, timeout, timeouts)?;
     let connection = session.connection.clone();
     let (executor, ()) = EngineExecutor::open("oliphaunt-broker-client", move || {
         Ok((Box::new(session), ()))
@@ -214,9 +223,10 @@ pub async fn restore(
     epoch: Epoch,
     control: Arc<dyn Control>,
     timeout: Option<Duration>,
+    timeouts: BrokerTimeouts,
     mut input: std::fs::File,
 ) -> Result<()> {
-    let mut session = Session::new(socket, epoch, control, timeout)?;
+    let mut session = Session::new(socket, epoch, control, timeout, timeouts)?;
     crate::executor::run_off_thread("oliphaunt-broker-archive-upload", move || {
         let connection = &session.connection;
         let mut socket = &mut session.socket;
@@ -279,12 +289,17 @@ impl Session {
         epoch: Epoch,
         control: Arc<dyn Control>,
         timeout: Option<Duration>,
+        timeouts: BrokerTimeouts,
     ) -> Result<Self> {
         let shutdown = socket
             .try_clone()
             .map_err(|e| failure(Reason::Transport, Execution::NotStarted, true, e))?;
+        timeouts
+            .validate()
+            .map_err(|message| Error::InvalidConfig(message.into()))?;
         let connection = Arc::new(Connection {
             epoch,
+            timeouts,
             control,
             socket: shutdown,
             state: Mutex::new(State::default()),
@@ -511,6 +526,39 @@ mod tests {
     }
 
     #[test]
+    fn recovery_during_close_keeps_the_original_shutdown_deadline() {
+        for interrupted in [false, true] {
+            let (socket, mut worker) = UnixStream::pair().unwrap();
+            worker
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let (closed, _receive) = std::sync::mpsc::channel();
+            let session = Session::new(
+                socket,
+                [5; 16],
+                Arc::new(Platform(closed)),
+                None,
+                BrokerTimeouts {
+                    recovery_timeout: Duration::from_secs(5),
+                    shutdown_timeout: Duration::from_millis(30),
+                },
+            )
+            .unwrap();
+            let request = session.connection.start(None).unwrap();
+            session.connection.begin_close();
+            if interrupted {
+                session.connection.interrupted();
+            } else {
+                session
+                    .connection
+                    .cancel_request(request, Reason::Cancelled)
+                    .unwrap();
+            }
+            assert_eq!(worker.read(&mut [0]).unwrap(), 0);
+        }
+    }
+
+    #[test]
     fn close_accepts_success_after_the_control_endpoint_exits() {
         struct ExitingWorker(Mutex<Option<UnixStream>>);
         impl Control for ExitingWorker {
@@ -539,6 +587,7 @@ mod tests {
                 [3; 16],
                 Arc::new(ExitingWorker(Mutex::new(Some(worker)))),
                 None,
+                oliphaunt_broker::config::BrokerTimeouts::default(),
             )
             .unwrap();
             if begin_close_first {
@@ -565,7 +614,14 @@ mod tests {
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         let (cancel, cancelled) = std::sync::mpsc::channel();
-        let mut session = Session::new(socket, [4; 16], Arc::new(Cancels(cancel)), None).unwrap();
+        let mut session = Session::new(
+            socket,
+            [4; 16],
+            Arc::new(Cancels(cancel)),
+            None,
+            oliphaunt_broker::config::BrokerTimeouts::default(),
+        )
+        .unwrap();
         let server = std::thread::spawn(move || {
             for request in 1..=2 {
                 let begin = wire::read_frame(&mut worker).unwrap();
@@ -612,8 +668,14 @@ mod tests {
     fn local_rejection_preserves_session_and_close_waits_for_worker_release() {
         let (socket, mut worker) = UnixStream::pair().unwrap();
         let (closed, receive) = std::sync::mpsc::channel();
-        let (database, connection) =
-            block_on(connect(socket, [1; 16], Arc::new(Platform(closed)), None)).unwrap();
+        let (database, connection) = block_on(connect(
+            socket,
+            [1; 16],
+            Arc::new(Platform(closed)),
+            None,
+            BrokerTimeouts::default(),
+        ))
+        .unwrap();
         let server = std::thread::spawn(move || {
             let begin = wire::read_frame(&mut worker).unwrap();
             while wire::read_frame(&mut worker).unwrap().kind != Kind::End {}
@@ -662,8 +724,14 @@ mod tests {
     fn lost_terminal_is_unknown_and_following_request_is_unstarted() {
         let (socket, mut worker) = UnixStream::pair().unwrap();
         let (closed, _) = std::sync::mpsc::channel();
-        let (database, _) =
-            block_on(connect(socket, [2; 16], Arc::new(Platform(closed)), None)).unwrap();
+        let (database, _) = block_on(connect(
+            socket,
+            [2; 16],
+            Arc::new(Platform(closed)),
+            None,
+            BrokerTimeouts::default(),
+        ))
+        .unwrap();
         let server = std::thread::spawn(move || {
             let _ = wire::read_frame(&mut worker).unwrap();
             while wire::read_frame(&mut worker).unwrap().kind != Kind::End {}

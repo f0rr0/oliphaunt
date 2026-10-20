@@ -1,7 +1,8 @@
 import Foundation
+import Testing
+
 @testable import Oliphaunt
 @testable import OliphauntCore
-import Testing
 
 @Test
 func structuredSQLScannerMatchesSharedProtocolFixtures() throws {
@@ -39,10 +40,38 @@ func queryParserMatchesSharedProtocolFixtures() throws {
     var names = Set<String>()
     for fixture in corpus.cases {
         #expect(names.insert(fixture.name).inserted)
+        let bytes = try sharedProtocolBytes(fixture.responseHex)
+        for (mode, expected) in fixture.protocolModeExpectation ?? [:] {
+            do {
+                let commandTag: String?
+                switch mode {
+                case "simpleCommand":
+                    commandTag = try parseOliphauntCommandResponse(bytes, expectedProtocol: .simple)
+                        .commandTag
+                case "extendedCommand":
+                    commandTag = try parseOliphauntCommandResponse(
+                        bytes, expectedProtocol: .extended
+                    ).commandTag
+                case "extendedQuery":
+                    commandTag = try parseOliphauntQueryResponse(bytes, expectedProtocol: .extended)
+                        .commandTag
+                default:
+                    Issue.record("shared protocol fixture \(fixture.name) has unknown mode \(mode)")
+                    continue
+                }
+                #expect(expected.outcome == "ok")
+                #expect(commandTag == expected.commandTag)
+            } catch OliphauntError.engine {
+                #expect(expected.outcome == "engineError")
+            } catch {
+                Issue.record(
+                    "shared protocol fixture \(fixture.name) \(mode) produced unexpected error \(error)"
+                )
+            }
+        }
         guard let expectation = fixture.queryExpectation else {
             continue
         }
-        let bytes = try sharedProtocolBytes(fixture.responseHex)
         if let expected = expectation.ok {
             try expectSharedProtocolOkFixture(fixture, expected: expected, bytes: bytes)
         } else if let expected = expectation.postgresError {
@@ -81,7 +110,9 @@ private func expectSharedProtocolOkFixture(
         #expect(expectedRow.count == expected.fields.count)
         for (columnIndex, expectedValue) in expectedRow.enumerated() {
             guard expected.fields.indices.contains(columnIndex) else {
-                Issue.record("shared protocol fixture \(fixture.name) is missing expected field \(columnIndex)")
+                Issue.record(
+                    "shared protocol fixture \(fixture.name) is missing expected field \(columnIndex)"
+                )
                 continue
             }
             #expect(try result.rows[rowIndex].text(columnIndex) == expectedValue)
@@ -96,7 +127,8 @@ private func expectSharedProtocolPostgresErrorFixture(
 ) {
     do {
         _ = try parseOliphauntQueryResponse(bytes, expectedProtocol: .either)
-        Issue.record("shared protocol fixture \(fixture.name) should have produced a PostgreSQL error")
+        Issue.record(
+            "shared protocol fixture \(fixture.name) should have produced a PostgreSQL error")
     } catch OliphauntError.postgres(let error) {
         #expect(error.severity == expected.severity)
         #expect(error.sqlstate == expected.sqlstate)
@@ -132,7 +164,8 @@ private func sharedProtocolFixtureURL() -> URL {
     for _ in 0..<6 {
         root.deleteLastPathComponent()
     }
-    return root
+    return
+        root
         .appendingPathComponent("test-fixtures")
         .appendingPathComponent("protocol")
         .appendingPathComponent("query-response-cases.json")
@@ -147,7 +180,8 @@ private func sharedStructuredSQLFixtureURL() -> URL {
 
     var root = URL(fileURLWithPath: #filePath)
     for _ in 0..<6 { root.deleteLastPathComponent() }
-    return root
+    return
+        root
         .appendingPathComponent("test-fixtures")
         .appendingPathComponent("protocol")
         .appendingPathComponent("structured-sql-cases.json")
@@ -186,6 +220,12 @@ private struct SharedProtocolFixtureCase: Decodable {
     var name: String
     var responseHex: String
     var queryExpectation: SharedProtocolQueryExpectation?
+    var protocolModeExpectation: [String: SharedProtocolModeExpectation]?
+}
+
+private struct SharedProtocolModeExpectation: Decodable {
+    var outcome: String
+    var commandTag: String?
 }
 
 private struct SharedProtocolQueryExpectation: Decodable {

@@ -28,12 +28,19 @@ members = [
   "src/native/runtime/packaging",
   "src/native/postgres-tools/tests",
   "src/wasix/runtime/tools/xtask",
+  "src/wasix/runtime/engine/crates/wasmer",
+  "src/wasix/runtime/engine/crates/wasmer-wasix-types",
+  "src/wasix/runtime/engine/crates/wasmer-journal",
+  "src/wasix/runtime/engine/crates/wasmer-wasix",
+  "src/wasix/runtime/engine/crates/virtual-fs",
+  "src/wasix/runtime/engine/crates/v8-windows-x64-msvc",
+
 ]
 resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.96"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
 license = "MIT"

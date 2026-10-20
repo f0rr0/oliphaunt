@@ -127,9 +127,12 @@ smaller qualified side modules remain supported in a direct Window.
 5. The direct export driver completes the exported startup transition before
    exposing the session. Selected carriers contribute verified artifacts and
    required startup/preload configuration only; database-local extension SQL is
-   application/ORM-owned. A requested non-default user is selected from existing
-   roles with `SET ROLE`; standalone bootstrap remains the fixed `postgres`
-   identity.
+   application/ORM-owned. PostgreSQL selects the trusted configured `PGUSER`
+   as the actual session principal during startup, applying catalog login,
+   database access, settings and login-trigger policy. The host does not emulate
+   that identity with later `SET ROLE` SQL; `RESET ROLE` and `DISCARD ALL` restore
+   the configured session principal. Fresh cluster seeds retain `postgres` as
+   their bootstrap owner.
 6. The binding frames later responses through `ReadyForQuery` and exposes
    serialized `query`, `execute`, buffered `execProtocolRaw`, callback
    `execProtocolRawStream`, and callback-scoped `transaction` calls
@@ -139,14 +142,13 @@ smaller qualified side modules remain supported in a direct Window.
    asks a persistent provider to publish only journaled `/base` paths before the
    Promise resolves. A callback transaction defers publication for `BEGIN`, its
    body, and `COMMIT`/`ROLLBACK`, then publishes exactly once after the confirmed
-   final boundary. A new persistent synchronous-OPFS root uses a separate internal
-   full-publication boundary after initialization; it is not a public database
-   operation. PostgreSQL `CHECKPOINT` remains available through ordinary
-   `execute`. If a
-   PostgreSQL `ERROR` crosses the host boundary, the direct host
-   invokes `PostgresMainLongJmp`, sends and flushes readiness, and continues
-   through `PostgresMainLoopOnce`. Normal ErrorResponse returns receive the same
-   top-level cleanup as trapping errors.
+   final boundary. Initialization also completes a full-publication boundary
+   before its namespace becomes ready; it is not a public database operation. PostgreSQL `CHECKPOINT` remains available through ordinary
+   `execute`. PostgreSQL `ERROR` recovery stays inside the live guest invocation:
+   `PostgresMainLoopOnce` returns a typed outcome (processed, recovered, or input
+   ended). The host never resumes a guest `longjmp` after unwinding into the host.
+   Unexpected traps, invalid outcomes, and failed guest phases close the backend;
+   ordinary SQL errors remain pgwire ErrorResponses with their original SQLSTATE.
 7. `close` establishes a terminal admission cutoff and lets already accepted
    database work drain. The direct owner
    sends PostgreSQL Terminate through the same direct bridge, deactivates the
@@ -189,9 +191,12 @@ The conditional `/direct` export constructs `NativeWasixDatabase` around
 synchronous `oliphaunt_wasix::Oliphaunt` on the importing JavaScript thread. It
 has the fewest hops and can block that event loop. The conditional `/worker`
 export creates one real package-owned Node-compatible Worker, which loads the
-same `/direct` implementation inside that Worker. It adds the requested
-JavaScript RPC hop and realm isolation without a child process or a second Rust
-owner thread. Native direct handles remain creator-thread-affine.
+synchronous Rust database inside that Worker. Tool destination callbacks belong
+to the responsive importing realm and pass their writers to the Worker through
+a private, one-shot Node-API registration. Queries add only the JavaScript RPC
+hop, without a child process or migrating an open database. Older addons without
+the registration capability use the Rust actor inside the Worker. Native direct
+handles remain creator-thread-affine.
 
 Close establishes one admission cutoff. The actor drains accepted work and
 settles its terminal completion. Direct close runs on its owning thread. A
@@ -203,8 +208,8 @@ pending work and leaves the public handle terminal.
 Query serialization, close semantics, the memory default, storage identity,
 and public errors remain TypeScript-owned. Descriptor validation also remains
 shared, but native release addons resolve validated extension SQL names against
-their compile-time catalog instead of expanding portable extension archives at
-open.
+their catalog. Contrib payloads are compiled into the addon; external extensions
+resolve verified, installed portable and target-specific AOT packages at open.
 
 IndexedDB and OPFS remain browser-only and are rejected before a native-host
 actor, direct, or Worker session starts. Directory persistence is exposed through matching
@@ -243,10 +248,22 @@ reentry fails immediately instead of creating a hidden post-stream operation.
 
 `@oliphaunt/wasix-tools` remains the optional public facade. In a browser it
 resolves the separately published `@oliphaunt/liboliphaunt-wasix-tools` asset
-carrier. `pg_dump` runs in the realm that already owns the database; `psql`
-uses a separate persistent browser tool worker because COPY input is genuinely
-full duplex. Its private pgwire connection has fixed, bounded shared-memory
-rings.
+carrier. Buffered `pg_dump` runs in the realm that already owns the database;
+`psql` and asynchronous destinations use a separate persistent browser tool
+worker. Private pgwire and destination output use bounded shared-memory rings.
+Finite request mode4 streams ordinary backend output from the first byte while
+preserving COPY input and host-owned Terminate handling. Output channels drain
+after sink failure; the database reservation stays held through the final
+destination write and tool cleanup.
+
+Native actor output uses one pending owned chunk per stream and explicit Node-API
+acknowledgement after the awaited write. A native-host Worker consumes registered
+writers while its synchronous call blocks that Worker; the importing realm
+handles callbacks and acknowledges them through the same output-credit protocol.
+Each registration closes after the tool response or Worker failure. One cleanup
+hook per callback environment releases outstanding waits and unused registrations
+when that environment exits.
+Synchronous `/direct` supports Rust host-file output and rejects async JS streams.
 
 Native hosts route `pg_dump` and `psql` through the existing Rust database owner
 on root, `/direct`, or `/worker`. The independently versioned tools product
@@ -290,9 +307,7 @@ opaque storage descriptor
           v
  acquire provider lease ---- exact physical compatibility
           |
-          +---- synchronous OPFS /base ---- exact-range file I/O
-          |
-          `---- portable /base ------ journaled publication
+          `---- direct OPFS or memory /base -- provider persistence
                            |
                            v
               PostgreSQL boundary + release
@@ -313,8 +328,7 @@ open. The shared portable delta layer drains the journal only at
 PostgreSQL-safe host boundaries, collapses overlapping paths, reads changed
 files and subtrees, and expresses removals explicitly. A provider without that
 host capability falls back to a full scan, so correctness does not depend on
-the optimization. Synchronous OPFS mounts bypass mutation tracking and serve the
-guest synchronously in its owning worker. Process-lifetime `postmaster.pid` and
+the optimization. Process-lifetime `postmaster.pid` and
 `postmaster.opts` never enter persistent storage.
 
 Each logical IndexedDB name owns a separate physical IndexedDB database with
@@ -323,22 +337,20 @@ removals in one atomic read-write transaction using the browser's default
 commitState policy; an aborted write leaves the preceding generation intact,
 and distinct logical databases do not share an object-store transaction. OPFS
 stores a strict logical namespace and physical identity over flat backing files.
-`/worker`, and the root inside a Dedicated Worker, preopen synchronous access
-handles and perform exact-range guest I/O without a mailbox or nested worker. A
-direct Window uses the portable path. Guest file flushes are immediate;
-operation boundaries drain WAL; internal full-publication, close, and namespace publication
-flush WAL before ordinary files and `global/pg_control`. The portable path uses
-copy-on-write backing files and atomically replaces namespace state last. OPFS
-has PostgreSQL recovery ordering but no cross-file transaction, so a failed
-publication reports unknown state instead of claiming that nothing changed.
-The synchronous path keeps a bounded private reserve of preopened backing files for
-the synchronous hot path. Overflow is staged only until the mandatory host
-boundary, which allocates, writes, and flushes every staged file before
-publishing namespace state. A failure leaves the previous namespace
-authoritative and poisons the live handle. The reserve is replenished
-best-effort after successful boundaries, and hosts that cannot establish its
-initial capacity use the portable path. Its size is an implementation detail,
-not a public database-capacity limit.
+Workers use direct range I/O when synchronous OPFS handles are available. A
+preopened journal commits namespace changes and overflow changes before a guest
+flush succeeds or a dependent published backing changes. Written WAL is flushed
+before ordinary overflow contents become recoverable. Journal records and two
+alternating commit slots are checksummed; checkpoint publication rotates the
+journal rather than truncating its only recoverable generation.
+
+The portable provider retains copy-on-write publication. Both providers share
+namespace validation and journal recovery. Direct acquisition upgrades legacy
+metadata in place to v2; older SDKs reject it. The PostgreSQL physical identity
+is unchanged. A direct persistence failure poisons the handle with an unknown
+outcome; PostgreSQL WAL supplies transaction recovery, rather than byte-identical
+rollback of every file. The spare reserve is configurable and overflow is
+durable, so it does not impose a fixed file-count limit.
 
 Compatibility uses the PostgreSQL major and versioned WASIX physical format.
 Runtime hashes and source fingerprints still reject mixed runtime, cluster-seed,
@@ -433,13 +445,13 @@ carrier-owned installed-file inventory. The core manifest is required to have
 
 That byte-closure processing is the browser implementation. Node.js, Bun, Deno,
 and Electron retain the same public descriptor and perform its structural/runtime
-validation, but pass only the validated, dependency-ordered SQL names across
-the N-API boundary. The Rust runtime resolves those names against the exact
-extension features compiled into the release carrier. Unknown names fail; the
-addon never treats arbitrary descriptor bytes as native code. A new or upgraded
-extension can ship independently for browsers, but it becomes available to
-native-host consumers only after the N-API product is rebuilt and released
-with that feature.
+validation. Contrib SQL names select runtime-bound payloads compiled into the
+release carrier. External descriptors also identify the installed portable
+package and, where required, its target-specific AOT package. Rust checks the
+catalog SQL name, product, version, target, installed paths, sizes, and hashes
+before selecting those trusted release bytes. Known external extensions can
+therefore ship independently of the addon. Unknown names and arbitrary remote
+or caller-supplied native code remain rejected.
 
 ## Host compatibility
 
@@ -452,15 +464,15 @@ into `lib/host`; the browser root imports the host in the caller realm, while
 the browser `/worker` imports it in its package Worker. Node.js, Bun, Deno, and Electron
 conditions do not import this module.
 
-This is not a general backport of WASIX 0.702 to Wasmer 0.601. The authoritative
-patch order is the `series` in `src/wasix/browser-host/source.toml`; this document records the
-resulting invariants instead of duplicating that filename inventory. Together,
-the patches:
+The source host uses SDK 0.19.1 with its coherent Wasmer 7.4 and WASIX/virtual-IO
+0.704 family. The authoritative patch order is the `series` in
+`src/wasix/browser-host/source.toml`; this document records the resulting
+invariants instead of duplicating that filename inventory. Together, the patches:
 
 - honor configured args, environment, mounts, cwd, and stdio; preserve original
   module bytes where the generic blocking worker needs them; and repair the
   pinned npm/toolchain inputs without mutating their lock;
-- provide only the 0.702 compatibility imports and runtime devices required by
+- provide the compatibility imports and runtime devices required by
   the shipped guests, reject unavailable fork/context/thread/process behavior,
   remove the retired Rust target, and recognize standard WebAssembly exception
   reference types;
@@ -471,8 +483,8 @@ the patches:
   amortize bounded pending-work checks, and avoid turning synchronous-file POSIX
   close into an implicit fsync that bypasses PostgreSQL durability policy;
 - expose the current-state mutation journal and the narrow caller-realm
-  synchronous filesystem bridge used by synchronous OPFS, without reviving the old
-  mailbox transport;
+  synchronous filesystem bridge; worker OPFS uses the bridge and recovery journal,
+  while portable OPFS uses the mutation journal and copy-on-write publication;
 - provide the caller-realm PostgreSQL lifecycle and reusable-memory pgwire
   driver, including COPY-aware callback streaming, top-level error recovery,
   and a bounded 16 KiB failure-only stderr tail; and
@@ -485,16 +497,19 @@ shortcut. Realtime uses the JavaScript epoch clock, while monotonic reads
 calibrate the host's monotonic clock against the canonical Rust fallback epoch,
 so fast and fallback reads cannot jump between domains. Process and thread CPU
 clocks remain on the canonical fallback because wall time is not an equivalent
-clock. Synthetic clock offsets remain honored by declining the direct import
-for guests that import `clock_time_set`, and pending WASIX operations are
-checked on a real-time bound. Invalid clock IDs, pointers, or host values use
+clock. Calling `clock_time_set` switches every reader sharing the database's
+memory to the canonical WASIX clock, including readers linked later. Importing
+a setter alone leaves the fast path enabled. Pending WASIX operations are
+checked after 16 observed milliseconds or 1,024 direct reads per clock domain.
+The read bound also covers coarsened or stalled clocks. Invalid clock IDs, pointers, or host values use
 the complete Rust syscall. Other WASIX programs retain the complete upstream
 per-call path.
 
-The exact pairing is qualified for the single-process direct Oliphaunt export
-path in both execution surfaces, including repeated PostgreSQL `ERROR` recovery. The
-direct driver treats every `PostgresMainLoopOnce` trap as the guest's exported
-top-level recovery boundary and also cleans up non-trapping ErrorResponses.
+The pairing requires single-process direct Oliphaunt integration checks in both
+execution surfaces, including repeated PostgreSQL `ERROR` recovery. A recovered
+typed outcome confirms that the live guest boundary performed top-level cleanup.
+The direct driver treats every `PostgresMainLoopOnce` trap as terminal, not as
+permission to invoke another guest recovery export.
 Its JavaScript memory bridge is limited to the direct Oliphaunt driver: generic
 WASIX streams keep their normal ownership and scheduling semantics. Copy failures
 are caught before guest buffers are released, and protocol responses are copied
@@ -510,31 +525,25 @@ of this PostgreSQL recovery path. Ordinary package resolution never selects
 stock `@wasmer/sdk`; the published binding owns the source-pinned host. A larger
 current-Wasmer JS port is outside this host's compatibility contract.
 
-The version skew is upstream-owned rather than a loose Oliphaunt dependency.
-The commit referenced by the latest npm `@wasmer/sdk` 0.10.0 release identifies
-its checked-in source as 0.8.0 and embeds Wasmer 6.1 with the 0.601 Wasmer
-support family. `wasmer-wasix` 0.702.1 embeds Wasmer 7.2.1 and
-matching 0.702.1 virtual filesystem/network, package, configuration, backend,
-and types contracts. A coordinated compile probe exposed incompatible
-`FileSystem` mounting, `TaskWasm`, wasm-bindgen conversion, registry calls,
-module hashing, and binary-package construction before the Oliphaunt runner and
-recovery changes could be reapplied. Consequently 0.702.1 adoption is a full
-source-host port plus browser qualification, not an isolated crate bump.
-`src/wasix/browser-host/source.toml` records the intentionally coherent 0.601 source family until
-that port exists.
+Engine updates must preserve the matching filesystem, network, task, package,
+and wasm-bindgen contracts and requalify the patched host in a real browser.
+The source manifest pins that complete family; an isolated crate bump does not
+establish guest or host compatibility.
 
 ## PGlite reference, not product inheritance
 
-PGlite independently validates the recovery shape used here. Its Emscripten
+PGlite is useful prior art for error reporting, not proof of our runtime's
+recovery safety. In the pinned reference below, its Emscripten
 guest turns the active PostgreSQL top-level `longjmp` into a known exit status;
 the TypeScript host then calls `PostgresMainLongJmp`, sends readiness, flushes,
 and resumes `PostgresMainLoopOnce`. Its public database error is separately
 decoded from pgwire. See PGlite's
 [runtime loop](https://github.com/electric-sql/pglite/blob/67872123b637ba132cceb8dbb3f739a09685ee87/packages/pglite/src/pglite.ts#L932-L965)
 and [guest shim](https://github.com/electric-sql/postgres-pglite/blob/7b4ee5086055dc5e54ae1e13e487888249438e68/pglite/src/pglitec/pglitec.c#L52-L84).
-Oliphaunt deliberately uses an environment-gated Wasmer exception discriminator
-instead of Emscripten's numeric sentinel, but preserves the same separation
-between control-flow recovery and the pgwire `PostgresError` seen by callers.
+Oliphaunt does not copy that host-side reentry: its guest catches PostgreSQL
+errors before returning a typed outcome to Wasmer. There is no environment-gated
+exception discriminator or process-exit sentinel for query recovery. Control-flow
+recovery remains separate from the pgwire `PostgresError` seen by callers.
 Lifecycle SQL for a selectively imported extension runs in the owning realm.
 Isolated-host errors are serialized by PostgreSQL field and rebuilt in the caller;
 direct errors retain the same `PostgresError` identity in place. Generic
@@ -601,13 +610,12 @@ Linux carriers are GNU/glibc-only. The adapter identifies libc from the
 runtime diagnostic report before resolving package-adjacent, optional, or
 explicit addon paths; known musl and unknown libc identities fail closed.
 
-Native release builds embed the runtime, AOT objects, and complete currently
-supported extension feature set. Seeds, ICU data, and frontend tools remain
-separate selected resources. Optional extensions remain
-exact, separately imported `-wasix` packages at the public TypeScript boundary,
-but native hosts use their descriptor identity to select compiled-in artifacts
-instead of copying the carrier bytes. Their availability is consequently a
-release-time N-API contract.
+Native release builds embed the runtime, its AOT objects, and runtime-bound
+contrib payloads. Seeds, ICU data, and frontend tools remain separate selected
+resources. Optional extensions are exact, separately imported `-wasix` packages
+at the public TypeScript boundary. Native hosts use contrib identities to select
+compiled-in artifacts and load known external extensions from verified installed
+portable and target-specific AOT packages.
 
 The source workspace manifest deliberately does not resolve that generated
 carrier from npm: the carrier exists only after same-candidate runtime assets

@@ -8,6 +8,107 @@ import { openWorkerDatabase, WorkerRpc } from '../workers/worker-rpc.js';
 import { FakeWorkerPort, workerOpenOptions } from './worker-helpers.js';
 
 describe('WASIX worker RPC', () => {
+  it('retires an owned worker whose ready reply arrives after startup expiry', async () => {
+    const port = new FakeWorkerPort();
+    const opening = openWorkerDatabase(port, {
+      ...workerOpenOptions(),
+      timeouts: { startupTimeoutMs: 10 },
+    });
+    const request = port.requests[0]!.message;
+    const unblock = performance.now() + 30;
+    while (performance.now() < unblock) {}
+    port.respond({ id: request.id, ok: true });
+    await expect(opening).rejects.toThrow('startup exceeded 10ms');
+    expect(port.terminations).toBe(1);
+  });
+
+  it('uses selected startup and shutdown deadlines and awaits owner termination', async () => {
+    const unopened = new FakeWorkerPort();
+    const opening = openWorkerDatabase(unopened, {
+      ...workerOpenOptions(),
+      timeouts: { startupTimeoutMs: 20 },
+    });
+    await expect(opening).rejects.toThrow('startup exceeded 20ms');
+    expect(unopened.terminations).toBe(1);
+
+    const port = new FakeWorkerPort();
+    const ready = openWorkerDatabase(port, {
+      ...workerOpenOptions(),
+      timeouts: { startupTimeoutMs: 1000, shutdownTimeoutMs: 20 },
+    });
+    const open = await postedRequest(port, 0);
+    port.respond({ id: open.id, ok: true });
+    const db = await ready;
+    await expect(db.close()).rejects.toThrow('close exceeded 20ms');
+    expect(port.terminations).toBe(1);
+    expect(db.closed).toBe(true);
+  });
+
+  it('sends independent tool credit only after awaited writes and rejects a terminated stream once', async () => {
+    const port = new FakeWorkerPort();
+    const rpc = new WorkerRpc(port);
+    let release!: () => void;
+    let entered!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const writing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const running = rpc.request(
+      {
+        method: 'runToolStream',
+        options: {
+          runtimeVersion: '0.1.1',
+          tool: { name: 'psql', sha256: '4'.repeat(64), size: 1, source: Uint8Array.of(4) },
+          args: [],
+        },
+        stderr: true,
+      },
+      [],
+      {
+        async stdout() {
+          entered();
+          await hold;
+        },
+        async stderr() {
+          throw Object.create(null);
+        },
+      },
+    );
+    const request = await postedRequest(port, 0);
+    port.respond({
+      id: request.id,
+      kind: 'toolChunk',
+      stream: 'stdout',
+      sequence: 1,
+      value: Uint8Array.of(1),
+    });
+    port.respond({
+      id: request.id,
+      kind: 'toolChunk',
+      stream: 'stderr',
+      sequence: 1,
+      value: Uint8Array.of(2),
+    });
+    await writing;
+    const stderrCredit = await postedRequest(port, 1);
+    expect(stderrCredit).toMatchObject({
+      method: 'toolOutputCredit',
+      stream: 'stderr',
+      sequence: 1,
+      error: 'Oliphaunt WASIX tool destination failed',
+    });
+    expect(port.requests).toHaveLength(2);
+    const failure = new Error('worker exited during destination write');
+    const rejected = rejects(running, (error) => error === failure);
+    port.fail(failure);
+    await rejected;
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(port.requests).toHaveLength(2);
+    expect(port.terminations).toBe(1);
+  });
   it('runs pg_dump in the database worker and returns both owned output streams', async () => {
     const port = new FakeWorkerPort();
     const opening = openWorkerDatabase(port, workerOpenOptions());

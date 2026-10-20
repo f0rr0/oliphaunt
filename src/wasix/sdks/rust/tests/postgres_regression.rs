@@ -174,6 +174,19 @@ fn savepoints_error_recovery_and_indexed_updates() -> Result<()> {
 }
 
 #[test]
+fn jsonb_fixed_arguments_preserve_postgres_semantics() -> Result<()> {
+    let fixture = shared_fixture(
+        "postgres/jsonb-build-object.sql",
+        "postgres/jsonb-build-object.sql",
+    )?;
+    let mut database = Oliphaunt::open()?;
+    database.execute(&fixture)?;
+    ensure!(database.query("SELECT 42 AS value")?.get_text(0, "value")? == Some("42"));
+    database.close()?;
+    Ok(())
+}
+
+#[test]
 fn panicking_transaction_callback_rolls_back_and_releases_the_database() -> Result<()> {
     let mut database = Oliphaunt::open()?;
     database.execute("CREATE TABLE panic_probe(value integer NOT NULL)")?;

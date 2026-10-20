@@ -10,8 +10,8 @@ script_path="$script_dir/$(basename "$0")"
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
 . "$repo_root/tools/dev/acquisition.sh"
 . "$repo_root/src/third-party/postgres/fetch-source.sh"
-pg_version="18.4"
-pg_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
+pg_version="18.6"
+pg_sha256="555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f"
 pg_url="https://ftp.postgresql.org/pub/source/v${pg_version}/postgresql-${pg_version}.tar.bz2"
 source_manifest="$repo_root/src/third-party/postgres/source.toml"
 patch_dir="$repo_root"
@@ -316,6 +316,11 @@ artifact_ready() {
     oliphaunt_exec_protocol_raw_stream \
     oliphaunt_protocol_stream_token \
     oliphaunt_feed_protocol_stream \
+    oliphaunt_exec_protocol_raw_stream_started_with_error \
+    oliphaunt_feed_protocol_stream_wait \
+    oliphaunt_exec_protocol_exchange_with_error \
+    oliphaunt_feed_protocol_exchange \
+    oliphaunt_finish_protocol_exchange \
     oliphaunt_backup \
     oliphaunt_restore \
     oliphaunt_init_with_error \

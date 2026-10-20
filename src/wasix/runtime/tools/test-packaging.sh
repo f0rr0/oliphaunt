@@ -17,6 +17,7 @@ if bun "$contract" unsupported > /dev/null 2>&1; then
   exit 1
 fi
 bash tools/dev/bun.sh test ./src/wasix/runtime/tools
+bash tools/dev/bun.sh test ./src/wasix/runtime/engine
 node src/wasix/runtime/tools/wasix-runtime-npm.test-consumer.mts
 for scenario in nested-owner aggregate independent-extension; do
   root="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/$scenario"

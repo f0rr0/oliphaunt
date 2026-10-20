@@ -60,6 +60,7 @@ fileGroups:
     - "!wasmer/capabilities.tsv"
     - "!wasmer/**/*.md"
     - "!wasmer/**/*.test.mts"
+    - "!wasmer/**/*.test.py"
 tasks:
   executor-build:
     script: "cd executor\ncargo build --locked --release --no-default-features --features product-executor --bin oliphaunt-wasix-postmaster-executor --target-dir ../../../target/oliphaunt-wasix-postmaster/runtime/postmaster-executor-target\n"
@@ -94,7 +95,7 @@ tasks:
       - quality
       - unit
       - requires-rust
-    script: "set -e\nbash tools/dev/bun.sh test ./src/wasix/postmaster\ncargo test --locked --manifest-path src/wasix/postmaster/tools/sealed-export-closure/Cargo.toml --target-dir target/oliphaunt-wasix-postmaster/runtime/sealed-export-closure-target\nwhile IFS= read -r test_file; do bash \"$test_file\"; done < <(find src/wasix/postmaster -type f -name '*.test.sh' ! -name 'seal-wasix-linear-memory.test.sh' | LC_ALL=C sort)\n"
+    script: "set -e\nbash tools/dev/bun.sh test ./src/wasix/postmaster\ncommand -v python3 >/dev/null\nwhile IFS= read -r test_file; do python3 \"$test_file\"; done < <(find src/wasix/postmaster -type f -name '*.test.py' | LC_ALL=C sort)\ncargo test --locked --manifest-path src/wasix/postmaster/tools/sealed-export-closure/Cargo.toml --target-dir target/oliphaunt-wasix-postmaster/runtime/sealed-export-closure-target\nwhile IFS= read -r test_file; do bash \"$test_file\"; done < <(find src/wasix/postmaster -type f -name '*.test.sh' ! -name 'seal-wasix-linear-memory.test.sh' | LC_ALL=C sort)\n"
     inputs:
       - "/tools/dev/bun.sh"
       - "**/*"

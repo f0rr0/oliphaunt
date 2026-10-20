@@ -1,0 +1,115 @@
+Subject: [PATCH] postgres: share ordered timeout expiry processing
+
+Extract the existing signal-handler queue expiry loop into one private helper.
+Keep deadline priority, indicators, periodic rescheduling and fresh time reads
+after potentially expensive handlers. The native embedded timer already uses
+this helper; WASIX cooperative expiry must reuse it instead of duplicating the
+PostgreSQL queue algorithm.
+
+diff --git a/src/backend/utils/misc/timeout.c b/src/backend/utils/misc/timeout.c
+index d92efa1..b3fe2cd 100644
+--- a/src/backend/utils/misc/timeout.c
++++ b/src/backend/utils/misc/timeout.c
+@@ -350,6 +350,42 @@ schedule_alarm(TimestampTz now)
+ }
+ 
+ 
++/* Process every timeout due at or before now, preserving priority order. */
++static void
++process_expired_timeouts(TimestampTz now)
++{
++	while (num_active_timeouts > 0 &&
++		   now >= active_timeouts[0]->fin_time)
++	{
++		timeout_params *this_timeout = active_timeouts[0];
++
++		remove_timeout_index(0);
++		this_timeout->indicator = true;
++		this_timeout->timeout_handler();
++
++		if (this_timeout->interval_in_ms > 0)
++		{
++			TimestampTz new_fin_time;
++
++			new_fin_time =
++				TimestampTzPlusMilliseconds(this_timeout->fin_time,
++										this_timeout->interval_in_ms);
++			if (new_fin_time < now)
++				new_fin_time =
++					TimestampTzPlusMilliseconds(now,
++										this_timeout->interval_in_ms);
++			enable_timeout(this_timeout->index, now, new_fin_time,
++						   this_timeout->interval_in_ms);
++		}
++
++		/* A timeout handler such as deadlock detection need not be cheap. */
++		now = GetCurrentTimestamp();
++	}
++
++	schedule_alarm(now);
++}
++
++
+ /*****************************************************************************
+  * Signal handler
+  *****************************************************************************/
+@@ -395,58 +431,7 @@ handle_sig_alarm(SIGNAL_ARGS)
+ 		disable_alarm();
+ 
+ 		if (num_active_timeouts > 0)
+-		{
+-			TimestampTz now = GetCurrentTimestamp();
+-
+-			/* While the first pending timeout has been reached ... */
+-			while (num_active_timeouts > 0 &&
+-				   now >= active_timeouts[0]->fin_time)
+-			{
+-				timeout_params *this_timeout = active_timeouts[0];
+-
+-				/* Remove it from the active list */
+-				remove_timeout_index(0);
+-
+-				/* Mark it as fired */
+-				this_timeout->indicator = true;
+-
+-				/* And call its handler function */
+-				this_timeout->timeout_handler();
+-
+-				/* If it should fire repeatedly, re-enable it. */
+-				if (this_timeout->interval_in_ms > 0)
+-				{
+-					TimestampTz new_fin_time;
+-
+-					/*
+-					 * To guard against drift, schedule the next instance of
+-					 * the timeout based on the intended firing time rather
+-					 * than the actual firing time. But if the timeout was so
+-					 * late that we missed an entire cycle, fall back to
+-					 * scheduling based on the actual firing time.
+-					 */
+-					new_fin_time =
+-						TimestampTzPlusMilliseconds(this_timeout->fin_time,
+-													this_timeout->interval_in_ms);
+-					if (new_fin_time < now)
+-						new_fin_time =
+-							TimestampTzPlusMilliseconds(now,
+-														this_timeout->interval_in_ms);
+-					enable_timeout(this_timeout->index, now, new_fin_time,
+-								   this_timeout->interval_in_ms);
+-				}
+-
+-				/*
+-				 * The handler might not take negligible time (CheckDeadLock
+-				 * for instance isn't too cheap), so let's update our idea of
+-				 * "now" after each one.
+-				 */
+-				now = GetCurrentTimestamp();
+-			}
+-
+-			/* Done firing timeouts, so reschedule next interrupt if any */
+-			schedule_alarm(now);
+-		}
++			process_expired_timeouts(GetCurrentTimestamp());
+ 	}
+ 
+ 	RESUME_INTERRUPTS();

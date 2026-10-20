@@ -1,3 +1,4 @@
+import { ENGINE_CARGO_PACKAGES } from '../engine/contract.mts';
 import { compareText } from '../../../../tools/release/release-graph.mts';
 
 export const WASIX_CARGO_ARTIFACT_SCHEMA = 'oliphaunt-liboliphaunt-wasix-cargo-artifacts-v2';
@@ -105,7 +106,9 @@ export const AOT_TARGET_CFGS = {
 };
 
 export function publicCargoPackageNames() {
-  return [RUNTIME_PACKAGE, ...Object.values(AOT_PACKAGES)].sort(compareText);
+  return [RUNTIME_PACKAGE, ...Object.values(AOT_PACKAGES), ...ENGINE_CARGO_PACKAGES].sort(
+    compareText,
+  );
 }
 
 export function publicAotCargoDependencies() {

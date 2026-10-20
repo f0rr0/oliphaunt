@@ -34,6 +34,7 @@ type DenoSymbols = {
   oliphaunt_exec_protocol_raw_stream_with_error: (...args: unknown[]) => Promise<number>;
   oliphaunt_exec_simple_query_with_error: (...args: unknown[]) => Promise<number>;
   oliphaunt_backup_with_error: (...args: unknown[]) => Promise<number>;
+  oliphaunt_backup_stream_with_error: (...args: unknown[]) => Promise<number>;
   oliphaunt_restore_with_error: (...args: unknown[]) => Promise<number>;
   oliphaunt_cancel: (...args: unknown[]) => unknown;
   oliphaunt_detach_with_error: (...args: unknown[]) => Promise<number>;
@@ -75,6 +76,11 @@ export async function createDenoNativeBinding(
     },
     oliphaunt_exec_simple_query_with_error: {
       parameters: ['pointer', 'buffer', 'usize', 'buffer', 'buffer'],
+      result: 'i32',
+      nonblocking: true,
+    },
+    oliphaunt_backup_stream_with_error: {
+      parameters: ['pointer', 'function', 'pointer', 'buffer'],
       result: 'i32',
       nonblocking: true,
     },
@@ -237,30 +243,8 @@ export async function createDenoNativeBinding(
       request: Uint8Array,
       onChunk: (chunk: Uint8Array) => void,
     ): Promise<void> {
-      let callbackFailed = false;
-      let callbackError: unknown;
-      const callback = deno.UnsafeCallback.threadSafe(
-        { parameters: ['pointer', 'pointer', 'usize'], result: 'i32' },
-        (_data: DenoPointer, bytes: DenoPointer, length: bigint) => {
-          try {
-            if (bytes === null && length !== 0n) {
-              throw new Error('native liboliphaunt stream returned null bytes');
-            }
-            const view =
-              length === 0n
-                ? new Uint8Array()
-                : new Uint8Array(
-                    new deno.UnsafePointerView(bytes).getArrayBuffer(Number(length)),
-                  ).slice();
-            onChunk(view);
-            return 0;
-          } catch (error) {
-            callbackFailed = true;
-            callbackError = error;
-            return 1;
-          }
-        },
-      );
+      const stream = createDenoStreamCallback(deno, onChunk);
+      const callback = stream.callback;
       let rc: number;
       const captured = errorCaptureBuffer();
       try {
@@ -276,13 +260,13 @@ export async function createDenoNativeBinding(
         callback.close();
       }
       if (rc === OLIPHAUNT_STREAM_CALLBACK_ABORTED) {
-        if (callbackFailed) throw callbackError;
+        if (stream.failure !== undefined) throw stream.failure.error;
         throw new Error(
           'native liboliphaunt protocol streaming reported a recovered callback abort without a callback failure',
         );
       }
       if (rc === 0) {
-        if (!callbackFailed) return;
+        if (stream.failure === undefined) return;
         throw new Error(
           'native liboliphaunt protocol streaming reported success after the callback failed',
         );
@@ -326,6 +310,31 @@ export async function createDenoNativeBinding(
         throw errorMessage('native liboliphaunt backup failed', rc, readErrorCapture(captured));
       }
       return copyResponse(deno, symbols, response);
+    },
+    async backupStream(handle: NativeHandle, onChunk: (chunk: Uint8Array) => void): Promise<void> {
+      const stream = createDenoStreamCallback(deno, onChunk);
+      const captured = errorCaptureBuffer();
+      let rc: number;
+      try {
+        rc = await symbols.oliphaunt_backup_stream_with_error(
+          handle,
+          stream.callback.pointer,
+          null,
+          captured,
+        );
+      } finally {
+        stream.callback.close();
+      }
+      if (rc !== 0) {
+        const error = errorMessage(
+          'native liboliphaunt backup failed',
+          rc,
+          readErrorCapture(captured),
+        );
+        if (stream.failure !== undefined) error.cause = stream.failure.error;
+        throw error;
+      }
+      if (stream.failure !== undefined) throw stream.failure.error;
     },
     async restore(options: NativeRestoreOptions): Promise<void> {
       const packed = packRestoreOptionsPointers(options, (value) => pointerOf(deno, value));
@@ -457,6 +466,47 @@ async function prepareDenoPgdata(
       }
     },
   });
+}
+
+function createDenoStreamCallback(deno: any, onChunk: (chunk: Uint8Array) => void) {
+  let failure: { error: unknown } | undefined;
+  const callback = deno.UnsafeCallback.threadSafe(
+    { parameters: ['pointer', 'pointer', 'usize'], result: 'i32' },
+    (_data: DenoPointer, bytes: DenoPointer, length: bigint) => {
+      if (failure !== undefined) return 1;
+      try {
+        if (bytes === null && length !== 0n) {
+          throw new Error('native liboliphaunt stream returned null bytes');
+        }
+        const size = Number(length);
+        if (!Number.isSafeInteger(size) || size < 0) {
+          throw new Error('native liboliphaunt stream returned an invalid length');
+        }
+        const view =
+          size === 0
+            ? new Uint8Array()
+            : new Uint8Array(new deno.UnsafePointerView(bytes).getArrayBuffer(size)).slice();
+        const result: unknown = onChunk(view);
+        if (
+          result !== null &&
+          (typeof result === 'object' || typeof result === 'function') &&
+          typeof (result as { then?: unknown }).then === 'function'
+        ) {
+          throw new TypeError('native stream callback must complete synchronously');
+        }
+        return 0;
+      } catch (error) {
+        failure = { error };
+        return 1;
+      }
+    },
+  );
+  return {
+    callback,
+    get failure() {
+      return failure;
+    },
+  };
 }
 
 function denoGlobal(): any {

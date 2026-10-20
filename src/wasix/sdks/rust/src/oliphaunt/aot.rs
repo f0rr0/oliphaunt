@@ -8,25 +8,25 @@ use anyhow::{Context, Result, bail, ensure};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use wasmer::sys::{EngineBuilder, Features, NativeEngineExt};
+#[cfg(not(windows))]
+use wasmer::sys::{EngineBuilder, Features};
 use wasmer::{Engine, Module};
 use zstd::stream::read::Decoder as ZstdDecoder;
 
 use super::assets;
 
 const RUNTIME_ARTIFACT: &str = "runtime:oliphaunt";
+#[cfg(not(windows))]
 const EXPECTED_AOT_ENGINE: &str = "llvm-opta";
-const EXPECTED_WASMER_VERSION: &str = "7.2.1";
-const EXPECTED_WASMER_WASIX_VERSION: &str = "0.702.1";
-const AOT_ENGINE_ID: &str = concat!(
-    "engine=",
-    "llvm-opta",
-    ";wasmer=",
-    "7.2.1",
-    ";wasmer-wasix=",
-    "0.702.1",
-    ";cpu=generic-baseline"
-);
+#[cfg(windows)]
+const EXPECTED_AOT_ENGINE: &str = "v8";
+const EXPECTED_WASMER_VERSION: &str = "7.5.0";
+const EXPECTED_WASMER_WASIX_VERSION: &str = "0.705.0";
+#[cfg(not(windows))]
+const AOT_ENGINE_ID: &str = "engine=llvm-opta;wasmer=7.5.0;wasmer-wasix=0.705.0;cpu=sse41-or-neon";
+#[cfg(windows)]
+const AOT_ENGINE_ID: &str =
+    "engine=v8;wasmer=7.5.0;wasmer-wasix=0.705.0;wee8=11.9.7;v8=13.6.233.17;cpu=sse41";
 const ZSTD_MAGIC: &[u8] = &[0x28, 0xb5, 0x2f, 0xfd];
 const CACHE_RECEIPT_FORMAT_VERSION: u32 = 1;
 const TOOL_AOT_ARTIFACTS: &[&str] = &["tool:pg_dump", "tool:psql"];
@@ -47,21 +47,29 @@ enum AotVerifyMode {
     Full,
 }
 
-pub(crate) fn headless_engine() -> Engine {
-    HEADLESS_ENGINE
-        .get_or_init(|| {
-            let mut features = Features::new();
-            features.exceptions(true);
-            EngineBuilder::headless()
-                .set_features(Some(features))
-                .engine()
-                .into()
-        })
-        .clone()
+pub(crate) fn headless_engine() -> Result<Engine> {
+    if let Some(engine) = HEADLESS_ENGINE.get() {
+        return Ok(engine.clone());
+    }
+    #[cfg(windows)]
+    let engine: Engine = wasmer::v8::V8::try_new()
+        .context("prepare Windows runtime engine")?
+        .into();
+    #[cfg(not(windows))]
+    let engine: Engine = {
+        let mut features = Features::new();
+        features.exceptions(true);
+        EngineBuilder::headless()
+            .set_features(Some(features))
+            .engine()
+            .into()
+    };
+    // Cache successful construction only so delivery failures can be retried.
+    Ok(HEADLESS_ENGINE.get_or_init(|| engine).clone())
 }
 
 pub(crate) fn load_runtime_module() -> Result<(Engine, Module)> {
-    let engine = headless_engine();
+    let engine = headless_engine()?;
     let module = load_artifact_module(&engine, RUNTIME_ARTIFACT)?;
     Ok((engine, module))
 }
@@ -79,7 +87,7 @@ pub(crate) fn load_artifact_module(engine: &Engine, artifact_name: &str) -> Resu
         return Ok(module.clone());
     }
 
-    let module = match deserialize_headless(engine, &artifact.path) {
+    let module = match deserialize_headless(engine, &artifact) {
         Ok(module) => module,
         Err(err) if aot_verify_mode()? == AotVerifyMode::Fast => {
             forget_installed_artifact(artifact_name);
@@ -87,7 +95,7 @@ pub(crate) fn load_artifact_module(engine: &Engine, artifact_name: &str) -> Resu
             let artifact = rebuild_artifact(artifact_name).with_context(|| {
                 format!("rebuild AOT artifact '{artifact_name}' after deserialize failure")
             })?;
-            deserialize_headless(engine, &artifact.path).with_context(|| {
+            deserialize_headless(engine, &artifact).with_context(|| {
                 format!(
                     "deserialize rebuilt Wasmer AOT artifact '{}' after initial failure: {err:#}",
                     artifact.path.display()
@@ -368,7 +376,7 @@ fn artifact_raw_bytes(
         bytes.to_vec()
     } else {
         bail!(
-            "no package-manager-resolved Wasmer LLVM AOT artifact named '{name}' is available for target {}; publish and stage the matching liboliphaunt-wasix AOT artifact crate with the application",
+            "no package-manager-resolved Wasmer runtime artifact named '{name}' is available for target {}; publish and stage the matching liboliphaunt-wasix AOT artifact crate with the application",
             target_triple()
         )
     };
@@ -557,7 +565,7 @@ fn target_aot_manifest() -> Result<AotManifest> {
         return Ok(manifest);
     }
     bail!(
-        "no package-manager-resolved Wasmer LLVM AOT manifest is available for target {}; publish and stage the matching liboliphaunt-wasix AOT artifact crate with the application",
+        "no package-manager-resolved Wasmer runtime manifest is available for target {}; publish and stage the matching liboliphaunt-wasix AOT artifact crate with the application",
         target_triple()
     )
 }
@@ -801,21 +809,28 @@ fn aot_verify_mode() -> Result<AotVerifyMode> {
     }
 }
 
-#[allow(unsafe_code)]
-fn deserialize_headless(engine: &Engine, path: &Path) -> Result<Module> {
-    deserialize_headless_mmap(engine, path)
+fn verified_artifact_bytes(artifact: &InstalledArtifact) -> Result<Vec<u8>> {
+    let bytes = fs::read(&artifact.path)
+        .with_context(|| format!("read Wasmer AOT artifact {}", artifact.path.display()))?;
+    ensure!(
+        sha256_hex(&bytes).eq_ignore_ascii_case(&artifact.sha256),
+        "Wasmer AOT artifact hash mismatch: {}",
+        artifact.path.display()
+    );
+    Ok(bytes)
 }
 
 #[allow(unsafe_code)]
-fn deserialize_headless_mmap(engine: &Engine, path: &Path) -> Result<Module> {
-    // SAFETY: same artifact ownership and cache-key constraints as the file
-    // deserializer below. This path avoids reading the complete native artifact
-    // into a Rust Vec before Wasmer deserializes it.
-    unsafe {
-        engine
-            .deserialize_from_mmapped_file(path)
-            .with_context(|| format!("mmap-deserialize Wasmer AOT artifact {}", path.display()))
-    }
+fn deserialize_headless(engine: &Engine, artifact: &InstalledArtifact) -> Result<Module> {
+    let bytes = verified_artifact_bytes(artifact)?;
+    // SAFETY: the trusted package digest covers these exact owned bytes; the
+    // cache path is never reopened between verification and deserialization.
+    unsafe { Module::deserialize(engine, bytes) }.with_context(|| {
+        format!(
+            "deserialize Wasmer AOT artifact {}",
+            artifact.path.display()
+        )
+    })
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -1097,6 +1112,27 @@ struct AotCacheReceipt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artifact_bytes_are_verified_before_deserialization() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("artifact");
+        let trusted = b"trusted artifact";
+        fs::write(&path, trusted).unwrap();
+        let artifact = InstalledArtifact {
+            path: path.clone(),
+            sha256: sha256_hex(trusted),
+        };
+        let bytes = verified_artifact_bytes(&artifact).unwrap();
+        fs::write(&path, b"mutated artifact").unwrap();
+        assert_eq!(bytes, trusted);
+        assert!(
+            verified_artifact_bytes(&artifact)
+                .unwrap_err()
+                .to_string()
+                .contains("hash mismatch")
+        );
+    }
 
     #[test]
     fn source_provenance_does_not_change_aot_compatibility() {
