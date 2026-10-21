@@ -52,12 +52,6 @@ PR builds only a subset of extensions.
 
 ## Release evidence
 
-The PostGIS 3.6.4 Windows build on commit `4dafd0325d05930636f0530276a3a40f3284cb68`
-imports `MSVCP140_2.dll` from `postgis-3.dll`, as recorded in
-[the extension build](https://github.com/f0rr0/oliphaunt/actions/runs/39249410590/job/118130472350).
-The provider profile includes this production runtime; import-derived staging
-still verifies its transitive closure and preserves the original DLL bytes.
-
 The MSVC setup step fails before a long build unless `VCToolsRedistDir` resolves
 the exact x64 VC145 directory and all audited production files. Windows build
 and packaging then:

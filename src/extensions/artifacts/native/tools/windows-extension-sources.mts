@@ -135,10 +135,6 @@ export function prepareSimple(config: Config, extension: string) {
         'bcrypt.lib',
         'ws2_32.lib',
         'user32.lib',
-        'ole32.lib',
-        'oleaut32.lib',
-        'uuid.lib',
-        'msvcprt.lib',
       );
     } else {
       copyFileSync(

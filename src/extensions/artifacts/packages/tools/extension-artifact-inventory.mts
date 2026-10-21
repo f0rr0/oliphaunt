@@ -147,16 +147,15 @@ export function parseExtensionArtifactProperties(text, label) {
     }
     properties.set(key, rawLine.slice(separator + 1));
   }
-  const orderedKeys = EXTENSION_ARTIFACT_PROPERTY_KEYS;
   const actual = [...properties.keys()].sort(compareText);
-  const expected = [...orderedKeys].sort(compareText);
+  const expected = [...EXTENSION_ARTIFACT_PROPERTY_KEYS].sort(compareText);
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw inventoryError(
       label,
       `property fields must be exactly ${expected.join(',')}; got ${actual.join(',')}`,
     );
   }
-  if (JSON.stringify([...properties.keys()]) !== JSON.stringify(orderedKeys)) {
+  if (JSON.stringify([...properties.keys()]) !== JSON.stringify(EXTENSION_ARTIFACT_PROPERTY_KEYS)) {
     throw inventoryError(label, 'properties must use the canonical field order');
   }
   return properties;
