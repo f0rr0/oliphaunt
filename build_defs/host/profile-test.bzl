@@ -97,6 +97,17 @@ def _profile_test(ctx):
             asserts.true(env, "-o" in flags)
             if "-o" in flags:
                 asserts.equals(env, ["fixture.a"], flags[flags.index("-o") + 1:flags.index("-o") + 2])
+        if index > 0:
+            for action, source in [(ACTION_NAMES.c_compile, "fixture.c"), (ACTION_NAMES.objc_compile, "fixture.m"), (ACTION_NAMES.cpp_compile, "fixture.cpp"), (ACTION_NAMES.objcpp_compile, "fixture.mm")]:
+                variables = cc_common.create_compile_variables(cc_toolchain = toolchain, feature_configuration = features, source_file = source, output_file = "fixture.o")
+                flags = cc_common.get_memory_inefficient_command_line(feature_configuration = features, action_name = action, variables = variables)
+                standards = [flag for flag in flags if flag.startswith("-std=")]
+                if index == 2 and (source.endswith(".cpp") or source.endswith(".mm")):
+                    asserts.equals(env, "-std=c++20", standards[-1] if standards else None, source + " must use the configured C++20 dialect after toolchain defaults")
+                elif source.endswith(".mm"):
+                    asserts.equals(env, ["-std=gnu++17"], standards, "an empty C++ profile preserves the upstream Objective-C++ default")
+                else:
+                    asserts.equals(env, [], standards, "C++ profile flags must not reach C or Objective-C")
     observed_xcode = "Xcode 26.5\nBuild version 17F42"
     captured_sdks = {"macosx": "26.5", "iphoneos": "26.5", "iphonesimulator": "26.5"}
     # Explicit stock Xcode configurations report UNKNOWN availability even
@@ -214,19 +225,20 @@ def profile_test(name, **kwargs):
     xcode_version(name = name + "_xcode_version", version = "26.5.0.17f42", default_macos_sdk_version = "26.5", default_ios_sdk_version = "26.5")
     xcode_config(name = name + "_xcode_configuration", versions = [":" + name + "_xcode_version"], default = ":" + name + "_xcode_version")
     profiles = []
-    for sdk in _APPLE_SDKS + ["native_archive", "package_archive"]:
+    for sdk in _APPLE_SDKS + ["native_archive", "package_archive", "ios_cpp_archive"]:
         profile = name + "_" + sdk
-        selected_sdk = "macosx" if sdk in ["native_archive", "package_archive"] else sdk
+        selected_sdk = "macosx" if sdk in ["native_archive", "package_archive"] else "iphonesimulator" if sdk == "ios_cpp_archive" else sdk
         includes = host_builtin_include_directories("external/selected_sdk/", _builtin_directories(selected_sdk))
-        if sdk == "package_archive":
+        if sdk in ["package_archive", "ios_cpp_archive"]:
             apple_config(
                 name = profile + "_configuration",
-                cpu = "darwin_arm64",
+                cpu = "ios_sim_arm64" if sdk == "ios_cpp_archive" else "darwin_arm64",
                 wrapped_clang = ":sdk-smoke.c",
                 wrapped_clang_pp = ":sdk-smoke.c",
                 libtool = "@apple_support//crosstool:libtool.cc",
                 module_map = ":" + profile + "_files",
                 cxx_builtin_include_directories = includes,
+                cxx_flags = ["-std=c++20"] if sdk == "ios_cpp_archive" else [],
                 tool_paths_overrides = {"ar": "tools/ar"},
                 testonly = True,
             )
