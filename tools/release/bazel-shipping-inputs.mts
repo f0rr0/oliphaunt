@@ -251,6 +251,7 @@ function aqueryFileGraph(raw: unknown) {
     artifactPaths.set(key, fragmentPath(id(artifact.pathFragmentId)));
   // Reuse each depset's own validated IDs, without retaining expanded input closures.
   const directInputs = new Map<string, string[]>();
+  const inputChildren = new Map<string, string[]>();
   const inputsOf = (action: Row): Set<string> => {
     const result = new Set<string>();
     const visited = new Set<string>();
@@ -259,7 +260,16 @@ function aqueryFileGraph(raw: unknown) {
       if (visited.has(key)) return;
       const item = required(depSets, key);
       stack.add(key);
-      for (const child of array(item.transitiveDepSetIds ?? [])) visit(id(child), stack);
+      let children = inputChildren.get(key);
+      if (children === undefined) {
+        children = [];
+        for (const value of array(item.transitiveDepSetIds ?? [])) {
+          const child = id(value);
+          visit(child, stack);
+          children.push(child);
+        }
+        inputChildren.set(key, children);
+      } else for (const child of children) visit(child, stack);
       let direct = directInputs.get(key);
       if (direct === undefined) {
         direct = [];
@@ -277,7 +287,16 @@ function aqueryFileGraph(raw: unknown) {
     for (const key of array(action.inputDepSetIds ?? [])) visit(id(key), new Set());
     return result;
   };
-  return { graph, targets, configurations, artifactPaths, depSets, directInputs, inputsOf };
+  return {
+    graph,
+    targets,
+    configurations,
+    artifactPaths,
+    depSets,
+    directInputs,
+    inputChildren,
+    inputsOf,
+  };
 }
 
 /** Actual TestRunner input closure and input-free FileWrite outputs of its configured target. */
@@ -351,11 +370,22 @@ export function buildShippingInputView(
     throw new Error('unsupported shipping export');
   if (exported.scope !== 'construction')
     throw new Error('shipping export must declare construction scope');
-  const { graph, targets, configurations, artifactPaths, depSets, directInputs, inputsOf } =
-    aqueryFileGraph(aqueryValue);
+  const {
+    graph,
+    targets,
+    configurations,
+    artifactPaths,
+    depSets,
+    directInputs,
+    inputChildren,
+    inputsOf,
+  } = aqueryFileGraph(aqueryValue);
   // Compare long shared SDK prefixes once; each action retains the same lexical path order.
   const rankedPaths = [...new Set(artifactPaths.values())].sort();
   const pathRanks = new Map(rankedPaths.map((file, rank) => [file, rank]));
+  const artifactRanks = new Map(
+    [...artifactPaths].map(([artifact, file]) => [artifact, required(pathRanks, file)]),
+  );
   const producers = new Map<string, Row>();
   const products: ShippingInputView['products'] = {};
   const identities = new Set<string>();
@@ -388,24 +418,46 @@ export function buildShippingInputView(
       ? {}
       : { primaryOutput: required(artifactPaths, id(action.primaryOutputId)) }),
   });
+  // Retain checkpoints for one previous sorted list, preserving its flat JSON digest.
+  let previousInputPaths: string[] = [];
+  let previousPrefixHashes = [createHash('sha256').update('[')];
+  const digestInputPaths = (paths: string[]) => {
+    let common = 0;
+    while (
+      common < paths.length &&
+      common < previousInputPaths.length &&
+      paths[common] === previousInputPaths[common]
+    )
+      common++;
+    const chunkSize = 256;
+    const reusedChunks = Math.floor(common / chunkSize);
+    const hashes = previousPrefixHashes.slice(0, reusedChunks + 1);
+    const hash = hashes.at(-1)!.copy();
+    for (let offset = reusedChunks * chunkSize; offset < paths.length; offset += chunkSize) {
+      const end = Math.min(offset + chunkSize, paths.length);
+      if (offset) hash.update(',');
+      hash.update(JSON.stringify(paths.slice(offset, end)).slice(1, -1));
+      if (end % chunkSize === 0) hashes.push(hash.copy());
+    }
+    previousInputPaths = paths;
+    previousPrefixHashes = hashes;
+    return hash.update(']').digest('hex');
+  };
   const actionDescription = (action: Row, inputs: Set<string>) => {
     const cached = actionDescriptions.get(action);
     if (cached !== undefined) return cached;
-    const paths = [
-      ...new Set([...inputs].map((input) => required(pathRanks, required(artifactPaths, input)))),
-    ]
+    const paths = [...new Set([...inputs].map((input) => required(artifactRanks, input)))]
       .sort((left, right) => left - right)
       .map((rank) => rankedPaths[rank]!);
-    for (const path of paths) physicalInputs.add(path);
     if (action.mnemonic === 'Middleman')
       for (const output of array(action.outputIds ?? []))
         virtualOutputs.add(required(artifactPaths, id(output)));
     const description = canonical({
       ...describeAction(action),
-      // Shared compiler headers are hashed once per action, never retained in every description.
+      // Bind the exact sorted input set without retaining it in every description.
       inputs: {
         count: paths.length,
-        sha256: createHash('sha256').update(JSON.stringify(paths)).digest('hex'),
+        sha256: digestInputPaths(paths),
       },
       target: canonicalShippingLabel(required(targets, id(action.targetId)).label),
     });
@@ -546,24 +598,20 @@ export function buildShippingInputView(
         captureInputs.add(inputPath);
       } else if (!visitedActions.has(action)) {
         const cached = actionDescriptions.get(action);
-        if (cached === undefined) {
-          const inputs = inputsOf(action);
-          stack.add(key);
-          for (const input of inputs) visit(input, stack);
-          // ActionKey describes action declarations, not consumed content or a remote-cache key.
-          descriptions.add(actionDescription(action, inputs));
-        } else {
-          stack.add(key);
-          const visitDepSet = (input: string) => {
-            if (visitedDepSets.has(input)) return;
-            const item = required(depSets, input);
-            for (const child of array(item.transitiveDepSetIds ?? [])) visitDepSet(id(child));
-            for (const artifact of required(directInputs, input)) visit(artifact, stack);
-            visitedDepSets.add(input);
-          };
-          for (const input of array(action.inputDepSetIds ?? [])) visitDepSet(id(input));
-          descriptions.add(cached);
-        }
+        const inputs = cached === undefined ? inputsOf(action) : undefined;
+        stack.add(key);
+        const visitDepSet = (input: string) => {
+          if (visitedDepSets.has(input)) return;
+          for (const child of required(inputChildren, input)) visitDepSet(child);
+          for (const artifact of required(directInputs, input)) {
+            physicalInputs.add(required(artifactPaths, artifact));
+            visit(artifact, stack);
+          }
+          visitedDepSets.add(input);
+        };
+        for (const input of array(action.inputDepSetIds ?? [])) visitDepSet(id(input));
+        // ActionKey describes action declarations, not consumed content or a remote-cache key.
+        descriptions.add(cached ?? actionDescription(action, inputs!));
         stack.delete(key);
         visitedActions.add(action);
       }

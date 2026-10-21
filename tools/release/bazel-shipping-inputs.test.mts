@@ -622,6 +622,66 @@ test('same-count input edge swaps and command changes remain visible with identi
   expect(command.products.alpha.actions).not.toEqual(swapped.products.alpha.actions);
 });
 
+test('shared input prefixes preserve flat JSON digests across chunk boundaries and resets', () => {
+  const { exported, graph } = fixture();
+  const compiler = graph.actions.shift()!;
+  const names = [
+    ...Array.from({ length: 514 }, (_, index) => `header-${String(index).padStart(4, '0')}.h`),
+    'quote".h',
+    'é.h',
+    '😀.h',
+    '\ue000.h',
+  ];
+  const paths = new Map<number, string>();
+  const ids = names.map((label, index) => {
+    const id = 100 + index;
+    graph.pathFragments.push({ id, parentId: 1, label });
+    graph.artifacts.push({ id, pathFragmentId: id });
+    paths.set(id, `src/${label}`);
+    return id;
+  });
+  const alias = 9999;
+  graph.artifacts.push({ id: alias, pathFragmentId: ids[0] });
+  paths.set(alias, paths.get(ids[0])!);
+  const cases = [
+    ...[0, 1, 255, 256, 257, 511, 512, 513, 512, 256, 0].map((count) => ids.slice(0, count)),
+    [...ids.slice(0, 255), ids[513]],
+    ids.slice(0, 256),
+    ids.slice(514).reverse(),
+    [...ids.slice(0, 512).reverse(), alias],
+    ids.slice(256, 512),
+  ];
+  graph.depSetOfFiles[1].directArtifactIds = [2];
+  for (const [index, inputs] of cases.entries()) {
+    const output = 10000 + index;
+    const inputSet = 100 + index;
+    graph.pathFragments.push({ id: output, parentId: 5, label: `prefix-${index}.o` });
+    graph.artifacts.push({ id: output, pathFragmentId: output });
+    graph.depSetOfFiles.push({ id: inputSet, directArtifactIds: inputs });
+    graph.depSetOfFiles[1].directArtifactIds.push(output);
+    graph.actions.push({
+      ...compiler,
+      actionKey: `prefix-${index}`,
+      inputDepSetIds: [inputSet],
+      outputIds: [output],
+      primaryOutputId: output,
+    });
+  }
+  const actions = new Map(
+    buildShippingInputView(exported, graph).products.alpha.actions.map((value) => {
+      const action = JSON.parse(value);
+      return [action.actionKey, action.inputs];
+    }),
+  );
+  for (const [index, inputs] of cases.entries()) {
+    const expected = [...new Set(inputs.map((id) => paths.get(id)!))].sort();
+    expect(actions.get(`prefix-${index}`)).toEqual({
+      count: expected.length,
+      sha256: createHash('sha256').update(JSON.stringify(expected)).digest('hex'),
+    });
+  }
+});
+
 test('physical source aliases collapse only after validation and repository paths stay distinct', () => {
   const { exported, graph } = fixture();
   const before = buildShippingInputView(exported, graph);
@@ -742,7 +802,7 @@ test('multi-output actions expand a shared input DAG once per product and graph 
       });
     });
   const view = buildShippingInputView(exported, graph);
-  expect(childIdReads).toBe(4);
+  expect(childIdReads).toBeLessThanOrEqual(4);
   expect(view).toEqual(singleProduct);
   expect(view.products.alpha.inputs).toHaveLength(2050);
   expect(view.physicalInputs).toHaveLength(2178);
@@ -751,12 +811,12 @@ test('multi-output actions expand a shared input DAG once per product and graph 
   const bothProducts = buildShippingInputView(exported, flatGraph);
   childIdReads = 0;
   expect(buildShippingInputView(exported, graph)).toEqual(bothProducts);
-  expect(childIdReads).toBe(8);
+  expect(childIdReads).toBeLessThanOrEqual(4);
   expect(bothProducts.products.beta.inputs).toEqual(view.products.alpha.inputs);
   expect(bothProducts.products.beta.actions).toEqual(view.products.alpha.actions);
   childIdReads = 0;
   expect(buildShippingInputView(exported, graph)).toEqual(bothProducts);
-  expect(childIdReads).toBe(8);
+  expect(childIdReads).toBeLessThanOrEqual(4);
   expect(JSON.stringify(graph)).toBe(original);
   const cyclic = structuredClone(graph);
   cyclic.depSetOfFiles.find((set) => set.id === 1002)!.directArtifactIds!.push(10000);
@@ -810,7 +870,7 @@ test('cached compiler actions share input DAG traversal within each later produc
       });
     });
   const view = buildShippingInputView(exported, graph);
-  expect(childIdReads).toBe(260);
+  expect(childIdReads).toBeLessThanOrEqual(4);
   expect(view).toEqual(flat);
   expect(view.products.beta.inputs).toEqual(view.products.alpha.inputs);
   expect(view.products.beta.actions).toEqual(view.products.alpha.actions);
@@ -818,7 +878,7 @@ test('cached compiler actions share input DAG traversal within each later produc
   expect(view.products.beta.actions).toHaveLength(65);
   childIdReads = 0;
   expect(buildShippingInputView(exported, graph)).toEqual(view);
-  expect(childIdReads).toBe(260);
+  expect(childIdReads).toBeLessThanOrEqual(4);
   expect(JSON.stringify(graph)).toBe(original);
 });
 
