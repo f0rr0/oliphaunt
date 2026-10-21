@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
 import {
   authHeaders,
   boundedResponseBytes,
+  githubReadOptionsFromEnv,
   requestGithubDownload,
   requestGithubPages,
   requestGithubRepositoryJson,
+  retryReadOperation,
 } from './github-read.mts';
 
 const REPOSITORY = 'f0rr0/oliphaunt';
@@ -19,6 +21,7 @@ const API = `repos/${REPOSITORY}`;
 const RELEASE = { name: 'Release', path: '.github/workflows/release.yml' };
 const NATIVE = { name: 'Native Bazel qualification', path: '.github/workflows/bazel.yml' };
 const REQUEST_JOB = 'Resolve native qualification for preparation';
+const INTENT_UPLOAD_STEP = 'Retain pending Prepare intent';
 const MAX_INTENT_BYTES = 64 * 1024;
 const positive = (value) => Number.isSafeInteger(value) && value > 0;
 const sha = (value) => typeof value === 'string' && /^[0-9a-f]{40}$/u.test(value);
@@ -90,22 +93,39 @@ function assertRun(run, workflow, sourceSha) {
   assert(['push', 'workflow_dispatch'].includes(run.event), 'Workflow run event is ineligible');
 }
 
-function oneJob(jobs, name, attempt) {
+class PendingCompletionMetadata extends Error {}
+
+function requireCompleted(value, label) {
+  if (value.status === 'completed') return;
+  assert(
+    ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(value.status) &&
+      value.conclusion === null,
+    `${label} has malformed completion metadata`,
+  );
+  throw new PendingCompletionMetadata(`${label} is not yet visible as completed`);
+}
+
+function oneJob(jobs, name, attempt, previous) {
   const matches = jobs.filter((job) => job.name === name);
-  assert.equal(matches.length, 1, `Expected one ${name} job`);
-  assert.equal(matches[0].run_attempt, attempt, `${name} job attempt mismatch`);
-  assert.equal(matches[0].status, 'completed', `${name} job is incomplete`);
-  return matches[0];
+  assert(matches.length <= 1, `Expected one ${name} job`);
+  if (!matches.length) throw new PendingCompletionMetadata(`${name} job is not yet visible`);
+  const job = matches[0];
+  assert.equal(job.run_attempt, attempt, `${name} job attempt mismatch`);
+  assert(positive(job.id), `${name} job identity is invalid`);
+  if (previous) assert.equal(job.id, previous.id, `${name} job identity changed`);
+  return job;
 }
 
 function githubIo(environment) {
   return {
-    read: (endpoint) => requestGithubRepositoryJson(endpoint, { environment }),
-    list: (endpoint, itemsField) => requestGithubPages(endpoint, { environment, itemsField }),
-    download: async (id) =>
+    read: (endpoint, options) => requestGithubRepositoryJson(endpoint, { environment, ...options }),
+    list: (endpoint, itemsField, options) =>
+      requestGithubPages(endpoint, { environment, itemsField, ...options }),
+    download: async (id, { timeoutMs }) =>
       boundedResponseBytes(
         await requestGithubDownload(`https://api.github.com/${API}/actions/artifacts/${id}/zip`, {
           environment,
+          timeoutMs: Math.min(30_000, timeoutMs),
         }),
         MAX_INTENT_BYTES,
         'Native Prepare intent artifact',
@@ -181,7 +201,7 @@ async function readIntentArtifact(artifact, original, repositoryId, io) {
 
 // Intent routes an existing Prepare request. It never substitutes for Required
 // or authorizes publication: the rerun repeats the original preparation gates.
-export async function reconcileNativePrepare(event, io) {
+export async function reconcileNativePrepare(event, io, readOptions = {}) {
   assert.equal(event.repository?.full_name, REPOSITORY, 'Continuation repository mismatch');
   assert.equal(event.action, 'completed', 'Continuation requires a completion event');
   const trigger = event.workflow_run;
@@ -195,11 +215,37 @@ export async function reconcileNativePrepare(event, io) {
       trigger.display_title !== 'Release / prepare-release-pr / main')
   )
     return [];
+  const settings = githubReadOptionsFromEnv(
+    {
+      OLIPHAUNT_GITHUB_READ_DEADLINE_MS: '300000',
+      OLIPHAUNT_GITHUB_READ_MAX_ATTEMPTS: '10',
+      OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS: '5000',
+      OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS: '30000',
+      ...(readOptions.environment ?? process.env),
+    },
+    readOptions,
+  );
+  const now = settings.now ?? Date.now;
+  const deadline = now() + Math.min(300_000, settings.deadlineMs);
+  const remaining = () => {
+    const milliseconds = deadline - now();
+    assert(
+      milliseconds > 0,
+      'Prepare continuation metadata deadline exhausted; rerun original Prepare',
+    );
+    return milliseconds;
+  };
+  const reads = {
+    read: (endpoint) => io.read(endpoint, { deadlineMs: remaining(), now, sleep: settings.sleep }),
+    list: (endpoint, field) =>
+      io.list(endpoint, field, { deadlineMs: remaining(), now, sleep: settings.sleep }),
+    download: (id) => io.download(id, { timeoutMs: remaining() }),
+  };
   const sourceSha = trigger.head_sha;
-  const repository = await io.read(API);
+  const repository = await reads.read(API);
   assert.equal(repository.full_name, REPOSITORY);
   assert(positive(repository.id), 'Canonical repository ID is missing');
-  const workflows = await io.list(`${API}/actions/workflows`, 'workflows');
+  const workflows = await reads.list(`${API}/actions/workflows`, 'workflows');
   const workflowId = (expected) => {
     const rows = workflows.filter(
       (row) => row.name === expected.name && row.path === expected.path,
@@ -214,86 +260,186 @@ export async function reconcileNativePrepare(event, io) {
   const originals =
     workflow === RELEASE
       ? [trigger]
-      : await io.list(
+      : await reads.list(
           `${API}/actions/workflows/${releaseId}/runs?head_sha=${sourceSha}&event=workflow_dispatch`,
           'workflow_runs',
         );
   const resumed = [];
   for (const candidate of originals) {
     if (candidate.display_title !== 'Release / prepare-release-pr / main') continue;
-    const original = await io.read(`${API}/actions/runs/${candidate.id}`);
-    assertRun(original, RELEASE, sourceSha);
-    assert.equal(original.workflow_id, releaseId);
-    assert.equal(original.event, 'workflow_dispatch');
-    assert.equal(original.display_title, 'Release / prepare-release-pr / main');
-    if (original.status !== 'completed') continue; // The Release completion event will reconcile later.
-    if (original.conclusion !== 'success') continue; // Never revive a failed/cancelled request automatically.
-    const artifacts = await io.list(`${API}/actions/runs/${original.id}/artifacts`, 'artifacts');
-    const matches = artifacts.filter(
-      (row) => row.name === nativePrepareIntentName(original.run_attempt),
+    assert(positive(candidate.id), 'Prepare candidate run identity is invalid');
+    if (candidate.status === 'completed')
+      assert(positive(candidate.run_attempt), 'Completed Prepare candidate attempt is invalid');
+    let originalAttempt = workflow === RELEASE ? trigger.run_attempt : undefined;
+    let originalCompleted = workflow === RELEASE;
+    let selectedNativeAttempt = workflow === NATIVE ? trigger.run_attempt : undefined;
+    let nativeCompleted = workflow === NATIVE;
+    let nativeEvent;
+    let intent;
+    let producer;
+    let required;
+    const readRun = async (id, expected) => {
+      const run = await reads.read(`${API}/actions/runs/${id}`);
+      assertRun(run, expected, sourceSha);
+      assert.equal(run.id, id, 'Workflow run ID mismatch');
+      assert.equal(run.workflow_id, expected === RELEASE ? releaseId : nativeId);
+      if (expected === RELEASE) {
+        assert.equal(run.event, 'workflow_dispatch');
+        assert.equal(run.display_title, 'Release / prepare-release-pr / main');
+      }
+      return run;
+    };
+    const runId = await retryReadOperation(
+      `Prepare run ${candidate.id} completion metadata; rerun original Prepare if readiness does not converge`,
+      async () => {
+        const original = await readRun(candidate.id, RELEASE);
+        if (originalAttempt === undefined) {
+          originalAttempt = Math.max(
+            original.run_attempt,
+            candidate.status === 'completed' ? candidate.run_attempt : 0,
+          );
+          originalCompleted =
+            candidate.status === 'completed' && candidate.run_attempt === originalAttempt;
+        }
+        if (original.run_attempt > originalAttempt) return;
+        if (
+          workflow === RELEASE &&
+          trigger.conclusion !== 'success' &&
+          original.status !== 'completed'
+        )
+          return; // No need to await metadata for an unsuccessful request.
+        if (original.run_attempt < originalAttempt)
+          throw new PendingCompletionMetadata('Original Prepare attempt is not yet visible');
+        if (original.status !== 'completed' && !originalCompleted) return;
+        requireCompleted(original, 'Original Prepare');
+        originalCompleted = true;
+        if (workflow === RELEASE)
+          assert.equal(
+            original.conclusion,
+            trigger.conclusion,
+            'Completed Prepare result conflicts with its trigger',
+          );
+        if (original.conclusion !== 'success') return; // Never revive a failed/cancelled request.
+        if (!intent) {
+          const requestJobs = await reads.list(
+            `${API}/actions/runs/${original.id}/attempts/${originalAttempt}/jobs`,
+            'jobs',
+          );
+          producer = oneJob(requestJobs, REQUEST_JOB, originalAttempt, producer);
+          requireCompleted(producer, REQUEST_JOB);
+          assert.equal(producer.conclusion, 'success', 'Prepare intent producer did not succeed');
+          const upload = producer.steps?.filter((step) => step.name === INTENT_UPLOAD_STEP) ?? [];
+          assert(upload.length <= 1, 'Prepare intent upload step is ambiguous');
+          if (!upload.length)
+            throw new PendingCompletionMetadata('Prepare intent upload step is not yet visible');
+          requireCompleted(upload[0], INTENT_UPLOAD_STEP);
+          if (upload[0].conclusion === 'skipped') return;
+          assert.equal(upload[0].conclusion, 'success', 'Prepare intent upload did not succeed');
+          const artifacts = await reads.list(
+            `${API}/actions/runs/${original.id}/artifacts`,
+            'artifacts',
+          );
+          const matches = artifacts.filter(
+            (row) => row.name === nativePrepareIntentName(originalAttempt),
+          );
+          assert(matches.length <= 1, 'Prepare intent artifact is ambiguous');
+          if (!matches.length)
+            throw new PendingCompletionMetadata(
+              'Uploaded Prepare intent artifact is not yet visible',
+            );
+          const captured = await readIntentArtifact(matches[0], original, repository.id, reads);
+          assert.equal(captured.originalRunId, original.id);
+          assert.equal(captured.originalAttempt, originalAttempt);
+          assert.equal(captured.sourceSha, sourceSha);
+          const commit = await reads.read(`${API}/git/commits/${sourceSha}`);
+          assert.equal(commit.sha, sourceSha);
+          assert.equal(
+            commit.tree?.sha,
+            captured.sourceTree,
+            'Prepare intent source tree mismatch',
+          );
+          intent = captured;
+        }
+        if (workflow === NATIVE && trigger.id !== intent.nativeRunId) return;
+        const native = await readRun(intent.nativeRunId, NATIVE);
+        nativeEvent ??= native.event;
+        assert.equal(native.event, nativeEvent, 'Bound Native event changed');
+        if (workflow === NATIVE)
+          assert.equal(native.event, trigger.event, 'Native trigger event mismatch');
+        selectedNativeAttempt ??= Math.max(native.run_attempt, intent.nativeAttempt);
+        if (native.run_attempt > selectedNativeAttempt) return;
+        if (
+          workflow === NATIVE &&
+          trigger.conclusion !== 'success' &&
+          native.status !== 'completed'
+        )
+          assert.fail(`Bound Native qualification failed: ${trigger.html_url}`);
+        if (native.run_attempt < selectedNativeAttempt)
+          throw new PendingCompletionMetadata('Completed Native attempt is not yet visible');
+        assert(
+          native.run_attempt >= intent.nativeAttempt,
+          `Bound Native attempt predates observed intent; rerun original Prepare https://github.com/${REPOSITORY}/actions/runs/${original.id} to select current proof`,
+        );
+        if (native.status !== 'completed' && !nativeCompleted) return;
+        requireCompleted(native, 'Bound Native run');
+        nativeCompleted = true;
+        if (workflow === NATIVE)
+          assert.equal(
+            native.conclusion,
+            trigger.conclusion,
+            'Native completion result conflicts with its trigger',
+          );
+        assert.equal(
+          native.conclusion,
+          'success',
+          `Bound Native qualification failed: ${native.html_url}`,
+        );
+        const nativeJobs = await reads.list(
+          `${API}/actions/runs/${native.id}/attempts/${selectedNativeAttempt}/jobs`,
+          'jobs',
+        );
+        required = oneJob(nativeJobs, 'Required', selectedNativeAttempt, required);
+        requireCompleted(required, 'Required');
+        assert(
+          required.conclusion === 'success' ||
+            (selectedNativeAttempt === intent.nativeAttempt &&
+              native.event === 'push' &&
+              required.conclusion === 'skipped'),
+          'Bound Native run did not pass Required or finish as a successful scoped push',
+        );
+        const currentMain = await reads.read(`${API}/git/ref/heads/main`);
+        assert.equal(
+          currentMain.object?.sha,
+          sourceSha,
+          'Prepare source is no longer current main',
+        );
+        const latestNative = await readRun(native.id, NATIVE);
+        assert.equal(latestNative.event, nativeEvent, 'Bound Native event changed');
+        if (latestNative.run_attempt > selectedNativeAttempt) return;
+        if (latestNative.run_attempt < selectedNativeAttempt)
+          throw new PendingCompletionMetadata('Completed Native attempt is not yet visible');
+        requireCompleted(latestNative, 'Bound Native run');
+        assert.equal(latestNative.conclusion, 'success', 'Bound Native qualification changed');
+        // Recheck after all reads under the controller's per-source concurrency lock.
+        const latest = await readRun(original.id, RELEASE);
+        if (latest.run_attempt > originalAttempt) return;
+        if (latest.run_attempt < originalAttempt)
+          throw new PendingCompletionMetadata('Original Prepare attempt is not yet visible');
+        requireCompleted(latest, 'Original Prepare');
+        assert.equal(latest.conclusion, 'success');
+        return original.id;
+      },
+      {
+        ...settings,
+        deadlineMs: remaining(),
+        classify: (error) => error instanceof PendingCompletionMetadata,
+      },
     );
-    if (matches.length === 0) continue; // No pending preparation intent in this attempt.
-    assert.equal(matches.length, 1, 'Prepare intent artifact is ambiguous');
-    const intent = await readIntentArtifact(matches[0], original, repository.id, io);
-    assert.equal(intent.originalRunId, original.id);
-    assert.equal(intent.originalAttempt, original.run_attempt);
-    assert.equal(intent.sourceSha, sourceSha);
-    const commit = await io.read(`${API}/git/commits/${sourceSha}`);
-    assert.equal(commit.sha, sourceSha);
-    assert.equal(commit.tree?.sha, intent.sourceTree, 'Prepare intent source tree mismatch');
-    const requestJobs = await io.list(
-      `${API}/actions/runs/${original.id}/attempts/${intent.originalAttempt}/jobs`,
-      'jobs',
-    );
-    const producer = oneJob(requestJobs, REQUEST_JOB, intent.originalAttempt);
-    assert.equal(producer.conclusion, 'success', 'Prepare intent producer did not succeed');
-    const native = await io.read(`${API}/actions/runs/${intent.nativeRunId}`);
-    assertRun(native, NATIVE, sourceSha);
-    assert.equal(native.workflow_id, nativeId);
-    // The retained attempt is the minimum observed for routing. A later
-    // attempt needs its own current full gate on this same run and source.
-    assert(
-      native.run_attempt >= intent.nativeAttempt,
-      `Bound Native attempt predates observed intent; rerun original Prepare https://github.com/${REPOSITORY}/actions/runs/${original.id} to select current proof`,
-    );
-    if (
-      workflow === NATIVE &&
-      (trigger.id !== native.id || trigger.run_attempt !== native.run_attempt)
-    )
-      continue;
-    if (native.status !== 'completed') continue;
-    assert.equal(
-      native.conclusion,
-      'success',
-      `Bound Native qualification failed: ${native.html_url}`,
-    );
-    const nativeJobs = await io.list(
-      `${API}/actions/runs/${native.id}/attempts/${native.run_attempt}/jobs`,
-      'jobs',
-    );
-    const required = oneJob(nativeJobs, 'Required', native.run_attempt);
-    // A successful scoped push only wakes the request stage, which dispatches
-    // full Native next; it cannot supply the Prepare job's run_id output.
-    assert(
-      required.conclusion === 'success' ||
-        (native.run_attempt === intent.nativeAttempt &&
-          native.event === 'push' &&
-          required.conclusion === 'skipped'),
-      'Bound Native run did not pass Required or finish as a successful scoped push',
-    );
-    const currentMain = await io.read(`${API}/git/ref/heads/main`);
-    assert.equal(currentMain.object?.sha, sourceSha, 'Prepare source is no longer current main');
-    // Recheck after all reads under the controller's per-source concurrency lock.
-    const latest = await io.read(`${API}/actions/runs/${original.id}`);
-    assertRun(latest, RELEASE, sourceSha);
-    if (latest.run_attempt > intent.originalAttempt) continue; // Another completion already resumed it.
-    assert.equal(latest.run_attempt, intent.originalAttempt);
-    if (latest.status !== 'completed') continue;
-    assert.equal(latest.conclusion, 'success');
-    await io.rerun(original.id);
+    if (runId === undefined) continue;
+    await io.rerun(runId); // A mutation is never inside the metadata retry.
     resumed.push({
-      runId: original.id,
-      url: `https://github.com/${REPOSITORY}/actions/runs/${original.id}`,
+      runId,
+      url: `https://github.com/${REPOSITORY}/actions/runs/${runId}`,
     });
   }
   return resumed;
@@ -324,7 +470,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     );
     const message = resumed.length
       ? resumed.map((run) => `Resumed original Prepare: ${run.url}`).join('\n')
-      : 'No completed pending Prepare request needs resuming.';
+      : 'No resumable Prepare request observed. If a pending request was missed, rerun original Prepare; indexed discovery has no automatic retry.';
     console.log(message);
     if (process.env.GITHUB_STEP_SUMMARY)
       appendFileSync(process.env.GITHUB_STEP_SUMMARY, message + '\n');
