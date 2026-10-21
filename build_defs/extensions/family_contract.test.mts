@@ -138,11 +138,23 @@ if (spec.outputs.npm) {
     .filter((row) => row.kind === 'native-dynamic')
     .map((row) => row.target);
   const leaves = spec.carriers.filter(
-    (row) => row.ecosystem === 'npm' && targets.includes(row.target),
+    (row) =>
+      row.ecosystem === 'npm' &&
+      targets.includes(row.target) &&
+      row.name === `${facade.name}-${row.target}`,
+  );
+  assert.deepEqual(
+    leaves.map((row) => row.target).sort(),
+    [...targets].sort(),
+    'final facade requires exactly one native npm carrier for every dynamic target',
   );
   assert.deepEqual(
     manifest.optionalDependencies,
     Object.fromEntries(leaves.map((row) => [row.name, spec.version])),
+  );
+  assert.deepEqual(
+    manifest.oliphaunt.targetPackageNames,
+    Object.fromEntries(leaves.map((row) => [row.target, row.name])),
   );
   assert.deepEqual(
     [...manifest.oliphaunt.members].sort(),

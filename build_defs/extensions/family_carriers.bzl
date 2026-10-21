@@ -5,7 +5,7 @@ load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRY
 load("//build_defs/release:identity.bzl", "release_identity")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load(":declared_final_inputs.bzl", "native_declared_apple_base", "native_extension_declared_final_import")
-load(":owner_carriers.bzl", "native_extension_family_carriers", "native_owner_carrier_helpers", "native_owner_carrier_metadata")
+load(":owner_carriers.bzl", "native_extension_family_carriers", "native_owner_carrier_helpers", "native_owner_carrier_legal", "native_owner_carrier_metadata")
 
 def _runfile(ctx, file):
     return file.short_path[3:] if file.short_path.startswith("../") else ctx.workspace_name + "/" + file.short_path
@@ -14,15 +14,15 @@ def _contract_impl(ctx):
     spec = ctx.attr.family[OutputGroupInfo].spec.to_list()
     if len(spec) != 1:
         fail("extension family contract requires its actual construction spec")
-    files = depset(transitive = [ctx.attr.family[DefaultInfo].files] + [target[DefaultInfo].files for target in ctx.attr.inputs]).to_list()
+    files = depset(ctx.files.legal, transitive = [ctx.attr.family[DefaultInfo].files] + [target[DefaultInfo].files for target in ctx.attr.inputs]).to_list()
     locations = ctx.actions.declare_file(ctx.label.name + ".locations.json")
     ctx.actions.write(locations, json.encode({file.path: _runfile(ctx, file) for file in files}))
     return bun_test_entrypoint(ctx, ctx.file._runner, [spec[0], locations], files + [locations] + ctx.files._helpers,
-                               source_files = [ctx.file._runner] + ctx.files._helpers, runfiles_argument = True)
+                               source_files = [ctx.file._runner] + ctx.files._helpers + ctx.files.legal, runfiles_argument = True)
 
 _family_contract_test = rule(implementation = _contract_impl, test = True, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
-        "family": attr.label(mandatory = True), "inputs": attr.label_list(allow_files = True),
+        "family": attr.label(mandatory = True), "inputs": attr.label_list(allow_files = True), "legal": attr.label_list(allow_files = True),
         "_runner": attr.label(default = "//build_defs/extensions:family_contract.test.mts", allow_single_file = True),
         "_helpers": attr.label_list(default = native_owner_carrier_helpers() + ["//build_defs/extensions:owner_carriers.mts", "//tools/release:checksum-manifest.mts"], allow_files = True),
     }))
@@ -64,7 +64,7 @@ def _family(name, product, base_carrier_manifest, family = "native"):
                          package_name = row.name, configuration = "portable", role = row.role, suppliers = ":" + name)
         packages.append(":" + package)
     _family_contract_test(name = name + "_contract_test", family = ":" + name,
-                     inputs = leaves + wasix_leaves + ([base] if base else []), args = bun_test_entrypoint_args(name + "_contract_test"), size = "medium")
+                     inputs = leaves + wasix_leaves + ([base] if base else []), legal = native_owner_carrier_legal(product), args = bun_test_entrypoint_args(name + "_contract_test"), size = "medium")
     shipping_export(name = name + "_shipping_export", packages = packages,
                     qualification = [":" + name + "_contract_test"], testonly = True)
 
