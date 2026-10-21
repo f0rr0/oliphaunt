@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmdirSync,
   rmSync,
@@ -229,6 +230,145 @@ captured_swift_package(runtime = "@oliphaunt//${fixturePath}:shared", targets = 
   assert.deepEqual(query('kind("cc_library rule", @conformance_captured_swift//:CBridge)'), [
     '//:CBridge',
   ]);
+}
+
+function checksumFamilyOriginalFiles() {
+  const repository = path.join(scratch, 'checksum-families');
+  mkdirSync(repository);
+  writeFileSync(path.join(repository, 'WORKSPACE.bazel'), '');
+  writeFileSync(path.join(repository, 'BUILD.bazel'), '');
+  const versions = JSON.parse(
+    readFileSync(path.join(workspace, '.release-please-manifest.json'), 'utf8'),
+  );
+  const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
+  const bytes = Buffer.from('controlled identical current and completed archive bytes\n');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const families = [
+    {
+      product: 'liboliphaunt-native',
+      path: 'src/native/runtime',
+      asset: 'liboliphaunt-{version}-linux-x64-gnu.tar.gz',
+    },
+    {
+      product: 'liboliphaunt-wasix',
+      path: 'src/wasix/runtime',
+      asset: 'liboliphaunt-wasix-{version}-runtime-portable.tar.zst',
+    },
+  ].map((family, index) => {
+    const version = versions[family.path];
+    assert.equal(typeof version, 'string');
+    const name = family.asset.replaceAll('{version}', version);
+    const directory = path.join(repository, `family${index}`);
+    mkdirSync(directory);
+    writeFileSync(
+      path.join(directory, 'BUILD.bazel'),
+      `load("@oliphaunt//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
+native_release_checksum_family(product = ${JSON.stringify(family.product)}, artifact_rows = ${JSON.stringify(
+        [
+          {
+            product: family.product,
+            kind: 'fixture-archive',
+            asset: family.asset,
+            surfaces: ['github-release'],
+          },
+          {
+            product: family.product,
+            kind: 'checksums',
+            asset: `${family.product}-{version}-conformance.sha256`,
+            surfaces: ['github-release'],
+          },
+        ],
+      )})
+`,
+    );
+    const file = (origin: string) => {
+      const file = path.join(scratch, origin, family.product, name);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, bytes);
+      return { path: file, size: bytes.length, sha256 };
+    };
+    const publication = {
+      product: family.product,
+      version,
+      tagName: `${family.product}-v${version}`,
+      publicationSha: 'c'.repeat(40),
+      publicationTree: 'd'.repeat(40),
+      releaseSha: 'e'.repeat(40),
+    };
+    return {
+      label: `@conformance_checksum_families//family${index}:release_family_archives`,
+      alias: `native-current-artifacts/${family.product}/${version}/${sha256}/${name}`,
+      current: {
+        product: family.product,
+        version,
+        artifact: `github-release:${name}`,
+        configuration: 'portable',
+        source,
+        file: {
+          ...file('current-checksum-files'),
+          producer: {
+            root: `//controlled:family${index}`,
+            configuration: 'f'.repeat(64),
+            evidenceDigest: `sha256:${'1'.repeat(64)}`,
+            invocationId: `controlled-family-${index}`,
+            output: `bazel-out/controlled/bin/${name}`,
+          },
+        },
+      },
+      held: { publication, artifact: `github-release:${name}`, file: file('held-checksum-files') },
+    };
+  });
+  const snapshot = path.join(scratch, 'checksum-family-inputs.json');
+  const save = (current: (typeof families)[number]['current'][] | undefined) =>
+    writeFileSync(
+      snapshot,
+      JSON.stringify({
+        source,
+        supplierPublications: families.map(({ held }) => held.publication),
+        supplierArtifacts: families.map(({ held }) => held),
+        ...(current === undefined ? {} : { nativeCurrentArtifacts: current }),
+      }),
+    );
+  save(families.map(({ current }) => current));
+  const flags = [
+    `--inject_repository=conformance_checksum_families=${repository}`,
+    `--repo_env=OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=${snapshot}`,
+    '--noshow_progress',
+  ];
+  const executionRoot = bazel('info', ['execution_root']).stdout.trim();
+  for (const family of families) {
+    const labels = bazel('query', [`labels(archives, ${family.label})`, ...flags, '--output=label'])
+      .stdout.trim()
+      .split('\n');
+    assert.equal(labels.length, 1, 'each checksum family reaches only its own original archive');
+    assert.match(labels[0], /^@@?[^/]*oliphaunt_metadata\/\/:/u);
+    assert.equal(labels[0].split('//:')[1], family.alias);
+    const file = bazel('cquery', [family.label, ...flags, '--output=files']).stdout.trim();
+    assert.ok(file.startsWith('external/'));
+    assert.equal(
+      realpathSync(path.resolve(executionRoot, '../..', file)),
+      family.current.file.path,
+      'identical completed bytes cannot replace the explicit current File alias',
+    );
+  }
+  const labels = families.map(({ label }) => label);
+  for (const current of [undefined, []]) {
+    save(current);
+    assert.deepEqual(
+      bazel('query', [`set(${labels.join(' ')})`, ...flags, '--output=label'])
+        .stdout.trim()
+        .split('\n')
+        .map((label) => label.slice(label.indexOf('//')))
+        .sort(),
+      labels.map((label) => label.slice(label.indexOf('//'))).sort(),
+    );
+    assert.match(
+      bazel('cquery', [labels[0], ...flags], true).stderr,
+      /release family is missing canonical public archive Files/u,
+    );
+  }
+  save(families.map(({ current }) => current));
+  bazel('cquery', [labels[0], ...flags, '--output=files']);
 }
 
 function ignoreGeneratedOutputDirectories() {
@@ -806,6 +946,7 @@ try {
   diskCacheAcrossFreshBases();
   externalBunEntrypoints();
   capturedSwiftPackageIdentity();
+  checksumFamilyOriginalFiles();
   cargoBuildScriptParity();
   const allProduction = [
     'config',

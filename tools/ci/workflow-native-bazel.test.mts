@@ -277,7 +277,6 @@ test('native package consumers follow their producers and remain required for ad
   assert.equal(sourceStep.env.CI_REQUEST_ID, 'release-families/public-source');
   assert.equal(sourceStep.env.CI_REQUIRES, undefined);
   assert.equal(sourceStep.env.CI_FULL_ONLY, undefined);
-  assert.ok(!sourceStep.run.includes('OLIPHAUNT_NATIVE_RELEASE_ARCHIVES'));
   assert.equal(familyStep.env.CI_REQUEST_ID, 'release-families/checksums');
   assert.equal(familyStep.env.CI_FULL_ONLY, 'true');
   assert.equal(JSON.parse(familyStep.env.CI_REQUIRES).length, 13);
@@ -324,11 +323,7 @@ test('native package consumers follow their producers and remain required for ad
       ]);
       if (mode === 'full') {
         const complete = execute(familyStep, '//:release_family_shipping_export');
-        assert.deepEqual(complete.slice(0, -1), configuration);
-        assert.equal(
-          complete.at(-1),
-          `--repo_env=OLIPHAUNT_NATIVE_RELEASE_ARCHIVES=${directory}/target/native-release-archive-inputs`,
-        );
+        assert.deepEqual(complete, configuration);
         assert.ok(
           existsSync(
             path.join(
@@ -858,6 +853,32 @@ exit "\${AUDIT_STATUS:-0}"
     }
     assert.equal(execute('success', '7').status, 7);
   });
+});
+
+test('React Native qualification retains diagnostics within its job budget', () => {
+  const job = jobs['react-native'];
+  const qualifier = job.steps.find((step: any) =>
+    step.run?.includes('--shipping-export //:native_react_native_shipping_export'),
+  );
+  const diagnostics = job.steps.find(
+    (step: any) => step.name === 'Upload React Native build and query diagnostics',
+  );
+  const cache = job.steps.find((step: any) => step.name === 'Save bounded standard Bazel caches');
+  assert.ok(
+    qualifier['timeout-minutes'] + diagnostics['timeout-minutes'] + cache['timeout-minutes'] <
+      job['timeout-minutes'],
+    'qualification must leave job time for authentication, diagnostics and cleanup',
+  );
+  assert.equal(diagnostics.if, 'always()');
+  const capture = qualifier.run.match(/--output-directory "\$RUNNER_TEMP\/([^"\n]+)"/u)?.[1];
+  assert.ok(capture, 'qualification must declare its capture directory');
+  for (const file of ['diagnostics/', 'build-events.jsonl', 'aquery-build-events.jsonl'])
+    assert.ok(diagnostics.with.path.includes(`/${capture}/${file}`));
+  assert.ok(diagnostics.with.path.includes('/native-bazel/command.log'));
+  assert.equal(diagnostics.with['if-no-files-found'], 'ignore');
+  assert.equal(cache.if, '${{ always() }}');
+  assert.ok(job.steps.indexOf(qualifier) < job.steps.indexOf(diagnostics));
+  assert.ok(job.steps.indexOf(diagnostics) < job.steps.indexOf(cache));
 });
 
 test('only the installed mobile test receives the actual clean candidate checkout identity', () => {

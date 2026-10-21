@@ -1359,7 +1359,7 @@ jobs:
     if: ${{ !cancelled() && needs.release-inputs.result == 'success' && needs.portable.result == 'success' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), 'react-native') }}
     needs: [portable, release-inputs]
     runs-on: macos-26
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       CI_REQUEST_JOB: react-native
       CI_MODE: ${{ needs.release-inputs.outputs.ci_mode }}
@@ -1406,6 +1406,8 @@ jobs:
 
       - name: Qualify final React Native package and installed iOS consumer
         if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        # Leave time for authentication, diagnostics, and bounded cache saving.
+        timeout-minutes: 150
         env:
           CI_REQUEST_ID: react-native/installed-consumer
           CI_REQUIRES: '["portable/macos-arm64/apple-packages"]'
@@ -1452,6 +1454,22 @@ jobs:
           retention-days: 7
 
       - *ci_request_receipts
+
+      - name: Upload React Native build and query diagnostics
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-react-native-diagnostics
+          path: |
+            ${{ runner.temp }}/react-native-build-capture/diagnostics/
+            ${{ runner.temp }}/react-native-build-capture/build-events.jsonl
+            ${{ runner.temp }}/react-native-build-capture/aquery-build-events.jsonl
+            ${{ runner.temp }}/native-bazel/command.log
+            ${{ runner.temp }}/native-bazel/execroot/_main/bazel-out/**/testlogs/**/test.log
+            ${{ runner.temp }}/native-bazel/execroot/_main/bazel-out/**/testlogs/**/test.xml
+          if-no-files-found: ignore
+          retention-days: 5
 
       - name: Save bounded standard Bazel caches
         if: ${{ always() }}
@@ -1554,10 +1572,9 @@ jobs:
             --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
             > "$input_root/github.json"
-          jq -nc --arg archives "$GITHUB_WORKSPACE/target/native-release-archive-inputs" '[
+          jq -nc '[
             "-c","opt","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
-            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=2",
-            "--repo_env=OLIPHAUNT_NATIVE_RELEASE_ARCHIVES="+$archives
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=2"
           ]' > "$input_root/configuration.json"
           printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
           ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"

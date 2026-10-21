@@ -1,6 +1,6 @@
 """Checksum-only publication roots from authenticated final public archive Files."""
 
-load("@oliphaunt_metadata//:metadata.bzl", "NATIVE_HELPER_ARTIFACTS", "NATIVE_RUNTIME_ARTIFACTS", "PRODUCTS", "WASIX_ARTIFACTS")
+load("@oliphaunt_metadata//:metadata.bzl", "NATIVE_CURRENT_ARTIFACTS", "NATIVE_HELPER_ARTIFACTS", "NATIVE_RUNTIME_ARTIFACTS", "PRODUCTS", "WASIX_ARTIFACTS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/release:supplier.bzl", "shipping_suppliers")
@@ -66,7 +66,10 @@ def native_release_checksum_family(product, artifact_rows = None, export_name = 
         fail("release family requires its unique canonical checksum descriptor")
     checksum = checksums[0]
     expected = [row["asset"].replace("{version}", version) for row in rows if row["kind"] != "checksums"]
-    _canonical_archives(name = "release_family_archives", archives = ["@postmaster_guest//:release_archives"],
+    current = NATIVE_CURRENT_ARTIFACTS or {}
+    archives = [row["file"]["path"] for name in expected
+                for row in [current.get(product + "/" + version + "/github-release:" + name)] if row]
+    _canonical_archives(name = "release_family_archives", archives = archives,
                         expected = expected, target_compatible_with = _LINUX_X64)
     native_checksum_manifest(name = "release_assets", product = product, artifact_rows = artifact_rows,
                              archives = [":release_family_archives"], assemble = True,

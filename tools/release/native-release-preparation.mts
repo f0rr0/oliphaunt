@@ -1276,14 +1276,17 @@ export async function acquireNativeReleaseArchives(
     label: 'native archive assembly',
   });
   assert.ok(!existsSync(destination), 'native archive assembly requires a new owned directory');
-  const inputs = `${destination}.producers`;
-  assert.ok(!existsSync(inputs), 'native archive assembly requires new owned producer captures');
+  const snapshotDirectory = `${destination}.inputs`;
+  assert.ok(
+    !existsSync(snapshotDirectory),
+    'native archive assembly requires a new owned input snapshot directory',
+  );
   try {
     const construction = await acquireNativePublicationBuilds(
       {
         source,
         runId,
-        directory: inputs,
+        directory: destination,
         ref,
         excludeArtifactNames: [
           'native-build-evidence-release-families',
@@ -1297,28 +1300,23 @@ export async function acquireNativeReleaseArchives(
       },
       { readJson, readPages, acquire },
     );
-    const { origins } = construction;
-    const families = stageNativeReleaseArchives(origins, source, destination);
-    assert.ok(families.length, 'native archive assembly has no canonical public assets');
     const snapshot =
       publicationInputs === undefined
         ? undefined
         : writeNativeConstructionInputSnapshot({
             source,
             file: publicationInputs,
-            directory: `${destination}.inputs`,
+            directory: snapshotDirectory,
             finalInputs: nativeArchiveConstructionFinalInputs(construction, source),
           });
     return {
       ...construction,
       directory: destination,
-      families,
       ...(snapshot ? { publicationInputs: snapshot } : {}),
     };
   } catch (error) {
     rmSync(destination, { recursive: true, force: true });
-    rmSync(inputs, { recursive: true, force: true });
-    rmSync(`${destination}.inputs`, { recursive: true, force: true });
+    rmSync(snapshotDirectory, { recursive: true, force: true });
     throw error;
   }
 }
@@ -2123,14 +2121,6 @@ export async function prepareNativeReleaseDelivery(
   };
 }
 
-export function stageNativeReleaseArchives(
-  origins: Map<string, Awaited<ReturnType<typeof acquireAuthenticatedNativeBuildEvidence>>>,
-  source: NativeBuildSource,
-  directory: string,
-) {
-  return collateNativeReleaseFiles(origins, source, directory, false);
-}
-
 /** Conventional readers require host assets and separate checksum outputs together. */
 export function stageNativeReleaseFamilies(
   origins: Map<string, Awaited<ReturnType<typeof acquireAuthenticatedNativeBuildEvidence>>>,
@@ -2138,22 +2128,11 @@ export function stageNativeReleaseFamilies(
   directory: string,
   products?: readonly string[],
 ) {
-  return collateNativeReleaseFiles(origins, source, directory, true, products);
-}
-
-function collateNativeReleaseFiles(
-  origins: Map<string, Awaited<ReturnType<typeof acquireAuthenticatedNativeBuildEvidence>>>,
-  source: NativeBuildSource,
-  directory: string,
-  finalFamily: boolean,
-  products?: readonly string[],
-) {
   const destination = path.resolve(directory);
-  if (finalFamily)
-    assert.ok(
-      path.relative(ROOT, destination).startsWith(`target${path.sep}`),
-      'native release families must remain under target/',
-    );
+  assert.ok(
+    path.relative(ROOT, destination).startsWith(`target${path.sep}`),
+    'native release families must remain under target/',
+  );
   requireSafeDirectoryChain(path.dirname(destination), {
     create: true,
     label: 'native release files',
@@ -2183,9 +2162,7 @@ function collateNativeReleaseFiles(
           (root) =>
             (products === undefined || products.includes(root.package.product)) &&
             root.package.ecosystem === 'github' &&
-            ['github-release-asset', ...(finalFamily ? ['github-release-metadata'] : [])].includes(
-              root.package.role,
-            ),
+            ['github-release-asset', 'github-release-metadata'].includes(root.package.role),
         )) {
           const outputPaths = new Set(root.package.outputs.map((output) => output.path));
           const files = value.outputs
@@ -2223,11 +2200,7 @@ function collateNativeReleaseFiles(
             1,
             'native family File is absent from authenticated transport',
           );
-          const family = path.join(
-            destination,
-            root.package.product,
-            ...(finalFamily ? ['release-assets'] : []),
-          );
+          const family = path.join(destination, root.package.product, 'release-assets');
           requireSafeDirectoryChain(family, { create: true, label: 'native release family' });
           const target = path.join(family, name);
           copyFileSync(path.join(evidenceRoot, 'files', String(cohort), file), target);

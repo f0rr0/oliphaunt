@@ -23,7 +23,6 @@ import {
   nativeCargoMinimumBindings,
   nativeCargoPayloadBindings,
   prepareNativeReleaseDelivery,
-  stageNativeReleaseArchives,
   stageNativeReleaseFamilies,
 } from './native-release-preparation.mts';
 import { loadPublicationCatalog } from './publication-catalog.mts';
@@ -1056,10 +1055,6 @@ test('family staging joins unique original host assets with a separate checksum 
       origins.set(evidenceRoot, producer(evidenceRoot, row, `qualified ${row.name}`).origin);
     }
     const original = structuredClone([...origins.values()].map((origin) => origin.evidence));
-    const inputs = stageNativeReleaseArchives(origins, source, path.join(directory, 'input'));
-    expect(inputs).toEqual([path.join(directory, 'input', asset.product)]);
-    expect(readFileSync(path.join(inputs[0], asset.name), 'utf8')).toBe(`qualified ${asset.name}`);
-    expect(existsSync(path.join(inputs[0], checksum.name))).toBe(false);
     const final = stageNativeReleaseFamilies(origins, source, finalDirectory);
     expect(final).toEqual([path.join(finalDirectory, asset.product, 'release-assets')]);
     for (const row of [asset, checksum])
@@ -1088,12 +1083,9 @@ test('family staging joins unique original host assets with a separate checksum 
     expect(() => stageNativeReleaseFamilies(origins, source, finalDirectory)).toThrow(
       'new owned directory',
     );
-    const duplicate = new Map(origins);
-    duplicate.set(path.join(directory, 'duplicate'), origins.values().next().value);
     expect(() =>
-      stageNativeReleaseArchives(duplicate, source, path.join(directory, 'duplicate-input')),
-    ).toThrow('repeats an observed public File');
-    expect(existsSync(path.join(directory, 'duplicate-input'))).toBe(false);
+      stageNativeReleaseFamilies(origins, source, path.join(directory, 'outside-target')),
+    ).toThrow('must remain under target/');
   } finally {
     rmSync(directory, { recursive: true, force: true });
     rmSync(finalDirectory, { recursive: true, force: true });
@@ -1143,12 +1135,10 @@ test('family staging selects each declared iOS asset from its shared original Tr
     };
     const origins = new Map([[evidenceRoot, origin]]);
     const original = structuredClone(origin.evidence);
-    const inputs = stageNativeReleaseArchives(origins, source, path.join(directory, 'input'));
-    expect(inputs).toEqual([path.join(directory, 'input', rows[0].product)]);
     const final = stageNativeReleaseFamilies(origins, source, finalDirectory);
     expect(final).toEqual([path.join(finalDirectory, rows[0].product, 'release-assets')]);
     for (const row of rows)
-      for (const family of [...inputs, ...final])
+      for (const family of final)
         expect(readFileSync(path.join(family, row.name), 'utf8')).toBe(`qualified ${row.name}`);
     expect(origin.evidence).toEqual(original);
 
@@ -1189,9 +1179,9 @@ test('family staging selects each declared iOS asset from its shared original Tr
     ] as const) {
       const changed = { ...origin, evidence: structuredClone(original) };
       change(changed);
-      const destination = path.join(directory, label);
+      const destination = path.join(finalDirectory, label);
       expect(() =>
-        stageNativeReleaseArchives(new Map([[evidenceRoot, changed]]), source, destination),
+        stageNativeReleaseFamilies(new Map([[evidenceRoot, changed]]), source, destination),
       ).toThrow(message);
       expect(existsSync(destination)).toBe(false);
       expect(origin.evidence).toEqual(original);
@@ -1199,6 +1189,32 @@ test('family staging selects each declared iOS asset from its shared original Tr
   } finally {
     rmSync(directory, { recursive: true, force: true });
     rmSync(finalDirectory, { recursive: true, force: true });
+  }
+});
+
+test('native archive acquisition preserves preexisting output directories', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'native-family-owned-'));
+  const destination = path.join(directory, 'input');
+  try {
+    for (const existing of [destination, `${destination}.inputs`]) {
+      mkdirSync(existing);
+      const sentinel = path.join(existing, 'sentinel');
+      writeFileSync(sentinel, 'retained');
+      await expect(
+        acquireNativeReleaseArchives(
+          { source, runId: 77, directory: destination },
+          {
+            readJson: async () => {
+              throw new Error('preexisting output must reject before acquisition');
+            },
+          },
+        ),
+      ).rejects.toThrow('new owned');
+      expect(readFileSync(sentinel, 'utf8')).toBe('retained');
+      rmSync(existing, { recursive: true });
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
@@ -1241,7 +1257,7 @@ test('PR family construction uses finite completed producer transport and never 
     expect(acquired[0].ref).toBe('refs/pull/295/merge');
     expect(acquired[0].github).not.toHaveProperty('runAttempt');
     expect([...result.origins.values()][0].github.runAttempt).toBe(1);
-    expect(result.families).toHaveLength(1);
+    expect([...result.origins.keys()]).toEqual([path.join(result.directory, '0')]);
     expect([...result.origins.values()].every((origin) => !('producerAssurance' in origin))).toBe(
       true,
     );
