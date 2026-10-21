@@ -184,6 +184,53 @@ function externalBunEntrypoints() {
   );
 }
 
+function capturedSwiftPackageIdentity() {
+  const repository = path.join(scratch, 'captured-swift');
+  const targets = {
+    Core: { path: 'Sources/Core', dependencies: [] },
+    Consumer: { path: 'Sources/Consumer', dependencies: ['Core'] },
+    CBridge: {
+      path: 'Sources/CBridge',
+      dependencies: ['liboliphaunt'],
+      publicHeaders: 'include',
+      define: 'FIXTURE',
+    },
+  };
+  for (const [module, target] of Object.entries(targets)) {
+    const directory = path.join(repository, target.path);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(path.join(directory, `${module}.${module === 'CBridge' ? 'c' : 'swift'}`), '');
+  }
+  mkdirSync(path.join(repository, targets.CBridge.path, 'include'));
+  writeFileSync(path.join(repository, targets.CBridge.path, 'include/bridge.h'), '');
+  writeFileSync(path.join(repository, 'WORKSPACE.bazel'), '');
+  writeFileSync(
+    path.join(repository, 'BUILD.bazel'),
+    `load("@oliphaunt//build_defs/apple:captured-swift.bzl", "captured_swift_package")
+captured_swift_package(runtime = "@oliphaunt//${fixturePath}:shared", targets = ${JSON.stringify(targets)}, language_version = "6")
+`,
+  );
+  const injection = `--inject_repository=conformance_captured_swift=${repository}`;
+  const libraries = 'kind("swift_library rule", @conformance_captured_swift//:all)';
+  const query = (expression: string) =>
+    bazel('query', [expression, injection, '--output=label', '--noshow_progress'])
+      .stdout.trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((label) => label.slice(label.indexOf('//')))
+      .sort();
+  const swift = query(libraries);
+  assert.deepEqual(swift, ['//:Consumer', '//:Core']);
+  assert.deepEqual(
+    query(`attr(package_name, "^Oliphaunt$", ${libraries})`),
+    swift,
+    'every imported Swift module must share the conventional SDK package identity',
+  );
+  assert.deepEqual(query('kind("cc_library rule", @conformance_captured_swift//:CBridge)'), [
+    '//:CBridge',
+  ]);
+}
+
 function ignoreGeneratedOutputDirectories() {
   const queryArguments = [
     'labels(srcs, //:root_quality_sources)',
@@ -758,6 +805,7 @@ try {
   writeModel();
   diskCacheAcrossFreshBases();
   externalBunEntrypoints();
+  capturedSwiftPackageIdentity();
   cargoBuildScriptParity();
   const allProduction = [
     'config',

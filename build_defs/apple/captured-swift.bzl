@@ -16,6 +16,6 @@ def captured_swift_package(runtime, targets, language_version):
                 hdrs = native.glob([include + "/*.h"]), includes = [include],
                 defines = [target["define"]], deps = dependencies, aspect_hints = [":" + hint])
         else:
-            swift_library(name = module, module_name = module,
+            swift_library(name = module, module_name = module, package_name = "Oliphaunt",
                 srcs = native.glob([target["path"] + "/*.swift"]),
                 deps = dependencies, copts = ["-swift-version", language_version])
