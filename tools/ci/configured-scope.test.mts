@@ -685,6 +685,81 @@ test('shared capture uses existing configured/recipe views without query, binds 
   });
 });
 
+test('capture awaits caller-owned queries and writes no receipt after cancellation', async () => {
+  await gitFixture(async (root, outputBase, actualSource) => {
+    const captureRequest = {
+      id: 'linux/packages',
+      job: 'linux',
+      source: actualSource,
+      github,
+      outputDirectory: path.join(outputBase, 'receipts/owned'),
+      workspaceRoot: root,
+      configuration: [],
+      startup: [],
+      requestedTargets: ['//one:root', '//two:root'],
+      completedRoots: ['//one:root', '//two:root'].map((label) => ({ label, configuration })),
+      executionRoot: path.join(outputBase, 'execroot/_main'),
+    };
+    const recipes = {
+      packages: ['//one', '//two', '//shared'],
+      labels: ['//one:BUILD', '//two:BUILD', '//shared:BUILD'],
+    };
+    const queries: string[] = [];
+    const file = await captureConfiguredCiRequest(captureRequest, {
+      async bazel(args, stdout) {
+        await Promise.resolve();
+        queries.push(args[0]);
+        writeFileSync(
+          stdout,
+          args[0] === 'cquery' ? JSON.stringify(graph()) : recipes.labels.join('\n'),
+          { flag: 'wx' },
+        );
+      },
+      assertRunning() {},
+    });
+    assert.deepEqual(queries, ['cquery', 'query']);
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).projection.files, ['shared/input.rs']);
+    assert.deepEqual(readdirSync(captureRequest.outputDirectory).sort(), [
+      'analysis-buildfiles.query',
+      'analysis-deps.query',
+      'ci-request.json',
+    ]);
+
+    for (const phase of ['query', 'recorded-inputs']) {
+      let interrupted = false;
+      const outputDirectory = path.join(outputBase, 'receipts', phase);
+      const pending = captureConfiguredCiRequest(
+        {
+          ...captureRequest,
+          outputDirectory,
+          ...(phase === 'recorded-inputs'
+            ? { configuredGraph: graph(), recipeQueries: [recipes] }
+            : {}),
+        },
+        {
+          async bazel(args, stdout) {
+            assert.equal(phase, 'query');
+            assert.equal(args[0], 'cquery');
+            await Promise.resolve();
+            writeFileSync(stdout, JSON.stringify(graph()), { flag: 'wx' });
+            interrupted = true;
+          },
+          assertRunning() {
+            if (interrupted) throw new Error('fixture interrupted');
+          },
+        },
+      );
+      // The supplied views reach the collector's real asynchronous file reads before returning.
+      if (phase === 'recorded-inputs') interrupted = true;
+      await assert.rejects(pending, /fixture interrupted/u);
+      assert.deepEqual(
+        readdirSync(outputDirectory),
+        phase === 'query' ? ['analysis-deps.query'] : [],
+      );
+    }
+  });
+});
+
 test('native capture binds original packet bytes to root-local source Files and reached imports', async () => {
   await gitFixture(async (root, outputBase, actualSource) => {
     const executionRoot = path.join(outputBase, 'execroot/_main');

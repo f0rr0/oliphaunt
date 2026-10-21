@@ -9,6 +9,7 @@ load("//build_defs/apple:native.bzl", "react_apple_headers")
 load("//build_defs/apple:generated-files.bzl", "IOS_GENERATED_FILES")
 load("//build_defs/apple:final-libraries.bzl", "expo_ios_final_libraries")
 load("//build_defs/apple:resources.bzl", "expo_ios_resources")
+load("//build_defs/resources:resources.bzl", "ios_declared_standard_seed_npm")
 load("//build_defs/apple:installed-app.bzl", "expo_ios_installed_test")
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_RELEASE_METADATA")
 load("@javascript_android_app_packages//:roots.bzl", "CONSUMER_CLOSURES", "CONSUMER_PACKAGES", "CONSUMER_TOOLS")
@@ -278,9 +279,11 @@ filegroup(name = "ios_constants_config", srcs = [":ios_project"], output_group =
 filegroup(name = "ios_bundle_assets", srcs = [":ios_bundle"], output_group = "resources")
 
 # This is the same selected member as the previous mandatory mobile example.
+IOS_FINAL_LEAVES = expo_ios_final_libraries(name = "ios_final_libraries", extensions = SELECTED_EXTENSIONS, base = "@react_native_swift_package//:native_requirement")
+ios_declared_standard_seed_npm(name = "ios_standard_seed_npm")
 expo_ios_resources(name = "ios_selected_resources", base = "@react_native_swift_package//:native_requirement",
-    seed = "//src/database-resources:ios_datum64_standard_carriers_npm_files",
-    leaves = ["//build_defs/extensions/mobile/final:" + product.replace("-", "_") + "_ios_xcframework" for product in sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in SELECTED_EXTENSIONS}.keys())], extensions = SELECTED_EXTENSIONS)
+    seed = ":ios_standard_seed_npm",
+    leaves = IOS_FINAL_LEAVES, extensions = SELECTED_EXTENSIONS)
 filegroup(name = "ios_selected_registry", srcs = [":ios_selected_resources"], output_group = "registry")
 apple_resource_bundle(name = "ios_selected_runtime_resources", bundle_name = "OliphauntReactNativeResources",
     structured_resources = [":ios_selected_resources"],
@@ -289,7 +292,6 @@ filegroup(name = "ios_standard_seed_files", srcs = [":ios_selected_resources"], 
 apple_resource_bundle(name = "ios_standard_seed", bundle_name = "OliphauntSeedNativeIOSStandard",
     structured_resources = [":ios_standard_seed_files"],
     strip_structured_resources_prefixes = ["ios_selected_resources"])
-expo_ios_final_libraries(name = "ios_final_libraries", extensions = SELECTED_EXTENSIONS, base = "@react_native_swift_package//:native_requirement")
 cc_library(name = "ios_selected_extensions", srcs = [":ios_selected_registry"], alwayslink = True,
     linkopts = ["-Wl,-u,_liboliphaunt_selected_static_extensions"],
     deps = ["@react_native_native_base//:runtime", "@react_native_native_base//:runtime_headers"] + [":ios_final_libraries"])

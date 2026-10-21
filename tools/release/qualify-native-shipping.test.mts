@@ -382,7 +382,28 @@ process.on('exit',()=>writeFileSync(${JSON.stringify(countsFile)},JSON.stringify
     );
   writeFileSync(
     path.join(workspace, 'tools/release/capture-native-build-evidence.mts'),
-    `import {spawnSync} from 'node:child_process';\nimport {readFileSync,writeFileSync} from 'node:fs';\nconst state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));\nif(state.mode==='capture-race') writeFileSync('src/input.mts','changed during capture');\nconst preload=state.mode==='capture-count'?['--preload',${JSON.stringify(path.join(workspace, 'tools/release/capture-counter.mts'))}]:[];\nconst result=spawnSync(process.execPath,[...preload,${JSON.stringify(realCapture)},...process.argv.slice(2)],{stdio:'inherit'});\nif(state.mode==='capture-output-race' && result.status===0) writeFileSync(state.output,'changed after capture');\nprocess.exit(result.status??1);\n`,
+    `import {spawn,spawnSync} from 'node:child_process';
+import {readFileSync,writeFileSync} from 'node:fs';
+const state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));
+if(state.mode==='capture-interrupt') {
+  const child=spawn(process.execPath,['--no-install','--no-env-file','-e',${JSON.stringify(`
+import {appendFileSync,mkdirSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
+const state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));
+mkdirSync(state.commandLock);
+process.on('exit',()=>appendFileSync(state.commandEvents,'closed\\n'));
+process.on('SIGTERM',()=>{appendFileSync(state.commandEvents,'SIGTERM\\n');rmSync(state.commandLock,{recursive:true});process.exit(0);});
+writeFileSync(state.commandReady,String(process.pid));
+setInterval(()=>{},1000);
+`)}],{stdio:'inherit'});
+  await new Promise(resolve=>child.once('close',resolve));
+  process.exit(0);
+}
+if(state.mode==='capture-race') writeFileSync('src/input.mts','changed during capture');
+const preload=state.mode==='capture-count'?['--preload',${JSON.stringify(path.join(workspace, 'tools/release/capture-counter.mts'))}]:[];
+const result=spawnSync(process.execPath,[...preload,${JSON.stringify(realCapture)},...process.argv.slice(2)],{stdio:'inherit'});
+if(state.mode==='capture-output-race' && result.status===0) writeFileSync(state.output,'changed after capture');
+process.exit(result.status??1);
+`,
   );
   writeFileSync(
     path.join(workspace, 'tools/dev/bazel.sh'),
@@ -390,17 +411,29 @@ process.on('exit',()=>writeFileSync(${JSON.stringify(countsFile)},JSON.stringify
   );
   writeFileSync(
     path.join(workspace, 'tools/dev/bazel-fixture.mts'),
-    `import {appendFileSync,readFileSync,writeFileSync} from 'node:fs';
+    `import {appendFileSync,existsSync,mkdirSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 const state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));
 const invocation=process.argv.slice(2);
 appendFileSync(${JSON.stringify(callsFile)},JSON.stringify(invocation)+'\\n');
 const args=invocation.slice(invocation.findIndex((arg:string)=>['test','build','cquery','query','aquery','info'].includes(arg)));
+if(state.commandLock && args[0]!=='test' && existsSync(state.commandLock)) throw Error('previous Bazel command still owns the lock');
 const profile=args.find((arg:string)=>arg.startsWith('--profile='));
 if(profile) writeFileSync(profile.slice(10),'fixture profile');
 const expression=args[1]?.startsWith('--query_file=')?readFileSync(args[1].slice(13),'utf8'):args[1];
 if(args[0]==='test') {
+  if(state.mode==='build-interrupt-zero' || state.mode==='build-interrupt-failure') {
+    mkdirSync(state.commandLock);
+    process.on('exit',()=>appendFileSync(state.commandEvents,'closed\\n'));
+    process.on('SIGINT',()=>{
+      appendFileSync(state.commandEvents,'SIGINT\\n');
+      setTimeout(()=>{rmSync(state.commandLock,{recursive:true});process.exit(state.mode==='build-interrupt-zero'?0:130);},50);
+    });
+    writeFileSync(state.commandReady,String(process.pid));
+    setInterval(()=>{},1000);
+    await new Promise(()=>{});
+  }
   if(state.mode==='build-failure') process.exit(1);
   if(state.mode==='build-race') writeFileSync('src/input.mts','changed during build');
   if(state.mode==='head-race') {
@@ -738,20 +771,21 @@ else {
 
 test('Mac capture CPU timing preserves evidence, collector failures and source freeze', async () => {
   const platform = process.platform;
-  const originalSpawn = childProcess.spawnSync;
+  const originalSpawn = childProcess.spawn;
   const captures: string[][] = [];
-  const calls = spyOn(childProcess, 'spawnSync').mockImplementation(((
+  const calls = spyOn(childProcess, 'spawn').mockImplementation(((
     command: string,
     args: string[],
     options: any,
   ) => {
     if (command === '/usr/bin/time') captures.push(args);
     return originalSpawn(command, args, options);
-  }) as typeof childProcess.spawnSync);
+  }) as typeof childProcess.spawn);
   try {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     for (const mode of ['success', 'manifest-tamper', 'capture-race']) {
       const f = fixture(mode);
+      const listeners = ['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal));
       try {
         if (mode === 'success') {
           const output = await qualifyNativeShipping(f.request, f.workspace);
@@ -789,6 +823,9 @@ test('Mac capture CPU timing preserves evidence, collector failures and source f
         ).toBe(false);
       } finally {
         f.cleanup();
+        expect(['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal))).toEqual(
+          listeners,
+        );
       }
     }
     expect(captures).toHaveLength(3);
@@ -797,6 +834,107 @@ test('Mac capture CPU timing preserves evidence, collector failures and source f
     calls.mockRestore();
   }
 });
+
+for (const { signal, exit, phase } of [
+  ...(['SIGINT', 'SIGTERM'] as const).flatMap((signal) =>
+    ['zero', 'failure'].map((exit) => ({ signal, exit, phase: 'build' })),
+  ),
+  { signal: 'SIGTERM' as const, exit: 'zero', phase: 'capture' },
+])
+  test.skipIf(process.platform === 'win32')(
+    `qualification ${signal} releases its owned ${phase} before rejecting (${exit} child exit)`,
+    async () => {
+      const f = fixture(phase === 'capture' ? 'capture-interrupt' : `build-interrupt-${exit}`);
+      const directory = path.dirname(f.workspace);
+      const lock = path.join(directory, 'command.lock');
+      const ready = path.join(directory, 'command.pid');
+      const events = path.join(directory, 'command-events.txt');
+      const listeners = path.join(directory, 'listeners.json');
+      f.update((state) => {
+        state.commandLock = lock;
+        state.commandReady = ready;
+        state.commandEvents = events;
+      });
+      f.request.ci = { id: 'fixture/cancel', job: 'fixture', mode: 'full', requires: [] };
+      const entry = path.join(directory, 'interrupt-qualification.mts');
+      writeFileSync(
+        entry,
+        `import {appendFileSync,writeFileSync} from 'node:fs';
+import {qualifyNativeShipping} from ${JSON.stringify(fileURLToPath(new URL('./qualify-native-shipping.mts', import.meta.url)))};
+const before=['SIGINT','SIGTERM'].map(signal=>process.listenerCount(signal));
+try {await qualifyNativeShipping(${JSON.stringify(f.request)},${JSON.stringify(f.workspace)});}
+catch(error) {console.error(error.message);process.exitCode=1;}
+finally {
+  writeFileSync(${JSON.stringify(listeners)},JSON.stringify({before,after:['SIGINT','SIGTERM'].map(signal=>process.listenerCount(signal))}));
+  appendFileSync(${JSON.stringify(events)},'settled\\n');
+}
+`,
+      );
+      const sentinel = childProcess.spawn(
+        process.execPath,
+        ['--no-install', '--no-env-file', '-e', 'setInterval(()=>{},1000)'],
+        { stdio: 'ignore' },
+      );
+      const child = childProcess.spawn(process.execPath, ['--no-install', '--no-env-file', entry], {
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let stderr = '';
+      child.stderr!.on('data', (data) => {
+        stderr += data;
+      });
+      const closed = new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', resolve);
+      });
+      const stopOwnedFixture = () => {
+        if (existsSync(ready)) {
+          try {
+            process.kill(Number(readFileSync(ready, 'utf8')), 'SIGKILL');
+          } catch {}
+        }
+        child.kill('SIGKILL');
+      };
+      const watchdog = setTimeout(stopOwnedFixture, 5000);
+      try {
+        const deadline = Date.now() + 4000;
+        while (!existsSync(ready) && Date.now() < deadline) await Bun.sleep(10);
+        expect(existsSync(ready)).toBe(true);
+        expect(child.kill(signal)).toBe(true);
+        await Bun.sleep(10);
+        child.kill(signal === 'SIGINT' ? 'SIGTERM' : 'SIGINT');
+        expect(await closed).toBe(1);
+        expect(stderr).toContain(`interrupted (${signal})`);
+        const observed = readFileSync(events, 'utf8').trim().split('\n');
+        expect(phase === 'capture' ? observed.sort() : observed).toEqual(
+          phase === 'capture' ? ['SIGTERM', 'closed', 'settled'] : ['SIGINT', 'closed', 'settled'],
+        );
+        expect(existsSync(lock)).toBe(false);
+        expect(() => process.kill(Number(readFileSync(ready, 'utf8')), 0)).toThrow();
+        expect(process.kill(sentinel.pid!, 0)).toBe(true);
+        const counts = JSON.parse(readFileSync(listeners, 'utf8'));
+        expect(counts.after).toEqual(counts.before);
+        expect(f.calls().map((call) => call[0])).toEqual(
+          phase === 'capture' ? ['test', 'aquery', 'info', 'cquery', 'query'] : ['test'],
+        );
+        if (phase === 'build')
+          expect(existsSync(path.join(f.outputDirectory, 'aquery.json'))).toBe(false);
+        for (const name of ['ci-request.json', 'evidence'])
+          expect(existsSync(path.join(f.outputDirectory, name))).toBe(false);
+        expect(
+          execFileSync('bash', ['tools/dev/bazel.sh', 'info', 'execution_root'], {
+            cwd: f.workspace,
+            encoding: 'utf8',
+          }).trim(),
+        ).toContain('execroot/_main');
+      } finally {
+        clearTimeout(watchdog);
+        stopOwnedFixture();
+        sentinel.kill('SIGTERM');
+        await closed.catch(() => {});
+        f.cleanup();
+      }
+    },
+  );
 
 for (const selection of ['explicit', 'export'])
   test(`qualifies ${selection} roots with one request and the real evidence collector`, async () => {

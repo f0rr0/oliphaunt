@@ -242,7 +242,14 @@ export type ConfiguredCiCapture = CiSuccess & {
 };
 
 /** Complete source-only projection; no action command lines or environments are serialized. */
-export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
+export async function captureConfiguredCiRequest(
+  request: ConfiguredCiCapture,
+  execution?: {
+    bazel(args: string[], stdout: string): Promise<void>;
+    assertRunning(): void;
+  },
+) {
+  execution?.assertRunning();
   const root = request.workspaceRoot ?? process.cwd();
   assertConfiguredCiSource(root, request.source);
   const roots = request.completedRoots.map((value) => {
@@ -259,19 +266,24 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
   const output = path.resolve(request.outputDirectory);
   mkdirSync(output, { recursive: true });
   const sourceLock = readFileSync(path.join(root, 'MODULE.bazel.lock'));
-  const run = (args: string[]) => {
+  const run = async (args: string[]) => {
+    execution?.assertRunning();
     const temporary = mkdtempSync(path.join(output, '.query-'));
     const stdout = path.join(temporary, 'stdout');
     let descriptor: number | undefined;
     try {
-      descriptor = openSync(stdout, 'wx', 0o600);
-      const result = spawnSync('bash', ['tools/dev/bazel.sh', ...request.startup, ...args], {
-        cwd: root,
-        stdio: ['ignore', descriptor, 'inherit'],
-      });
-      if (result.error) throw result.error;
-      if (result.status !== 0)
-        throw new Error(`CI ${args[0]} failed (${result.signal ?? result.status})`);
+      if (execution) await execution.bazel(args, stdout);
+      else {
+        descriptor = openSync(stdout, 'wx', 0o600);
+        const result = spawnSync('bash', ['tools/dev/bazel.sh', ...request.startup, ...args], {
+          cwd: root,
+          stdio: ['ignore', descriptor, 'inherit'],
+        });
+        if (result.error) throw result.error;
+        if (result.status !== 0)
+          throw new Error(`CI ${args[0]} failed (${result.signal ?? result.status})`);
+      }
+      execution?.assertRunning();
       return readFileSync(stdout, 'utf8');
     } finally {
       if (descriptor !== undefined) closeSync(descriptor);
@@ -290,7 +302,7 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
   const raw =
     request.configuredGraph ??
     JSON.parse(
-      run([
+      await run([
         'cquery',
         queryFile('analysis-deps.query', `deps(${expression(roots.map((value) => value.label))})`),
         ...request.configuration,
@@ -341,13 +353,15 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
       ),
     );
     loaded.push(
-      ...run([
-        'query',
-        queryFile('analysis-buildfiles.query', `buildfiles(${expression(representatives)})`),
-        ...loading,
-        '--consistent_labels',
-        '--output=label',
-      ])
+      ...(
+        await run([
+          'query',
+          queryFile('analysis-buildfiles.query', `buildfiles(${expression(representatives)})`),
+          ...loading,
+          '--consistent_labels',
+          '--output=label',
+        ])
+      )
         .split(/\r?\n/u)
         .filter(Boolean),
     );
@@ -385,6 +399,7 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
     outputBase,
     repositories,
   });
+  execution?.assertRunning();
   const snapshotFile = process.env.OLIPHAUNT_NATIVE_PUBLICATION_INPUTS;
   const wasixCargoInputs = request.configuration
     .filter((flag) => flag.startsWith('--repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS='))
@@ -525,6 +540,7 @@ export async function captureConfiguredCiRequest(request: ConfiguredCiCapture) {
     ...(importedRoots.length ? { importedRoots } : {}),
     ...(nativeOutputs.length ? { nativeOutputs: orderedImportedRoots(nativeOutputs) } : {}),
   };
+  execution?.assertRunning();
   return writeReceipt(request, record);
 }
 

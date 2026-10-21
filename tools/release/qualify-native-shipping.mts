@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 /** Build shipping roots once and retain configured construction evidence. */
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn, type SpawnOptions } from 'node:child_process';
 import {
   closeSync,
   openSync,
@@ -193,6 +193,75 @@ export async function qualifyNativeShipping(
   request: NativeShippingRequest,
   directory = process.cwd(),
 ) {
+  let interrupted: NodeJS.Signals | undefined;
+  let activeBazel: ChildProcess | undefined;
+  let activeCapture: ChildProcess | undefined;
+  const assertRunning = () => {
+    if (interrupted) throw new Error(`shipping qualification interrupted (${interrupted})`);
+  };
+  const interrupt = (signal: NodeJS.Signals) => {
+    if (interrupted) return;
+    interrupted = signal;
+    activeBazel?.kill('SIGINT');
+    if (activeCapture?.pid !== undefined) {
+      if (process.platform === 'win32') activeCapture.kill('SIGTERM');
+      else {
+        try {
+          process.kill(-activeCapture.pid, 'SIGTERM');
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+        }
+      }
+    }
+  };
+  const onInterrupt = () => interrupt('SIGINT');
+  const onTerminate = () => interrupt('SIGTERM');
+  process.on('SIGINT', onInterrupt);
+  process.on('SIGTERM', onTerminate);
+  try {
+    return await qualifyOwnedNativeShipping(request, directory, {
+      assertRunning,
+      get interrupted() {
+        return interrupted !== undefined;
+      },
+      spawnBazel(command, args, options) {
+        assertRunning();
+        const child = spawn(command, args, options);
+        activeBazel = child;
+        child.once('close', () => {
+          if (activeBazel === child) activeBazel = undefined;
+        });
+        return child;
+      },
+      spawnCapture(command, args, options) {
+        assertRunning();
+        const child = spawn(command, args, {
+          ...options,
+          ...(process.platform === 'win32' ? {} : { detached: true }),
+        });
+        activeCapture = child;
+        child.once('close', () => {
+          if (activeCapture === child) activeCapture = undefined;
+        });
+        return child;
+      },
+    });
+  } finally {
+    process.removeListener('SIGINT', onInterrupt);
+    process.removeListener('SIGTERM', onTerminate);
+  }
+}
+
+async function qualifyOwnedNativeShipping(
+  request: NativeShippingRequest,
+  directory: string,
+  commands: {
+    assertRunning(): void;
+    readonly interrupted: boolean;
+    spawnBazel(command: string, args: string[], options: SpawnOptions): ChildProcess;
+    spawnCapture(command: string, args: string[], options: SpawnOptions): ChildProcess;
+  },
+) {
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: directory, encoding: 'utf8', maxBuffer: 1024 * 1024 }).trim();
   const workspace = git('rev-parse', '--show-toplevel');
@@ -262,26 +331,47 @@ export async function qualifyNativeShipping(
     return () =>
       console.error(`native qualification: ${name} finished in ${Date.now() - started} ms`);
   };
-  const run = (name: string, command: string, args: string[], stdout?: string) => {
+  const run = async (
+    name: string,
+    command: string,
+    args: string[],
+    stdout?: string,
+    spawnCommand: typeof commands.spawnBazel = spawn,
+  ) => {
+    commands.assertRunning();
     const finish = phase(name);
     const fd = stdout === undefined ? undefined : openSync(stdout, 'wx');
     try {
-      const result = spawnSync(command, args, {
-        cwd: workspace,
-        stdio: ['ignore', fd ?? 'inherit', 'inherit'],
+      await new Promise<void>((resolve, reject) => {
+        const child = spawnCommand(command, args, {
+          cwd: workspace,
+          stdio: ['ignore', fd ?? 'inherit', 'inherit'],
+        });
+        let error: Error | undefined;
+        child.once('error', (cause) => {
+          error = cause;
+        });
+        child.once('close', (code, signal) => {
+          try {
+            commands.assertRunning();
+            if (error) throw error;
+            if (code !== 0)
+              throw new Error(
+                `shipping qualification ${command} ${args[0] ?? ''} failed (${signal ?? code})`,
+              );
+            resolve();
+          } catch (cause) {
+            reject(cause);
+          }
+        });
       });
-      if (result.error) throw result.error;
-      if (result.status !== 0)
-        throw new Error(
-          `shipping qualification ${command} ${args[0] ?? ''} failed (${result.signal ?? result.status})`,
-        );
     } finally {
       if (fd !== undefined) closeSync(fd);
       finish();
     }
   };
   const bazel = (args: string[], stdout?: string) =>
-    run(args[0], 'bash', ['tools/dev/bazel.sh', ...startup, ...args], stdout);
+    run(args[0], 'bash', ['tools/dev/bazel.sh', ...startup, ...args], stdout, commands.spawnBazel);
   const captureQueryDiagnostics = async () => {
     try {
       const base = startup.find((arg) => arg.startsWith('--output_base='))?.slice(14);
@@ -340,16 +430,18 @@ export async function qualifyNativeShipping(
     const finish = phase('aquery');
     try {
       await new Promise<void>((resolve, reject) => {
-        const child = spawn('bash', ['tools/dev/bazel.sh', ...startup, ...args], {
+        const child = commands.spawnBazel('bash', ['tools/dev/bazel.sh', ...startup, ...args], {
           cwd: workspace,
           stdio: ['ignore', 'inherit', 'inherit'],
         });
         let exceeded = false;
+        let error: Error | undefined;
         let snapshot: Promise<void> | undefined;
         let escalation: ReturnType<typeof setTimeout> | undefined;
         // Ordinary captures finish in seconds. A stalled serializer must not consume the build's job budget.
         const timer = setTimeout(
           () => {
+            if (commands.interrupted) return;
             exceeded = true;
             snapshot = captureQueryDiagnostics()
               .catch((error: NodeJS.ErrnoException) =>
@@ -358,28 +450,36 @@ export async function qualifyNativeShipping(
                 ),
               )
               .finally(() => {
+                if (commands.interrupted || child.exitCode !== null || child.signalCode !== null)
+                  return;
                 escalation = setTimeout(() => {
-                  child.kill('SIGKILL');
+                  if (!commands.interrupted) child.kill('SIGKILL');
                 }, 5000);
                 child.kill('SIGTERM');
               });
           },
           5 * 60 * 1000,
         );
-        child.once('error', (error) => {
+        child.once('error', (cause) => {
+          error = cause;
           clearTimeout(timer);
           clearTimeout(escalation);
-          reject(error);
         });
         child.once('close', async (code, signal) => {
           clearTimeout(timer);
           await snapshot;
           clearTimeout(escalation);
-          if (exceeded)
-            reject(new Error('shipping qualification aquery exceeded its five-minute limit'));
-          else if (code !== 0)
-            reject(new Error(`shipping qualification aquery failed (${signal ?? code})`));
-          else resolve();
+          try {
+            commands.assertRunning();
+            if (error) throw error;
+            if (exceeded)
+              throw new Error('shipping qualification aquery exceeded its five-minute limit');
+            if (code !== 0)
+              throw new Error(`shipping qualification aquery failed (${signal ?? code})`);
+            resolve();
+          } catch (cause) {
+            reject(cause);
+          }
         });
       });
     } finally {
@@ -395,7 +495,7 @@ export async function qualifyNativeShipping(
   if ('export' in request.shipping) {
     const owner = label(request.shipping.export);
     shippingExport = owner;
-    bazel(
+    await bazel(
       [
         'cquery',
         owner,
@@ -418,7 +518,7 @@ export async function qualifyNativeShipping(
       // cquery can return success with empty output for an incompatible owner.
       // Ask Bazel for its dependency diagnostic without executing any actions.
       try {
-        bazel(['build', owner, ...configuration, '--nobuild']);
+        await bazel(['build', owner, ...configuration, '--nobuild']);
       } catch (analysisError) {
         throw new Error(`Shipping export ${owner}: Bazel configuration analysis failed`, {
           cause: new AggregateError([cause, analysisError]),
@@ -452,7 +552,7 @@ export async function qualifyNativeShipping(
     // These graph edges are source-owned, independently of caller targets.
     // An incompatible declared test fails analysis rather than disappearing.
     if (tests.length && !sourceOnly)
-      bazel(
+      await bazel(
         [
           'cquery',
           `set(${tests.join(' ')})`,
@@ -503,7 +603,7 @@ export async function qualifyNativeShipping(
   // Finish each SDK's existing actions before changing its sandbox population.
   // The final test invocation still qualifies the complete requested scope once.
   for (const group of sliceGroups) {
-    bazel([
+    await bazel([
       'build',
       ...roots,
       ...configuration,
@@ -515,10 +615,10 @@ export async function qualifyNativeShipping(
     assertSource();
   }
   if (sourceOnly) {
-    bazel(['test', ...buildTargets, ...configuration, ...metadata]);
+    await bazel(['test', ...buildTargets, ...configuration, ...metadata]);
     return writeConfiguredCiSuccessReceipt(ciIdentity!);
   }
-  bazel([
+  await bazel([
     'test',
     ...buildTargets,
     ...configuration,
@@ -539,7 +639,7 @@ export async function qualifyNativeShipping(
     `--profile=${diagnosticFile('aquery-profile.json.gz')}`,
   ]);
   assertSource();
-  bazel(['info', ...configuration, 'execution_root'], file('execution-root.txt'));
+  await bazel(['info', ...configuration, 'execution_root'], file('execution-root.txt'));
   const executionRoot = readFileSync(file('execution-root.txt'), 'utf8').trim();
   if (!path.isAbsolute(executionRoot) || /[\u0000-\u001f\u007f]/u.test(executionRoot))
     throw new Error('shipping qualification requires one absolute execution root');
@@ -570,7 +670,7 @@ export async function qualifyNativeShipping(
       flag: 'wx',
     },
   );
-  bazel(
+  await bazel(
     [
       'cquery',
       `--query_file=${depsQuery}`,
@@ -601,7 +701,7 @@ export async function qualifyNativeShipping(
       `buildfiles(set(${root.packages.map((pkg) => JSON.stringify(packageLabels.get(pkg))).join(' ')}))`,
       { flag: 'wx' },
     );
-    bazel(
+    await bazel(
       [
         'query',
         `--query_file=${recipeQuery}`,
@@ -633,33 +733,39 @@ export async function qualifyNativeShipping(
   );
   // Retain OS CPU timing without the memory overhead of continuous sampling.
   const macos = process.platform === 'darwin';
-  run('capture', macos ? '/usr/bin/time' : 'bash', [
-    ...(macos ? ['-p', 'bash'] : []),
-    'tools/release/with-source.sh',
-    'HEAD',
-    'bash',
-    'tools/dev/bun.sh',
-    'tools/release/capture-native-build-evidence.mts',
-    '--github-json',
-    file('github.json'),
-    '--expected-qualification-json',
-    file('expected-qualification.json'),
-    '--producer-cohort',
-    file('selected-roots.json'),
-    file('aquery.json'),
-    file('build-events.jsonl'),
-    executionRoot,
-    '--aquery-build-events',
-    file('aquery-build-events.jsonl'),
-    ...(shippingExport ? ['--shipping-export', shippingExport] : []),
-    '--analysis-root-inputs',
-    file('analysis-root-inputs.json'),
-    workspace,
-    '--output-directory',
-    file('evidence'),
-    '--source-ref',
-    'HEAD',
-  ]);
+  await run(
+    'capture',
+    macos ? '/usr/bin/time' : 'bash',
+    [
+      ...(macos ? ['-p', 'bash'] : []),
+      'tools/release/with-source.sh',
+      'HEAD',
+      'bash',
+      'tools/dev/bun.sh',
+      'tools/release/capture-native-build-evidence.mts',
+      '--github-json',
+      file('github.json'),
+      '--expected-qualification-json',
+      file('expected-qualification.json'),
+      '--producer-cohort',
+      file('selected-roots.json'),
+      file('aquery.json'),
+      file('build-events.jsonl'),
+      executionRoot,
+      '--aquery-build-events',
+      file('aquery-build-events.jsonl'),
+      ...(shippingExport ? ['--shipping-export', shippingExport] : []),
+      '--analysis-root-inputs',
+      file('analysis-root-inputs.json'),
+      workspace,
+      '--output-directory',
+      file('evidence'),
+      '--source-ref',
+      'HEAD',
+    ],
+    undefined,
+    commands.spawnCapture,
+  );
   const evidence = file('evidence/native-build-evidence.json');
   try {
     assertSource();
@@ -674,18 +780,26 @@ export async function qualifyNativeShipping(
     throw error;
   }
   if (request.ci?.mode === 'full') {
-    await captureConfiguredCiRequest({
-      ...ciIdentity!,
-      configuration,
-      startup,
-      requestedTargets: buildTargets,
-      completedRoots: completedCiRequestRoots(bep, buildTargets),
-      executionRoot,
-      nativeEvidence: evidence,
-      configuredGraph: json(depsFile),
-      recipeQueries: [...recipeQueries.values()],
-    });
-  } else if (ciIdentity) writeConfiguredCiSuccessReceipt(ciIdentity);
+    commands.assertRunning();
+    await captureConfiguredCiRequest(
+      {
+        ...ciIdentity!,
+        configuration,
+        startup,
+        requestedTargets: buildTargets,
+        completedRoots: completedCiRequestRoots(bep, buildTargets),
+        executionRoot,
+        nativeEvidence: evidence,
+        configuredGraph: json(depsFile),
+        recipeQueries: [...recipeQueries.values()],
+      },
+      { bazel, assertRunning: commands.assertRunning },
+    );
+  } else if (ciIdentity) {
+    commands.assertRunning();
+    writeConfiguredCiSuccessReceipt(ciIdentity);
+  }
+  commands.assertRunning();
   return evidence;
 }
 

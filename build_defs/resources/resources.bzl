@@ -2,7 +2,7 @@
 
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "BunScriptInfo", "bun_action", "bun_script_test", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/host:desktop-profile.bzl", "desktop_profile")
-load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS", "DATABASE_RESOURCE_CONTRACT", "DATABASE_WASIX_SEED_CONSUMER", "DATABASE_SEED_CARRIERS", "NATIVE_RUNTIME_ARTIFACTS", "PRODUCTS", "PUBLICATION_CARRIERS", "SEED_REUSE_CONTROLS", "COMPLETED_SUPPLIER_ARTIFACTS", "WASIX_ARTIFACTS")
+load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS", "DATABASE_RESOURCE_CONTRACT", "DATABASE_WASIX_SEED_CONSUMER", "DATABASE_SEED_CARRIERS", "NATIVE_CURRENT_ARTIFACTS", "NATIVE_RUNTIME_ARTIFACTS", "PRODUCTS", "PUBLICATION_CARRIERS", "SEED_REUSE_CONTROLS", "COMPLETED_SUPPLIER_ARTIFACTS", "WASIX_ARTIFACTS")
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@aspect_rules_js//npm:providers.bzl", "NpmPackageInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
@@ -352,6 +352,34 @@ def _seed_artifact_rows(family, target, profile):
     if len(archives) != 1 or len(manifests) != 1:
         fail("seed envelopes require exactly the canonical archive and manifest")
     return archives[0], manifests[0]
+
+def _declared_seed_assets_impl(ctx):
+    files = ctx.files.assets
+    if any([file.is_directory for file in files]) or sorted([file.basename for file in files]) != sorted(ctx.attr.expected) or len(ctx.attr.configurations) != len(ctx.attr.expected) or any([configuration != ctx.attr.target for configuration in ctx.attr.configurations]):
+        fail("installed native seed requires its exact original current archive and manifest Files for " + ctx.attr.target)
+    return [DefaultInfo(files = depset(files))]
+
+_declared_seed_assets = rule(implementation = _declared_seed_assets_impl, attrs = {
+    "assets": attr.label_list(allow_files = True), "expected": attr.string_list(mandatory = True),
+    "configurations": attr.string_list(), "target": attr.string(mandatory = True),
+})
+
+def ios_declared_standard_seed_npm(name):
+    """Format an installed consumer's seed from its original qualified assets."""
+    target = "ios-datum64"
+    rows = _seed_artifact_rows("native", target, "standard")
+    names = [row["asset"].replace("{version}", _VERSION) for row in rows]
+    current = NATIVE_CURRENT_ARTIFACTS or {}
+    captures = [current.get("database-resources/" + _VERSION + "/github-release:" + asset) for asset in names]
+    _declared_seed_assets(name = name + "_assets", expected = names, target = target,
+        assets = [row["file"]["path"] for row in captures if row], configurations = [row["configuration"] for row in captures if row])
+    identities = [row for row in DATABASE_SEED_CARRIERS if row["family"] == "native" and row["target"] == target and row["profile"] == "standard"]
+    if len(identities) != 1:
+        fail("installed seed requires one canonical registry identity")
+    identity = identities[0]
+    resource_carriers(name = name + "_carriers", kind = "seed", family = "native", target = target, profile = "standard",
+        assets = [":" + name + "_assets"], carriers = json.encode(_rows([identity["npm"], identity["cargo"]])))
+    native.filegroup(name = name, srcs = [":" + name + "_carriers"], output_group = "npm")
 
 def wasix_current_seed_assets(name, profile = "standard"):
     """Private current-module admission preserves the original seed and creator."""

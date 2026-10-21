@@ -2,6 +2,7 @@
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_RELEASE_METADATA", "NATIVE_MOBILE_COMPONENT_CLOSURES")
 load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library")
 load("//build_defs/extensions:final_leaf.bzl", "ExtensionFinalLeafInfo", "NativeAppleBaseInfo")
+load("//build_defs/extensions:declared_final_inputs.bzl", "native_extension_declared_final_import")
 load("//build_defs/extensions:owner_carriers.bzl", "native_owner_carrier_helpers")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 
@@ -39,11 +40,16 @@ def expo_ios_final_libraries(name, extensions, base):
     native.config_setting(name = name + "_simulator", constraint_values = ["@apple_support//constraints:simulator"])
     slice = select({":" + name + "_simulator": "ios-arm64-simulator", "//conditions:default": "ios-arm64"})
     rows = {row["sqlName"]: row for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in extensions}
+    leaves = {}
+    for product in sorted({row["artifactProduct"]: True for row in rows.values()}):
+        imported = name + "_" + product.replace("-", "_") + "_original"
+        native_extension_declared_final_import(name = imported, product = product, family = "native", target = "ios-xcframework")
+        leaves[product] = ":" + imported
     descriptors = {row["sql-name"]: row for row in EXTENSIONS.values()}
     units = {}
     for sql_name in extensions:
         row = rows[sql_name]
-        leaf = "//build_defs/extensions/mobile/final:" + row["artifactProduct"].replace("-", "_") + "_ios_xcframework"
+        leaf = leaves[row["artifactProduct"]]
         # The canonical final manifest owns each extension/dependency role.
         module = descriptors[sql_name].get("native-module-file")
         if not module:
@@ -59,3 +65,4 @@ def expo_ios_final_libraries(name, extensions, base):
         cc_import(name = archive, static_library = ":" + archive + "_archive", alwayslink = True)
         imports.append(":" + archive)
     cc_library(name = name, deps = imports)
+    return leaves.values()

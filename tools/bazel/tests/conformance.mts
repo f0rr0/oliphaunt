@@ -371,6 +371,135 @@ native_release_checksum_family(product = ${JSON.stringify(family.product)}, arti
   bazel('cquery', [labels[0], ...flags, '--output=files']);
 }
 
+function installedAppleFinalInputs() {
+  const pkg = '//src/examples/native/react-native-expo';
+  const resources = `${pkg}:ios_selected_resources`;
+  const versions = JSON.parse(
+    readFileSync(path.join(workspace, '.release-please-manifest.json'), 'utf8'),
+  );
+  const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
+  const directory = path.join(scratch, 'installed-apple-inputs');
+  mkdirSync(directory);
+  const file = (name: string) => {
+    const bytes = Buffer.from(`controlled analysis-only original File ${name}\n`);
+    const file = path.join(directory, name);
+    writeFileSync(file, bytes);
+    return {
+      path: file,
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      producer: {
+        root: '//controlled:apple_final_files',
+        configuration: 'f'.repeat(64),
+        evidenceDigest: `sha256:${'1'.repeat(64)}`,
+        invocationId: 'controlled-apple-final-files',
+        output: `bazel-out/controlled/bin/${name}`,
+      },
+    };
+  };
+  const product = 'oliphaunt-extension-vector';
+  const snapshot = {
+    source,
+    extensionFinalInputs: [
+      {
+        product,
+        owner: product,
+        version: versions['src/extensions/external/vector'],
+        family: 'native',
+        target: 'ios-xcframework',
+        github: [file('controlled-vector-ios.tar.gz')],
+        npm: [],
+        cargo: [],
+        manifest: file('controlled-vector-manifest.json'),
+        frozen: file('controlled-vector-frozen.json'),
+      },
+    ],
+    nativeCurrentArtifacts: ['tar.zst', 'json'].map((suffix) => {
+      const version = versions['src/database-resources'];
+      const name = `database-resources-${version}-seed-native-ios-datum64-standard.${suffix}`;
+      return {
+        product: 'database-resources',
+        version,
+        artifact: `github-release:${name}`,
+        configuration: 'ios-datum64',
+        source,
+        file: file(name),
+      };
+    }),
+  };
+  const inputs = path.join(directory, 'inputs.json');
+  const save = (value: typeof snapshot) => writeFileSync(inputs, JSON.stringify(value));
+  save(snapshot);
+  const flags = [`--repo_env=OLIPHAUNT_NATIVE_PUBLICATION_INPUTS=${inputs}`, '--noshow_progress'];
+  const query = (expression: string) =>
+    bazel('query', [expression, ...flags, '--output=label'])
+      .stdout.trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(canonicalShippingLabel)
+      .sort();
+  const leafSelection = `labels(leaves, ${resources})`;
+  const seedSelection = `labels(seed, ${resources})`;
+  const linkSelection = `labels(leaf, labels(static_library, labels(deps, ${pkg}:ios_final_libraries)))`;
+  const leaves = query(leafSelection);
+  assert.ok(leaves.length, 'installed app must retain selected final extensions');
+  const originals = query(`labels(inputs, ${leafSelection})`);
+  assert.ok(
+    originals.length && originals.every((label) => label.includes('//:extension-final-inputs/')),
+    'installed app extensions must consume original final File aliases',
+  );
+  assert.deepEqual(
+    query(linkSelection),
+    leaves,
+    'resources and linker share the same original final leaves',
+  );
+  const selected = query(`${leafSelection} union ${seedSelection}`);
+  const closure = query(`deps(${leafSelection} union ${seedSelection})`);
+  assert.ok(closure.some((label) => label.includes('//:extension-final-inputs/')));
+  assert.ok(
+    closure.some((label) => label.includes('//:native-current-artifacts/database-resources/')),
+  );
+  assert.deepEqual(
+    query(`kind("cc_(library|binary) rule", deps(${leafSelection} union ${seedSelection}))`),
+    [],
+    'installed final-file imports must not reconstruct runtime or extension compiler inputs',
+  );
+  bazel('cquery', [`set(${selected.join(' ')})`, ...flags, '--output=files']);
+  save({ ...snapshot, extensionFinalInputs: [], nativeCurrentArtifacts: [] });
+  assert.deepEqual(
+    query(`${leafSelection} union ${seedSelection}`),
+    selected,
+    'missing imports must preserve package loading',
+  );
+  assert.match(
+    bazel('cquery', [leaves[0], ...flags], true).stderr,
+    /extension family requires its original authenticated source\/run File inputs/u,
+  );
+  assert.match(
+    bazel('cquery', [query(seedSelection)[0], ...flags], true).stderr,
+    /installed native seed requires its exact original current archive and manifest Files/u,
+  );
+  save(snapshot);
+  bazel('cquery', [`set(${selected.join(' ')})`, ...flags, '--output=files']);
+  assert.deepEqual(
+    query(
+      `labels(host, //build_defs/extensions/mobile/final:${product.replaceAll('-', '_')}_ios_xcframework)`,
+    ),
+    ['//src/extensions/external/vector:native_payload'],
+    'original extension producer remains source-owned',
+  );
+  assert.deepEqual(
+    query('labels(producer, //src/database-resources:ios_datum64_standard_seed)'),
+    ['//src/database-resources:macos_arm64_standard_seed'],
+    'original seed producer keeps its actual bootstrap',
+  );
+  assert.deepEqual(
+    query('labels(receipts, //src/database-resources:ios_datum64_standard_seed)'),
+    ['//src/native/runtime:apple_ios_device_abi', '//src/native/runtime:apple_ios_simulator_abi'],
+    'original seed producer keeps both actual iOS ABI inputs',
+  );
+}
+
 function ignoreGeneratedOutputDirectories() {
   const queryArguments = [
     'labels(srcs, //:root_quality_sources)',
@@ -947,6 +1076,7 @@ try {
   externalBunEntrypoints();
   capturedSwiftPackageIdentity();
   checksumFamilyOriginalFiles();
+  installedAppleFinalInputs();
   cargoBuildScriptParity();
   const allProduction = [
     'config',
