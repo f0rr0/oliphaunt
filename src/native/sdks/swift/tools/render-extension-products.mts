@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   loadSwiftExtensionInventoryCatalog,
+  normalizeExtensionMemberClosure,
   readSafeFileSnapshot,
   snapshotSafeFileTree,
   validateSwiftExtensionResourceArtifact,
@@ -419,7 +420,7 @@ export function validateSelection(
   const basePackage = validateBasePackage(root.basePackage);
   const nativeRuntime = validateNativeRuntime(root.nativeRuntime);
   const extensions = root.extensions.map((raw, index) => {
-    const row = object(raw, `extensions[${index}]`);
+    const row = normalizeExtensionMemberClosure(object(raw, `extensions[${index}]`));
     exactKeys(
       row,
       [

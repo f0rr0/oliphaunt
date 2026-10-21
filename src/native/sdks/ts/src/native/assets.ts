@@ -30,6 +30,7 @@ import {
   parseNpmExtensionLicenseFiles,
 } from './extension-contract.js';
 import {
+  isCanonicalExtensionInstallSql,
   nativeModuleSuffixForTarget,
   type RuntimeFileHost,
   selectedExtensionClosure,
@@ -606,7 +607,12 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${label} must be a JSON object`);
   }
-  const row = value as Record<string, unknown>;
+  const row = { ...value } as Record<string, unknown>;
+  // Published v1 carriers without companion fields contain only their primary identities.
+  if (!('sqlMembers' in row) && !('nativeModuleStems' in row)) {
+    row.sqlMembers = row.createsExtension ? [row.sqlName] : [];
+    row.nativeModuleStems = row.nativeModuleStem === null ? [] : [row.nativeModuleStem];
+  }
   if (
     JSON.stringify(Object.keys(row).sort(compareText)) !==
     JSON.stringify(NPM_EXTENSION_CONTRACT_MEMBER_FIELDS)
@@ -1120,14 +1126,6 @@ function extensionRuntimeSqlFileOwned(
     (fileName.endsWith('.sql') &&
       extension.extensionSqlFilePrefixes.some((prefix) => fileName.startsWith(prefix)))
   );
-}
-
-function isCanonicalExtensionInstallSql(fileName: string, sqlName: string): boolean {
-  if (fileName === `${sqlName}.sql`) return true;
-  const prefix = `${sqlName}--`;
-  if (!fileName.startsWith(prefix) || !fileName.endsWith('.sql')) return false;
-  const version = fileName.slice(prefix.length, -'.sql'.length);
-  return /^[0-9][A-Za-z0-9._-]*$/u.test(version) && !version.includes('--');
 }
 
 async function exactRuntimeLeafPaths(root: string, source: string): Promise<string[]> {

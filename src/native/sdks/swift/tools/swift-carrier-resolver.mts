@@ -12,6 +12,7 @@ import {
 } from '../../../../../tools/packaging/portable-archive.mts';
 import {
   loadSwiftExtensionInventoryCatalog,
+  normalizeExtensionMemberClosure,
   validateSwiftExtensionResourceArtifact,
 } from './extension-resource-inventory.mts';
 
@@ -444,7 +445,7 @@ function validateExtensionReleaseReference(value, label) {
   return { product, tag: row.tag, version };
 }
 function validateExtension(value, label, carriers) {
-  const row = object(value, label);
+  const row = normalizeExtensionMemberClosure(object(value, label));
   exactKeys(
     row,
     [

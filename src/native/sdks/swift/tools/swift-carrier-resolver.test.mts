@@ -516,6 +516,8 @@ async function main() {
   frozenOldCarrier.extensions = frozenOldCarrier.extensions.filter(
     ({ sqlName }) => sqlName === 'pgtap',
   );
+  delete frozenOldCarrier.extensions[0].sqlMembers;
+  delete frozenOldCarrier.extensions[0].nativeModuleStems;
   frozenOldCarrier.extensions[0].version = '0.9.0';
   frozenOldCarrier.extensions[0].tag = 'oliphaunt-extension-pgtap-v0.9.0';
   const frozenCarrierNames = new Set(

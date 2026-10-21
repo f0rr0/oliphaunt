@@ -1297,6 +1297,12 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
       Properties manifest,
       String assetName,
       String expectedRuntimeVersion) {
+    // Published v1 artifacts encode only the primary SQL and module identities.
+    if (!manifest.containsKey("sqlMembers") && !manifest.containsKey("nativeModuleStems")) {
+      manifest.setProperty("sqlMembers", "yes".equals(manifest.getProperty("createsExtension"))
+          ? manifest.getProperty("sqlName", "") : "");
+      manifest.setProperty("nativeModuleStems", manifest.getProperty("nativeModuleStem", ""));
+    }
     TreeSet<String> actualKeys = new TreeSet<>(manifest.stringPropertyNames());
     TreeSet<String> expectedKeys = new TreeSet<>(EXTENSION_ARTIFACT_PROPERTY_KEYS);
     if (!actualKeys.equals(expectedKeys)) {

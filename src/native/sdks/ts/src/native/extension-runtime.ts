@@ -72,17 +72,13 @@ export async function requireExtensionRuntimePayload(config: {
 }): Promise<void> {
   if (config.extension.createsExtension) {
     const entries = await extensionSqlDirectoryEntries(config.runtimeDirectories, config.host);
-    const hasControl = entries.includes(`${config.extension.sqlName}.control`);
-    if (!hasControl) {
-      throw new Error(`${config.runtimeSource} is missing ${config.extension.sqlName}.control`);
-    }
-    const hasInstallSql = entries.some(
-      (entry) => entry.endsWith('.sql') && extensionSqlFileBelongs(config.extension, entry),
-    );
-    if (!hasInstallSql) {
-      throw new Error(
-        `${config.runtimeSource} is missing SQL install files for ${config.extension.sqlName}`,
-      );
+    for (const member of config.extension.sqlMembers) {
+      if (!entries.includes(`${member}.control`)) {
+        throw new Error(`${config.runtimeSource} is missing ${member}.control`);
+      }
+      if (!entries.some((entry) => isCanonicalExtensionInstallSql(entry, member))) {
+        throw new Error(`${config.runtimeSource} is missing SQL install files for ${member}`);
+      }
     }
   }
 
@@ -95,10 +91,8 @@ export async function requireExtensionRuntimePayload(config: {
     );
   }
 
-  if (config.extension.nativeModuleStem !== null) {
-    const moduleFile = `${config.extension.nativeModuleStem}${nativeModuleSuffixForTarget(
-      config.target,
-    )}`;
+  for (const stem of config.extension.nativeModuleStems) {
+    const moduleFile = `${stem}${nativeModuleSuffixForTarget(config.target)}`;
     await requireFileInAnyRoot(
       config.moduleDirectories,
       moduleFile,
@@ -168,14 +162,12 @@ async function extensionSqlDirectoryEntries(
   return entries;
 }
 
-function extensionSqlFileBelongs(extension: GeneratedExtensionMetadata, fileName: string): boolean {
-  return (
-    fileName === `${extension.sqlName}.control` ||
-    fileName === `${extension.sqlName}.sql` ||
-    (fileName.startsWith(`${extension.sqlName}--`) && fileName.endsWith('.sql')) ||
-    extension.extensionSqlFileNames.includes(fileName) ||
-    extension.extensionSqlFilePrefixes.some((prefix) => fileName.startsWith(prefix))
-  );
+export function isCanonicalExtensionInstallSql(fileName: string, sqlName: string): boolean {
+  if (fileName === `${sqlName}.sql`) return true;
+  const prefix = `${sqlName}--`;
+  if (!fileName.startsWith(prefix) || !fileName.endsWith('.sql')) return false;
+  const version = fileName.slice(prefix.length, -'.sql'.length);
+  return /^[0-9][A-Za-z0-9._-]*$/u.test(version) && !version.includes('--');
 }
 
 async function requireFileInAnyRoot(

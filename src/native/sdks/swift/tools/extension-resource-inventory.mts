@@ -167,6 +167,16 @@ function normalizeCanonicalRow(row, label) {
   };
 }
 
+// Published v1 carriers without companion fields contain only their primary identities.
+export function normalizeExtensionMemberClosure(row) {
+  if ('sqlMembers' in row || 'nativeModuleStems' in row) return row;
+  return {
+    ...row,
+    sqlMembers: row.createsExtension ? [row.sqlName] : [],
+    nativeModuleStems: row.nativeModuleStem === null ? [] : [row.nativeModuleStem],
+  };
+}
+
 function normalizeFrozenRuntimeContract(row, label) {
   const sqlName = portable(row?.sqlName, `${label}.sqlName`);
   const product = portable(row?.product, `${label}.product`);
@@ -174,6 +184,7 @@ function normalizeFrozenRuntimeContract(row, label) {
   if (typeof row?.createsExtension !== 'boolean') fail(label, 'createsExtension must be boolean');
   const nativeModuleStem = row?.nativeModuleStem ?? null;
   if (nativeModuleStem !== null) portable(nativeModuleStem, `${label}.nativeModuleStem`);
+  row = normalizeExtensionMemberClosure(row);
   const sqlMembers = canonicalList(row.sqlMembers, `${label}.sqlMembers`, portable);
   const nativeModuleStems = canonicalList(
     row.nativeModuleStems,
@@ -296,11 +307,22 @@ function parseProperties(text, label) {
     if (properties.has(key)) fail(label, `repeats property ${key}`);
     properties.set(key, line.slice(separator + 1));
   }
-  if (JSON.stringify([...properties.keys()]) !== JSON.stringify(PROPERTY_KEYS)) {
+  const legacy = !properties.has('sqlMembers') && !properties.has('nativeModuleStems');
+  const expectedKeys = legacy
+    ? PROPERTY_KEYS.filter((key) => key !== 'sqlMembers' && key !== 'nativeModuleStems')
+    : PROPERTY_KEYS;
+  if (JSON.stringify([...properties.keys()]) !== JSON.stringify(expectedKeys)) {
     fail(
       label,
       `must contain the exact canonical fields in canonical order: ${PROPERTY_KEYS.join(',')}`,
     );
+  }
+  if (legacy) {
+    properties.set(
+      'sqlMembers',
+      properties.get('createsExtension') === 'yes' ? properties.get('sqlName') : '',
+    );
+    properties.set('nativeModuleStems', properties.get('nativeModuleStem'));
   }
   return properties;
 }
@@ -746,8 +768,6 @@ export async function validateSwiftExtensionResourceArtifact({
     allowed.add(mobilePath);
   }
   const sqlPrefix = 'files/share/postgresql/extension/';
-  let hasControl = false;
-  let hasSql = false;
   for (const file of files) {
     if (!file.relative.startsWith(sqlPrefix)) continue;
     const fileName = file.relative.slice(sqlPrefix.length);
@@ -755,11 +775,6 @@ export async function validateSwiftExtensionResourceArtifact({
       fail(label, `contains undeclared extension SQL/control file ${file.relative}`);
     }
     allowed.add(file.relative);
-    if (fileName === `${contract.sqlName}.control`) hasControl = true;
-    if (isCanonicalInstallSql(fileName, contract.sqlName)) hasSql = true;
-  }
-  if (contract.createsExtension && (!hasControl || !hasSql)) {
-    fail(label, `must contain ${contract.sqlName}.control and canonical base installation SQL`);
   }
   for (const member of contract.sqlMembers) {
     if (

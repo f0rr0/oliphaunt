@@ -1203,7 +1203,12 @@ async function nodePostgisCompanionClosureInstall(
       const incomplete: Partial<FixtureExtensionContract> = { ...complete };
       for (const field of omitted) delete incomplete[field];
       await writeContract(incomplete);
-      await assert.rejects(materialize, /fields must be exactly/);
+      await assert.rejects(
+        materialize,
+        omitted.length === 2
+          ? /incompatible with the SDK extension contract/
+          : /fields must be exactly/,
+      );
     }
     for (const incomplete of [
       { ...complete, dependencies: [] },
@@ -1251,6 +1256,27 @@ async function nodePostgisCompanionClosureInstall(
     await assert.rejects(materialize, /requires undeclared dependency cube/);
     await writeFile(tigerControl, controlBytes);
     const installed = await materialize();
+    for (const stem of ['dict_snowball', 'plpgsql']) {
+      await writeFile(
+        join(installed.runtimeDirectory!, 'lib/modules', `${stem}${suffix}`),
+        'embedded core module',
+      );
+    }
+    await nodeAssets.validatePreparedNativeRuntimeExtensions(installed, ['postgis']);
+    for (const relative of [
+      'share/postgresql/extension/postgis_raster.control',
+      'share/postgresql/extension/postgis_raster--3.6.4.sql',
+      `lib/modules/postgis_raster-3${suffix}`,
+    ]) {
+      const file = join(installed.runtimeDirectory!, relative);
+      const original = await readFile(file);
+      await rm(file);
+      await assert.rejects(
+        nodeAssets.validatePreparedNativeRuntimeExtensions(installed, ['postgis']),
+        /postgis_raster/,
+      );
+      await writeFile(file, original);
+    }
     assert.equal(
       await readFile(join(installed.moduleDirectory!, `postgis_topology-3${suffix}`), 'utf8'),
       'complete:postgis_topology-3',
@@ -1414,6 +1440,8 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
         fixtureExtensionContractManifest(product, extensionVersion, target.id, [
           independentlyVersionedContract,
         ]),
+        // Published v1 carriers omit both companion-closure fields.
+        (key, value) => (key === 'sqlMembers' || key === 'nativeModuleStems' ? undefined : value),
       ),
     );
     const skewData = join(canonicalRuntime, 'share/postgresql/oliphaunt-skew/new-version.dat');

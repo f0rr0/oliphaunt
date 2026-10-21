@@ -103,8 +103,9 @@ Every direct or bundle npm platform package also carries and exports
 `extension-contract.json` with schema `oliphaunt-npm-extension-contract-v1`.
 That manifest freezes each member's `createsExtension`, primary and companion
 native module stems, SQL members, dependencies, data files, additional SQL
-names/prefixes, and preload libraries
-at the independently versioned extension release. It also freezes the exact,
+names/prefixes, and preload libraries at the independently versioned extension
+release. Published v1 carriers without companion fields retain only their
+primary SQL/module identities. The manifest also freezes the exact,
 sorted `share/licenses/` file inventory derived from that member's canonical
 carrier legal metadata. Every row binds the portable path, canonical SHA-256,
 and archive mode `0644`; contrib members therefore declare an explicit empty

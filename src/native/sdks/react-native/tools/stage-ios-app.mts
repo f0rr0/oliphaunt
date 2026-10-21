@@ -684,7 +684,12 @@ function validateBase(value, label, allowFileUrls) {
 }
 
 function validateExtension(value, label, carriers) {
-  const root = object(value, label);
+  const root = { ...object(value, label) };
+  // Published v1 carriers without companion fields contain only their primary identities.
+  if (!('sqlMembers' in root) && !('nativeModuleStems' in root)) {
+    root.sqlMembers = root.createsExtension ? [root.sqlName] : [];
+    root.nativeModuleStems = root.nativeModuleStem === null ? [] : [root.nativeModuleStem];
+  }
   exactKeys(
     root,
     [
@@ -1829,9 +1834,6 @@ async function validateExactExtensionArtifactInventory(
   if (carrier.createsExtension) {
     const extensionRoot = 'files/share/postgresql/extension';
     const sqlMembers = carrier.sqlMembers;
-    const control = `${extensionRoot}/${carrier.sqlName}.control`;
-    if (!actualFiles.has(control)) fail(`${source} is missing canonical control file ${control}`);
-    expectedFiles.add(control);
     const ownedSqlFiles = [...actualFiles].filter((file) => {
       if (path.posix.dirname(file) !== extensionRoot) return false;
       const name = path.posix.basename(file);
@@ -1843,16 +1845,6 @@ async function validateExactExtensionArtifactInventory(
         return /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(versionPath);
       });
     });
-    const installSqlFiles = ownedSqlFiles.filter((file) => {
-      const name = path.posix.basename(file);
-      const prefix = `${carrier.sqlName}--`;
-      if (!name.startsWith(prefix) || !name.endsWith('.sql')) return false;
-      const version = name.slice(prefix.length, -'.sql'.length);
-      return !version.includes('--') && /^[0-9][A-Za-z0-9._-]*$/u.test(version);
-    });
-    if (installSqlFiles.length === 0) {
-      fail(`${source} is missing an install SQL file owned by ${carrier.sqlName}`);
-    }
     const ancillarySqlFiles = [...actualFiles].filter((file) => {
       if (path.posix.dirname(file) !== extensionRoot) return false;
       const name = path.posix.basename(file);
@@ -1869,7 +1861,6 @@ async function validateExactExtensionArtifactInventory(
         ![...actualFiles].some((file) => {
           if (path.posix.dirname(file) !== extensionRoot) return false;
           const name = path.posix.basename(file);
-          if (name === `${member}.sql`) return true;
           const prefix = `${member}--`;
           if (!name.startsWith(prefix) || !name.endsWith('.sql')) return false;
           const version = name.slice(prefix.length, -'.sql'.length);
@@ -1930,6 +1921,13 @@ async function extensionResourceRoot(carrier, base, cacheDir) {
   const manifestFile = path.join(root, 'manifest.properties');
   const manifest = parseProperties(await fs.readFile(manifestFile, 'utf8'), manifestFile);
   rejectUnsupportedProperties(manifest, EXTENSION_ARTIFACT_PROPERTY_KEYS, manifestFile);
+  if (!manifest.has('sqlMembers') && !manifest.has('nativeModuleStems')) {
+    manifest.set(
+      'sqlMembers',
+      manifest.get('createsExtension') === 'yes' ? manifest.get('sqlName') : '',
+    );
+    manifest.set('nativeModuleStems', manifest.get('nativeModuleStem'));
+  }
   requireProperty(manifest, 'sqlMembers', carrier.sqlMembers.join(','), manifestFile);
   requireProperty(manifest, 'nativeModuleStems', carrier.nativeModuleStems.join(','), manifestFile);
   requireProperty(manifest, 'packageLayout', 'oliphaunt-extension-artifact-v1', manifestFile);

@@ -532,8 +532,12 @@ async function extensionRow(root, config) {
       `staticSymbolAliases=${staticSymbolAliases.join(',')}`,
       `licenseFiles=${licenseFiles.join(',')}`,
       `licenseProfile=${profile}`,
-      `sqlMembers=${config.sqlMembers.join(',')}`,
-      `nativeModuleStems=${config.nativeModuleStem ?? ''}`,
+      ...(config.sqlName === 'pgtap'
+        ? []
+        : [
+            `sqlMembers=${config.sqlMembers.join(',')}`,
+            `nativeModuleStems=${config.nativeModuleStem ?? ''}`,
+          ]),
       'files=files',
       '',
     ].join('\n'),
@@ -688,8 +692,13 @@ async function extensionRow(root, config) {
     extension: {
       assets: logicalAssets.map(({ locator }) => locator),
       createsExtension,
-      sqlMembers: config.sqlMembers,
-      nativeModuleStems: config.nativeModuleStem === null ? [] : [config.nativeModuleStem],
+      // Keep one published v1 single-member carrier in the complete staging proof.
+      ...(config.sqlName === 'pgtap'
+        ? {}
+        : {
+            sqlMembers: config.sqlMembers,
+            nativeModuleStems: config.nativeModuleStem === null ? [] : [config.nativeModuleStem],
+          }),
       dataFiles,
       dependencies: config.dependencies,
       extensionSqlFileNames: config.extensionSqlFileNames,

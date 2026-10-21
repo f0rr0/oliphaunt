@@ -2639,6 +2639,8 @@ public final class OliphauntExtensionCatalogContractTest {
 
   private static void validatesExactNestedArtifactContract() {
     Properties manifest = cubeArtifactManifest();
+    manifest.remove("sqlMembers");
+    manifest.remove("nativeModuleStems");
 
     ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
         "oliphaunt-extension-contrib-pg18",

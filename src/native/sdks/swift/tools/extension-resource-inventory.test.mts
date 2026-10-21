@@ -166,36 +166,32 @@ async function main() {
       }),
     /mobile nativeModuleStems must contain only the merged primary module/u,
   );
-  const expandedPostgis = postgis;
-  const companionFiles = sqlMembers
-    .filter((name) => name !== 'postgis')
-    .map((member) =>
-      path.join(postgis.resourceRoot, 'files/share/postgresql/extension', `${member}.control`),
-    );
-  const expandedResources = await validateSwiftExtensionResourceArtifact({
-    extension: expandedPostgis,
+  const postgisResources = await validateSwiftExtensionResourceArtifact({
+    extension: postgis,
     canonical: catalog.get('postgis'),
     nativeRuntime: document.nativeRuntime,
   });
   assert.ok(
-    expandedResources.files.some(
+    postgisResources.files.some(
       ({ relative }) => relative === 'extension/postgis_topology.control',
     ),
   );
-  const missingCompanion = companionFiles.find((file) =>
-    file.endsWith('/postgis_topology.control'),
+  const missingCompanion = path.join(
+    postgis.resourceRoot,
+    'files/share/postgresql/extension/postgis_topology.control',
   );
+  const companionBytes = await fs.readFile(missingCompanion);
   await fs.rm(missingCompanion);
   await assert.rejects(
     () =>
       validateSwiftExtensionResourceArtifact({
-        extension: expandedPostgis,
+        extension: postgis,
         canonical: catalog.get('postgis'),
         nativeRuntime: document.nativeRuntime,
       }),
     /postgis_topology\.control and canonical base installation SQL/u,
   );
-  await fs.writeFile(missingCompanion, '-- companion fixture\n');
+  await fs.writeFile(missingCompanion, companionBytes);
   const foreignControl = path.join(
     postgis.resourceRoot,
     'files/share/postgresql/extension/postgis_topology_extra.control',
@@ -204,14 +200,13 @@ async function main() {
   await assert.rejects(
     () =>
       validateSwiftExtensionResourceArtifact({
-        extension: expandedPostgis,
+        extension: postgis,
         canonical: catalog.get('postgis'),
         nativeRuntime: document.nativeRuntime,
       }),
     /undeclared extension SQL\/control file/u,
   );
   await fs.rm(foreignControl);
-  await fs.writeFile(postgisManifest, postgisManifestText);
   await assert.rejects(
     () =>
       validateSwiftExtensionResourceArtifact({

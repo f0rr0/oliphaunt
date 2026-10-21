@@ -824,11 +824,26 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
             manifest_path.display()
         ))
     })?;
-    let manifest = parse_canonical_properties_manifest(
-        &manifest_path,
-        &manifest_text,
-        &EXTENSION_ARTIFACT_MANIFEST_KEYS,
-    )?;
+    let legacy = !manifest_text
+        .lines()
+        .any(|line| line.starts_with("sqlMembers=") || line.starts_with("nativeModuleStems="));
+    let keys = EXTENSION_ARTIFACT_MANIFEST_KEYS
+        .iter()
+        .copied()
+        .filter(|key| !legacy || !matches!(*key, "sqlMembers" | "nativeModuleStems"))
+        .collect::<Vec<_>>();
+    let mut manifest = parse_canonical_properties_manifest(&manifest_path, &manifest_text, &keys)?;
+    if legacy {
+        // Published v1 artifacts encode only the primary SQL and module identities.
+        let members = if parse_manifest_yes_no(&manifest_path, &manifest, "createsExtension")? {
+            required_manifest_value(&manifest_path, &manifest, "sqlName")?.to_owned()
+        } else {
+            String::new()
+        };
+        let stems = manifest["nativeModuleStem"].clone();
+        manifest.insert("sqlMembers".to_owned(), members);
+        manifest.insert("nativeModuleStems".to_owned(), stems);
+    }
     require_property(
         &manifest_path,
         &manifest,
@@ -1715,6 +1730,17 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             "data/acme_ext.rules",
             true,
         );
+        let manifest = artifact.join("manifest.properties");
+        let legacy = fs::read_to_string(&manifest)
+            .unwrap()
+            .lines()
+            .filter(|line| {
+                !line.starts_with("sqlMembers=") && !line.starts_with("nativeModuleStems=")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        fs::write(manifest, legacy).unwrap();
         write_file(
             &artifact.join("files/share/postgresql/extension/hstore.control"),
             b"comment = 'should not leak'\n",
