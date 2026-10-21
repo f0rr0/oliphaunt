@@ -341,6 +341,15 @@ test('release-family archive acquisition is full-only while source qualification
   const acquisition = family.steps.find(
     (step: any) => step.name === "Authenticate this run's completed archive producers",
   );
+  const sourceQualification = family.steps.find(
+    (step: any) => step.env?.CI_REQUEST_ID === 'release-families/public-source',
+  );
+  assert.ok(acquisition);
+  assert.ok(sourceQualification);
+  assert.ok(
+    family.steps.indexOf(acquisition) < family.steps.indexOf(sourceQualification),
+    'authenticate producer archives before source qualification so both family phases share inputs',
+  );
   const aggregate = family.steps.find(
     (step: any) => step.env?.CI_REQUEST_ID === 'release-families/checksums',
   );

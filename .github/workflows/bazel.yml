@@ -1520,6 +1520,15 @@ jobs:
           phase: restore
           cohort: release-families
 
+      - name: Authenticate this run's completed archive producers
+        if: needs.release-inputs.outputs.ci_mode == 'full' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), 'release-families/checksums')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts
+          --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF"
+          --output-directory target/native-release-archive-inputs
+
       - name: Qualify public Cargo source packages
         if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
         env:
@@ -1548,15 +1557,6 @@ jobs:
             --output-directory "$RUNNER_TEMP/public-source-build-capture"
           mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
           cp "$RUNNER_TEMP/public-source-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
-
-      - name: Authenticate this run's completed archive producers
-        if: needs.release-inputs.outputs.ci_mode == 'full' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), 'release-families/checksums')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts
-          --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF"
-          --output-directory target/native-release-archive-inputs
 
       - name: Qualify complete public checksum families
         if: needs.release-inputs.outputs.ci_mode == 'full' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
