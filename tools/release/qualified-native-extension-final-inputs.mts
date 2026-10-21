@@ -6,7 +6,10 @@ import {
   assertAuthenticatedNativeBuildOrigin,
   validateReviewedNativeProducerAssurance,
 } from './authenticate-native-build-evidence.mts';
-import type { ReleaseMetadata } from './bazel-release-metadata.mts';
+import {
+  nativeSupplierGithubArtifactDeclarations,
+  type ReleaseMetadata,
+} from './bazel-release-metadata.mts';
 import { canonicalShippingLabel } from './bazel-shipping-inputs.mts';
 import {
   type ExtensionFinalInput,
@@ -93,6 +96,22 @@ export function isNativeCurrentCargoRoot(
   );
 }
 
+/** Match an observed asset to its source owner's complete public declarations. */
+export function isNativeCurrentGithubRoot(
+  {
+    package: pkg,
+  }: {
+    package: { product: string; version: string; ecosystem: string; role: string; name: string };
+  },
+  declared: ReadonlySet<string>,
+) {
+  return (
+    pkg.ecosystem === 'github' &&
+    pkg.role === 'github-release-asset' &&
+    declared.has(`${pkg.product}/${pkg.version}/${pkg.name}`)
+  );
+}
+
 function collectNativeFinalInputs(
   preparation: NativeFinalInputPreparation,
   metadata: ReleaseMetadata,
@@ -100,6 +119,12 @@ function collectNativeFinalInputs(
 ) {
   const inputs: ExtensionFinalInput[] = [];
   const current = new Map<string, NativeCurrentArtifact>();
+  const githubArtifacts = new Set(
+    nativeSupplierGithubArtifactDeclarations(metadata).map(({ product, asset }) => {
+      const version = metadata.products[product].version;
+      return `${product}/${version}/${asset.replaceAll('{version}', version)}`;
+    }),
+  );
   const catalog = {
     carriers: metadata.publicationCarriers.map((row) => ({
       ...row,
@@ -226,19 +251,7 @@ function collectNativeFinalInputs(
         for (const root of cohort.roots) {
           const pkg = root.package;
           const cargo = isNativeCurrentCargoRoot(root, metadata, extensionConstructors);
-          const github =
-            pkg.ecosystem === 'github' &&
-            pkg.role === 'github-release-asset' &&
-            [
-              ...metadata.nativeRuntimeArtifacts,
-              ...metadata.nativeHelperArtifacts,
-              ...metadata.wasixArtifacts,
-            ].some(
-              (row) =>
-                row.product === pkg.product &&
-                typeof row.asset === 'string' &&
-                row.asset.replaceAll('{version}', pkg.version) === pkg.name,
-            );
+          const github = isNativeCurrentGithubRoot(root, githubArtifacts);
           if (!(cargo || github)) continue;
           assert.equal(
             pkg.version,

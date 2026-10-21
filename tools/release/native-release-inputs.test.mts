@@ -18,7 +18,10 @@ import {
 } from '../../build_defs/resources/seed_construction.mts';
 import { createDeterministicTar } from '../packaging/archive-directory.mts';
 import { tarArchive } from '../packaging/testdata/tar-fixture.mts';
-import { loadReleaseMetadata } from './bazel-release-metadata.mts';
+import {
+  loadReleaseMetadata,
+  nativeSupplierGithubArtifactDeclarations,
+} from './bazel-release-metadata.mts';
 import type { ExtensionFinalInputFile } from './native-extension-final-inputs.mts';
 import { fileIdentity } from './native-file-identity.mts';
 import { projectPreparedNativePublicationPlan } from './native-freeze-publication-candidate.mts';
@@ -42,8 +45,12 @@ import {
   collectNativeVersionUpdates,
   commitNativeVersionUpdates,
 } from './native-version-source.mts';
-import { isNativeCurrentCargoRoot } from './qualified-native-extension-final-inputs.mts';
-import { discoverPublicationArtifacts } from './publication-lock.mts';
+import { loadPublicationCatalog } from './publication-catalog.mts';
+import { discoverPublicationArtifacts, expectedProductArtifactRows } from './publication-lock.mts';
+import {
+  isNativeCurrentCargoRoot,
+  isNativeCurrentGithubRoot,
+} from './qualified-native-extension-final-inputs.mts';
 import { loadProducts } from './release-graph.mts';
 
 async function fixture() {
@@ -1403,6 +1410,48 @@ test('canonical WASIX core and contrib Cargo roots survive a shared extension co
   const extensionRoot = cargoRoot(extensionCarrier!);
   expect(isNativeCurrentCargoRoot(extensionRoot, metadata, new Set())).toBe(true);
   expect(isNativeCurrentCargoRoot(extensionRoot, metadata, extensionConstructors)).toBe(false);
+});
+
+test('current GitHub construction covers every canonical product asset and rejects other identities', () => {
+  const metadata = loadReleaseMetadata(path.resolve(import.meta.dir, '../..'));
+  const declared = new Set(
+    nativeSupplierGithubArtifactDeclarations(metadata).map(({ product, asset }) => {
+      const version = metadata.products[product].version;
+      return `${product}/${version}/${asset.replaceAll('{version}', version)}`;
+    }),
+  );
+  const rows = expectedProductArtifactRows(loadPublicationCatalog().products);
+  const assets = rows.filter((row) => row.role === 'github-release-asset');
+  for (const row of rows) {
+    const root = {
+      package: {
+        product: row.product,
+        version: metadata.products[row.product].version,
+        ecosystem: 'github',
+        role: row.role,
+        name: row.name,
+      },
+    };
+    expect(isNativeCurrentGithubRoot(root, declared)).toBe(row.role === 'github-release-asset');
+    if (row.role !== 'github-release-asset') continue;
+    for (const change of [
+      { product: 'unknown-product' },
+      { version: '999.0.0' },
+      { ecosystem: 'npm' },
+      { role: 'release-input' },
+      { name: `${row.name}.unknown` },
+    ])
+      expect(isNativeCurrentGithubRoot({ package: { ...root.package, ...change } }, declared)).toBe(
+        false,
+      );
+  }
+  for (const product of [
+    'database-resources',
+    'oliphaunt-swift',
+    'liboliphaunt-native',
+    'liboliphaunt-wasix',
+  ])
+    expect(assets.some((row) => row.product === product)).toBe(true);
 });
 
 test('the constructor coordinator keeps RN and WASIX bootstrap roles separate and rejects raw origins', () => {

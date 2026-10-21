@@ -206,6 +206,37 @@ test('public checksum archive aliases inherit their original producer without su
   assert.deepEqual(f.inspect([f.guestLabel]), [f.archive.producer]);
 });
 
+test('copied database-resource family archives retain their original current producer', () => {
+  const f = fixture();
+  const product = 'database-resources';
+  const archive = f.original(
+    'database-resources-1.0.0-linux-x64-gnu.tar.gz',
+    tarArchive([{ name: 'seed/PG_VERSION', data: '18\n' }]),
+    '//src/database-resources:native_seed_shipping',
+  );
+  f.snapshot.nativeCurrentArtifacts.push({
+    product,
+    version: '1.0.0',
+    artifact: `github-release:${path.basename(archive.path)}`,
+    configuration: 'linux-x64-gnu',
+    source: f.source,
+    file: archive,
+  });
+  const repository = '_main+postmaster+postmaster_guest';
+  const member = `release-archives/${product}/${path.basename(archive.path)}`;
+  const copied = f.write(
+    path.join(f.executionRoot, 'external', repository, member),
+    readFileSync(archive.path),
+  );
+  const label = `@@${repository}//:${member}`;
+  assert.deepEqual(f.inspect([label]), [archive.producer]);
+  f.snapshot.supplierArtifacts.push(completed(archive, product));
+  assert.throws(() => f.inspect([label]), /unambiguous/u);
+  f.snapshot.supplierArtifacts.length = 0;
+  writeFileSync(copied, 'substituted archive');
+  assert.throws(() => f.inspect([label]), /original current producer/u);
+});
+
 test('the single postmaster guest archive also retains its actual original producer', () => {
   const f = fixture();
   const repository = '_main+postmaster+postmaster_guest';
