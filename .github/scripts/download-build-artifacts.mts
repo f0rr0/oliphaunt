@@ -31,6 +31,7 @@ import {
 import { validateZipEntryTypes } from '../../tools/packaging/portable-archive.mts';
 import {
   githubJobArtifact,
+  githubReadOptionsFromEnv,
   isRetryableGitHubReadError,
   latestGithubJob,
   matchesGithubWorkflowRef,
@@ -38,6 +39,7 @@ import {
   requestGithubDownload,
   requestGithubJsonWithRetry,
   requestGithubPages,
+  retryReadOperation,
 } from '../../tools/release/github-read.mts';
 import { mergeChecksumManifest } from './merge-checksum-manifest.mts';
 
@@ -316,8 +318,9 @@ function exactExpectedArtifact(records, runId, name, expectedMetadata = null) {
   return observed;
 }
 
-async function jobRecords(repo, runId) {
+async function jobRecords(repo, runId, options = {}) {
   const records = await requestGithubPages(`repos/${repo}/actions/runs/${runId}/jobs?filter=all`, {
+    ...options,
     itemsField: 'jobs',
     label: `jobs for run ${runId}`,
   });
@@ -411,9 +414,17 @@ function validateSnapshot(snapshot, { requireWorkflowSuccess = true, sourceTree 
 }
 
 async function createRunSnapshot(repo, runId, options = {}) {
-  const data = await requestGithubJsonWithRetry(
-    `https://api.github.com/repos/${repo}/actions/runs/${runId}`,
-  );
+  const read = (endpoint) =>
+    requestGithubJsonWithRetry(`https://api.github.com/repos/${repo}/${endpoint}`, {
+      ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
+    });
+  const pageOptions = () => {
+    if (options.deadlineMs === undefined) return {};
+    const remaining = options.deadlineMs - Date.now();
+    if (remaining <= 0) throw new Error('exact producer metadata convergence deadline exhausted');
+    return { deadlineMs: remaining };
+  };
+  const data = await read(`actions/runs/${runId}`);
   if (
     String(data?.id ?? '') !== String(runId) ||
     !FULL_SHA.test(data?.head_sha ?? '') ||
@@ -426,9 +437,7 @@ async function createRunSnapshot(repo, runId, options = {}) {
   ) {
     throw new Error(`workflow run ${runId} is malformed or not completed/success`);
   }
-  const workflow = await requestGithubJsonWithRetry(
-    `https://api.github.com/repos/${repo}/actions/workflows/${data.workflow_id}`,
-  );
+  const workflow = await read(`actions/workflows/${data.workflow_id}`);
   if (
     workflow?.id !== data.workflow_id ||
     typeof workflow?.name !== 'string' ||
@@ -438,19 +447,17 @@ async function createRunSnapshot(repo, runId, options = {}) {
   }
   let headTree;
   if (options.sourceTree) {
-    const commit = await requestGithubJsonWithRetry(
-      `https://api.github.com/repos/${repo}/git/commits/${data.head_sha}`,
-    );
+    const commit = await read(`git/commits/${data.head_sha}`);
     if (commit?.sha !== data.head_sha || !FULL_SHA.test(commit?.tree?.sha ?? ''))
       throw new Error(`workflow run ${runId} source commit metadata is malformed`);
     headTree = commit.tree.sha;
   }
   return validateSnapshot(
     {
-      artifacts: await artifactRecords(repo, runId),
+      artifacts: await artifactRecords(repo, runId, pageOptions()),
       conclusion: data.conclusion,
       headSha: data.head_sha.toLowerCase(),
-      jobs: await jobRecords(repo, runId),
+      jobs: await jobRecords(repo, runId, pageOptions()),
       repo,
       runAttempt: data.run_attempt,
       runId: String(runId),
@@ -473,7 +480,7 @@ async function createRunSnapshot(repo, runId, options = {}) {
 
 async function runSnapshot(repo, runId, options = {}) {
   const file = snapshotFile(runId);
-  if (file !== null && existsSync(file)) {
+  if (file !== null && existsSync(file) && !options.refresh) {
     assertRegularSnapshotFile(file);
     const snapshot = validateSnapshot(
       parsedJson(readFileSync(file, 'utf8'), `cached run ${runId} snapshot`),
@@ -527,12 +534,73 @@ function assertRunIdentity(snapshot, args) {
   }
   if (args.jobSuccessOnly) {
     const job = latestGithubJob(snapshot, args.requiredJob);
-    if (args.jobAttempt && String(job.run_attempt) !== args.jobAttempt)
+    if (args.jobAttempt && String(job?.run_attempt) !== args.jobAttempt)
       throw new Error(`workflow run ${snapshot.runId} producing job attempt mismatch`);
-    const selected = args.artifacts.map((name) => githubJobArtifact(snapshot, job, name, args.sha));
-    for (const name of args.artifacts)
-      exactExpectedArtifact(selected, snapshot.runId, name, args.expectedArtifactMetadata);
   }
+}
+
+class PendingProducerJob extends Error {}
+
+async function exactProducerSnapshot(repo, args) {
+  let observedIdentity;
+  const environment = {
+    OLIPHAUNT_GITHUB_READ_DEADLINE_MS: '300000',
+    OLIPHAUNT_GITHUB_READ_MAX_ATTEMPTS: '10',
+    OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS: '5000',
+    OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS: '30000',
+    ...process.env,
+  };
+  return retryReadOperation(
+    `exact producer ${args.requiredJob} in run ${args.selectedRunId}`,
+    async ({ attempt, deadlineMs }) => {
+      const snapshot = await runSnapshot(repo, args.selectedRunId, {
+        requireWorkflowSuccess: false,
+        sourceTree: args.sourceTree,
+        refresh: attempt > 1,
+        deadlineMs,
+      });
+      if (!runMatchesRequest(snapshot, args.workflow, args.sha))
+        fail(`${args.workflow} run ${args.selectedRunId} does not belong to commit ${args.sha}`);
+      assertRunIdentity(snapshot, args);
+      const job = latestGithubJob(snapshot, args.requiredJob);
+      if (!job) fail(`workflow run ${snapshot.runId} is missing required job ${args.requiredJob}`);
+      const identity = JSON.stringify([
+        snapshot.repo,
+        snapshot.runId,
+        snapshot.headSha,
+        snapshot.headTree,
+        snapshot.workflowId,
+        snapshot.workflowName,
+        snapshot.workflowPath,
+        snapshot.runWorkflowPath,
+        snapshot.event,
+        snapshot.headBranch,
+        snapshot.pullRequestNumbers,
+        snapshot.runAttempt,
+        job.id,
+        job.run_attempt,
+        job.run_id,
+        job.head_sha,
+      ]);
+      if (observedIdentity !== undefined && identity !== observedIdentity)
+        fail('exact producer run or job identity changed while waiting for completion');
+      observedIdentity = identity;
+      if (requiredJobSuccess(snapshot, args.requiredJob)) return snapshot;
+      if (
+        !['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(job.status) ||
+        job.conclusion !== null
+      )
+        fail(
+          `${args.workflow} run ${snapshot.runId} does not satisfy required job ${args.requiredJob}`,
+        );
+      throw new PendingProducerJob(`required job ${args.requiredJob} is ${job.status}`);
+    },
+    {
+      classify: (error) => error instanceof PendingProducerJob,
+      deadlineMs: Math.min(300_000, githubReadOptionsFromEnv(environment).deadlineMs),
+      environment,
+    },
+  );
 }
 
 async function candidateRunIds(repo, workflow, sha) {
@@ -803,10 +871,9 @@ async function mergeDownloadedArtifact(artifact, sourceDir, destination) {
 async function selectRunId(repo, args) {
   if (args.selectedRunId !== '') {
     const runId = args.selectedRunId;
-    const snapshot = await runSnapshot(repo, runId, {
-      requireWorkflowSuccess: !args.jobSuccessOnly,
-      sourceTree: args.sourceTree,
-    });
+    const snapshot = args.jobSuccessOnly
+      ? await exactProducerSnapshot(repo, args)
+      : await runSnapshot(repo, runId, { sourceTree: args.sourceTree });
     if (!runMatchesRequest(snapshot, args.workflow, args.sha)) {
       fail(`${args.workflow} run ${runId} does not belong to commit ${args.sha}`);
     }

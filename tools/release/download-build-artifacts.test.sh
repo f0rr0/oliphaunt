@@ -18,10 +18,13 @@ invoke() {
     TMPDIR="$case_root" FAKE_ARTIFACT_ARCHIVE="$case_root/artifact.zip" \
     FAKE_GH_LOG="$case_root/gh.log" FAKE_GH_STATE="$case_root/state" FAKE_MODE="$mode" \
     FAKE_CANDIDATE_MODE="${candidate_mode:-}" FAKE_DUPLICATE_JOB="${duplicate_job:-}" \
+    FAKE_JOB_CASE="${job_case:-}" \
     FAKE_RUN_STATUS="${run_status:-completed}" FAKE_RUN_CONCLUSION="${run_conclusion-success}" \
     GH_REPO=f0rr0/oliphaunt GH_TOKEN=test-token \
     OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR="$case_root/snapshots" \
     OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS=0 OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS=0 \
+    OLIPHAUNT_GITHUB_READ_DEADLINE_MS="${read_deadline:-300000}" \
+    OLIPHAUNT_GITHUB_READ_MAX_ATTEMPTS="${read_attempts:-10}" \
     bash .github/scripts/download-build-artifacts.sh CI "${requested_sha:-$sha}" "$case_root/durable" \
       --job Qualified --artifact exact-artifact "$@" > "$case_root/result" 2>&1
 }
@@ -64,6 +67,49 @@ prepare snapshot
 invoke success --run-id 77
 invoke success --run-id 77
 clean snapshot
+# Only a pending exact producer may converge; its immutable identity remains pinned.
+producer=(--run-id 77 --job-success-only --workflow-path .github/workflows/ci.yml
+  --event workflow_dispatch --ref refs/heads/main --source-tree bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)
+prepare producer-success
+job_case=pending-success invoke success "${producer[@]}"
+invoke success "${producer[@]}"
+clean producer:2:2:accepted
+prepare producer-cached pending-snapshot
+job_case=cached-success invoke success "${producer[@]}"
+clean producer:1:1:accepted
+prepare producer-shared-cache
+job_case=cache-other-pending invoke success "${producer[@]}"
+job_case=cache-other-success invoke success "${producer[@]}" --job 'Second producer'
+clean producer:2:2:accepted
+prepare producer-immediate
+# An unrelated failed workflow must not disqualify the successful requested role.
+run_conclusion=failure invoke success "${producer[@]}" --run-attempt 1 --job-attempt 1
+clean producer:1:1:accepted
+for fault in failure cancelled missing event; do
+  prepare "producer-$fault"
+  job_case="$fault" reject 1 'does not satisfy required job|missing required job|event mismatch' success "${producer[@]}"
+  [[ ! -e "$case_root/durable" && ! -e "$case_root/state" ]]
+  clean producer:1:0
+done
+prepare producer-duplicate
+job_case=pending-success duplicate_job=true reject 1 'ambiguous latest executions' success "${producer[@]}"
+clean producer:1:0
+prepare producer-wrong-attempt
+job_case=pending-success reject 1 'producing job attempt mismatch' success "${producer[@]}" --job-attempt 2
+clean producer:1:0
+for fault in failure source-drift producer-drift rerun-drift 404; do
+  prepare "producer-pending-$fault"
+  job_case="pending-$fault" reject 1 'does not satisfy required job|does not belong to commit|identity changed|HTTP 404' success "${producer[@]}"
+  [[ ! -e "$case_root/durable" && ! -e "$case_root/state" ]]
+  clean producer:2:0
+done
+prepare producer-timeout
+job_case=pending-timeout read_attempts=3 reject 1 'retry budget exhausted after 3 attempt' success "${producer[@]}"
+clean producer:3:0
+prepare producer-deadline
+# A larger ambient HTTP deadline must not expand the five-minute readiness cap.
+job_case=pending-deadline read_deadline=3600000 reject 1 'deadline (exhausted|expired)' success "${producer[@]}"
+clean producer:2:0
 prepare pagination
 candidate_mode=beyond-first-page invoke success
 [[ "$(cat "$case_root/durable/payload.txt")" == correct ]]

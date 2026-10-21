@@ -7,6 +7,14 @@ const nativeCase = process.env.FAKE_NATIVE_CASE;
 const mixed = nativeCase?.startsWith('mixed') === true;
 const nativeSourceCommit = process.env.FAKE_NATIVE_SOURCE_COMMIT || 'a'.repeat(40);
 const nativeSourceTree = process.env.FAKE_NATIVE_SOURCE_TREE || 'b'.repeat(40);
+const jobCase = process.env.FAKE_JOB_CASE || '';
+let snapshotReads = 0;
+if (nativeCase === 'mixed-pending') {
+  process.env.OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS = '0';
+  process.env.OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS = '0';
+}
+let now = Date.now();
+if (jobCase === 'pending-deadline') Date.now = () => now;
 
 globalThis.fetch = async (input, options) => {
   const url = new URL(input);
@@ -50,6 +58,8 @@ globalThis.fetch = async (input, options) => {
       size_in_bytes: bytes.length,
       expired: false,
       digest: 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex'),
+      created_at: '2026-10-11T01:01:00Z',
+      workflow_run: { id: 77, head_sha: 'a'.repeat(40) },
       ...(native
         ? {
             created_at:
@@ -84,22 +94,27 @@ globalThis.fetch = async (input, options) => {
     });
   }
   if (/actions\/runs\/77\/jobs/.test(endpoint)) {
+    const pending =
+      jobCase.startsWith('pending-') &&
+      (snapshotReads === 1 || ['pending-timeout', 'pending-deadline'].includes(jobCase));
     const jobs = [
       {
         id: 501,
         run_id: 77,
         head_sha: native ? nativeSourceCommit : 'a'.repeat(40),
         name: native ? 'Linux runtime (x86_64)' : 'Qualified',
-        status: 'completed',
-        conclusion: nativeCase === 'job-failure' ? 'failure' : 'success',
+        status: pending ? 'in_progress' : 'completed',
+        conclusion: pending
+          ? null
+          : nativeCase === 'job-failure' || ['pending-failure', 'failure'].includes(jobCase)
+            ? 'failure'
+            : jobCase === 'cancelled'
+              ? 'cancelled'
+              : 'success',
         run_attempt: nativeCase === 'job-attempt' ? 2 : 1,
-        ...(native
-          ? {
-              created_at: '2026-10-11T00:59:59Z',
-              started_at: '2026-10-11T01:00:00Z',
-              completed_at: '2026-10-11T01:02:00Z',
-            }
-          : {}),
+        created_at: '2026-10-11T00:59:59Z',
+        started_at: '2026-10-11T01:00:00Z',
+        completed_at: pending ? null : '2026-10-11T01:02:00Z',
       },
     ];
     if (mixed) {
@@ -143,18 +158,46 @@ globalThis.fetch = async (input, options) => {
         run_attempt: 1,
       });
     if (nativeCase === 'job-window-missing') delete jobs[0].started_at;
+    if (jobCase === 'pending-producer-drift' && snapshotReads > 1) jobs[0].id = 502;
+    if (jobCase.startsWith('cache-other-'))
+      jobs.push({
+        ...jobs[0],
+        id: 502,
+        name: 'Second producer',
+        status: jobCase === 'cache-other-pending' ? 'in_progress' : 'completed',
+        conclusion: jobCase === 'cache-other-pending' ? null : 'success',
+        completed_at: jobCase === 'cache-other-pending' ? null : jobs[0].completed_at,
+      });
+    if (jobCase === 'missing') jobs.length = 0;
     if (process.env.FAKE_DUPLICATE_JOB === 'true') jobs.push({ ...jobs[0], id: 502 });
     return Response.json({ jobs });
   }
   if (/actions\/runs\/77$/.test(endpoint)) {
+    snapshotReads += 1;
+    if (jobCase === 'pending-deadline') now += 160_000;
+    if (jobCase === 'pending-404' && snapshotReads > 1)
+      return new Response('not found', { status: 404 });
     return Response.json({
       id: 77,
       head_sha:
-        nativeCase === 'source' ? 'f'.repeat(40) : native ? nativeSourceCommit : 'a'.repeat(40),
+        nativeCase === 'source' || (jobCase === 'pending-source-drift' && snapshotReads > 1)
+          ? 'f'.repeat(40)
+          : native
+            ? nativeSourceCommit
+            : 'a'.repeat(40),
       workflow_id: 9,
-      run_attempt: nativeCase === 'attempt' ? 0 : mixed ? 2 : 1,
+      run_attempt:
+        nativeCase === 'attempt'
+          ? 0
+          : mixed || (jobCase === 'pending-rerun-drift' && snapshotReads > 1)
+            ? 2
+            : 1,
       status: process.env.FAKE_RUN_STATUS || 'completed',
       conclusion: process.env.FAKE_RUN_CONCLUSION || 'success',
+      path: '.github/workflows/ci.yml',
+      event: jobCase === 'event' ? 'push' : 'workflow_dispatch',
+      head_branch: 'main',
+      pull_requests: [],
       ...(native
         ? {
             path:
@@ -176,6 +219,7 @@ globalThis.fetch = async (input, options) => {
     return Response.json({
       id: 9,
       name: native ? 'Native Bazel qualification' : 'CI',
+      path: '.github/workflows/ci.yml',
       ...(native
         ? {
             path:
