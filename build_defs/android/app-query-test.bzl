@@ -9,6 +9,7 @@ load("@rules_android//rules:dex.bzl", "dex")
 load("@rules_android//rules/android_binary:impl.bzl", "PROCESSORS")
 load("@rules_android//android:rules.bzl", "android_binary")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo", "int_flag")
+load("//build_defs/release:shipping.bzl", "ShippingExportInfo", "ShippingInfo")
 
 def _query_input_test_impl(ctx):
     env = unittest.begin(ctx)
@@ -164,6 +165,34 @@ _android_dex_actions = rule(
 
 _android_min_sdk_test = analysistest.make(_android_min_sdk_test_impl)
 
+_FinalDataFiles = provider(fields = ["files", "attributes", "abis"])
+
+def _final_data_files_impl(_target, ctx):
+    inherited = []
+    for name in ["apk", "deps", "assets", "aar"]:
+        dependencies = getattr(ctx.rule.attr, name, [])
+        if type(dependencies) != "list":
+            dependencies = [dependencies] if dependencies else []
+        inherited += [dependency[_FinalDataFiles] for dependency in dependencies if _FinalDataFiles in dependency]
+    files, attributes, abis = [], [], []
+    if ctx.rule.kind in ["android_final_aar", "android_app_runtime_assets"]:
+        names = ["source"] if ctx.rule.kind == "android_final_aar" else ["payload", "icu", "leaves"]
+        for name in names:
+            dependencies = getattr(ctx.rule.attr, name)
+            if type(dependencies) != "list":
+                dependencies = [dependencies] if dependencies else []
+            files += [file for dependency in dependencies for file in dependency[DefaultInfo].files.to_list()]
+            attributes.append(name)
+        if ctx.rule.kind == "android_app_runtime_assets":
+            abis.append(ctx.rule.attr.abi)
+    return [_FinalDataFiles(
+        files = depset(files, transitive = [data.files for data in inherited]),
+        attributes = depset(attributes, transitive = [data.attributes for data in inherited]),
+        abis = depset(abis, transitive = [data.abis for data in inherited]),
+    )]
+
+_final_data_files = aspect(implementation = _final_data_files_impl, attr_aspects = ["apk", "deps", "assets", "aar"])
+
 def _android_binary_min_sdk_test_impl(ctx):
     env = analysistest.begin(ctx)
     flags = {"AndroidDexer": "--min-sdk-version", "Desugar": "--min_sdk_version", "ValidateManifest": "--expected_min_sdk_version"}
@@ -174,6 +203,18 @@ def _android_binary_min_sdk_test_impl(ctx):
             asserts.equals(env, "26", action.argv[action.argv.index(flag) + 1])
             observed[action.mnemonic] = True
     asserts.equals(env, sorted(flags), sorted(observed))
+    # The existing Android qualifier already owns these apps and producers.
+    # Inspect their configured Files without adding any app/producer outputs to
+    # this analysis test's executable or runfiles.
+    producers = {file: True for package in ctx.attr.shipping[ShippingExportInfo].packages for file in package[ShippingInfo].files.to_list()}
+    producers.update({file: True for dependency in ctx.attr.shared_data for file in dependency[DefaultInfo].files.to_list()})
+    data = [app[_FinalDataFiles] for app in ctx.attr.installed_apps]
+    asserts.equals(env, ["arm64-v8a", "x86_64"], sorted(depset(transitive = [item.abis for item in data]).to_list()))
+    asserts.equals(env, ["icu", "leaves", "payload", "source"], sorted(depset(transitive = [item.attributes for item in data]).to_list()))
+    files = depset(transitive = [item.files for item in data]).to_list()
+    asserts.true(env, bool(files), "installed Android apps must reach their actual final data")
+    for file in files:
+        asserts.true(env, file in producers, "installed Android final data differs from its original producer File: " + file.path)
     return analysistest.end(env)
 
 _android_binary_min_sdk_test = analysistest.make(
@@ -181,6 +222,11 @@ _android_binary_min_sdk_test = analysistest.make(
     config_settings = {
         str(Label("@rules_android//rules:min_sdk_version")): 26,
         "//command_line_option:android_platforms": [str(Label("//build_defs/android:android_x86_64"))],
+    },
+    attrs = {
+        "installed_apps": attr.label_list(default = [Label("//src/examples/native/react-native-expo:" + name) for name in ["android_release", "android_release_x86_64"]], aspects = [_final_data_files]),
+        "shipping": attr.label(default = Label("//:native_android_shipping_export"), providers = [ShippingExportInfo]),
+        "shared_data": attr.label_list(default = [Label("//src/native/runtime:public_payload"), Label("//src/database-resources:icu_payload"), Label("//src/native/sdks/kotlin:android_maven_archive")]),
     },
 )
 

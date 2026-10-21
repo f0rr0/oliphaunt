@@ -273,11 +273,30 @@ def _final_aar_impl(ctx):
         ctx.actions.symlink(output = output, target_file = source)
     return [DefaultInfo(files = depset([output]))]
 
+_ANDROID_MIN_SDK = str(Label("@rules_android//rules:min_sdk_version"))
+
+def _final_data_impl(settings, _attr):
+    # Final carriers are data from the same host-side producers exported by the
+    # Android request. Keep their Files out of the app's ABI and tool configs.
+    return {
+        "//command_line_option:platforms": [str(settings["//command_line_option:host_platform"])],
+        "//command_line_option:android_platforms": [],
+        "//command_line_option:Android configuration distinguisher": "main",
+        "//command_line_option:dynamic_mode": "default",
+        _ANDROID_MIN_SDK: 0,
+    }
+
+_final_data = transition(implementation = _final_data_impl,
+    inputs = ["//command_line_option:host_platform"],
+    outputs = ["//command_line_option:platforms", "//command_line_option:android_platforms",
+        "//command_line_option:Android configuration distinguisher", "//command_line_option:dynamic_mode", _ANDROID_MIN_SDK])
+
 android_final_aar = rule(implementation = _final_aar_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
-    attrs = dict(_RUNNER, **{"source": attr.label(mandatory = True, allow_files = True, cfg = "exec"),
+    attrs = dict(_RUNNER, **{"source": attr.label(mandatory = True, allow_files = True, cfg = _final_data),
         "kind": attr.string(default = "aar", values = ["aar", "runtime", "seed"]),
         "catalog_profile": attr.string(default = "standard", values = ["standard", "icu"]),
-        "package": attr.string(), "abi": attr.string(default = "", values = ["", "arm64-v8a", "x86_64"])}))
+        "package": attr.string(), "abi": attr.string(default = "", values = ["", "arm64-v8a", "x86_64"]),
+        "_allowlist_function_transition": attr.label(default = Label("@bazel_tools//tools/allowlists/function_transition_allowlist"))}))
 
 def mobile_query_input(owner, requirement, source_version, final_version, selected_products, suppliers):
     """Admit the prepared TS owner, otherwise retain its genuine completed dependency."""
@@ -367,14 +386,15 @@ def _runtime_assets_impl(ctx):
 
 android_app_runtime_assets = rule(implementation = _runtime_assets_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = dict(_RUNNER, **{
-        "payload": attr.label(default = Label("//src/native/runtime:public_payload"), cfg = "exec", allow_files = True),
-        "icu": attr.label(allow_single_file = True, cfg = "exec"),
+        "payload": attr.label(default = Label("//src/native/runtime:public_payload"), cfg = _final_data, allow_files = True),
+        "icu": attr.label(allow_single_file = True, cfg = _final_data),
         "version": attr.string(mandatory = True), "selected_extensions": attr.string_list(mandatory = True),
         "mobile_static_modules": attr.string_list(mandatory = True), "receipt": attr.label(mandatory = True, allow_single_file = [".json"]),
         "abi": attr.string(mandatory = True, values = ["arm64-v8a", "x86_64"]),
-        "leaves": attr.label_list(mandatory = True, providers = [ExtensionFinalLeafInfo], cfg = "exec"),
+        "leaves": attr.label_list(mandatory = True, providers = [ExtensionFinalLeafInfo], cfg = _final_data),
         "_helpers": attr.label_list(default = _STATIC_CARRIER_HELPERS, allow_files = True),
         "_formatter": attr.label(default = Label("//src/native/runtime/packaging:resources"), cfg = "exec", executable = True),
+        "_allowlist_function_transition": attr.label(default = Label("@bazel_tools//tools/allowlists/function_transition_allowlist")),
     }))
 
 def _jni_aar_impl(ctx):
@@ -393,8 +413,6 @@ def _jni_aar_impl(ctx):
 android_jni_aar = rule(implementation = _jni_aar_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
                        attrs = dict(_RUNNER, **{"libraries": attr.label_keyed_string_dict(allow_files = True, mandatory = True),
                                                 "package": attr.string(mandatory = True)}))
-
-_ANDROID_MIN_SDK = str(Label("@rules_android//rules:min_sdk_version"))
 
 def _apk_abi_impl(settings, attr):
     platform = "//build_defs/android:android_" + ("arm64" if attr.abi == "arm64-v8a" else "x86_64")
