@@ -14,11 +14,30 @@ export MOCK_BINARY="$scratch/bazel"
 export MOCK_EXECUTION_LOG="$scratch/executions"
 export MOCK_DOWNLOAD_LOG="$scratch/downloads"
 export MOCK_OS=Linux MOCK_ARCH=x86_64 MOCK_DOWNLOAD_KIND=valid
+export MOCK_CREDENTIAL_NAMES='FIXTURE_TOKEN fixture_token FiXtUrE_pAsSwOrD FIXTURE_PASSWORD fixture_secret FIXTURE_SECRET fixture_key FIXTURE_KEY fixture_credentials FIXTURE_CREDENTIALS npm_config__auth npm_config__authToken NPM_CONFIG__AUTHTOKEN'
+for credential in $MOCK_CREDENTIAL_NAMES; do export "$credential=synthetic-private-value"; done
+export MOCK_STAGED_INPUTS="$scratch/staged publication inputs.json"
+export OLIPHAUNT_NATIVE_PUBLICATION_INPUTS="$MOCK_STAGED_INPUTS"
+export HTTPS_PROXY='http://fixture.invalid:8080'
 export PATH="$scratch/bin:$PATH"
+shopt -u nocasematch
+export BASHOPTS
 
 fail() { echo "bazel-bootstrap.test.sh: $*" >&2; exit 1; }
 cat > "$MOCK_BINARY" <<'SH'
 #!/usr/bin/env bash
+set -euo pipefail
+for credential in $MOCK_CREDENTIAL_NAMES; do
+  if declare -p "$credential" >/dev/null 2>&1; then
+    echo 'bazel-bootstrap.test.sh: credential variable reached Bazel' >&2
+    exit 91
+  fi
+done
+[[ "$OLIPHAUNT_NATIVE_PUBLICATION_INPUTS" == "$MOCK_STAGED_INPUTS" ]] || exit 92
+[[ "$HTTPS_PROXY" == 'http://fixture.invalid:8080' ]] || exit 92
+casefold=off
+if shopt -q nocasematch; then casefold=on; fi
+[[ "$casefold" == "${MOCK_CASEFOLD:-off}" ]] || exit 93
 printf 'cwd=%s\n' "$PWD" >> "$MOCK_EXECUTION_LOG"
 printf 'arg=%s\n' "$@" >> "$MOCK_EXECUTION_LOG"
 SH
@@ -64,7 +83,13 @@ launcher="$checkout/tools/dev/bazel.sh"
 for selector in Linux/x86_64 Linux/aarch64 Darwin/x86_64 Darwin/arm64 MINGW64_NT-10.0/x86_64; do
   MOCK_OS="${selector%/*}" MOCK_ARCH="${selector#*/}" \
     bash "$launcher" --output_user_root="$scratch/output root" build '//target:two words'
+  # Every platform's verified cache works without contacting the network.
+  MOCK_OS="${selector%/*}" MOCK_ARCH="${selector#*/}" MOCK_DOWNLOAD_KIND=fail \
+    bash "$launcher" version
 done
+shopt -s nocasematch
+MOCK_CASEFOLD=on MOCK_DOWNLOAD_KIND=fail bash "$launcher" version
+shopt -u nocasematch
 [ "$(wc -l < "$MOCK_DOWNLOAD_LOG")" -eq 5 ] || fail 'platform downloads were not selected once each'
 for suffix in linux-x86_64 linux-arm64 darwin-x86_64 darwin-arm64 windows-x86_64.exe; do
   grep -Fxq "https://releases.bazel.build/8.8.1/release/bazel-8.8.1-$suffix" "$MOCK_DOWNLOAD_LOG" ||
@@ -75,9 +100,6 @@ printf 'cwd=%s\narg=--output_user_root=%s/output root\narg=build\narg=//target:t
 head -n 4 "$MOCK_EXECUTION_LOG" > "$scratch/actual"
 cmp "$scratch/expected" "$scratch/actual" || fail 'workspace or argument boundaries changed'
 
-# A verified cache must work without contacting the network.
-MOCK_DOWNLOAD_KIND=fail bash "$launcher" version
-[ "$(wc -l < "$MOCK_DOWNLOAD_LOG")" -eq 5 ] || fail 'valid cache contacted the network'
 binary="$XDG_CACHE_HOME/oliphaunt/bazel/8.8.1/bazel-8.8.1-linux-x86_64"
 printf 'corrupt cache\n' > "$binary"
 bash "$launcher" version
@@ -110,4 +132,4 @@ printf '8.8.1\tbazel-8.8.1-linux-x86_64\t%s\n' "$checksum" >> "$checkout/tools/d
 expect_failure
 grep -q 'missing or ambiguous checksum' "$scratch/failure" || fail 'duplicate checksum was accepted'
 
-echo 'Bazel bootstrap passed: platforms, pinned downloads, verified cache, arguments and failure cleanup'
+echo 'Bazel bootstrap passed: platforms, pinned downloads, verified cache, credential exclusion, staged inputs, arguments and failure cleanup'

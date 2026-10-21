@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Bazel records its client environment in raw build events.
+oliphaunt_bazel_nocasematch=false
+if shopt -q nocasematch; then oliphaunt_bazel_nocasematch=true; fi
+shopt -s nocasematch
+while IFS= read -r oliphaunt_bazel_variable; do
+  case "$oliphaunt_bazel_variable" in
+    *_TOKEN|*_PASSWORD|*_SECRET|*_KEY|*_CREDENTIALS|npm_config__auth|npm_config__authToken) unset "$oliphaunt_bazel_variable" ;;
+  esac
+done < <(compgen -e)
+if [[ "$oliphaunt_bazel_nocasematch" == false ]]; then shopt -u nocasematch; fi
+unset oliphaunt_bazel_nocasematch oliphaunt_bazel_variable
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$script_dir/../.." && pwd)"
 cd "$root"
