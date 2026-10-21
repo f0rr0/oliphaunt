@@ -20,8 +20,6 @@ export MOCK_STAGED_INPUTS="$scratch/staged publication inputs.json"
 export OLIPHAUNT_NATIVE_PUBLICATION_INPUTS="$MOCK_STAGED_INPUTS"
 export HTTPS_PROXY='http://fixture.invalid:8080'
 export PATH="$scratch/bin:$PATH"
-shopt -u nocasematch
-export BASHOPTS
 
 fail() { echo "bazel-bootstrap.test.sh: $*" >&2; exit 1; }
 cat > "$MOCK_BINARY" <<'SH'
@@ -35,9 +33,6 @@ for credential in $MOCK_CREDENTIAL_NAMES; do
 done
 [[ "$OLIPHAUNT_NATIVE_PUBLICATION_INPUTS" == "$MOCK_STAGED_INPUTS" ]] || exit 92
 [[ "$HTTPS_PROXY" == 'http://fixture.invalid:8080' ]] || exit 92
-casefold=off
-if shopt -q nocasematch; then casefold=on; fi
-[[ "$casefold" == "${MOCK_CASEFOLD:-off}" ]] || exit 93
 printf 'cwd=%s\n' "$PWD" >> "$MOCK_EXECUTION_LOG"
 printf 'arg=%s\n' "$@" >> "$MOCK_EXECUTION_LOG"
 SH
@@ -87,9 +82,20 @@ for selector in Linux/x86_64 Linux/aarch64 Darwin/x86_64 Darwin/arm64 MINGW64_NT
   MOCK_OS="${selector%/*}" MOCK_ARCH="${selector#*/}" MOCK_DOWNLOAD_KIND=fail \
     bash "$launcher" version
 done
-shopt -s nocasematch
-MOCK_CASEFOLD=on MOCK_DOWNLOAD_KIND=fail bash "$launcher" version
-shopt -u nocasematch
+# Inspect the launcher's own state before exec; child shells reset shopt options.
+for expected_casefold in off on; do
+  (
+    shopt -u nocasematch
+    if [[ "$expected_casefold" == on ]]; then shopt -s nocasematch; fi
+    exec() {
+      local actual_casefold=off
+      if shopt -q nocasematch; then actual_casefold=on; fi
+      [[ "$actual_casefold" == "$expected_casefold" ]] || exit 93
+      command exec "$@"
+    }
+    MOCK_DOWNLOAD_KIND=fail source "$launcher" version
+  )
+done
 [ "$(wc -l < "$MOCK_DOWNLOAD_LOG")" -eq 5 ] || fail 'platform downloads were not selected once each'
 for suffix in linux-x86_64 linux-arm64 darwin-x86_64 darwin-arm64 windows-x86_64.exe; do
   grep -Fxq "https://releases.bazel.build/8.8.1/release/bazel-8.8.1-$suffix" "$MOCK_DOWNLOAD_LOG" ||
