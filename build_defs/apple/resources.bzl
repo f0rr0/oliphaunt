@@ -1,5 +1,7 @@
 """The original SDK's selected app resource/registry construction."""
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_RELEASE_METADATA")
 load("//build_defs/extensions:final_leaf.bzl", "ExtensionFinalLeafInfo", "NativeAppleBaseInfo")
+load("//build_defs/extensions:owner_carriers.bzl", "native_owner_carrier_legal")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 
 def _resources_impl(ctx):
@@ -8,7 +10,7 @@ def _resources_impl(ctx):
         fail("App construction requires the two genuine declared native archive Files")
     if not ctx.attr.extensions:
         fail("The mandatory installed app must exercise a nonempty selected extension cohort")
-    inputs = [base.file, ctx.file.seed] + base.archive_files
+    inputs = [base.file, ctx.file.seed] + base.archive_files + ctx.files.legal
     leaves = []
     for target in ctx.attr.leaves:
         leaf = target[ExtensionFinalLeafInfo]
@@ -31,14 +33,15 @@ def _resources_impl(ctx):
         "resources":resources.path,"registry":registry.path,"selection":selection.path,
         "seed":ctx.file.seed.path,"seedResources":seed_resources.path}) + "\n")
     bun_file_action(ctx,ctx.file._runner,arguments=[specification.path],
-        inputs=inputs+[specification],source_files=[ctx.file._runner]+ctx.files._helpers,
+        inputs=inputs+[specification],source_files=[ctx.file._runner]+ctx.files._helpers+ctx.files.legal,
         outputs=[resources,registry,selection,seed_resources],execution_requirements={"block-network":"1"},mnemonic="ExpoAppleSelectedResources")
     return [DefaultInfo(files=depset([resources])),OutputGroupInfo(resources=depset([resources]),registry=depset([registry]),selection=depset([selection]),seed=depset([seed_resources]))]
 
-expo_ios_resources = rule(implementation=_resources_impl,toolchains=BUN_SOURCE_TOOLCHAINS,attrs={
+_resources = rule(implementation=_resources_impl,toolchains=BUN_SOURCE_TOOLCHAINS,attrs={
     "base":attr.label(mandatory=True,providers=[NativeAppleBaseInfo]),
     "leaves":attr.label_list(mandatory=True,providers=[ExtensionFinalLeafInfo],cfg="exec"),
     "extensions":attr.string_list(mandatory=True),
+    "legal":attr.label_list(allow_files=True),
     "seed":attr.label(mandatory=True,allow_single_file=[".tgz"],cfg="exec"),
     "_runner":attr.label(default=Label("//build_defs/apple:resources.mts"),allow_single_file=True),
     "_helpers":attr.label_list(default=[
@@ -48,3 +51,8 @@ expo_ios_resources = rule(implementation=_resources_impl,toolchains=BUN_SOURCE_T
         Label("//src/database-resources:contracts/native-manifest.mts"), Label("//src/database-resources:contracts/contract.json"),
     ],allow_files=True),
 })
+
+def expo_ios_resources(name, extensions, **kwargs):
+    products = {row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in extensions}
+    legal = {label: True for product in products for label in native_owner_carrier_legal(product)}
+    _resources(name=name, extensions=extensions, legal=sorted(legal), **kwargs)

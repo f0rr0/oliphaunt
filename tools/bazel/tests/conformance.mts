@@ -438,6 +438,37 @@ function installedAppleFinalInputs() {
       .filter(Boolean)
       .map(canonicalShippingLabel)
       .sort();
+  const resourceSources = path.join(directory, 'resource-sources');
+  for (const label of query(
+    `kind("source file", deps(labels("$runner", ${resources}) union labels("$helpers", ${resources}) union labels(legal, ${resources})))`,
+  )) {
+    assert.ok(label.startsWith('//'), 'app helper sources must retain their workspace paths');
+    const relative = label.slice(2).split(':').filter(Boolean).join('/');
+    const destination = path.join(resourceSources, relative);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    cpSync(realpathSync(path.join(workspace, relative)), destination);
+  }
+  const legalProbe = path.join(resourceSources, 'build_defs/apple/resource-legal-probe.mts');
+  writeFileSync(
+    legalProbe,
+    `import assert from 'node:assert/strict';
+import { extensionCarrierLegalContract } from '../../src/extensions/tools/extension-upstream-licenses.mts';
+const legal = extensionCarrierLegalContract(${JSON.stringify(product)}, ['vector'], { family: 'native', target: 'ios-xcframework' });
+assert.ok(legal.licenseFiles.length, 'selected app extension requires its actual upstream legal files');
+`,
+  );
+  const legalResult = spawnSync(process.execPath, ['--no-install', '--no-env-file', legalProbe], {
+    cwd: resourceSources,
+    encoding: 'utf8',
+    env: subprocessEnvironment,
+    timeout: 30_000,
+  });
+  assert.equal(legalResult.error, undefined);
+  assert.equal(
+    legalResult.status,
+    0,
+    `app legal policy must run from only its declared resource helper sources: ${legalResult.stderr}`,
+  );
   const leafSelection = `labels(leaves, ${resources})`;
   const seedSelection = `labels(seed, ${resources})`;
   const linkSelection = `labels(leaf, labels(static_library, labels(deps, ${pkg}:ios_final_libraries)))`;
