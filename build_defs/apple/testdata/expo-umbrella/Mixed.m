@@ -1,4 +1,5 @@
 #import "Mixed.h"
+@import AliasFixture_Alias;
 
 @interface ExpoUmbrellaObjcView : UIView
 @end

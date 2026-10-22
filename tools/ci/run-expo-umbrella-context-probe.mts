@@ -10,6 +10,17 @@ export function withoutUIKitImport(source: string) {
   return source.replace(imported, '"// UIKit import disabled for regression control"');
 }
 
+export function withoutClangModuleMapAdmission(source: string) {
+  const admission = '["-fmodule-map-file=$(location " + module_map + ")" for module_map in clang_module_maps]';
+  assert.equal(source.split(admission).length, 2, 'Disable exactly one explicit Clang module-map admission list.');
+  return source.replace(admission, '[]');
+}
+
+export function aliasModuleHomeMismatch(logs: string) {
+  const match = logs.match(/fatal error: module 'AliasFixture_Alias' was built in directory '([^'\r\n]*AliasFixture\.framework)' but now resides in directory '([^'\r\n]*AliasFixture\.framework\/Modules)'/);
+  return match ? { builtDirectory: match[1], residentDirectory: match[2] } : undefined;
+}
+
 export function missingUmbrellaSymbols(logs: string) {
   const found: Record<'Headerless' | 'Mixed', string[]> = { Headerless: [], Mixed: [] };
   for (const match of logs.matchAll(/\b(Headerless|Mixed)\.swift:\d+:\d+:\s+error:\s+cannot find(?: type)? '(DispatchQueue|UIView)' in scope/g)) {
@@ -54,6 +65,7 @@ function main() {
   const helper = join(checkout, 'build_defs/apple/native.bzl');
   const original = readFileSync(helper);
   const baseline = withoutUIKitImport(original.toString('utf8'));
+  const aliasBaseline = withoutClangModuleMapAdmission(original.toString('utf8'));
   const sha256 = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
   const environment: NodeJS.ProcessEnv = {};
   for (const name of ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'DEVELOPER_DIR']) {
@@ -71,7 +83,9 @@ function main() {
     'build_defs/apple/native.bzl', 'build_defs/apple/BUILD.bazel', '.github/workflows/bazel.yml',
     'src/examples/native/react-native-expo/BUILD.bazel',
     'build_defs/android/native-repository.bzl', 'build_defs/apple/react-native-repository.bzl',
-    ...['Headerless.swift', 'Mixed.swift', 'Mixed.h', 'Mixed.m', 'MixedPrivate.h'].map(name => `build_defs/apple/testdata/expo-umbrella/${name}`),
+    ...['Headerless.swift', 'Mixed.swift', 'Mixed.h', 'Mixed.m', 'MixedPrivate.h',
+      'AliasFixture.framework/Headers/Root.h', 'AliasFixture.framework/Headers/Alias.h',
+      'AliasFixture.framework/Modules/module.modulemap'].map(name => `build_defs/apple/testdata/expo-umbrella/${name}`),
   ];
   const observations: Record<string, unknown>[] = [];
   const result: Record<string, unknown> = {
@@ -80,6 +94,7 @@ function main() {
     sourceHashes: Object.fromEntries(sourceFiles.map(file => [file, sha256(readFileSync(join(checkout, file)))])),
     probeRunnerSha256: sha256(readFileSync(import.meta.path)),
     originalSourceSha256: sha256(original), baselineSourceSha256: sha256(baseline),
+    aliasBaselineSourceSha256: sha256(aliasBaseline),
     observations, status: 'incomplete',
   };
   function run(name: string, timeoutMs: number) {
@@ -106,6 +121,7 @@ function main() {
       elapsedMs: Math.round(performance.now() - started), timeoutMs,
       stdoutSha256: sha256(readFileSync(stdoutPath)), stderrSha256: sha256(readFileSync(stderrPath)),
       missingSymbols: missingUmbrellaSymbols(logs),
+      aliasModuleHomeMismatch: aliasModuleHomeMismatch(logs) ?? null,
       testPassed: expoFixturePassed(logs),
     };
     observations.push(observation);
@@ -124,12 +140,25 @@ function main() {
       writeFileSync(helper, original);
       const restored = readFileSync(helper);
       result.restoredSourceSha256 = sha256(restored);
-      assert.ok(restored.equals(original), 'Restore the exact original helper before the positive run.');
+      assert.ok(restored.equals(original), 'Restore the exact original helper before the module-map control.');
+    }
+    let aliasNegative: ReturnType<typeof run>;
+    try {
+      writeFileSync(helper, aliasBaseline);
+      aliasNegative = run('clang-module-map-admission-disabled', 3 * 60_000);
+    } finally {
+      writeFileSync(helper, original);
+      const restored = readFileSync(helper);
+      result.aliasRestoredSourceSha256 = sha256(restored);
+      assert.ok(restored.equals(original), 'Restore the exact original helper after the module-map control.');
     }
     const positive = run('fixed-positive', 3 * 60_000);
     assert.ok(negative.status !== null && negative.status !== 0 && !negative.signal && !negative.error &&
       negative.missingSymbols.Headerless.length > 0 && negative.missingSymbols.Mixed.length > 0,
     'Disabling the UIKit import must fail on missing DispatchQueue or UIView in both Swift fixtures.');
+    assert.ok(aliasNegative.status !== null && aliasNegative.status !== 0 && !aliasNegative.signal && !aliasNegative.error &&
+      aliasNegative.aliasModuleHomeMismatch,
+    'Disabling explicit map admission must fail on AliasFixture_Alias moving from the framework directory to Modules.');
     assert.ok(positive.status === 0 && !positive.signal && !positive.error && positive.testPassed,
       'The exact restored helper must pass the same permanent iOS build test.');
     result.status = 'passed';

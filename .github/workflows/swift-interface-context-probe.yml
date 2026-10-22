@@ -37,7 +37,7 @@ jobs:
           cohort: portable
 
       - name: Prove the permanent Expo iOS umbrella regression
-        timeout-minutes: 28
+        timeout-minutes: 31
         shell: bash
         run: |
           bash tools/dev/bun.sh --no-env-file tools/ci/run-expo-umbrella-context-probe.mts \

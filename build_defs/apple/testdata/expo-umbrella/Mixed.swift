@@ -1,7 +1,13 @@
+import AliasFixture_Alias
+
 private let mixedQueue = DispatchQueue(label: "oliphaunt.expo.mixed")
 
 @objc public class ExpoUmbrellaSwiftValue: NSObject {
   @objc public static func value() -> Int32 { 17 }
+
+  @objc public static func aliasValue(_ value: ExpoUmbrellaAliasValue?) -> ExpoUmbrellaAliasValue? {
+    value
+  }
 }
 
 func mixedPodView(_ view: UIView) -> UIView {

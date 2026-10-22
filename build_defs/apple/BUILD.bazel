@@ -3,6 +3,7 @@ load("@bazel_skylib//rules:select_file.bzl", "select_file")
 load("@bazel_lib//lib:copy_file.bzl", "copy_file")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_apple//apple:ios.bzl", "ios_build_test")
+load("@rules_apple//apple:apple.bzl", "apple_dynamic_framework_import")
 load("@rules_swift//swift:swift_library.bzl", "swift_library")
 load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
 load(":native.bzl", "expo_apple_swift_library", "react_apple_swift_copts")
@@ -82,6 +83,11 @@ build_test(name = "swift_interface_context_test", targets = [":swift_context_con
 # CocoaPods supplies UIKit to Swift and Clang; private headers may import generated Swift declarations.
 _EXPO_UMBRELLA = "testdata/expo-umbrella/"
 _EXPO_UMBRELLA_IOS = ["@platforms//os:ios", "@platforms//cpu:aarch64"]
+apple_dynamic_framework_import(
+    name = "expo_umbrella_alias_framework",
+    framework_imports = glob([_EXPO_UMBRELLA + "AliasFixture.framework/**"]),
+    testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
+)
 expo_apple_swift_library(
     name = "expo_umbrella_headerless", module_name = "ExpoUmbrellaHeaderless",
     swift_srcs = [_EXPO_UMBRELLA + "Headerless.swift"], clang_srcs = [],
@@ -92,6 +98,8 @@ expo_apple_swift_library(
     name = "expo_umbrella_mixed", module_name = "ExpoUmbrellaMixed",
     swift_srcs = [_EXPO_UMBRELLA + "Mixed.swift"], clang_srcs = [_EXPO_UMBRELLA + "Mixed.m"],
     hdrs = [_EXPO_UMBRELLA + "Mixed.h"],
+    deps = [":expo_umbrella_alias_framework"],
+    clang_module_maps = [_EXPO_UMBRELLA + "AliasFixture.framework/Modules/module.modulemap"],
     swiftc_inputs = [_EXPO_UMBRELLA + "MixedPrivate.h"],
     additional_objc_compiler_inputs = [_EXPO_UMBRELLA + "MixedPrivate.h"],
     swift_copts = ["-swift-version", "5", "-cxx-interoperability-mode=default", "-Xcc", "-std=c++20"],

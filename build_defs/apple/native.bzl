@@ -3,6 +3,8 @@ load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_swift//swift:swift_library.bzl", "swift_library")
 load("@rules_swift//mixed_language:mixed_language_library.bzl", "mixed_language_library")
 load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
+load("@rules_swift//swift:providers.bzl", "SwiftInfo")
+load("@rules_swift//swift:swift_clang_module_aspect.bzl", "swift_clang_module_aspect")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_cc//cc:objc_library.bzl", "objc_library")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
@@ -20,6 +22,9 @@ def _react_headers_impl(ctx):
     jsi = [header for header in headers if header.path == root + "/Headers/React_jsi/jsi/jsi.h"]
     if len(jsi) != 1:
         fail("Selected React.framework must provide exactly one jsi.h")
+    module_maps = [module.clang.module_map for module in ctx.attr.react[SwiftInfo].direct_modules if module.name == "React" and module.clang and type(module.clang.module_map) == "File"]
+    if len(module_maps) != 1 or module_maps[0].path != root + "/Modules/module.modulemap":
+        fail("React module map must belong to the selected React.framework")
     overlay = ctx.actions.declare_file(ctx.label.name + ".yaml")
     ctx.actions.expand_template(template = ctx.file.template, output = overlay,
         substitutions = {"${ROOT_PATH}": root})
@@ -30,15 +35,15 @@ def _react_headers_impl(ctx):
     swift_headers = ctx.file.swift_bridging.dirname.removesuffix("/swift")
     return [
         DefaultInfo(files = depset([overlay])),
-        OutputGroupInfo(jsi_header = depset(jsi)),
+        OutputGroupInfo(jsi_header = depset(jsi), module_map = depset(module_maps)),
         CcInfo(compilation_context = cc_common.create_compilation_context(
-            headers = depset(headers + ctx.files.headers + ctx.files.swift_headers + [overlay]),
+            headers = depset(headers + module_maps + ctx.files.headers + ctx.files.swift_headers + [overlay]),
             system_includes = depset([prefix, hermes, dependencies, swift_headers]),
         )),
     ]
 
 react_apple_headers = rule(implementation = _react_headers_impl, attrs = {
-    "react": attr.label(mandatory = True, providers = [CcInfo]),
+    "react": attr.label(mandatory = True, providers = [CcInfo], aspects = [swift_clang_module_aspect]),
     "template": attr.label(mandatory = True, allow_single_file = [".yaml"]),
     "hermes_header": attr.label(mandatory = True, allow_single_file = [".h"]),
     "dependencies_header": attr.label(mandatory = True, allow_single_file = [".h"]),
@@ -55,7 +60,7 @@ def react_apple_swift_copts(react_headers):
         "-Xfrontend", "-strict-implicit-module-context",
     ]
 
-def expo_apple_swift_library(name, hdrs = [], clang_copts = [], **kwargs):
+def expo_apple_swift_library(name, hdrs = [], clang_copts = [], clang_module_maps = [], additional_objc_compiler_inputs = [], **kwargs):
     """Preserve CocoaPods' UIKit prefix and re-exporting underlying module."""
     umbrella = name + "_pod_umbrella"
     write_file(
@@ -67,7 +72,9 @@ def expo_apple_swift_library(name, hdrs = [], clang_copts = [], **kwargs):
     )
     mixed_language_library(
         name = name, hdrs = [":" + umbrella] + hdrs, enable_modules = True,
-        clang_copts = ["-include", "$(location :" + umbrella + ")"] + clang_copts,
+        clang_copts = ["-include", "$(location :" + umbrella + ")"] +
+            ["-fmodule-map-file=$(location " + module_map + ")" for module_map in clang_module_maps] + clang_copts,
+        additional_objc_compiler_inputs = additional_objc_compiler_inputs + clang_module_maps,
         **kwargs
     )
 
@@ -75,7 +82,7 @@ _SQLITE = ["HAVE_USLEEP=1", "SQLITE_ENABLE_LOCKING_STYLE=0", "SQLITE_ENABLE_BYTE
     "SQLITE_TEMP_STORE=2", "SQLITE_ENABLE_SESSION=1", "SQLITE_ENABLE_PREUPDATE_HOOK=1",
     "SQLITE_ENABLE_MATH_FUNCTIONS=1", "SQLITE_ENABLE_FTS4=1", "SQLITE_ENABLE_FTS3_PARENTHESIS=1", "SQLITE_ENABLE_FTS5=1"]
 
-def expo_apple_modules(metadata, react, hermes, dependencies, react_headers, react_jsi_headers, app_dependency_provider, app_codegen, constants_config):
+def expo_apple_modules(metadata, react, hermes, dependencies, react_headers, react_jsi_headers, react_module_map, app_dependency_provider, app_codegen, constants_config):
     """Build the real release closure declared by the exact original Apple resolve."""
     common = [react, hermes, dependencies, react_headers]
     overlay = "$(location " + react_headers + ")"
@@ -131,6 +138,7 @@ def expo_apple_modules(metadata, react, hermes, dependencies, react_headers, rea
             deps = deps + [react_headers], alwayslink = True,
             swift_copts = ["-swift-version", row.get("swift", "5")] + swift + (["-Xcc", "-I" + sqlite_headers] + [flag for define in defines for flag in ["-Xcc", "-D" + define]] if defines else []),
             clang_copts = clang + ["-D" + define for define in defines] + (["-I" + sqlite_headers] if defines else []),
+            clang_module_maps = [react_module_map],
             # Original relative includes remain available without importing private Swift.h into its own module.
             swiftc_inputs = [react_headers] + row["privateHeaders"],
             additional_objc_compiler_inputs = [react_headers] + row["privateHeaders"],

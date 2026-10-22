@@ -227,6 +227,7 @@ react_apple_headers(
     swift_headers = ["@native_apple_sdk//:swift_interop_headers"],
 )
 filegroup(name = "ios_react_jsi_header", srcs = [":ios_react_headers"], output_group = "jsi_header")
+filegroup(name = "ios_react_module_map", srcs = [":ios_react_headers"], output_group = "module_map")
 _IOS_REACT = ["@react_native_apple_release//:React", ":ios_react_headers"]
 _IOS_SWIFT = ["-swift-version", "5"] + react_apple_swift_copts(":ios_react_headers")
 _CODEGEN = [relative for relative in IOS_GENERATED_FILES if relative.startswith("codegen/ReactCodegen/")]

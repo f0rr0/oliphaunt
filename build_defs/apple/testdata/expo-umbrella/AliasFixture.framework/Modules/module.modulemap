@@ -1,0 +1,11 @@
+framework module AliasFixture {
+  umbrella header "Root.h"
+  export *
+  module * { export * }
+}
+
+framework module AliasFixture_Alias {
+  umbrella header "Alias.h"
+  export *
+  module * { export * }
+}

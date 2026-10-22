@@ -60,6 +60,7 @@ expo_apple_modules(
     dependencies = "@react_native_apple_release//:dependencies",
     react_headers = "@oliphaunt//src/examples/native/react-native-expo:ios_react_headers",
     react_jsi_headers = "@oliphaunt//src/examples/native/react-native-expo:ios_react_jsi_header",
+    react_module_map = "@oliphaunt//src/examples/native/react-native-expo:ios_react_module_map",
     app_dependency_provider = "@oliphaunt//src/examples/native/react-native-expo:ios_ReactAppDependencyProvider",
     app_codegen = "@oliphaunt//src/examples/native/react-native-expo:ios_ReactCodegen",
     constants_config = "@oliphaunt//src/examples/native/react-native-expo:ios_constants_config",
