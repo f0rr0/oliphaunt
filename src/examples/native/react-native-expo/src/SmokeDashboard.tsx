@@ -32,6 +32,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Settings,
   StyleSheet,
   Text,
   View,
@@ -1049,12 +1050,19 @@ async function resolveBenchmarkPreset(): Promise<BenchmarkPreset> {
 }
 
 function resolveInitialLaunchUrl(): Promise<string | null> {
-  initialLaunchUrlPromise ??= Promise.race([
-    Linking.getInitialURL().catch(() => null),
-    new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), initialUrlTimeoutMs);
-    }),
-  ]);
+  if (!initialLaunchUrlPromise) {
+    // Direct simulator launches pass configuration through iOS's argument domain.
+    const launchUrl = Platform.OS === 'ios' ? Settings.get('liboliphauntLaunchURL') : undefined;
+    initialLaunchUrlPromise =
+      typeof launchUrl === 'string' && launchUrl.length > 0
+        ? Promise.resolve(launchUrl)
+        : Promise.race([
+            Linking.getInitialURL().catch(() => null),
+            new Promise<null>((resolve) => {
+              setTimeout(() => resolve(null), initialUrlTimeoutMs);
+            }),
+          ]);
+  }
   return initialLaunchUrlPromise;
 }
 

@@ -99,7 +99,9 @@ export function simulatorTemplate(value: any) {
       (devices as any[])
         .filter(
           (device) =>
-            device.isAvailable === true && typeof device.deviceTypeIdentifier === 'string',
+            device.isAvailable === true &&
+            typeof device.deviceTypeIdentifier === 'string' &&
+            device.deviceTypeIdentifier.startsWith('com.apple.CoreSimulator.SimDeviceType.iPhone-'),
         )
         .map((device) => ({ runtime, type: device.deviceTypeIdentifier })),
     );
@@ -110,7 +112,7 @@ export function simulatorTemplate(value: any) {
   );
   assert(
     choices.length,
-    'Selected Xcode must have an available real iOS simulator runtime/device type',
+    'Selected Xcode must have an available real iPhone simulator runtime/device type',
   );
   return choices[0];
 }
@@ -197,6 +199,7 @@ async function installedApp(args: string[]) {
       /^[0-9A-Fa-f-]{36}$/u,
       'simctl create must return the actual owned simulator',
     );
+    console.log(`Installed iOS simulator ${simulator}: ${template.type} (${template.runtime})`);
     const extracted = path.join(scratch, 'app');
     const app = extractInstalledAppArchive(archive, extracted);
     const pack = path.join(scratch, 'pack');

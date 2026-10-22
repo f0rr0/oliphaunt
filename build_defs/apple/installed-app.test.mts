@@ -98,28 +98,51 @@ describe('actual installed app qualification boundary', () => {
       /declared File/,
     );
   });
-  test('uses a genuinely available iOS runtime/type and excludes other platforms', () => {
+  test('uses an available iPhone on the newest eligible runtime and excludes iPads', () => {
+    const phone = 'com.apple.CoreSimulator.SimDeviceType.iPhone-16';
+    const phonePro = 'com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro';
+    const ipad = 'com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M4-8GB';
     const rows = {
       'com.apple.CoreSimulator.SimRuntime.visionOS-99-0': [
-        { isAvailable: true, deviceTypeIdentifier: 'vision' },
+        { isAvailable: true, deviceTypeIdentifier: phone },
       ],
       'com.apple.CoreSimulator.SimRuntime.iOS-26-3': [
-        { isAvailable: true, deviceTypeIdentifier: 'iphone' },
+        { isAvailable: true, deviceTypeIdentifier: phone },
+      ],
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-6': [
+        { isAvailable: true, deviceTypeIdentifier: ipad },
       ],
       'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-        { isAvailable: false, deviceTypeIdentifier: 'newer-unavailable' },
+        { isAvailable: false, deviceTypeIdentifier: phone },
       ],
       'com.apple.CoreSimulator.SimRuntime.iOS-26-4': [
-        { isAvailable: true, deviceTypeIdentifier: 'iphone' },
+        { isAvailable: true, deviceTypeIdentifier: ipad },
+        { isAvailable: true, deviceTypeIdentifier: phonePro },
+        { isAvailable: true, deviceTypeIdentifier: phone },
       ],
     };
     expect(simulatorTemplate({ devices: rows })).toEqual({
       runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-4',
-      type: 'iphone',
+      type: phone,
     });
     expect(
-      simulatorTemplate({ devices: Object.fromEntries(Object.entries(rows).reverse()) }),
+      simulatorTemplate({
+        devices: Object.fromEntries(
+          Object.entries(rows)
+            .reverse()
+            .map(([runtime, devices]) => [runtime, [...devices].reverse()]),
+        ),
+      }),
     ).toEqual(simulatorTemplate({ devices: rows }));
-    expect(() => simulatorTemplate({ devices: {} })).toThrow(/available real iOS/);
+    expect(() => simulatorTemplate({ devices: {} })).toThrow(/available real iPhone/);
+    expect(() =>
+      simulatorTemplate({
+        devices: {
+          'com.apple.CoreSimulator.SimRuntime.iOS-26-6': [
+            { isAvailable: true, deviceTypeIdentifier: ipad },
+          ],
+        },
+      }),
+    ).toThrow(/available real iPhone/);
   });
 });

@@ -218,13 +218,16 @@ expo_ios_bundle(
 _IOS = {relative: ":" + ios_project_file_name(relative) for relative in IOS_GENERATED_FILES}
 react_apple_headers(
     name = "ios_react_headers",
+    react = "@react_native_apple_release//:React",
     template = "@react_native_apple_release//:React.xcframework/React-VFS-template.yaml",
     hermes_header = "@react_native_apple_release//:destroot/include/hermes/hermes.h",
     dependencies_header = "@react_native_apple_release//:packages/react-native/third-party/ReactNativeDependencies.xcframework/Headers/folly/Traits.h",
-    headers = ["@react_native_apple_release//:react_headers", "@react_native_apple_release//:hermes_headers", "@react_native_apple_release//:dependency_headers"],
+    headers = ["@react_native_apple_release//:hermes_headers", "@react_native_apple_release//:dependency_headers"],
     swift_bridging = "@native_apple_sdk//:toolchain/include/swift/bridging",
     swift_headers = ["@native_apple_sdk//:swift_interop_headers"],
 )
+filegroup(name = "ios_react_jsi_header", srcs = [":ios_react_headers"], output_group = "jsi_header")
+filegroup(name = "ios_react_module_map", srcs = [":ios_react_headers"], output_group = "module_map")
 _IOS_REACT = ["@react_native_apple_release//:React", ":ios_react_headers"]
 _IOS_SWIFT = ["-swift-version", "5"] + react_apple_swift_copts(":ios_react_headers")
 _CODEGEN = [relative for relative in IOS_GENERATED_FILES if relative.startswith("codegen/ReactCodegen/")]
@@ -251,6 +254,7 @@ objc_library(
 swift_library(
     name = "ios_RNAdapter", module_name = "OliphauntReactNative",
     srcs = [_IOS["sdk/ios/OliphauntAdapter.swift"]],
+    hdrs = [_IOS["sdk/ios/OliphauntAdapter.h"]],
     deps = ["@react_native_swift_package//:Oliphaunt"], copts = ["-swift-version", "6"],
     alwayslink = True,
 )
@@ -263,16 +267,12 @@ objc_library(
     copts = ["-ivfsoverlay", "$(location :ios_react_headers)"], data = [":ios_react_headers"],
 )
 swift_library(
-    name = "ios_ExpoModulesProvider", module_name = "ExpoModulesProvider",
-    srcs = [_IOS["ExpoModulesProvider.swift"]], alwayslink = True,
-    deps = ["@expo_android_sources//:" + row["module"] for row in APPLE_NATIVE["modules"]] +
-        ["@expo_android_sources//:" + row["module"] for row in APPLE_NATIVE["frameworks"]],
-    copts = _IOS_SWIFT, swiftc_inputs = [":ios_react_headers"],
-)
-swift_library(
     name = "ios_AppDelegate", module_name = "reactnativeoliphauntexpo",
-    srcs = [_IOS["app/AppDelegate.swift"]],
-    deps = [":ios_ReactAppDependencyProvider", ":ios_ExpoModulesProvider", "@expo_android_sources//:Expo"] + _IOS_REACT,
+    # Expo discovers the generated provider through the application's Swift module.
+    srcs = [_IOS["app/AppDelegate.swift"], _IOS["ExpoModulesProvider.swift"]],
+    deps = [":ios_ReactAppDependencyProvider"] +
+        ["@expo_android_sources//:" + row["module"] for row in APPLE_NATIVE["modules"]] +
+        ["@expo_android_sources//:" + row["module"] for row in APPLE_NATIVE["frameworks"]] + _IOS_REACT,
     copts = _IOS_SWIFT, swiftc_inputs = [":ios_react_headers"],
 )
 filegroup(name = "ios_constants_config", srcs = [":ios_project"], output_group = "constants")
