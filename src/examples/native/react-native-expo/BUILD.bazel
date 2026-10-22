@@ -251,6 +251,7 @@ objc_library(
 swift_library(
     name = "ios_RNAdapter", module_name = "OliphauntReactNative",
     srcs = [_IOS["sdk/ios/OliphauntAdapter.swift"]],
+    hdrs = [_IOS["sdk/ios/OliphauntAdapter.h"]],
     deps = ["@react_native_swift_package//:Oliphaunt"], copts = ["-swift-version", "6"],
     alwayslink = True,
 )
