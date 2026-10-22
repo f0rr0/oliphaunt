@@ -267,16 +267,12 @@ objc_library(
     copts = ["-ivfsoverlay", "$(location :ios_react_headers)"], data = [":ios_react_headers"],
 )
 swift_library(
-    name = "ios_ExpoModulesProvider", module_name = "ExpoModulesProvider",
-    srcs = [_IOS["ExpoModulesProvider.swift"]], alwayslink = True,
-    deps = ["@expo_android_sources//:" + row["module"] for row in APPLE_NATIVE["modules"]] +
-        ["@expo_android_sources//:" + row["module"] for row in APPLE_NATIVE["frameworks"]],
-    copts = _IOS_SWIFT, swiftc_inputs = [":ios_react_headers"],
-)
-swift_library(
     name = "ios_AppDelegate", module_name = "reactnativeoliphauntexpo",
-    srcs = [_IOS["app/AppDelegate.swift"]],
-    deps = [":ios_ReactAppDependencyProvider", ":ios_ExpoModulesProvider", "@expo_android_sources//:Expo"] + _IOS_REACT,
+    # Expo discovers the generated provider through the application's Swift module.
+    srcs = [_IOS["app/AppDelegate.swift"], _IOS["ExpoModulesProvider.swift"]],
+    deps = [":ios_ReactAppDependencyProvider"] +
+        ["@expo_android_sources//:" + row["module"] for row in APPLE_NATIVE["modules"]] +
+        ["@expo_android_sources//:" + row["module"] for row in APPLE_NATIVE["frameworks"]] + _IOS_REACT,
     copts = _IOS_SWIFT, swiftc_inputs = [":ios_react_headers"],
 )
 filegroup(name = "ios_constants_config", srcs = [":ios_project"], output_group = "constants")

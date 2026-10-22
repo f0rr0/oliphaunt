@@ -60,7 +60,7 @@ export function retainIosLinkDiagnostics(checkout: string, output: string, envir
       inputs.push({ ...fileIdentity(provider), retainedAs: `${configuration}/ExpoModulesProvider.swift` });
     }
     const entries = readdirSync(packageDirectory, { withFileTypes: true }).filter(entry => entry.isFile());
-    const libraries = entries.filter(entry => /^libios_ExpoModulesProvider.*\.(?:a|lo)$/.test(entry.name));
+    const libraries = entries.filter(entry => /^libios_(?:ExpoModulesProvider|AppDelegate).*\.(?:a|lo)$/.test(entry.name));
     for (const library of libraries) {
       if (providerInvocations >= 4) break;
       const file = join(packageDirectory, library.name);
@@ -68,7 +68,7 @@ export function retainIosLinkDiagnostics(checkout: string, output: string, envir
       command(`${configuration}.${library.name}.nm`, '/usr/bin/nm', ['-m', file], 32 * 1024 * 1024);
       providerInvocations += 1;
     }
-    const params = entries.filter(entry => /^_?(?:ios_release|libios_ExpoModulesProvider).*(?:\.params|\.param|\.objlist|\.(?:link)?filelist)$/.test(entry.name));
+    const params = entries.filter(entry => /^_?(?:ios_release|libios_(?:ExpoModulesProvider|AppDelegate)).*(?:\.params|\.param|\.objlist|\.(?:link)?filelist)$/.test(entry.name));
     for (const entry of params) {
       if (retainedParams >= 16) break;
       const file = join(packageDirectory, entry.name);
