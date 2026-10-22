@@ -90,37 +90,41 @@ fi
 
 echo "iOS runner failure and receipt checks passed"
 
-# Release must deliver a registered-scheme URL through UIKit. Debug retains
-# the development launcher's supported argument; neither changes bundle flags.
+# Release passes its URL through NSArgumentDomain without a scheme confirmation.
+# Debug retains the development launcher's supported argument.
 calls="$test_root/launch-calls"
 app_id=dev.oliphaunt.fixture
-openurl_failure=0
+launch_failure=0
 xcrun() {
   printf '%s\n' "$*" >>"$calls"
-  if [ "$2" = openurl ] && [ "$openurl_failure" = 1 ]; then return 7; fi
+  printf '%s\n' "$@" >"$test_root/launch-argv"
+  if [ "$2" = launch ] && [ "$launch_failure" = 1 ]; then return 7; fi
   if [ "$2" = launch ]; then printf '%s: %s\n' "$app_id" "$$"; fi
 }
 uses_ios_metro() { [ "$configuration" = Debug ]; }
 configuration=Release
-launch_ios_simulator_runner owned-simulator 'fixture://smoke?liboliphauntLifecycle=1' >"$test_root/launch-output"
-grep -Fxq 'simctl openurl owned-simulator fixture://smoke?liboliphauntLifecycle=1' "$calls"
-grep -Fxq 'simctl launch owned-simulator dev.oliphaunt.fixture' "$calls"
-[ "$(wc -l <"$calls" | tr -d '[:space:]')" = 2 ]
-if grep -Fq -- '--initialUrl' "$calls"; then
-  echo 'Release forwarded an unsupported initialUrl argument' >&2
-  exit 1
-fi
+for launch_url in \
+  'fixture://oliphaunt-smoke?liboliphauntRunner=smoke&liboliphauntLifecycle=1' \
+  'fixture://oliphaunt-smoke?liboliphauntRunner=benchmark&liboliphauntBenchmarkPreset=short%20read&liboliphauntStartupGUCs=work_mem%3D4MB%26search_path%3Dpublic' \
+  'fixture://oliphaunt-smoke?liboliphauntRunner=crash-verify&liboliphauntStorageDirectory=%2Ftmp%2Fcrash%20data&label=two words'; do
+  : >"$calls"
+  launch_ios_simulator_runner owned-simulator "$launch_url" >"$test_root/launch-output"
+  [ "$(cat "$test_root/launch-argv")" = "$(printf '%s\n' simctl launch owned-simulator "$app_id" -liboliphauntLaunchURL "$launch_url")" ]
+  [ "$(wc -l <"$calls" | tr -d '[:space:]')" = 1 ]
+  if grep -Fq 'simctl openurl ' "$calls"; then
+    echo 'Release initial launch requested a custom-scheme confirmation' >&2
+    exit 1
+  fi
+done
 : >"$calls"
-openurl_failure=1
+launch_failure=1
 status=0
 launch_output="$(launch_ios_simulator_runner owned-simulator 'fixture://smoke')" || status=$?
 [ "$status" = 7 ]
+[ -z "$launch_output" ]
 [ "$(wc -l <"$calls" | tr -d '[:space:]')" = 1 ]
-if grep -Fq 'simctl launch ' "$calls"; then
-  echo 'failed registered URL launch fell through to ordinary launch' >&2
-  exit 1
-fi
-openurl_failure=0
+grep -Fxq 'simctl launch owned-simulator dev.oliphaunt.fixture -liboliphauntLaunchURL fixture://smoke' "$calls"
+launch_failure=0
 : >"$calls"
 configuration=Debug
 launch_ios_simulator_runner owned-simulator 'fixture://development' >"$test_root/launch-output"
@@ -167,30 +171,33 @@ completed_receipt="$(bun "$root/src/native/sdks/react-native/tools/expo-runner-i
 xcrun() {
   printf '%s\n' "$*" >>"$calls"
   if [ "$2" = openurl ]; then
-    if [ "$4" = https://example.com/liboliphaunt-lifecycle-background ]; then
-      printf 'exercised\n' >"$test_root/lifecycle-exercised"
-      printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:state","state":"background"}\n' >>"$ios_simulator_log_file"
-    elif [ "$scenario" = complete ] || [ "$scenario" = lifecycle-js-fatal-pass ] || [ "$scenario" = lifecycle-timeout ]; then
-      if [ "$scenario" = complete ]; then
-        printf 'Warning: Cannot find native module ExpoAsset\n' >>"$ios_simulator_log_file"
-      fi
-      if [ "$scenario" = lifecycle-timeout ]; then
-        printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"open:start","fixture":"scoped-diagnostic"}\n' >>"$ios_simulator_log_file"
-      fi
-      printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:ready","state":"inactive"}\n' >>"$ios_simulator_log_file"
-    elif [ "$scenario" = js-fatal ] || [ "$scenario" = lifecycle-js-fatal ]; then
-      printf 'Unhandled JS Exception: [runtime not ready]: Error: Cannot find native module ExpoAsset\n' >>"$ios_simulator_log_file"
-      printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:ready","state":"active"}\n' >>"$ios_simulator_log_file"
-    elif [ "$scenario" = ordinary ]; then
-      printf '%s %s\n' "$success_tag" "$receipt_json" >>"$ios_simulator_log_file"
-    else
-      printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"open:start","fixture":"scoped-diagnostic"}\n' >>"$ios_simulator_log_file"
-    fi
+    [ "$4" = https://example.com/liboliphaunt-lifecycle-background ] || return 9
+    printf 'exercised\n' >"$test_root/lifecycle-exercised"
+    printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:state","state":"background"}\n' >>"$ios_simulator_log_file"
   elif [ "$2" = io ] && [ "$4" = screenshot ]; then
     [ "$scenario" != dead-capture ] || return 7
     printf 'fixture PNG\n' >"$5"
   elif [ "$2" = launch ]; then
-    if [ -s "$test_root/lifecycle-exercised" ]; then
+    if [ "${5:-}" = -liboliphauntLaunchURL ]; then
+      [ "$#" = 6 ] && [ "$6" = "$(ios_runner_url "$runner")" ] || return 9
+      if [ "$scenario" = complete ] || [ "$scenario" = lifecycle-js-fatal-pass ] || [ "$scenario" = lifecycle-timeout ]; then
+        if [ "$scenario" = complete ]; then
+          printf 'Warning: Cannot find native module ExpoAsset\n' >>"$ios_simulator_log_file"
+        fi
+        if [ "$scenario" = lifecycle-timeout ]; then
+          printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"open:start","fixture":"scoped-diagnostic"}\n' >>"$ios_simulator_log_file"
+        fi
+        printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:ready","state":"inactive"}\n' >>"$ios_simulator_log_file"
+      elif [ "$scenario" = js-fatal ] || [ "$scenario" = lifecycle-js-fatal ]; then
+        printf 'Unhandled JS Exception: [runtime not ready]: Error: Cannot find native module ExpoAsset\n' >>"$ios_simulator_log_file"
+        printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:ready","state":"active"}\n' >>"$ios_simulator_log_file"
+      elif [ "$scenario" = ordinary ]; then
+        printf '%s %s\n' "$success_tag" "$receipt_json" >>"$ios_simulator_log_file"
+      else
+        printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"open:start","fixture":"scoped-diagnostic"}\n' >>"$ios_simulator_log_file"
+      fi
+    elif [ -s "$test_root/lifecycle-exercised" ]; then
+      [ "$#" = 4 ] || return 9
       if [ "$scenario" = lifecycle-timeout ]; then
         printf '%s lifecycle timeout states=inactive>background\n' "$failure_tag" >>"$ios_simulator_log_file"
       else
@@ -269,8 +276,8 @@ for scenario in ordinary complete js-fatal lifecycle-js-fatal lifecycle-js-fatal
   fi
   if [ "$scenario" = complete ] || [ "$scenario" = lifecycle-timeout ]; then
     grep -Fxq 'simctl openurl owned-simulator https://example.com/liboliphaunt-lifecycle-background' "$calls"
-    [ "$(grep -Fxc "simctl openurl owned-simulator $(ios_runner_url "$runner")" "$calls")" = 1 ]
-    [ "$(grep -Fxc 'simctl launch owned-simulator dev.oliphaunt.fixture' "$calls")" = 2 ]
+    grep -Fxq "simctl launch owned-simulator dev.oliphaunt.fixture -liboliphauntLaunchURL $(ios_runner_url "$runner")" "$calls"
+    [ "$(grep -Fxc 'simctl launch owned-simulator dev.oliphaunt.fixture' "$calls")" = 1 ]
   fi
 done
-echo 'iOS registered URL launch, lifecycle receipt, liveness, and scoped diagnostics passed'
+echo 'iOS direct launch, lifecycle receipt, liveness, and scoped diagnostics passed'

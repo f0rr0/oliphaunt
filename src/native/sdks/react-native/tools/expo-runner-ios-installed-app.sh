@@ -499,10 +499,7 @@ launch_ios_simulator_runner() {
   if uses_ios_metro; then
     xcrun simctl launch "$device_udid" "$app_id" --initialUrl "$url"
   else
-    # A cold registered-scheme launch gives Release Linking real UIKit URL
-    # options; --initialUrl is understood only by the development launcher.
-    run xcrun simctl openurl "$device_udid" "$url" >&2 || return
-    xcrun simctl launch "$device_udid" "$app_id"
+    xcrun simctl launch "$device_udid" "$app_id" -liboliphauntLaunchURL "$url"
   fi
 }
 

@@ -210,7 +210,6 @@ expo_ios_project(
 )
 expo_ios_bundle(
     name = "ios_bundle", sources = COMMON_INPUTS["sources"],
-    environment = {"EXPO_PUBLIC_OLIPHAUNT_LIFECYCLE_SMOKE": "1"},
     selected_extensions = SELECTED_EXTENSIONS, catalog_profile = "standard",
     package_inputs = INPUTS, package_identities = IDENTITIES, package_roots = ROOTS,
     workspace_inputs = WORKSPACE_INPUTS, workspace_identities = WORKSPACE_IDENTITIES,
