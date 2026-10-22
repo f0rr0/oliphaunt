@@ -85,7 +85,7 @@ function main() {
     'build_defs/android/native-repository.bzl', 'build_defs/apple/react-native-repository.bzl',
     ...['Headerless.swift', 'Mixed.swift', 'Mixed.h', 'Mixed.m', 'MixedPrivate.h',
       'AliasFixture.framework/Headers/Root.h', 'AliasFixture.framework/Headers/Alias.h',
-      'AliasFixture.framework/Modules/module.modulemap'].map(name => `build_defs/apple/testdata/expo-umbrella/${name}`),
+      'AliasFixture.framework/Modules/module.modulemap', 'AliasFixture.framework/Info.plist'].map(name => `build_defs/apple/testdata/expo-umbrella/${name}`),
   ];
   const observations: Record<string, unknown>[] = [];
   const result: Record<string, unknown> = {
