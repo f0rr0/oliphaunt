@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -86,9 +86,11 @@ export function retainIosLinkDiagnostics(checkout: string, output: string, envir
   if (listing.status === 0 && !listing.error && !listing.signal) {
     const members = (listing.stdout ?? Buffer.alloc(0)).toString().split('\n').filter(member => /^(?:Payload\/)?reactnativeoliphauntexpo\.app\/reactnativeoliphauntexpo$/.test(member));
     assert.equal(members.length, 1, 'Inspect exactly the original app executable.');
-    const temporaryBinary = join(directory, 'app-binary.temporary');
-    const descriptor = openSync(temporaryBinary, 'wx', 0o600);
+    const temporaryDirectory = mkdtempSync(join(output, '..', '..', 'oliphaunt-ios-link-'));
+    const temporaryBinary = join(temporaryDirectory, 'reactnativeoliphauntexpo');
+    let descriptor: number | undefined;
     try {
+      descriptor = openSync(temporaryBinary, 'wx', 0o600);
       const extraction = spawnSync('/usr/bin/unzip', ['-p', archive, members[0]!], {
         cwd: checkout, env: environment, stdio: ['ignore', descriptor, 'pipe'], timeout: 15_000, maxBuffer: 1024 * 1024,
       });
@@ -103,8 +105,8 @@ export function retainIosLinkDiagnostics(checkout: string, output: string, envir
         command('app.frameworks', '/usr/bin/otool', ['-L', temporaryBinary]);
       }
     } finally {
-      closeSync(descriptor);
-      rmSync(temporaryBinary, { force: true });
+      if (descriptor !== undefined) closeSync(descriptor);
+      rmSync(temporaryDirectory, { recursive: true, force: true });
     }
   }
   const result = { scope: 'diagnostic-only', admission: false, descriptor, archive: archiveIdentity,
@@ -181,7 +183,7 @@ function main() {
     let invocation: ReturnType<typeof spawnSync>;
     try {
       invocation = spawnSync('/bin/bash', command, {
-        cwd: checkout, env: environment, stdio: ['ignore', stdout, stderr], timeout: 45 * 60_000, killSignal: 'SIGTERM',
+        cwd: checkout, env: environment, stdio: ['ignore', stdout, stderr], timeout: 42 * 60_000, killSignal: 'SIGTERM',
       });
     } finally {
       closeSync(stdout);
