@@ -1,4 +1,4 @@
-name: Expo iOS module context probe
+name: Expo Swift UIKit mechanism matrix
 
 on:
   push:
@@ -6,17 +6,15 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
-  expo-umbrella-context:
+  expo-umbrella-mechanism:
     runs-on: macos-26
-    timeout-minutes: 120
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         timeout-minutes: 2
         with:
-          fetch-depth: 0
           persist-credentials: false
 
       - uses: ./.github/actions/setup-bun
@@ -27,41 +25,17 @@ jobs:
         with:
           install-build-dependencies: "false"
 
-      - name: Prove the permanent Expo iOS umbrella regression
-        timeout-minutes: 20
+      - name: Observe the direct Swift UIKit import mechanisms
+        timeout-minutes: 15
         shell: bash
-        run: |
-          bash tools/dev/bun.sh --no-env-file tools/ci/run-expo-umbrella-context-probe.mts \
-            --out-dir "$RUNNER_TEMP/expo-umbrella-context" \
-            --runner-temp "$RUNNER_TEMP"
-
-      - name: Download the original immutable public inputs
-        timeout-minutes: 5
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          run-id: 39712693156
-          artifact-ids: 12399683430
-          github-token: ${{ github.token }}
-          path: ${{ runner.temp }}/original-public-inputs
-
-      - name: Authenticate original RN inputs in the detached original source
-        timeout-minutes: 36
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash tools/dev/bun.sh --no-env-file tools/ci/stage-original-rn-probe-inputs.mts
-
-      - name: Exercise the original whole RN request on the fixed candidate
-        timeout-minutes: 46
-        shell: bash
-        run: bash tools/dev/bun.sh --no-env-file tools/ci/run-original-rn-consumer-probe.mts
+        run: bash tools/dev/bun.sh --no-env-file tools/ci/run-expo-umbrella-mechanism-matrix.mts
 
       - name: Retain exact compiler observations
-        timeout-minutes: 5
+        timeout-minutes: 3
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: expo-umbrella-context
-          path: ${{ runner.temp }}/expo-umbrella-context/
+          name: expo-umbrella-mechanism
+          path: ${{ runner.temp }}/expo-umbrella-mechanism/
           if-no-files-found: error
           retention-days: 7
