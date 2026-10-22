@@ -1,0 +1,41 @@
+name: Swift interface context probe
+
+on:
+  push:
+    branches: [f0rr0/swift-interface-probe-20261022]
+
+permissions:
+  contents: read
+
+jobs:
+  swift-interface-context:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      - uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
+
+      - name: Reproduce implicit interface import contexts
+        shell: bash
+        run: |
+          bash tools/dev/bun.sh --no-env-file tools/ci/swift-interface-context-probe.mts \
+            --swiftc "$(xcrun --find swiftc)" \
+            --sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+            --developer-dir "$DEVELOPER_DIR" \
+            --out-dir "$RUNNER_TEMP/swift-interface-context"
+
+      - name: Retain exact compiler observations
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: swift-interface-context
+          path: ${{ runner.temp }}/swift-interface-context/
+          if-no-files-found: error
+          retention-days: 7
