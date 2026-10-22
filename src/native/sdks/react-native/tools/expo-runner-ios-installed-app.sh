@@ -589,9 +589,9 @@ install_and_launch() {
   fi
 
   local logs pass
+  mobile_app_is_alive() { [ -n "$launch_pid" ] && kill -0 "$launch_pid" 2>/dev/null; }
   if [ "$runner" = smoke ] && [ "$lifecycle_smoke" != 1 ]; then
     local receipt_status=0
-    mobile_app_is_alive() { [ -n "$launch_pid" ] && kill -0 "$launch_pid" 2>/dev/null; }
     pass="$(wait_for_mobile_receipt "$ios_simulator_log_file" "$ios_simulator_log_pid")" || receipt_status=$?
     stop_ios_simulator_log_capture || receipt_status=3
     mobile_log_has_failure "$ios_simulator_log_file" && receipt_status=2
@@ -606,8 +606,15 @@ install_and_launch() {
   fi
 
   local deadline=$((SECONDS + timeout_seconds))
-  local fail_line lifecycle_exercised=0
+  local fail_line lifecycle_exercised=0 receipt_status
   while [ "$SECONDS" -lt "$deadline" ]; do
+    receipt_status=0
+    ios_simulator_log_capture_is_alive || receipt_status=3
+    mobile_app_is_alive || receipt_status=4
+    if [ "$receipt_status" != 0 ]; then
+      tail -200 "$ios_simulator_log_file" >&2 || true
+      fail "iOS smoke receipt failed (status $receipt_status: timeout=1, failure=2, capture=3, app=4)"
+    fi
     logs="$(cat "$ios_simulator_log_file")"
     if [ "$lifecycle_smoke" = "1" ] && [ "$lifecycle_exercised" = "0" ]; then
       if {
@@ -656,7 +663,7 @@ install_and_launch() {
     sleep 2
   done
 
-  xcrun simctl spawn "$device_udid" log show --style compact --last 2m 2>/dev/null | tail -200 >&2 || true
+  tail -200 "$ios_simulator_log_file" >&2 || true
   file_from_offset "$scratch_root/metro.log" "$scratch_metro_offset" | tail -120 >&2 || true
   file_from_offset "$metro_dev_log" "$dev_metro_offset" | tail -120 >&2 || true
   fail "timed out waiting for $success_tag"

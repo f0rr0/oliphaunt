@@ -147,8 +147,13 @@ start_ios_simulator_log_capture() {
   mkdir -p "$scratch_root/logs"
   ios_simulator_log_file="$scratch_root/logs/smoke-simulator-unified.log"
   : >"$ios_simulator_log_file"
-  sleep 60 &
+  if [ "$scenario" = dead-capture ]; then
+    ( : ) &
+  else
+    sleep 60 &
+  fi
   ios_simulator_log_pid=$!
+  if [ "$scenario" = dead-capture ]; then wait "$ios_simulator_log_pid"; fi
 }
 completed_receipt="$(bun "$root/src/native/sdks/react-native/tools/expo-runner-ios-installed-app.fixture.mts" receipt "$root/src/extensions/generated/sdk/extensions.json" lifecycle)"
 exercise_ios_lifecycle() {
@@ -163,16 +168,27 @@ xcrun() {
   if [ "$2" = openurl ]; then
     if [ "$scenario" = complete ]; then
       printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:ready","state":"active"}\n' >>"$ios_simulator_log_file"
-    else
+    elif [ "$scenario" = ordinary ]; then
       printf '%s %s\n' "$success_tag" "$receipt_json" >>"$ios_simulator_log_file"
+    else
+      printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"open:start","fixture":"scoped-diagnostic"}\n' >>"$ios_simulator_log_file"
     fi
   elif [ "$2" = launch ]; then
-    printf '%s: %s\n' "$app_id" "$$"
+    if [ "$scenario" = dead-app ]; then
+      ( : ) &
+      local dead_pid=$!
+      wait "$dead_pid"
+      printf '%s: %s\n' "$app_id" "$dead_pid"
+    else
+      printf '%s: %s\n' "$app_id" "$$"
+    fi
   fi
 }
 export OLIPHAUNT_MOBILE_E2E_EXPECT_LIFECYCLE=1
-for scenario in ordinary complete; do
+for scenario in ordinary complete dead-capture dead-app timeout; do
   scratch_root="$test_root/$scenario"
+  timeout_seconds=5
+  [ "$scenario" != timeout ] || timeout_seconds=1
   status=0
   (
     ios_simulator_log_pid=""
@@ -183,10 +199,18 @@ for scenario in ordinary complete; do
     [ "$status" != 0 ]
     grep -Fq 'PASS preceded the requested lifecycle exercise' "$test_root/$scenario.log"
     [ ! -e "$test_root/lifecycle-exercised" ]
-  else
+  elif [ "$scenario" = complete ]; then
     [ "$status" = 0 ] || { cat "$test_root/$scenario.log" >&2; exit 1; }
     [ -s "$test_root/lifecycle-exercised" ]
     verify_mobile_e2e_smoke_receipt ios "$scratch_root"
+  else
+    [ "$status" != 0 ]
+    grep -Fq '"fixture":"scoped-diagnostic"' "$test_root/$scenario.log"
+    case "$scenario" in
+      dead-capture) grep -Fq 'iOS smoke receipt failed (status 3:' "$test_root/$scenario.log" ;;
+      dead-app) grep -Fq 'iOS smoke receipt failed (status 4:' "$test_root/$scenario.log" ;;
+      timeout) grep -Fq "timed out waiting for $success_tag" "$test_root/$scenario.log" ;;
+    esac
   fi
 done
-echo 'iOS registered URL launch and required lifecycle receipt passed'
+echo 'iOS registered URL launch, lifecycle receipt, liveness, and scoped diagnostics passed'

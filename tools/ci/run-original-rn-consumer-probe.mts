@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
 export const originalRnTargets = [
@@ -92,6 +92,8 @@ function main() {
     result.failure = error instanceof Error ? error.message : String(error);
     process.exitCode = 1;
   } finally {
+    const testOutputs = join(checkout, 'bazel-testlogs/src/examples/native/react-native-expo/ios_installed_test/test.outputs');
+    if (existsSync(testOutputs)) cpSync(testOutputs, join(output, 'installed-test-outputs'), { recursive: true });
     writeFileSync(join(output, 'result.json'), `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
     console.log(JSON.stringify({ status: result.status, output, failure: result.failure ?? null, observation: result.observation }));
   }

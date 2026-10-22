@@ -95,6 +95,8 @@ function main() {
     'build_defs/apple/native.bzl', 'build_defs/apple/BUILD.bazel', '.github/workflows/bazel.yml',
     'src/examples/native/react-native-expo/BUILD.bazel',
     'build_defs/android/native-repository.bzl', 'build_defs/apple/react-native-repository.bzl',
+    'src/native/sdks/react-native/tools/expo-runner-ios-installed-app.sh',
+    'src/native/sdks/react-native/tools/expo-runner-ios-installed-app.test.sh',
     ...['Headerless.swift', 'Mixed.swift', 'Mixed.h', 'Mixed.m', 'MixedPrivate.h', 'Base.swift', 'Consumer.swift',
       'include/ExpoUmbrellaMixed/Nested.h',
       'AliasFixture.framework/Headers/AliasFixture/Root.h', 'AliasFixture.framework/Headers/AliasFixture_Alias/Alias.h',

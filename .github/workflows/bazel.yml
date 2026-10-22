@@ -1468,6 +1468,7 @@ jobs:
             ${{ runner.temp }}/native-bazel/command.log
             ${{ runner.temp }}/native-bazel/execroot/_main/bazel-out/**/testlogs/**/test.log
             ${{ runner.temp }}/native-bazel/execroot/_main/bazel-out/**/testlogs/**/test.xml
+            ${{ runner.temp }}/native-bazel/execroot/_main/bazel-out/**/testlogs/src/examples/native/react-native-expo/ios_installed_test/test.outputs/**
           if-no-files-found: ignore
           retention-days: 5
 
