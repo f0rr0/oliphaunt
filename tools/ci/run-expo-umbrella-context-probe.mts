@@ -16,6 +16,17 @@ export function withoutClangModuleMapAdmission(source: string) {
   return source.replace(admission, '[]');
 }
 
+export function withoutSelectiveCppExposure(source: string) {
+  const exposure = '"-Xfrontend", "-clang-header-expose-decls=has-expose-attr",';
+  assert.equal(source.split(exposure).length, 2, 'Disable exactly one selective C++ header exposure option pair.');
+  return source.replace(exposure, '');
+}
+
+export function missingGeneratedCppBaseNamespace(logs: string) {
+  const match = logs.match(/(?:^|\n)((?:[^\r\n]*\/)?ExpoUmbrellaMixed-Swift\.h:\d+:\d+):\s+(?:fatal )?error:\s+use of undeclared identifier 'ExpoUmbrellaBase'/);
+  return match ? { headerLocation: match[1], namespace: 'ExpoUmbrellaBase' } : undefined;
+}
+
 export function aliasModuleHomeMismatch(logs: string) {
   const match = logs.match(/fatal error: module 'AliasFixture_Alias' was built in directory '([^'\r\n]*AliasFixture\.framework)' but now resides in directory '([^'\r\n]*AliasFixture\.framework\/Modules)'/);
   return match ? { builtDirectory: match[1], residentDirectory: match[2] } : undefined;
@@ -66,6 +77,7 @@ function main() {
   const original = readFileSync(helper);
   const baseline = withoutUIKitImport(original.toString('utf8'));
   const aliasBaseline = withoutClangModuleMapAdmission(original.toString('utf8'));
+  const exposureBaseline = withoutSelectiveCppExposure(original.toString('utf8'));
   const sha256 = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
   const environment: NodeJS.ProcessEnv = {};
   for (const name of ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'DEVELOPER_DIR']) {
@@ -83,7 +95,7 @@ function main() {
     'build_defs/apple/native.bzl', 'build_defs/apple/BUILD.bazel', '.github/workflows/bazel.yml',
     'src/examples/native/react-native-expo/BUILD.bazel',
     'build_defs/android/native-repository.bzl', 'build_defs/apple/react-native-repository.bzl',
-    ...['Headerless.swift', 'Mixed.swift', 'Mixed.h', 'Mixed.m', 'MixedPrivate.h',
+    ...['Headerless.swift', 'Mixed.swift', 'Mixed.h', 'Mixed.m', 'MixedPrivate.h', 'Base.swift', 'Consumer.swift',
       'AliasFixture.framework/Headers/AliasFixture/Root.h', 'AliasFixture.framework/Headers/AliasFixture_Alias/Alias.h',
       'AliasFixture.framework/Modules/module.modulemap', 'AliasFixture.framework/Info.plist'].map(name => `build_defs/apple/testdata/expo-umbrella/${name}`),
   ];
@@ -95,6 +107,7 @@ function main() {
     probeRunnerSha256: sha256(readFileSync(import.meta.path)),
     originalSourceSha256: sha256(original), baselineSourceSha256: sha256(baseline),
     aliasBaselineSourceSha256: sha256(aliasBaseline),
+    exposureBaselineSourceSha256: sha256(exposureBaseline),
     observations, status: 'incomplete',
   };
   function run(name: string, timeoutMs: number) {
@@ -122,13 +135,14 @@ function main() {
       stdoutSha256: sha256(readFileSync(stdoutPath)), stderrSha256: sha256(readFileSync(stderrPath)),
       missingSymbols: missingUmbrellaSymbols(logs),
       aliasModuleHomeMismatch: aliasModuleHomeMismatch(logs) ?? null,
+      missingGeneratedCppBaseNamespace: missingGeneratedCppBaseNamespace(logs) ?? null,
       testPassed: expoFixturePassed(logs),
     };
     observations.push(observation);
     return observation;
   }
   try {
-    const warmup = run('fixed-warmup', 20 * 60_000);
+    const warmup = run('fixed-warmup', 17 * 60_000);
     result.warmupProfile = retainWarmupProfile(outputBase, output);
     assert.ok(warmup.status === 0 && !warmup.signal && !warmup.error && warmup.testPassed,
       'The unchanged fixed helper must pass before disabling its UIKit import.');
@@ -152,6 +166,16 @@ function main() {
       result.aliasRestoredSourceSha256 = sha256(restored);
       assert.ok(restored.equals(original), 'Restore the exact original helper after the module-map control.');
     }
+    let exposureNegative: ReturnType<typeof run>;
+    try {
+      writeFileSync(helper, exposureBaseline);
+      exposureNegative = run('selective-cpp-exposure-disabled', 3 * 60_000);
+    } finally {
+      writeFileSync(helper, original);
+      const restored = readFileSync(helper);
+      result.exposureRestoredSourceSha256 = sha256(restored);
+      assert.ok(restored.equals(original), 'Restore the exact original helper after the C++ header exposure control.');
+    }
     const positive = run('fixed-positive', 3 * 60_000);
     assert.ok(negative.status !== null && negative.status !== 0 && !negative.signal && !negative.error &&
       negative.missingSymbols.Headerless.length > 0 && negative.missingSymbols.Mixed.length > 0,
@@ -159,6 +183,9 @@ function main() {
     assert.ok(aliasNegative.status !== null && aliasNegative.status !== 0 && !aliasNegative.signal && !aliasNegative.error &&
       aliasNegative.aliasModuleHomeMismatch,
     'Disabling explicit map admission must fail on AliasFixture_Alias moving from the framework directory to Modules.');
+    assert.ok(exposureNegative.status !== null && exposureNegative.status !== 0 && !exposureNegative.signal && !exposureNegative.error &&
+      exposureNegative.missingGeneratedCppBaseNamespace,
+    'Disabling selective C++ exposure must fail on undeclared ExpoUmbrellaBase in the generated Mixed header.');
     assert.ok(positive.status === 0 && !positive.signal && !positive.error && positive.testPassed,
       'The exact restored helper must pass the same permanent iOS build test.');
     result.status = 'passed';

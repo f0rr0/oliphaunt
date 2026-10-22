@@ -52,10 +52,16 @@ react_apple_headers = rule(implementation = _react_headers_impl, attrs = {
     "swift_headers": attr.label_list(mandatory = True, allow_files = True),
 })
 
+def apple_swift_cxx_copts():
+    """Import C++ without exporting unannotated Swift declarations as C++."""
+    return [
+        "-Xfrontend", "-clang-header-expose-decls=has-expose-attr",
+        "-cxx-interoperability-mode=default", "-Xcc", "-std=c++20",
+    ]
+
 def react_apple_swift_copts(react_headers):
     """Keep RN's C++ import context when rebuilding textual Swift interfaces."""
-    return [
-        "-cxx-interoperability-mode=default", "-Xcc", "-std=c++20",
+    return apple_swift_cxx_copts() + [
         "-Xcc", "-ivfsoverlay", "-Xcc", "$(location " + react_headers + ")",
         "-Xfrontend", "-strict-implicit-module-context",
     ]
@@ -104,8 +110,7 @@ def expo_apple_modules(metadata, react, hermes, dependencies, react_headers, rea
         srcs = native.glob([root + "/Sources/ExpoModulesJSI/**/*.swift"]),
         deps = [":ExpoModulesJSI_Cxx", ":jsi_module"] + common,
         copts = ["-swift-version", "6", "-enable-upcoming-feature", "NonisolatedNonsendingByDefault",
-            "-enable-upcoming-feature", "InferIsolatedConformances", "-no-verify-emitted-module-interface",
-            "-Xfrontend", "-clang-header-expose-decls=has-expose-attr"] + swift +
+            "-enable-upcoming-feature", "InferIsolatedConformances", "-no-verify-emitted-module-interface"] + swift +
             ["-Xcc", "-iapinotes-modules", "-Xcc", "external/" + native.repository_name().removeprefix("@") + "/" + root + "/APINotes"],
         swiftc_inputs = [react_headers] + native.glob([root + "/APINotes/**"]),
         library_evolution = True,

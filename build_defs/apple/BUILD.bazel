@@ -6,7 +6,7 @@ load("@rules_apple//apple:ios.bzl", "ios_build_test")
 load("@rules_apple//apple:apple.bzl", "apple_dynamic_framework_import")
 load("@rules_swift//swift:swift_library.bzl", "swift_library")
 load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
-load(":native.bzl", "expo_apple_swift_library", "react_apple_swift_copts")
+load(":native.bzl", "apple_swift_cxx_copts", "expo_apple_swift_library", "react_apple_swift_copts")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":requirement-selection-test.bzl", "requirement_selection_test")
 load(":slices-test.bzl", "apple_slices_test")
@@ -91,22 +91,36 @@ apple_dynamic_framework_import(
 expo_apple_swift_library(
     name = "expo_umbrella_headerless", module_name = "ExpoUmbrellaHeaderless",
     swift_srcs = [_EXPO_UMBRELLA + "Headerless.swift"], clang_srcs = [],
-    swift_copts = ["-swift-version", "5", "-cxx-interoperability-mode=default", "-Xcc", "-std=c++20"],
+    swift_copts = ["-swift-version", "5"] + apple_swift_cxx_copts(),
+    testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
+)
+# A prebuilt Swift dependency supplies an Objective-C header without a C++ API.
+swift_library(
+    name = "expo_umbrella_base", module_name = "ExpoUmbrellaBase",
+    srcs = [_EXPO_UMBRELLA + "Base.swift"], generates_header = True,
+    generated_header_name = "ExpoUmbrellaBase-Swift.h",
+    copts = ["-swift-version", "5", "-cxx-interoperability-mode=off"],
     testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
 )
 expo_apple_swift_library(
     name = "expo_umbrella_mixed", module_name = "ExpoUmbrellaMixed",
     swift_srcs = [_EXPO_UMBRELLA + "Mixed.swift"], clang_srcs = [_EXPO_UMBRELLA + "Mixed.m"],
     hdrs = [_EXPO_UMBRELLA + "Mixed.h"],
-    deps = [":expo_umbrella_alias_framework"],
+    deps = [":expo_umbrella_alias_framework", ":expo_umbrella_base"],
     clang_module_maps = [_EXPO_UMBRELLA + "AliasFixture.framework/Modules/module.modulemap"],
     swiftc_inputs = [_EXPO_UMBRELLA + "MixedPrivate.h"],
     additional_objc_compiler_inputs = [_EXPO_UMBRELLA + "MixedPrivate.h"],
-    swift_copts = ["-swift-version", "5", "-cxx-interoperability-mode=default", "-Xcc", "-std=c++20"],
+    swift_copts = ["-swift-version", "5"] + apple_swift_cxx_copts(),
+    testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
+)
+swift_library(
+    name = "expo_umbrella_consumer", module_name = "ExpoUmbrellaConsumer",
+    srcs = [_EXPO_UMBRELLA + "Consumer.swift"], deps = [":expo_umbrella_mixed"],
+    copts = ["-swift-version", "5"] + apple_swift_cxx_copts(),
     testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
 )
 ios_build_test(
     name = "expo_umbrella_test", minimum_os_version = "17.0",
-    targets = [":expo_umbrella_headerless", ":expo_umbrella_mixed"],
+    targets = [":expo_umbrella_headerless", ":expo_umbrella_mixed", ":expo_umbrella_consumer"],
     target_compatible_with = _EXPO_UMBRELLA_IOS, size = "small",
 )

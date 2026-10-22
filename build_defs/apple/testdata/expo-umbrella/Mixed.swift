@@ -1,4 +1,7 @@
 import AliasFixture_Alias
+import ExpoUmbrellaBase
+
+public final class ExpoUmbrellaSwiftChild: ExpoUmbrellaSwiftBase {}
 
 private let mixedQueue = DispatchQueue(label: "oliphaunt.expo.mixed")
 
