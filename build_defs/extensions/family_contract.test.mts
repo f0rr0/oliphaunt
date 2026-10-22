@@ -52,6 +52,28 @@ const documents = composeExtensionReleaseDocuments({
   directAssets,
   releaseMetadata: spec.releaseMetadata,
 });
+const frozen = json(spec.outputs.frozen);
+const withoutAssetLocators = (value: any) => {
+  const result = structuredClone(value);
+  for (const asset of [
+    ...(result.carrierAssets ?? []),
+    ...(result.extensions ?? [result]).flatMap((member) => member.assets),
+  ]) {
+    delete asset.path;
+    delete asset.source;
+  }
+  return result;
+};
+assert.deepEqual(
+  withoutAssetLocators(frozen),
+  withoutAssetLocators(JSON.parse(JSON.stringify(documents.manifest))),
+);
+for (const asset of frozen.carrierAssets ?? frozen.assets)
+  assert.equal(asset.path, `product/release-assets/${asset.name}`);
+if (frozen.extensions)
+  for (const member of frozen.extensions)
+    for (const asset of member.assets)
+      assert.equal(asset.path, `product/member-assets/${member.sqlName}/${asset.name}`);
 const manifest = json(spec.outputs['control_manifest-json']);
 assert.deepEqual(manifest, JSON.parse(JSON.stringify(documents.releaseData)));
 assert.equal(

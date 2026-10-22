@@ -1,6 +1,16 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { sourceManifest } from '../../build_defs/languages/source-package.mts';
@@ -26,10 +36,14 @@ import {
   stageNativeReleaseFamilies,
 } from './native-release-preparation.mts';
 import { loadPublicationCatalog } from './publication-catalog.mts';
-import { expectedProductArtifactRows } from './publication-lock.mts';
-import { allArtifactTargets } from './release-artifact-targets.mts';
+import { discoverProductArtifacts, expectedProductArtifactRows } from './publication-lock.mts';
+import { allArtifactTargets, contribCarrierDescriptor } from './release-artifact-targets.mts';
 import { loadProducts, ROOT } from './release-graph.mts';
 import { fixtureCompletedNativeInventory } from './testdata/prepare-release-candidate-fixtures.mts';
+import {
+  extensionGithubReleaseFixture,
+  githubReleaseFixture,
+} from './testdata/publication-artifact-fixtures.mts';
 
 const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
 
@@ -970,12 +984,14 @@ for (const artifacts of [
 function producer(
   directory: string,
   row: ReturnType<typeof expectedProductArtifactRows>[number],
-  content: string,
+  content: string | Uint8Array,
+  mode?: number,
 ) {
   const output = `bazel-out/k8-opt/bin/${row.product}/${row.name}`;
   const file = path.join(directory, 'files/0', output);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, content);
+  if (mode !== undefined) chmodSync(file, mode);
   const identity = fileIdentity(file);
   return {
     file,
@@ -992,12 +1008,13 @@ function producer(
         source,
         cohorts: [
           {
+            executionRoot: '/fixture/execroot',
             roots: [
               {
                 label: `//${row.product}:shipping`,
                 package: {
                   product: row.product,
-                  version: '0.3.2',
+                  version: row.version,
                   ecosystem: 'github',
                   name: row.name,
                   role: row.role,
@@ -1014,7 +1031,7 @@ function producer(
                     type: 'file',
                     size: identity.size,
                     sha256: identity.sha256,
-                    mode: 0o644,
+                    mode: identity.mode,
                   },
                 ],
               },
@@ -1024,6 +1041,12 @@ function producer(
       },
       finalFiles: {
         files: [{ cohort: 0, path: output, size: identity.size, sha256: identity.sha256 }],
+        file(cohort: number, declaredPath: string) {
+          expect(cohort).toBe(0);
+          expect(declaredPath).toBe(output);
+          expect(fileIdentity(file)).toEqual(identity);
+          return file;
+        },
         assertUnchanged() {
           expect(fileIdentity(file)).toEqual(identity);
         },
@@ -1047,7 +1070,10 @@ test('family staging joins unique original host assets with a separate checksum 
       (row) => row.product === 'liboliphaunt-native' && row.role === 'github-release-asset',
     )!;
     const checksum = rows.find(
-      (row) => row.product === asset.product && row.role === 'github-release-metadata',
+      (row) =>
+        row.product === asset.product &&
+        row.role === 'github-release-asset' &&
+        row.kind === 'checksums',
     )!;
     const origins = new Map<string, any>();
     for (const [index, row] of [asset, checksum].entries()) {
@@ -1092,7 +1118,265 @@ test('family staging joins unique original host assets with a separate checksum 
   }
 });
 
-test('family staging selects each declared iOS asset from its shared original Tree', () => {
+test('family staging preserves complete runtime, contrib and external publication layouts', {
+  timeout: 30_000,
+}, () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'native-publication-families-'));
+  const destination = path.join(ROOT, 'target', path.basename(directory));
+  const fixtureRoot = path.join(directory, 'original-layouts');
+  const catalog = loadPublicationCatalog('family publication reader test', {
+    products: ['liboliphaunt-native', 'liboliphaunt-wasix', 'oliphaunt-extension-vector'],
+  });
+  const expected = expectedProductArtifactRows(catalog.products);
+  const contrib = contribCarrierDescriptor('family publication reader test');
+  const origins = new Map<string, any>();
+  const familyInputs: { owner: string; key: string }[] = [];
+  const fixedNames = new Map<string, string[]>();
+  const publicFiles = new Map<string, { key: string; file: string }>();
+  let sequence = 0;
+  const retain = (row, file: string) => {
+    const key = path.join(directory, 'packets', String(sequence++));
+    const retained = producer(key, row, readFileSync(file), statSync(file).mode & 0o777);
+    origins.set(key, retained.origin);
+    return { key, ...retained };
+  };
+  const retainPublic = (owner: string, assetDirectory: string) => {
+    for (const entry of readdirSync(assetDirectory, { withFileTypes: true })) {
+      expect(entry.isFile()).toBe(true);
+      const row = expected.find((row) => row.product === owner && row.name === entry.name);
+      expect(row).toBeDefined();
+      const retained = retain(row, path.join(assetDirectory, entry.name));
+      publicFiles.set(`${owner}/${entry.name}`, retained);
+    }
+  };
+  const retainFamily = (product, options = {}) => {
+    const family = extensionGithubReleaseFixture(fixtureRoot, product, options);
+    retainPublic(product.id, family.directory);
+    const row = expected.find((row) => row.product === product.id)!;
+    const input = retain(
+      { ...row, name: 'extension-artifacts.json', role: 'extension-release-family-input' },
+      family.manifestPath,
+    );
+    const root = input.origin.evidence.cohorts[0].roots[0];
+    root.package.ecosystem = 'internal';
+    root.package.name = `${product.id}-${familyInputs.length}-release-family`;
+    root.package.configuration = 'portable';
+    familyInputs.push({ owner: product.id, key: input.key });
+    return family;
+  };
+  const selectedProducts = (ids: readonly string[]) =>
+    catalog.products.filter((product) => ids.includes(product.id));
+  const discover = (roots: string[], ids: readonly string[]) => {
+    const products = selectedProducts(ids);
+    const rows = discoverProductArtifacts(roots, products);
+    const versions = new Map(products.map(({ id, version }) => [id, version]));
+    expect(
+      rows.map(({ product, id, role, kind, target, identity, name }) => ({
+        product,
+        version: versions.get(product),
+        id,
+        role,
+        kind,
+        target,
+        identity,
+        name,
+      })),
+    ).toEqual(expectedProductArtifactRows(products));
+    for (const row of rows) {
+      expect(path.resolve(ROOT, row.path).startsWith(`${destination}${path.sep}`)).toBe(true);
+      const retained = publicFiles.get(`${row.product}/${row.name}`)!;
+      expect(statSync(path.resolve(ROOT, row.path)).mode & 0o777).toBe(
+        statSync(retained.file).mode & 0o777,
+      );
+    }
+    return rows;
+  };
+  try {
+    for (const product of catalog.products) {
+      if (![contrib.nativeOwner, contrib.wasixOwner].includes(product.id)) continue;
+      const fixed = githubReleaseFixture(fixtureRoot, product);
+      fixedNames.set(product.id, fixed.rows.map(({ name }) => name).sort());
+      retainPublic(product.id, fixed.directory);
+    }
+    const native = catalog.products.find(({ id }) => id === contrib.nativeOwner)!;
+    const wasix = catalog.products.find(({ id }) => id === contrib.wasixOwner)!;
+    const external = catalog.products.find(({ id }) => id === 'oliphaunt-extension-vector')!;
+    const nativeFamily = retainFamily(native, {
+      artifactProduct: contrib.artifactProduct,
+      family: 'native',
+    });
+    retainFamily(wasix, { artifactProduct: contrib.artifactProduct, family: 'wasix' });
+    retainFamily(external);
+    const original = structuredClone([...origins.values()].map(({ evidence }) => evidence));
+    // Raw manifest paths now point at deleted originals; retained Files must supply every byte.
+    rmSync(fixtureRoot, { recursive: true, force: true });
+    const ids = catalog.products.map(({ id }) => id);
+    const staged = stageNativeReleaseFamilies(origins, source, destination, ids);
+    const published = discover(staged, ids);
+    const contribChecksums = published.filter(
+      (row) =>
+        [native.id, wasix.id].includes(row.product) &&
+        row.role === 'github-release-metadata' &&
+        row.kind === 'checksums',
+    );
+    expect(contribChecksums).toHaveLength(2);
+    expect(new Set(contribChecksums.map(({ path: file }) => path.dirname(file))).size).toBe(2);
+    for (const row of contribChecksums) {
+      const version = catalog.products.find(({ id }) => id === row.product)!.version;
+      expect(row.name).toBe(`${contrib.artifactProduct}-${version}-release-assets.sha256`);
+    }
+    for (const [owner, names] of fixedNames)
+      expect(readdirSync(path.join(destination, owner, 'release-assets')).sort()).toEqual(names);
+    expect([...origins.values()].map(({ evidence }) => evidence)).toEqual(original);
+    for (const product of catalog.products) {
+      const selected = path.join(destination, `selected-${product.id}`);
+      const roots = stageNativeReleaseFamilies(origins, source, selected, [product.id]);
+      const rows = discover(roots, [product.id]);
+      expect(new Set(rows.map(({ product: owner }) => owner))).toEqual(new Set([product.id]));
+    }
+    const nativeAsset = publicFiles.get(`${native.id}/${nativeFamily.assets[0].name}`)!;
+    const fixedChecksum = expected.find(
+      (row) =>
+        row.product === native.id &&
+        row.role === 'github-release-asset' &&
+        row.kind === 'checksums',
+    )!;
+    const checksum = publicFiles.get(`${native.id}/${fixedChecksum.name}`)!;
+    for (const [fault, message] of [
+      ['missing-family', /lacks its complete aggregate manifest/u],
+      ['missing-asset', /lacks its declared public File/u],
+      ['foreign-file', /canonical public owner/u],
+      ['checksum', /checksum/u],
+    ] as const) {
+      const changed = new Map(origins);
+      if (fault === 'missing-family')
+        changed.delete(familyInputs.find(({ owner }) => owner === native.id)!.key);
+      if (fault === 'missing-asset') changed.delete(nativeAsset.key);
+      if (fault === 'foreign-file' || fault === 'checksum') {
+        const row =
+          fault === 'foreign-file'
+            ? { ...fixedChecksum, name: 'foreign-public.bin' }
+            : fixedChecksum;
+        const content =
+          fault === 'foreign-file'
+            ? 'foreign public bytes'
+            : readFileSync(checksum.file, 'utf8').replace(/^[0-9a-f]{64}/u, '0'.repeat(64));
+        const key = path.join(directory, 'packets', fault);
+        changed.set(key, producer(key, row, content).origin);
+        if (fault === 'checksum') changed.delete(checksum.key);
+      }
+      const invalid = path.join(destination, fault);
+      expect(() => {
+        const roots = stageNativeReleaseFamilies(changed, source, invalid, [native.id]);
+        discoverProductArtifacts(roots, [native]);
+      }).toThrow(message);
+    }
+    for (const origin of origins.values()) origin.finalFiles.assertUnchanged();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(destination, { recursive: true, force: true });
+  }
+});
+
+test('family staging projects Windows loose modes while retaining POSIX safety and original evidence', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'native-family-modes-'));
+  const finalDirectory = path.join(ROOT, 'target', path.basename(directory));
+  try {
+    const rows = expectedProductArtifactRows(
+      loadPublicationCatalog('family transport modes').products,
+    );
+    const asset = rows.find(
+      (row) =>
+        row.product === 'liboliphaunt-native' &&
+        row.role === 'github-release-asset' &&
+        row.target.includes('windows'),
+    )!;
+    expect(asset).toBeDefined();
+    const checksum = rows.find(
+      (row) =>
+        row.product === asset.product &&
+        row.role === 'github-release-asset' &&
+        row.kind === 'checksums',
+    )!;
+    for (const scenario of [
+      {
+        name: 'windows-drive',
+        executionRoot: 'C:\\b\\execroot\\_main',
+        mode: 0o666,
+        expected: 0o644,
+      },
+      {
+        name: 'windows-slashes',
+        executionRoot: 'D:/b/execroot/_main',
+        mode: 0o444,
+        expected: 0o644,
+      },
+      {
+        name: 'windows-unc',
+        executionRoot: '\\\\runner\\share\\execroot\\_main',
+        mode: 0o666,
+        expected: 0o644,
+      },
+      {
+        name: 'posix-read-only',
+        executionRoot: '/windows-target/execroot',
+        mode: 0o444,
+        expected: 0o444,
+      },
+      {
+        name: 'posix-executable',
+        executionRoot: '/windows-target/execroot',
+        mode: 0o555,
+        expected: 0o555,
+      },
+      { name: 'posix-world-writable', executionRoot: '/windows-target/execroot', mode: 0o666 },
+      { name: 'posix-writable-executable', executionRoot: '/windows-target/execroot', mode: 0o775 },
+      { name: 'posix-unreadable', executionRoot: '/windows-target/execroot', mode: 0o222 },
+    ]) {
+      const originals = [asset, checksum].map((row, index) => {
+        const evidenceRoot = path.join(directory, scenario.name, String(index));
+        const captured = producer(evidenceRoot, row, `qualified ${row.name}`);
+        const cohort = captured.origin.evidence.cohorts[0];
+        cohort.executionRoot = scenario.executionRoot;
+        cohort.outputs[0].members[0].mode = scenario.mode;
+        return { ...captured, evidenceRoot };
+      });
+      const origins = new Map(originals.map(({ evidenceRoot, origin }) => [evidenceRoot, origin]));
+      const evidence = structuredClone(originals.map(({ origin }) => origin.evidence));
+      const identities = originals.map(({ file }) => fileIdentity(file));
+      const destination = path.join(finalDirectory, scenario.name);
+      if (scenario.expected === undefined) {
+        expect(() => stageNativeReleaseFamilies(origins, source, destination)).toThrow(
+          'unsafe captured mode',
+        );
+        expect(existsSync(destination)).toBe(false);
+      } else {
+        const staged = stageNativeReleaseFamilies(origins, source, destination);
+        for (const row of [asset, checksum]) {
+          const file = path.join(staged[0], row.name);
+          expect(readFileSync(file, 'utf8')).toBe(`qualified ${row.name}`);
+          expect(statSync(file).mode & 0o777).toBe(scenario.expected);
+        }
+        if (scenario.name === 'windows-drive') {
+          const selected = stageNativeReleaseFamilies(origins, source, `${destination}-selected`, [
+            asset.product,
+          ]);
+          expect(readFileSync(path.join(selected[0], asset.name))).toEqual(
+            readFileSync(path.join(staged[0], asset.name)),
+          );
+          expect(statSync(path.join(selected[0], asset.name)).mode & 0o777).toBe(0o644);
+        }
+      }
+      expect(originals.map(({ origin }) => origin.evidence)).toEqual(evidence);
+      expect(originals.map(({ file }) => fileIdentity(file))).toEqual(identities);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(finalDirectory, { recursive: true, force: true });
+  }
+});
+
+test('family staging selects each declared fixed asset from its shared original Tree', () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'native-shared-family-'));
   const finalDirectory = path.join(ROOT, 'target', path.basename(directory));
   try {
@@ -1100,8 +1384,9 @@ test('family staging selects each declared iOS asset from its shared original Tr
       loadPublicationCatalog('shared iOS family staging test').products,
     ).filter(
       (row) =>
-        row.product === 'oliphaunt-extension-pg-uuidv7' &&
-        /-native-ios-(runtime\.tar\.gz|xcframework\.zip)$/u.test(row.name),
+        row.product === 'liboliphaunt-native' &&
+        (row.kind === 'apple-swiftpm-binary' ||
+          (row.kind === 'runtime-resources' && row.target === 'ios-datum64')),
     );
     expect(rows).toHaveLength(2);
     const evidenceRoot = path.join(directory, 'producer');
@@ -1120,7 +1405,11 @@ test('family staging selects each declared iOS asset from its shared original Tr
       },
     }));
     const origin = originals[0].origin;
-    origin.evidence.cohorts[0] = { roots, outputs: [{ path: output, members }] };
+    origin.evidence.cohorts[0] = {
+      executionRoot: '/fixture/execroot',
+      roots,
+      outputs: [{ path: output, members }],
+    };
     origin.finalFiles = {
       files: originals.flatMap((value) => value.origin.finalFiles.files),
       assertUnchanged() {

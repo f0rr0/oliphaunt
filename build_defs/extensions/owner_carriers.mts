@@ -58,6 +58,7 @@ import {
   releaseNoticeRows,
 } from '../../tools/packaging/release-notices.mts';
 import type { ExtensionFinalInput } from '../../tools/release/native-extension-final-inputs.mts';
+import { stageDeclaredExtensionReleaseFiles } from '../../tools/release/native-extension-release-files.mts';
 import { safeRelative } from '../../tools/release/native-file-identity.mts';
 import {
   type NativeCarrierSpec,
@@ -128,58 +129,17 @@ export function stageDeclaredFinalLeaf(spec: NativeOwnerSpec, leaf: FinalLeaf, r
   assert.equal(leaf.product, spec.product);
   assert.equal(leaf.owner, spec.owner);
   assert.equal(leaf.version, spec.version);
-  const frozen = json(leaf.frozen);
-  const members = frozen.extensions ?? [frozen];
-  const assets = frozen.carrierAssets ?? members[0].assets;
-  const physical = new Map(leaf.github.map((file) => [path.basename(file), file]));
-  assert.equal(physical.size, leaf.github.length, 'repeated imported GitHub File');
   const productRoot = path.join(root, 'product');
-  mkdirSync(path.join(productRoot, 'release-assets'), { recursive: true });
-  const direct = assets.map((asset) =>
-    copyAsset(
-      asset,
-      physical.get(asset.name)!,
-      path.join(productRoot, 'release-assets', safeRelative(asset.name)),
-      root,
-    ),
+  const staged = stageDeclaredExtensionReleaseFiles(
+    json(leaf.frozen),
+    leaf.github,
+    productRoot,
+    root,
   );
-  const bundles = new Map<string, ReturnType<typeof readPortableArchiveEntries>>();
-  const staged = members.map((member) => ({
-    ...member,
-    assets: member.assets.map((asset) => {
-      if (!asset.carrierAsset)
-        return {
-          ...asset,
-          path: relative(root, path.join(productRoot, 'release-assets', asset.name)),
-        };
-      // Facade metadata needs the closed bundle's original nested archive, not a
-      // newly packaged replacement. Parsing this index is part of composition.
-      const declaredOuterFile = physical.get(asset.carrierAsset);
-      assert(declaredOuterFile, 'nested member lacks its actual closed bundle File');
-      const outerFile = realpathSync(declaredOuterFile);
-      const prefix = safeRelative(asset.carrierRoot);
-      const memberPath = safeRelative(asset.memberPath);
-      if (!bundles.has(outerFile)) bundles.set(outerFile, readPortableArchiveEntries(outerFile));
-      const entries = bundles.get(outerFile)!;
-      const bytes = entries.get(`${prefix}/${memberPath}`)?.data();
-      assert(bytes, 'nested member is absent from the original closed bundle');
-      assert.equal(digest(bytes), asset.sha256);
-      assert.equal(bytes.length, asset.bytes);
-      const destination = path.join(
-        productRoot,
-        'member-assets',
-        member.sqlName,
-        safeRelative(asset.name),
-      );
-      mkdirSync(path.dirname(destination), { recursive: true });
-      writeFileSync(destination, bytes);
-      return { ...asset, path: relative(root, destination) };
-    }),
-  }));
   return {
     leaf,
-    members: staged,
-    directAssets: direct,
+    members: staged.members,
+    directAssets: staged.directAssets,
     inventory: finalFileInventory(leaf),
     productRoot,
   };
@@ -965,6 +925,8 @@ export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
         directAssets,
         swiftOptions: { ...declaredApple(spec), assetRoot: outputRoot },
       });
+      mkdirSync(path.dirname(spec.outputs.frozen), { recursive: true });
+      copyFileSync(path.join(productRoot, 'extension-artifacts.json'), spec.outputs.frozen);
       if (spec.outputs.npm) {
         const iosCarrier = buildIosCarrierManifest({
           assetRoot: outputRoot,

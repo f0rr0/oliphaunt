@@ -24,6 +24,7 @@ import {
   captureNativePublicationOutputs,
   copyNativeOutputFile,
   isNativeFinalTransportRoot,
+  nativeTransportStagingMode,
 } from './native-publication-staging.mts';
 import { ROOT } from './release-graph.mts';
 
@@ -318,6 +319,13 @@ function readPhysicalNativeBuildFinalFiles(
         const cohorts = stagedSelection.map((cohort, index) => ({
           ...cohort,
           executionRoot: path.join(reconstruction, String(index)),
+          outputs: cohort.outputs.map((output) => ({
+            ...output,
+            members: output.members.map((member) => ({
+              ...member,
+              mode: nativeTransportStagingMode(member, cohort.executionRoot),
+            })),
+          })),
         }));
         for (const [index, cohort] of cohorts.entries()) {
           requireSafeDirectoryChain(cohort.executionRoot, {
@@ -329,7 +337,9 @@ function readPhysicalNativeBuildFinalFiles(
           const outputs = new Set(
             cohort.roots.flatMap(({ package: pkg }) => pkg.outputs.map(({ path }) => path)),
           );
-          for (const output of cohort.outputs.filter(({ path }) => outputs.has(path))) {
+          for (const output of stagedSelection[index].outputs.filter(({ path }) =>
+            outputs.has(path),
+          )) {
             for (const member of output.members) {
               const relative = member.path ? `${output.path}/${member.path}` : output.path;
               const target = path.join(cohort.executionRoot, relative);
@@ -343,8 +353,9 @@ function readPhysicalNativeBuildFinalFiles(
                 continue;
               }
               restored.set(relative, identity);
+              const mode = nativeTransportStagingMode(member, stagedSelection[index].executionRoot);
               if (member.type === 'directory') {
-                if ((member.mode & 0o500) !== 0o500 || (member.mode & 0o002) !== 0)
+                if ((mode & 0o500) !== 0o500 || (mode & 0o002) !== 0)
                   throw new Error(
                     `native transported directory has an unsafe captured mode ${member.mode.toString(8)}: ${relative}`,
                   );
@@ -352,12 +363,12 @@ function readPhysicalNativeBuildFinalFiles(
                   create: true,
                   label: 'native file reconstruction',
                 });
-                directories.push({ path: target, mode: member.mode });
+                directories.push({ path: target, mode });
               } else {
                 if (
-                  (member.mode & 0o400) === 0 ||
-                  (member.mode & 0o002) !== 0 ||
-                  ((member.mode & 0o111) !== 0 && (member.mode & 0o020) !== 0)
+                  (mode & 0o400) === 0 ||
+                  (mode & 0o002) !== 0 ||
+                  ((mode & 0o111) !== 0 && (mode & 0o020) !== 0)
                 )
                   throw new Error(
                     `native transported file has an unsafe captured mode ${member.mode.toString(8)}: ${relative}`,
@@ -372,7 +383,7 @@ function readPhysicalNativeBuildFinalFiles(
                   { size: member.size, sha256: member.sha256 },
                   'native reconstructed file bytes',
                 );
-                chmodSync(target, member.mode);
+                chmodSync(target, mode);
               }
             }
           }
@@ -384,11 +395,13 @@ function readPhysicalNativeBuildFinalFiles(
               'native reconstructed output members',
             );
         }
-        // First retain/verify the exact physical evidence above; publication modes apply only
-        // inside this owned reconstruction and never mutate authenticated cohort metadata.
+        // Staging and publication modes apply only to owned copies; raw evidence stays exact.
         const publication = cohorts.map((cohort, index) => ({
           ...cohort,
-          outputs: nativeSwiftSourceTagPublication(selected[index]).outputs,
+          outputs: nativeSwiftSourceTagPublication({
+            ...cohort,
+            roots: selected[index].roots,
+          }).outputs,
         }));
         for (const [index, cohort] of publication.entries())
           for (const [outputIndex, output] of cohort.outputs.entries()) {

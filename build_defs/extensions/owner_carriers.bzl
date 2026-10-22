@@ -24,6 +24,7 @@ def native_owner_carrier_helpers():
         "//src/extensions/tools:native-component-contract.mts",
         "//:src/extensions/artifacts/native/tools/ios-extension-registration.mts",
         "//tools/release:native-file-identity.mts",
+        "//tools/release:native-extension-release-files.mts",
     ]
 
 def native_owner_carrier_metadata(product, family = "native"):
@@ -162,6 +163,7 @@ def _join_impl(ctx):
             fail("complete extension owner requires its one genuine portable WASIX constructor")
     outputs = {"collection": ctx.actions.declare_file(ctx.label.name + ".collection.json")}
     if ctx.attr.complete:
+        outputs["frozen"] = ctx.actions.declare_file(ctx.label.name + "/extension-artifacts.json")
         if "native" in spec["ownerFamilies"]:
             rows = [row for row in spec["carriers"] if row["ecosystem"] == "npm" and row["target"] == None and row["role"] == "facade"]
             if len(rows) != 1:

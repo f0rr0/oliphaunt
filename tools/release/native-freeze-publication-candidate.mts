@@ -29,6 +29,7 @@ import {
   observeNativePublicationConstruction,
   projectNativePublicationConstruction,
 } from './native-publication-observation.mts';
+import { NATIVE_EXTENSION_RELEASE_INPUT_ROLES } from './native-publication-staging.mts';
 import {
   acquirePreparedNativeReleaseInputs,
   assertAcquiredPreparedNativeReleaseInputs,
@@ -914,7 +915,11 @@ export async function freezeNativePublicationFromRun({
     );
     artifactRoots.push(
       ...origin.finalFiles.stage({
-        excludeRoles: ['github-release-asset', 'github-release-metadata'],
+        excludeRoles: [
+          'github-release-asset',
+          'github-release-metadata',
+          ...NATIVE_EXTENSION_RELEASE_INPUT_ROLES,
+        ],
         artifactPhase: 'pre-version',
       }),
     );
@@ -946,7 +951,11 @@ export async function freezeNativePublicationFromRun({
     selectedRoots.push(
       ...origin.finalFiles.stage({
         products: owned,
-        excludeRoles: ['github-release-asset', 'github-release-metadata'],
+        excludeRoles: [
+          'github-release-asset',
+          'github-release-metadata',
+          ...NATIVE_EXTENSION_RELEASE_INPUT_ROLES,
+        ],
       }),
     );
   }

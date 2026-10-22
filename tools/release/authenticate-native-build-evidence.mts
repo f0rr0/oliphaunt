@@ -37,6 +37,35 @@ export function assertAuthenticatedNativeBuildOrigin(value: unknown) {
   origin.finalFiles?.assertUnchanged?.();
   return origin;
 }
+
+/** Reuse acquisition's immutable qualification only when no explicit test plan needs replay. */
+export function validateAuthenticatedNativeBuildEvidence(
+  origin: Pick<
+    Awaited<ReturnType<typeof acquireAuthenticatedNativeBuildEvidence>>,
+    'evidence' | 'finalFiles'
+  >,
+  expected: Parameters<typeof validateNativeBuildEvidence>[1],
+) {
+  const qualification =
+    authenticatedOrigins.has(origin) && expected.requiredTests === undefined
+      ? origin.finalFiles?.qualification
+      : undefined;
+  if (!qualification) return validateNativeBuildEvidence(origin.evidence, expected);
+  nativeBuildMetadata(expected.source, expected.github);
+  deepStrictEqual(qualification.source, expected.source, 'native build source');
+  deepStrictEqual(
+    qualification.github,
+    expected.github,
+    'native build producing workflow/run/attempt/job',
+  );
+  const producingVersion = (origin.evidence as NativeBuildEvidence).cohorts[0].buildEvents.find(
+    (event) => event.started !== undefined,
+  )?.started?.buildToolVersion;
+  deepStrictEqual(producingVersion, expected.bazelVersion, 'native BEP Bazel version mismatch');
+  if (expected.requireShippingAnalysis === true && qualification.shippingAnalysis !== 'bound')
+    throw new Error('native qualification requires producing-analysis shipping manifests');
+  return qualification;
+}
 const reviewedProducerArtifacts: readonly (readonly [string, string])[] = [
   ['Linux runtime (x86_64)', 'native-build-evidence-x86_64'],
   ['Linux runtime (aarch64)', 'native-build-evidence-aarch64'],

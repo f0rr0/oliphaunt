@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -35,6 +36,7 @@ import {
   assertAuthenticatedNativeBuildOrigin,
   createNativeBuildEvidenceAcquirer,
   reviewedNativeProducerArtifacts,
+  validateAuthenticatedNativeBuildEvidence,
   validateReviewedNativeProducerAssurance,
 } from './authenticate-native-build-evidence.mts';
 import {
@@ -59,7 +61,6 @@ import {
   assertNativeSwiftShippingPhase,
   type NativeBuildSource,
   nativeShippingRootsHaveQualification,
-  validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
 import {
   type CompletedDeliveryBaseline,
@@ -80,6 +81,14 @@ import {
   type NativePublicationBuild,
   observeNativePublicationConstruction,
 } from './native-publication-observation.mts';
+import {
+  NATIVE_EXTENSION_RELEASE_INPUT_ROLES,
+  nativeTransportStagingMode,
+} from './native-publication-staging.mts';
+import {
+  extensionReleaseDocumentRows,
+  stageDeclaredExtensionReleaseFiles,
+} from './native-extension-release-files.mts';
 import {
   type NativeSeedConstructionBaseline,
   proposeSeedConstructionAnchor,
@@ -107,7 +116,12 @@ import {
 } from './publication-lock.mts';
 import { constructionNativeFinalInputs } from './qualified-native-extension-final-inputs.mts';
 import { materializeRegistryCarrierIntegrity } from './registry-integrity.mts';
-import { DESKTOP_TARGETS } from './release-artifact-targets.mts';
+import {
+  allArtifactTargets,
+  contribCarrierDescriptor,
+  DESKTOP_TARGETS,
+  extensionReleaseMetadataRows,
+} from './release-artifact-targets.mts';
 import {
   compatibilityVersionEntries,
   compatibilityVersionFromText,
@@ -1371,20 +1385,17 @@ export function nativeArchiveConstructionFinalInputs(
       build.expected.artifactName,
       'native constructor artifact role differs',
     );
-    const qualification = origin.finalFiles?.qualification;
-    assert.ok(qualification, 'native constructor requires acquired physical qualification');
-    const producingBazelVersion = origin.evidence.cohorts[0].buildEvents.find(
-      (event) => event.started !== undefined,
-    )?.started?.buildToolVersion;
-    assert.equal(producingBazelVersion, bazelVersion, 'native constructor Bazel pin differs');
-    assert.deepEqual(
-      qualification.source,
-      source,
-      'native constructor qualification source differs',
+    assert.ok(
+      origin.finalFiles?.qualification,
+      'native constructor requires acquired physical qualification',
     );
-    assert.deepEqual(qualification.github, build.expected.github);
+    const qualification = validateAuthenticatedNativeBuildEvidence(origin, {
+      source,
+      github: build.expected.github,
+      bazelVersion,
+      requireShippingAnalysis: true,
+    });
     assert.equal(qualification.testQualification, 'passed');
-    assert.equal(qualification.shippingAnalysis, 'bound');
     assert.equal(qualification.qualificationPolicy, 'bound');
     assert.ok(
       qualification.requiredTests.length,
@@ -1492,7 +1503,7 @@ export function stageNativePublicationConstruction({
     for (const [index, { evidenceRoot, expected }] of builds.entries()) {
       const origin = origins.get(evidenceRoot);
       assert.ok(origin);
-      const qualification = validateNativeBuildEvidence(origin.evidence, {
+      const qualification = validateAuthenticatedNativeBuildEvidence(origin, {
         source,
         github: expected.github,
         bazelVersion,
@@ -1510,7 +1521,11 @@ export function stageNativePublicationConstruction({
       );
       artifactRoots.push(
         ...origin.finalFiles.stage({
-          excludeRoles: ['github-release-asset', 'github-release-metadata'],
+          excludeRoles: [
+            'github-release-asset',
+            'github-release-metadata',
+            ...NATIVE_EXTENSION_RELEASE_INPUT_ROLES,
+          ],
           artifactPhase: 'pre-version',
           stageDirectory: path
             .relative(ROOT, path.join(familyCapture, 'registry', String(index)))
@@ -2148,7 +2163,15 @@ export function stageNativeReleaseFamilies(
     'native release family selection requires unique canonical product IDs',
   );
   const expected = expectedProductArtifactRows(catalog.products);
-  const copied = new Set<string>();
+  type PublicFile = {
+    owner: string;
+    name: string;
+    file: string;
+    member: any;
+    executionRoot: string;
+  };
+  const publicFiles = new Map<string, PublicFile>();
+  const manifests: { owner: string; value: any }[] = [];
   const families = new Set<string>();
   mkdirSync(destination);
   try {
@@ -2161,8 +2184,9 @@ export function stageNativeReleaseFamilies(
         for (const root of value.roots.filter(
           (root) =>
             (products === undefined || products.includes(root.package.product)) &&
-            root.package.ecosystem === 'github' &&
-            ['github-release-asset', 'github-release-metadata'].includes(root.package.role),
+            ((root.package.ecosystem === 'github' &&
+              ['github-release-asset', 'github-release-metadata'].includes(root.package.role)) ||
+              root.package.role === 'extension-release-family-input'),
         )) {
           const outputPaths = new Set(root.package.outputs.map((output) => output.path));
           const files = value.outputs
@@ -2172,7 +2196,10 @@ export function stageNativeReleaseFamilies(
                 .filter(
                   (member) =>
                     member.type === 'file' &&
-                    path.posix.basename(member.path || output.path) === root.package.name,
+                    path.posix.basename(member.path || output.path) ===
+                      (root.package.role === 'extension-release-family-input'
+                        ? 'extension-artifacts.json'
+                        : root.package.name),
                 )
                 .map((member) => ({ output, member })),
             );
@@ -2182,16 +2209,6 @@ export function stageNativeReleaseFamilies(
             'native family identity needs its exact original regular File',
           );
           const [{ output, member }] = files;
-          const name = root.package.name;
-          assert.equal(
-            expected.filter((row) => row.product === root.package.product && row.name === name)
-              .length,
-            1,
-            `native family ${name} has no unique canonical public owner`,
-          );
-          const key = `${root.package.product}/${name}`;
-          assert.ok(!copied.has(key), `native family repeats an observed public File ${key}`);
-          copied.add(key);
           const file = member.path ? `${output.path}/${member.path}` : output.path;
           assert.equal(
             origin.finalFiles.files.filter(
@@ -2200,27 +2217,141 @@ export function stageNativeReleaseFamilies(
             1,
             'native family File is absent from authenticated transport',
           );
-          const family = path.join(destination, root.package.product, 'release-assets');
-          requireSafeDirectoryChain(family, { create: true, label: 'native release family' });
-          const target = path.join(family, name);
-          copyFileSync(path.join(evidenceRoot, 'files', String(cohort), file), target);
-          assert.ok(
-            (member.mode & 0o400) !== 0 &&
-              (member.mode & 0o002) === 0 &&
-              !((member.mode & 0o111) !== 0 && (member.mode & 0o020) !== 0),
-            'native family File has an unsafe captured mode',
+          const retained = path.join(evidenceRoot, 'files', String(cohort), file);
+          if (root.package.role === 'extension-release-family-input') {
+            const manifest = JSON.parse(readFileSync(retained, 'utf8'));
+            assert.equal(
+              manifest.releaseProduct ?? manifest.product,
+              root.package.product,
+              'native family manifest release owner differs',
+            );
+            assert.equal(
+              manifest.version,
+              root.package.version,
+              'native family manifest version differs',
+            );
+            manifests.push({ owner: root.package.product, value: manifest });
+            continue;
+          }
+          const name = root.package.name;
+          assert.equal(
+            expected.filter((row) => row.product === root.package.product && row.name === name)
+              .length,
+            1,
+            `native family ${name} has no unique canonical public owner`,
           );
-          chmodSync(target, member.mode);
-          const identity = fileIdentity(target);
-          assert.deepEqual(
-            { size: identity.size, sha256: identity.sha256 },
-            { size: member.size, sha256: member.sha256 },
-            'native family File changed during relocation',
-          );
-          families.add(family);
+          const key = `${root.package.product}/${name}`;
+          assert.ok(!publicFiles.has(key), `native family repeats an observed public File ${key}`);
+          publicFiles.set(key, {
+            owner: root.package.product,
+            name,
+            file: retained,
+            member,
+            executionRoot: value.executionRoot,
+          });
         }
       origin.finalFiles.assertUnchanged?.();
     }
+    const copy = (file: PublicFile, target: string) => {
+      const mode = nativeTransportStagingMode(file.member, file.executionRoot);
+      assert.ok(
+        (mode & 0o400) !== 0 &&
+          (mode & 0o002) === 0 &&
+          !((mode & 0o111) !== 0 && (mode & 0o020) !== 0),
+        'native family File has an unsafe captured mode',
+      );
+      requireSafeDirectoryChain(path.dirname(target), {
+        create: true,
+        label: 'native release family',
+      });
+      copyFileSync(file.file, target);
+      chmodSync(target, mode);
+      const identity = fileIdentity(target);
+      assert.deepEqual(
+        { size: identity.size, sha256: identity.sha256 },
+        { size: file.member.size, sha256: file.member.sha256 },
+        'native family File changed during relocation',
+      );
+      return identity;
+    };
+    const claimed = new Set<string>();
+    const complete = new Set<string>();
+    const contrib = contribCarrierDescriptor('native release family');
+    for (const { owner, value } of manifests) {
+      const artifactProduct = value.artifactProduct ?? value.product;
+      const family = value.family ?? null;
+      const product = catalog.products.find((product) => product.id === owner)!;
+      assert.equal(value.version, product.version, 'native family version is not canonical');
+      if (artifactProduct === contrib.artifactProduct) {
+        assert.ok(family === 'native' || family === 'wasix', 'contrib family is not canonical');
+        assert.equal(
+          owner,
+          family === 'native' ? contrib.nativeOwner : contrib.wasixOwner,
+          'contrib family owner differs',
+        );
+      } else {
+        assert.equal(artifactProduct, owner, 'extension family artifact owner differs');
+        assert.ok(
+          ['exact-extension-artifact', 'exact-extension-bundle'].includes(product.kind),
+          'native family is not an extension product',
+        );
+        assert.equal(family, null, 'independent extension family must be complete');
+      }
+      const key = `${owner}/${artifactProduct}/${family ?? 'combined'}`;
+      assert.ok(!complete.has(key), 'native family repeats its complete aggregate manifest');
+      complete.add(key);
+      const { directAssets: direct } = extensionReleaseDocumentRows(value);
+      const names = [
+        ...direct.map((asset) => asset.name),
+        ...extensionReleaseMetadataRows(
+          { id: artifactProduct, version: value.version },
+          family,
+        ).map(([, name]) => name),
+      ];
+      assert.equal(new Set(names).size, names.length, 'native family repeats a public asset');
+      const files = names.map((name) => {
+        const identity = `${owner}/${name}`;
+        assert.ok(
+          !claimed.has(identity),
+          'native family public File belongs to multiple aggregate manifests',
+        );
+        const file = publicFiles.get(identity);
+        assert.ok(file, `native family lacks its declared public File ${identity}`);
+        claimed.add(identity);
+        return file;
+      });
+      const productRoot = path.join(destination, key);
+      const byPath = new Map(files.map((file) => [realpathSync(file.file), file]));
+      const staged = stageDeclaredExtensionReleaseFiles(
+        value,
+        files.map((file) => file.file),
+        productRoot,
+        ROOT,
+        (source, target) => copy(byPath.get(source)!, target),
+      );
+      for (const file of files.filter((file) => !direct.some((asset) => asset.name === file.name)))
+        copy(file, path.join(productRoot, 'release-assets', file.name));
+      writeFileSync(
+        path.join(productRoot, 'extension-artifacts.json'),
+        `${JSON.stringify(staged.manifest, null, 2)}\n`,
+      );
+      families.add(productRoot);
+    }
+    for (const [key, file] of publicFiles) {
+      if (claimed.has(key)) continue;
+      const product = catalog.products.find((product) => product.id === file.owner)!;
+      assert.ok(
+        allArtifactTargets(
+          { product: file.owner, surface: 'github-release' },
+          'native release family',
+        ).some((target) => target.asset.replaceAll('{version}', product.version) === file.name),
+        `native family ${key} lacks its complete aggregate manifest`,
+      );
+      const family = path.join(destination, file.owner, 'release-assets');
+      copy(file, path.join(family, file.name));
+      families.add(family);
+    }
+    for (const origin of origins.values()) origin.finalFiles.assertUnchanged?.();
     return [...families].sort();
   } catch (error) {
     rmSync(destination, { recursive: true, force: true });

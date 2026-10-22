@@ -19,6 +19,7 @@ import {
   assureReviewedNativeBuildProducer,
   authenticateNativeBuildEvidence,
   createNativeBuildEvidenceAcquirer,
+  validateAuthenticatedNativeBuildEvidence,
   validateReviewedNativeProducerAssurance,
 } from './authenticate-native-build-evidence.mts';
 import {
@@ -26,7 +27,6 @@ import {
   type NativeBuildEvidence,
   nativeAqueryExpression,
   nativeBuildMetadata,
-  validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
 
 const expected = {
@@ -754,6 +754,9 @@ test('owned native acquisition authenticates and retains one download without ac
     const destination = path.join(root, 'acquired');
     const origin = await acquireAuthenticatedNativeBuildEvidence(destination, expected);
     expect(origin.evidence).toEqual({ synthetic: true });
+    expect(() =>
+      validateAuthenticatedNativeBuildEvidence(origin, { ...expected, bazelVersion: '8.8.1' }),
+    ).toThrow();
     expect(
       JSON.parse(readFileSync(path.join(destination, 'native-build-evidence.json'), 'utf8')),
     ).toEqual(origin.evidence);
@@ -1054,7 +1057,44 @@ test('controller authenticates transported final bytes from the exact artifact a
       },
     ]);
     expect(origin.finalFiles?.artifactRoots).toEqual([transported]);
+    const qualification = origin.finalFiles?.qualification;
+    const context = { ...expected, bazelVersion: f.request.bazelVersion };
+    expect(validateAuthenticatedNativeBuildEvidence(origin, context)).toBe(qualification);
+    expect(
+      validateAuthenticatedNativeBuildEvidence(origin, {
+        ...context,
+        requireShippingAnalysis: true,
+      }),
+    ).toBe(qualification);
+    for (const changed of [
+      { source: { ...expected.source, commit: 'e'.repeat(40) } },
+      { source: { ...expected.source, tree: 'e'.repeat(40) } },
+      { github: { ...expected.github, runAttempt: 2 } },
+      { github: { ...expected.github, job: 'Other producer' } },
+    ])
+      expect(() =>
+        validateAuthenticatedNativeBuildEvidence(origin, { ...context, ...changed }),
+      ).toThrow();
+    const replay = validateAuthenticatedNativeBuildEvidence(origin, {
+      ...context,
+      requiredTests: f.request.requiredTests,
+    });
+    expect(replay).not.toBe(qualification);
+    expect(replay.testQualification).toBe('passed');
+    expect(() =>
+      validateAuthenticatedNativeBuildEvidence(origin, { ...context, requiredTests: [] }),
+    ).toThrow('nonempty unique');
+    expect(
+      validateAuthenticatedNativeBuildEvidence(Object.freeze({ ...origin }), context),
+    ).not.toBe(qualification);
+    expect(() =>
+      validateAuthenticatedNativeBuildEvidence(
+        { ...origin, evidence: { synthetic: true } },
+        context,
+      ),
+    ).toThrow();
     writeFileSync(transported, 'local substitution');
+    expect(() => assertAuthenticatedNativeBuildOrigin(origin)).toThrow();
     await expect(authenticateNativeBuildEvidence(evidenceRoot, expected)).rejects.toThrow(
       'native final transport bytes',
     );
@@ -1069,6 +1109,54 @@ test('controller authenticates transported final bytes from the exact artifact a
     await expect(authenticateNativeBuildEvidence(evidenceRoot, expected)).rejects.toThrow(
       'final file transport differ',
     );
+  });
+});
+
+test('authenticated qualification retains unbound shipping and explicit cross-cohort test checks', async () => {
+  await fixture(async (root) => {
+    const f = syntheticReviewedProducer();
+    delete f.origin.evidence.cohorts[0].producerCapture;
+    const second = structuredClone(f.origin.evidence.cohorts[0]);
+    const started = second.buildEvents.find((event) => event.started);
+    if (!started) throw new Error('synthetic fixture requires its started event');
+    started.started.uuid = 'second-synthetic-invocation';
+    f.origin.evidence.cohorts.push(second);
+    const directory = path.join(root, 'evidence');
+    for (const [index, cohort] of f.origin.evidence.cohorts.entries()) {
+      const file = path.join(directory, 'files', String(index), cohort.outputs[0].path);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, 'synthetic public archive');
+    }
+    writeFileSync(
+      path.join(directory, 'native-build-evidence.json'),
+      JSON.stringify(f.origin.evidence),
+    );
+    rmSync(path.join(root, 'artifact.zip'));
+    execFileSync(
+      'zip',
+      ['-qr', path.join(root, 'artifact.zip'), 'native-build-evidence.json', 'files'],
+      { cwd: directory },
+    );
+    const origin = await acquireAuthenticatedNativeBuildEvidence(
+      path.join(root, 'acquired'),
+      expected,
+    );
+    const context = { ...expected, bazelVersion: f.request.bazelVersion };
+    expect(validateAuthenticatedNativeBuildEvidence(origin, context)).toBe(
+      origin.finalFiles?.qualification,
+    );
+    expect(() =>
+      validateAuthenticatedNativeBuildEvidence(origin, {
+        ...context,
+        requireShippingAnalysis: true,
+      }),
+    ).toThrow('producing-analysis shipping manifests');
+    expect(() =>
+      validateAuthenticatedNativeBuildEvidence(origin, {
+        ...context,
+        requiredTests: f.request.requiredTests,
+      }),
+    ).toThrow('found 2');
   });
 });
 
@@ -1099,10 +1187,10 @@ test('historical producer transport uses its authenticated version while current
     const origin = await authenticateNativeBuildEvidence(directory, expected);
     expect(origin.finalFiles?.artifactRoots).toEqual([file]);
     expect(() =>
-      validateNativeBuildEvidence(origin.evidence, { ...expected, bazelVersion: historical }),
+      validateAuthenticatedNativeBuildEvidence(origin, { ...expected, bazelVersion: historical }),
     ).not.toThrow();
     expect(() =>
-      validateNativeBuildEvidence(origin.evidence, { ...expected, bazelVersion: current }),
+      validateAuthenticatedNativeBuildEvidence(origin, { ...expected, bazelVersion: current }),
     ).toThrow('native BEP Bazel version mismatch');
   });
 });

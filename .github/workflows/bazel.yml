@@ -1808,7 +1808,7 @@ jobs:
     needs: [release-inputs, portable, linux, wasix, postmaster, postmaster-host, react-native, release-families, wasix-host]
     if: always() && (github.event_name != 'pull_request' || github.event.action != 'closed') && needs.release-inputs.outputs.ci_mode == 'full'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Require every native qualification job
         env:

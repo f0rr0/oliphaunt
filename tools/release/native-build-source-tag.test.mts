@@ -256,6 +256,24 @@ test('complete Swift source tag transfers once with exact raw modes and canonica
     });
     expect(assetsOnly).toHaveLength(2);
     expect(assetsOnly.some((file) => path.basename(file) === 'release-tree')).toBe(false);
+    const inputsOnly = normalized.stage({
+      excludeRoles: ['github-release-asset', 'github-release-metadata'],
+      stageDirectory: `${stageDirectory}-inputs`,
+    });
+    const inputTree = inputsOnly.find((file) => path.basename(file) === 'release-tree');
+    expect(inputTree).toBeDefined();
+    expect(
+      inputsOnly.some((file) =>
+        assetsOnly.some((asset) => path.basename(asset) === path.basename(file)),
+      ),
+    ).toBe(false);
+    expect(statSync(path.join(inputTree, 'src/sdks/swift/Templates/launch.sh')).mode & 0o777).toBe(
+      0o644,
+    );
+    expect(readFileSync(path.join(inputTree, 'Package.swift'))).toEqual(
+      readFileSync(path.join(stagedTree, 'Package.swift')),
+    );
+    expect(tree.members.find(({ path }) => path.endsWith('launch.sh')).mode).toBe(0o755);
   });
 });
 

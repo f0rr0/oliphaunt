@@ -30,8 +30,10 @@ import {
   readNativeBuildFinalFilesBatch,
 } from './native-build-files.mts';
 import {
+  captureNativeInputMembers,
   captureNativeOutputMembers,
   captureNativePublicationOutputs,
+  NATIVE_EXTENSION_RELEASE_INPUT_ROLES,
 } from './native-publication-staging.mts';
 import { ROOT } from './release-graph.mts';
 
@@ -227,130 +229,214 @@ test('selected File staging preserves source bytes while leaving other public pr
   });
 });
 
-test('split Cargo public trees preserve exact part ordering, identities and controls without producer sources', async () => {
-  await fixture(async (f) => {
-    const evidence = structuredClone(f.origin.evidence);
-    const cohort = evidence.cohorts[0];
-    const root = cohort.roots[0];
-    const previous = root.package.outputs[0].path;
-    const output = 'bazel-out/k8-opt/bin/alpha/crates';
-    const physical = path.join(cohort.executionRoot, output);
-    mkdirSync(physical);
-    const packages = [];
-    for (const part of ['000', '001']) {
-      const name = `fixture-runtime-linux-x64-gnu-artifacts-part${part}`;
-      const source = path.join(f.directory, name);
-      mkdirSync(path.join(source, `${name}-1.0.0`), { recursive: true });
-      writeFileSync(
-        path.join(source, `${name}-1.0.0/Cargo.toml`),
-        `[package]\nname = "${name}"\nversion = "1.0.0"\n`,
-      );
-      writeFileSync(
-        path.join(source, `${name}-1.0.0/artifacts.part`),
-        `genuine part bytes ${part}`,
-      );
-      const archive = path.join(physical, `${name}-1.0.0.crate`);
-      await archiveDirectory(source, `${archive}.tar.gz`);
-      renameSync(`${archive}.tar.gz`, archive);
-      packages.push({ name, file: path.basename(archive) });
-    }
-    writeFileSync(path.join(physical, 'packages.json'), `${JSON.stringify(packages)}\n`);
-    writeFileSync(path.join(physical, 'Cargo.toml'), '[workspace]\n');
-    const empty = path.join(physical, 'read-only-empty');
-    mkdirSync(empty);
-    chmodSync(empty, 0o555);
-    chmodSync(physical, 0o500);
-    const treeMode = statSync(physical).mode & 0o777;
-    const emptyMode = statSync(empty).mode & 0o777;
-    try {
-      const graph: any = cohort.aquery;
-      const fragments = new Map(graph.pathFragments.map((row) => [row.id, row]));
-      const resolved = (id) => {
-        const row: any = fragments.get(id);
-        return row.parentId === undefined ? row.label : `${resolved(row.parentId)}/${row.label}`;
-      };
-      const artifact = graph.artifacts.find((row) => resolved(row.pathFragmentId) === previous);
-      const parts = output.split('/');
-      graph.pathFragments.push(
-        ...parts.map((label, index) => ({
-          id: `parts-${index}`,
-          label,
-          ...(index ? { parentId: `parts-${index - 1}` } : {}),
-        })),
-      );
-      artifact.pathFragmentId = `parts-${parts.length - 1}`;
-      root.package.ecosystem = 'cargo';
-      root.package.name = 'fixture-runtime-linux-x64-gnu';
-      root.package.outputs[0].path = output;
-      const members = captureNativeOutputMembers(cohort.executionRoot, output).members;
-      for (const event of cohort.buildEvents as any[]) {
-        const files = event.namedSetOfFiles?.files;
-        if (!files?.some((file) => file.name === previous)) continue;
-        event.namedSetOfFiles.files = files.flatMap((file) =>
-          file.name === previous
-            ? members
-                .filter((member) => member.type === 'file')
-                .map((member: any) => ({
-                  name: `${output}/${member.path}`,
-                  digest: member.sha256,
-                  length: String(member.size),
-                }))
-            : [file],
+for (const windowsRoot of [
+  undefined,
+  'C:\\b\\execroot\\_main',
+  '\\\\server\\share\\execroot\\_main',
+])
+  test(`split Cargo public trees preserve parts and modes from ${windowsRoot ?? 'POSIX'} producers`, async () => {
+    await fixture(async (f) => {
+      const evidence = structuredClone(f.origin.evidence);
+      const cohort = evidence.cohorts[0];
+      const root = cohort.roots[0];
+      const previous = root.package.outputs[0].path;
+      const output = 'bazel-out/k8-opt/bin/alpha/crates';
+      const physical = path.join(cohort.executionRoot, output);
+      mkdirSync(physical);
+      const packages = [];
+      for (const part of ['000', '001']) {
+        const name = `fixture-runtime-linux-x64-gnu-artifacts-part${part}`;
+        const source = path.join(f.directory, name);
+        mkdirSync(path.join(source, `${name}-1.0.0`), { recursive: true });
+        writeFileSync(
+          path.join(source, `${name}-1.0.0/Cargo.toml`),
+          `[package]\nname = "${name}"\nversion = "1.0.0"\n`,
         );
+        writeFileSync(
+          path.join(source, `${name}-1.0.0/artifacts.part`),
+          `genuine part bytes ${part}`,
+        );
+        const executable = path.join(source, `${name}-1.0.0/launch.sh`);
+        writeFileSync(executable, '#!/bin/sh\nexit 0\n');
+        chmodSync(executable, 0o755);
+        const archive = path.join(physical, `${name}-1.0.0.crate`);
+        await archiveDirectory(source, `${archive}.tar.gz`);
+        renameSync(`${archive}.tar.gz`, archive);
+        packages.push({ name, file: path.basename(archive) });
       }
-      const captured = captureNativeBuildEvidence({
-        ...constraints(f),
-        cohorts: [
-          {
-            ...cohort,
-            cquery: {
-              results: cohort.roots.map(({ label }) => ({
-                target: { rule: { name: label } },
-                configurationId: 1,
-              })),
-              configurations: [{ id: 1, checksum: cohort.rootConfigurations[0].configuration }],
-            },
-          },
-        ],
-      });
-      const directory = path.join(f.directory, 'parts-packet');
-      const file = writeNativeBuildEvidence(captured, directory);
-      const packet = readNativeBuildFinalFiles(
-        directory,
-        JSON.parse(readFileSync(file, 'utf8')),
-        constraints(f),
-      );
-      const files = packet.artifactRoots.filter((file) => file.includes('/alpha/crates/'));
-      expect(files.map((file) => path.basename(file))).toEqual([
-        'Cargo.toml',
-        ...packages.map(({ file }) => file),
-        'packages.json',
-      ]);
-      const manifest = files.find((file) => file.endsWith('packages.json'));
-      expect(JSON.parse(readFileSync(manifest, 'utf8'))).toEqual(packages);
-      for (const file of files)
-        expect(readFileSync(file)).toEqual(readFileSync(path.join(physical, path.basename(file))));
-      expect(packet.artifactRoots.some((file) => file.includes('-source/'))).toBe(false);
+      writeFileSync(path.join(physical, 'packages.json'), `${JSON.stringify(packages)}\n`);
+      writeFileSync(path.join(physical, 'Cargo.toml'), '[workspace]\n');
+      const empty = path.join(physical, 'read-only-empty');
+      mkdirSync(empty);
+      mkdirSync(path.join(physical, 'nested/empty'), { recursive: true });
+      writeFileSync(path.join(physical, 'nested/control.json'), '{}\n');
+      chmodSync(empty, 0o555);
+      chmodSync(physical, 0o500);
+      const treeMode = statSync(physical).mode & 0o777;
+      const emptyMode = statSync(empty).mode & 0o777;
+      const nestedMode = statSync(path.join(physical, 'nested/empty')).mode & 0o777;
+      const controlMode = statSync(path.join(physical, 'nested/control.json')).mode & 0o777;
       const stagedDirectory = path.join(f.directory, 'read-only-stage');
-      const staged = packet.stage({
-        stageDirectory: path.relative(ROOT, stagedDirectory).split(path.sep).join('/'),
-      });
-      const tree = staged.find((file) => path.basename(file) === 'crates');
-      if (!tree) throw new Error('staged Cargo Tree is missing');
-      expect(statSync(tree).mode & 0o777).toBe(treeMode);
-      expect(statSync(path.join(tree, 'read-only-empty')).mode & 0o777).toBe(emptyMode);
-      expect(captureNativeOutputMembers(cohort.executionRoot, output).members).toEqual(members);
-      packet.assertUnchanged();
-      removeOwnedDirectory(stagedDirectory);
-      expect(existsSync(stagedDirectory)).toBe(false);
-      expect(statSync(physical).mode & 0o777).toBe(treeMode);
-      expect(statSync(empty).mode & 0o777).toBe(emptyMode);
-    } finally {
-      chmodSync(physical, 0o755);
-      chmodSync(empty, 0o755);
-    }
+      try {
+        const graph: any = cohort.aquery;
+        const fragments = new Map(graph.pathFragments.map((row) => [row.id, row]));
+        const resolved = (id) => {
+          const row: any = fragments.get(id);
+          return row.parentId === undefined ? row.label : `${resolved(row.parentId)}/${row.label}`;
+        };
+        const artifact = graph.artifacts.find((row) => resolved(row.pathFragmentId) === previous);
+        const parts = output.split('/');
+        graph.pathFragments.push(
+          ...parts.map((label, index) => ({
+            id: `parts-${index}`,
+            label,
+            ...(index ? { parentId: `parts-${index - 1}` } : {}),
+          })),
+        );
+        artifact.pathFragmentId = `parts-${parts.length - 1}`;
+        graph.pathFragments.push({
+          id: 'parts-nested',
+          label: 'nested',
+          parentId: artifact.pathFragmentId,
+        });
+        graph.artifacts.push({ ...artifact, id: 'parts-nested', pathFragmentId: 'parts-nested' });
+        graph.actions
+          .find((action) => action.outputIds.includes(artifact.id))
+          .outputIds.push('parts-nested');
+        root.package.ecosystem = 'cargo';
+        root.package.name = 'fixture-runtime-linux-x64-gnu';
+        root.package.outputs[0].path = output;
+        root.package.outputs.push({ ...root.package.outputs[0], path: `${output}/nested` });
+        const members = captureNativeOutputMembers(cohort.executionRoot, output).members;
+        for (const event of cohort.buildEvents as any[]) {
+          const files = event.namedSetOfFiles?.files;
+          if (!files?.some((file) => file.name === previous)) continue;
+          event.namedSetOfFiles.files = files.flatMap((file) =>
+            file.name === previous
+              ? members
+                  .filter((member) => member.type === 'file')
+                  .map((member: any) => ({
+                    name: `${output}/${member.path}`,
+                    digest: member.sha256,
+                    length: String(member.size),
+                  }))
+              : [file],
+          );
+        }
+        const captured = captureNativeBuildEvidence({
+          ...constraints(f),
+          cohorts: [
+            {
+              ...cohort,
+              cquery: {
+                results: cohort.roots.map(({ label }) => ({
+                  target: { rule: { name: label } },
+                  configurationId: 1,
+                })),
+                configurations: [{ id: 1, checksum: cohort.rootConfigurations[0].configuration }],
+              },
+            },
+          ],
+        });
+        const directory = path.join(f.directory, 'parts-packet');
+        const file = writeNativeBuildEvidence(captured, directory);
+        const transported = JSON.parse(readFileSync(file, 'utf8'));
+        if (windowsRoot) {
+          // Simulate Windows stat metadata around genuine transported opaque archives.
+          transported.cohorts[0].executionRoot = windowsRoot;
+          transported.cohorts[0].buildEvents.find(
+            (event) => event.workspaceInfo,
+          ).workspaceInfo.localExecRoot = windowsRoot;
+          for (const output of transported.cohorts[0].outputs)
+            for (const member of output.members) member.mode = 0o666;
+          writeFileSync(file, JSON.stringify(transported));
+        }
+        const originalEvidence = readFileSync(file);
+        const originalMetadata = structuredClone(transported);
+        const transportMembers = captureNativeInputMembers(directory, 'files').members;
+        const packet = readNativeBuildFinalFiles(directory, transported, constraints(f));
+        const files = packet.artifactRoots.filter((file) => file.includes('/alpha/crates/'));
+        expect(files.map((file) => path.basename(file))).toEqual([
+          'Cargo.toml',
+          ...packages.map(({ file }) => file),
+          'control.json',
+          'packages.json',
+        ]);
+        const manifest = files.find((file) => file.endsWith('packages.json'));
+        expect(JSON.parse(readFileSync(manifest, 'utf8'))).toEqual(packages);
+        for (const file of files)
+          expect(readFileSync(file)).toEqual(
+            readFileSync(path.join(physical, file.split('/alpha/crates/')[1])),
+          );
+        expect(packet.artifactRoots.some((file) => file.includes('-source/'))).toBe(false);
+        const staged = packet.stage({
+          stageDirectory: path.relative(ROOT, stagedDirectory).split(path.sep).join('/'),
+        });
+        const tree = staged.find((file) => path.basename(file) === 'crates');
+        if (!tree) throw new Error('staged Cargo Tree is missing');
+        expect(statSync(tree).mode & 0o777).toBe(windowsRoot ? 0o755 : treeMode);
+        expect(statSync(path.join(tree, 'read-only-empty')).mode & 0o777).toBe(
+          windowsRoot ? 0o755 : emptyMode,
+        );
+        expect(statSync(path.join(tree, 'nested/empty')).mode & 0o777).toBe(
+          windowsRoot ? 0o755 : nestedMode,
+        );
+        expect(statSync(path.join(tree, 'nested/control.json')).mode & 0o777).toBe(
+          windowsRoot ? 0o644 : controlMode,
+        );
+        for (const { name, file } of packages) {
+          const staged = path.join(tree, file);
+          expect(readFileSync(staged)).toEqual(readFileSync(path.join(physical, file)));
+          expect(readPortableArchiveEntries(staged).get(`${name}-1.0.0/launch.sh`)?.mode).toBe(
+            0o755,
+          );
+        }
+        expect(readFileSync(file)).toEqual(originalEvidence);
+        expect(transported).toEqual(originalMetadata);
+        expect(captureNativeInputMembers(directory, 'files').members).toEqual(transportMembers);
+        if (windowsRoot) {
+          const conflicting = structuredClone(transported);
+          conflicting.cohorts[0].outputs.find(
+            ({ path }) => path === `${output}/nested`,
+          ).members[0].mode = 0o444;
+          expect(() =>
+            readNativeBuildFinalFiles(directory, conflicting, constraints(f)).stage(),
+          ).toThrow('native overlapping reconstructed members');
+        } else {
+          for (const executionRoot of [cohort.executionRoot, '//server/share/execroot']) {
+            const unsafe = structuredClone(transported);
+            unsafe.cohorts[0].executionRoot = executionRoot;
+            unsafe.cohorts[0].buildEvents.find(
+              (event) => event.workspaceInfo,
+            ).workspaceInfo.localExecRoot = executionRoot;
+            unsafe.cohorts[0].outputs.find(({ path }) => path === output).members[0].mode = 0o666;
+            expect(() =>
+              readNativeBuildFinalFiles(directory, unsafe, constraints(f)).stage(),
+            ).toThrow('unsafe captured mode');
+          }
+          for (const mode of [0o666, 0o775]) {
+            const unsafe = structuredClone(transported);
+            unsafe.cohorts[0].outputs.find(({ path }) =>
+              path.endsWith('/beta.tgz'),
+            ).members[0].mode = mode;
+            expect(() =>
+              readNativeBuildFinalFiles(directory, unsafe, constraints(f)).stage(),
+            ).toThrow('unsafe captured mode');
+          }
+        }
+        expect(captureNativeOutputMembers(cohort.executionRoot, output).members).toEqual(members);
+        packet.assertUnchanged();
+        removeOwnedDirectory(stagedDirectory);
+        expect(existsSync(stagedDirectory)).toBe(false);
+        expect(statSync(physical).mode & 0o777).toBe(treeMode);
+        expect(statSync(empty).mode & 0o777).toBe(emptyMode);
+      } finally {
+        if (existsSync(stagedDirectory)) removeOwnedDirectory(stagedDirectory);
+        chmodSync(physical, 0o755);
+        chmodSync(empty, 0o755);
+      }
+    });
   });
-});
 
 for (const kind of [
   'tampered',
@@ -416,12 +502,10 @@ test('extension join documents survive final transport and owned staging without
   await fixture(async (f) => {
     const evidence = f.origin.evidence;
     const roots = evidence.cohorts[0].roots;
-    for (const [index, role] of [
-      'extension-release-manifest-input',
-      'extension-release-frozen-input',
-    ].entries()) {
-      roots[index].package.ecosystem = 'internal';
-      roots[index].package.role = role;
+    const documents = [roots[0], roots[1], roots[3]];
+    for (const [index, role] of NATIVE_EXTENSION_RELEASE_INPUT_ROLES.entries()) {
+      documents[index].package.ecosystem = 'internal';
+      documents[index].package.role = role;
     }
     const directory = path.join(f.directory, 'join-packet');
     const file = writeNativeBuildEvidence(f.capture, directory);
@@ -439,13 +523,15 @@ test('extension join documents survive final transport and owned staging without
         .join('/'),
     });
     expect(staged).toHaveLength(3);
-    for (const root of roots.slice(0, 2)) {
+    for (const root of documents) {
       const original = path.join(evidence.cohorts[0].executionRoot, root.package.outputs[0].path);
       const transferred = staged.find((file) => path.basename(file) === path.basename(original));
       expect(transferred).toBeDefined();
       expect(readFileSync(transferred)).toEqual(readFileSync(original));
     }
-    expect(roots.slice(0, 2).every(({ package: pkg }) => pkg.ecosystem === 'internal')).toBe(true);
+    expect(roots.every(({ package: pkg }) => pkg.ecosystem === 'internal')).toBe(true);
+    expect(packet.stage({ excludeRoles: NATIVE_EXTENSION_RELEASE_INPUT_ROLES })).toEqual([]);
+    expect(packet.files).toHaveLength(3);
     expect(packet).not.toHaveProperty('releaseDecision');
   });
 });

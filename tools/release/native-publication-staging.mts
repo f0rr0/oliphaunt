@@ -65,6 +65,19 @@ export type NativeOutputMember =
   | { path: string; type: 'directory'; mode: number }
   | { path: string; type: 'file'; mode: number; size: number; sha256: string };
 
+/** Windows stat bits have no POSIX permission meaning; normalize only owned staging. */
+export function nativeTransportStagingMode(
+  member: Pick<NativeOutputMember, 'type' | 'mode'>,
+  executionRoot: string,
+): number {
+  // Ambiguous POSIX-looking roots, including slash-spelled UNC paths, retain POSIX checks.
+  return !path.posix.isAbsolute(executionRoot) && path.win32.isAbsolute(executionRoot)
+    ? member.type === 'directory'
+      ? 0o755
+      : 0o644
+    : member.mode;
+}
+
 /** Copy one declared regular output through the same bounded reader as candidate staging. */
 export function copyNativeOutputFile(executionRoot: string, output: string, destination: string) {
   return fileIdentity(nativeOutputPath(executionRoot, safeRelative(output)), destination);
@@ -120,12 +133,18 @@ export function captureNativeInputMembers(executionRoot: string, input: string) 
  * byte staging, never producer execution, qualification or release selection.
  */
 /** Final envelopes and the exact documents required to join extension target leaves. */
+export const NATIVE_EXTENSION_RELEASE_INPUT_ROLES = [
+  'extension-release-manifest-input',
+  'extension-release-frozen-input',
+  'extension-release-family-input',
+] as const;
+
 export function isNativeFinalTransportRoot(root: NativeRoot) {
   const pkg = root.package;
   return (
     isNativeAppleBaseInputRoot(root) ||
     pkg.ecosystem !== 'internal' ||
-    ['extension-release-manifest-input', 'extension-release-frozen-input'].includes(pkg.role)
+    (NATIVE_EXTENSION_RELEASE_INPUT_ROLES as readonly string[]).includes(pkg.role)
   );
 }
 

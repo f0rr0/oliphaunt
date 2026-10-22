@@ -46,7 +46,7 @@ def _family(name, product, base_carrier_manifest, family = "native"):
                                      base_carrier_manifest = base, family = family)
     owner = name + "_owner"
     release_identity(name = owner, product_id = spec["owner"], version = spec["version"])
-    rows = []
+    rows = [struct(group = "frozen", ecosystem = "internal", name = product + "-" + family + "-release-family", role = "extension-release-family-input")]
     if "native" in spec["ownerFamilies"]:
         for ecosystem in ["npm", "cargo"]:
             facade = [row for row in spec["carriers"] if row["ecosystem"] == ecosystem and row["role"] == "facade" and row["target"] == None]
