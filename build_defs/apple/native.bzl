@@ -52,7 +52,6 @@ def expo_apple_swift_library(name, hdrs = [], clang_copts = [], **kwargs):
         name = umbrella,
         out = umbrella + ".h",
         content = ["#ifdef __OBJC__", "#import <UIKit/UIKit.h>", "#endif", ""],
-        testonly = kwargs.get("testonly", False),
         target_compatible_with = kwargs.get("target_compatible_with", []),
         visibility = ["//visibility:private"],
     )
