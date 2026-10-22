@@ -85,4 +85,4 @@ jobs:
           cohort: portable
           disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
           output-base: ${{ runner.temp }}/expo-umbrella-bazel
-          jvm-args: --host_jvm_args=-Xmx3g
+          jvm-args: -Xmx3g

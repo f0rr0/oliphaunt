@@ -23,6 +23,17 @@ export function expoFixturePassed(logs: string) {
   return /^\/\/build_defs\/apple:expo_umbrella_test[ \t]+(?:\(cached\)[ \t]+)?PASSED\b/m.test(logs);
 }
 
+export function retainWarmupProfile(outputBase: string, output: string) {
+  try {
+    const bytes = readFileSync(join(outputBase, 'command.profile.gz'));
+    const path = join(output, 'fixed-warmup.profile.gz');
+    writeFileSync(path, bytes, { mode: 0o600, flag: 'wx' });
+    return { path, sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function main() {
   const args = new Map<string, string>();
   for (let index = 2; index < process.argv.length; index += 2) {
@@ -58,6 +69,8 @@ function main() {
   ];
   const sourceFiles = [
     'build_defs/apple/native.bzl', 'build_defs/apple/BUILD.bazel', '.github/workflows/bazel.yml',
+    'src/examples/native/react-native-expo/BUILD.bazel',
+    'build_defs/android/native-repository.bzl', 'build_defs/apple/react-native-repository.bzl',
     ...['Headerless.swift', 'Mixed.swift', 'Mixed.h', 'Mixed.m', 'MixedPrivate.h'].map(name => `build_defs/apple/testdata/expo-umbrella/${name}`),
   ];
   const observations: Record<string, unknown>[] = [];
@@ -100,6 +113,7 @@ function main() {
   }
   try {
     const warmup = run('fixed-warmup', 20 * 60_000);
+    result.warmupProfile = retainWarmupProfile(outputBase, output);
     assert.ok(warmup.status === 0 && !warmup.signal && !warmup.error && warmup.testPassed,
       'The unchanged fixed helper must pass before disabling its UIKit import.');
     let negative: ReturnType<typeof run>;

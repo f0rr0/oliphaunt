@@ -16,8 +16,6 @@ def _release_impl(ctx):
 load("@rules_apple//apple:apple.bzl", "apple_dynamic_xcframework_import")
 package(default_visibility = ["//visibility:public"])
 exports_files(glob(["React.xcframework/Headers/**", "React.xcframework/*.yaml", "destroot/include/**", "packages/react-native/third-party/ReactNativeDependencies.xcframework/Headers/**"]))
-filegroup(name = "react_headers", srcs = glob(["React.xcframework/Headers/**"]))
-filegroup(name = "jsi_headers", srcs = ["React.xcframework/Headers/React_jsi/jsi/jsi.h"])
 filegroup(name = "hermes_headers", srcs = glob(["destroot/include/**"]))
 filegroup(name = "dependency_headers", srcs = glob(["packages/react-native/third-party/ReactNativeDependencies.xcframework/Headers/**"]))
 apple_dynamic_xcframework_import(name = "hermes", xcframework_imports = glob(["destroot/Library/Frameworks/universal/hermesvm.xcframework/**"]))

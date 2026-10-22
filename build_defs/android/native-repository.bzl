@@ -59,7 +59,7 @@ expo_apple_modules(
     hermes = "@react_native_apple_release//:hermes",
     dependencies = "@react_native_apple_release//:dependencies",
     react_headers = "@oliphaunt//src/examples/native/react-native-expo:ios_react_headers",
-    react_jsi_headers = "@react_native_apple_release//:jsi_headers",
+    react_jsi_headers = "@oliphaunt//src/examples/native/react-native-expo:ios_react_jsi_header",
     app_dependency_provider = "@oliphaunt//src/examples/native/react-native-expo:ios_ReactAppDependencyProvider",
     app_codegen = "@oliphaunt//src/examples/native/react-native-expo:ios_ReactCodegen",
     constants_config = "@oliphaunt//src/examples/native/react-native-expo:ios_constants_config",

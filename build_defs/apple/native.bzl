@@ -12,23 +12,33 @@ load("@rules_apple//apple:resources.bzl", "apple_resource_bundle")
 load("@rules_apple//apple:ios.bzl", "ios_dynamic_framework")
 
 def _react_headers_impl(ctx):
+    headers = ctx.attr.react[CcInfo].compilation_context.direct_headers
+    roots = {header.path.split("/React.framework/")[0] + "/React.framework": True for header in headers if "/React.framework/" in header.path}
+    if len(roots) != 1:
+        fail("React header projection requires one selected React.framework")
+    root = roots.keys()[0]
+    jsi = [header for header in headers if header.path == root + "/Headers/React_jsi/jsi/jsi.h"]
+    if len(jsi) != 1:
+        fail("Selected React.framework must provide exactly one jsi.h")
     overlay = ctx.actions.declare_file(ctx.label.name + ".yaml")
     ctx.actions.expand_template(template = ctx.file.template, output = overlay,
-        substitutions = {"${ROOT_PATH}": ctx.file.template.dirname})
-    # RN ships this precise legacy-header overlay alongside its genuine framework.
-    prefix = ctx.file.template.dirname + "/Headers"
+        substitutions = {"${ROOT_PATH}": root})
+    # The upstream overlay and selected module map must name the same physical headers.
+    prefix = root + "/Headers"
     hermes = ctx.file.hermes_header.dirname.removesuffix("/hermes")
     dependencies = ctx.file.dependencies_header.dirname.removesuffix("/folly")
     swift_headers = ctx.file.swift_bridging.dirname.removesuffix("/swift")
     return [
         DefaultInfo(files = depset([overlay])),
+        OutputGroupInfo(jsi_header = depset(jsi)),
         CcInfo(compilation_context = cc_common.create_compilation_context(
-            headers = depset(ctx.files.headers + ctx.files.swift_headers + [overlay]),
+            headers = depset(headers + ctx.files.headers + ctx.files.swift_headers + [overlay]),
             system_includes = depset([prefix, hermes, dependencies, swift_headers]),
         )),
     ]
 
 react_apple_headers = rule(implementation = _react_headers_impl, attrs = {
+    "react": attr.label(mandatory = True, providers = [CcInfo]),
     "template": attr.label(mandatory = True, allow_single_file = [".yaml"]),
     "hermes_header": attr.label(mandatory = True, allow_single_file = [".h"]),
     "dependencies_header": attr.label(mandatory = True, allow_single_file = [".h"]),
