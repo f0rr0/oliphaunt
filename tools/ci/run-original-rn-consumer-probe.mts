@@ -136,7 +136,7 @@ function main() {
   const checkout = process.cwd();
   const output = join(temporary, 'expo-umbrella-context', 'original-rn-consumer');
   const outputBase = join(temporary, 'expo-umbrella-bazel');
-  assert.ok(existsSync(outputBase) && !existsSync(output), 'Reuse only this probe fixture output base.');
+  assert.ok(!existsSync(outputBase) && !existsSync(output), 'Use fresh runtime output and Bazel directories.');
   mkdirSync(output, { mode: 0o700 });
   const environment: NodeJS.ProcessEnv = {};
   for (const name of ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'DEVELOPER_DIR']) {

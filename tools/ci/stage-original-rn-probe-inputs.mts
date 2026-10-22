@@ -16,7 +16,7 @@ function main() {
   for (const file of [output, originalCheckout, archives, `${archives}.inputs`]) assert.ok(!existsSync(file));
   assert.ok(!originalCheckout.startsWith(`${checkout}/`));
   assert.ok(process.env.GITHUB_ENV && process.env.GH_TOKEN, 'Authentication needs the step-scoped GitHub token and environment file.');
-  mkdirSync(output, { mode: 0o700 });
+  mkdirSync(output, { recursive: true, mode: 0o700 });
   const source = { commit: 'bbe8b93614830b68af257e30cfa3bee2bd89b500', tree: 'c295716c95fa0d7475ed28d855ed375022b83fb0' };
   const hash = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
   const environment: NodeJS.ProcessEnv = {};

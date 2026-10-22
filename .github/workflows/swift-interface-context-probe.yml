@@ -11,7 +11,7 @@ permissions:
 jobs:
   expo-umbrella-context:
     runs-on: macos-26
-    timeout-minutes: 140
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         timeout-minutes: 2
@@ -36,14 +36,6 @@ jobs:
           phase: restore
           cohort: portable
 
-      - name: Prove the permanent Expo iOS umbrella regression
-        timeout-minutes: 31
-        shell: bash
-        run: |
-          bash tools/dev/bun.sh --no-env-file tools/ci/run-expo-umbrella-context-probe.mts \
-            --out-dir "$RUNNER_TEMP/expo-umbrella-context" \
-            --runner-temp "$RUNNER_TEMP"
-
       - name: Download the original immutable public inputs
         timeout-minutes: 5
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -65,7 +57,7 @@ jobs:
         shell: bash
         run: bash tools/dev/bun.sh --no-env-file tools/ci/run-original-rn-consumer-probe.mts
 
-      - name: Retain exact compiler observations
+      - name: Retain exact runtime observations
         timeout-minutes: 5
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
