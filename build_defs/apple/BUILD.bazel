@@ -1,3 +1,10 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@bazel_skylib//rules:select_file.bzl", "select_file")
+load("@bazel_lib//lib:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_swift//swift:swift_library.bzl", "swift_library")
+load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
+load(":native.bzl", "react_apple_swift_copts")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":requirement-selection-test.bzl", "requirement_selection_test")
 load(":slices-test.bzl", "apple_slices_test")
@@ -43,3 +50,30 @@ source_quality_files()
 requirement_selection_test(name = "requirement_selection_test")
 apple_slices_test(name = "slices_test")
 bun_test(name = "final_libraries_test", entry_point = "final-libraries.test.mts", data = ["final-libraries.mts", "//build_defs/native/apple:static-carrier-consumer.mts", "//build_defs/native/apple:framework_helpers", "//src/native/sdks/swift:generator_sources", "//:tools/packaging/testdata/zip-fixture.mts"], size = "small")
+
+# Rebuild a Swift 6 textual interface under the real Swift 5 React import profile.
+_SWIFT_CONTEXT = "testdata/swift-context/"
+_SWIFT_CONTEXT_MAC = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"]
+swift_interop_hint(name = "swift_context_cbridge_hint", module_name = "CBridge", module_map = _SWIFT_CONTEXT + "module.modulemap")
+cc_library(
+    name = "swift_context_cbridge", hdrs = [_SWIFT_CONTEXT + "Bridge.h", _SWIFT_CONTEXT + "CallInvoker.h"],
+    aspect_hints = [":swift_context_cbridge_hint"], testonly = True, target_compatible_with = _SWIFT_CONTEXT_MAC,
+)
+swift_library(
+    name = "swift_context_emitter", module_name = "Bridge", srcs = [_SWIFT_CONTEXT + "Bridge.swift"],
+    deps = [":swift_context_cbridge"], library_evolution = True,
+    copts = ["-swift-version", "6", "-cxx-interoperability-mode=off"],
+    features = ["swift.add_target_name_to_output"], testonly = True, target_compatible_with = _SWIFT_CONTEXT_MAC,
+)
+select_file(name = "swift_context_interface", srcs = ":swift_context_emitter", subpath = "swift_context_emitter/Bridge.swiftinterface", testonly = True)
+# Copy only the interface: even without a sandbox, its search directory has no binary fallback.
+copy_file(name = "swift_context_interface_only", src = ":swift_context_interface", out = "swift_context_interfaces/Bridge.swiftinterface", testonly = True)
+swift_library(
+    name = "swift_context_consumer", module_name = "SwiftContextConsumer", srcs = [_SWIFT_CONTEXT + "Consumer.swift"],
+    deps = [":swift_context_cbridge"], swiftc_inputs = [":swift_context_interface_only", _SWIFT_CONTEXT + "react.yaml"],
+    copts = ["-swift-version", "5", "-I$(BINDIR)/build_defs/apple/swift_context_interfaces"] +
+        react_apple_swift_copts(_SWIFT_CONTEXT + "react.yaml") +
+        ["-Xcc", "-Ioliphaunt-swift-context/Headers", "-Xcc", "-DOLIPHAUNT_SWIFT_CONTEXT_REQUIRED=17"],
+    testonly = True, target_compatible_with = _SWIFT_CONTEXT_MAC,
+)
+build_test(name = "swift_interface_context_test", targets = [":swift_context_consumer"], target_compatible_with = _SWIFT_CONTEXT_MAC, size = "small")

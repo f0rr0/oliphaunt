@@ -35,6 +35,14 @@ react_apple_headers = rule(implementation = _react_headers_impl, attrs = {
     "swift_headers": attr.label_list(mandatory = True, allow_files = True),
 })
 
+def react_apple_swift_copts(react_headers):
+    """Keep RN's C++ import context when rebuilding textual Swift interfaces."""
+    return [
+        "-cxx-interoperability-mode=default", "-Xcc", "-std=c++20",
+        "-Xcc", "-ivfsoverlay", "-Xcc", "$(location " + react_headers + ")",
+        "-Xfrontend", "-strict-implicit-module-context",
+    ]
+
 _SQLITE = ["HAVE_USLEEP=1", "SQLITE_ENABLE_LOCKING_STYLE=0", "SQLITE_ENABLE_BYTECODE_VTAB=1",
     "SQLITE_TEMP_STORE=2", "SQLITE_ENABLE_SESSION=1", "SQLITE_ENABLE_PREUPDATE_HOOK=1",
     "SQLITE_ENABLE_MATH_FUNCTIONS=1", "SQLITE_ENABLE_FTS4=1", "SQLITE_ENABLE_FTS3_PARENTHESIS=1", "SQLITE_ENABLE_FTS5=1"]
@@ -45,7 +53,7 @@ def expo_apple_modules(metadata, react, hermes, dependencies, react_headers, rea
     overlay = "$(location " + react_headers + ")"
     headers = "external/" + native.repository_name().removeprefix("@") + "/apple-headers"
     clang = ["-ivfsoverlay", overlay, "-I" + headers, "-DREACT_NATIVE_MINOR_VERSION=" + metadata["reactNativeVersion"].split(".")[1], "-DRCT_NEW_ARCH_ENABLED=1"] + metadata["follyCompilerFlags"]
-    swift = ["-Xcc", "-ivfsoverlay", "-Xcc", overlay, "-Xcc", "-I" + headers, "-cxx-interoperability-mode=default", "-Xcc", "-std=c++20"] + [flag for option in metadata["follyCompilerFlags"] for flag in ["-Xcc", option]]
+    swift = react_apple_swift_copts(react_headers) + ["-Xcc", "-I" + headers] + [flag for option in metadata["follyCompilerFlags"] for flag in ["-Xcc", option]]
     root = metadata["jsiRoot"] + "/apple"
     swift_interop_hint(name = "jsi_module_hint", module_name = "jsi")
     cc_library(name = "jsi_module", hdrs = [react_jsi_headers], deps = common, aspect_hints = [":jsi_module_hint"])

@@ -5,7 +5,7 @@ load("@rules_apple//apple:resources.bzl", "apple_resource_bundle")
 load("@rules_swift//swift:swift_library.bzl", "swift_library")
 load("@rules_cc//cc:objc_library.bzl", "objc_library")
 load("//build_defs/apple:app.bzl", "expo_ios_bundle", "expo_ios_project", "ios_project_file", "ios_project_file_name")
-load("//build_defs/apple:native.bzl", "react_apple_headers")
+load("//build_defs/apple:native.bzl", "react_apple_headers", "react_apple_swift_copts")
 load("//build_defs/apple:generated-files.bzl", "IOS_GENERATED_FILES")
 load("//build_defs/apple:final-libraries.bzl", "expo_ios_final_libraries")
 load("//build_defs/apple:resources.bzl", "expo_ios_resources")
@@ -226,7 +226,7 @@ react_apple_headers(
     swift_headers = ["@native_apple_sdk//:swift_interop_headers"],
 )
 _IOS_REACT = ["@react_native_apple_release//:React", ":ios_react_headers"]
-_IOS_SWIFT = ["-swift-version", "5", "-cxx-interoperability-mode=default", "-Xcc", "-std=c++20", "-Xcc", "-ivfsoverlay", "-Xcc", "$(location :ios_react_headers)"]
+_IOS_SWIFT = ["-swift-version", "5"] + react_apple_swift_copts(":ios_react_headers")
 _CODEGEN = [relative for relative in IOS_GENERATED_FILES if relative.startswith("codegen/ReactCodegen/")]
 
 objc_library(
