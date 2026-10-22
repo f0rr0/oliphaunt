@@ -92,9 +92,8 @@ def expo_apple_modules(metadata, react, hermes, dependencies, react_headers, rea
     """Build the real release closure declared by the exact original Apple resolve."""
     common = [react, hermes, dependencies, react_headers]
     overlay = "$(location " + react_headers + ")"
-    headers = "external/" + native.repository_name().removeprefix("@") + "/apple-headers"
-    clang = ["-ivfsoverlay", overlay, "-I" + headers, "-DREACT_NATIVE_MINOR_VERSION=" + metadata["reactNativeVersion"].split(".")[1], "-DRCT_NEW_ARCH_ENABLED=1"] + metadata["follyCompilerFlags"]
-    swift = react_apple_swift_copts(react_headers) + ["-Xcc", "-I" + headers] + [flag for option in metadata["follyCompilerFlags"] for flag in ["-Xcc", option]]
+    clang = ["-ivfsoverlay", overlay, "-DREACT_NATIVE_MINOR_VERSION=" + metadata["reactNativeVersion"].split(".")[1], "-DRCT_NEW_ARCH_ENABLED=1"] + metadata["follyCompilerFlags"]
+    swift = react_apple_swift_copts(react_headers) + [flag for option in metadata["follyCompilerFlags"] for flag in ["-Xcc", option]]
     root = metadata["jsiRoot"] + "/apple"
     swift_interop_hint(name = "jsi_module_hint", module_name = "jsi")
     cc_library(name = "jsi_module", hdrs = [react_jsi_headers], deps = common, aspect_hints = [":jsi_module_hint"])
@@ -132,6 +131,7 @@ def expo_apple_modules(metadata, react, hermes, dependencies, react_headers, rea
         if not any([source.endswith(".swift") for source in row["sources"]]):
             objc_library(name = row["module"], module_name = row["module"], enable_modules = True,
                 srcs = row["sources"] + row["privateHeaders"], hdrs = row["headers"],
+                includes = ["apple-headers"],
                 deps = deps + [react_headers], alwayslink = True, copts = clang,
                 data = [react_headers])
             continue
@@ -140,6 +140,7 @@ def expo_apple_modules(metadata, react, hermes, dependencies, react_headers, rea
             swift_srcs = [source for source in row["sources"] if source.endswith(".swift")],
             clang_srcs = [source for source in row["sources"] if not source.endswith(".swift")] + ([metadata["sqliteRoot"] + "/vendor/sqlite3/sqlite3.c"] if defines else []),
             hdrs = row["headers"] + ([metadata["sqliteRoot"] + "/vendor/sqlite3/sqlite3.h"] if defines else []),
+            includes = ["apple-headers"],
             deps = deps + [react_headers], alwayslink = True,
             swift_copts = ["-swift-version", row.get("swift", "5")] + swift + (["-Xcc", "-I" + sqlite_headers] + [flag for define in defines for flag in ["-Xcc", "-D" + define]] if defines else []),
             clang_copts = clang + ["-D" + define for define in defines] + (["-I" + sqlite_headers] if defines else []),

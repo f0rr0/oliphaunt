@@ -105,7 +105,8 @@ swift_library(
 expo_apple_swift_library(
     name = "expo_umbrella_mixed", module_name = "ExpoUmbrellaMixed",
     swift_srcs = [_EXPO_UMBRELLA + "Mixed.swift"], clang_srcs = [_EXPO_UMBRELLA + "Mixed.m"],
-    hdrs = [_EXPO_UMBRELLA + "Mixed.h"],
+    hdrs = [_EXPO_UMBRELLA + "Mixed.h", _EXPO_UMBRELLA + "include/ExpoUmbrellaMixed/Nested.h"],
+    includes = [_EXPO_UMBRELLA + "include"],
     deps = [":expo_umbrella_alias_framework", ":expo_umbrella_base"],
     clang_module_maps = [_EXPO_UMBRELLA + "AliasFixture.framework/Modules/module.modulemap"],
     swiftc_inputs = [_EXPO_UMBRELLA + "MixedPrivate.h"],
