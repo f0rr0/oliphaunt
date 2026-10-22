@@ -126,6 +126,13 @@ configuration=Debug
 launch_ios_simulator_runner owned-simulator 'fixture://development' >"$test_root/launch-output"
 grep -Fxq 'simctl launch owned-simulator dev.oliphaunt.fixture --initialUrl fixture://development' "$calls"
 [ "$(wc -l <"$calls" | tr -d '[:space:]')" = 1 ]
+: >"$calls"
+background_seconds=0
+scheme=fixture
+exercise_ios_lifecycle owned-simulator >"$test_root/lifecycle-output"
+grep -Fxq 'simctl openurl owned-simulator https://example.com/liboliphaunt-lifecycle-background' "$calls"
+grep -Fxq 'simctl launch owned-simulator dev.oliphaunt.fixture' "$calls"
+[ "$(wc -l <"$calls" | tr -d '[:space:]')" = 2 ]
 
 # Exercise the actual simulator runner loop: an ordinary PASS before readiness
 # cannot stand in for lifecycle, while a completed requested exercise succeeds.
@@ -133,6 +140,7 @@ configuration=Release
 sdk=iphonesimulator
 runner=smoke
 lifecycle_smoke=1
+background_seconds=0
 clean_simulator_install=0
 scheme=fixture
 startup_gucs=""
@@ -156,24 +164,20 @@ start_ios_simulator_log_capture() {
   if [ "$scenario" = dead-capture ]; then wait "$ios_simulator_log_pid"; fi
 }
 completed_receipt="$(bun "$root/src/native/sdks/react-native/tools/expo-runner-ios-installed-app.fixture.mts" receipt "$root/src/extensions/generated/sdk/extensions.json" lifecycle)"
-exercise_ios_lifecycle() {
-  printf 'exercised\n' >"$test_root/lifecycle-exercised"
-  if [ "$scenario" = lifecycle-js-fatal-pass ]; then
-    printf 'Unhandled JS Exception: [runtime not ready]: Error: Cannot find native module ExpoAsset\n' >>"$ios_simulator_log_file"
-  fi
-  printf '%s\n' \
-    'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:state","state":"background"}' \
-    'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:state","state":"active"}' \
-    'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:sql:done"}' \
-    "$success_tag $completed_receipt" >>"$ios_simulator_log_file"
-}
 xcrun() {
+  printf '%s\n' "$*" >>"$calls"
   if [ "$2" = openurl ]; then
-    if [ "$scenario" = complete ] || [ "$scenario" = lifecycle-js-fatal-pass ]; then
+    if [ "$4" = https://example.com/liboliphaunt-lifecycle-background ]; then
+      printf 'exercised\n' >"$test_root/lifecycle-exercised"
+      printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:state","state":"background"}\n' >>"$ios_simulator_log_file"
+    elif [ "$scenario" = complete ] || [ "$scenario" = lifecycle-js-fatal-pass ] || [ "$scenario" = lifecycle-timeout ]; then
       if [ "$scenario" = complete ]; then
         printf 'Warning: Cannot find native module ExpoAsset\n' >>"$ios_simulator_log_file"
       fi
-      printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:ready","state":"active"}\n' >>"$ios_simulator_log_file"
+      if [ "$scenario" = lifecycle-timeout ]; then
+        printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"open:start","fixture":"scoped-diagnostic"}\n' >>"$ios_simulator_log_file"
+      fi
+      printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:ready","state":"inactive"}\n' >>"$ios_simulator_log_file"
     elif [ "$scenario" = js-fatal ] || [ "$scenario" = lifecycle-js-fatal ]; then
       printf 'Unhandled JS Exception: [runtime not ready]: Error: Cannot find native module ExpoAsset\n' >>"$ios_simulator_log_file"
       printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:ready","state":"active"}\n' >>"$ios_simulator_log_file"
@@ -182,7 +186,23 @@ xcrun() {
     else
       printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"open:start","fixture":"scoped-diagnostic"}\n' >>"$ios_simulator_log_file"
     fi
+  elif [ "$2" = io ] && [ "$4" = screenshot ]; then
+    [ "$scenario" != dead-capture ] || return 7
+    printf 'fixture PNG\n' >"$5"
   elif [ "$2" = launch ]; then
+    if [ -s "$test_root/lifecycle-exercised" ]; then
+      if [ "$scenario" = lifecycle-timeout ]; then
+        printf '%s lifecycle timeout states=inactive>background\n' "$failure_tag" >>"$ios_simulator_log_file"
+      else
+        if [ "$scenario" = lifecycle-js-fatal-pass ]; then
+          printf 'Unhandled JS Exception: [runtime not ready]: Error: Cannot find native module ExpoAsset\n' >>"$ios_simulator_log_file"
+        fi
+        printf '%s\n' \
+          'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:state","state":"active"}' \
+          'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:sql:done"}' \
+          "$success_tag $completed_receipt" >>"$ios_simulator_log_file"
+      fi
+    fi
     if [ "$scenario" = dead-app ]; then
       ( : ) &
       local dead_pid=$!
@@ -194,9 +214,10 @@ xcrun() {
   fi
 }
 export OLIPHAUNT_MOBILE_E2E_EXPECT_LIFECYCLE=1
-for scenario in ordinary complete js-fatal lifecycle-js-fatal lifecycle-js-fatal-pass dead-capture dead-app timeout; do
+for scenario in ordinary complete js-fatal lifecycle-js-fatal lifecycle-js-fatal-pass dead-capture dead-app timeout lifecycle-timeout; do
   scratch_root="$test_root/$scenario"
   rm -f "$test_root/lifecycle-exercised"
+  : >"$calls"
   lifecycle_smoke=1
   [ "$scenario" != js-fatal ] || lifecycle_smoke=0
   timeout_seconds=5
@@ -214,6 +235,7 @@ for scenario in ordinary complete js-fatal lifecycle-js-fatal lifecycle-js-fatal
   elif [ "$scenario" = complete ]; then
     [ "$status" = 0 ] || { cat "$test_root/$scenario.log" >&2; exit 1; }
     [ -s "$test_root/lifecycle-exercised" ]
+    [ ! -e "$scratch_root/logs/smoke-lifecycle-failure.png" ]
     verify_mobile_e2e_smoke_receipt ios "$scratch_root"
   elif [ "$scenario" = js-fatal ] || [ "$scenario" = lifecycle-js-fatal ] || [ "$scenario" = lifecycle-js-fatal-pass ]; then
     [ "$status" != 0 ]
@@ -226,6 +248,9 @@ for scenario in ordinary complete js-fatal lifecycle-js-fatal lifecycle-js-fatal
     else
       [ ! -e "$test_root/lifecycle-exercised" ]
     fi
+    if [ "$scenario" = js-fatal ]; then
+      [ ! -e "$scratch_root/logs/smoke-lifecycle-failure.png" ]
+    fi
   else
     [ "$status" != 0 ]
     grep -Fq '"fixture":"scoped-diagnostic"' "$test_root/$scenario.log"
@@ -233,7 +258,19 @@ for scenario in ordinary complete js-fatal lifecycle-js-fatal lifecycle-js-fatal
       dead-capture) grep -Fq 'iOS smoke receipt failed (status 3:' "$test_root/$scenario.log" ;;
       dead-app) grep -Fq 'iOS smoke receipt failed (status 4:' "$test_root/$scenario.log" ;;
       timeout) grep -Fq "timed out waiting for $success_tag" "$test_root/$scenario.log" ;;
+      lifecycle-timeout)
+        grep -Fq 'iOS smoke receipt failed (status 2:' "$test_root/$scenario.log"
+        grep -Fq 'lifecycle timeout states=inactive>background' "$test_root/$scenario.log"
+        [ -s "$scratch_root/logs/smoke-lifecycle-failure.png" ]
+        if grep -Fq '"stage":"lifecycle:state","state":"active"' "$test_root/$scenario.log"; then exit 1; fi
+        [ ! -e "$scratch_root/reports/smoke-extension-receipt.json" ]
+        ;;
     esac
+  fi
+  if [ "$scenario" = complete ] || [ "$scenario" = lifecycle-timeout ]; then
+    grep -Fxq 'simctl openurl owned-simulator https://example.com/liboliphaunt-lifecycle-background' "$calls"
+    [ "$(grep -Fxc "simctl openurl owned-simulator $(ios_runner_url "$runner")" "$calls")" = 1 ]
+    [ "$(grep -Fxc 'simctl launch owned-simulator dev.oliphaunt.fixture' "$calls")" = 2 ]
   fi
 done
 echo 'iOS registered URL launch, lifecycle receipt, liveness, and scoped diagnostics passed'

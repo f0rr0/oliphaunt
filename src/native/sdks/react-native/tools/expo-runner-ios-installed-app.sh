@@ -614,6 +614,9 @@ install_and_launch() {
     ios_simulator_log_capture_is_alive || receipt_status=3
     mobile_app_is_alive || receipt_status=4
     if [ "$receipt_status" != 0 ]; then
+      if [ "$lifecycle_smoke" = 1 ]; then
+        xcrun simctl io "$device_udid" screenshot "$scratch_root/logs/$runner-lifecycle-failure.png" >&2 || true
+      fi
       tail -200 "$ios_simulator_log_file" >&2 || true
       fail "iOS smoke receipt failed (status $receipt_status: timeout=1, failure=2, capture=3, app=4)"
     fi
