@@ -10,7 +10,7 @@ permissions:
 jobs:
   swift-interface-context:
     runs-on: macos-26
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -22,14 +22,12 @@ jobs:
         with:
           install-build-dependencies: "false"
 
-      - name: Reproduce implicit interface import contexts
+      - name: Prove the permanent Bazel compiler regression
         shell: bash
         run: |
-          bash tools/dev/bun.sh --no-env-file tools/ci/swift-interface-context-probe.mts \
-            --swiftc "$(xcrun --find swiftc)" \
-            --sdk "$(xcrun --sdk macosx --show-sdk-path)" \
-            --developer-dir "$DEVELOPER_DIR" \
-            --out-dir "$RUNNER_TEMP/swift-interface-context"
+          bash tools/dev/bun.sh --no-env-file tools/ci/run-bazel-swift-context-probe.mts \
+            --out-dir "$RUNNER_TEMP/swift-interface-context" \
+            --runner-temp "$RUNNER_TEMP"
 
       - name: Retain exact compiler observations
         if: always()
