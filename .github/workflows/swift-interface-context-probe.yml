@@ -11,7 +11,7 @@ permissions:
 jobs:
   expo-umbrella-context:
     runs-on: macos-26
-    timeout-minutes: 120
+    timeout-minutes: 140
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         timeout-minutes: 2
@@ -27,8 +27,17 @@ jobs:
         with:
           install-build-dependencies: "false"
 
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        timeout-minutes: 4
+        continue-on-error: true
+        with:
+          phase: restore
+          cohort: portable
+
       - name: Prove the permanent Expo iOS umbrella regression
-        timeout-minutes: 20
+        timeout-minutes: 28
         shell: bash
         run: |
           bash tools/dev/bun.sh --no-env-file tools/ci/run-expo-umbrella-context-probe.mts \
@@ -65,3 +74,15 @@ jobs:
           path: ${{ runner.temp }}/expo-umbrella-context/
           if-no-files-found: error
           retention-days: 7
+
+      - name: Save bounded standard Bazel caches
+        if: always()
+        uses: ./.github/actions/bazel-cache
+        timeout-minutes: 6
+        continue-on-error: true
+        with:
+          phase: save
+          cohort: portable
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          output-base: ${{ runner.temp }}/expo-umbrella-bazel
+          jvm-args: --host_jvm_args=-Xmx3g

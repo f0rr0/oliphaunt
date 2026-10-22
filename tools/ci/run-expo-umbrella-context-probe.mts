@@ -99,17 +99,20 @@ function main() {
     return observation;
   }
   try {
+    const warmup = run('fixed-warmup', 20 * 60_000);
+    assert.ok(warmup.status === 0 && !warmup.signal && !warmup.error && warmup.testPassed,
+      'The unchanged fixed helper must pass before disabling its UIKit import.');
     let negative: ReturnType<typeof run>;
     try {
       writeFileSync(helper, baseline);
-      negative = run('uikit-import-disabled', 12 * 60_000);
+      negative = run('uikit-import-disabled', 3 * 60_000);
     } finally {
       writeFileSync(helper, original);
       const restored = readFileSync(helper);
       result.restoredSourceSha256 = sha256(restored);
       assert.ok(restored.equals(original), 'Restore the exact original helper before the positive run.');
     }
-    const positive = run('fixed-positive', 6 * 60_000);
+    const positive = run('fixed-positive', 3 * 60_000);
     assert.ok(negative.status !== null && negative.status !== 0 && !negative.signal && !negative.error &&
       negative.missingSymbols.Headerless.length > 0 && negative.missingSymbols.Mixed.length > 0,
     'Disabling the UIKit import must fail on missing DispatchQueue or UIView in both Swift fixtures.');
