@@ -1,4 +1,5 @@
 """Finite original Expo Apple module declarations, compiled by maintained rules."""
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_swift//swift:swift_library.bzl", "swift_library")
 load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
 load("@rules_cc//cc:defs.bzl", "cc_library")
@@ -42,6 +43,19 @@ def react_apple_swift_copts(react_headers):
         "-Xcc", "-ivfsoverlay", "-Xcc", "$(location " + react_headers + ")",
         "-Xfrontend", "-strict-implicit-module-context",
     ]
+
+def expo_apple_swift_library(name, hdrs = [], **kwargs):
+    """Preserve CocoaPods' implicit UIKit umbrella, including headerless pods."""
+    umbrella = name + "_pod_umbrella"
+    write_file(
+        name = umbrella,
+        out = umbrella + ".h",
+        content = ["#ifdef __OBJC__", "#import <UIKit/UIKit.h>", "#endif", ""],
+        testonly = kwargs.get("testonly", False),
+        target_compatible_with = kwargs.get("target_compatible_with", []),
+        visibility = ["//visibility:private"],
+    )
+    swift_library(name = name, hdrs = hdrs + [":" + umbrella], **kwargs)
 
 _SQLITE = ["HAVE_USLEEP=1", "SQLITE_ENABLE_LOCKING_STYLE=0", "SQLITE_ENABLE_BYTECODE_VTAB=1",
     "SQLITE_TEMP_STORE=2", "SQLITE_ENABLE_SESSION=1", "SQLITE_ENABLE_PREUPDATE_HOOK=1",
@@ -96,7 +110,7 @@ def expo_apple_modules(metadata, react, hermes, dependencies, react_headers, rea
                 deps = deps + [react_headers], alwayslink = True, copts = clang,
                 data = [react_headers])
             continue
-        swift_library(
+        expo_apple_swift_library(
             name = row["module"], module_name = row["module"],
             srcs = row["sources"] + row["privateHeaders"] + extra, hdrs = row["headers"],
             deps = deps + [react_headers], alwayslink = True, generates_header = True,

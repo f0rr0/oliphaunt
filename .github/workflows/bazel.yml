@@ -275,7 +275,7 @@ jobs:
             "--platforms=//build_defs/host:apple_package_macos_arm64",
             "--host_platform=//build_defs/host:native_macos_arm64","--jobs=2","--local_test_jobs=1"]' \
             > "$input_root/configuration.json"
-          jq -nc '["//build_defs/host:host_swift_smoke", "//build_defs/apple:swift_interface_context_test", "//src/native/sdks/swift:installed_consumer_test"]' \
+          jq -nc '["//build_defs/host:host_swift_smoke", "//build_defs/apple:swift_interface_context_test", "//build_defs/apple:expo_umbrella_test", "//src/native/sdks/swift:installed_consumer_test"]' \
             > "$input_root/targets.json"
           printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
           ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"

@@ -2,9 +2,10 @@ load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@bazel_skylib//rules:select_file.bzl", "select_file")
 load("@bazel_lib//lib:copy_file.bzl", "copy_file")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_apple//apple:ios.bzl", "ios_build_test")
 load("@rules_swift//swift:swift_library.bzl", "swift_library")
 load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
-load(":native.bzl", "react_apple_swift_copts")
+load(":native.bzl", "expo_apple_swift_library", "react_apple_swift_copts")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":requirement-selection-test.bzl", "requirement_selection_test")
 load(":slices-test.bzl", "apple_slices_test")
@@ -77,3 +78,27 @@ swift_library(
     testonly = True, target_compatible_with = _SWIFT_CONTEXT_MAC,
 )
 build_test(name = "swift_interface_context_test", targets = [":swift_context_consumer"], target_compatible_with = _SWIFT_CONTEXT_MAC, size = "small")
+
+# CocoaPods gives even headerless Swift pods an implicit UIKit umbrella.
+_EXPO_UMBRELLA = "testdata/expo-umbrella/"
+_EXPO_UMBRELLA_IOS = ["@platforms//os:ios", "@platforms//cpu:aarch64"]
+expo_apple_swift_library(
+    name = "expo_umbrella_headerless", module_name = "ExpoUmbrellaHeaderless",
+    srcs = [_EXPO_UMBRELLA + "Headerless.swift"],
+    generates_header = True,
+    copts = ["-swift-version", "5", "-cxx-interoperability-mode=default"],
+    testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
+)
+expo_apple_swift_library(
+    name = "expo_umbrella_mixed", module_name = "ExpoUmbrellaMixed",
+    srcs = [_EXPO_UMBRELLA + "Mixed.swift", _EXPO_UMBRELLA + "Mixed.m"],
+    hdrs = [_EXPO_UMBRELLA + "Mixed.h"],
+    generates_header = True,
+    copts = ["-swift-version", "5", "-cxx-interoperability-mode=default"],
+    testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
+)
+ios_build_test(
+    name = "expo_umbrella_test", minimum_os_version = "17.0",
+    targets = [":expo_umbrella_headerless", ":expo_umbrella_mixed"],
+    target_compatible_with = _EXPO_UMBRELLA_IOS, size = "small",
+)

@@ -1,4 +1,4 @@
-name: Swift interface context probe
+name: Expo iOS module context probe
 
 on:
   push:
@@ -6,34 +6,62 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  swift-interface-context:
+  expo-umbrella-context:
     runs-on: macos-26
-    timeout-minutes: 25
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        timeout-minutes: 2
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: ./.github/actions/setup-bun
+        timeout-minutes: 2
 
       - uses: ./.github/actions/setup-apple
+        timeout-minutes: 2
         with:
           install-build-dependencies: "false"
 
-      - name: Prove the permanent Bazel compiler regression
+      - name: Prove the permanent Expo iOS umbrella regression
+        timeout-minutes: 20
         shell: bash
         run: |
-          bash tools/dev/bun.sh --no-env-file tools/ci/run-bazel-swift-context-probe.mts \
-            --out-dir "$RUNNER_TEMP/swift-interface-context" \
+          bash tools/dev/bun.sh --no-env-file tools/ci/run-expo-umbrella-context-probe.mts \
+            --out-dir "$RUNNER_TEMP/expo-umbrella-context" \
             --runner-temp "$RUNNER_TEMP"
 
+      - name: Download the original immutable public inputs
+        timeout-minutes: 5
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: 39712693156
+          artifact-ids: 12399683430
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/original-public-inputs
+
+      - name: Authenticate original RN inputs in the detached original source
+        timeout-minutes: 36
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/dev/bun.sh --no-env-file tools/ci/stage-original-rn-probe-inputs.mts
+
+      - name: Exercise the original whole RN request on the fixed candidate
+        timeout-minutes: 46
+        shell: bash
+        run: bash tools/dev/bun.sh --no-env-file tools/ci/run-original-rn-consumer-probe.mts
+
       - name: Retain exact compiler observations
+        timeout-minutes: 5
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: swift-interface-context
-          path: ${{ runner.temp }}/swift-interface-context/
+          name: expo-umbrella-context
+          path: ${{ runner.temp }}/expo-umbrella-context/
           if-no-files-found: error
           retention-days: 7
