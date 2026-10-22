@@ -1,11 +1,11 @@
 framework module AliasFixture {
-  umbrella header "Root.h"
+  umbrella header "AliasFixture/Root.h"
   export *
   module * { export * }
 }
 
 framework module AliasFixture_Alias {
-  umbrella header "Alias.h"
+  umbrella header "AliasFixture_Alias/Alias.h"
   export *
   module * { export * }
 }
