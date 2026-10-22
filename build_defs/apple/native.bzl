@@ -1,6 +1,7 @@
 """Finite original Expo Apple module declarations, compiled by maintained rules."""
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_swift//swift:swift_library.bzl", "swift_library")
+load("@rules_swift//mixed_language:mixed_language_library.bzl", "mixed_language_library")
 load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_cc//cc:objc_library.bzl", "objc_library")
@@ -44,8 +45,8 @@ def react_apple_swift_copts(react_headers):
         "-Xfrontend", "-strict-implicit-module-context",
     ]
 
-def expo_apple_swift_library(name, hdrs = [], **kwargs):
-    """Preserve CocoaPods' implicit UIKit umbrella, including headerless pods."""
+def expo_apple_swift_library(name, hdrs = [], clang_copts = [], **kwargs):
+    """Preserve CocoaPods' UIKit prefix and re-exporting underlying module."""
     umbrella = name + "_pod_umbrella"
     write_file(
         name = umbrella,
@@ -55,7 +56,11 @@ def expo_apple_swift_library(name, hdrs = [], **kwargs):
         target_compatible_with = kwargs.get("target_compatible_with", []),
         visibility = ["//visibility:private"],
     )
-    swift_library(name = name, hdrs = hdrs + [":" + umbrella], **kwargs)
+    mixed_language_library(
+        name = name, hdrs = [":" + umbrella] + hdrs, enable_modules = True,
+        clang_copts = ["-include", "$(location :" + umbrella + ")"] + clang_copts,
+        **kwargs
+    )
 
 _SQLITE = ["HAVE_USLEEP=1", "SQLITE_ENABLE_LOCKING_STYLE=0", "SQLITE_ENABLE_BYTECODE_VTAB=1",
     "SQLITE_TEMP_STORE=2", "SQLITE_ENABLE_SESSION=1", "SQLITE_ENABLE_PREUPDATE_HOOK=1",
@@ -101,7 +106,6 @@ def expo_apple_modules(metadata, react, hermes, dependencies, react_headers, rea
             apple_resource_bundle(name = row["module"] + "_privacy", bundle_name = row["module"] + "_privacy", resources = row["privacy"])
     for row in metadata["modules"]:
         defines = _SQLITE if row["module"] == "ExpoSQLite" else []
-        extra = [metadata["sqliteRoot"] + "/vendor/sqlite3/sqlite3.c", metadata["sqliteRoot"] + "/vendor/sqlite3/sqlite3.h"] if defines else []
         sqlite_headers = "external/" + native.repository_name().removeprefix("@") + "/" + metadata["sqliteRoot"] + "/vendor/sqlite3"
         deps = [app_dependency_provider if dep.startswith("@app//") else react if dep == "React" else ":ExpoModulesJSI_sources" if dep == "ExpoModulesJSI" else ":" + dep for dep in row["deps"]]
         if not any([source.endswith(".swift") for source in row["sources"]]):
@@ -112,11 +116,15 @@ def expo_apple_modules(metadata, react, hermes, dependencies, react_headers, rea
             continue
         expo_apple_swift_library(
             name = row["module"], module_name = row["module"],
-            srcs = row["sources"] + row["privateHeaders"] + extra, hdrs = row["headers"],
-            deps = deps + [react_headers], alwayslink = True, generates_header = True,
-            generated_header_name = row["module"] + "-Swift.h",
-            copts = ["-swift-version", row.get("swift", "5")] + swift + (["-Xcc", "-I" + sqlite_headers] + [flag for define in defines for flag in ["-Xcc", "-D" + define]] if defines else []),
-            c_copts = clang + ["-D" + define for define in defines] + (["-I" + sqlite_headers] if defines else []), swiftc_inputs = [react_headers],
+            swift_srcs = [source for source in row["sources"] if source.endswith(".swift")],
+            clang_srcs = [source for source in row["sources"] if not source.endswith(".swift")] + ([metadata["sqliteRoot"] + "/vendor/sqlite3/sqlite3.c"] if defines else []),
+            hdrs = row["headers"] + ([metadata["sqliteRoot"] + "/vendor/sqlite3/sqlite3.h"] if defines else []),
+            deps = deps + [react_headers], alwayslink = True,
+            swift_copts = ["-swift-version", row.get("swift", "5")] + swift + (["-Xcc", "-I" + sqlite_headers] + [flag for define in defines for flag in ["-Xcc", "-D" + define]] if defines else []),
+            clang_copts = clang + ["-D" + define for define in defines] + (["-I" + sqlite_headers] if defines else []),
+            # Original relative includes remain available without importing private Swift.h into its own module.
+            swiftc_inputs = [react_headers] + row["privateHeaders"],
+            additional_objc_compiler_inputs = [react_headers] + row["privateHeaders"],
         )
         if row["privacy"]:
             apple_resource_bundle(name = row["module"] + "_privacy", bundle_name = row["module"] + "_privacy",

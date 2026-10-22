@@ -79,22 +79,22 @@ swift_library(
 )
 build_test(name = "swift_interface_context_test", targets = [":swift_context_consumer"], target_compatible_with = _SWIFT_CONTEXT_MAC, size = "small")
 
-# CocoaPods gives even headerless Swift pods an implicit UIKit umbrella.
+# CocoaPods supplies UIKit to Swift and Clang; private headers may import generated Swift declarations.
 _EXPO_UMBRELLA = "testdata/expo-umbrella/"
 _EXPO_UMBRELLA_IOS = ["@platforms//os:ios", "@platforms//cpu:aarch64"]
 expo_apple_swift_library(
     name = "expo_umbrella_headerless", module_name = "ExpoUmbrellaHeaderless",
-    srcs = [_EXPO_UMBRELLA + "Headerless.swift"],
-    generates_header = True,
-    copts = ["-swift-version", "5", "-cxx-interoperability-mode=default"],
+    swift_srcs = [_EXPO_UMBRELLA + "Headerless.swift"], clang_srcs = [],
+    swift_copts = ["-swift-version", "5", "-cxx-interoperability-mode=default", "-Xcc", "-std=c++20"],
     testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
 )
 expo_apple_swift_library(
     name = "expo_umbrella_mixed", module_name = "ExpoUmbrellaMixed",
-    srcs = [_EXPO_UMBRELLA + "Mixed.swift", _EXPO_UMBRELLA + "Mixed.m"],
+    swift_srcs = [_EXPO_UMBRELLA + "Mixed.swift"], clang_srcs = [_EXPO_UMBRELLA + "Mixed.m"],
     hdrs = [_EXPO_UMBRELLA + "Mixed.h"],
-    generates_header = True,
-    copts = ["-swift-version", "5", "-cxx-interoperability-mode=default"],
+    swiftc_inputs = [_EXPO_UMBRELLA + "MixedPrivate.h"],
+    additional_objc_compiler_inputs = [_EXPO_UMBRELLA + "MixedPrivate.h"],
+    swift_copts = ["-swift-version", "5", "-cxx-interoperability-mode=default", "-Xcc", "-std=c++20"],
     testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
 )
 ios_build_test(

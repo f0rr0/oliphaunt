@@ -4,10 +4,10 @@ import { createHash } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 
-export function withoutGeneratedUmbrella(source: string) {
-  const dependency = 'hdrs = hdrs + [":" + umbrella]';
-  assert.equal(source.split(dependency).length, 2, 'Change exactly one generated umbrella dependency.');
-  return source.replace(dependency, 'hdrs = hdrs');
+export function withoutUIKitImport(source: string) {
+  const imported = '"#import <UIKit/UIKit.h>"';
+  assert.equal(source.split(imported).length, 2, 'Disable exactly one generated UIKit import.');
+  return source.replace(imported, '"// UIKit import disabled for regression control"');
 }
 
 export function missingUmbrellaSymbols(logs: string) {
@@ -42,7 +42,7 @@ function main() {
   mkdirSync(output, { mode: 0o700 });
   const helper = join(checkout, 'build_defs/apple/native.bzl');
   const original = readFileSync(helper);
-  const baseline = withoutGeneratedUmbrella(original.toString('utf8'));
+  const baseline = withoutUIKitImport(original.toString('utf8'));
   const sha256 = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
   const environment: NodeJS.ProcessEnv = {};
   for (const name of ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'DEVELOPER_DIR']) {
@@ -58,7 +58,7 @@ function main() {
   ];
   const sourceFiles = [
     'build_defs/apple/native.bzl', 'build_defs/apple/BUILD.bazel', '.github/workflows/bazel.yml',
-    ...['Headerless.swift', 'Mixed.swift', 'Mixed.h', 'Mixed.m'].map(name => `build_defs/apple/testdata/expo-umbrella/${name}`),
+    ...['Headerless.swift', 'Mixed.swift', 'Mixed.h', 'Mixed.m', 'MixedPrivate.h'].map(name => `build_defs/apple/testdata/expo-umbrella/${name}`),
   ];
   const observations: Record<string, unknown>[] = [];
   const result: Record<string, unknown> = {
@@ -102,7 +102,7 @@ function main() {
     let negative: ReturnType<typeof run>;
     try {
       writeFileSync(helper, baseline);
-      negative = run('old-negative', 12 * 60_000);
+      negative = run('uikit-import-disabled', 12 * 60_000);
     } finally {
       writeFileSync(helper, original);
       const restored = readFileSync(helper);
@@ -112,7 +112,7 @@ function main() {
     const positive = run('fixed-positive', 6 * 60_000);
     assert.ok(negative.status !== null && negative.status !== 0 && !negative.signal && !negative.error &&
       negative.missingSymbols.Headerless.length > 0 && negative.missingSymbols.Mixed.length > 0,
-    'The baseline must fail on missing DispatchQueue or UIView in both Swift fixtures.');
+    'Disabling the UIKit import must fail on missing DispatchQueue or UIView in both Swift fixtures.');
     assert.ok(positive.status === 0 && !positive.signal && !positive.error && positive.testPassed,
       'The exact restored helper must pass the same permanent iOS build test.');
     result.status = 'passed';

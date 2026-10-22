@@ -1,5 +1,13 @@
 #import "Mixed.h"
 
+@interface ExpoUmbrellaObjcView : UIView
+@end
+
+#import "MixedPrivate.h"
+
+@implementation ExpoUmbrellaObjcView
+@end
+
 int expo_umbrella_fixture_value(void) {
-  return 17;
+  return [ExpoUmbrellaSwiftValue value];
 }
