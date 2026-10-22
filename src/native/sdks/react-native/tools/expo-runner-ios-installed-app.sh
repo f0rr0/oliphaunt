@@ -609,13 +609,14 @@ install_and_launch() {
   local fail_line lifecycle_exercised=0 receipt_status
   while [ "$SECONDS" -lt "$deadline" ]; do
     receipt_status=0
+    logs="$(cat "$ios_simulator_log_file")"
+    mobile_log_has_failure "$ios_simulator_log_file" && receipt_status=2
     ios_simulator_log_capture_is_alive || receipt_status=3
     mobile_app_is_alive || receipt_status=4
     if [ "$receipt_status" != 0 ]; then
       tail -200 "$ios_simulator_log_file" >&2 || true
       fail "iOS smoke receipt failed (status $receipt_status: timeout=1, failure=2, capture=3, app=4)"
     fi
-    logs="$(cat "$ios_simulator_log_file")"
     if [ "$lifecycle_smoke" = "1" ] && [ "$lifecycle_exercised" = "0" ]; then
       if {
         printf '%s\n' "$logs"
@@ -647,11 +648,6 @@ install_and_launch() {
         write_ios_process_metrics "$launch_pid"
         return
       fi
-    fi
-    fail_line="$(printf '%s\n' "$logs" | grep -E "$failure_tag|Fatal error|terminating" | tail -20 || true)"
-    if [ -n "$fail_line" ]; then
-      printf '%s\n' "$fail_line" >&2
-      fail "Expo iOS $runner failed"
     fi
     if uses_ios_metro; then
       fail_line="$(latest_metro_runner_failure "$scratch_metro_offset" "$dev_metro_offset")"

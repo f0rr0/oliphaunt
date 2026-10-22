@@ -158,6 +158,9 @@ start_ios_simulator_log_capture() {
 completed_receipt="$(bun "$root/src/native/sdks/react-native/tools/expo-runner-ios-installed-app.fixture.mts" receipt "$root/src/extensions/generated/sdk/extensions.json" lifecycle)"
 exercise_ios_lifecycle() {
   printf 'exercised\n' >"$test_root/lifecycle-exercised"
+  if [ "$scenario" = lifecycle-js-fatal-pass ]; then
+    printf 'Unhandled JS Exception: [runtime not ready]: Error: Cannot find native module ExpoAsset\n' >>"$ios_simulator_log_file"
+  fi
   printf '%s\n' \
     'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:state","state":"background"}' \
     'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:state","state":"active"}' \
@@ -166,7 +169,13 @@ exercise_ios_lifecycle() {
 }
 xcrun() {
   if [ "$2" = openurl ]; then
-    if [ "$scenario" = complete ]; then
+    if [ "$scenario" = complete ] || [ "$scenario" = lifecycle-js-fatal-pass ]; then
+      if [ "$scenario" = complete ]; then
+        printf 'Warning: Cannot find native module ExpoAsset\n' >>"$ios_simulator_log_file"
+      fi
+      printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:ready","state":"active"}\n' >>"$ios_simulator_log_file"
+    elif [ "$scenario" = js-fatal ] || [ "$scenario" = lifecycle-js-fatal ]; then
+      printf 'Unhandled JS Exception: [runtime not ready]: Error: Cannot find native module ExpoAsset\n' >>"$ios_simulator_log_file"
       printf 'OLIPHAUNT_EXPO_SMOKE_STAGE {"stage":"lifecycle:ready","state":"active"}\n' >>"$ios_simulator_log_file"
     elif [ "$scenario" = ordinary ]; then
       printf '%s %s\n' "$success_tag" "$receipt_json" >>"$ios_simulator_log_file"
@@ -185,8 +194,11 @@ xcrun() {
   fi
 }
 export OLIPHAUNT_MOBILE_E2E_EXPECT_LIFECYCLE=1
-for scenario in ordinary complete dead-capture dead-app timeout; do
+for scenario in ordinary complete js-fatal lifecycle-js-fatal lifecycle-js-fatal-pass dead-capture dead-app timeout; do
   scratch_root="$test_root/$scenario"
+  rm -f "$test_root/lifecycle-exercised"
+  lifecycle_smoke=1
+  [ "$scenario" != js-fatal ] || lifecycle_smoke=0
   timeout_seconds=5
   [ "$scenario" != timeout ] || timeout_seconds=1
   status=0
@@ -203,6 +215,17 @@ for scenario in ordinary complete dead-capture dead-app timeout; do
     [ "$status" = 0 ] || { cat "$test_root/$scenario.log" >&2; exit 1; }
     [ -s "$test_root/lifecycle-exercised" ]
     verify_mobile_e2e_smoke_receipt ios "$scratch_root"
+  elif [ "$scenario" = js-fatal ] || [ "$scenario" = lifecycle-js-fatal ] || [ "$scenario" = lifecycle-js-fatal-pass ]; then
+    [ "$status" != 0 ]
+    grep -Fq 'iOS smoke receipt failed (status 2:' "$test_root/$scenario.log"
+    grep -Fq 'Unhandled JS Exception: [runtime not ready]: Error: Cannot find native module ExpoAsset' "$test_root/$scenario.log"
+    [ ! -e "$scratch_root/reports/smoke-extension-receipt.json" ]
+    if [ "$scenario" = lifecycle-js-fatal-pass ]; then
+      [ -s "$test_root/lifecycle-exercised" ]
+      grep -Fq "$success_tag $completed_receipt" "$test_root/$scenario.log"
+    else
+      [ ! -e "$test_root/lifecycle-exercised" ]
+    fi
   else
     [ "$status" != 0 ]
     grep -Fq '"fixture":"scoped-diagnostic"' "$test_root/$scenario.log"

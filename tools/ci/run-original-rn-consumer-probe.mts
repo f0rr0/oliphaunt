@@ -1,8 +1,118 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
+
+const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
+
+function fileIdentity(file: string) {
+  const digest = createHash('sha256');
+  const descriptor = openSync(file, 'r');
+  const buffer = Buffer.alloc(1024 * 1024);
+  try {
+    for (let count; (count = readSync(descriptor, buffer)) !== 0;) digest.update(buffer.subarray(0, count));
+  } finally {
+    closeSync(descriptor);
+  }
+  return { path: file, bytes: statSync(file).size, sha256: digest.digest('hex') };
+}
+
+/** Read only the package outputs already constructed by the actual installed-app request. */
+export function retainIosLinkDiagnostics(checkout: string, output: string, environment: NodeJS.ProcessEnv) {
+  const directory = join(output, 'ios-link-diagnostics');
+  mkdirSync(directory, { mode: 0o700 });
+  const observations: Record<string, unknown>[] = [];
+  const inputs: (ReturnType<typeof fileIdentity> & { retainedAs?: string })[] = [];
+  const command = (name: string, executable: string, args: string[], maximumBytes = 1024 * 1024) => {
+    const invocation = spawnSync(executable, args, {
+      cwd: checkout, env: environment, timeout: 15_000, maxBuffer: maximumBytes,
+    });
+    const stdout = invocation.stdout ?? Buffer.alloc(0);
+    const stderr = invocation.stderr ?? Buffer.alloc(0);
+    writeFileSync(join(directory, `${name}.stdout.log`), stdout, { mode: 0o600 });
+    writeFileSync(join(directory, `${name}.stderr.log`), stderr, { mode: 0o600 });
+    observations.push({ name, command: [executable, ...args], status: invocation.status, signal: invocation.signal,
+      error: invocation.error?.message ?? null, capturedStdoutBytes: stdout.length, capturedStdoutSha256: hash(stdout),
+      stderrBytes: stderr.length, stderrSha256: hash(stderr), timeoutMs: 15_000, maximumBytes });
+    writeFileSync(join(directory, 'commands.json'), `${JSON.stringify(observations, null, 2)}\n`, { mode: 0o600 });
+    return invocation;
+  };
+  const packagePath = 'src/examples/native/react-native-expo';
+  const descriptor = join(checkout, 'bazel-bin', packagePath, 'ios_installed_test.inputs.json');
+  const application: string = JSON.parse(readFileSync(descriptor, 'utf8')).replay.files.application;
+  assert.match(application, /^bazel-out\/[^/]+\/bin\/src\/examples\/native\/react-native-expo\/ios_release\.(?:ipa|zip)$/);
+  const archive = join(checkout, application);
+  const availableConfigurations = readdirSync(join(checkout, 'bazel-out'), { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && /^[\w.-]+$/.test(entry.name)).map(entry => entry.name).sort();
+  const configurations = [...new Set([application.split('/')[1]!, ...availableConfigurations])].slice(0, 64);
+  const packageOutputs: Record<string, unknown>[] = [];
+  let providerInvocations = 0;
+  let retainedParams = 0;
+  for (const configuration of configurations) {
+    const packageDirectory = join(checkout, 'bazel-out', configuration, 'bin', packagePath);
+    if (!existsSync(packageDirectory)) continue;
+    const retainedDirectory = join(directory, configuration);
+    mkdirSync(retainedDirectory, { mode: 0o700 });
+    const provider = join(packageDirectory, 'ios_project', 'ExpoModulesProvider.swift');
+    if (existsSync(provider) && statSync(provider).size <= 1024 * 1024) {
+      writeFileSync(join(retainedDirectory, 'ExpoModulesProvider.swift'), readFileSync(provider), { mode: 0o600 });
+      inputs.push({ ...fileIdentity(provider), retainedAs: `${configuration}/ExpoModulesProvider.swift` });
+    }
+    const entries = readdirSync(packageDirectory, { withFileTypes: true }).filter(entry => entry.isFile());
+    const libraries = entries.filter(entry => /^libios_ExpoModulesProvider.*\.(?:a|lo)$/.test(entry.name));
+    for (const library of libraries) {
+      if (providerInvocations >= 4) break;
+      const file = join(packageDirectory, library.name);
+      inputs.push(fileIdentity(file));
+      command(`${configuration}.${library.name}.nm`, '/usr/bin/nm', ['-m', file], 32 * 1024 * 1024);
+      providerInvocations += 1;
+    }
+    const params = entries.filter(entry => /^_?(?:ios_release|libios_ExpoModulesProvider).*(?:\.params|\.param|\.objlist|\.(?:link)?filelist)$/.test(entry.name));
+    for (const entry of params) {
+      if (retainedParams >= 16) break;
+      const file = join(packageDirectory, entry.name);
+      if (statSync(file).size > 1024 * 1024) continue;
+      writeFileSync(join(retainedDirectory, entry.name), readFileSync(file), { mode: 0o600 });
+      inputs.push({ ...fileIdentity(file), retainedAs: `${configuration}/${entry.name}` });
+      retainedParams += 1;
+    }
+    packageOutputs.push({ configuration, providerPresent: existsSync(provider), providerLibraries: libraries.map(entry => entry.name),
+      linkParamFilesFound: params.map(entry => entry.name) });
+  }
+  const archiveIdentity = fileIdentity(archive);
+  const listing = command('archive-members', '/usr/bin/unzip', ['-Z1', archive]);
+  let binary: (ReturnType<typeof fileIdentity> & { archiveMember: string }) | undefined;
+  if (listing.status === 0 && !listing.error && !listing.signal) {
+    const members = (listing.stdout ?? Buffer.alloc(0)).toString().split('\n').filter(member => /^(?:Payload\/)?reactnativeoliphauntexpo\.app\/reactnativeoliphauntexpo$/.test(member));
+    assert.equal(members.length, 1, 'Inspect exactly the original app executable.');
+    const temporaryBinary = join(directory, 'app-binary.temporary');
+    const descriptor = openSync(temporaryBinary, 'wx', 0o600);
+    try {
+      const extraction = spawnSync('/usr/bin/unzip', ['-p', archive, members[0]!], {
+        cwd: checkout, env: environment, stdio: ['ignore', descriptor, 'pipe'], timeout: 15_000, maxBuffer: 1024 * 1024,
+      });
+      observations.push({ name: 'extract-app-binary', command: ['/usr/bin/unzip', '-p', archive, members[0]],
+        status: extraction.status, signal: extraction.signal, error: extraction.error?.message ?? null,
+        stderr: extraction.stderr?.toString() ?? '' });
+      writeFileSync(join(directory, 'commands.json'), `${JSON.stringify(observations, null, 2)}\n`, { mode: 0o600 });
+      if (extraction.status === 0 && !extraction.error && !extraction.signal) {
+        binary = { ...fileIdentity(temporaryBinary), archiveMember: members[0]! };
+        command('app.nm', '/usr/bin/nm', ['-m', temporaryBinary], 32 * 1024 * 1024);
+        command('app.objc-metadata', '/usr/bin/otool', ['-ov', temporaryBinary], 32 * 1024 * 1024);
+        command('app.frameworks', '/usr/bin/otool', ['-L', temporaryBinary]);
+      }
+    } finally {
+      closeSync(descriptor);
+      rmSync(temporaryBinary, { force: true });
+    }
+  }
+  const result = { scope: 'diagnostic-only', admission: false, descriptor, archive: archiveIdentity,
+    availableConfigurations, scannedConfigurations: configurations, packageOutputs, inputs, binary, binaryRetained: false,
+    limits: { configurations: 64, providerNmCommands: 4, retainedParamFiles: 16, retainedSourceOrParamBytes: 1024 * 1024 }, observations };
+  writeFileSync(join(directory, 'result.json'), `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
+  return result;
+}
 
 export const originalRnTargets = [
   '//src/native/sdks/react-native:package_test',
@@ -26,7 +136,6 @@ function main() {
   const outputBase = join(temporary, 'expo-umbrella-bazel');
   assert.ok(existsSync(outputBase) && !existsSync(output), 'Reuse only this probe fixture output base.');
   mkdirSync(output, { mode: 0o700 });
-  const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
   const environment: NodeJS.ProcessEnv = {};
   for (const name of ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'DEVELOPER_DIR']) {
     if (process.env[name] !== undefined) environment[name] = process.env[name];
@@ -93,7 +202,16 @@ function main() {
     process.exitCode = 1;
   } finally {
     const testOutputs = join(checkout, 'bazel-testlogs/src/examples/native/react-native-expo/ios_installed_test/test.outputs');
-    if (existsSync(testOutputs)) cpSync(testOutputs, join(output, 'installed-test-outputs'), { recursive: true });
+    try {
+      if (existsSync(testOutputs)) cpSync(testOutputs, join(output, 'installed-test-outputs'), { recursive: true });
+    } catch (error) {
+      result.testOutputRetentionError = error instanceof Error ? error.message : String(error);
+    }
+    try {
+      result.iosLinkDiagnostics = retainIosLinkDiagnostics(checkout, output, environment);
+    } catch (error) {
+      result.iosLinkDiagnostics = { status: 'unavailable', error: error instanceof Error ? error.message : String(error) };
+    }
     writeFileSync(join(output, 'result.json'), `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
     console.log(JSON.stringify({ status: result.status, output, failure: result.failure ?? null, observation: result.observation }));
   }
