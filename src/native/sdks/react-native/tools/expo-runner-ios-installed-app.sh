@@ -192,13 +192,21 @@ logs_have_lifecycle_ready() {
   esac
 }
 
+run_ios_lifecycle_command() {
+  local status=0
+  printf '\n==> iOS lifecycle [%s]: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
+  "$@" || status=$?
+  printf '==> iOS lifecycle [%s]: exit %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$status"
+  return "$status"
+}
+
 exercise_ios_lifecycle() {
   local device_udid="$1"
   echo
-  echo "==> iOS lifecycle: open Safari, wait ${background_seconds}s, foreground $app_id"
-  run xcrun simctl openurl "$device_udid" "https://example.com/liboliphaunt-lifecycle-background"
+  echo "==> iOS lifecycle: launch Safari, wait ${background_seconds}s, foreground $app_id"
+  run_ios_lifecycle_command xcrun simctl launch "$device_udid" com.apple.mobilesafari || return $?
   sleep "$background_seconds"
-  run xcrun simctl launch "$device_udid" "$app_id"
+  run_ios_lifecycle_command xcrun simctl launch "$device_udid" "$app_id"
 }
 
 exercise_ios_device_lifecycle() {
@@ -571,13 +579,21 @@ install_and_launch() {
   dev_metro_offset="$(file_bytes "$metro_dev_log")"
   local app_process_name
   app_process_name="$(resolve_ios_app_process_name "$app")" || fail "missing iOS executable"
+  if [ "$lifecycle_smoke" = 1 ]; then
+    # Prepare the auxiliary app before the tested launch starts its lifecycle
+    # deadline. Switching apps needs neither URL dispatch nor network access.
+    run_ios_lifecycle_command xcrun simctl launch "$device_udid" com.apple.mobilesafari ||
+      fail "failed to prepare the iOS lifecycle background app"
+  fi
   start_ios_simulator_log_capture "$device_udid" "$app_process_name" ||
     fail "failed to start exact-launch iOS unified-log capture"
   local url
   url="$(ios_runner_url "$runner")"
   local launch_output launch_pid
   echo
+  printf '==> iOS initial launch [%s]\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   launch_output="$(launch_ios_simulator_runner "$device_udid" "$url")"
+  printf '==> iOS initial launch returned [%s]\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   printf '%s\n' "$launch_output"
   launch_pid="$(printf '%s\n' "$launch_output" | awk -F': ' -v app_id="$app_id" '$1 == app_id {print $2; exit}')"
   if [ "${OLIPHAUNT_EXPO_IOS_OPENURL_FALLBACK:-0}" = "1" ]; then
@@ -613,6 +629,7 @@ install_and_launch() {
     if [ "$receipt_status" != 0 ]; then
       if [ "$lifecycle_smoke" = 1 ]; then
         xcrun simctl io "$device_udid" screenshot "$scratch_root/logs/$runner-lifecycle-failure.png" >&2 || true
+        grep -F 'OLIPHAUNT_EXPO_SMOKE_' "$ios_simulator_log_file" | tail -40 >&2 || true
       fi
       tail -200 "$ios_simulator_log_file" >&2 || true
       fail "iOS smoke receipt failed (status $receipt_status: timeout=1, failure=2, capture=3, app=4)"
@@ -623,7 +640,8 @@ install_and_launch() {
         file_from_offset "$scratch_root/metro.log" "$scratch_metro_offset"
         file_from_offset "$metro_dev_log" "$dev_metro_offset"
       } | logs_have_lifecycle_ready; then
-        exercise_ios_lifecycle "$device_udid"
+        printf '==> iOS lifecycle readiness observed [%s]\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        exercise_ios_lifecycle "$device_udid" || fail "failed to exercise the iOS lifecycle transition"
         lifecycle_exercised=1
         sleep 2
         continue
@@ -659,6 +677,9 @@ install_and_launch() {
     sleep 2
   done
 
+  if [ "$lifecycle_smoke" = 1 ]; then
+    grep -F 'OLIPHAUNT_EXPO_SMOKE_' "$ios_simulator_log_file" | tail -40 >&2 || true
+  fi
   tail -200 "$ios_simulator_log_file" >&2 || true
   file_from_offset "$scratch_root/metro.log" "$scratch_metro_offset" | tail -120 >&2 || true
   file_from_offset "$metro_dev_log" "$dev_metro_offset" | tail -120 >&2 || true
