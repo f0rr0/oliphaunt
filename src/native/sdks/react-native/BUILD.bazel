@@ -113,7 +113,7 @@ query_envelope(
     },
 )
 
-shipping_package(name = "construction", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":source_npm"], ecosystem = "internal", package_name = SDK["name"], configuration = "portable", role = "construction")
+shipping_package(name = "construction", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":source_npm"], ecosystem = "internal", package_name = SDK["name"], configuration = "portable", role = "construction", suppliers = "//build_defs/release:no_suppliers")
 
 # The final package follows its conventional Swift pin and genuine native Files.
 react_native_npm(name = "npm", out = "oliphaunt-react-native-" + SDK["version"] + ".tgz", source_archive = ":source_npm", manifest = "package.json")

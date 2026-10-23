@@ -172,6 +172,7 @@ def native_contrib_members(crypto = None):
             name = name + "_native_member",
             owner = extension_identity(member["sql-name"]),
             artifacts = [":" + payload],
+            suppliers = ":" + payload,
             ecosystem = "internal",
             package_name = member["sql-name"],
             configuration = NATIVE_EXTENSION_CONFIGURATION,

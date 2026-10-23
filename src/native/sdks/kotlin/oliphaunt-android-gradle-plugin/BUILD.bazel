@@ -3,6 +3,8 @@ load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@rules_java//java:defs.bzl", "java_library", "java_test")
 load("//build_defs/languages/jvm:maven.bzl", "java_javadoc", "kotlin_maven_package")
 load("//build_defs/foundation:bun.bzl", "bun_source_output")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_CONFIGURATION")
+load("//build_defs/release:supplier.bzl", "file_shipping_supplier")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -63,6 +65,15 @@ java_javadoc(
     deps = ["@oliphaunt_gradle_api//:api"],
 )
 
+file_shipping_supplier(
+    name = "native_contract_suppliers",
+    inputs = {"//src/native/runtime:include/oliphaunt.h": "", "//src/native/runtime:bin/android-cxx-runtime.map": ""},
+    owner = "@oliphaunt_metadata//:product_liboliphaunt-native",
+    configuration = NATIVE_EXTENSION_CONFIGURATION,
+    binding = "abi-contract",
+    origin = json.encode({"kind": "current-source"}),
+)
+
 kotlin_maven_package(
     name = "plugin_maven",
     coordinate = "dev.oliphaunt:oliphaunt-android-gradle-plugin",
@@ -71,6 +82,7 @@ kotlin_maven_package(
     sources = glob(["src/main/java/**/*.java"]),
     legal_sources = ["//:LICENSE", "//:THIRD_PARTY_NOTICES.md"],
     javadoc = ":plugin_javadoc",
+    suppliers = ":native_contract_suppliers",
 )
 
 kotlin_maven_package(

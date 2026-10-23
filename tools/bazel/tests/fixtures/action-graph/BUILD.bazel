@@ -3,6 +3,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//build_defs/foundation:bun.bzl", "bun_script_test")
 load("//build_defs/release:identity.bzl", "release_identity")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "file_shipping_supplier")
 load(":fixture.bzl", "fixture_header", "fixture_package")
 
 package(default_visibility = ["//visibility:public"])
@@ -44,6 +45,7 @@ release_identity(name = "gamma_identity", product_id = "fixture-gamma", version 
     package_name = "fixture-" + product,
     configuration = "fixture-host",
     role = "package",
+    suppliers = "//build_defs/release:no_suppliers",
 ) for product in ["alpha", "beta", "gamma"]]
 
 shipping_export(

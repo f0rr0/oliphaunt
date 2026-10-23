@@ -6,10 +6,13 @@ load("@rules_java//java/common:java_info.bzl", "JavaInfo")
 load("@rules_jvm_external//:providers.bzl", "MavenInfo")
 load("@rules_jvm_external//private/rules:has_maven_deps.bzl", "has_maven_deps")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
+load("//build_defs/languages:mobile-compiled-inputs.bzl", "MOBILE_BINDINGS_COMPILE_OWNERS", "MOBILE_BINDINGS_COMPILE_QUALIFICATION", "MobileCompiledInputsInfo", "merge_mobile_compiled_inputs", "mobile_bindings_compile_group", "mobile_bindings_compiled_supplier", "mobile_compiled_inputs")
 load("//build_defs/native/carriers:defs.bzl", "native_carrier_helpers")
-load("//build_defs/release:shipping.bzl", "shipping_package")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "merge_shipping_suppliers")
 
 _JAVA_RUNTIME = "@bazel_tools//tools/jdk:runtime_toolchain_type"
+KOTLIN_BINDINGS_COMPILE_SLOTS = ["android-arm64-v8a", "android-x86_64", "host-generator"]
 
 def _javadoc_impl(ctx):
     runtime = ctx.toolchains[_JAVA_RUNTIME].java_runtime
@@ -110,7 +113,22 @@ def _maven_package_impl(ctx):
         mnemonic = "OliphauntMavenEnvelope",
         use_default_shell_env = False,
     )
-    return [DefaultInfo(files = depset(files)), OutputGroupInfo(archive = depset([files[0]]) if packaging != "pom" else depset())]
+    observed = []
+    for target in ctx.attr.sources:
+        if MobileCompiledInputsInfo in target:
+            observed.append(target[MobileCompiledInputsInfo])
+        else:
+            source_files = target[DefaultInfo].files.to_list()
+            if len(source_files) != 1 or not source_files[0].is_source or source_files[0].owner != target.label:
+                fail("Maven source rule lacks its original compiler input observation: " + str(target.label))
+    compiled = merge_mobile_compiled_inputs(observed + [target[MobileCompiledInputsInfo] for target in ctx.attr.native_libraries])
+    if packaging == "aar":
+        expected = [mobile_bindings_compile_group(owner, slot) for owner in MOBILE_BINDINGS_COMPILE_OWNERS for slot in KOTLIN_BINDINGS_COMPILE_SLOTS]
+        if sorted(compiled.files) != sorted(expected) or sorted(compiled.upstream) != sorted(expected):
+            fail("Kotlin AAR must retain its complete original Rust compiler File inventory")
+    suppliers = merge_shipping_suppliers([ctx.attr.suppliers[ShippingSupplierInfo], compiled.current, compiled.registry])
+    return [DefaultInfo(files = depset(files)), compiled, suppliers,
+            OutputGroupInfo(archive = depset([files[0]]) if packaging != "pom" else depset(), **{name: depset([file]) for name, file in compiled.files.items()})]
 
 _maven_package = rule(
     implementation = _maven_package_impl,
@@ -118,11 +136,12 @@ _maven_package = rule(
     attrs = {
         "coordinate": attr.string(mandatory = True),
         "packaging": attr.string(mandatory = True, values = ["aar", "jar", "pom"]),
-        "sources": attr.label_list(allow_files = True),
+        "sources": attr.label_list(allow_files = True, aspects = [mobile_compiled_inputs]),
         "legal_sources": attr.label_list(allow_files = True),
         "classes": attr.label_list(providers = [JavaInfo]),
         "android_aar": attr.label(allow_single_file = [".aar"]),
-        "native_libraries": attr.label_keyed_string_dict(allow_files = True),
+        "native_libraries": attr.label_keyed_string_dict(allow_files = True, aspects = [mobile_compiled_inputs]),
+        "suppliers": attr.label(default = "//build_defs/release:no_suppliers", providers = [ShippingSupplierInfo]),
         "coroutines_jvm": attr.label(providers = [JavaInfo], aspects = [has_maven_deps]),
         "javadoc": attr.label(allow_single_file = True),
         "_packager": attr.label(default = Label("//build_defs/languages/jvm:maven-package.mts"), allow_single_file = True),
@@ -148,7 +167,25 @@ def kotlin_maven_package(name, coordinate, packaging, **kwargs):
         name = name + "_shipping",
         owner = "@oliphaunt_metadata//:product_oliphaunt-kotlin",
         artifacts = [":" + name], ecosystem = "maven", package_name = coordinate, configuration = "portable", role = carriers[0]["role"],
+        suppliers = ":" + name,
     )
+    if packaging == "aar":
+        exports = []
+        for owner, product in MOBILE_BINDINGS_COMPILE_OWNERS.items():
+            packages = []
+            for slot in KOTLIN_BINDINGS_COMPILE_SLOTS:
+                group = mobile_bindings_compile_group(owner, slot)
+                native.filegroup(name = name + "_" + group, srcs = [":" + name], output_group = group)
+                supplier = name + "_" + group + "_suppliers"
+                mobile_bindings_compiled_supplier(name = supplier, inputs = ":" + name, owner = owner, configuration = slot)
+                package = name + "_" + group + "_shipping"
+                shipping_package(name = package, owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":" + name + "_" + group],
+                                 ecosystem = "internal", package_name = product + "-kotlin-bindings", configuration = slot, role = "compiled-source", suppliers = ":" + supplier)
+                packages.append(":" + package)
+            export = name + "_" + owner + "_compiled_shipping_export"
+            shipping_export(name = export, packages = packages, qualification = MOBILE_BINDINGS_COMPILE_QUALIFICATION[owner], testonly = True)
+            exports.append(":" + export)
+        shipping_export(name = name + "_compiled_shipping_export", exports = exports, testonly = True)
 
 def _installed_maven_test_impl(ctx):
     arguments = [PRODUCTS["oliphaunt-kotlin"]["version"]]

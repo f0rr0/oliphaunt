@@ -5,6 +5,8 @@ load(":source.bzl", "cargo_source_contract_test")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["mobile-compiled-inputs.bzl"])
+
 config_setting(
     name = "release",
     values = {"compilation_mode": "opt"},

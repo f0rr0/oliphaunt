@@ -753,9 +753,15 @@ function shippingState(exportName = 'export') {
 }
 
 function assertEnvelopeIdentities(exported: {
-  packages: { product: string; version: string; outputs: { path: string }[] }[];
+  packages: {
+    product: string;
+    version: string;
+    supplierInputs: unknown[];
+    outputs: { path: string }[];
+  }[];
 }) {
   for (const pkg of exported.packages) {
+    assert.deepEqual(pkg.supplierInputs, [], 'fixture suppliers must be explicitly known empty');
     assert.equal(pkg.outputs.length, 1, 'fixture shipping envelope has exactly one output');
     const envelope = JSON.parse(readFileSync(path.join(workspace, pkg.outputs[0].path), 'utf8'));
     assert.equal(
@@ -895,6 +901,8 @@ function diskCacheAcrossFreshBases() {
     ]);
     assert.equal(changed.hits.length, cold.executed.length - changed.executed.length);
     unchanged(cold.hashes, changed.hashes, ['alpha']);
+    for (const name of ['cold', 'restored', 'changed'])
+      removePrivateScratch(path.join(scratch, `cache-${name}`));
   } finally {
     model.alpha = originalAlpha;
     writeModel();
@@ -1335,7 +1343,7 @@ try {
 
   const mirrorBuild =
     originalBuild +
-    '\nshipping_package(name = "alpha_mirror_ship", owner = ":alpha_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-alpha-mirror", configuration = "fixture-host", role = "package")\nshipping_export(name = "mirror_export", packages = [":alpha_ship", ":alpha_mirror_ship", ":beta_ship", ":gamma_ship"])\n';
+    '\nshipping_package(name = "alpha_mirror_ship", owner = ":alpha_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-alpha-mirror", configuration = "fixture-host", role = "package", suppliers = "//build_defs/release:no_suppliers")\nshipping_export(name = "mirror_export", packages = [":alpha_ship", ":alpha_mirror_ship", ":beta_ship", ":gamma_ship"])\n';
   writeFileSync(build, mirrorBuild);
   scenario('two carriers share one product identity', [], [], 'mirror_export');
   const sharedOwnerBefore = shippingState('mirror_export');
@@ -1376,7 +1384,7 @@ try {
   writeFileSync(
     build,
     originalBuild +
-      '\nshipping_package(name = "shared_alpha_input", owner = ":alpha_identity", artifacts = [":config"], ecosystem = "github", package_name = "shared-control.h", configuration = "portable", role = "release-input")\nshipping_package(name = "shared_beta_input", owner = ":beta_identity", artifacts = [":config"], ecosystem = "github", package_name = "shared-control.h", configuration = "portable", role = "release-input")\nshipping_export(name = "shared_input_export", packages = [":shared_alpha_input", ":shared_beta_input"])\n',
+      '\nshipping_package(name = "shared_alpha_input", owner = ":alpha_identity", artifacts = [":config"], ecosystem = "github", package_name = "shared-control.h", configuration = "portable", role = "release-input", suppliers = "//build_defs/release:no_suppliers")\nshipping_package(name = "shared_beta_input", owner = ":beta_identity", artifacts = [":config"], ecosystem = "github", package_name = "shared-control.h", configuration = "portable", role = "release-input", suppliers = "//build_defs/release:no_suppliers")\nshipping_export(name = "shared_input_export", packages = [":shared_alpha_input", ":shared_beta_input"])\n',
   );
   scenario('shared candidate input across component owners', [], [], 'shared_input_export');
   const sharedInput = shippingState('shared_input_export');
@@ -1407,26 +1415,38 @@ try {
 
   const badCases = [
     {
+      name: 'missing_suppliers',
+      body: `shipping_package(name = "bad_ship", owner = ":alpha_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "bad", configuration = "fixture-host", role = "package")`,
+      target: 'bad_ship',
+      message: "missing value for mandatory attribute 'suppliers'",
+    },
+    {
+      name: 'unknown_suppliers',
+      body: `file_shipping_supplier(name = "unknown_suppliers", inputs = {"LEGAL.txt": ""}, owner = ":alpha_identity", configuration = "fixture-host", binding = "abi-contract")\nshipping_package(name = "bad_ship", owner = ":alpha_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "bad", configuration = "fixture-host", role = "package", suppliers = ":unknown_suppliers")`,
+      target: 'bad_ship',
+      message: 'explicit known supplier coverage',
+    },
+    {
       name: 'missing_owner',
-      body: `shipping_package(name = "bad_ship", owner = ":shared", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "bad", configuration = "fixture-host", role = "package")`,
+      body: `shipping_package(name = "bad_ship", owner = ":shared", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "bad", configuration = "fixture-host", role = "package", suppliers = "//build_defs/release:no_suppliers")`,
       target: 'bad_ship',
       message: 'ReleaseIdentityInfo',
     },
     {
       name: 'empty_payload',
-      body: `shipping_package(name = "bad_ship", owner = ":alpha_identity", artifacts = [], ecosystem = "github", package_name = "bad", configuration = "fixture-host", role = "package")`,
+      body: `shipping_package(name = "bad_ship", owner = ":alpha_identity", artifacts = [], ecosystem = "github", package_name = "bad", configuration = "fixture-host", role = "package", suppliers = "//build_defs/release:no_suppliers")`,
       target: 'bad_ship',
       message: 'actual output files',
     },
     {
       name: 'duplicate_identity',
-      body: `shipping_package(name = "bad_ship", owner = ":alpha_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-alpha", configuration = "fixture-host", role = "package")\nshipping_export(name = "bad_export", packages = [":alpha_ship", ":bad_ship"])`,
+      body: `shipping_package(name = "bad_ship", owner = ":alpha_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-alpha", configuration = "fixture-host", role = "package", suppliers = "//build_defs/release:no_suppliers")\nshipping_export(name = "bad_export", packages = [":alpha_ship", ":bad_ship"])`,
       target: 'bad_export',
       message: 'duplicate shipping identity',
     },
     {
       name: 'conflicting_product_versions',
-      body: `release_identity(name = "bad_identity", product_id = "fixture-alpha", version = "9.0.0")\nshipping_package(name = "bad_ship", owner = ":bad_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-alpha-other", configuration = "fixture-host", role = "package")\nshipping_export(name = "bad_export", packages = [":alpha_ship", ":bad_ship"])`,
+      body: `release_identity(name = "bad_identity", product_id = "fixture-alpha", version = "9.0.0")\nshipping_package(name = "bad_ship", owner = ":bad_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-alpha-other", configuration = "fixture-host", role = "package", suppliers = "//build_defs/release:no_suppliers")\nshipping_export(name = "bad_export", packages = [":alpha_ship", ":bad_ship"])`,
       target: 'bad_export',
       message: 'inconsistent shipping version',
     },
@@ -1447,7 +1467,7 @@ try {
   writeFileSync(
     build,
     renamedBuild +
-      '\nshipping_package(name = "forged_ship", owner = ":beta_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-forged", configuration = "fixture-host", role = "package")\nshipping_export(name = "forged_export", packages = [":forged_ship"])\n',
+      '\nshipping_package(name = "forged_ship", owner = ":beta_identity", artifacts = [":alpha_archive"], ecosystem = "github", package_name = "fixture-forged", configuration = "fixture-host", role = "package", suppliers = "//build_defs/release:no_suppliers")\nshipping_export(name = "forged_export", packages = [":forged_ship"])\n',
   );
   bazel('build', [`${label}:forged_export`, '--noshow_progress']);
   const forged = shippingState('forged_export');

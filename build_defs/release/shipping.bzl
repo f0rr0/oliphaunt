@@ -8,21 +8,22 @@ ShippingInfo = provider(fields = ["product", "version", "ecosystem", "name", "co
 ShippingExportInfo = provider(fields = ["packages", "qualification", "policies"])
 
 def _package(info):
-    result = {
+    return {
         "product": info.product,
         "version": info.version,
         "ecosystem": info.ecosystem,
         "name": info.name,
         "configuration": info.configuration,
         "role": info.role,
+        "supplierInputs": info.supplier_inputs,
         "outputs": [{"path": file.path, "owner": str(file.owner)} for file in info.files.to_list()],
     }
-    if info.supplier_inputs != None:
-        result["supplierInputs"] = info.supplier_inputs
-    return result
 
 def _shipping_package_impl(ctx):
     owner = ctx.attr.owner[ReleaseIdentityInfo]
+    suppliers = ctx.attr.suppliers[ShippingSupplierInfo]
+    if suppliers.suppliers == None:
+        fail("shipping package requires explicit known supplier coverage")
     files = depset(transitive = [artifact[DefaultInfo].files for artifact in ctx.attr.artifacts])
     if not files.to_list():
         fail("shipping package must contain actual output files")
@@ -34,13 +35,13 @@ def _shipping_package_impl(ctx):
         configuration = ctx.attr.configuration,
         role = ctx.attr.role,
         files = files,
-        supplier_inputs = ctx.attr.suppliers[ShippingSupplierInfo].suppliers if ctx.attr.suppliers else None,
+        supplier_inputs = suppliers.suppliers,
     )
     manifest = ctx.actions.declare_file(ctx.label.name + ".shipping.json")
     ctx.actions.write(manifest, json.encode({"label": str(ctx.label), "package": _package(info)}) + "\n")
     observation_inputs = depset(
         ctx.files.observation_inputs,
-        transitive = ([ctx.attr.suppliers[ShippingSupplierInfo].files] if ctx.attr.suppliers else []) + [
+        transitive = [suppliers.files] + [
             target[OutputGroupInfo].observation_inputs
             for target in ctx.attr.observation_inputs
             if OutputGroupInfo in target and hasattr(target[OutputGroupInfo], "observation_inputs")
@@ -61,7 +62,7 @@ shipping_package = rule(
         "package_name": attr.string(mandatory = True),
         "configuration": attr.string(mandatory = True),
         "role": attr.string(mandatory = True),
-        "suppliers": attr.label(providers = [ShippingSupplierInfo], doc = "Actual configured supplier Files. Omission is unknown coverage; shipping_suppliers(inputs = []) explicitly declares none."),
+        "suppliers": attr.label(providers = [ShippingSupplierInfo], mandatory = True, doc = "Actual configured supplier Files; use //build_defs/release:no_suppliers to explicitly declare none. Unknown coverage is not a complete shipping package."),
         "observation_inputs": attr.label_list(allow_files = True, doc = "Original constructor values required by evidence capture, materialized in this same invocation."),
     },
 )

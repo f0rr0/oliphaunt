@@ -1,8 +1,9 @@
 """Genuine target ABI receipts for separately admitted native seed domains."""
 
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
-load("//build_defs/resources:resources.bzl", "NativeSeedInfo", "SEED_REUSE_ATTRS", "native_seed_envelopes", "seed_constructor_inputs", "seed_constructor_tree_members", "seed_promotion", "seed_reuse")
+load("//build_defs/resources:resources.bzl", "NATIVE_SEED_ABI_CONFIGURATION", "NativeSeedInfo", "SEED_REUSE_ATTRS", "native_seed_abi_suppliers", "native_seed_envelopes", "seed_constructor_inputs", "seed_constructor_tree_members", "seed_promotion", "seed_reuse")
 load("//build_defs/release:shipping.bzl", "shipping_export")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "file_shipping_supplier", "merge_shipping_suppliers")
 load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS", "DATABASE_RESOURCE_CONTRACT", "PRODUCTS", "SEED_REUSE_CONTROLS")
 load("//build_defs/native/carriers:defs.bzl", "native_carrier_legal_inputs")
 load("//build_defs/release:shipping.bzl", "shipping_package")
@@ -57,7 +58,10 @@ def _native_abi_receipt_impl(ctx):
     bun_action(ctx, ctx.attr._tool, arguments = [arguments],
                inputs = [specification, runtime] + ctx.files.configuration + ctx.files.headers,
                outputs = [receipt], mnemonic = "NativeSeedTargetAbi")
-    return [DefaultInfo(files = depset([receipt])), NativeAbiReceiptInfo(receipt = receipt, runtime = runtime, target = target)]
+    suppliers = native_seed_abi_suppliers([runtime])
+    return [DefaultInfo(files = depset([receipt])), suppliers,
+            NativeAbiReceiptInfo(receipt = receipt, runtime = runtime, target = target),
+            OutputGroupInfo(supplier_inputs = suppliers.files)]
 
 native_abi_receipt = rule(
     implementation = _native_abi_receipt_impl,
@@ -123,16 +127,18 @@ def _native_seed_domain_impl(ctx):
         [frozen, construction],
         transitive = [ctx.attr.producer[OutputGroupInfo].observation_inputs],
     )
-    return [DefaultInfo(files = depset([frozen, producer.abi, construction])),
+    suppliers = merge_shipping_suppliers([ctx.attr.producer[ShippingSupplierInfo]] + [supplier[ShippingSupplierInfo] for supplier in ctx.attr.suppliers])
+    return [DefaultInfo(files = depset([frozen, producer.abi, construction])), suppliers,
             NativeSeedInfo(frozen = frozen, abi = producer.abi, runtime = producer.runtime,
                            profile = producer.profile, target = ctx.attr.domain, construction = construction),
-            OutputGroupInfo(frozen = depset([frozen]), abi = depset([producer.abi]), construction = depset([construction]), observation_inputs = observation_inputs)]
+            OutputGroupInfo(frozen = depset([frozen]), abi = depset([producer.abi]), construction = depset([construction]), observation_inputs = observation_inputs, supplier_inputs = suppliers.files)]
 
 native_seed_domain = rule(
     implementation = _native_seed_domain_impl,
     attrs = dict(SEED_REUSE_ATTRS, **{
-        "producer": attr.label(providers = [NativeSeedInfo], mandatory = True),
+        "producer": attr.label(providers = [NativeSeedInfo, ShippingSupplierInfo], mandatory = True),
         "receipts": attr.label_list(allow_files = True, mandatory = True),
+        "suppliers": attr.label_list(providers = [ShippingSupplierInfo], mandatory = True),
         "domain": attr.string(values = ["android-datum64", "ios-datum64"], mandatory = True),
         "icu": attr.label(allow_single_file = True),
         "_tool": attr.label(default = "//build_defs/resources:seed_domain", providers = [BunScriptInfo], cfg = "exec"),
@@ -143,10 +149,11 @@ def android_resource_slice(name, qualification):
     """Admit the actual Linux bootstrap against both actual Android producers."""
     compatible = ["@platforms//os:linux", "@platforms//cpu:x86_64"]
     packages = []
+    receipts = [":android_arm64_abi", ":android_x86_64_abi"]
     for profile in DATABASE_RESOURCE_CONTRACT["profiles"]:
         prefix = "android_datum64_" + profile
         icu = ":icu_payload" if profile == "icu" else None
-        native_seed_domain(name = prefix + "_seed", producer = ":linux_x64_" + profile + "_seed", receipts = [":android_arm64_abi", ":android_x86_64_abi"],
+        native_seed_domain(name = prefix + "_seed", producer = ":linux_x64_" + profile + "_seed", receipts = receipts, suppliers = receipts,
                            domain = "android-datum64", icu = icu, target_compatible_with = compatible,
                            **SEED_REUSE_CONTROLS.get("native/android-datum64/" + profile, {}))
         native.filegroup(name = prefix + "_frozen", srcs = [":" + prefix + "_seed"], output_group = "frozen")
@@ -173,10 +180,11 @@ def _swift_seed_envelope_impl(ctx):
         "output": output.path,
     }) + "\n")
     bun_action(ctx, ctx.attr._tool, arguments = [specification.path], inputs = inputs + [specification], outputs = [output], mnemonic = "SwiftSeedEnvelope")
-    return [DefaultInfo(files = depset([output]))]
+    return [DefaultInfo(files = depset([output])), merge_shipping_suppliers([seed[ShippingSupplierInfo] for seed in ctx.attr.seeds])]
 
 _swift_seed_envelope = rule(implementation = _swift_seed_envelope_impl, attrs = {
     "assets": attr.label_list(allow_files = True, mandatory = True),
+    "seeds": attr.label_list(providers = [ShippingSupplierInfo], mandatory = True),
     "notices": attr.label_keyed_string_dict(allow_files = True),
     "out": attr.string(mandatory = True),
     "_tool": attr.label(default = "//build_defs/native/apple:seed_envelope", providers = [BunScriptInfo], cfg = "exec"),
@@ -186,11 +194,18 @@ def ios_resource_slice(name, qualification):
     """Admit the real Mac bootstrap against both actual dynamic iOS producers."""
     compatible = ["@platforms//os:macos", "@platforms//cpu:aarch64"]
     packages, assets, seeds = [], [":icu_payload"], []
+    suppliers = []
+    for target in ["device", "simulator"]:
+        supplier_name = "ios_seed_" + target + "_abi_supplier"
+        file_shipping_supplier(name = supplier_name, inputs = {"//src/native/runtime:apple_ios_" + target + "_abi": ""},
+                               owner = "@oliphaunt_metadata//:product_liboliphaunt-native", configuration = NATIVE_SEED_ABI_CONFIGURATION,
+                               binding = "abi-contract", origin = json.encode({"kind": "current-source"}), target_compatible_with = compatible)
+        suppliers.append(":" + supplier_name)
     for profile in DATABASE_RESOURCE_CONTRACT["profiles"]:
         prefix = "ios_datum64_" + profile
         icu = ":icu_payload" if profile == "icu" else None
         native_seed_domain(name = prefix + "_seed", producer = ":macos_arm64_" + profile + "_seed",
-                           receipts = ["//src/native/runtime:apple_ios_device_abi", "//src/native/runtime:apple_ios_simulator_abi"],
+                           receipts = ["//src/native/runtime:apple_ios_device_abi", "//src/native/runtime:apple_ios_simulator_abi"], suppliers = suppliers,
                            domain = "ios-datum64", icu = icu, target_compatible_with = compatible,
                            **SEED_REUSE_CONTROLS.get("native/ios-datum64/" + profile, {}))
         native.filegroup(name = prefix + "_frozen", srcs = [":" + prefix + "_seed"], output_group = "frozen")
@@ -202,9 +217,9 @@ def ios_resource_slice(name, qualification):
     if len(rows) != 1:
         fail("Swift seed envelope requires exactly one canonical artifact")
     asset = rows[0]["asset"].replace("{version}", PRODUCTS["database-resources"]["version"])
-    _swift_seed_envelope(name = "swift_seed_archive", assets = assets, notices = native_carrier_legal_inputs(), out = asset, target_compatible_with = compatible)
+    _swift_seed_envelope(name = "swift_seed_archive", assets = assets, seeds = seeds, notices = native_carrier_legal_inputs(), out = asset, target_compatible_with = compatible)
     shipping_package(name = "swift_seed_shipping", owner = "@oliphaunt_metadata//:product_database-resources", artifacts = [":swift_seed_archive"],
-                     ecosystem = "github", package_name = asset, configuration = rows[0]["target"], role = "github-release-asset", observation_inputs = seeds)
+                     ecosystem = "github", package_name = asset, configuration = rows[0]["target"], role = "github-release-asset", suppliers = ":swift_seed_archive", observation_inputs = seeds)
     shipping_export(name = name, packages = packages + [":swift_seed_shipping"], qualification = qualification, testonly = True, target_compatible_with = compatible)
 
 def mobile_resource_test(name, target):

@@ -6,7 +6,7 @@ load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS", "DATAB
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@aspect_rules_js//npm:providers.bzl", "NpmPackageInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
-load("//build_defs/release:supplier.bzl", "file_shipping_supplier")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "file_shipping_supplier")
 load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE")
 
 NativeSeedInfo = provider(fields = ["frozen", "abi", "runtime", "profile", "target", "construction"])
@@ -21,6 +21,18 @@ _DESKTOP_PROFILES = {
     "windows_x64": ("windows-x64-msvc", ["@platforms//os:windows", "@platforms//cpu:x86_64"], "//build_defs/native:windows_x64"),
 }
 _VERSION = PRODUCTS["database-resources"]["version"]
+NATIVE_SEED_ABI_CONFIGURATION = "seed-abi"
+
+def native_seed_abi_suppliers(files):
+    """The actual creator/ABI Files bind seed format, not compiled version coupling."""
+    if not files or any([file.is_source or file.is_directory for file in files]):
+        fail("Native seed ABI provenance requires actual generated regular Files")
+    return ShippingSupplierInfo(
+        suppliers = [{"product": "liboliphaunt-native", "version": PRODUCTS["liboliphaunt-native"]["version"],
+                      "configuration": NATIVE_SEED_ABI_CONFIGURATION, "binding": "abi-contract",
+                      "origin": {"kind": "current-source"}, "files": [{"path": file.path} for file in files]}],
+        files = depset(files),
+    )
 
 def _wasix_consumer_version():
     return PRODUCTS["database-resources"]["compatibility_versions"]["liboliphaunt-wasix"]
@@ -196,9 +208,10 @@ def _native_seed_impl(ctx):
         "reuse": reuse,
         "promotion": promotion,
     }, constructor_inputs + reuse_inputs + promotion_inputs, [frozen, abi, construction], "PostgresClusterSeed")
-    return [DefaultInfo(files = depset([frozen, abi, construction])),
+    suppliers = native_seed_abi_suppliers([ctx.file.runtime])
+    return [DefaultInfo(files = depset([frozen, abi, construction])), suppliers,
             NativeSeedInfo(frozen = frozen, abi = abi, runtime = ctx.file.runtime, profile = ctx.attr.profile, target = ctx.attr.target, construction = construction),
-            OutputGroupInfo(frozen = depset([frozen]), abi = depset([abi]), specification = depset([specification]), construction = depset([construction]), observation_inputs = depset([frozen, construction]))]
+            OutputGroupInfo(frozen = depset([frozen]), abi = depset([abi]), specification = depset([specification]), construction = depset([construction]), observation_inputs = depset([frozen, construction]), supplier_inputs = suppliers.files)]
 
 native_seed = rule(implementation = _native_seed_impl, cfg = desktop_profile, attrs = dict(SEED_REUSE_ATTRS, **{
     "runtime": attr.label(default = "//src/native/runtime:runtime_payload", allow_single_file = True),
@@ -335,7 +348,7 @@ def _rows(names):
         fail("resource carriers must exactly match the canonical publication catalog")
     return rows
 
-def _shipping(name, rows, suppliers = None, observation_inputs = [], **kwargs):
+def _shipping(name, rows, suppliers, observation_inputs = [], **kwargs):
     packages = []
     for row in rows:
         label = name + "_" + row["ecosystem"]
@@ -392,7 +405,7 @@ def wasix_current_seed_assets(name, profile = "standard"):
     for group in ["archive", "manifest"]:
         native.filegroup(name = name + "_" + group, srcs = [":" + name], output_group = group, testonly = True)
 
-def seed_envelopes(prefix, family, target, profile, seed, icu = None, compatible = [], consumer_runtime = None, suppliers = None, **kwargs):
+def seed_envelopes(prefix, family, target, profile, seed, suppliers, icu = None, compatible = [], consumer_runtime = None, **kwargs):
     """Use the one canonical row expansion and existing writers for one seed."""
     archive, manifest = _seed_artifact_rows(family, target, profile)
     seed_assets(name = prefix + "_assets", seed = seed, icu = icu, consumer_runtime = consumer_runtime,
@@ -418,8 +431,17 @@ def seed_envelopes(prefix, family, target, profile, seed, icu = None, compatible
     packages.extend(_shipping(prefix + "_carriers", carriers, suppliers = suppliers, observation_inputs = [seed], **kwargs))
     return packages
 
+def native_seed_abi_shipping(prefix, seed, **kwargs):
+    native.filegroup(name = prefix + "_seed_abi_files", srcs = [seed], output_group = "supplier_inputs", **kwargs)
+    name = prefix + "_seed_abi_shipping"
+    shipping_package(name = name, owner = "@oliphaunt_metadata//:product_liboliphaunt-native", artifacts = [":" + prefix + "_seed_abi_files"],
+                     ecosystem = "internal", package_name = prefix + "-seed-abi", configuration = NATIVE_SEED_ABI_CONFIGURATION,
+                     role = "abi-contract", suppliers = "//build_defs/release:no_suppliers", **kwargs)
+    return ":" + name
+
 def native_seed_envelopes(prefix, target, profile, seed, icu = None, compatible = []):
-    return seed_envelopes(prefix, "native", target, profile, seed, icu, compatible)
+    packages = seed_envelopes(prefix, "native", target, profile, seed, suppliers = seed, icu = icu, compatible = compatible)
+    return packages + [native_seed_abi_shipping(prefix, seed, target_compatible_with = compatible)]
 
 def wasix_resource_slice(name, qualification):
     consumer = _wasix_consumer() if DATABASE_WASIX_SEED_CONSUMER["source"] == "completed" else None
@@ -521,9 +543,9 @@ def native_resource_slice(name, templates, qualification):
     icu_payload(name = "icu_payload", out = icu_row["asset"].replace("{version}", _VERSION))
     icu_rows = _rows(["@oliphaunt/icu", "oliphaunt-icu", "dev.oliphaunt.runtime:oliphaunt-icu"])
     resource_carriers(name = "icu_carriers", kind = "icu", assets = [":icu_payload"], templates = templates, carriers = json.encode(icu_rows))
-    packages = _shipping("icu_carriers", icu_rows)
+    packages = _shipping("icu_carriers", icu_rows, suppliers = "//build_defs/release:no_suppliers")
     shipping_package(name = "icu_github", owner = "@oliphaunt_metadata//:product_database-resources", artifacts = [":icu_payload"], ecosystem = "github",
-                     package_name = icu_row["asset"].replace("{version}", _VERSION), configuration = "portable", role = "github-release-asset")
+                     package_name = icu_row["asset"].replace("{version}", _VERSION), configuration = "portable", role = "github-release-asset", suppliers = "//build_defs/release:no_suppliers")
     packages.append(":icu_github")
     platform_packages = {}
     for architecture, (target, compatible, condition) in _DESKTOP_PROFILES.items():

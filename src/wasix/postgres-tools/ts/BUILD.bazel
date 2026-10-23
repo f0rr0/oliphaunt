@@ -101,6 +101,7 @@ query_envelope(
 
 shipping_package(
     name = "shipping_package",
+    suppliers = "//build_defs/release:no_suppliers",
     owner = "@oliphaunt_metadata//:product_postgres-tools-wasix",
     artifacts = [":npm"],
     ecosystem = "npm",

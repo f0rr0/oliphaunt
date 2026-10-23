@@ -124,7 +124,7 @@ def wasix_tools_carriers(patches, qualification = []):
             carrier = cargo_rows[0] if ecosystem == "cargo" else npm_rows[0]
             shipping_package(name = group + "_shipping", owner = owner, artifacts = [":" + group], ecosystem = ecosystem,
                              package_name = row["asset"].replace("{version}", PRODUCTS["postgres-tools-wasix"]["version"]) if ecosystem == "github" else carrier["name"],
-                             configuration = row["target"] if ecosystem == "github" else (carrier["target"] or row["target"]), role = "github-release-asset" if ecosystem == "github" else carrier["role"])
+                             configuration = row["target"] if ecosystem == "github" else (carrier["target"] or row["target"]), role = "github-release-asset" if ecosystem == "github" else carrier["role"], suppliers = "//build_defs/release:no_suppliers")
             packages.append(":" + group + "_shipping")
     native_checksum_manifest(name = "assembled_release_assets", product = "postgres-tools-wasix", archives = archives, artifact_rows = WASIX_ARTIFACTS, assemble = True)
     for group, asset in github_groups:
@@ -133,7 +133,7 @@ def wasix_tools_carriers(patches, qualification = []):
     checksum = [row for row in WASIX_ARTIFACTS if row["product"] == "postgres-tools-wasix" and row["kind"] == "checksums"]
     shipping_package(name = "checksums_shipping", owner = owner, artifacts = [":checksums"], ecosystem = "github",
                      package_name = checksum[0]["asset"].replace("{version}", PRODUCTS["postgres-tools-wasix"]["version"]),
-                     configuration = "portable", role = "github-release-asset")
+                     configuration = "portable", role = "github-release-asset", suppliers = "//build_defs/release:no_suppliers")
     packages.append(":checksums_shipping")
     native.filegroup(name = "release_assets", srcs = [":assembled_release_assets"])
     native.filegroup(name = "carriers", srcs = [":carriers_" + row["target"].replace("-", "_") for row in rows] + ["//src/wasix/postgres-tools/ts:npm"])

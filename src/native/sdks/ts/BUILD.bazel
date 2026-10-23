@@ -105,6 +105,7 @@ shipping_package(
     package_name = SDK["name"],
     configuration = "portable",
     role = [carrier["role"] for carrier in PUBLICATION_CARRIERS if carrier["product"] == "oliphaunt-js" and carrier["ecosystem"] == "npm" and carrier["name"] == SDK["name"]][0],
+    suppliers = "//build_defs/release:no_suppliers",
 )
 
 shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = [":consumer_test", "//build_defs/languages/carriers:installed_sql_test", ":unit_test", ":package_policy_test"], testonly = True)

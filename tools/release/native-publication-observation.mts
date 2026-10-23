@@ -16,6 +16,7 @@ import {
   validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
 import type { NativeRoot } from './native-publication-artifacts.mts';
+import { isNativePreEnvelopePayloadRoot } from './native-publication-payloads.mts';
 import { consumerDigest } from './publication-consumer-proof.mts';
 
 type Row = Record<string, any>;
@@ -306,7 +307,7 @@ export function projectNativePublicationConstruction(
       carriers,
       productArtifacts,
       construction,
-      preEnvelopeCapture: roots.some(({ root }) => root.package.ecosystem === 'internal')
+      preEnvelopeCapture: roots.some(({ root }) => isNativePreEnvelopePayloadRoot(root))
         ? 'observed'
         : 'absent',
       baselineAdmission: 'unknown' as const,

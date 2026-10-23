@@ -138,6 +138,24 @@ function bundle(directory, subjects) {
   return file;
 }
 
+test('compiler and ABI roots retain construction evidence without claiming pre-envelope capture', async () => {
+  await fixture(async ({ input, transports, origin }) => {
+    const root = origin.evidence.cohorts[0].roots.find(
+      (root) => root.package.ecosystem === 'internal',
+    );
+    if (!root) throw new Error('fixture requires an internal construction root');
+    for (const role of ['compiled-source', 'abi-contract', 'extension-release-frozen-input']) {
+      root.package.role = role;
+      const records = await prepareNativePublicationMetadata(preparation(input), transports);
+      const product = records.find((record) => record.product.id === root.package.product);
+      expect(product?.preEnvelopeCapture).toBe(
+        role === 'extension-release-frozen-input' ? 'observed' : 'absent',
+      );
+      expect(product?.construction[0].roots.some((value) => value.label === root.label)).toBe(true);
+    }
+  });
+});
+
 test('prepared metadata authenticates actual captured construction and excludes circular envelopes', async () => {
   await fixture(async ({ input, transports, requests }) => {
     const records = await prepareNativePublicationMetadata(preparation(input), transports);

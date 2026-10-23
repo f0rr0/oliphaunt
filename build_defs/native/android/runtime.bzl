@@ -110,7 +110,7 @@ def native_android_runtime_targets():
         name = "android_" + row["target"].replace("android-", "").replace("-", "_")
         native.filegroup(name = name + "_archive", srcs = [":android_release_assets"], output_group = row["target"].replace("-", "_"), target_compatible_with = _LINUX)
         shipping_package(name = name + "_github_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":" + name + "_archive"],
-                         ecosystem = "github", package_name = row["asset"].replace("{version}", PRODUCTS[product]["version"]), configuration = row["target"], role = "github-release-asset")
+                         ecosystem = "github", package_name = row["asset"].replace("{version}", PRODUCTS[product]["version"]), configuration = row["target"], role = "github-release-asset", suppliers = "//build_defs/release:no_suppliers")
         packages.append(":" + name + "_github_shipping")
     for row in carriers:
         artifact = row["name"].split(":")[1]
@@ -118,7 +118,7 @@ def native_android_runtime_targets():
         native.filegroup(name = name, srcs = [":android_release_assets"], output_group = "maven_" + artifact.replace("-", "_"), target_compatible_with = _LINUX)
         configuration = row["target"] if row["target"] != None else "android-datum64"
         shipping_package(name = name + "_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":" + name],
-                         ecosystem = "maven", package_name = row["name"], configuration = configuration, role = row["role"])
+                         ecosystem = "maven", package_name = row["name"], configuration = configuration, role = row["role"], suppliers = "//build_defs/release:no_suppliers")
         packages.append(":" + name + "_shipping")
     _assets_test(name = "android_runtime_assets_test", assets = ":android_release_assets", args = bun_test_entrypoint_args("android_runtime_assets_test"),
                  target_compatible_with = _LINUX, size = "small")

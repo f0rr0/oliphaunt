@@ -212,10 +212,10 @@ def native_desktop_carriers(product, root_mappings, runtime_mappings, binary_map
     native_public_payload(name = "public_payload", root_mappings = [replacements.get(label, label) for label in root_mappings], runtime_mappings = [replacements.get(label, label) for label in runtime_mappings], metadata = select(payload_metadata), legal = select(payload_legal), windows_runtime = select({"//build_defs/native:windows_x64": ["@native_msvc_sdk//:runtime_dlls"], "//conditions:default": []}), target_compatible_with = compatibility)
     for phase, out in [("github", select(github)), ("npm", select(npm)), ("cargo", "cargo-packages")]:
         _native_envelope(name = "github_archive" if phase == "github" else "cargo_packages" if phase == "cargo" else "npm", phase = phase, payload = ":public_payload", metadata = select(metadata), sources = select(sources) if phase == "npm" else {}, legal = native_carrier_legal_inputs() if phase != "github" else {}, out = out, target_compatible_with = compatibility)
-    shipping_package(name = "native_github_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":github_archive"], ecosystem = "github", package_name = select({key: value[len("release-assets/"):] for key, value in github.items()}), configuration = select(physical), role = "github-release-asset")
-    shipping_package(name = "native_npm_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":npm"], ecosystem = "npm", package_name = select(npm_names), configuration = select(physical), role = select(npm_roles))
-    shipping_package(name = "native_cargo_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":cargo_packages"], ecosystem = "cargo", package_name = select(cargo_names), configuration = select(physical), role = select(cargo_roles))
-    shipping_package(name = "native_payload_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":public_payload"], ecosystem = "internal", package_name = product + "-public-payload", configuration = select(physical), role = "construction")
+    shipping_package(name = "native_github_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":github_archive"], ecosystem = "github", package_name = select({key: value[len("release-assets/"):] for key, value in github.items()}), configuration = select(physical), role = "github-release-asset", suppliers = "//build_defs/release:no_suppliers")
+    shipping_package(name = "native_npm_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":npm"], ecosystem = "npm", package_name = select(npm_names), configuration = select(physical), role = select(npm_roles), suppliers = "//build_defs/release:no_suppliers")
+    shipping_package(name = "native_cargo_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":cargo_packages"], ecosystem = "cargo", package_name = select(cargo_names), configuration = select(physical), role = select(cargo_roles), suppliers = "//build_defs/release:no_suppliers")
+    shipping_package(name = "native_payload_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":public_payload"], ecosystem = "internal", package_name = product + "-public-payload", configuration = select(physical), role = "construction", suppliers = "//build_defs/release:no_suppliers")
     shipping_export(name = "native_shipping_export", packages = [":native_github_shipping", ":native_npm_shipping", ":native_cargo_shipping", ":native_payload_shipping"], qualification = qualification, testonly = True)
 
 def _facade_impl(ctx):
@@ -249,7 +249,7 @@ def native_tools_facades(qualification):
             output = row["name"] + "-" + row["version"] + ".crate"
         name = ecosystem + "_facade"
         _native_facade(name = name, phase = ecosystem, out = output, metadata = metadata, sources = sources, legal = native_carrier_legal_inputs())
-        shipping_package(name = name + "_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":" + name], ecosystem = ecosystem, package_name = row["name"], configuration = "portable", role = row["role"])
+        shipping_package(name = name + "_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":" + name], ecosystem = ecosystem, package_name = row["name"], configuration = "portable", role = row["role"], suppliers = "//build_defs/release:no_suppliers")
     shipping_export(name = "facade_shipping_export", packages = [":npm_facade_shipping", ":cargo_facade_shipping"], qualification = qualification, testonly = True)
 
 def _unit_inputs_impl(ctx):

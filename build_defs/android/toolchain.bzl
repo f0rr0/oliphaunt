@@ -5,6 +5,7 @@ load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES")
 load("@rules_cc//cc:cc_toolchain_config_lib.bzl", "feature", "flag_group", "flag_set")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/toolchains:cc_toolchain_config_info.bzl", "CcToolchainConfigInfo")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
 
 def _android_cc_config_impl(ctx):
     # This is a qualification bound, not a second version authority. An SDK or
@@ -76,7 +77,8 @@ def _platform_impl(settings, attr):
 _android_platform = transition(implementation = _platform_impl, inputs = [], outputs = ["//command_line_option:platforms"])
 
 def _android_artifact_impl(ctx):
-    files = ctx.attr.artifact[0][DefaultInfo].files
+    artifact = ctx.attr.artifact[0]
+    files = artifact[DefaultInfo].files
     if ctx.attr.output:
         physical = files.to_list()
         if len(physical) != 1:
@@ -84,7 +86,7 @@ def _android_artifact_impl(ctx):
         output = ctx.actions.declare_file(ctx.attr.output)
         ctx.actions.symlink(output = output, target_file = physical[0])
         files = depset([output])
-    return [DefaultInfo(files = files)]
+    return [DefaultInfo(files = files)] + ([artifact[ShippingSupplierInfo]] if ShippingSupplierInfo in artifact else [])
 
 android_artifact = rule(
     implementation = _android_artifact_impl,

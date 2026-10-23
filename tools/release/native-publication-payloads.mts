@@ -55,6 +55,11 @@ export function nativePayloadDigest(product: NativePayloadProduct) {
   return createHash('sha256').update(canonical(product)).digest('hex');
 }
 
+export function isNativePreEnvelopePayloadRoot(root: NativeRoot) {
+  const pkg = root.package;
+  return pkg.ecosystem === 'internal' && !['compiled-source', 'abi-contract'].includes(pkg.role);
+}
+
 /** Reads only supplied internal ShippingInfo outputs, never guessed source directories. */
 export function captureNativePreEnvelopePayloads(
   cohorts: NativePayloadCohort[],
@@ -76,7 +81,7 @@ export function captureNativePreEnvelopePayloads(
     for (const root of cohort.roots as NativeRoot[]) {
       const pkg = root.package;
       const product = observed.get(pkg.product);
-      if (pkg.ecosystem !== 'internal' || !product) continue;
+      if (!isNativePreEnvelopePayloadRoot(root) || !product) continue;
       if (pkg.version !== product.version)
         throw new Error(`native payload version disagrees for ${product.id}`);
       for (const value of [root.label, pkg.name, pkg.configuration, pkg.role]) nonempty(value);

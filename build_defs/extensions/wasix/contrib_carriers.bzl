@@ -10,6 +10,7 @@ load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_actio
 load("//build_defs/foundation:bun.bzl", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
 load("//build_defs/wasix:aot.bzl", "WasixAotInfo", "wasix_aot")
 load("//build_defs/wasix:platform.bzl", "WASIX_PORTABLE_TRANSITION")
 load("//build_defs/wasix:wasm.bzl", "WasmModuleInfo")
@@ -103,7 +104,7 @@ def _carriers_impl(ctx):
     ctx.actions.write(inputs, json.encode(spec))
     bun_file_action(ctx, ctx.file._tool, arguments = [inputs.path], inputs = member_inputs + resource_files + image_files + [inputs, ctx.file.toolchain] + ctx.files.legal,
                     source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal, outputs = output_files, mnemonic = "WasixContribEnvelopes")
-    return [DefaultInfo(files = depset(output_files)),
+    return [DefaultInfo(files = depset(output_files)), ctx.attr._suppliers[ShippingSupplierInfo],
             ExtensionFinalLeafInfo(product = spec["product"], owner = owner.id, version = owner.version, family = "wasix", target = "wasix-portable", metadata = spec,
                                    github = outputs["github"], npm = outputs["npm"], cargo = outputs["cargo"], manifest = outputs["manifest"][0], frozen = outputs["frozen"][0], spec = inputs, validation = None, receipt = None, origin = None),
             OutputGroupInfo(**{name: depset(files) for name, files in outputs.items()} | carrier_groups | {"spec": depset([inputs]), "link": depset(links)})]
@@ -116,6 +117,7 @@ _wasix_contrib_carriers = rule(implementation = _carriers_impl, toolchains = BUN
     "_tool": attr.label(default = "//build_defs/extensions/wasix:contrib_carriers.mts", allow_single_file = True),
     "_helpers": attr.label_list(default = wasix_sql_carrier_helpers() + ["//build_defs/extensions:wasix_carriers.mts", "//:src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts", "//:src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts"], allow_files = True),
     "_analyzer": attr.label(default = "//src/wasix/runtime/tools/xtask:xtask", executable = True, cfg = "exec"),
+    "_suppliers": attr.label(default = "//build_defs/release:no_suppliers", providers = [ShippingSupplierInfo]),
     "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
 })
 
@@ -202,13 +204,13 @@ def wasix_contrib_extension_shipping(name, carriers, qualification):
     for index, row in enumerate(spec["carriers"]):
         package = name + "_" + row["ecosystem"] + "_shipping_" + str(index)
         native.filegroup(name = package + "_files", srcs = [carriers], output_group = "carrier_" + str(index))
-        shipping_package(name = package, owner = owner, artifacts = [":" + package + "_files"], ecosystem = row["ecosystem"], package_name = row["name"], configuration = row["target"] or "portable", role = row["role"])
+        shipping_package(name = package, owner = owner, artifacts = [":" + package + "_files"], ecosystem = row["ecosystem"], package_name = row["name"], configuration = row["target"] or "portable", role = row["role"], suppliers = carriers)
         packages.append(":" + package)
     for group in ["github", "manifest", "frozen"]:
         package = name + "_" + group + "_shipping"
         native.filegroup(name = package + "_files", srcs = [carriers], output_group = group)
         package_name = spec["product"] + "-" + spec["version"] + "-wasix-" + spec["target"] + "-bundle.tar.gz" if group == "github" else "contrib-wasix-" + group
         shipping_package(name = package, owner = owner, artifacts = [":" + package + "_files"], ecosystem = "github" if group == "github" else "internal", package_name = package_name,
-                         configuration = spec["target"], role = "github-release-asset" if group == "github" else "extension-release-" + group + "-input")
+                         configuration = spec["target"], role = "github-release-asset" if group == "github" else "extension-release-" + group + "-input", suppliers = carriers)
         packages.append(":" + package)
     shipping_export(name = name + "_shipping_export", packages = packages, qualification = qualification, testonly = True)

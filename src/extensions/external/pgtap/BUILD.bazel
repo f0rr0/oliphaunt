@@ -25,6 +25,7 @@ shipping_package(
     name = "native_member",
     owner = extension_identity("pgtap"),
     artifacts = [":native_payload"],
+    suppliers = ":native_payload",
     ecosystem = "internal",
     package_name = "pgtap",
     configuration = NATIVE_EXTENSION_CONFIGURATION,

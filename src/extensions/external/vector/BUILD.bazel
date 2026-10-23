@@ -34,6 +34,7 @@ shipping_package(
     name = "native_member",
     owner = extension_identity("vector"),
     artifacts = [":native_payload"],
+    suppliers = ":native_payload",
     ecosystem = "internal",
     package_name = "vector",
     configuration = NATIVE_EXTENSION_CONFIGURATION,

@@ -107,9 +107,9 @@ def postmaster_release_asset(name, target, carrier, execution, qualification):
                   args = bun_test_entrypoint_args(prefix + "_public_archive_test"), target_compatible_with = compatible,
                   exec_compatible_with = execution, tags = ["manual"], size = "medium")
     shipping_package(name = prefix + "_carrier_construction", owner = owner, artifacts = [carrier], ecosystem = "internal",
-                     package_name = "native_carrier", configuration = row["target"], role = "construction")
+                     package_name = "native_carrier", configuration = row["target"], role = "construction", suppliers = "//build_defs/release:no_suppliers")
     shipping_package(name = prefix + "_release_asset_shipping", owner = owner, artifacts = [":" + name + "_release_asset"], ecosystem = "github",
-                     package_name = row["asset"].replace("{version}", PRODUCTS[row["product"]]["version"]), configuration = row["target"], role = "github-release-asset")
+                     package_name = row["asset"].replace("{version}", PRODUCTS[row["product"]]["version"]), configuration = row["target"], role = "github-release-asset", suppliers = "//build_defs/release:no_suppliers")
     shipping_export(name = prefix + "_shipping_export", packages = [":" + prefix + "_carrier_construction", ":" + prefix + "_release_asset_shipping"], qualification = [":" + prefix + "_public_archive_test"] + qualification, testonly = True)
 
 def postmaster_linux_release_asset(qualification):

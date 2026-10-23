@@ -6,6 +6,7 @@ load("@rules_apple//apple:apple.bzl", "apple_static_xcframework")
 load("//build_defs/apple:slices.bzl", "apple_slice_filegroup", "apple_slice_groups")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "merge_shipping_suppliers")
 load(":construction.bzl", "desktop_member_inventory")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_identity")
 load(":final_leaf.bzl", "ExtensionFinalLeafInfo")
@@ -119,12 +120,13 @@ def _carriers_impl(ctx):
     for target, files in slice_files.items():
         name = "apple_slice_" + {"macos-arm64": "macos-arm64", "ios-device": "ios-arm64", "ios-simulator": "ios-arm64-simulator"}[target]
         slice_groups[name] = depset(files, transitive = [slice_groups[name]] if name in slice_groups else [])
-    return [DefaultInfo(files = depset([github, frozen, manifest])), ExtensionFinalLeafInfo(product = metadata["product"], owner = metadata["owner"], version = metadata["version"], family = "native", target = ctx.attr.target, metadata = spec,
+    suppliers = merge_shipping_suppliers([target[ShippingSupplierInfo] for target in host_members])
+    return [DefaultInfo(files = depset([github, frozen, manifest])), suppliers, ExtensionFinalLeafInfo(product = metadata["product"], owner = metadata["owner"], version = metadata["version"], family = "native", target = ctx.attr.target, metadata = spec,
             github = [github], npm = [], cargo = [], manifest = manifest, frozen = frozen, spec = specification, validation = None, receipt = None, origin = None),
             OutputGroupInfo(github = depset([github]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([specification]), **slice_groups)]
 
 _mobile_carriers = rule(implementation = _carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS, attrs = {
-    "product": attr.string(mandatory = True), "target": attr.string(mandatory = True, values = _TARGETS), "host": attr.label_list(mandatory = True, providers = [ExtensionMemberInfo], cfg = mobile_host_transition),
+    "product": attr.string(mandatory = True), "target": attr.string(mandatory = True, values = _TARGETS), "host": attr.label_list(mandatory = True, providers = [ExtensionMemberInfo, ShippingSupplierInfo], cfg = mobile_host_transition),
     "members": attr.label_list(providers = [MobileExtensionInfo], cfg = _slices), "dependencies": attr.label_list(providers = [MobileComponentInfo], cfg = _slices), "frameworks": attr.label_keyed_string_dict(allow_files = True), "legal": attr.label_list(allow_files = True),
     "_tool": attr.label(default = "//build_defs/extensions:mobile_carriers.mts", allow_single_file = True), "_helpers": attr.label_list(default = mobile_carrier_helpers(), allow_files = True), "_components": attr.label(default = "//src/extensions/catalog:native-components.toml", allow_single_file = True), "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
 })
@@ -147,14 +149,14 @@ def mobile_native_carriers(name, product, target, frameworks = {}):
     for index, row in enumerate(github_rows):
         package = name + "_github_" + str(index) + "_shipping"
         shipping_package(name = package, owner = owner, artifacts = [":" + github_files], ecosystem = "github", package_name = row["name"],
-                         configuration = row["target"], role = row["role"], target_compatible_with = compatible)
+                         configuration = row["target"], role = row["role"], suppliers = ":" + name, target_compatible_with = compatible)
         packages.append(":" + package)
     for group in ["manifest", "frozen"]:
         files = name + "_" + group + "_files"
         apple_slice_filegroup(name = files, src = ":" + name, output_group = group, target_compatible_with = compatible)
         package = name + "_" + group + "_shipping"
         shipping_package(name = package, owner = owner, artifacts = [":" + files], ecosystem = "internal", package_name = product + "-" + target + "-" + group,
-                         configuration = target, role = "extension-release-" + group + "-input", target_compatible_with = compatible)
+                         configuration = target, role = "extension-release-" + group + "-input", suppliers = ":" + name, target_compatible_with = compatible)
         packages.append(":" + package)
     shipping_export(name = name + "_shipping_export", packages = packages, target_compatible_with = compatible)
     return packages
@@ -180,10 +182,11 @@ def _maven_impl(ctx):
     bun_file_action(ctx, ctx.file._tool, arguments = [specification.path], source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal,
                     inputs = [specification, ctx.file._components] + [file for leaf in leaves for file in native_final_leaf_files(leaf)] + ctx.files.legal,
                     outputs = outputs.values(), mnemonic = "MobileExtensionMavenEnvelopes")
-    return [DefaultInfo(files = depset(outputs.values())), OutputGroupInfo(**{row["name"].split(":")[1].replace("-", "_"): depset([outputs[row["name"]]]) for row in rows})]
+    suppliers = merge_shipping_suppliers([target[ShippingSupplierInfo] for target in ctx.attr.leaves])
+    return [DefaultInfo(files = depset(outputs.values())), suppliers, OutputGroupInfo(**{row["name"].split(":")[1].replace("-", "_"): depset([outputs[row["name"]]]) for row in rows})]
 
 _mobile_maven = rule(implementation = _maven_impl, toolchains = BUN_SOURCE_TOOLCHAINS, attrs = {
-    "product": attr.string(mandatory = True), "leaves": attr.label_list(mandatory = True, providers = [ExtensionFinalLeafInfo]), "legal": attr.label_list(allow_files = True),
+    "product": attr.string(mandatory = True), "leaves": attr.label_list(mandatory = True, providers = [ExtensionFinalLeafInfo, ShippingSupplierInfo]), "legal": attr.label_list(allow_files = True),
     "_tool": attr.label(default = "//build_defs/extensions:mobile_maven.mts", allow_single_file = True), "_components": attr.label(default = "//src/extensions/catalog:native-components.toml", allow_single_file = True),
     "_helpers": attr.label_list(default = mobile_carrier_helpers() + ["//build_defs/extensions:owner_carriers.mts", "//:tools/packaging/build-maven-artifact-manifest.mts", "//:tools/packaging/maven-artifact-manifest.mts", "//:tools/packaging/maven-artifact-staging.mts", "//:tools/packaging/maven-central-contract.mts", "//:tools/packaging/atomic-directory.mts", "//tools/release:compatibility-version-policy.mts", "//tools/release:product-version.mts"], allow_files = True),
 })
@@ -198,7 +201,7 @@ def mobile_maven_carriers(name, product, leaves):
         files = name + "_" + group + "_files"
         native.filegroup(name = files, srcs = [":" + name], output_group = group, target_compatible_with = _LINUX)
         package = name + "_" + group + "_shipping"
-        shipping_package(name = package, owner = extension_identity(metadata["members"][0]["sqlName"]), artifacts = [":" + files], ecosystem = "maven", package_name = row["name"], configuration = row["target"] or "android", role = row["role"], target_compatible_with = _LINUX)
+        shipping_package(name = package, owner = extension_identity(metadata["members"][0]["sqlName"]), artifacts = [":" + files], ecosystem = "maven", package_name = row["name"], configuration = row["target"] or "android", role = row["role"], suppliers = ":" + name, target_compatible_with = _LINUX)
         packages.append(":" + package)
         if row["target"] not in target_packages:
             fail("mobile Maven identity must declare its exact Android ABI")

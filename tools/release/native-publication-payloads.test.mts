@@ -161,6 +161,42 @@ test('captures only declared internal roots and binds their physical bytes to th
   });
 });
 
+test('compiler and ABI evidence stays outside payloads while final input roles remain captured', async () => {
+  await fixture(async ({ capture, cohort, executionRoot }) => {
+    const original = capture().payloads;
+    const payload = cohort.roots[0];
+    const outputs = ['android-arm64', 'android-x86_64'].map((target) => {
+      const file = `bazel-out/${target}/bin/runtime/liboliphaunt.so`;
+      mkdirSync(path.dirname(path.join(executionRoot, file)), { recursive: true });
+      writeFileSync(path.join(executionRoot, file), `${target} compiler evidence`);
+      return { path: file, owner: '//fixture/runtime:library' };
+    });
+    for (const role of ['compiled-source', 'abi-contract'])
+      cohort.roots.push({
+        label: `//fixture/runtime:${role}`,
+        package: { ...payload.package, name: `runtime-${role}`, role, outputs },
+      });
+    expect(capture().payloads).toEqual(original);
+
+    cohort.roots.push({
+      label: '//fixture/runtime:frozen',
+      package: {
+        ...payload.package,
+        name: 'runtime-frozen',
+        role: 'extension-release-frozen-input',
+        outputs: [outputs[0]],
+      },
+    });
+    const captured = capture().payloads.products.find(({ id }) => id === payload.package.product);
+    expect(captured?.roots.map(({ name }) => name)).toEqual([
+      'runtime-frozen',
+      'runtime-public-payload',
+    ]);
+    payload.package.outputs = outputs;
+    expect(() => capture()).toThrow('ambiguous native payload output');
+  });
+});
+
 test('missing origin, qualification or complete shipping-mode contract stays unknown', async () => {
   await fixture(async ({ capture }) => {
     const current = capture().payloads;

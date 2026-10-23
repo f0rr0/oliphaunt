@@ -1,6 +1,7 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/languages/jvm:bindings.bzl", "uniffi_kotlin")
 load("//build_defs/languages/jvm:maven.bzl", "kotlin_installed_maven_test", "kotlin_maven_package")
+load("//build_defs/languages/jvm:compiled-inputs-test.bzl", "kotlin_compiled_inputs_test")
 load("//build_defs/languages/jvm:quality.bzl", "kotlin_format_test")
 load("//build_defs/languages/jvm:android-lint.bzl", "kotlin_android_lint_test")
 load("//build_defs/android:toolchain.bzl", "android_artifact")
@@ -200,6 +201,7 @@ kotlin_installed_maven_test(
 
 shipping_export(
     name = "shipping_export",
+    exports = [":android_maven_compiled_shipping_export"],
     packages = [":android_maven_shipping", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:plugin_maven_shipping", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:marker_maven_shipping"],
     qualification = [
         ":installed_maven_test",
@@ -207,8 +209,19 @@ shipping_export(
         ":android_configuration_test", ":android_java_test", ":android_runtime_assets_test", ":native_bindings_test",
         "//src/native/sdks/react-native:android_temporary_root_test",
         "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:contract_test",
+        ":compiled_supplier_analysis_test",
     ],
     testonly = True,
+)
+
+kotlin_compiled_inputs_test(
+    name = "compiled_supplier_analysis_test",
+    target_under_test = ":android_maven_compiled_shipping_export",
+    maven = ":android_maven",
+    plugin = "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:plugin_maven_shipping",
+    marker = "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:marker_maven_shipping",
+    target_compatible_with = LINUX_EXECUTION,
+    size = "small",
 )
 
 kotlin_format_test(name = "format_test", target_compatible_with = LINUX_EXECUTION, size = "small")

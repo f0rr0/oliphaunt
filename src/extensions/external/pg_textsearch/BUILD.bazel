@@ -43,7 +43,7 @@ extension_member_payload(
     }),
 )
 
-shipping_package(name = "native_member", owner = extension_identity("pg_textsearch"), artifacts = [":native_payload"], ecosystem = "internal", package_name = "pg_textsearch", configuration = NATIVE_EXTENSION_CONFIGURATION, role = "extension-member")
+shipping_package(name = "native_member", owner = extension_identity("pg_textsearch"), artifacts = [":native_payload"], ecosystem = "internal", package_name = "pg_textsearch", configuration = NATIVE_EXTENSION_CONFIGURATION, role = "extension-member", suppliers = ":native_payload")
 extension_member_validation_test(name = "native_payload_test", payload = ":native_payload", sql_name = "pg_textsearch")
 
 source_quality_files()

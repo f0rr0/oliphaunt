@@ -91,6 +91,7 @@ shipping_package(
     role = "facade",
     package_name = QUERY_NPM_NAME,
     configuration = "portable",
+    suppliers = "//build_defs/release:no_suppliers",
 )
 
 shipping_export(

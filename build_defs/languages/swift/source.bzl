@@ -6,6 +6,7 @@ load("//build_defs/extensions:declared_final_inputs.bzl", "native_declared_apple
 load("//build_defs/extensions:final_leaf.bzl", "NativeAppleBaseInfo")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/foundation:bun-sources.bzl", "bun_source_path", "bun_source_tree")
+load("//build_defs/languages:mobile-compiled-inputs.bzl", "MOBILE_BINDINGS_COMPILE_QUALIFICATION")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/release:supplier.bzl", "shipping_suppliers")
 load(":xcframework.bzl", "SWIFT_BINDINGS_COMPILE_OWNERS", "SWIFT_BINDINGS_COMPILE_SLOTS", "swift_bindings_compile_group", "swift_bindings_compiled_supplier")
@@ -153,13 +154,8 @@ def swift_source_package(name, sources, bindings_archive, bindings_release_asset
                              ecosystem = "internal", package_name = producer + "-swift-bindings", configuration = slot, role = "compiled-source", suppliers = ":" + supplier)
             compiled.append(":" + package)
         export = name + "_" + owner + "_compiled_shipping_export"
-        tests = {
-            "core": ["//src/native/rust-bindings:unit_test"],
-            "sdk": ["//src/native/sdks/rust:mobile_unit_test", "//src/native/mobile-bindings:unit_test"],
-            "broker": ["//src/native/broker:unit_test"],
-        }
         shipping_export(name = export, packages = compiled,
-                        qualification = tests[owner],
+                        qualification = MOBILE_BINDINGS_COMPILE_QUALIFICATION[owner],
                         testonly = True)
         compiled_exports.append(":" + export)
     shipping_export(name = name + "_compiled_shipping_export", exports = compiled_exports, testonly = True)

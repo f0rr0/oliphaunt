@@ -56,13 +56,14 @@ def _carriers_impl(ctx):
     bun_file_action(ctx, ctx.file._tool, arguments = [inputs.path, leaves], inputs = sql + [inputs] + ctx.files.legal,
                     source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal,
                     outputs = [github, npm, cargo, manifest, frozen], mnemonic = "WasixSqlExtensionEnvelopes")
-    return [DefaultInfo(files = depset([github, npm, cargo, manifest, frozen])),
+    return [DefaultInfo(files = depset([github, npm, cargo, manifest, frozen])), ctx.attr._suppliers[ShippingSupplierInfo],
             ExtensionFinalLeafInfo(product = spec["product"], owner = owner.id, version = owner.version, family = "wasix", target = "wasix-portable", metadata = spec, github = [github], npm = [npm], cargo = [cargo], manifest = manifest, frozen = frozen, spec = inputs, validation = None, receipt = None, origin = None),
             OutputGroupInfo(github = depset([github]), npm = depset([npm]), cargo = depset([cargo]), manifest = depset([manifest]), frozen = depset([frozen]), spec = depset([inputs]), sql = depset(sql))]
 
 _wasix_sql_carriers = rule(implementation = _carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {"sql_name": attr.string(mandatory = True), "sql": attr.label(mandatory = True, cfg = "exec"),
              "owner": attr.label(mandatory = True, providers = [ReleaseIdentityInfo]), "legal": attr.label_list(allow_files = True),
+             "_suppliers": attr.label(default = "//build_defs/release:no_suppliers", providers = [ShippingSupplierInfo]),
              "_tool": attr.label(default = "//build_defs/extensions:wasix_carriers.mts", allow_single_file = True),
              "_helpers": attr.label_list(default = wasix_sql_carrier_helpers(), allow_files = True)})
 
@@ -80,7 +81,7 @@ def wasix_sql_extension_carriers(sql_name, sql = ":sql"):
             package_name, role = row["name"], row["role"]
         else:
             package_name, role = sql_name + "-wasix-" + ecosystem, "extension-release-" + ecosystem + "-input"
-        shipping_package(name = name, owner = extension_identity(sql_name, family = "wasix"), artifacts = [":" + name + "_files"], ecosystem = ecosystem if ecosystem in ["github", "npm", "cargo"] else "internal", package_name = package_name, configuration = "wasix-portable", role = role)
+        shipping_package(name = name, owner = extension_identity(sql_name, family = "wasix"), artifacts = [":" + name + "_files"], ecosystem = ecosystem if ecosystem in ["github", "npm", "cargo"] else "internal", package_name = package_name, configuration = "wasix-portable", role = role, suppliers = ":wasix_carriers")
         packages.append(":" + name)
     wasix_extension_declared_host(name = "wasix_declared_host", sql_name = sql_name)
     wasix_compiled_extension_installed_test(name = "wasix_installed_test", sql_name = sql_name, leaf = ":wasix_carriers", host = ":wasix_declared_host",
