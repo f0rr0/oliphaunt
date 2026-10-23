@@ -300,12 +300,10 @@ function aqueryFileGraph(raw: unknown) {
 }
 
 /** Actual TestRunner input closure and input-free FileWrite outputs of its configured target. */
-export function configuredAqueryTargetInputs(raw: unknown, label: string, configuration: string) {
+export function createConfiguredAqueryTargetInputResolver(raw: unknown) {
   const { graph, targets, configurations, artifactPaths, inputsOf } = aqueryFileGraph(raw);
-  const inputs = new Set<string>();
-  const written = new Set<string>();
   const producers = new Map<string, Row>();
-  const tests: Row[] = [];
+  const actionsByLabel = new Map<string, Row[]>();
   for (const rawAction of array(graph.actions ?? [])) {
     const action = row(rawAction);
     for (const output of array(action.outputIds ?? [])) {
@@ -316,38 +314,48 @@ export function configuredAqueryTargetInputs(raw: unknown, label: string, config
         throw new Error('native qualification has conflicting aquery producers');
       producers.set(key, action);
     }
-    if (
-      canonicalShippingLabel(required(targets, id(action.targetId)).label) !==
-      canonicalShippingLabel(label)
-    )
-      continue;
-    if (text(required(configurations, id(action.configurationId)).checksum) !== configuration)
-      continue;
-    if (action.mnemonic === 'TestRunner') tests.push(action);
-    if (action.mnemonic === 'FileWrite' && inputsOf(action).size === 0)
-      for (const output of array(action.outputIds ?? []))
-        written.add(required(artifactPaths, id(output)));
+    const label = canonicalShippingLabel(required(targets, id(action.targetId)).label);
+    const actions = actionsByLabel.get(label);
+    if (actions) actions.push(action);
+    else actionsByLabel.set(label, [action]);
   }
-  if (!tests.length)
-    throw new Error('native qualification requires its actual configured TestRunner action');
-  const visited = new Set<string>();
-  const visit = (key: string, stack: Set<string>) => {
-    if (stack.has(key)) throw new Error('cycle in native qualification TestRunner inputs');
-    if (visited.has(key)) return;
-    const file = required(artifactPaths, key);
-    inputs.add(file);
-    const producer = producers.get(key);
-    // Runfiles infrastructure expands runtime Files. An APK or package producer
-    // belongs to construction; its compiler inputs are not installed-test inputs.
-    if (
-      producer &&
-      ['Middleman', 'SourceSymlinkManifest', 'SymlinkTree'].includes(text(producer.mnemonic))
-    )
-      for (const input of inputsOf(producer)) visit(input, new Set(stack).add(key));
-    visited.add(key);
+  return (label: string, configuration: string) => {
+    const inputs = new Set<string>();
+    const written = new Set<string>();
+    const tests: Row[] = [];
+    for (const action of actionsByLabel.get(canonicalShippingLabel(label)) ?? []) {
+      if (text(required(configurations, id(action.configurationId)).checksum) !== configuration)
+        continue;
+      if (action.mnemonic === 'TestRunner') tests.push(action);
+      if (action.mnemonic === 'FileWrite' && inputsOf(action).size === 0)
+        for (const output of array(action.outputIds ?? []))
+          written.add(required(artifactPaths, id(output)));
+    }
+    if (!tests.length)
+      throw new Error('native qualification requires its actual configured TestRunner action');
+    const visited = new Set<string>();
+    const visit = (key: string, stack: Set<string>) => {
+      if (stack.has(key)) throw new Error('cycle in native qualification TestRunner inputs');
+      if (visited.has(key)) return;
+      const file = required(artifactPaths, key);
+      inputs.add(file);
+      const producer = producers.get(key);
+      // Runfiles infrastructure expands runtime Files. An APK or package producer
+      // belongs to construction; its compiler inputs are not installed-test inputs.
+      if (
+        producer &&
+        ['Middleman', 'SourceSymlinkManifest', 'SymlinkTree'].includes(text(producer.mnemonic))
+      )
+        for (const input of inputsOf(producer)) visit(input, new Set(stack).add(key));
+      visited.add(key);
+    };
+    for (const test of tests) for (const input of inputsOf(test)) visit(input, new Set());
+    return { inputs, written };
   };
-  for (const test of tests) for (const input of inputsOf(test)) visit(input, new Set());
-  return { inputs, written };
+}
+
+export function configuredAqueryTargetInputs(raw: unknown, label: string, configuration: string) {
+  return createConfiguredAqueryTargetInputResolver(raw)(label, configuration);
 }
 
 export function buildShippingInputView(

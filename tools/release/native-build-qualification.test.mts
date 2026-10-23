@@ -12,12 +12,17 @@ import {
   assertAuthenticatedNativeBuildOrigin,
   authenticateNativeBuildEvidence,
 } from './authenticate-native-build-evidence.mts';
-import { buildShippingInputView, configuredAqueryTargetInputs } from './bazel-shipping-inputs.mts';
+import {
+  buildShippingInputView,
+  configuredAqueryTargetInputs,
+  createConfiguredAqueryTargetInputResolver,
+} from './bazel-shipping-inputs.mts';
 import {
   assertNativeFinalShippingPhase,
   type NativeBuildEvidence,
   nativeAnalysisInputBindings,
   nativeBuildMetadata,
+  nativeQualificationInputBindings,
   nativeRequiredCaptureInputs,
   validateNativeBuildEvidence,
   validateNativeSeedConstructions,
@@ -1124,14 +1129,112 @@ test('configured qualification follows TestRunner producer edges and rejects mis
     expect(() =>
       configuredAqueryTargetInputs(graph, '//package:generated', 'c'.repeat(64)),
     ).toThrow(/configured TestRunner/);
+    const conflicting = structuredClone(graph);
+    conflicting.actions.push({ ...conflicting.actions[0], actionKey: 'other-producer' });
+    expect(() => createConfiguredAqueryTargetInputResolver(conflicting)).toThrow(
+      /conflicting aquery producers/,
+    );
+    const missing = structuredClone(graph);
+    missing.depSetOfFiles[1].directArtifactIds.push(999);
+    const resolveMissing = createConfiguredAqueryTargetInputResolver(missing);
+    for (let attempt = 0; attempt < 2; attempt++)
+      expect(() => resolveMissing('//package:archive', 'c'.repeat(64))).toThrow(
+        /incomplete aquery graph/,
+      );
     graph.actions[0].mnemonic = 'Middleman';
     graph.depSetOfFiles[0].directArtifactIds.push(3);
-    expect(() => configuredAqueryTargetInputs(graph, '//package:archive', 'c'.repeat(64))).toThrow(
-      /cycle/,
-    );
+    const resolveCyclic = createConfiguredAqueryTargetInputResolver(graph);
+    for (let attempt = 0; attempt < 2; attempt++)
+      expect(() => resolveCyclic('//package:archive', 'c'.repeat(64))).toThrow(/cycle/);
   } finally {
     f.cleanup();
   }
+});
+
+test('one qualification graph keeps configured test inputs and specifications independent', () => {
+  const files = ['first.spec', 'second.spec', 'derived.spec', 'payload', 'runfiles'].map(
+    (name) => `bazel-out/${name}`,
+  );
+  const graph = {
+    pathFragments: [
+      { id: 'root', label: 'bazel-out' },
+      ...files.map((file, id) => ({ id, label: file.split('/')[1], parentId: 'root' })),
+    ],
+    artifacts: files.map((_, id) => ({ id, pathFragmentId: id })),
+    targets: [
+      { id: 1, label: '@@//package:first' },
+      { id: 2, label: '//package:second' },
+    ],
+    configuration: [
+      { id: 1, checksum: 'first' },
+      { id: 2, checksum: 'second' },
+    ],
+    depSetOfFiles: [
+      { id: 1, directArtifactIds: [0, 2, 4] },
+      { id: 2, directArtifactIds: [1, 4] },
+      { id: 3, directArtifactIds: [0, 4] },
+      { id: 4, directArtifactIds: [3] },
+    ],
+    actions: [
+      { targetId: 1, configurationId: 1, mnemonic: 'FileWrite', outputIds: [0] },
+      { targetId: 1, configurationId: 2, mnemonic: 'FileWrite', outputIds: [1] },
+      {
+        targetId: 1,
+        configurationId: 1,
+        mnemonic: 'FileWrite',
+        inputDepSetIds: [4],
+        outputIds: [2],
+      },
+      {
+        targetId: 2,
+        configurationId: 1,
+        mnemonic: 'Middleman',
+        inputDepSetIds: [4],
+        outputIds: [4],
+      },
+      { targetId: 1, configurationId: 1, mnemonic: 'TestRunner', inputDepSetIds: [1] },
+      { targetId: 1, configurationId: 2, mnemonic: 'TestRunner', inputDepSetIds: [2] },
+      { targetId: 2, configurationId: 1, mnemonic: 'TestRunner', inputDepSetIds: [3] },
+    ],
+  };
+  const resolve = createConfiguredAqueryTargetInputResolver(graph);
+  const first = resolve('//package:first', 'first');
+  expect(first.inputs).toEqual(new Set([files[0], files[2], files[4], files[3]]));
+  expect(first.written).toEqual(new Set([files[0]]));
+  const second = resolve('@//package:first', 'second');
+  expect(second.inputs).toEqual(new Set([files[1], files[4], files[3]]));
+  expect(second.written).toEqual(new Set([files[1]]));
+  const sibling = resolve('//package:second', 'first');
+  expect(sibling.inputs).toEqual(new Set([files[0], files[4], files[3]]));
+  expect(sibling.written.size).toBe(0);
+  expect(() => resolve('//package:second', 'second')).toThrow(/configured TestRunner/);
+  first.inputs.clear();
+  first.written.clear();
+  expect(resolve('//package:first', 'first')).toEqual(
+    configuredAqueryTargetInputs(graph, '//package:first', 'first'),
+  );
+
+  const requiredTests = ['first', 'second'].map((configuration) => ({
+    label: '//package:first',
+    configuration,
+  }));
+  const completed = requiredTests.map((test, index) => ({
+    ...test,
+    value: {
+      success: true,
+      outputGroup: [{ name: 'observation_inputs' }],
+      files: new Map([files[index], files[3], files[4]].map((file) => [file, {}])),
+    },
+  }));
+  const bep = { completed, filesOf: (target: any) => target.files } as any;
+  const policy = { requiredTests } as any;
+  expect(
+    nativeQualificationInputBindings(graph, bep, policy).map((row) => row.specification),
+  ).toEqual(files.slice(0, 2));
+  completed[1].value.files = new Map([files[0], files[3], files[4]].map((file) => [file, {}]));
+  expect(() => nativeQualificationInputBindings(graph, bep, policy)).toThrow(/not consumed/);
+  for (const target of completed) target.value.outputGroup = [];
+  expect(nativeQualificationInputBindings(null, bep, policy)).toEqual([]);
 });
 
 test('batched graph digests preserve canonical JSON bytes across boundaries and seeded values', () => {

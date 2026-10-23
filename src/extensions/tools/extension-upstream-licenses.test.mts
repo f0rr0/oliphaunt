@@ -222,6 +222,104 @@ test('pgcrypto native construction receipts bind desktop and mobile-host OpenSSL
   }
 });
 
+test('Linux contrib legal file inventories follow validated pgcrypto construction receipts', () => {
+  const product = 'oliphaunt-extension-contrib-pg18';
+  const openssl = releaseNoticeRows({ profile: 'contrib-native-openssl' }).find(
+    ({ id }) => id === 'openssl',
+  );
+  assert.ok(openssl);
+  const bytes = readFileSync(openssl.source);
+  for (const target of ['linux-x64-gnu', 'linux-arm64-gnu']) {
+    const options = { family: 'native', target };
+    const absent = extensionCarrierLegalFileInventory(product, ['pgcrypto'], options);
+    assert.equal(
+      extensionCarrierLegalContract(product, ['pgcrypto'], options).profile,
+      'contrib-native',
+    );
+    assert.equal(
+      absent.some((file) => file.path === openssl.member),
+      false,
+    );
+    assert.deepEqual(
+      extensionCarrierLegalFileInventory(product, ['pgcrypto'], {
+        ...options,
+        memberContracts: [{ sqlName: 'pgcrypto', nativeConstructionLicenseFiles: [] }],
+      }),
+      absent,
+    );
+    const receipts = nativeExtensionConstructionLicenseInventory('pgcrypto', target);
+    const memberContracts = [{ sqlName: 'pgcrypto', nativeConstructionLicenseFiles: receipts }];
+    const present = extensionCarrierLegalFileInventory(product, ['pgcrypto'], {
+      ...options,
+      memberContracts,
+    });
+    assert.equal(
+      extensionCarrierLegalContract(product, ['pgcrypto'], {
+        ...options,
+        memberContracts,
+      }).profile,
+      'contrib-native-openssl',
+    );
+    assert.deepEqual(
+      present.find((file) => file.path === openssl.member),
+      {
+        path: openssl.member,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        bytes: bytes.length,
+        mode: '0644',
+      },
+    );
+    assert.throws(
+      () =>
+        extensionCarrierLegalFileInventory(product, ['pgcrypto'], {
+          ...options,
+          memberContracts: [
+            {
+              sqlName: 'pgcrypto',
+              nativeConstructionLicenseFiles: receipts.map((file, index) =>
+                index === 0 ? { ...file, sha256: '0'.repeat(64) } : file,
+              ),
+            },
+          ],
+        }),
+      /differs from the immutable construction source/u,
+    );
+  }
+});
+
+test('construction receipts survive canonical JSON key order and retain exact inventory checks', () => {
+  for (const [sqlName, target] of [
+    ['pgcrypto', 'linux-x64-gnu'],
+    ['pgcrypto', 'linux-arm64-gnu'],
+    ['vector', 'linux-x64-gnu'],
+    ['pg_textsearch', 'android-x86_64'],
+  ]) {
+    const expected = nativeExtensionConstructionLicenseInventory(sqlName, target);
+    const serialized = JSON.parse(
+      JSON.stringify(expected.map(({ mode, path, sha256 }) => ({ mode, path, sha256 }))),
+    );
+    assert.deepEqual(
+      validateNativeExtensionConstructionLicenseInventory(sqlName, target, serialized),
+      expected,
+    );
+    for (const invalid of [
+      [...serialized].reverse(),
+      [serialized[0], serialized[0]],
+      serialized.slice(0, 1),
+      [...serialized, serialized[0]],
+      serialized.map((file) => ({ ...file, mode: '0666' })),
+      serialized.map((file) => ({ ...file, extra: true })),
+      serialized.map(({ mode, path }) => ({ mode, path })),
+    ]) {
+      assert.throws(
+        () => validateNativeExtensionConstructionLicenseInventory(sqlName, target, invalid),
+        /differs from the immutable construction source/u,
+        `${sqlName}/${target}`,
+      );
+    }
+  }
+});
+
 test('pgcrypto construction receipts reject unsupported targets and changed source digests', () => {
   const files = nativeExtensionConstructionLicenseInventory('pgcrypto', 'linux-x64-gnu');
   for (const target of ['macos-x64', 'linux-x64-musl', 'wasix']) {

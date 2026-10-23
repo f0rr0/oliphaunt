@@ -632,7 +632,7 @@ export async function stageCompiledWasixMember(
         'missing nonempty compiled base installation SQL',
       );
     }
-    const archiveName = `${spec.product}-${spec.version}-${spec.product === 'oliphaunt-extension-contrib-pg18' ? `${spec.sqlName}-` : ''}wasix-portable.tar.zst`;
+    const archiveName = `${spec.product}-${spec.version}-wasix-portable.tar.zst`;
     const archive = path.join(releaseAssets, archiveName);
     const bytes = releaseZstdCompressSync(await payloadTar(stage));
     writeFileSync(archive, bytes);

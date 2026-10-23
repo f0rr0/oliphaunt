@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expectedExtensionBundleManifest } from './check-carriers.mts';
@@ -10,6 +12,140 @@ import {
   writeReleaseControls,
 } from './build-extension-ci-artifacts.mts';
 import { parseUniquePropertiesText } from '../../../../../tools/packaging/release-carrier.mts';
+import { createDeterministicTar } from '../../../../../tools/packaging/cargo-source-package.mts';
+import { canonicalGzipSync } from '../../../../../tools/packaging/portable-archive.mts';
+import {
+  extensionMetadata,
+  extensionSourceIdentity,
+  ROOT,
+} from '../../../../../tools/release/release-artifact-targets.mts';
+import { loadPublicationCatalog } from '../../../../../tools/release/publication-catalog.mts';
+import { extensionGithubReleaseFixture } from '../../../../../tools/release/testdata/publication-artifact-fixtures.mts';
+import { bundleCarrierAssets } from './bundle-carrier-assets.mts';
+
+test('checks composed singleton and bundle optional member facts against their frozen values', () => {
+  mkdirSync(path.join(ROOT, 'target'), { recursive: true });
+  const root = mkdtempSync(path.join(ROOT, 'target/check-carriers-optional-'));
+  try {
+    const payloadRoot = path.join(root, 'payload');
+    mkdirSync(payloadRoot);
+    writeFileSync(path.join(payloadRoot, 'fixture.txt'), 'runtime fixture\n');
+    const payload = canonicalGzipSync(createDeterministicTar(payloadRoot, 'runtime', {}));
+    for (const [id, product] of [
+      ['oliphaunt-extension-vector', 'oliphaunt-extension-vector'],
+      ['liboliphaunt-native', 'oliphaunt-extension-contrib-pg18'],
+    ]) {
+      const catalogProduct = loadPublicationCatalog('check-carriers.test', { products: [id] })
+        .products[0];
+      const fixture = extensionGithubReleaseFixture(root, catalogProduct, {
+        artifactProduct: product,
+        family: 'native',
+      });
+      const frozen = JSON.parse(readFileSync(fixture.manifestPath, 'utf8'));
+      const members = frozen.extensions ?? [frozen];
+      rmSync(fixture.directory, { recursive: true });
+      mkdirSync(fixture.directory);
+      for (const member of members) {
+        member.iosNativeDependencies = [];
+        member.iosRegistration = null;
+        member.assets = member.assets
+          .filter((asset) => asset.target === 'linux-x64-gnu')
+          .map((asset) => {
+            writeFileSync(asset.path, payload);
+            return {
+              ...asset,
+              source: 'fixture',
+              path: path.relative(ROOT, asset.path).split(path.sep).join('/'),
+              sha256: createHash('sha256').update(payload).digest('hex'),
+              bytes: payload.length,
+            };
+          });
+      }
+      const productRoot = path.dirname(fixture.manifestPath);
+      const directAssets =
+        members.length === 1
+          ? members[0].assets
+          : bundleCarrierAssets(
+              product,
+              frozen.version,
+              productRoot,
+              members,
+              frozen.compatibility,
+              {
+                root: ROOT,
+              },
+            );
+      const metadata = extensionMetadata(product, 'check-carriers.test');
+      const controls = () =>
+        writeReleaseControls({
+          product,
+          releaseProduct: id,
+          family: 'native',
+          version: frozen.version,
+          members,
+          directAssets,
+          productRoot,
+          releaseMetadata: metadata,
+          ...composeExtensionReleaseDocuments({
+            product,
+            releaseProduct: id,
+            family: 'native',
+            version: frozen.version,
+            members,
+            directAssets,
+            releaseMetadata: metadata,
+            sourceIdentity: extensionSourceIdentity(product, 'check-carriers.test'),
+          }),
+        });
+      const check = () =>
+        spawnSync(
+          process.execPath,
+          [
+            '--no-env-file',
+            '--no-install',
+            path.join(import.meta.dir, 'check-carriers.mts'),
+            product,
+            '--family',
+            'native',
+          ],
+          {
+            cwd: ROOT,
+            env: {
+              ...process.env,
+              OLIPHAUNT_EXTENSION_ARTIFACT_ROOT: path.relative(
+                ROOT,
+                path.join(root, 'target/extension-artifacts'),
+              ),
+            },
+            encoding: 'utf8',
+          },
+        );
+      controls();
+      let result = check();
+      assert.equal(result.status, 0, result.stderr);
+      const selected = members.find((member) => member.nativeModuleStem !== null);
+      selected.nativeDependencyModules = ['fixture.so'];
+      selected.nativeConstructionLicenseFiles = [];
+      controls();
+      result = check();
+      assert.equal(result.status, 0, result.stderr);
+      for (const field of ['nativeDependencyModules', 'nativeConstructionLicenseFiles']) {
+        const { releaseManifest } = controls();
+        const publicDocument = JSON.parse(readFileSync(releaseManifest, 'utf8'));
+        const publicMember =
+          publicDocument.extensions?.find((member) => member.sqlName === selected.sqlName) ??
+          publicDocument;
+        delete publicMember[field];
+        writeFileSync(releaseManifest, JSON.stringify(publicDocument));
+        result = check();
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /keys must be|must exactly match stable metadata/u);
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('explicit external native controls retain their family while combined defaults stay unchanged', () => {
   const product = 'oliphaunt-extension-pgtap';

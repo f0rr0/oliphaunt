@@ -5,6 +5,7 @@ load("//build_defs/quality:sources.bzl", "source_quality_files")
 load(":link_inputs_test.bzl", "wasix_extension_link_input_tests")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load("//build_defs/extensions:wasix_carriers.bzl", "wasix_sql_carrier_helpers")
+load("//build_defs/extensions:contrib_carriers.bzl", "native_contrib_carrier_legal")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -13,7 +14,7 @@ exports_files(["compiled_carriers.test.mts", "installed_consumer.mts", "contrib_
 bun_test(
     name = "resource_inputs_test",
     entry_point = "resource_inputs.test.mts",
-    data = ["//build_defs/extensions:wasix_carriers.mts"] + wasix_sql_carrier_helpers(),
+    data = ["//build_defs/extensions:wasix_carriers.mts", "//:src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts"] + wasix_sql_carrier_helpers() + native_contrib_carrier_legal(),
     size = "small",
 )
 

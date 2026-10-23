@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
 import { requireSafeDirectoryChain as requireReleaseDirectoryChain } from '../../../tools/packaging/release-directory-safety.mts';
 import {
@@ -798,7 +799,7 @@ export function validateNativeExtensionConstructionLicenseInventory(sqlName, tar
   const expected = nativeExtensionConstructionLicenseInventory(sqlName, target);
   if (expected.length === 0)
     fail('native construction legal closure has no declared source for this member/target');
-  if (JSON.stringify(files) !== JSON.stringify(expected))
+  if (!isDeepStrictEqual(files, expected))
     fail('native construction legal inventory differs from the immutable construction source');
   return expected;
 }
@@ -915,12 +916,13 @@ export function nativeExtensionCarrierLegal(
 export function extensionCarrierLegalFileInventory(
   product,
   sqlNames,
-  { family, target, carriesPayload = true } = {},
+  { family, target, carriesPayload = true, memberContracts = [] } = {},
 ) {
   const legal = extensionCarrierLegalContract(product, sqlNames, {
     family,
     target,
     carriesPayload,
+    memberContracts,
   });
   const files = new Map();
   const add = (file, bytes, expectedSha256 = undefined) => {

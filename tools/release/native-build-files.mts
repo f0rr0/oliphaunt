@@ -41,7 +41,15 @@ function finalFiles(evidence: NativeBuildEvidence) {
     for (const root of value.roots) {
       const pkg = root.package;
       if (!isNativeFinalTransportRoot(root)) continue;
-      if (pkg.ecosystem === 'swift' || (pkg.role === 'release-input' && !sourceInputs.has(root))) {
+      if (
+        pkg.ecosystem === 'swift' ||
+        (pkg.role === 'release-input' &&
+          !sourceInputs.has(root) &&
+          pkg.outputs.some(
+            (output) =>
+              value.outputs.find(({ path }) => path === output.path)?.members[0]?.type !== 'file',
+          ))
+      ) {
         unsupported.push({
           cohort,
           label: root.label,

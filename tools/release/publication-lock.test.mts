@@ -5,6 +5,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   unlinkSync,
@@ -13,11 +14,15 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { gunzipSync } from 'node:zlib';
+import { composeExtensionReleaseDocuments } from '../../src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts';
+import { bundleCarrierAssets } from '../../src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts';
+import { projectNativeRuntimeAssetMember } from '../../src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts';
+import { nativeExtensionConstructionLicenseInventory } from '../../src/extensions/tools/extension-upstream-licenses.mts';
 import { iosBaseLegalMetadata } from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { extensionDependencyRequirement } from '../../src/wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
 import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
-import { canonicalGzipSync } from '../packaging/portable-archive.mts';
+import { canonicalGzipSync, readPortableArchiveEntries } from '../packaging/portable-archive.mts';
 import {
   extensionGithubArtifactInputs,
   loadReleaseMetadata,
@@ -59,6 +64,38 @@ import {
 } from './testdata/publication-artifact-fixtures.mts';
 
 const temporaryDirectories = [];
+
+function writeProducedExtensionControls(fixture, frozen, mutatePublic = undefined) {
+  const prefix = `${frozen.product}-${frozen.version}`;
+  const publicFile = path.join(fixture.directory, `${prefix}-manifest.json`);
+  const previous = JSON.parse(readFileSync(publicFile, 'utf8'));
+  const { releaseData } = composeExtensionReleaseDocuments({
+    product: frozen.product,
+    releaseProduct: frozen.releaseProduct ?? frozen.product,
+    family: frozen.family ?? null,
+    version: frozen.version,
+    members: frozen.extensions ?? [frozen],
+    directAssets: frozen.carrierAssets ?? frozen.assets,
+    releaseMetadata: {
+      class: previous.extensionClass,
+      versioning: previous.versioning,
+      sourceIdentity: previous.sourceIdentity,
+      compatibility: frozen.compatibility,
+    },
+  });
+  mutatePublic?.(releaseData);
+  writeFileSync(fixture.manifestPath, JSON.stringify(frozen));
+  writeFileSync(publicFile, JSON.stringify(releaseData));
+  const checksum = `${prefix}-release-assets.sha256`;
+  writeFileSync(
+    path.join(fixture.directory, checksum),
+    readdirSync(fixture.directory)
+      .filter((name) => name !== checksum)
+      .sort()
+      .map((name) => `${sha256File(path.join(fixture.directory, name))}  ./${name}\n`)
+      .join(''),
+  );
+}
 
 function assertExpectedArtifactInventory(artifacts, products) {
   const versions = new Map(products.map(({ id, version }) => [id, version]));
@@ -587,6 +624,44 @@ function selectionNeutralSwiftSourceCarrier(version = '1.2.3') {
     schema: 'oliphaunt-react-native-ios-carrier-v1',
   };
 }
+
+test('React Native aggregate carrier discovery accepts declared and legacy layouts without selecting Swift source inputs', () => {
+  const root = temporaryDirectory();
+  const name = 'oliphaunt-react-native-ios-carriers.json';
+  const products = loadPublicationCatalog('publication-lock.test', {
+    products: ['oliphaunt-react-native'],
+  }).products;
+  const bytes = Buffer.from(`${JSON.stringify(selectionNeutralSwiftSourceCarrier())}\n`);
+  const sourceTree = path.join(root, 'release-tree/src/sdks/swift/Carriers');
+  mkdirSync(sourceTree, { recursive: true });
+  writeFileSync(path.join(sourceTree, name), bytes);
+  expect(() => discoverProductArtifacts([root], products)).toThrow(
+    /exactly one canonical aggregate iOS carrier manifest, found 0/u,
+  );
+
+  for (const layout of ['npm/ios-carriers', 'release/ios-carriers']) {
+    const directory = path.join(root, layout);
+    mkdirSync(directory, { recursive: true });
+    const file = path.join(directory, name);
+    writeFileSync(file, bytes);
+    const artifacts = discoverProductArtifacts([root], products);
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]).toMatchObject({
+      product: 'oliphaunt-react-native',
+      id: `release-input:${name}`,
+      kind: 'react-native-ios-carrier-manifest',
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
+    unlinkSync(file);
+  }
+
+  for (const layout of ['npm/ios-carriers', 'release/ios-carriers'])
+    writeFileSync(path.join(root, layout, name), bytes);
+  expect(() => discoverProductArtifacts([root], products)).toThrow(
+    /exactly one canonical aggregate iOS carrier manifest, found 2/u,
+  );
+});
 
 function tarGzip(output, cwd, member) {
   writeFileSync(
@@ -1358,6 +1433,115 @@ describe('publication artifact discovery and freezing', () => {
     expect(() => discoverProductArtifacts([root], [product])).toThrow(
       /frozen aggregate member\/carrier inventory/u,
     );
+  });
+
+  test('reads produced contrib bundle legal inventories from each selected runtime asset', {
+    timeout: 30_000,
+  }, () => {
+    const root = temporaryDirectory();
+    const artifactProduct = 'oliphaunt-extension-contrib-pg18';
+    const product = loadPublicationCatalog('publication-lock.test', {
+      products: ['liboliphaunt-native'],
+    }).products[0];
+    githubReleaseFixture(root, product);
+    const fixture = extensionGithubReleaseFixture(root, product, {
+      artifactProduct,
+      family: 'native',
+    });
+    const frozen = JSON.parse(readFileSync(fixture.manifestPath, 'utf8'));
+    frozen.carrierAssets.reverse();
+    const pgcrypto = frozen.extensions.find(({ sqlName }) => sqlName === 'pgcrypto');
+    expect(pgcrypto).toBeDefined();
+    const linuxAssets = ['linux-x64-gnu', 'linux-arm64-gnu'].map((target) => {
+      const asset = pgcrypto.assets.find(
+        (asset) => asset.target === target && asset.kind === 'runtime',
+      );
+      expect(asset).toBeDefined();
+      asset.nativeConstructionLicenseFiles = nativeExtensionConstructionLicenseInventory(
+        'pgcrypto',
+        target,
+      ).map(({ mode, path, sha256 }) => ({ mode, path, sha256 }));
+      expect(asset.nativeConstructionLicenseFiles).toHaveLength(2);
+      return asset;
+    });
+    const rebuildBundle = (target, profile) => {
+      const members = frozen.extensions.map((member) => {
+        const assets = member.assets.filter((asset) => asset.target === target);
+        const runtime = assets.find((asset) => asset.kind === 'runtime');
+        return {
+          ...projectNativeRuntimeAssetMember(member, runtime),
+          assets: assets.map((asset) => ({
+            ...asset,
+            path: path.relative(root, asset.path).split(path.sep).join('/'),
+          })),
+        };
+      });
+      const carriers = bundleCarrierAssets(
+        artifactProduct,
+        product.version,
+        path.dirname(fixture.manifestPath),
+        members,
+        frozen.compatibility,
+        { root },
+      );
+      expect(carriers).toHaveLength(1);
+      const carrier = { ...carriers[0], path: path.resolve(root, carriers[0].path) };
+      Object.assign(
+        frozen.carrierAssets.find((asset) => asset.target === target),
+        carrier,
+      );
+      const archiveRoot = path.basename(carrier.name, '.tar.gz');
+      const entries = readPortableArchiveEntries(carrier.path);
+      const bundleManifest = JSON.parse(
+        entries.get(`${archiveRoot}/bundle-manifest.json`).data().toString('utf8'),
+      );
+      expect(bundleManifest.licenseProfile).toBe(profile);
+    };
+    for (const { target } of linuxAssets) rebuildBundle(target, 'contrib-native-openssl');
+    writeProducedExtensionControls(fixture, frozen);
+    assertExpectedArtifactInventory(discoverProductArtifacts([root], [product]), [product]);
+
+    writeProducedExtensionControls(fixture, frozen, (data) => data.assets.reverse());
+    expect(() => discoverProductArtifacts([root], [product])).toThrow(
+      /does not exactly expose the frozen aggregate member\/carrier inventory/u,
+    );
+    writeProducedExtensionControls(fixture, frozen);
+
+    // Legacy member-level facts remain the default when an asset has no override.
+    pgcrypto.nativeConstructionLicenseFiles = linuxAssets[0].nativeConstructionLicenseFiles;
+    delete linuxAssets[0].nativeConstructionLicenseFiles;
+    writeProducedExtensionControls(fixture, frozen);
+    assertExpectedArtifactInventory(discoverProductArtifacts([root], [product]), [product]);
+
+    // An explicit empty target inventory must override those legacy member facts.
+    linuxAssets[1].nativeConstructionLicenseFiles = [];
+    rebuildBundle(linuxAssets[1].target, 'contrib-native');
+    writeProducedExtensionControls(fixture, frozen);
+    assertExpectedArtifactInventory(discoverProductArtifacts([root], [product]), [product]);
+  });
+
+  test('reads produced singleton controls with exact optional native member facts', () => {
+    const root = temporaryDirectory();
+    const product = loadPublicationCatalog('publication-lock.test', {
+      products: ['oliphaunt-extension-vector'],
+    }).products[0];
+    const fixture = extensionGithubReleaseFixture(root, product);
+    const frozen = JSON.parse(readFileSync(fixture.manifestPath, 'utf8'));
+    frozen.nativeDependencyModules = ['support.so'];
+    frozen.nativeConstructionLicenseFiles = [];
+    writeProducedExtensionControls(fixture, frozen);
+    assertExpectedArtifactInventory(discoverProductArtifacts([root], [product]), [product]);
+    for (const field of ['nativeDependencyModules', 'nativeConstructionLicenseFiles']) {
+      for (const value of [undefined, ['changed']]) {
+        writeProducedExtensionControls(fixture, frozen, (data) => {
+          if (value === undefined) delete data[field];
+          else data[field] = value;
+        });
+        expect(() => discoverProductArtifacts([root], [product])).toThrow(
+          /does not exactly expose the canonical extension identity and frozen asset inventory/u,
+        );
+      }
+    }
   });
 
   test('rejects stale, missing, extra, substituted, or wrongly-moded aggregate bundle legal material', {

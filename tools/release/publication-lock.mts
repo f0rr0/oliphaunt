@@ -12,7 +12,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { extensionRuntimeAssetContract } from '../../src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts';
+import {
+  extensionRuntimeAssetContract,
+  projectNativeRuntimeAssetMember,
+} from '../../src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts';
 import { assertWasixExtensionMemberInstall } from '../../src/extensions/contracts/wasix-extension-install.mts';
 import {
   extensionCarrierLegalContract,
@@ -961,6 +964,12 @@ function publicExtensionMember(member) {
     extensionSqlFileNames: member.extensionSqlFileNames,
     extensionSqlFilePrefixes: member.extensionSqlFilePrefixes,
     nativeModuleStem: member.nativeModuleStem,
+    ...(member.nativeDependencyModules === undefined
+      ? {}
+      : { nativeDependencyModules: member.nativeDependencyModules }),
+    ...(member.nativeConstructionLicenseFiles === undefined
+      ? {}
+      : { nativeConstructionLicenseFiles: member.nativeConstructionLicenseFiles }),
     iosNativeDependencies: member.iosNativeDependencies,
     iosRegistration: member.iosRegistration,
     wasixInstall,
@@ -1171,10 +1180,18 @@ function extensionBundleGithubReleaseArtifacts({
     if (stableJson(memberNames) !== stableJson(expectedSqlNames)) {
       throw error(`${rel(file)} aggregate carrier does not contain every exact bundle member`);
     }
-    const legal = extensionCarrierLegalContract(product.id, memberNames, {
+    const legalOptions = {
       family: row.family,
       target: row.target,
-    });
+      memberContracts: members.map((member) => {
+        const asset = member.assets.find(
+          (asset) =>
+            asset.family === row.family && asset.target === row.target && asset.kind === 'runtime',
+        );
+        return asset ? projectNativeRuntimeAssetMember(member, asset) : member;
+      }),
+    };
+    const legal = extensionCarrierLegalContract(product.id, memberNames, legalOptions);
     const expectedBundleManifest = {
       schema: 'oliphaunt-extension-bundle-v1',
       product: product.id,
@@ -1187,10 +1204,7 @@ function extensionBundleGithubReleaseArtifacts({
       members: manifestMembers,
     };
     const entries = extensionBundleEntries(file);
-    const legalFiles = extensionCarrierLegalFileInventory(product.id, memberNames, {
-      family: row.family,
-      target: row.target,
-    });
+    const legalFiles = extensionCarrierLegalFileInventory(product.id, memberNames, legalOptions);
     const expectedArchiveFiles = [
       bundleManifestPath,
       ...manifestMembers.map((member) => `${carrierRoot}/${member.path}`),
@@ -1278,9 +1292,7 @@ function extensionBundleGithubReleaseArtifacts({
     sourceIdentity: extensionSourceIdentity(product.id, 'publication-lock'),
     compatibility: metadata.compatibility,
     extensions: members.map(publicExtensionMember),
-    assets: [...carriersByName.values()]
-      .map(({ row }) => publicExtensionAsset(row))
-      .sort((left, right) => compareText(left.name, right.name)),
+    assets: [...carriersByName.values()].map(({ row }) => publicExtensionAsset(row)),
   };
   if (stableJson(publicManifest) !== stableJson(expectedPublicManifest)) {
     throw error(
@@ -1500,6 +1512,12 @@ function extensionGithubReleaseArtifacts(files, product) {
     extensionSqlFileNames: publicMember.extensionSqlFileNames,
     extensionSqlFilePrefixes: publicMember.extensionSqlFilePrefixes,
     nativeModuleStem: publicMember.nativeModuleStem,
+    ...(publicMember.nativeDependencyModules === undefined
+      ? {}
+      : { nativeDependencyModules: publicMember.nativeDependencyModules }),
+    ...(publicMember.nativeConstructionLicenseFiles === undefined
+      ? {}
+      : { nativeConstructionLicenseFiles: publicMember.nativeConstructionLicenseFiles }),
     iosNativeDependencies: publicMember.iosNativeDependencies,
     iosRegistration: publicMember.iosRegistration,
     wasixInstall: publicMember.wasixInstall,
@@ -1747,10 +1765,7 @@ function swiftReleaseInputs(
 function reactNativeReleaseInputs(files, product) {
   const name = 'oliphaunt-react-native-ios-carriers.json';
   const matches = files.filter(
-    (file) =>
-      path.basename(file) === name &&
-      (rel(file).startsWith('target/release/ios-carriers/') ||
-        rel(file).includes('/release/ios-carriers/')),
+    (file) => path.basename(file) === name && path.basename(path.dirname(file)) === 'ios-carriers',
   );
   if (matches.length !== 1) {
     throw error(

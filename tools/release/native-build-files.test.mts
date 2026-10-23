@@ -536,12 +536,50 @@ test('extension join documents survive final transport and owned staging without
   });
 });
 
-test('producer internals and unsupported source publication inputs stay outside final-file transport', async () => {
+test('declared regular release inputs survive exact final transport and staging', async () => {
+  await fixture(async (f) => {
+    const evidence = f.origin.evidence;
+    const root = evidence.cohorts[0].roots[1];
+    Object.assign(root.package, {
+      ecosystem: 'github',
+      name: 'beta.tgz',
+      role: 'release-input',
+    });
+    const declared = root.package.outputs[0].path;
+    const original = readFileSync(path.join(evidence.cohorts[0].executionRoot, declared));
+    const directory = path.join(f.directory, 'release-input-packet');
+    const file = writeNativeBuildEvidence(f.capture, directory);
+    const captured = JSON.parse(readFileSync(file, 'utf8'));
+    const packet = readNativeBuildFinalFiles(directory, captured, constraints(f));
+    expect(packet.unsupported).toEqual([]);
+    expect(packet.files.some(({ path }) => path === declared)).toBe(true);
+    const transferred = packet.file(0, declared);
+    expect(readFileSync(transferred)).toEqual(original);
+    const staged = packet.stage({
+      stageDirectory: path
+        .relative(ROOT, path.join(f.directory, 'release-input-stage'))
+        .split(path.sep)
+        .join('/'),
+    });
+    const stagedInput = staged.find((file) => file.endsWith('/beta/beta.tgz'));
+    expect(stagedInput).toBeDefined();
+    expect(readFileSync(stagedInput)).toEqual(original);
+    expect(packet).not.toHaveProperty('releaseDecision');
+    writeFileSync(transferred, 'substituted release input');
+    expect(() => packet.assertUnchanged()).toThrow();
+    expect(() => readNativeBuildFinalFiles(directory, captured, constraints(f))).toThrow(/bytes/);
+    expect(readFileSync(path.join(evidence.cohorts[0].executionRoot, declared))).toEqual(original);
+  });
+});
+
+test('producer internals and unsupported source publication trees stay outside final-file transport', async () => {
   await fixture(async (f) => {
     const evidence = f.origin.evidence;
     evidence.cohorts[0].roots[0].package.ecosystem = 'internal';
     evidence.cohorts[0].roots[0].package.role = 'construction';
-    evidence.cohorts[0].roots[1].package.role = 'release-input';
+    evidence.cohorts[0].roots[1].package.ecosystem = 'swift';
+    evidence.cohorts[0].roots[2].package.ecosystem = 'github';
+    evidence.cohorts[0].roots[2].package.role = 'release-input';
     const directory = path.join(f.directory, 'packet');
     const file = writeNativeBuildEvidence(f.capture, directory);
     const packet = readNativeBuildFinalFiles(
@@ -556,6 +594,11 @@ test('producer internals and unsupported source publication inputs stay outside 
         label: evidence.cohorts[0].roots[1].label,
         reason: 'source publication input transport',
       },
+      {
+        cohort: 0,
+        label: evidence.cohorts[0].roots[2].label,
+        reason: 'source publication input transport',
+      },
     ]);
     expect(
       packet.files.some(
@@ -565,6 +608,11 @@ test('producer internals and unsupported source publication inputs stay outside 
     expect(
       packet.files.some(
         ({ path: file }) => file === evidence.cohorts[0].roots[1].package.outputs[0].path,
+      ),
+    ).toBe(false);
+    expect(
+      packet.files.some(
+        ({ path: file }) => file === evidence.cohorts[0].roots[2].package.outputs[0].path,
       ),
     ).toBe(false);
     expect(packet).not.toHaveProperty('releaseDecision');

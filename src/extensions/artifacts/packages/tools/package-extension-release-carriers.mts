@@ -3159,6 +3159,7 @@ export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, st
           const partLegal = nativeExtensionCarrierLegal(product, members, {
             target,
             carriesPayload: true,
+            memberContracts: runtimeSet.members.map(({ metadata }) => metadata),
           });
           const aggregatorLegal = writeNativeExtensionSplitAggregatorCrate(crateDir, {
             product,

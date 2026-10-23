@@ -255,10 +255,14 @@ function requireExactKeys(value, expected, context) {
   }
 }
 
-function requireRuntimeAssetKeys(asset, expected, member, context, product, version) {
-  const optional = ['nativeDependencyModules', 'nativeConstructionLicenseFiles'].filter((key) =>
-    Object.hasOwn(asset, key),
+function nativeInventoryKeys(value) {
+  return ['nativeDependencyModules', 'nativeConstructionLicenseFiles'].filter((key) =>
+    Object.hasOwn(value, key),
   );
+}
+
+function requireRuntimeAssetKeys(asset, expected, member, context, product, version) {
+  const optional = nativeInventoryKeys(asset);
   requireExactKeys(asset, new Set([...expected, ...optional]), context);
   if (optional.length > 0) {
     if (asset.family !== 'native' || asset.kind !== 'runtime')
@@ -336,7 +340,7 @@ export function expectedExtensionBundleManifest({ product, version, data, carrie
 function validateBundleMemberMetadata(member, manifest, stagedTargets) {
   requireExactKeys(
     member,
-    EXTENSION_BUNDLE_MEMBER_KEYS,
+    new Set([...EXTENSION_BUNDLE_MEMBER_KEYS, ...nativeInventoryKeys(member)]),
     `${rel(manifest)} member ${JSON.stringify(member?.sqlName)}`,
   );
   if (typeof member.sqlName !== 'string' || !member.sqlName) {
@@ -797,7 +801,7 @@ async function checkExtensionBundleProduct(
   for (const member of releaseData.extensions) {
     requireExactKeys(
       member,
-      EXTENSION_BUNDLE_MEMBER_KEYS,
+      new Set([...EXTENSION_BUNDLE_MEMBER_KEYS, ...nativeInventoryKeys(member)]),
       `${rel(releaseManifest)} member ${member?.sqlName}`,
     );
     for (const asset of member.assets) {
@@ -1139,6 +1143,12 @@ async function checkExtensionProductVariant(
     extensionSqlFileNames: data.extensionSqlFileNames,
     extensionSqlFilePrefixes: data.extensionSqlFilePrefixes,
     nativeModuleStem: data.nativeModuleStem,
+    ...(data.nativeDependencyModules === undefined
+      ? {}
+      : { nativeDependencyModules: data.nativeDependencyModules }),
+    ...(data.nativeConstructionLicenseFiles === undefined
+      ? {}
+      : { nativeConstructionLicenseFiles: data.nativeConstructionLicenseFiles }),
     iosNativeDependencies: data.iosNativeDependencies,
     iosRegistration: data.iosRegistration,
     wasixInstall: data.wasixInstall,
@@ -1147,7 +1157,11 @@ async function checkExtensionProductVariant(
   };
   requireExactKeys(
     releaseData,
-    new Set([...PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS, ...Object.keys(ownership)]),
+    new Set([
+      ...PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS,
+      ...Object.keys(ownership),
+      ...nativeInventoryKeys(data),
+    ]),
     rel(releaseManifest),
   );
   if (!deepEqual(releaseData, expectedRelease)) {

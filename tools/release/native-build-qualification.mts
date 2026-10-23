@@ -9,7 +9,7 @@ import {
   buildShippingInputView,
   type ConfiguredFileWriteCheck,
   canonicalShippingLabel,
-  configuredAqueryTargetInputs,
+  createConfiguredAqueryTargetInputResolver,
   type ShippingInputView,
   validateNativeShippingSuppliers,
 } from './bazel-shipping-inputs.mts';
@@ -798,6 +798,7 @@ export function nativeQualificationInputBindings(
   bep: ReturnType<typeof nativeBuildEventIndex>,
   policy: ReturnType<typeof nativeShippingQualificationPolicy>,
 ) {
+  let resolveInputs: ReturnType<typeof createConfiguredAqueryTargetInputResolver> | undefined;
   return (policy?.requiredTests ?? []).flatMap((test) => {
     const targets = bep.completed.filter(
       (target) =>
@@ -820,7 +821,8 @@ export function nativeQualificationInputBindings(
     for (const file of files.keys())
       if (!file.startsWith('bazel-out/'))
         throw new Error('native qualification observer requires a generated bazel-out File');
-    const declared = configuredAqueryTargetInputs(aquery, test.label, test.configuration);
+    resolveInputs ??= createConfiguredAqueryTargetInputResolver(aquery);
+    const declared = resolveInputs(test.label, test.configuration);
     for (const file of files.keys())
       if (!declared.inputs.has(file))
         throw new Error(
