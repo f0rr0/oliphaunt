@@ -27,7 +27,9 @@ def _release_inputs_impl(ctx):
     return [
         DefaultInfo(files = depset([tree])),
         WasixNapiInputsInfo(tree = tree, target = "windows-x64-msvc", triple = "x86_64-pc-windows-msvc", sql_names = ["fixture"], sdk_version = "fixture-sdk"),
-        ShippingSupplierInfo(suppliers = [{"product": "declared-supplier-fixture"}], files = depset([evidence])),
+        ShippingSupplierInfo(suppliers = [{"product": "liboliphaunt-wasix", "version": PRODUCTS["liboliphaunt-wasix"]["version"],
+                                          "configuration": "portable", "binding": "compiled-input",
+                                          "origin": {"kind": "current-source"}, "files": [{"path": evidence.path}]}], files = depset([evidence])),
     ]
 
 _release_inputs = rule(implementation = _release_inputs_impl)
@@ -42,15 +44,23 @@ def _projection_impl(ctx):
     asserts.equals(env, "napi_projection_library.dll", release[WasixNapiReleaseInfo].binary.basename)
     asserts.equals(env, ["napi_projection_library.dll"], [file.basename for file in release[DefaultInfo].files.to_list()])
     asserts.equals(env, "fixture-sdk", release[WasixNapiReleaseInfo].inputs.sdk_version)
-    suppliers = release[ShippingSupplierInfo].suppliers
-    asserts.equals(env, {"product": "declared-supplier-fixture"}, suppliers[0])
+    rows = release[ShippingSupplierInfo].suppliers
+    asserts.equals(env, 3, len(rows))
+    suppliers = {row["product"]: row for row in rows}
+    asserts.equals(env, ["liboliphaunt-wasix", "oliphaunt-pgwire-server", "oliphaunt-wasix-rust"], sorted(suppliers))
+    supplier_files = release[ShippingSupplierInfo].files.to_list()
+    evidence = [file for file in supplier_files if file.basename == "napi_release_inputs.evidence"]
+    asserts.equals(env, 1, len(evidence))
+    asserts.equals(env, {"product": "liboliphaunt-wasix", "version": PRODUCTS["liboliphaunt-wasix"]["version"],
+                         "configuration": "portable", "binding": "compiled-input", "origin": {"kind": "current-source"},
+                         "files": [{"path": file.path} for file in evidence]}, suppliers["liboliphaunt-wasix"])
     compiled = []
-    for index, product, package, group in [
-        (1, "oliphaunt-wasix-rust", "src/wasix/sdks/rust", "sdk_compiled"),
-        (2, "oliphaunt-pgwire-server", "src/wasix/pgwire-server", "server_compiled"),
+    for product, package, group in [
+        ("oliphaunt-wasix-rust", "src/wasix/sdks/rust", "sdk_compiled"),
+        ("oliphaunt-pgwire-server", "src/wasix/pgwire-server", "server_compiled"),
     ]:
-        supplier = suppliers[index]
-        asserts.equals(env, product, supplier["product"])
+        supplier = suppliers[product]
+        asserts.equals(env, PRODUCTS[product]["version"], supplier["version"])
         asserts.equals(env, "windows-x64-msvc", supplier["configuration"])
         asserts.equals(env, "compiled-input", supplier["binding"])
         asserts.equals(env, {"kind": "current-source"}, supplier["origin"])
@@ -59,7 +69,7 @@ def _projection_impl(ctx):
         asserts.equals(env, Label("//" + package + ":shipping_supplier_fixture"), files[0].owner)
         asserts.equals(env, [{"path": files[0].path}], supplier["files"])
         compiled.extend(files)
-    asserts.equals(env, sorted([file.path for file in compiled]), sorted([file.path for file in release[ShippingSupplierInfo].files.to_list() if file.basename != "napi_release_inputs.evidence"]))
+    asserts.equals(env, sorted([file.path for file in compiled + evidence]), sorted([file.path for file in supplier_files]))
     return analysistest.end(env)
 
 _projection_test = analysistest.make(_projection_impl, attrs = {"release": attr.label(mandatory = True, providers = [WasixNapiReleaseInfo])})
