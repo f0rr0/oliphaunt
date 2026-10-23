@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   loadSwiftExtensionInventoryCatalog,
+  normalizeExtensionMemberClosure,
   readSafeFileSnapshot,
   snapshotSafeFileTree,
   validateSwiftExtensionResourceArtifact,
@@ -421,7 +422,7 @@ export function validateSelection(
   const basePackage = validateBasePackage(root.basePackage);
   const nativeRuntime = validateNativeRuntime(root.nativeRuntime);
   const extensions = root.extensions.map((raw, index) => {
-    const row = object(raw, `extensions[${index}]`);
+    const row = normalizeExtensionMemberClosure(object(raw, `extensions[${index}]`));
     exactKeys(
       row,
       [
@@ -440,6 +441,8 @@ export function validateSelection(
         'sharedPreloadLibraries',
         'sqlName',
         'version',
+        'sqlMembers',
+        'nativeModuleStems',
       ],
       `extensions[${index}]`,
     );
@@ -500,6 +503,11 @@ export function validateSelection(
       cFunction: nativeModuleStem === null ? null : `oliphaunt_extension_${cModuleStem}_descriptor`,
       cTarget: nativeModuleStem === null ? null : `COliphauntExtension${suffix}`,
       createsExtension: row.createsExtension,
+      sqlMembers: uniquePortableList(row.sqlMembers, `extensions[${index}].sqlMembers`),
+      nativeModuleStems: uniquePortableList(
+        row.nativeModuleStems,
+        `extensions[${index}].nativeModuleStems`,
+      ),
       dataFiles: frozenDataFiles(row.dataFiles, `extensions[${index}].dataFiles`),
       dependencies,
       extensionSqlFileNames: frozenSqlFileNames(

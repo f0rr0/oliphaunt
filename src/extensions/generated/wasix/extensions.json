@@ -675,7 +675,9 @@
     },
     {
       "archive": "extensions/postgis.tar.zst",
-      "dependencies": [],
+      "dependencies": [
+        "fuzzystrmatch"
+      ],
       "id": "postgis",
       "lifecycle": {
         "create-extension": true,
@@ -690,25 +692,28 @@
         "lib/postgresql/postgis-3.so"
       ],
       "native-components": [
+        "libiconv",
         "geos",
         "sqlite",
         "proj",
         "libxml2",
         "json-c",
-        "libiconv"
+        "gdal"
       ],
       "native-link-units": [
+        "libiconv",
+        "libcharset",
+        "gdal",
         "geos-c",
         "geos",
         "proj",
         "sqlite",
         "libxml2",
-        "json-c",
-        "libiconv",
-        "libcharset"
+        "json-c"
       ],
       "native-module-file": "postgis-3.so",
       "native-runtime-files": [
+        "gdal/gdalvrt.xsd",
         "proj/proj.db"
       ],
       "native-support-modules": [
@@ -717,6 +722,18 @@
           "build-path": "postgis/postgis/liboliphaunt_postgis_deps.so",
           "name": "postgis_deps",
           "runtime-path": "lib/postgresql/liboliphaunt_postgis_deps.so"
+        },
+        {
+          "aot-file": "postgis_raster-llvm-opta.bin.zst",
+          "build-path": "postgis/raster/rt_pg/postgis_raster-3.so",
+          "name": "postgis_raster",
+          "runtime-path": "lib/postgresql/postgis_raster-3.so"
+        },
+        {
+          "aot-file": "postgis_topology-llvm-opta.bin.zst",
+          "build-path": "postgis/topology/postgis_topology-3.so",
+          "name": "postgis_topology",
+          "runtime-path": "lib/postgresql/postgis_topology-3.so"
         }
       ],
       "sql-name": "postgis"

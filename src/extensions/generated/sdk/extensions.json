@@ -1,5 +1,5 @@
 {
-  "extension-catalog-sha256": "c1d2e09905d7ecc0172173b34b9e4104dad58987503dd3dab7af4ae78890d9f3",
+  "extension-catalog-sha256": "dbe1ab284693ef923cb12e35e1c75bcc7fc1ed42af1fecf9fe9fee0aaf0ef8d0",
   "extensions": [
     {
       "artifact-product": "oliphaunt-extension-contrib-pg18",
@@ -16,6 +16,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "amcheck",
+      "native-module-stems": [
+        "amcheck"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -25,6 +28,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "amcheck"
+      ],
       "sql-name": "amcheck"
     },
     {
@@ -42,6 +48,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "auto_explain",
+      "native-module-stems": [
+        "auto_explain"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -51,6 +60,7 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [],
       "sql-name": "auto_explain"
     },
     {
@@ -68,6 +78,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "bloom",
+      "native-module-stems": [
+        "bloom"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -77,6 +90,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "bloom"
+      ],
       "sql-name": "bloom"
     },
     {
@@ -94,6 +110,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "btree_gin",
+      "native-module-stems": [
+        "btree_gin"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -103,6 +122,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "btree_gin"
+      ],
       "sql-name": "btree_gin"
     },
     {
@@ -120,6 +142,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "btree_gist",
+      "native-module-stems": [
+        "btree_gist"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -129,6 +154,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "btree_gist"
+      ],
       "sql-name": "btree_gist"
     },
     {
@@ -146,6 +174,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "citext",
+      "native-module-stems": [
+        "citext"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -155,6 +186,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "citext"
+      ],
       "sql-name": "citext"
     },
     {
@@ -172,6 +206,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "cube",
+      "native-module-stems": [
+        "cube"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -181,6 +218,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "cube"
+      ],
       "sql-name": "cube"
     },
     {
@@ -198,6 +238,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "dict_int",
+      "native-module-stems": [
+        "dict_int"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -207,6 +250,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "dict_int"
+      ],
       "sql-name": "dict_int"
     },
     {
@@ -226,6 +272,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "dict_xsyn",
+      "native-module-stems": [
+        "dict_xsyn"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -237,6 +286,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "dict_xsyn"
+      ],
       "sql-name": "dict_xsyn"
     },
     {
@@ -256,6 +308,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "earthdistance",
+      "native-module-stems": [
+        "earthdistance"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -267,6 +322,9 @@
       ],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "earthdistance"
+      ],
       "sql-name": "earthdistance"
     },
     {
@@ -284,6 +342,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "file_fdw",
+      "native-module-stems": [
+        "file_fdw"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -293,6 +354,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "file_fdw"
+      ],
       "sql-name": "file_fdw"
     },
     {
@@ -310,6 +374,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "fuzzystrmatch",
+      "native-module-stems": [
+        "fuzzystrmatch"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -319,6 +386,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "fuzzystrmatch"
+      ],
       "sql-name": "fuzzystrmatch"
     },
     {
@@ -336,6 +406,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "hstore",
+      "native-module-stems": [
+        "hstore"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -345,6 +418,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "hstore"
+      ],
       "sql-name": "hstore"
     },
     {
@@ -362,6 +438,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "_int",
+      "native-module-stems": [
+        "_int"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -371,6 +450,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "intarray"
+      ],
       "sql-name": "intarray"
     },
     {
@@ -388,6 +470,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "isn",
+      "native-module-stems": [
+        "isn"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -397,6 +482,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "isn"
+      ],
       "sql-name": "isn"
     },
     {
@@ -414,6 +502,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "lo",
+      "native-module-stems": [
+        "lo"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -423,6 +514,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "lo"
+      ],
       "sql-name": "lo"
     },
     {
@@ -440,6 +534,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "ltree",
+      "native-module-stems": [
+        "ltree"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -449,6 +546,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "ltree"
+      ],
       "sql-name": "ltree"
     },
     {
@@ -466,6 +566,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "pageinspect",
+      "native-module-stems": [
+        "pageinspect"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -475,6 +578,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "pageinspect"
+      ],
       "sql-name": "pageinspect"
     },
     {
@@ -492,6 +598,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "pg_buffercache",
+      "native-module-stems": [
+        "pg_buffercache"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -501,6 +610,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "pg_buffercache"
+      ],
       "sql-name": "pg_buffercache"
     },
     {
@@ -518,6 +630,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "pg_freespacemap",
+      "native-module-stems": [
+        "pg_freespacemap"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -527,6 +642,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "pg_freespacemap"
+      ],
       "sql-name": "pg_freespacemap"
     },
     {
@@ -544,6 +662,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "pg_hashids",
+      "native-module-stems": [
+        "pg_hashids"
+      ],
       "npm-package": "@oliphaunt/extension-pg-hashids",
       "postgres-major": 18,
       "release-product": "oliphaunt-extension-pg-hashids",
@@ -553,6 +674,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "oliphaunt-other-extension",
+      "sql-members": [
+        "pg_hashids"
+      ],
       "sql-name": "pg_hashids"
     },
     {
@@ -570,6 +694,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "pg_ivm",
+      "native-module-stems": [
+        "pg_ivm"
+      ],
       "npm-package": "@oliphaunt/extension-pg-ivm",
       "postgres-major": 18,
       "release-product": "oliphaunt-extension-pg-ivm",
@@ -579,6 +706,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "oliphaunt-other-extension",
+      "sql-members": [
+        "pg_ivm"
+      ],
       "sql-name": "pg_ivm"
     },
     {
@@ -596,6 +726,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "pg_surgery",
+      "native-module-stems": [
+        "pg_surgery"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -605,6 +738,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "pg_surgery"
+      ],
       "sql-name": "pg_surgery"
     },
     {
@@ -622,6 +758,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "pg_textsearch",
+      "native-module-stems": [
+        "pg_textsearch"
+      ],
       "npm-package": "@oliphaunt/extension-pg-textsearch",
       "postgres-major": 18,
       "release-product": "oliphaunt-extension-pg-textsearch",
@@ -633,6 +772,9 @@
         "pg_textsearch"
       ],
       "source-kind": "oliphaunt-other-extension",
+      "sql-members": [
+        "pg_textsearch"
+      ],
       "sql-name": "pg_textsearch"
     },
     {
@@ -650,6 +792,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "pg_trgm",
+      "native-module-stems": [
+        "pg_trgm"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -659,6 +804,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "pg_trgm"
+      ],
       "sql-name": "pg_trgm"
     },
     {
@@ -676,6 +824,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "pg_uuidv7",
+      "native-module-stems": [
+        "pg_uuidv7"
+      ],
       "npm-package": "@oliphaunt/extension-pg-uuidv7",
       "postgres-major": 18,
       "release-product": "oliphaunt-extension-pg-uuidv7",
@@ -685,6 +836,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "oliphaunt-other-extension",
+      "sql-members": [
+        "pg_uuidv7"
+      ],
       "sql-name": "pg_uuidv7"
     },
     {
@@ -702,6 +856,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "pg_visibility",
+      "native-module-stems": [
+        "pg_visibility"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -711,6 +868,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "pg_visibility"
+      ],
       "sql-name": "pg_visibility"
     },
     {
@@ -728,6 +888,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "pg_walinspect",
+      "native-module-stems": [
+        "pg_walinspect"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -737,6 +900,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "pg_walinspect"
+      ],
       "sql-name": "pg_walinspect"
     },
     {
@@ -853,6 +1019,9 @@
         "openssl"
       ],
       "native-module-stem": "pgcrypto",
+      "native-module-stems": [
+        "pgcrypto"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -862,6 +1031,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "pgcrypto"
+      ],
       "sql-name": "pgcrypto"
     },
     {
@@ -886,6 +1058,7 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": null,
+      "native-module-stems": [],
       "npm-package": "@oliphaunt/extension-pgtap",
       "postgres-major": 18,
       "release-product": "oliphaunt-extension-pgtap",
@@ -895,6 +1068,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "oliphaunt-other-extension",
+      "sql-members": [
+        "pgtap"
+      ],
       "sql-name": "pgtap"
     },
     {
@@ -910,9 +1086,37 @@
         "share/postgresql/contrib/postgis-3.6/spatial_ref_sys.sql",
         "share/postgresql/contrib/postgis-3.6/uninstall_legacy.sql",
         "share/postgresql/contrib/postgis-3.6/uninstall_postgis.sql",
+        "share/postgresql/gdal/GDALLogoBW.svg",
+        "share/postgresql/gdal/GDALLogoColor.svg",
+        "share/postgresql/gdal/GDALLogoGS.svg",
+        "share/postgresql/gdal/LICENSE.TXT",
+        "share/postgresql/gdal/cubewerx_extra.wkt",
+        "share/postgresql/gdal/ecw_cs.wkt",
+        "share/postgresql/gdal/epsg.wkt",
+        "share/postgresql/gdal/esri_StatePlane_extra.wkt",
+        "share/postgresql/gdal/gdal_algorithm.schema.json",
+        "share/postgresql/gdal/gdalicon.png",
+        "share/postgresql/gdal/gdalinfo_output.schema.json",
+        "share/postgresql/gdal/gdalmdiminfo_output.schema.json",
+        "share/postgresql/gdal/gdalvrt.xsd",
+        "share/postgresql/gdal/leaflet_template.html",
+        "share/postgresql/gdal/ogr_fields_override.schema.json",
+        "share/postgresql/gdal/ogrinfo_output.schema.json",
+        "share/postgresql/gdal/ozi_datum.csv",
+        "share/postgresql/gdal/ozi_ellips.csv",
+        "share/postgresql/gdal/pci_datum.txt",
+        "share/postgresql/gdal/pci_ellips.txt",
+        "share/postgresql/gdal/stateplane.csv",
+        "share/postgresql/gdal/template_tiles.mapml",
+        "share/postgresql/gdal/tms_LINZAntarticaMapTileGrid.json",
+        "share/postgresql/gdal/tms_MapML_APSTILE.json",
+        "share/postgresql/gdal/tms_MapML_CBMTILE.json",
+        "share/postgresql/gdal/tms_NZTM2000.json",
         "share/postgresql/proj/proj.db"
       ],
-      "dependencies": [],
+      "dependencies": [
+        "fuzzystrmatch"
+      ],
       "display-name": "PostGIS",
       "extension-sql-file-names": [
         "uninstall_postgis.sql"
@@ -920,6 +1124,9 @@
       "extension-sql-file-prefixes": [
         "postgis_comments",
         "postgis_proc_set_search_path",
+        "postgis_raster",
+        "postgis_tiger_geocoder",
+        "postgis_topology",
         "rtpostgis"
       ],
       "id": "postgis",
@@ -932,11 +1139,13 @@
             "sqlite",
             "proj",
             "libxml2",
-            "json-c"
+            "json-c",
+            "gdal"
           ],
           "family": "native",
           "kind": "native-dynamic",
           "link-units": [
+            "gdal",
             "geos-c",
             "geos",
             "proj",
@@ -945,6 +1154,7 @@
             "json-c"
           ],
           "runtime-files": [
+            "gdal/gdalvrt.xsd",
             "proj/proj.db"
           ],
           "target": "linux-arm64-gnu"
@@ -955,11 +1165,13 @@
             "sqlite",
             "proj",
             "libxml2",
-            "json-c"
+            "json-c",
+            "gdal"
           ],
           "family": "native",
           "kind": "native-dynamic",
           "link-units": [
+            "gdal",
             "geos-c",
             "geos",
             "proj",
@@ -968,6 +1180,7 @@
             "json-c"
           ],
           "runtime-files": [
+            "gdal/gdalvrt.xsd",
             "proj/proj.db"
           ],
           "target": "linux-x64-gnu"
@@ -978,11 +1191,13 @@
             "sqlite",
             "proj",
             "libxml2",
-            "json-c"
+            "json-c",
+            "gdal"
           ],
           "family": "native",
           "kind": "native-dynamic",
           "link-units": [
+            "gdal",
             "geos-c",
             "geos",
             "proj",
@@ -991,6 +1206,7 @@
             "json-c"
           ],
           "runtime-files": [
+            "gdal/gdalvrt.xsd",
             "proj/proj.db"
           ],
           "target": "macos-arm64"
@@ -1001,11 +1217,13 @@
             "sqlite",
             "proj",
             "libxml2",
-            "json-c"
+            "json-c",
+            "gdal"
           ],
           "family": "native",
           "kind": "native-dynamic",
           "link-units": [
+            "gdal",
             "geos-c",
             "geos",
             "proj",
@@ -1014,58 +1232,65 @@
             "json-c"
           ],
           "runtime-files": [
+            "gdal/gdalvrt.xsd",
             "proj/proj.db"
           ],
           "target": "windows-x64-msvc"
         },
         {
           "components": [
+            "libiconv",
             "geos",
             "sqlite",
             "proj",
             "libxml2",
             "json-c",
-            "libiconv"
+            "gdal"
           ],
           "family": "native",
           "kind": "native-static-registry",
           "link-units": [
+            "libiconv",
+            "libcharset",
+            "gdal",
             "geos-c",
             "geos",
             "proj",
             "sqlite",
             "libxml2",
-            "json-c",
-            "libiconv",
-            "libcharset"
+            "json-c"
           ],
           "runtime-files": [
+            "gdal/gdalvrt.xsd",
             "proj/proj.db"
           ],
           "target": "android-arm64-v8a"
         },
         {
           "components": [
+            "libiconv",
             "geos",
             "sqlite",
             "proj",
             "libxml2",
             "json-c",
-            "libiconv"
+            "gdal"
           ],
           "family": "native",
           "kind": "native-static-registry",
           "link-units": [
+            "libiconv",
+            "libcharset",
+            "gdal",
             "geos-c",
             "geos",
             "proj",
             "sqlite",
             "libxml2",
-            "json-c",
-            "libiconv",
-            "libcharset"
+            "json-c"
           ],
           "runtime-files": [
+            "gdal/gdalvrt.xsd",
             "proj/proj.db"
           ],
           "target": "android-x86_64"
@@ -1076,11 +1301,13 @@
             "sqlite",
             "proj",
             "libxml2",
-            "json-c"
+            "json-c",
+            "gdal"
           ],
           "family": "native",
           "kind": "native-static-registry",
           "link-units": [
+            "gdal",
             "geos-c",
             "geos",
             "proj",
@@ -1089,38 +1316,43 @@
             "json-c"
           ],
           "runtime-files": [
+            "gdal/gdalvrt.xsd",
             "proj/proj.db"
           ],
           "target": "ios-xcframework"
         },
         {
           "components": [
+            "libiconv",
             "geos",
             "sqlite",
             "proj",
             "libxml2",
             "json-c",
-            "libiconv"
+            "gdal"
           ],
           "family": "wasix",
           "kind": "wasix-runtime",
           "link-units": [
+            "libiconv",
+            "libcharset",
+            "gdal",
             "geos-c",
             "geos",
             "proj",
             "sqlite",
             "libxml2",
-            "json-c",
-            "libiconv",
-            "libcharset"
+            "json-c"
           ],
           "runtime-files": [
+            "gdal/gdalvrt.xsd",
             "proj/proj.db"
           ],
           "target": "wasix-portable"
         }
       ],
       "native-components": [
+        "gdal",
         "geos",
         "json-c",
         "libiconv",
@@ -1129,11 +1361,21 @@
         "sqlite"
       ],
       "native-module-stem": "postgis-3",
+      "native-module-stems": [
+        "postgis-3",
+        "postgis_raster-3",
+        "postgis_topology-3"
+      ],
       "npm-package": "@oliphaunt/extension-postgis",
       "postgres-major": 18,
       "release-product": "oliphaunt-extension-postgis",
       "runtime-bound": false,
       "runtime-environment": [
+        {
+          "name": "GDAL_DATA",
+          "path": "share/postgresql/gdal",
+          "required_file": "gdalvrt.xsd"
+        },
         {
           "name": "PROJ_DATA",
           "path": "share/postgresql/proj",
@@ -1149,11 +1391,45 @@
         "contrib/postgis-3.6/spatial_ref_sys.sql",
         "contrib/postgis-3.6/uninstall_legacy.sql",
         "contrib/postgis-3.6/uninstall_postgis.sql",
+        "gdal/GDALLogoBW.svg",
+        "gdal/GDALLogoColor.svg",
+        "gdal/GDALLogoGS.svg",
+        "gdal/LICENSE.TXT",
+        "gdal/cubewerx_extra.wkt",
+        "gdal/ecw_cs.wkt",
+        "gdal/epsg.wkt",
+        "gdal/esri_StatePlane_extra.wkt",
+        "gdal/gdal_algorithm.schema.json",
+        "gdal/gdalicon.png",
+        "gdal/gdalinfo_output.schema.json",
+        "gdal/gdalmdiminfo_output.schema.json",
+        "gdal/gdalvrt.xsd",
+        "gdal/leaflet_template.html",
+        "gdal/ogr_fields_override.schema.json",
+        "gdal/ogrinfo_output.schema.json",
+        "gdal/ozi_datum.csv",
+        "gdal/ozi_ellips.csv",
+        "gdal/pci_datum.txt",
+        "gdal/pci_ellips.txt",
+        "gdal/stateplane.csv",
+        "gdal/template_tiles.mapml",
+        "gdal/tms_LINZAntarticaMapTileGrid.json",
+        "gdal/tms_MapML_APSTILE.json",
+        "gdal/tms_MapML_CBMTILE.json",
+        "gdal/tms_NZTM2000.json",
         "proj/proj.db"
       ],
-      "selected-extension-dependencies": [],
+      "selected-extension-dependencies": [
+        "fuzzystrmatch"
+      ],
       "shared-preload-libraries": [],
       "source-kind": "postgis",
+      "sql-members": [
+        "postgis",
+        "postgis_raster",
+        "postgis_tiger_geocoder",
+        "postgis_topology"
+      ],
       "sql-name": "postgis"
     },
     {
@@ -1171,6 +1447,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "seg",
+      "native-module-stems": [
+        "seg"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -1180,6 +1459,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "seg"
+      ],
       "sql-name": "seg"
     },
     {
@@ -1197,6 +1479,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "tablefunc",
+      "native-module-stems": [
+        "tablefunc"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -1206,6 +1491,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "tablefunc"
+      ],
       "sql-name": "tablefunc"
     },
     {
@@ -1223,6 +1511,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "tcn",
+      "native-module-stems": [
+        "tcn"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -1232,6 +1523,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "tcn"
+      ],
       "sql-name": "tcn"
     },
     {
@@ -1249,6 +1543,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "tsm_system_rows",
+      "native-module-stems": [
+        "tsm_system_rows"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -1258,6 +1555,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "tsm_system_rows"
+      ],
       "sql-name": "tsm_system_rows"
     },
     {
@@ -1275,6 +1575,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "tsm_system_time",
+      "native-module-stems": [
+        "tsm_system_time"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -1284,6 +1587,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "tsm_system_time"
+      ],
       "sql-name": "tsm_system_time"
     },
     {
@@ -1303,6 +1609,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "unaccent",
+      "native-module-stems": [
+        "unaccent"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -1314,6 +1623,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "unaccent"
+      ],
       "sql-name": "unaccent"
     },
     {
@@ -1430,6 +1742,9 @@
         "portable-uuid"
       ],
       "native-module-stem": "uuid-ossp",
+      "native-module-stems": [
+        "uuid-ossp"
+      ],
       "npm-package": "@oliphaunt/extension-contrib-pg18",
       "postgres-major": 18,
       "release-product": "liboliphaunt-native",
@@ -1439,6 +1754,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "postgres-contrib",
+      "sql-members": [
+        "uuid-ossp"
+      ],
       "sql-name": "uuid-ossp"
     },
     {
@@ -1456,6 +1774,9 @@
       "native-component-requirements": [],
       "native-components": [],
       "native-module-stem": "vector",
+      "native-module-stems": [
+        "vector"
+      ],
       "npm-package": "@oliphaunt/extension-vector",
       "postgres-major": 18,
       "release-product": "oliphaunt-extension-vector",
@@ -1465,6 +1786,9 @@
       "selected-extension-dependencies": [],
       "shared-preload-libraries": [],
       "source-kind": "oliphaunt-other-extension",
+      "sql-members": [
+        "vector"
+      ],
       "sql-name": "vector"
     }
   ],

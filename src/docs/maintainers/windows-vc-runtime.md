@@ -32,7 +32,7 @@ relicense Microsoft's DLLs.
 
 - `liboliphaunt-native` is the one shared provider for native extensions. Its
   `provider` profile is the exact union required by the base runtime and every
-  supported Windows extension: `msvcp140.dll`, `vcruntime140.dll`, and
+  supported Windows extension: `msvcp140.dll`, `msvcp140_2.dll`, `vcruntime140.dll`, and
   `vcruntime140_1.dll`. Separately versioned extension packages depend on the
   exact native-runtime product/version and do not duplicate these bytes.
 - `oliphaunt-tools` and `oliphaunt-broker` are independently installable. Each

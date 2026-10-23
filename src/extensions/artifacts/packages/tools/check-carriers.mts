@@ -41,6 +41,7 @@ import {
   assertExtensionUpstreamLicensesInArchive,
   extensionCarrierLegalContract,
 } from '../../../tools/extension-upstream-licenses.mts';
+import { assertExtensionArtifactClosure } from './extension-artifact-inventory.mts';
 import {
   expectedExtensionRoles,
   extensionRuntimeAssetContract,
@@ -72,6 +73,8 @@ const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
   'extensionSqlFileNames',
   'extensionSqlFilePrefixes',
   'nativeModuleStem',
+  'sqlMembers',
+  'nativeModuleStems',
   'iosNativeDependencies',
   'iosRegistration',
   'wasixInstall',
@@ -99,6 +102,8 @@ const EXTENSION_BUNDLE_MEMBER_KEYS = new Set([
   'extensionSqlFileNames',
   'extensionSqlFilePrefixes',
   'nativeModuleStem',
+  'sqlMembers',
+  'nativeModuleStems',
   'iosNativeDependencies',
   'iosRegistration',
   'wasixInstall',
@@ -261,6 +266,16 @@ function nativeInventoryKeys(value) {
   );
 }
 
+function extensionClosure(member, context) {
+  for (const key of ['sqlMembers', 'nativeModuleStems']) {
+    requireSortedUniqueStrings(member[key], `${context}.${key}`);
+    if (member[key].some((name) => !/^[A-Za-z0-9._-]{1,128}$/u.test(name)))
+      fail(`${context}.${key} must contain portable identifiers`);
+  }
+  assertExtensionArtifactClosure(member, 'linux-x64-gnu', context);
+  return { sqlMembers: member.sqlMembers, nativeModuleStems: member.nativeModuleStems };
+}
+
 function requireRuntimeAssetKeys(asset, expected, member, context, product, version) {
   const optional = nativeInventoryKeys(asset);
   requireExactKeys(asset, new Set([...expected, ...optional]), context);
@@ -370,6 +385,7 @@ function validateBundleMemberMetadata(member, manifest, stagedTargets) {
     );
   }
   validateMemberWasixInstall(member, `${rel(manifest)} member ${member.sqlName}`);
+  extensionClosure(member, `${rel(manifest)} member ${member.sqlName}`);
   const stagesIos = stagedTargets.has('ios-xcframework');
   if (member.nativeModuleStem === null) {
     if (member.iosNativeDependencies.length > 0 || member.iosRegistration !== null) {
@@ -882,6 +898,8 @@ async function checkExtensionBundleProduct(
     expectedProperties[`${prefix}.extensionSqlFilePrefixes`] =
       member.extensionSqlFilePrefixes.join(',');
     expectedProperties[`${prefix}.nativeModuleStem`] = member.nativeModuleStem ?? '';
+    for (const [key, values] of Object.entries(extensionClosure(member, prefix)))
+      expectedProperties[`${prefix}.${key}`] = values.join(',');
     expectedProperties[`${prefix}.iosNativeDependencies`] = member.iosNativeDependencies.join(',');
     expectedProperties[`${prefix}.sharedPreloadLibraries`] =
       member.sharedPreloadLibraries.join(',');
@@ -1143,6 +1161,7 @@ async function checkExtensionProductVariant(
     extensionSqlFileNames: data.extensionSqlFileNames,
     extensionSqlFilePrefixes: data.extensionSqlFilePrefixes,
     nativeModuleStem: data.nativeModuleStem,
+    ...extensionClosure(data, rel(manifest)),
     ...(data.nativeDependencyModules === undefined
       ? {}
       : { nativeDependencyModules: data.nativeDependencyModules }),
@@ -1229,6 +1248,12 @@ async function checkExtensionProductVariant(
     extensionSqlFileNames: data.extensionSqlFileNames.join(','),
     extensionSqlFilePrefixes: data.extensionSqlFilePrefixes.join(','),
     nativeModuleStem: data.nativeModuleStem ?? '',
+    ...Object.fromEntries(
+      Object.entries(extensionClosure(data, rel(manifest))).map(([key, values]) => [
+        key,
+        values.join(','),
+      ]),
+    ),
     iosNativeDependencies: data.iosNativeDependencies.join(','),
     sharedPreloadLibraries: data.sharedPreloadLibraries.join(','),
   };

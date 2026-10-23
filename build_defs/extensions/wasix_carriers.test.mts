@@ -51,6 +51,8 @@ async function checkCarriers(spec: WasixSqlCarrierSpec, sql: string[]) {
   assert.equal(frozen.product, spec.product);
   assert.equal(frozen.version, spec.version);
   assert.equal(frozen.nativeModuleStem, null);
+  assert.deepEqual(frozen.sqlMembers, [spec.sqlName]);
+  assert.deepEqual(frozen.nativeModuleStems, []);
   assert.equal(frozen.assets.length, 1);
   const asset = frozen.assets[0];
   assert.equal(asset.sha256, digest(spec.outputs.github));

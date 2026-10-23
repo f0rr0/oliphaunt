@@ -8,6 +8,7 @@ load("@javascript_compiler_packages//:roots.bzl", "COMPILER_CLOSURES", "COMPILER
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_metadata", "sdk_extension_projections")
+load("//build_defs/foundation:bun.bzl", "bun_script_test")
 load("//build_defs/languages/ts:defs.bzl", "workspace_dependency_package", "workspace_dependency_link")
 load("//build_defs/languages/jvm:robolectric.bzl", "robolectric_sdk")
 load("@rules_java//java:java_import.bzl", "java_import")
@@ -93,6 +94,28 @@ react_native_bundle(
     },
 )
 react_native_templates(name = "broker_templates", sources = "//src/native/sdks/swift:broker_templates")
+
+bun_script_test(
+    name = "ios_stager_test",
+    entry_point = "tools/stage-ios-app.bazel.test.mts",
+    args = [
+        "$(rootpath :app_plugin)",
+        "$(rootpath :ios_stager)",
+        "$(rootpath :resource_closure)",
+        "$(rootpath :ios_verifier)",
+        "$(rootpath :extension_metadata)",
+        "$(rootpath //src/extensions/generated/sdk:ios-static-dependencies.json)",
+    ],
+    data = [
+        ":app_plugin", ":ios_stager", ":resource_closure", ":ios_verifier", ":extension_metadata",
+        "//src/extensions/generated/sdk:ios-static-dependencies.json",
+        "package.json", "tools/stage-ios-app.test.mts", "tools/stage-ios-app.mts",
+        "tools/native-resource-closure.mts", "tools/verify-ios-package.mts",
+        "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts",
+        "//:tools/packaging/testdata/tar-fixture.mts", "//:tools/packaging/testdata/zip-fixture.mts",
+    ],
+    size = "small",
+)
 
 react_native_manifest(name = "publish_files", manifest = "package.json")
 filegroup(name = "publish_manifest", srcs = [":publish_files"], output_group = "manifest")

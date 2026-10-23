@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::Result;
 #[cfg(all(test, feature = "extension-pg-textsearch"))]
 use anyhow::bail;
+use anyhow::{Context, Result, ensure};
 
 use crate::oliphaunt::config::PostgresConfig;
 
@@ -84,13 +84,91 @@ impl Extension {
     }
 
     pub(crate) const fn startup_config(self) -> &'static [&'static str] {
+        if let Some(package) = self.package
+            && let Some(install) = package.install
+        {
+            return install.startup_config;
+        }
+        // Legacy descriptors never carried lifecycle facts; their caller/SDK policy remains explicit.
         self.startup_config
+    }
+
+    fn required_sql_names(self) -> Result<Vec<String>> {
+        if let Some(package) = self.package {
+            if let Some(install) = package.install {
+                return Ok(install
+                    .dependencies
+                    .iter()
+                    .map(|name| (*name).to_owned())
+                    .collect());
+            }
+            return legacy_package_dependencies(package, self.sql_name());
+        }
+        Ok(self
+            .dependencies()
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect())
+    }
+
+    pub(crate) fn required_native_modules(self) -> Result<Vec<(String, Option<String>)>> {
+        if let Some(package) = self.package {
+            if let Some(install) = package.install {
+                return Ok(install
+                    .native_modules
+                    .iter()
+                    .map(|(path, name)| ((*path).to_owned(), Some((*name).to_owned())))
+                    .collect());
+            }
+            let files = legacy_package_files(package, self.sql_name())?;
+            let modules: Vec<_> = files
+                .iter()
+                .filter(|(path, _)| path.starts_with("lib/") && path.ends_with(".so"))
+                .collect();
+            if modules.is_empty() {
+                return Ok(Vec::new());
+            }
+            let identities = super::aot::package_module_identities(package.aot_manifest())?;
+            use sha2::{Digest, Sha256};
+            return modules
+                .into_iter()
+                .map(|(path, bytes)| {
+                    let digest = format!("{:x}", Sha256::digest(bytes));
+                    let matches: Vec<_> = identities
+                        .iter()
+                        .filter(|(_, hash)| *hash == digest)
+                        .collect();
+                    ensure!(
+                        matches.len() == 1,
+                        "legacy package module {path} must match exactly one original AOT identity"
+                    );
+                    Ok((path.clone(), Some(matches[0].0.clone())))
+                })
+                .collect();
+        }
+        let mut modules: Vec<_> = self
+            .native_support_modules()
+            .iter()
+            .map(|module| {
+                (
+                    module.runtime_path().to_owned(),
+                    module.aot_name().map(str::to_owned),
+                )
+            })
+            .collect();
+        if let Some(module) = self.native_module_file() {
+            modules.push((
+                format!("lib/postgresql/{module}"),
+                self.aot_name().map(str::to_owned),
+            ));
+        }
+        Ok(modules)
     }
 }
 
 pub fn resolve_extension_set(extensions: &[Extension]) -> Result<Vec<Extension>> {
     let mut visiting = BTreeSet::new();
-    let mut visited = BTreeSet::new();
+    let mut visited = Vec::new();
     let mut resolved = Vec::new();
     let mut requested = extensions.to_vec();
     requested.sort_by_key(|extension| extension.sql_name());
@@ -113,20 +191,12 @@ pub fn resolve_extension_set(extensions: &[Extension]) -> Result<Vec<Extension>>
                 extension.sql_name()
             )));
         }
-        if let Some(package) = extension.package
-            && package.runtime_version() != liboliphaunt_wasix_portable::PACKAGE_VERSION
-        {
-            return Err(crate::error::invalid_configuration(format!(
-                "{}@{} requires WASIX runtime {}, selected {}",
-                package.product(),
-                package.version(),
-                package.runtime_version(),
-                liboliphaunt_wasix_portable::PACKAGE_VERSION
-            )));
-        }
         visit_extension(
             extension,
             &selected,
+            extension
+                .package
+                .map_or(&[], |package| package.dependencies),
             &mut visiting,
             &mut visited,
             &mut resolved,
@@ -263,57 +333,115 @@ fn comma_separated_values(value: &str) -> impl Iterator<Item = &str> {
 fn visit_extension(
     extension: Extension,
     selected: &BTreeMap<&'static str, Extension>,
+    package_dependencies: &'static [ExtensionPackageDependency],
     visiting: &mut BTreeSet<&'static str>,
-    visited: &mut BTreeSet<&'static str>,
+    visited: &mut Vec<(Extension, &'static [ExtensionPackageDependency])>,
     resolved: &mut Vec<Extension>,
 ) -> Result<()> {
-    if visited.contains(extension.sql_name()) {
-        if resolved
-            .iter()
-            .any(|prior| prior.sql_name() == extension.sql_name() && *prior != extension)
-        {
-            return Err(crate::error::invalid_configuration(format!(
-                "conflicting packages selected for extension '{}'",
-                extension.sql_name()
-            )));
-        }
-        return Ok(());
+    if let Some(package) = extension.package
+        && package.runtime_version() != liboliphaunt_wasix_portable::PACKAGE_VERSION
+    {
+        return Err(crate::error::invalid_configuration(format!(
+            "{}@{} requires WASIX runtime {}, selected {}",
+            package.product(),
+            package.version(),
+            package.runtime_version(),
+            liboliphaunt_wasix_portable::PACKAGE_VERSION
+        )));
     }
-    if !visiting.insert(extension.sql_name()) {
+    if resolved
+        .iter()
+        .any(|prior| prior.sql_name() == extension.sql_name() && *prior != extension)
+    {
+        return Err(crate::error::invalid_configuration(format!(
+            "conflicting packages selected for extension '{}'",
+            extension.sql_name()
+        )));
+    }
+    if visiting.contains(extension.sql_name()) {
         return Err(crate::error::invalid_configuration(format!(
             "cyclic extension dependency involving '{}'",
             extension.sql_name()
         )));
     }
-    for dependency in extension.dependencies() {
-        let mut dependency_extension = Extension::by_sql_name(dependency).ok_or_else(|| {
+    // Resource identity excludes acquisition tables, so validate each distinct reachable context.
+    if visited.iter().any(|(prior, dependencies)| {
+        *prior == extension && std::ptr::eq(*dependencies, package_dependencies)
+    }) {
+        return Ok(());
+    }
+    visiting.insert(extension.sql_name());
+    for dependency in extension.required_sql_names()? {
+        if dependency == "plpgsql" {
+            continue;
+        }
+        let mut dependency_extension = Extension::by_sql_name(&dependency).ok_or_else(|| {
             crate::error::invalid_configuration(format!(
                 "selected extension '{}' depends on missing catalog extension '{}'",
                 extension.sql_name(),
                 dependency
             ))
         })?;
-        if let Some(package) = extension.package
+        let mut dependency_package: Option<&'static ExtensionPackage> = None;
+        for candidate in package_dependencies
+            .iter()
+            .filter(|candidate| candidate.sql_name == dependency)
+        {
+            ensure!(
+                dependency_package.is_none_or(|prior| prior == &candidate.package),
+                "conflicting packages selected for extension '{dependency}'"
+            );
+            dependency_package = Some(&candidate.package);
+        }
+        if let Some(package) = dependency_package {
+            dependency_extension = dependency_extension.with_package(package);
+        } else if let Some(package) = extension.package
+            && package.install.is_none()
             && package
                 .archives()
                 .iter()
-                .any(|(name, _, _)| name == dependency)
+                .any(|(name, _, _)| *name == dependency)
         {
             dependency_extension = dependency_extension.with_package(package);
         }
-        if let Some(explicit) = selected.get(dependency) {
+        let mut dependency_context = package_dependencies;
+        if let Some(explicit) = selected.get(dependency.as_str()) {
             if dependency_extension.package.is_some() && dependency_extension != *explicit {
                 return Err(crate::error::invalid_configuration(format!(
                     "conflicting packages selected for extension '{dependency}'"
                 )));
             }
+            if dependency_extension.package.is_none() {
+                dependency_context = explicit.package.map_or(&[], |package| package.dependencies);
+            }
             dependency_extension = *explicit;
+        } else if dependency_extension.package.is_none()
+            && extension
+                .package
+                .is_some_and(|package| package.install.is_some())
+        {
+            return Err(crate::error::invalid_configuration(format!(
+                "packaged extension '{}' lacks its frozen dependency package '{dependency}'",
+                extension.sql_name()
+            )));
         }
-        visit_extension(dependency_extension, selected, visiting, visited, resolved)?;
+        visit_extension(
+            dependency_extension,
+            selected,
+            dependency_context,
+            visiting,
+            visited,
+            resolved,
+        )?;
     }
     visiting.remove(extension.sql_name());
-    visited.insert(extension.sql_name());
-    resolved.push(extension);
+    visited.push((extension, package_dependencies));
+    if !resolved
+        .iter()
+        .any(|prior| prior.sql_name() == extension.sql_name())
+    {
+        resolved.push(extension);
+    }
     Ok(())
 }
 
@@ -1094,10 +1222,149 @@ mod extension_tests {
     }
 }
 
+fn legacy_package_files(
+    package: &ExtensionPackage,
+    sql_name: &str,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    let matches: Vec<_> = package
+        .archives()
+        .iter()
+        .filter(|(name, _, _)| *name == sql_name)
+        .collect();
+    ensure!(
+        matches.len() == 1,
+        "extension package must contain exactly one archive for {sql_name}"
+    );
+    let (_, bytes, expected) = matches[0];
+    ensure!(
+        format!("{:x}", Sha256::digest(bytes)).eq_ignore_ascii_case(expected),
+        "extension archive hash mismatch for {sql_name}"
+    );
+    let mut archive = super::base::extension_archive(bytes)?;
+    let mut observed = BTreeSet::new();
+    let mut files = BTreeMap::new();
+    for entry in archive.entries().context("read legacy extension archive")? {
+        let mut entry = entry.context("read legacy extension entry")?;
+        if entry.header().entry_type().is_dir() {
+            continue;
+        }
+        ensure!(
+            entry.header().entry_type().is_file(),
+            "legacy extension archive contains a nonregular member"
+        );
+        let path = entry
+            .path()?
+            .to_str()
+            .context("extension archive path is not UTF-8")?
+            .to_owned();
+        ensure!(
+            !path.starts_with('/')
+                && !path.contains('\\')
+                && path
+                    .split('/')
+                    .all(|part| !part.is_empty() && part != "." && part != ".."),
+            "unsafe extension archive path {path}"
+        );
+        ensure!(
+            observed.insert(path.clone()),
+            "duplicate extension archive member {path}"
+        );
+        if path.ends_with(".control") || (path.starts_with("lib/") && path.ends_with(".so")) {
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes)?;
+            files.insert(path, bytes);
+        }
+    }
+    Ok(files)
+}
+
+fn legacy_package_dependencies(package: &ExtensionPackage, sql_name: &str) -> Result<Vec<String>> {
+    let files = legacy_package_files(package, sql_name)?;
+    let controls: BTreeMap<_, _> = files
+        .iter()
+        .filter_map(|(path, bytes)| {
+            path.strip_prefix("share/postgresql/extension/")?
+                .strip_suffix(".control")
+                .map(|name| (name, bytes))
+        })
+        .collect();
+    let mut dependencies = BTreeSet::new();
+    for (name, bytes) in &controls {
+        let text = std::str::from_utf8(bytes).context("extension control is not UTF-8")?;
+        let mut declared = false;
+        for line in text.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                ensure!(
+                    line.split_whitespace().next() != Some("requires"),
+                    "invalid requires assignment in {name}.control"
+                );
+                continue;
+            };
+            if key.trim() != "requires" {
+                continue;
+            }
+            ensure!(!declared, "duplicate requires assignment in {name}.control");
+            declared = true;
+            let value = value.trim_start();
+            let value = if let Some(quoted) = value.strip_prefix('\'') {
+                let (value, remainder) = quoted
+                    .split_once('\'')
+                    .context("unterminated control requires")?;
+                ensure!(
+                    remainder.trim().is_empty() || remainder.trim().starts_with('#'),
+                    "invalid control requires suffix"
+                );
+                value
+            } else {
+                let value = value.split('#').next().unwrap_or_default().trim();
+                ensure!(!value.is_empty(), "empty unquoted control requires");
+                value
+            };
+            if value.trim().is_empty() {
+                continue;
+            }
+            let mut seen = BTreeSet::new();
+            for dependency in value.split(',').map(str::trim) {
+                ensure!(
+                    !dependency.is_empty()
+                        && dependency.bytes().all(|byte| byte.is_ascii_lowercase()
+                            || byte.is_ascii_digit()
+                            || byte == b'_'
+                            || byte == b'-')
+                        && seen.insert(dependency),
+                    "invalid control dependency {dependency}"
+                );
+                if !controls.contains_key(dependency) && dependency != "plpgsql" {
+                    dependencies.insert(dependency.to_owned());
+                }
+            }
+        }
+    }
+    Ok(dependencies.into_iter().collect())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct FrozenExtensionInstall {
+    dependencies: &'static [&'static str],
+    native_modules: &'static [(&'static str, &'static str)],
+    startup_config: &'static [&'static str],
+}
+
+/// A flat, package-owned dependency resource snapshot used by generated facades.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExtensionPackageDependency {
+    sql_name: &'static str,
+    package: ExtensionPackage,
+}
+
 /// Immutable resources owned by an independently released WASIX package.
 ///
 /// Applications use the descriptor exported by their extension crate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy)]
 pub struct ExtensionPackage {
     product: &'static str,
     version: &'static str,
@@ -1105,9 +1372,92 @@ pub struct ExtensionPackage {
     archives: &'static [(&'static str, &'static [u8], &'static str)],
     aot_manifest: &'static str,
     aot_artifacts: &'static [(&'static str, &'static [u8])],
+    install: Option<FrozenExtensionInstall>,
+    dependencies: &'static [ExtensionPackageDependency],
+}
+
+impl PartialEq for ExtensionPackage {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
+}
+impl Eq for ExtensionPackage {}
+impl PartialOrd for ExtensionPackage {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for ExtensionPackage {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.identity().cmp(&other.identity())
+    }
+}
+impl std::hash::Hash for ExtensionPackage {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.identity(), state);
+    }
 }
 
 impl ExtensionPackage {
+    // Dependency bindings are request composition; the immutable resource identity stays finite.
+    fn identity(
+        &self,
+    ) -> (
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static [(&'static str, &'static [u8], &'static str)],
+        &'static str,
+        &'static [(&'static str, &'static [u8])],
+        Option<FrozenExtensionInstall>,
+    ) {
+        (
+            self.product,
+            self.version,
+            self.runtime_version,
+            self.archives,
+            self.aot_manifest,
+            self.aot_artifacts,
+            self.install,
+        )
+    }
+
+    /// Bind the requirements captured by the original package's install contract.
+    #[doc(hidden)]
+    pub const fn with_install(
+        mut self,
+        dependencies: &'static [&'static str],
+        native_modules: &'static [(&'static str, &'static str)],
+        startup_config: &'static [&'static str],
+    ) -> Self {
+        self.install = Some(FrozenExtensionInstall {
+            dependencies,
+            native_modules,
+            startup_config,
+        });
+        self
+    }
+
+    /// Bind the complete, flat dependency closure without changing any resource owner.
+    #[doc(hidden)]
+    pub const fn with_dependencies(
+        mut self,
+        dependencies: &'static [ExtensionPackageDependency],
+    ) -> Self {
+        self.dependencies = dependencies;
+        self
+    }
+
+    /// Capture one dependency without nesting package graphs or recursive identities.
+    #[doc(hidden)]
+    pub const fn as_dependency(mut self, sql_name: &'static str) -> ExtensionPackageDependency {
+        self.dependencies = &[];
+        ExtensionPackageDependency {
+            sql_name,
+            package: self,
+        }
+    }
+
     /// Package-owned product.
     pub const fn product(self) -> &'static str {
         self.product
@@ -1157,6 +1507,305 @@ impl ExtensionPackage {
             archives,
             aot_manifest,
             aot_artifacts,
+            install: None,
+            dependencies: &[],
         }
+    }
+}
+
+#[cfg(all(test, feature = "extensions"))]
+#[allow(unsafe_code)]
+mod package_requirement_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+
+    fn resources(product: &'static str, runtime: &'static str) -> ExtensionPackage {
+        // Inert resources exercise descriptor selection and never deserialize native code.
+        unsafe { ExtensionPackage::from_trusted_release(product, "1.2.3", runtime, &[], "", &[]) }
+    }
+
+    #[test]
+    fn legacy_controls_accept_postgresql_requires_syntax_and_reject_malformed_assignments() {
+        let read = |controls: &[(&str, &str)]| {
+            let mut archive = tar::Builder::new(Vec::new());
+            for (name, text) in controls {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(text.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                archive
+                    .append_data(
+                        &mut header,
+                        format!("share/postgresql/extension/{name}.control"),
+                        text.as_bytes(),
+                    )
+                    .unwrap();
+            }
+            let bytes = Box::leak(archive.into_inner().unwrap().into_boxed_slice());
+            let hash = Box::leak(format!("{:x}", Sha256::digest(&*bytes)).into_boxed_str());
+            let package = ExtensionPackage {
+                archives: Box::leak(vec![("postgis", &*bytes, &*hash)].into_boxed_slice()),
+                ..resources("oliphaunt-extension-postgis", "1.2.3")
+            };
+            legacy_package_dependencies(&package, "postgis")
+        };
+        // The packaged raster/topology controls use bare identifiers; tiger uses a quoted list.
+        assert_eq!(
+            read(&[
+                ("postgis", "default_version = '3.6.4'\n"),
+                ("postgis_raster", "requires = postgis\n"),
+                ("postgis_topology", "requires = postgis # owned member\n"),
+                (
+                    "postgis_tiger_geocoder",
+                    "requires = 'postgis,fuzzystrmatch' # external member\n",
+                ),
+            ])
+            .unwrap(),
+            ["fuzzystrmatch"]
+        );
+        for text in [
+            "requires = fuzzystrmatch # bare identifier\n",
+            "requires = 'fuzzystrmatch,plpgsql' # quoted list\n",
+        ] {
+            assert_eq!(read(&[("postgis", text)]).unwrap(), ["fuzzystrmatch"]);
+        }
+        assert!(
+            read(&[("postgis", "requires = '' # no dependencies\n")])
+                .unwrap()
+                .is_empty()
+        );
+        for text in [
+            "requires\n",
+            "requires =\n",
+            "requires = # comment\n",
+            "requires = 'cube\n",
+            "requires = cube trailing\n",
+            "requires = 'cube' trailing\n",
+            "requires = 'cube,,hstore'\n",
+            "requires = 'cube,cube'\n",
+            "requires = 'cube'\nrequires = 'hstore'\n",
+        ] {
+            assert!(read(&[("postgis", text)]).is_err(), "{text}");
+        }
+    }
+
+    #[test]
+    fn captured_postgis_requirements_override_new_sdk_modules_dependencies_and_startup() {
+        let package = Box::leak(Box::new(
+            resources(
+                "oliphaunt-extension-postgis",
+                liboliphaunt_wasix_portable::PACKAGE_VERSION,
+            )
+            .with_install(
+                &[],
+                &[("lib/postgresql/postgis-3.so", "extension:postgis")],
+                &["search_path=public"],
+            ),
+        ));
+        let extension = Extension::POSTGIS.with_package(package);
+        assert_eq!(resolve_extension_set(&[extension]).unwrap(), [extension]);
+        assert_eq!(
+            extension.required_native_modules().unwrap(),
+            [(
+                "lib/postgresql/postgis-3.so".to_owned(),
+                Some("extension:postgis".to_owned())
+            )]
+        );
+        assert_eq!(extension.startup_config(), ["search_path=public"]);
+        assert_eq!(Extension::POSTGIS.dependencies(), &["fuzzystrmatch"]);
+    }
+
+    #[test]
+    fn foreign_packages_keep_their_owner_and_reject_conflicts_cycles_and_transitive_host_mismatch()
+    {
+        let host = liboliphaunt_wasix_portable::PACKAGE_VERSION;
+        let foreign =
+            resources("oliphaunt-extension-contrib-pg18", host).with_install(&[], &[], &[]);
+        let dependencies =
+            Box::leak(vec![foreign.as_dependency("fuzzystrmatch")].into_boxed_slice());
+        let package = Box::leak(Box::new(
+            resources("oliphaunt-extension-postgis", host)
+                .with_install(&["fuzzystrmatch", "plpgsql"], &[], &[])
+                .with_dependencies(dependencies),
+        ));
+        let extension = Extension::POSTGIS.with_package(package);
+        let resolved = resolve_extension_set(&[extension]).unwrap();
+        assert_eq!(
+            resolved
+                .iter()
+                .map(|extension| extension.sql_name())
+                .collect::<Vec<_>>(),
+            ["fuzzystrmatch", "postgis"]
+        );
+        assert_eq!(
+            resolved[0].package().unwrap().product(),
+            "oliphaunt-extension-contrib-pg18"
+        );
+        let conflicting = Box::leak(Box::new(resources("another-owner", host).with_install(
+            &[],
+            &[],
+            &[],
+        )));
+        assert!(
+            resolve_extension_set(&[
+                extension,
+                Extension::FUZZYSTRMATCH.with_package(conflicting)
+            ])
+            .unwrap_err()
+            .to_string()
+            .contains("conflicting packages")
+        );
+        let duplicate_candidates = Box::leak(
+            vec![
+                foreign.as_dependency("fuzzystrmatch"),
+                conflicting.as_dependency("fuzzystrmatch"),
+            ]
+            .into_boxed_slice(),
+        );
+        let duplicate_root =
+            Box::leak(Box::new((*package).with_dependencies(duplicate_candidates)));
+        assert!(
+            resolve_extension_set(&[Extension::POSTGIS.with_package(duplicate_root)])
+                .unwrap_err()
+                .to_string()
+                .contains("conflicting packages selected for extension 'fuzzystrmatch'")
+        );
+        let incompatible =
+            resources("oliphaunt-extension-contrib-pg18", "999.0.0").with_install(&[], &[], &[]);
+        let incompatible_dependencies =
+            Box::leak(vec![incompatible.as_dependency("fuzzystrmatch")].into_boxed_slice());
+        let incompatible_root = Box::leak(Box::new(
+            (*package).with_dependencies(incompatible_dependencies),
+        ));
+        assert!(
+            resolve_extension_set(&[Extension::POSTGIS.with_package(incompatible_root)])
+                .unwrap_err()
+                .to_string()
+                .contains("requires WASIX runtime")
+        );
+        let cyclic = resources("oliphaunt-extension-contrib-pg18", host).with_install(
+            &["postgis"],
+            &[],
+            &[],
+        );
+        let cyclic_dependencies =
+            Box::leak(vec![cyclic.as_dependency("fuzzystrmatch")].into_boxed_slice());
+        let cyclic_root = Box::leak(Box::new((*package).with_dependencies(cyclic_dependencies)));
+        assert!(
+            resolve_extension_set(&[Extension::POSTGIS.with_package(cyclic_root)])
+                .unwrap_err()
+                .to_string()
+                .contains("cyclic extension dependency")
+        );
+        let nested = foreign.with_install(&["cube"], &[], &[]);
+        let first_cube = resources("original-cube-owner", host).with_install(&[], &[], &[]);
+        let second_cube = resources("different-cube-owner", host).with_install(&[], &[], &[]);
+        let first_context = Box::leak(
+            vec![
+                nested.as_dependency("fuzzystrmatch"),
+                first_cube.as_dependency("cube"),
+            ]
+            .into_boxed_slice(),
+        );
+        let second_context = Box::leak(
+            vec![
+                nested.as_dependency("fuzzystrmatch"),
+                second_cube.as_dependency("cube"),
+            ]
+            .into_boxed_slice(),
+        );
+        let first_root = Box::leak(Box::new((*package).with_dependencies(first_context)));
+        let second_root = Box::leak(Box::new((*package).with_dependencies(second_context)));
+        assert_eq!(*first_root, *second_root);
+        assert!(
+            resolve_extension_set(&[
+                Extension::POSTGIS.with_package(first_root),
+                Extension::POSTGIS.with_package(second_root),
+            ])
+            .unwrap_err()
+            .to_string()
+            .contains("conflicting packages selected for extension 'cube'")
+        );
+        assert_eq!(*package, package.as_dependency("postgis").package);
+    }
+
+    #[test]
+    fn legacy_postgis_uses_original_control_and_archive_modules_and_preserves_sdk_startup_policy() {
+        let module = b"inert original postgis wasm";
+        let mut archive = tar::Builder::new(Vec::new());
+        for (path, bytes) in [
+            (
+                "share/postgresql/extension/postgis.control",
+                &b"default_version = '3.5.0'\n"[..],
+            ),
+            ("lib/postgresql/postgis-3.so", &module[..]),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            archive.append_data(&mut header, path, bytes).unwrap();
+        }
+        let bytes: &'static [u8] = Box::leak(archive.into_inner().unwrap().into_boxed_slice());
+        let hash = Box::leak(format!("{:x}", Sha256::digest(bytes)).into_boxed_str());
+        let archives = Box::leak(vec![("postgis", bytes, &*hash)].into_boxed_slice());
+        let target = if cfg!(target_os = "windows") {
+            "x86_64-pc-windows-msvc"
+        } else if cfg!(target_os = "macos") {
+            "aarch64-apple-darwin"
+        } else if cfg!(target_arch = "aarch64") {
+            "aarch64-unknown-linux-gnu"
+        } else {
+            "x86_64-unknown-linux-gnu"
+        };
+        let postgres = crate::oliphaunt::assets::asset_manifest_metadata()
+            .unwrap()
+            .postgres_version;
+        let manifest = Box::leak(serde_json::json!({"format-version": 1, "postgres-version": postgres, "target-triple": target, "engine": "llvm-opta", "wasmer-version": "7.2.1", "wasmer-wasix-version": "0.702.1", "artifacts": [{"name": "extension:postgis", "sha256": "a".repeat(64), "module-sha256": format!("{:x}", Sha256::digest(module))}]}).to_string().into_boxed_str());
+        let package = Box::leak(Box::new(unsafe {
+            ExtensionPackage::from_trusted_release(
+                "oliphaunt-extension-postgis",
+                "3.5.0",
+                liboliphaunt_wasix_portable::PACKAGE_VERSION,
+                archives,
+                manifest,
+                &[],
+            )
+        }));
+        let extension = Extension::POSTGIS.with_package(package);
+        assert_eq!(resolve_extension_set(&[extension]).unwrap(), [extension]);
+        let unused_dependencies = Box::leak(
+            vec![
+                resources(
+                    "original-unused-contrib",
+                    liboliphaunt_wasix_portable::PACKAGE_VERSION,
+                )
+                .with_install(&[], &[], &[])
+                .as_dependency("fuzzystrmatch"),
+                resources("conflicting-unused-contrib", "999.0.0")
+                    .with_install(&[], &[], &[])
+                    .as_dependency("fuzzystrmatch"),
+            ]
+            .into_boxed_slice(),
+        );
+        let with_unused = Box::leak(Box::new((*package).with_dependencies(unused_dependencies)));
+        let old_extension = Extension::POSTGIS.with_package(with_unused);
+        assert_eq!(
+            resolve_extension_set(&[old_extension]).unwrap(),
+            [old_extension]
+        );
+        assert_eq!(
+            extension.required_native_modules().unwrap(),
+            [(
+                "lib/postgresql/postgis-3.so".to_owned(),
+                Some("extension:postgis".to_owned())
+            )]
+        );
+        assert_eq!(
+            Extension::PG_TEXTSEARCH
+                .with_package(package)
+                .startup_config(),
+            Extension::PG_TEXTSEARCH.startup_config()
+        );
     }
 }

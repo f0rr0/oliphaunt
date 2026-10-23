@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -40,6 +47,9 @@ const [
   facadeInput,
   addonTemplateInput,
   currentAddonInput,
+  addonInputs,
+  currentAddonInputs,
+  contribPortableInput,
 ] = process.argv.slice(2);
 const napiContract = JSON.parse(readFileSync(napiInput, 'utf8'));
 const addonTemplate = JSON.parse(readFileSync(addonTemplateInput, 'utf8'));
@@ -49,9 +59,9 @@ const githubRoot = path.dirname(githubInput);
 const npmRoot = path.dirname(npmInput);
 const cargoRoot = path.dirname(cargoInput);
 const spec = JSON.parse(readFileSync(input, 'utf8'));
-const partInputs = process.argv.slice(19);
+const partInputs = process.argv.slice(22);
 const partParents = Object.keys(spec.outputs.cargoParts ?? {});
-assert.equal(process.argv.length, 19 + partParents.length);
+assert.equal(process.argv.length, 22 + partParents.length);
 if (partParents.length)
   assert.deepEqual(
     partParents.sort(),
@@ -150,18 +160,64 @@ try {
     assert.equal(linkContract.postgresVersion, hostManifest.runtime['postgres-version']);
     const link = linkContract.moduleLinkMetadata[spec.sqlName];
     const exports = new Set(link.exports.map((row: { name: string }) => row.name));
-    const callable = new Set<string>();
-    for (const [name, entry] of portable)
-      if (name.endsWith('.sql'))
-        for (const match of entry
-          .data()
-          .toString()
-          .matchAll(/\bAS\s+'(?:MODULE_PATHNAME|\$libdir\/[^']+)'\s*,\s*'([^']+)'/giu))
-          callable.add(match[1]);
-    for (const name of ['Pg_magic_func', ...callable])
-      assert(exports.has(name), `compiled member lost PostgreSQL export ${name}`);
-    for (const name of callable)
-      assert(exports.has(`pg_finfo_${name}`), `compiled member lost function metadata ${name}`);
+    const modules = new Map<string, string>(
+      linkContract.nativeModules.map((module: { name: string; path: string }) => [
+        module.path,
+        module.name,
+      ]),
+    );
+    const callable = new Map<string, Set<string>>([[spec.sqlName, new Set()]]);
+    for (const [sql, entry] of portable) {
+      if (!sql.endsWith('.sql')) continue;
+      const sqlName = path.posix.basename(sql).split('--')[0];
+      const control = portable.get(`share/postgresql/extension/${sqlName}.control`);
+      const modulePathname = control
+        ?.data()
+        .toString()
+        .match(/^\s*module_pathname\s*=\s*'([^']+)'/imu)?.[1];
+      for (const match of entry
+        .data()
+        .toString()
+        .matchAll(/\bAS\s+'([^']+)'\s*,\s*'([^']+)'/giu)) {
+        let library = match[1];
+        if (library.toUpperCase() === 'MODULE_PATHNAME') {
+          assert(
+            modulePathname || !sql.includes('--') || sqlName === spec.sqlName,
+            `${sql} has no control module_pathname`,
+          );
+          library = modulePathname ?? `$libdir/${spec.descriptor['native-module-file']}`;
+        }
+        assert(library.startsWith('$libdir/'), `${sql} references unknown module ${library}`);
+        const modulePath = `lib/postgresql/${library.slice('$libdir/'.length)}${library.endsWith('.so') ? '' : '.so'}`;
+        const moduleName = modules.get(modulePath);
+        assert(moduleName, `${sql} references undeclared module ${library}`);
+        const functions = callable.get(moduleName) ?? new Set<string>();
+        functions.add(match[2]);
+        callable.set(moduleName, functions);
+      }
+    }
+    for (const [module, functions] of callable) {
+      const moduleExports =
+        module === spec.sqlName
+          ? exports
+          : new Set(
+              linkContract.moduleLinkMetadata[module].exports.map(
+                (row: { name: string }) => row.name,
+              ),
+            );
+      for (const name of ['Pg_magic_func', ...functions])
+        assert(moduleExports.has(name), `compiled module ${module} lost PostgreSQL export ${name}`);
+      for (const name of functions)
+        assert(
+          moduleExports.has(`pg_finfo_${name}`),
+          `compiled module ${module} lost function metadata ${name}`,
+        );
+      if (spec.sqlName === 'postgis' && module !== spec.sqlName)
+        assert(
+          moduleExports.has('_PG_init'),
+          `compiled module ${module} lost its PostgreSQL initializer`,
+        );
+    }
     if (['vector', 'pg_ivm', 'pg_textsearch', 'postgis'].includes(spec.sqlName))
       assert(exports.has('_PG_init'), 'compiled member lost its PostgreSQL initializer');
     if (spec.sqlName === 'vector')
@@ -360,6 +416,71 @@ try {
     addonProvenance.binary.sha256,
     digest(addonMember('package/prebuilds/oliphaunt_wasix_napi.node')),
   );
+  const dependencyFacts: { sqlName: string; sha256: string; size: number; modules: string[] }[] =
+    [];
+  const dependencyArchives = new Map<string, any>(
+    addonProvenance.buildInputs.inputs.extensionArtifacts.flatMap((row: any) => {
+      assert.equal(row.product, 'oliphaunt-extension-contrib-pg18');
+      return row.portableArchives.map((member: any) => [member.sqlName, member]);
+    }),
+  );
+  const selectedInputs = current ? currentAddonInputs : addonInputs;
+  let completedContrib: ReturnType<typeof readPortableArchiveEntries> | undefined;
+  if (selectedInputs === '-' && frozen.wasixInstall.dependencies.length > 0) {
+    assert.notEqual(contribPortableInput, '-', 'held dependency requires its original carrier');
+    const original = napi.contribPortable;
+    assert.equal(original.publication.version, addonManifest.oliphaunt.runtimeVersion);
+    const bytes = readFileSync(contribPortableInput);
+    assert.equal(digest(bytes), original.file.sha256);
+    assert.equal(bytes.length, original.file.size);
+    completedContrib = readPortableArchiveEntries(realpathSync(contribPortableInput));
+  }
+  const visitedDependencies = new Set<string>();
+  const visitDependency = (sqlName: string) => {
+    if (sqlName === 'plpgsql' || sqlName === spec.sqlName || visitedDependencies.has(sqlName))
+      return;
+    visitedDependencies.add(sqlName);
+    const declared = dependencyArchives.get(sqlName);
+    assert(declared, `selected addon has no declared dependency ${sqlName}`);
+    let bytes: Buffer;
+    if (selectedInputs !== '-') bytes = readFileSync(path.join(selectedInputs, declared.path));
+    else {
+      const member = completedContrib?.get(
+        `oliphaunt-extension-contrib-pg18-wasix-${addonManifest.oliphaunt.runtimeVersion}/payload/files/extensions/${sqlName}/extension.tar.zst`,
+      );
+      assert(member?.isFile && !member.isSymbolicLink, `missing original ${sqlName} archive`);
+      bytes = Buffer.from(member.data());
+    }
+    assert.equal(digest(bytes), declared.sha256, `${sqlName} differs from addon input`);
+    // Published v1 provenance carries SHA-256 only; the executing addon also checks size.
+    if (declared.size !== undefined)
+      assert.equal(bytes.length, declared.size, `${sqlName} size differs from addon input`);
+    const archiveFile = path.join(root, `${sqlName}.tar.zst`);
+    writeFileSync(archiveFile, bytes);
+    const entries = readPortableArchiveEntries(archiveFile);
+    for (const [name, entry] of entries) {
+      if (!entry.isFile || !name.endsWith('.control')) continue;
+      for (const line of entry.data().toString().split('\n')) {
+        if (!/^\s*requires\s*=/u.test(line)) continue;
+        const value = line.match(/^\s*requires\s*=\s*(?:'([^']*)'|([^#]*?))\s*(?:#.*)?$/u);
+        assert(value, `${sqlName} has malformed control requires`);
+        for (const dependency of (value[1] ?? value[2]).split(',').map((name) => name.trim()))
+          if (dependency) visitDependency(dependency);
+      }
+    }
+    dependencyFacts.push({
+      sqlName,
+      sha256: declared.sha256,
+      size: bytes.length,
+      modules: [...entries]
+        .filter(([name, entry]) => entry.isFile && name.startsWith('lib/postgresql/'))
+        .map(([name]) => name)
+        .sort(),
+    });
+  };
+  for (const dependency of frozen.wasixInstall.dependencies) visitDependency(dependency);
+  const dependenciesInput = path.join(root, 'selected-dependencies.json');
+  writeFileSync(dependenciesInput, JSON.stringify(dependencyFacts));
   extractPortableArchiveTree(
     addonArchive,
     path.join(root, 'node_modules', addonManifest.name),
@@ -381,6 +502,7 @@ try {
       realpathSync(frozenInput),
       realpathSync(fixtureInput),
       realpathSync(hostManifestInput),
+      dependenciesInput,
     ],
     { cwd: root, env, stdout: 'pipe', stderr: 'pipe', timeout: 240_000 },
   );

@@ -103,7 +103,7 @@ _member = rule(implementation = _member_impl, toolchains = use_cc_toolchain() + 
              "_registration": attr.label(default = "//build_defs/extensions:mobile_registration.mts", allow_single_file = True),
              "_helpers": attr.label_list(default = _REGISTRATION_HELPERS, allow_files = True)}, fragments = ["cpp"])
 
-def native_mobile_extension(name, sql_name, srcs, hdrs = [], deps = [], copts = [], includes = [], defines = [], linkopts = [], object_roots = [], consumer_deps = None):
+def native_mobile_extension(name, sql_name, srcs, hdrs = [], deps = [], copts = [], includes = [], defines = [], linkopts = [], object_roots = [], consumer_deps = None, init_symbol = None):
     """Compile the existing units with the static hook namespace and target SDK."""
     descriptor = _descriptor(sql_name)
     stem = descriptor.get("native-module-file", "")
@@ -112,7 +112,7 @@ def native_mobile_extension(name, sql_name, srcs, hdrs = [], deps = [], copts = 
     stem = stem[:-3]
     aliases = NATIVE_MOBILE_MEMBER_ALIASES[sql_name]
     prefix = "oliphaunt_static_" + stem.replace("-", "_")
-    local_defines = ["Pg_magic_func=" + prefix + "_Pg_magic_func", "_PG_init=" + prefix + "__PG_init"]
+    local_defines = ["Pg_magic_func=" + prefix + "_Pg_magic_func", "_PG_init=" + (init_symbol or prefix + "__PG_init")]
     local_defines += [key + "=" + value for key, value in aliases.items()]
     cc_library(name = name + "_objects", srcs = srcs, hdrs = hdrs,
                deps = ["//src/native/runtime:postgres_embedded_headers"] + deps, includes = includes, defines = defines,

@@ -32,7 +32,7 @@ def extension_native_dependency_modules(paths, configuration, by_target = {}):
         if not basename.endswith(".so"):
             fail("canonical native dependency module must declare its .so stem")
         result.append(basename[:-3] + _module_suffix(configuration))
-    return result
+    return sorted(result)
 
 def _descriptor(sql_name):
     for descriptor in EXTENSIONS.values():
@@ -220,11 +220,18 @@ def _payload_impl(ctx):
         fail("compiled member payload requires independently built server and embedded modules")
     dependency_paths = recipe_artifacts.get("native_dependency_modules", [])
     dependency_basenames = extension_native_dependency_modules(dependency_paths, configuration, recipe_artifacts.get("native_dependency_modules_by_target", {}))
-    if sorted([file.basename for file in ctx.files.dependency_modules]) != sorted(dependency_basenames):
-        fail("native dependency modules differ from the canonical extension recipe")
-    for file in ctx.files.dependency_modules:
-        for profile in profiles:
+    for profile, companions in [("postgresql", ctx.files.server_companion_modules), ("modules", ctx.files.embedded_companion_modules)]:
+        modules = ctx.files.dependency_modules + companions
+        if sorted([file.basename for file in modules]) != sorted(dependency_basenames):
+            fail("native dependency modules differ from the canonical extension recipe for " + profile)
+        for file in modules:
             mappings.append({"source": file.path, "destination": "lib/%s/%s" % (profile, file.basename)})
+    sql_members = {ctx.attr.sql_name: True} if descriptor["lifecycle"]["create-extension"] else {}
+    for path in recipe_artifacts.get("control_files", []):
+        prefix = "share/postgresql/extension/"
+        if not path.startswith(prefix) or not path.endswith(".control") or "/" in path[len(prefix):]:
+            fail("owned SQL control requires its canonical PostgreSQL destination")
+        sql_members[path[len(prefix):-len(".control")]] = True
     facts = {
         "schema": "oliphaunt-extension-member-payload-v1",
         "sql_name": ctx.attr.sql_name,
@@ -237,6 +244,7 @@ def _payload_impl(ctx):
         "postgres_source": POSTGRES_SOURCE,
         "default_version": extension_default_version(ctx.attr.sql_name),
         "creates_extension": descriptor["lifecycle"]["create-extension"],
+        "sql_members": sorted(sql_members.keys()),
         "dependencies": descriptor.get("dependencies", []),
         "module_profiles": profiles,
         "module_file": module_file,
@@ -259,7 +267,7 @@ def _payload_impl(ctx):
     args.add("--inventory", inventory)
     bun_action(
         ctx, ctx.attr._assembler,
-        inputs = depset([spec] + ctx.files.resources + ctx.files.main_sql + ctx.files.server_module + ctx.files.embedded_module + ctx.files.dependency_modules + data_inputs),
+        inputs = depset([spec] + ctx.files.resources + ctx.files.main_sql + ctx.files.server_module + ctx.files.embedded_module + ctx.files.dependency_modules + ctx.files.server_companion_modules + ctx.files.embedded_companion_modules + data_inputs),
         outputs = [archive, inventory],
         arguments = [args],
         mnemonic = "ExtensionMemberPayload",
@@ -283,6 +291,8 @@ _extension_member_payload = rule(
         "server_module": attr.label(allow_files = True),
         "embedded_module": attr.label(allow_files = True),
         "dependency_modules": attr.label_list(allow_files = True),
+        "server_companion_modules": attr.label_list(allow_files = True),
+        "embedded_companion_modules": attr.label_list(allow_files = True),
         "data_resources": attr.label_keyed_string_dict(allow_files = True),
         "construction_licenses": attr.label_keyed_string_dict(allow_files = True),
         "core_supplier": attr.label(providers = [ShippingSupplierInfo]),

@@ -67,7 +67,7 @@ use static_registry::*;
 const RUNTIME_RESOURCES_SCHEMA: &str = "oliphaunt-runtime-resources-v1";
 const EXTENSION_ARTIFACT_LAYOUT: &str = "oliphaunt-extension-artifact-v1";
 const EXTENSION_ARTIFACT_NATIVE_RUNTIME_PRODUCT: &str = "liboliphaunt-native";
-const EXTENSION_ARTIFACT_MANIFEST_KEYS: [&str; 22] = [
+const EXTENSION_ARTIFACT_MANIFEST_KEYS: [&str; 24] = [
     "packageLayout",
     "pgMajor",
     "sqlName",
@@ -89,6 +89,8 @@ const EXTENSION_ARTIFACT_MANIFEST_KEYS: [&str; 22] = [
     "staticSymbolAliases",
     "licenseFiles",
     "licenseProfile",
+    "sqlMembers",
+    "nativeModuleStems",
     "files",
 ];
 const RUNTIME_FILES_LAYOUT: &str = "postgres-runtime-files-v1";
@@ -469,8 +471,9 @@ struct RuntimeResourceExtension {
     sql_name: String,
     native_runtime_version: Option<String>,
     creates_extension: bool,
+    sql_members: Vec<String>,
     native_module_stem: Option<String>,
-    native_module_file: Option<String>,
+    native_module_files: Vec<String>,
     native_dependency_module_files: Vec<String>,
     native_target: Option<String>,
     dependencies: Vec<String>,
@@ -790,11 +793,9 @@ fn built_in_runtime_resource_extension(extension: Extension) -> RuntimeResourceE
         sql_name: catalog.sql_name.clone(),
         native_runtime_version: None,
         creates_extension: catalog.creates_extension,
+        sql_members: catalog.sql_members.clone(),
         native_module_stem: catalog.native_module_stem.clone(),
-        native_module_file: catalog
-            .native_module_stem
-            .as_deref()
-            .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX)),
+        native_module_files: extension.native_module_files().collect(),
         native_dependency_module_files: extension
             .native_dependency_module_stems_for_host()
             .iter()
@@ -860,11 +861,26 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
             manifest_path.display()
         ))
     })?;
-    let manifest = parse_canonical_properties_manifest(
-        &manifest_path,
-        &manifest_text,
-        &EXTENSION_ARTIFACT_MANIFEST_KEYS,
-    )?;
+    let legacy = !manifest_text
+        .lines()
+        .any(|line| line.starts_with("sqlMembers=") || line.starts_with("nativeModuleStems="));
+    let keys = EXTENSION_ARTIFACT_MANIFEST_KEYS
+        .iter()
+        .copied()
+        .filter(|key| !legacy || !matches!(*key, "sqlMembers" | "nativeModuleStems"))
+        .collect::<Vec<_>>();
+    let mut manifest = parse_canonical_properties_manifest(&manifest_path, &manifest_text, &keys)?;
+    if legacy {
+        // Published v1 artifacts encode only the primary SQL and module identities.
+        let members = if parse_manifest_yes_no(&manifest_path, &manifest, "createsExtension")? {
+            required_manifest_value(&manifest_path, &manifest, "sqlName")?.to_owned()
+        } else {
+            String::new()
+        };
+        let stems = manifest["nativeModuleStem"].clone();
+        manifest.insert("sqlMembers".to_owned(), members);
+        manifest.insert("nativeModuleStems".to_owned(), stems);
+    }
     require_property(
         &manifest_path,
         &manifest,
@@ -933,6 +949,63 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
             manifest_path.display()
         )));
     }
+    let sql_members = parse_manifest_id_list(&manifest_path, &manifest, "sqlMembers")?;
+    let native_module_stems =
+        parse_manifest_id_list(&manifest_path, &manifest, "nativeModuleStems")?;
+    if creates_extension != sql_members.contains(&sql_name)
+        || (!creates_extension && !sql_members.is_empty())
+        || native_module_stem
+            .as_ref()
+            .is_some_and(|stem| !native_module_stems.contains(stem))
+        || (native_module_stem.is_none() && !native_module_stems.is_empty())
+    {
+        return Err(Error::InvalidConfig(format!(
+            "manifest {} SQL/module members disagree with its primary extension",
+            manifest_path.display()
+        )));
+    }
+    let mobile = native_target
+        .as_deref()
+        .is_some_and(|target| target == "ios-xcframework" || target.starts_with("android-"));
+    let primary_stems = native_module_stem.iter().cloned().collect::<Vec<_>>();
+    if let Some(catalog) = catalog::by_sql_name(&sql_name).filter(|_| !legacy) {
+        let expected_stems = if mobile {
+            &primary_stems
+        } else {
+            &catalog.native_module_stems
+        };
+        if sql_members != catalog.sql_members
+            || native_module_stem != catalog.native_module_stem
+            || native_module_stems != *expected_stems
+        {
+            return Err(Error::InvalidConfig(format!(
+                "manifest {} sqlMembers/nativeModuleStems must identify the owned SQL/module closure",
+                manifest_path.display()
+            )));
+        }
+    } else if mobile && native_module_stems != primary_stems {
+        return Err(Error::InvalidConfig(format!(
+            "manifest {} nativeModuleStems must contain only the merged primary mobile module",
+            manifest_path.display()
+        )));
+    }
+    let native_module_files = if let Some(stem) = &native_module_stem {
+        let suffix = native_module_file
+            .as_deref()
+            .and_then(|file| file.strip_prefix(stem));
+        let Some(suffix @ (".so" | ".dylib" | ".dll")) = suffix else {
+            return Err(Error::InvalidConfig(format!(
+                "manifest {} nativeModuleFile must match nativeModuleStem and a native module suffix",
+                manifest_path.display()
+            )));
+        };
+        native_module_stems
+            .iter()
+            .map(|stem| format!("{stem}{suffix}"))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let dependencies = parse_manifest_id_list(&manifest_path, &manifest, "dependencies")?;
     let data_files = parse_manifest_relative_path_list(&manifest_path, &manifest, "dataFiles")?;
     let extension_sql_file_names =
@@ -1005,8 +1078,9 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
         sql_name,
         native_runtime_version: Some(native_runtime_version),
         creates_extension,
+        sql_members,
         native_module_stem,
-        native_module_file,
+        native_module_files,
         native_dependency_module_files: Vec::new(),
         native_target,
         dependencies,
@@ -1026,15 +1100,19 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
             files_root,
         },
     };
-    validate_prebuilt_extension_leaf_inventory(root, &manifest_path, &mut extension)?;
+    validate_prebuilt_extension_leaf_inventory(root, &manifest_path, &mut extension, legacy)?;
     Ok(extension)
 }
 
 impl RuntimeResourceExtension {
     fn native_module_files(&self) -> impl Iterator<Item = &str> {
-        self.native_module_file
+        self.native_module_files
             .iter()
-            .chain(&self.native_dependency_module_files)
+            .chain(
+                self.native_dependency_module_files
+                    .iter()
+                    .filter(|module| !self.native_module_files.contains(module)),
+            )
             .map(String::as_str)
     }
 
@@ -1047,15 +1125,14 @@ fn runtime_extension_sql_file_belongs(
     extension: &RuntimeResourceExtension,
     file_name: &str,
 ) -> bool {
-    (extension.creates_extension
-        && (file_name == format!("{}.control", extension.sql_name)
-            || file_name == format!("{}.sql", extension.sql_name)
-            || (file_name.starts_with(&format!("{}--", extension.sql_name))
-                && file_name.ends_with(".sql"))))
-        || extension
-            .extension_sql_file_names
-            .iter()
-            .any(|name| name == file_name)
+    extension.sql_members.iter().any(|member| {
+        file_name == format!("{member}.control")
+            || file_name == format!("{member}.sql")
+            || (file_name.starts_with(&format!("{member}--")) && file_name.ends_with(".sql"))
+    }) || extension
+        .extension_sql_file_names
+        .iter()
+        .any(|name| name == file_name)
         || (file_name.ends_with(".sql")
             && extension
                 .extension_sql_file_prefixes
@@ -1245,6 +1322,277 @@ mod tests {
             "all packaged paths and file bytes must ignore private acquisition paths/markers"
         );
         assert_eq!(materialized.runtime_cache_key, "installed-runtime-cache");
+    }
+
+    #[test]
+    fn postgis_artifact_stages_complete_sql_and_platform_module_closures() {
+        for mobile in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let artifact = temp.path().join("postgis");
+            let target = if mobile {
+                "ios-xcframework"
+            } else {
+                "linux-x64-gnu"
+            };
+            write_prebuilt_extension_artifact(
+                &artifact,
+                "postgis",
+                "postgis-3",
+                "oliphaunt_static_postgis_3",
+                "data/postgis.rules",
+                mobile,
+            );
+            let catalog = catalog::for_extension(Extension::POSTGIS);
+            let stems = if mobile {
+                vec!["postgis-3".to_owned()]
+            } else {
+                catalog.native_module_stems.clone()
+            };
+            let manifest_path = artifact.join("manifest.properties");
+            let manifest = fs::read_to_string(&manifest_path)
+                .unwrap()
+                .replace(
+                    "nativeTarget=test-target",
+                    &format!("nativeTarget={target}"),
+                )
+                .replace(
+                    "sqlMembers=postgis\n",
+                    &format!("sqlMembers={}\n", catalog.sql_members.join(",")),
+                )
+                .replace(
+                    "nativeModuleStems=postgis-3\n",
+                    &format!("nativeModuleStems={}\n", stems.join(",")),
+                );
+            fs::write(&manifest_path, &manifest).unwrap();
+            for member in &catalog.sql_members {
+                for suffix in [".control", "--1.0.sql"] {
+                    write_file(
+                        &artifact
+                            .join(format!("files/share/postgresql/extension/{member}{suffix}")),
+                        b"fixture\n",
+                    );
+                }
+                let symbol = match member.as_str() {
+                    "postgis" => Some("postgis_version"),
+                    "postgis_raster" => Some("RASTER_in"),
+                    "postgis_topology" => Some("Topology_LoadTopoGeometry"),
+                    _ => None,
+                };
+                if let Some(symbol) = symbol {
+                    let stem = if mobile { "postgis" } else { member };
+                    write_file(
+                        &artifact.join(format!(
+                            "files/share/postgresql/extension/{member}--1.0.sql"
+                        )),
+                        format!(
+                            "CREATE FUNCTION {symbol}() RETURNS text AS '$libdir/{stem}-3', '{symbol}' LANGUAGE C;\n"
+                        )
+                        .as_bytes(),
+                    );
+                }
+            }
+            for stem in &stems {
+                for directory in ["postgresql", "modules"] {
+                    write_file(
+                        &artifact.join(format!(
+                            "files/lib/{directory}/{stem}{}",
+                            std::env::consts::DLL_SUFFIX
+                        )),
+                        b"fixture-module\n",
+                    );
+                }
+            }
+            let extension = load_prebuilt_extension_artifact(&artifact).unwrap();
+            assert!(
+                extension.native_dependency_module_files.is_empty(),
+                "owned companions must not infer an absent aggregate supplier"
+            );
+            let extensions = vec![extension];
+            let registered = if mobile {
+                vec!["postgis-3".to_owned()]
+            } else {
+                vec![]
+            };
+            let metadata = mobile_static_registry_metadata(&extensions, &registered).unwrap();
+            let runtime_files = temp.path().join("runtime");
+            copy_prebuilt_extension_artifacts(&runtime_files, &extensions, Some(target), &metadata)
+                .unwrap();
+            if mobile {
+                let modules =
+                    static_registry_modules(&runtime_files, &extensions, &metadata).unwrap();
+                assert_eq!(modules.len(), 1);
+                assert_eq!(
+                    modules[0].sql_symbols,
+                    ["RASTER_in", "Topology_LoadTopoGeometry", "postgis_version"]
+                );
+            }
+            for member in &catalog.sql_members {
+                assert!(
+                    runtime_files
+                        .join(format!("share/postgresql/extension/{member}.control"))
+                        .is_file()
+                );
+                assert!(
+                    runtime_files
+                        .join(format!("share/postgresql/extension/{member}--1.0.sql"))
+                        .is_file()
+                );
+            }
+            for stem in &stems {
+                assert_eq!(
+                    runtime_files
+                        .join(format!(
+                            "lib/postgresql/{stem}{}",
+                            std::env::consts::DLL_SUFFIX
+                        ))
+                        .is_file(),
+                    !mobile
+                );
+            }
+            for (field, incomplete) in [
+                ("sqlMembers", "postgis"),
+                (
+                    "nativeModuleStems",
+                    if mobile {
+                        "postgis-3,postgis_raster-3"
+                    } else {
+                        "postgis-3"
+                    },
+                ),
+            ] {
+                let current = manifest
+                    .lines()
+                    .find(|line| line.starts_with(&format!("{field}=")))
+                    .unwrap();
+                fs::write(
+                    &manifest_path,
+                    manifest.replace(current, &format!("{field}={incomplete}")),
+                )
+                .unwrap();
+                assert!(load_prebuilt_extension_artifact(&artifact).is_err());
+                fs::write(
+                    &manifest_path,
+                    manifest.replace(&format!("{current}\n"), ""),
+                )
+                .unwrap();
+                assert!(load_prebuilt_extension_artifact(&artifact).is_err());
+            }
+            fs::write(&manifest_path, &manifest).unwrap();
+            for suffix in [".control", "--1.0.sql"] {
+                let file = artifact.join(format!(
+                    "files/share/postgresql/extension/postgis_raster{suffix}"
+                ));
+                fs::remove_file(&file).unwrap();
+                assert!(
+                    load_prebuilt_extension_artifact(&artifact)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("postgis_raster")
+                );
+                write_file(&file, b"fixture\n");
+            }
+            if !mobile {
+                fs::remove_file(artifact.join(format!(
+                    "files/lib/modules/postgis_raster-3{}",
+                    std::env::consts::DLL_SUFFIX
+                )))
+                .unwrap();
+                assert!(load_prebuilt_extension_artifact(&artifact).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_postgis_artifact_keeps_its_declared_primary_only_closure() {
+        let temp = tempfile::tempdir().unwrap();
+        let artifact = temp.path().join("postgis");
+        write_profiled_extension_artifact(
+            &artifact,
+            "postgis",
+            "postgis-3",
+            "linux-x64-gnu",
+            NativeExtensionArtifactLicenseProfile::ExternalNative,
+            &["share/licenses/postgis/COPYING"],
+        );
+        let manifest_path = artifact.join("manifest.properties");
+        let manifest = fs::read_to_string(&manifest_path)
+            .unwrap()
+            .lines()
+            .filter(|line| {
+                !line.starts_with("sqlMembers=") && !line.starts_with("nativeModuleStems=")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        fs::write(&manifest_path, manifest).unwrap();
+        let catalog = catalog::for_extension(Extension::POSTGIS);
+        for member in catalog
+            .sql_members
+            .iter()
+            .filter(|member| *member != "postgis")
+        {
+            for suffix in [".control", "--1.0.sql"] {
+                fs::remove_file(
+                    artifact.join(format!("files/share/postgresql/extension/{member}{suffix}")),
+                )
+                .unwrap();
+            }
+        }
+        for stem in catalog
+            .native_module_stems
+            .iter()
+            .filter(|stem| *stem != "postgis-3")
+        {
+            for profile in ["postgresql", "modules"] {
+                fs::remove_file(artifact.join(format!("files/lib/{profile}/{stem}.so"))).unwrap();
+            }
+        }
+        let extension = load_prebuilt_extension_artifact(&artifact).unwrap();
+        assert_eq!(extension.sql_members, ["postgis"]);
+        assert_eq!(extension.native_module_files, ["postgis-3.so"]);
+        assert!(extension.native_dependency_module_files.is_empty());
+        let suppliers = Extension::POSTGIS
+            .native_dependency_module_stems()
+            .iter()
+            .filter(|stem| {
+                !catalog
+                    .native_module_stems
+                    .iter()
+                    .any(|owned| owned.as_str() == **stem)
+            })
+            .map(|stem| format!("{stem}.so"))
+            .collect::<Vec<_>>();
+        assert!(!suppliers.is_empty());
+        for module in &suppliers {
+            for profile in ["postgresql", "modules"] {
+                write_file(
+                    &artifact.join(format!("files/lib/{profile}/{module}")),
+                    b"historical supplier module\n",
+                );
+            }
+        }
+        let extension = load_prebuilt_extension_artifact(&artifact).unwrap();
+        assert_eq!(extension.native_module_files, ["postgis-3.so"]);
+        assert_eq!(extension.native_dependency_module_files, suppliers);
+        let embedded_supplier = artifact.join("files/lib/modules").join(&suppliers[0]);
+        fs::remove_file(&embedded_supplier).unwrap();
+        assert!(
+            load_prebuilt_extension_artifact(&artifact)
+                .unwrap_err()
+                .to_string()
+                .contains("leaf inventory mismatch")
+        );
+        write_file(&embedded_supplier, b"historical supplier module\n");
+        write_file(
+            &artifact.join("files/share/postgresql/extension/postgis_raster.control"),
+            b"undeclared companion\n",
+        );
+        assert!(
+            load_prebuilt_extension_artifact(&artifact)
+                .unwrap_err()
+                .to_string()
+                .contains("undeclared extension SQL/control file")
+        );
     }
 
     #[test]
@@ -1698,6 +2046,17 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             "data/acme_ext.rules",
             true,
         );
+        let manifest = artifact.join("manifest.properties");
+        let legacy = fs::read_to_string(&manifest)
+            .unwrap()
+            .lines()
+            .filter(|line| {
+                !line.starts_with("sqlMembers=") && !line.starts_with("nativeModuleStems=")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        fs::write(manifest, legacy).unwrap();
         write_file(
             &artifact.join("files/share/postgresql/extension/hstore.control"),
             b"comment = 'should not leak'\n",
@@ -2983,12 +3342,20 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             );
             let module = format!("{stem}.{suffix}");
             if suffix != "so" {
-                for profile in ["postgresql", "modules"] {
-                    fs::rename(
-                        root.join(format!("files/lib/{profile}/{stem}.so")),
-                        root.join(format!("files/lib/{profile}/{module}")),
-                    )
-                    .unwrap();
+                for owned_stem in if slices.is_empty() {
+                    catalog::for_extension(canonical)
+                        .native_module_stems
+                        .clone()
+                } else {
+                    vec![stem.to_owned()]
+                } {
+                    for profile in ["postgresql", "modules"] {
+                        fs::rename(
+                            root.join(format!("files/lib/{profile}/{owned_stem}.so")),
+                            root.join(format!("files/lib/{profile}/{owned_stem}.{suffix}")),
+                        )
+                        .unwrap();
+                    }
                 }
             }
             let mut text = fs::read_to_string(root.join("manifest.properties"))
@@ -3100,19 +3467,12 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             let report =
                 runtime_resource_size_report(&resources, &extensions, Some(target), &registry)
                     .unwrap();
-            assert_eq!(
-                report.extensions[0].file_count,
-                if slices.is_empty() {
-                    4 + modules.len()
-                } else {
-                    3
-                }
-            );
-            let mut expected = vec![
-                PathBuf::from("share/postgresql/extension/postgis.control"),
-                PathBuf::from("share/postgresql/extension/postgis--1.0.sql"),
-                PathBuf::from("share/licenses/postgis/COPYING"),
-            ];
+            let mut expected = vec![PathBuf::from("share/licenses/postgis/COPYING")];
+            for member in &catalog::for_extension(canonical).sql_members {
+                expected.extend([".control", "--1.0.sql"].map(|suffix| {
+                    PathBuf::from(format!("share/postgresql/extension/{member}{suffix}"))
+                }));
+            }
             if slices.is_empty() {
                 expected.extend(
                     extensions[0]
@@ -3120,6 +3480,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
                         .map(|module| PathBuf::from("lib/postgresql").join(module)),
                 );
             }
+            assert_eq!(report.extensions[0].file_count, expected.len());
             let bytes = expected
                 .iter()
                 .map(|file| fs::metadata(runtime.join(file)).unwrap().len())
@@ -3175,7 +3536,11 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             }
             let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
             assert!(
-                error.to_string().contains("leaf inventory mismatch"),
+                error.to_string().contains("leaf inventory mismatch")
+                    || fault == "wrong-main"
+                        && error
+                            .to_string()
+                            .contains("SQL/module members disagree with its primary extension"),
                 "{error}"
             );
         }
@@ -3221,15 +3586,11 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         let built_in = built_in_runtime_resource_extension(canonical);
         assert_eq!(
             built_in.native_dependency_module_files,
-            if cfg!(windows) {
-                Vec::<String>::new()
-            } else {
-                canonical
-                    .native_dependency_module_stems()
-                    .iter()
-                    .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX))
-                    .collect()
-            },
+            canonical
+                .native_dependency_module_stems_for_host()
+                .iter()
+                .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX))
+                .collect::<Vec<_>>(),
             "current Windows construction incorporates dependencies; historical sidecar fixtures above remain valid",
         );
         let base = temp.join("built-in-base");
@@ -3643,6 +4004,8 @@ staticSymbolPrefix={static_symbol_prefix}
 staticSymbolAliases=
 licenseFiles=share/licenses/{sql_name}/LICENSE
 licenseProfile=external-native
+sqlMembers={sql_name}
+nativeModuleStems={module_stem}
 files=files
 ",
                 if mobile_prebuilt { "yes" } else { "no" }
@@ -3714,6 +4077,14 @@ files=files
     ) {
         let module_file = format!("{module_stem}.so");
         let license_value = license_files.join(",");
+        let catalog = catalog::by_sql_name(sql_name).unwrap();
+        let sql_members = catalog.sql_members.join(",");
+        let module_stems = if target == "ios-xcframework" || target.starts_with("android-") {
+            vec![module_stem.to_owned()]
+        } else {
+            catalog.native_module_stems.clone()
+        };
+        let native_module_stems = module_stems.join(",");
         write_file(
             &root.join("manifest.properties"),
             format!(
@@ -3739,6 +4110,8 @@ staticSymbolPrefix=
 staticSymbolAliases=
 licenseFiles={license_value}
 licenseProfile={}
+sqlMembers={sql_members}
+nativeModuleStems={native_module_stems}
 files=files
 ",
                 profile.as_str()
@@ -3772,26 +4145,30 @@ files=files
                 format!("fixture upstream license {license}\n").as_bytes(),
             );
         }
-        write_file(
-            &root
-                .join("files/share/postgresql/extension")
-                .join(format!("{sql_name}.control")),
-            b"comment = 'profile fixture'\n",
-        );
-        write_file(
-            &root
-                .join("files/share/postgresql/extension")
-                .join(format!("{sql_name}--1.0.sql")),
-            b"SELECT 1;\n",
-        );
-        write_file(
-            &root.join("files/lib/postgresql").join(&module_file),
-            b"fixture server module\n",
-        );
-        write_file(
-            &root.join("files/lib/modules").join(module_file),
-            b"fixture embedded module\n",
-        );
+        for member in &catalog.sql_members {
+            write_file(
+                &root
+                    .join("files/share/postgresql/extension")
+                    .join(format!("{member}.control")),
+                b"comment = 'profile fixture'\n",
+            );
+            write_file(
+                &root
+                    .join("files/share/postgresql/extension")
+                    .join(format!("{member}--1.0.sql")),
+                b"SELECT 1;\n",
+            );
+        }
+        for stem in &module_stems {
+            write_file(
+                &root.join("files/lib/postgresql").join(format!("{stem}.so")),
+                b"fixture server module\n",
+            );
+            write_file(
+                &root.join("files/lib/modules").join(format!("{stem}.so")),
+                b"fixture embedded module\n",
+            );
+        }
     }
 
     fn write_tar_archive_from_dir(archive_path: &Path, source: &Path, prefix: &str) {

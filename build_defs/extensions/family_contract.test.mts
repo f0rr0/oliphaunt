@@ -10,11 +10,22 @@ import {
   extensionReleasePropertiesText,
 } from '../../src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts';
 import {
+  expectedExtensionAotTargets,
+  wasixExtensionAotPackageName,
+  wasixExtensionPackageName,
+} from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
+import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
 } from '../../tools/packaging/portable-archive.mts';
 import { rustNativeTargetCfg } from '../../tools/packaging/rust-native-targets.mts';
 import { validateChecksumManifest } from '../../tools/release/checksum-manifest.mts';
+import { frozenExtensionOwnerRequirements } from '../../tools/release/extension-release-metadata.mts';
+import {
+  DESKTOP_TARGETS,
+  extensionOwnerForSqlName,
+} from '../../tools/release/release-artifact-targets.mts';
+import { declaredWasixDependencyManifest } from './declared_final_inputs.mts';
 import {
   mergeNativeFinalMembers,
   type NativeOwnerSpec,
@@ -115,6 +126,12 @@ validateChecksumManifest(
   spec.product,
 );
 if (spec.outputs.cargo) {
+  const api = Bun.TOML.parse(
+    readFileSync(
+      new URL('../../src/extensions/artifacts/packages/Cargo.toml', import.meta.url),
+      'utf8',
+    ),
+  );
   const archive = readPortableArchiveEntries(spec.outputs.cargo);
   const cargo = Bun.TOML.parse(
     archive.get(`${spec.product}-${spec.version}/Cargo.toml`)!.data().toString('utf8'),
@@ -131,24 +148,85 @@ if (spec.outputs.cargo) {
   const leafNames = spec.carriers
     .filter((row) => row.ecosystem === 'cargo' && row.target !== null)
     .map((row) => row.name);
-  const allowed = new Set([
-    ...leafNames,
-    'liboliphaunt-native-bindings',
-    ...(spec.ownerFamilies.includes('wasix') ? ['oliphaunt-wasix'] : []),
-  ]);
-  assert.deepEqual([...dependencies.keys()].sort(), [...allowed].sort());
-  for (const name of leafNames) {
-    assert.equal(dependencies.get(name).version, `=${spec.version}`);
-    assert.equal(dependencies.get(name).path, undefined);
-    assert.equal(dependencies.get(name).optional, true);
+  const requirements = (family: 'native' | 'wasix') =>
+    frozenExtensionOwnerRequirements({
+      product: spec.product,
+      releaseProduct: family === 'native' ? spec.owner : spec.cargoFacadeMetadata.wasixOwner,
+      members:
+        family === 'native'
+          ? members
+          : members.map((member) => ({
+              sqlName: member.sqlName,
+              dependencies: member.wasixInstall.dependencies,
+            })),
+      runtimeProduct: `liboliphaunt-${family}`,
+      runtimeVersion: spec.releaseMetadata.compatibility[`${family}RuntimeVersion`],
+      ownerForSqlName: (sqlName) =>
+        extensionOwnerForSqlName(sqlName, family, {
+          ownerMetadata: spec.ownerMetadata,
+        }),
+    });
+  const nativeRequirements = requirements('native');
+  const wasixRequirements = spec.ownerFamilies.includes('wasix') ? requirements('wasix') : [];
+  const captured = (spec.wasixDependencyManifests ?? []).map(declaredWasixDependencyManifest);
+  const installs = new Map(members.map((member) => [member.sqlName, member.wasixInstall]));
+  const selectedForeignModules = new Set<string>();
+  const visited = new Set<string>();
+  const pending = spec.ownerFamilies.includes('wasix') ? [...installs.keys()] : [];
+  for (const sqlName of pending) {
+    if (sqlName === 'plpgsql' || visited.has(sqlName)) continue;
+    visited.add(sqlName);
+    let install = installs.get(sqlName);
+    if (!install) {
+      const owner = extensionOwnerForSqlName(sqlName, 'wasix', {
+        ownerMetadata: spec.ownerMetadata,
+      });
+      const supplier = captured.find((row) => row.product === owner.product);
+      install = supplier?.members.find((member) => member.sqlName === sqlName)?.wasixInstall;
+      assert(install, 'final facade dependency lacks its captured WASIX install');
+      if (install.nativeModules.length) selectedForeignModules.add(owner.product);
+    }
+    pending.push(...install.dependencies);
+  }
+  const foreignPortable = wasixRequirements.map(({ product }) =>
+    wasixExtensionPackageName(product),
+  );
+  const foreignAot = wasixRequirements.filter(({ product }) => selectedForeignModules.has(product));
+  const foreignNames = [
+    ...nativeRequirements.map(({ product }) => product),
+    ...foreignPortable,
+    ...foreignAot.flatMap(({ product }) =>
+      expectedExtensionAotTargets().map((target) => wasixExtensionAotPackageName(product, target)),
+    ),
+  ];
+  assert.deepEqual(
+    [...dependencies.keys()].sort(),
+    [
+      ...leafNames,
+      ...foreignNames,
+      'liboliphaunt-native-bindings',
+      ...(spec.ownerFamilies.includes('wasix') ? ['oliphaunt-wasix'] : []),
+    ].sort(),
+  );
+  const exact = new Map(leafNames.map((name) => [name, spec.version]));
+  for (const requirement of nativeRequirements) exact.set(requirement.product, requirement.version);
+  for (const requirement of wasixRequirements)
+    exact.set(wasixExtensionPackageName(requirement.product), requirement.version);
+  for (const requirement of foreignAot)
+    for (const target of expectedExtensionAotTargets())
+      exact.set(wasixExtensionAotPackageName(requirement.product, target), requirement.version);
+  for (const [name, dependency] of dependencies) {
+    if (exact.has(name)) assert.equal(dependency.version, `=${exact.get(name)}`);
+    assert.equal(dependency.path, undefined);
+    assert.equal(dependency.optional, true);
   }
   assert.equal(
     dependencies.get('liboliphaunt-native-bindings').version,
-    `^${spec.cargoFacadeMetadata.bindingVersion}`,
+    api.dependencies['liboliphaunt-native-bindings'],
   );
   assert.equal(
     cargo['build-dependencies']['oliphaunt-build'].version,
-    `^${spec.cargoFacadeMetadata.sdkVersion}`,
+    api['build-dependencies']['oliphaunt-build'],
   );
   for (const target of spec.cargoFacadeMetadata.targets.nativeCargoTargets) {
     const cfg = rustNativeTargetCfg(target);
@@ -156,18 +234,37 @@ if (spec.outputs.cargo) {
       (row) => row.ecosystem === 'cargo' && row.target === target,
     );
     assert(expected && cargo.target[`cfg(${cfg})`].dependencies[expected.name]);
+    for (const { product } of foreignAot)
+      assert(
+        cargo.target[`cfg(${cfg})`].dependencies[
+          wasixExtensionAotPackageName(product, DESKTOP_TARGETS[target].triple)
+        ],
+      );
   }
   if (spec.ownerFamilies.includes('wasix')) {
-    assert.equal(
-      dependencies.get('oliphaunt-wasix').version,
-      `^${spec.cargoFacadeMetadata.wasixSdkVersion}`,
-    );
+    assert.equal(dependencies.get('oliphaunt-wasix').version, api.dependencies['oliphaunt-wasix']);
     assert(cargo.features.wasix.includes('dep:oliphaunt-wasix'));
+    for (const name of foreignPortable) assert(cargo.features.wasix.includes(`dep:${name}`));
+    for (const { product } of foreignAot)
+      for (const target of expectedExtensionAotTargets())
+        assert(
+          cargo.features.wasix.includes(`dep:${wasixExtensionAotPackageName(product, target)}`),
+        );
   } else assert.equal(cargo.features.wasix, undefined);
+  for (const { product } of nativeRequirements) {
+    assert.deepEqual(dependencies.get(product).features, ['native']);
+    assert(cargo.features.native.includes(`dep:${product}`));
+    assert(!cargo.features.wasix?.includes(`dep:${product}`));
+  }
 }
 if (spec.outputs.npm) {
   const archive = readPortableArchiveEntries(spec.outputs.npm);
   const manifest = JSON.parse(archive.get('package/package.json')!.data().toString('utf8'));
+  const api = json(
+    path.resolve(import.meta.dirname, '../../src/extensions/artifacts/packages/package.json'),
+  );
+  assert.deepEqual(manifest.peerDependencies, api.peerDependencies);
+  assert.deepEqual(manifest.peerDependenciesMeta, api.peerDependenciesMeta);
   const facade = spec.carriers.find(
     (row) => row.ecosystem === 'npm' && row.target === null && row.role === 'facade',
   );

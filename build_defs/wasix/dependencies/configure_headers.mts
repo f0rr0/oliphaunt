@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { configure } from '../../extensions/postgis/configure_headers.mts';
+import { configure, geosHeaderValues } from '../../extensions/postgis/configure_headers.mts';
 
 type Values = Record<string, string>;
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -44,7 +44,7 @@ export function generateWasixHeaders({
     // JSON's optional threading and x86 RDRAND remain disabled.
     const values = {
       ...enabled(
-        'HAVE_DLFCN_H HAVE_ENDIAN_H HAVE_FCNTL_H HAVE_INTTYPES_H HAVE_LIMITS_H HAVE_LOCALE_H HAVE_MEMORY_H HAVE_STDARG_H HAVE_STDINT_H HAVE_STDLIB_H HAVE_STRINGS_H HAVE_STRING_H HAVE_SYSLOG_H HAVE_SYS_CDEFS_H HAVE_SYS_PARAM_H HAVE_SYS_RANDOM_H HAVE_SYS_RESOURCE_H HAVE_SYS_STAT_H HAVE_SYS_TYPES_H HAVE_UNISTD_H HAVE_ATOMIC_BUILTINS HAVE_DECL_INFINITY HAVE_DECL_ISINF HAVE_DECL_ISNAN HAVE_DECL_NAN HAVE_OPEN HAVE_REALLOC HAVE_SETLOCALE HAVE_SNPRINTF HAVE_STRCASECMP HAVE_STRDUP HAVE_STRERROR HAVE_STRNCASECMP HAVE_USELOCALE HAVE_VASPRINTF HAVE_VPRINTF HAVE_VSNPRINTF HAVE_VSYSLOG HAVE_GETRANDOM HAVE_GETRUSAGE HAVE_STRTOLL HAVE_STRTOULL HAVE___THREAD JSON_C_HAVE_INTTYPES_H JSON_C_HAVE_STDINT_H STDC_HEADERS',
+        'HAVE_DLFCN_H HAVE_ENDIAN_H HAVE_FCNTL_H HAVE_INTTYPES_H HAVE_LIMITS_H HAVE_LOCALE_H HAVE_MEMORY_H HAVE_STDARG_H HAVE_STDINT_H HAVE_STDLIB_H HAVE_STRINGS_H HAVE_STRING_H HAVE_SYSLOG_H HAVE_SYS_CDEFS_H HAVE_SYS_PARAM_H HAVE_SYS_RANDOM_H HAVE_SYS_RESOURCE_H HAVE_SYS_STAT_H HAVE_SYS_TYPES_H HAVE_UNISTD_H HAVE_ATOMIC_BUILTINS HAVE_DECL_INFINITY HAVE_DECL_ISINF HAVE_DECL_ISNAN HAVE_DECL_NAN HAVE_OPEN HAVE_REALLOC HAVE_SETLOCALE HAVE_SNPRINTF HAVE_STRCASECMP HAVE_STRDUP HAVE_STRERROR HAVE_STRNCASECMP HAVE_USELOCALE HAVE_DUPLOCALE HAVE_VASPRINTF HAVE_VPRINTF HAVE_VSNPRINTF HAVE_VSYSLOG HAVE_GETRANDOM HAVE_GETRUSAGE HAVE_STRTOLL HAVE_STRTOULL HAVE___THREAD JSON_C_HAVE_INTTYPES_H JSON_C_HAVE_STDINT_H STDC_HEADERS',
       ),
       PROJECT_NAME: 'json-c',
       JSON_C_BUGREPORT: 'json-c@googlegroups.com',
@@ -116,31 +116,10 @@ export function generateWasixHeaders({
     // Canonical WASIX PROJ has no libdl, TIFF, curl or Emscripten fetch.
     emit('cmake/proj_config.cmake.in', 'proj_config.h', enabled('HAVE_LOCALECONV HAVE_STRERROR'));
   } else if (kind === 'geos') {
-    const version = Object.fromEntries(
-      [...read(join(source, 'Version.txt')).matchAll(/^(\w+)=(.*)$/gmu)].map((match) => [
-        match[1],
-        match[2],
-      ]),
+    const values = geosHeaderValues(
+      read(join(source, 'Version.txt')),
+      read(join(source, 'capi/CMakeLists.txt')),
     );
-    const major = version.GEOS_VERSION_MAJOR;
-    const minor = version.GEOS_VERSION_MINOR;
-    const patch = version.GEOS_VERSION_PATCH;
-    const apiMajor = Number(version.CAPI_INTERFACE_CURRENT) - Number(version.CAPI_INTERFACE_AGE);
-    assert(
-      major && minor && patch && Number.isInteger(apiMajor),
-      'Invalid pinned GEOS Version.txt',
-    );
-    const values = {
-      VERSION_MAJOR: major,
-      VERSION_MINOR: minor,
-      VERSION_PATCH: patch,
-      VERSION: `${major}.${minor}.${patch}${version.GEOS_PATCH_WORD ?? ''}`,
-      JTS_PORT: version.JTS_PORT,
-      CAPI_VERSION_MAJOR: String(apiMajor),
-      CAPI_VERSION_MINOR: version.CAPI_INTERFACE_AGE,
-      CAPI_VERSION_PATCH: version.CAPI_INTERFACE_REVISION,
-      CAPI_VERSION: `${apiMajor}.${version.CAPI_INTERFACE_AGE}.${version.CAPI_INTERFACE_REVISION}`,
-    };
     emit('include/geos/version.h.in', 'geos/version.h', values);
     emit('capi/geos_c.h.in', 'geos_c.h', values);
   } else if (kind === 'postgis') {
@@ -196,6 +175,7 @@ export function generateWasixHeaders({
       POSTGIS_MINOR_VERSION: minor,
       POSTGIS_MICRO_VERSION: micro,
       POSTGIS_GEOS_VERSION: number(dependencyVersion('geos')),
+      POSTGIS_GDAL_VERSION: number(dependencyVersion('gdal')),
       POSTGIS_PROJ_VERSION: number(dependencyVersion('proj')),
       POSTGIS_LIBXML2_VERSION: dependencyVersion('libxml2'),
       POSTGIS_SFCGAL_VERSION: '0',
@@ -223,7 +203,15 @@ export function generateWasixHeaders({
     emit('postgis_config.h.in', 'postgis_config.h', quoted);
     emit('liblwgeom/liblwgeom.h.in', 'liblwgeom/liblwgeom.h', values);
     emit('postgis/sqldefines.h.in', 'postgis/sqldefines.h', values);
+    emit('raster/raster_config.h.in', 'raster/rt_core/raster_config.h', values);
     emit('extensions/postgis/postgis.control.in', 'extensions/postgis/postgis.control', values);
+    for (const member of ['postgis_raster', 'postgis_topology', 'postgis_tiger_geocoder']) {
+      emit(`extensions/${member}/${member}.control.in`, `extensions/${member}/${member}.control`, {
+        ...values,
+        EXTENSION: member,
+        MODULEPATH: `$libdir/${member}-${major}`,
+      });
+    }
     writeFileSync(join(output, 'postgis_revision.h'), `#define POSTGIS_REVISION ${facts.commit}\n`);
   } else {
     throw new Error(`Unknown WASIX configuration ${kind}`);

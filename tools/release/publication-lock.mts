@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 import { createHash } from 'node:crypto';
 import { sourceIdentity } from './with-source.mts';
+
 export { sourceIdentity } from './with-source.mts';
+
 import {
   existsSync,
   lstatSync,
@@ -13,14 +15,19 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import {
-  extensionRuntimeAssetContract,
-  projectNativeRuntimeAssetMember,
-} from '../../src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts';
-import { assertWasixExtensionMemberInstall } from '../../src/extensions/contracts/wasix-extension-install.mts';
+  hasDeclaredExtensionArtifactClosure,
+  validateFrozenExtensionLegalInventory,
+} from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
 import {
-  extensionCarrierLegalContract,
-  extensionCarrierLegalFileInventory,
-} from '../../src/extensions/tools/extension-upstream-licenses.mts';
+  expectedExtensionRoles,
+  extensionRuntimeAssetContract,
+} from '../../src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts';
+import {
+  frozenExtensionCompatibility,
+  frozenExtensionMemberInventory,
+  frozenExtensionPublicMetadata,
+} from '../../src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts';
+import { assertWasixExtensionMemberInstall } from '../../src/extensions/contracts/wasix-extension-install.mts';
 import {
   buildSwiftExtensionCarrierManifest,
   swiftExtensionCarrierAssetName,
@@ -64,8 +71,6 @@ import {
   expectedExtensionGithubReleaseAssetRows as declaredExtensionGithubReleaseAssetRows,
   extensionReleaseMetadataRows as declaredExtensionReleaseMetadataRows,
   extensionArtifactTargets,
-  extensionMetadata,
-  extensionSourceIdentity,
   extensionSqlNames,
   readArtifactInputText,
 } from './release-artifact-targets.mts';
@@ -403,15 +408,24 @@ function mavenArtifact(file) {
 
 function mavenManifestArtifacts(file) {
   if (!rel(file).includes('/maven-artifacts/')) return [];
-  return parseMavenArtifactManifest(file).map(({ groupId, artifactId, version, artifact }) => ({
-    ecosystem: 'maven',
-    name: groupId + ':' + artifactId,
-    version,
-    dependencies: [],
-    artifacts: [
-      { path: rel(artifact), sha256: sha256File(artifact), size: statSync(artifact).size },
-    ],
-  }));
+  return parseMavenArtifactManifest(file).map(
+    ({ groupId, artifactId, version, artifact, dependencies }) => ({
+      ecosystem: 'maven',
+      name: groupId + ':' + artifactId,
+      version,
+      dependencies: dependencies
+        .map(({ groupId, artifactId, version, scope }) => ({
+          ecosystem: 'maven',
+          name: `${groupId}:${artifactId}`,
+          requirement: version,
+          scope,
+        }))
+        .sort((left, right) => compareText(left.name, right.name)),
+      artifacts: [
+        { path: rel(artifact), sha256: sha256File(artifact), size: statSync(artifact).size },
+      ],
+    }),
+  );
 }
 
 function directoryEnvelope(directory, fileEnvelopes = undefined) {
@@ -852,22 +866,21 @@ export function expectedExtensionGithubReleaseAssetRows(
 }
 
 function exactExtensionManifestRows(product, manifest, manifestPath) {
-  const expectedSqlNames = extensionSqlNames(product.id, 'publication-lock');
-  const metadata = extensionMetadata(product.id, 'publication-lock');
   const family = extensionCarrierFamily(product);
+  frozenExtensionCompatibility(manifest.compatibility, rel(manifestPath));
   if (
     (manifest.artifactProduct ?? manifest.product) !== product.id ||
     (manifest.releaseProduct ?? manifest.product) !== extensionPublicationOwner(product) ||
     (family !== null && manifest.family !== family) ||
-    manifest.version !== product.version ||
-    stableJson(manifest.compatibility) !== stableJson(metadata.compatibility)
+    manifest.version !== product.version
   ) {
     throw error(`${rel(manifestPath)} does not describe ${product.id}@${product.version}`);
   }
-  if (expectedSqlNames.length === 1) {
+  if (manifest.schema === 'oliphaunt-extension-ci-artifacts-v1') {
     if (
-      manifest.schema !== 'oliphaunt-extension-ci-artifacts-v1' ||
-      !Array.isArray(manifest.assets)
+      !Array.isArray(manifest.assets) ||
+      typeof manifest.sqlName !== 'string' ||
+      !/^[A-Za-z0-9._-]{1,128}$/u.test(manifest.sqlName)
     ) {
       throw error(`${rel(manifestPath)} must be a singleton exact-extension CI artifact manifest`);
     }
@@ -875,23 +888,31 @@ function exactExtensionManifestRows(product, manifest, manifestPath) {
   }
   if (
     manifest.schema !== 'oliphaunt-extension-ci-artifacts-v2' ||
-    !Array.isArray(manifest.extensions)
+    !Array.isArray(manifest.extensions) ||
+    manifest.extensions.length === 0
   ) {
     throw error(`${rel(manifestPath)} must be an exact-extension bundle CI artifact manifest`);
   }
   const actualSqlNames = manifest.extensions.map((row) => row?.sqlName);
-  if (stableJson(actualSqlNames) !== stableJson(expectedSqlNames)) {
+  if (
+    actualSqlNames.some(
+      (name) => typeof name !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/u.test(name),
+    ) ||
+    stableJson(actualSqlNames) !== stableJson([...new Set(actualSqlNames)].sort(compareText))
+  ) {
     throw error(`${rel(manifestPath)} must contain the exact sorted bundle member set`);
   }
   return manifest.extensions;
 }
 
 function validateExtensionManifestRow(product, manifestPath, member) {
-  const iosContract = exactExtensionIosContract(product.id, member.sqlName);
+  const inventory = frozenExtensionMemberInventory(member, {
+    product: product.id,
+    version: product.version,
+  });
   const stagesIos =
     Array.isArray(member.assets) &&
     member.assets.some((asset) => asset?.target === 'ios-xcframework');
-  const iosDependencies = stagesIos ? iosContract.dependencies : [];
   const sortedStrings = (value) =>
     Array.isArray(value) &&
     value.every((item) => typeof item === 'string' && item.length > 0) &&
@@ -899,31 +920,18 @@ function validateExtensionManifestRow(product, manifestPath, member) {
     stableJson(value) === stableJson([...value].sort(compareText))
       ? value
       : null;
+  const iosDependencies = sortedStrings(member.iosNativeDependencies);
   if (
-    member.nativeModuleStem !== iosContract.nativeModuleStem ||
-    member.createsExtension !== (iosContract.metadata['creates-extension'] !== false) ||
-    stableJson(sortedStrings(member.dependencies)) !==
-      stableJson(
-        [...(iosContract.metadata['selected-extension-dependencies'] ?? [])].sort(compareText),
-      ) ||
-    stableJson(sortedStrings(member.dataFiles)) !==
-      stableJson([...(iosContract.metadata['runtime-share-data-files'] ?? [])].sort(compareText)) ||
-    stableJson(sortedStrings(member.extensionSqlFileNames)) !==
-      stableJson([...(iosContract.metadata['extension-sql-file-names'] ?? [])].sort(compareText)) ||
-    stableJson(sortedStrings(member.extensionSqlFilePrefixes)) !==
-      stableJson(
-        [...(iosContract.metadata['extension-sql-file-prefixes'] ?? [])].sort(compareText),
-      ) ||
-    stableJson(sortedStrings(member.sharedPreloadLibraries)) !==
-      stableJson([...(iosContract.metadata['shared-preload-libraries'] ?? [])].sort(compareText)) ||
-    stableJson(sortedStrings(member.iosNativeDependencies)) !== stableJson(iosDependencies)
+    iosDependencies === null ||
+    iosDependencies.some((dependency) => !/^[A-Za-z0-9._-]{1,128}$/u.test(dependency)) ||
+    (!stagesIos && iosDependencies.length !== 0)
   ) {
     throw error(
-      `${rel(manifestPath)} ${member.sqlName} semantic extension metadata is not canonical generated metadata`,
+      `${rel(manifestPath)} ${member.sqlName} must freeze sorted unique iOS dependencies for its declared carriers`,
     );
   }
-  if (iosContract.nativeModuleStem === null) {
-    if (member.iosRegistration !== null) {
+  if (inventory.nativeModuleStem === null) {
+    if (member.iosRegistration !== null || iosDependencies.length !== 0) {
       throw error(
         `${rel(manifestPath)} SQL-only extension ${member.sqlName} must not carry iOS registration`,
       );
@@ -935,7 +943,7 @@ function validateExtensionManifestRow(product, manifestPath, member) {
       typeof member.iosRegistration !== 'object' ||
       member.iosRegistration.schema !== 'oliphaunt-ios-extension-registration-v1' ||
       member.iosRegistration.sqlName !== member.sqlName ||
-      member.iosRegistration.nativeModuleStem !== iosContract.nativeModuleStem)
+      member.iosRegistration.nativeModuleStem !== inventory.nativeModuleStem)
   ) {
     throw error(
       `${rel(manifestPath)} native extension ${member.sqlName} lacks matching build-derived iOS registration`,
@@ -945,7 +953,7 @@ function validateExtensionManifestRow(product, manifestPath, member) {
       `${rel(manifestPath)} native extension ${member.sqlName} claims iOS registration without an iOS carrier`,
     );
   }
-  return iosContract;
+  return { nativeModuleStem: inventory.nativeModuleStem, dependencies: iosDependencies };
 }
 
 function publicExtensionAsset(row) {
@@ -970,12 +978,32 @@ function publicExtensionMember(member) {
     ...(member.nativeConstructionLicenseFiles === undefined
       ? {}
       : { nativeConstructionLicenseFiles: member.nativeConstructionLicenseFiles }),
+    ...(hasDeclaredExtensionArtifactClosure(member)
+      ? { sqlMembers: member.sqlMembers, nativeModuleStems: member.nativeModuleStems }
+      : {}),
     iosNativeDependencies: member.iosNativeDependencies,
     iosRegistration: member.iosRegistration,
     wasixInstall,
     sharedPreloadLibraries: member.sharedPreloadLibraries,
     assets: member.assets.map(publicExtensionAsset),
   };
+}
+
+function frozenExtensionRoleKeys(product, members) {
+  const family = extensionCarrierFamily(product);
+  const targets = extensionArtifactTargets({ product: product.id }, 'publication-lock');
+  return members
+    .flatMap((member) =>
+      expectedExtensionRoles(
+        member,
+        targets
+          .filter(
+            (row) => row.sqlName === member.sqlName && (family === null || row.family === family),
+          )
+          .map((row) => row.target),
+      ).map((role) => `${member.sqlName}:${role.replace(/:$/u, '')}`),
+    )
+    .sort(compareText);
 }
 
 function extensionBundleGithubReleaseArtifacts({
@@ -985,7 +1013,7 @@ function extensionBundleGithubReleaseArtifacts({
   members,
   product,
 }) {
-  const expectedSqlNames = extensionSqlNames(product.id, 'publication-lock');
+  const expectedSqlNames = members.map((member) => member.sqlName);
   const family = extensionCarrierFamily(product);
   const expectedGroups = extensionBundleCarrierRows(product.id, family);
   if (
@@ -1154,15 +1182,20 @@ function extensionBundleGithubReleaseArtifacts({
       logicalRows.set(key, { row, file: logicalFile });
     }
   }
-  const expectedLogicalKeys = extensionRequiredArtifactRows(product.id)
-    .filter((row) => family === null || row.family === family)
-    .map(
-      (row) =>
-        `${row.sqlName}:${row.family}:${row.target}:${row.kind}${row.identity === null ? '' : `:${row.identity}`}`,
-    );
+  const expectedLogicalKeys = frozenExtensionRoleKeys(product, members);
   if (stableJson([...logicalRows.keys()].sort(compareText)) !== stableJson(expectedLogicalKeys)) {
     throw error(`${product.id} logical bundle rows do not exactly cover every member target/role`);
   }
+
+  const manifestName = `${product.id}-${product.version}-manifest.json`;
+  const publicManifestFile = path.join(directory, manifestName);
+  let publicManifest;
+  try {
+    publicManifest = JSON.parse(readFileSync(publicManifestFile, 'utf8'));
+  } catch (cause) {
+    throw error(`${rel(publicManifestFile)} is invalid JSON: ${cause.message}`);
+  }
+  const metadata = frozenExtensionPublicMetadata(product, manifest, publicManifest, members);
 
   for (const { row, file, members: carrierMembers } of carriersByName.values()) {
     carrierMembers.sort((left, right) =>
@@ -1180,44 +1213,10 @@ function extensionBundleGithubReleaseArtifacts({
     if (stableJson(memberNames) !== stableJson(expectedSqlNames)) {
       throw error(`${rel(file)} aggregate carrier does not contain every exact bundle member`);
     }
-    const legalOptions = {
-      family: row.family,
-      target: row.target,
-      memberContracts: members.map((member) => {
-        const asset = member.assets.find(
-          (asset) =>
-            asset.family === row.family && asset.target === row.target && asset.kind === 'runtime',
-        );
-        return asset ? projectNativeRuntimeAssetMember(member, asset) : member;
-      }),
-    };
-    const legal = extensionCarrierLegalContract(product.id, memberNames, legalOptions);
-    const expectedBundleManifest = {
-      schema: 'oliphaunt-extension-bundle-v1',
-      product: product.id,
-      version: product.version,
-      compatibility: extensionMetadata(product.id, 'publication-lock').compatibility,
-      family: row.family,
-      target: row.target,
-      licenseProfile: legal.profile,
-      licenseFiles: legal.licenseFiles,
-      members: manifestMembers,
-    };
     const entries = extensionBundleEntries(file);
-    const legalFiles = extensionCarrierLegalFileInventory(product.id, memberNames, legalOptions);
-    const expectedArchiveFiles = [
-      bundleManifestPath,
-      ...manifestMembers.map((member) => `${carrierRoot}/${member.path}`),
-      ...legalFiles.map(({ path: legalPath }) => `${carrierRoot}/${legalPath}`),
-    ].sort(compareText);
-    const archiveFiles = [...entries.keys()].sort(compareText);
-    if (stableJson(archiveFiles) !== stableJson(expectedArchiveFiles)) {
-      throw error(`${rel(file)} contains undeclared or missing regular bundle members`);
-    }
-    for (const archiveFile of expectedArchiveFiles)
-      safeArchiveMember(archiveFile, `${rel(file)} member`);
     const manifestEntry = entries.get(bundleManifestPath);
-    const expectedBundleManifestBytes = Buffer.from(canonicalJsonText(expectedBundleManifest));
+    if (manifestEntry === undefined)
+      throw error(`${rel(file)} contains undeclared or missing regular bundle members`);
     const actualBundleManifestBytes = Buffer.from(manifestEntry.data());
     let bundleManifest;
     try {
@@ -1225,6 +1224,58 @@ function extensionBundleGithubReleaseArtifacts({
     } catch (cause) {
       throw error(`${rel(file)} has invalid bundle-manifest.json: ${cause.message}`);
     }
+    const payloadPaths = new Set([
+      bundleManifestPath,
+      ...manifestMembers.map((member) => `${carrierRoot}/${member.path}`),
+    ]);
+    const legalFiles = [...entries]
+      .filter(([archivePath]) => !payloadPaths.has(archivePath))
+      .map(([archivePath, entry]) => {
+        if (!archivePath.startsWith(`${carrierRoot}/`))
+          throw error(`${rel(file)} contains undeclared or missing regular bundle members`);
+        const payload = Buffer.from(entry.data());
+        return {
+          path: archivePath.slice(carrierRoot.length + 1),
+          mode: entry.mode.toString(8).padStart(4, '0'),
+          bytes: payload.length,
+          sha256: createHash('sha256').update(payload).digest('hex'),
+        };
+      })
+      .sort((left, right) => compareText(left.path, right.path));
+    const legal = validateFrozenExtensionLegalInventory(
+      {
+        profile: bundleManifest?.licenseProfile,
+        licenseFiles: bundleManifest?.licenseFiles,
+        files: legalFiles,
+        extensionClass: metadata.extensionClass,
+      },
+      `${rel(file)} bundle legal inventory`,
+    );
+    if (!legal.profile.replace(/-openssl$/u, '').endsWith(`-${row.family}`))
+      throw error(`${rel(file)} frozen legal profile must match its carrier family`);
+    const expectedBundleManifest = {
+      schema: 'oliphaunt-extension-bundle-v1',
+      product: product.id,
+      version: product.version,
+      compatibility: manifest.compatibility,
+      family: row.family,
+      target: row.target,
+      licenseProfile: legal.profile,
+      licenseFiles: legal.licenseFiles,
+      members: manifestMembers,
+    };
+    const expectedArchiveFiles = [
+      bundleManifestPath,
+      ...manifestMembers.map((member) => `${carrierRoot}/${member.path}`),
+      ...legal.files.map(({ path: legalPath }) => `${carrierRoot}/${legalPath}`),
+    ].sort(compareText);
+    const archiveFiles = [...entries.keys()].sort(compareText);
+    if (stableJson(archiveFiles) !== stableJson(expectedArchiveFiles)) {
+      throw error(`${rel(file)} contains undeclared or missing regular bundle members`);
+    }
+    for (const archiveFile of expectedArchiveFiles)
+      safeArchiveMember(archiveFile, `${rel(file)} member`);
+    const expectedBundleManifestBytes = Buffer.from(canonicalJsonText(expectedBundleManifest));
     if (stableJson(bundleManifest) !== stableJson(expectedBundleManifest)) {
       throw error(
         `${rel(file)} bundle-manifest.json does not exactly freeze its nested member and legal locators`,
@@ -1250,33 +1301,8 @@ function extensionBundleGithubReleaseArtifacts({
         );
       }
     }
-    for (const legalFile of legalFiles) {
-      const archivePath = `${carrierRoot}/${legalFile.path}`;
-      const entry = entries.get(archivePath);
-      const payload = Buffer.from(entry.data());
-      if (
-        legalFile.mode !== '0644' ||
-        entry.mode !== 0o644 ||
-        entry.size !== legalFile.bytes ||
-        payload.length !== legalFile.bytes ||
-        createHash('sha256').update(payload).digest('hex') !== legalFile.sha256
-      ) {
-        throw error(
-          `${rel(file)} legal member ${archivePath} does not match its canonical bytes and mode`,
-        );
-      }
-    }
   }
 
-  const manifestName = `${product.id}-${product.version}-manifest.json`;
-  const publicManifestFile = path.join(directory, manifestName);
-  let publicManifest;
-  try {
-    publicManifest = JSON.parse(readFileSync(publicManifestFile, 'utf8'));
-  } catch (cause) {
-    throw error(`${rel(publicManifestFile)} is invalid JSON: ${cause.message}`);
-  }
-  const metadata = extensionMetadata(product.id, 'publication-lock');
   const expectedPublicManifest = {
     schema: 'oliphaunt-extension-release-manifest-v2',
     product: product.id,
@@ -1287,9 +1313,9 @@ function extensionBundleGithubReleaseArtifacts({
           family: family ?? 'combined',
         }),
     version: product.version,
-    extensionClass: metadata.class,
+    extensionClass: metadata.extensionClass,
     versioning: metadata.versioning,
-    sourceIdentity: extensionSourceIdentity(product.id, 'publication-lock'),
+    sourceIdentity: metadata.sourceIdentity,
     compatibility: metadata.compatibility,
     extensions: members.map(publicExtensionMember),
     assets: [...carriersByName.values()].map(({ row }) => publicExtensionAsset(row)),
@@ -1314,8 +1340,7 @@ function extensionBundleGithubReleaseArtifacts({
     }
     const expectedSwiftCarrier = buildSwiftExtensionCarrierManifest({
       extensionManifest: manifestPath,
-      nativeRuntimeVersion: extensionMetadata(product.id, 'publication-lock').compatibility
-        .nativeRuntimeVersion,
+      nativeRuntimeVersion: manifest.compatibility.nativeRuntimeVersion,
       verifyMembers: false,
     });
     if (stableJson(actualSwiftCarrier) !== stableJson(expectedSwiftCarrier)) {
@@ -1390,7 +1415,7 @@ function extensionGithubReleaseArtifacts(files, product) {
   const [manifestPath, manifest] = manifests[0];
   const members = exactExtensionManifestRows(product, manifest, manifestPath);
   const directory = path.join(path.dirname(manifestPath), 'release-assets');
-  if (members.length > 1) {
+  if (manifest.schema === 'oliphaunt-extension-ci-artifacts-v2') {
     return extensionBundleGithubReleaseArtifacts({
       directory,
       manifest,
@@ -1469,13 +1494,7 @@ function extensionGithubReleaseArtifacts(files, product) {
     }
   }
   const family = extensionCarrierFamily(product);
-  const expectedKeys = extensionRequiredArtifactRows(product.id)
-    .filter((row) => family === null || row.family === family)
-    .map(
-      (row) =>
-        `${row.sqlName}:${row.family}:${row.target}:${row.kind}${row.identity === null ? '' : `:${row.identity}`}`,
-    )
-    .sort(compareText);
+  const expectedKeys = frozenExtensionRoleKeys(product, members);
   const actualKeys = [...rows.keys()].sort(compareText);
   if (stableJson(expectedKeys) !== stableJson(actualKeys)) {
     throw error(
@@ -1489,7 +1508,7 @@ function extensionGithubReleaseArtifacts(files, product) {
   } catch (cause) {
     throw error(`${rel(publicManifestFile)} is invalid JSON: ${cause.message}`);
   }
-  const metadata = extensionMetadata(product.id, 'publication-lock');
+  const metadata = frozenExtensionPublicMetadata(product, manifest, publicManifest, members);
   const publicMember = publicExtensionMember(members[0]);
   const expectedPublicManifest = {
     schema: 'oliphaunt-extension-release-manifest-v1',
@@ -1502,9 +1521,9 @@ function extensionGithubReleaseArtifacts(files, product) {
         }),
     version: product.version,
     sqlName: publicMember.sqlName,
-    extensionClass: metadata.class,
+    extensionClass: metadata.extensionClass,
     versioning: metadata.versioning,
-    sourceIdentity: extensionSourceIdentity(product.id, 'publication-lock'),
+    sourceIdentity: metadata.sourceIdentity,
     compatibility: metadata.compatibility,
     createsExtension: publicMember.createsExtension,
     dependencies: publicMember.dependencies,
@@ -1518,6 +1537,9 @@ function extensionGithubReleaseArtifacts(files, product) {
     ...(publicMember.nativeConstructionLicenseFiles === undefined
       ? {}
       : { nativeConstructionLicenseFiles: publicMember.nativeConstructionLicenseFiles }),
+    ...(hasDeclaredExtensionArtifactClosure(publicMember)
+      ? { sqlMembers: publicMember.sqlMembers, nativeModuleStems: publicMember.nativeModuleStems }
+      : {}),
     iosNativeDependencies: publicMember.iosNativeDependencies,
     iosRegistration: publicMember.iosRegistration,
     wasixInstall: publicMember.wasixInstall,
@@ -1548,8 +1570,7 @@ function extensionGithubReleaseArtifacts(files, product) {
     }
     const expectedSwiftCarrier = buildSwiftExtensionCarrierManifest({
       extensionManifest: manifestPath,
-      nativeRuntimeVersion: extensionMetadata(product.id, 'publication-lock').compatibility
-        .nativeRuntimeVersion,
+      nativeRuntimeVersion: manifest.compatibility.nativeRuntimeVersion,
       verifyMembers: false,
     });
     if (stableJson(actualSwiftCarrier) !== stableJson(expectedSwiftCarrier)) {
@@ -1891,7 +1912,11 @@ export function packageDependencyMatchesCarrier(dependency, carrier) {
   return Bun.semver.satisfies(carrier.version, requirement);
 }
 
-export function projectInternalDependencyIds(carriers, dependencies) {
+export function projectInternalDependencyIds(
+  carriers,
+  dependencies,
+  { artifactPhase = 'final' } = {},
+) {
   const byId = new Map(carriers.map((carrier) => [carrier.id, carrier]));
   return [
     ...new Set(
@@ -1899,12 +1924,21 @@ export function projectInternalDependencyIds(carriers, dependencies) {
         .filter((dependency) =>
           PUBLICATION_DEPENDENCY_SCOPES[dependency.ecosystem]?.has(dependency.scope),
         )
-        .filter((dependency) =>
-          packageDependencyMatchesCarrier(
-            dependency,
-            byId.get(`${dependency.ecosystem}:${dependency.name}`),
-          ),
-        )
+        .filter((dependency) => {
+          const carrier = byId.get(`${dependency.ecosystem}:${dependency.name}`);
+          const matches = packageDependencyMatchesCarrier(dependency, carrier);
+          if (
+            artifactPhase !== 'pre-version' &&
+            dependency.ecosystem === 'npm' &&
+            dependency.scope === 'peer' &&
+            carrier &&
+            !matches
+          )
+            throw error(
+              `npm peer ${dependency.name} requires ${dependency.requirement}, but the candidate provides ${carrier.version}`,
+            );
+          return matches;
+        })
         .map((dependency) => `${dependency.ecosystem}:${dependency.name}`),
     ),
   ].sort(compareText);
@@ -2054,7 +2088,9 @@ export function buildPublicationCandidate({
     );
   }
   for (const carrier of carriers) {
-    carrier.dependencies = projectInternalDependencyIds(carriers, carrier.packageDependencies);
+    carrier.dependencies = projectInternalDependencyIds(carriers, carrier.packageDependencies, {
+      artifactPhase,
+    });
   }
   validateCargoPayloadPartSets(carriers);
   assignPublishOrder(carriers, catalog.products);
@@ -2678,6 +2714,7 @@ export function validatePublicationCandidate(candidate, { nativeMetadata = false
     const expectedDependencies = projectInternalDependencyIds(
       candidate.carriers,
       carrier.packageDependencies,
+      { artifactPhase },
     );
     if (stableJson(carrier.dependencies) !== stableJson(expectedDependencies)) {
       throw error(

@@ -13,6 +13,7 @@ if rustc --crate-name fixture_extension --crate-type lib --edition 2024 --cfg 'f
 fi
 grep -q 'default native feature supports only' "$scratch/unsupported.log"
 rustc --crate-name fixture_extension --crate-type lib --edition 2024 --cfg 'feature="wasix"' --emit metadata -o "$scratch/wasix.rmeta" "$scratch/forced-unsupported.rs"
-OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD=1 cargo check --manifest-path "$scratch/app/Cargo.toml" --target-dir "$scratch/cargo-target"
+OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD=1 cargo run --manifest-path "$scratch/app/Cargo.toml" --target-dir "$scratch/cargo-target"
+cargo run --manifest-path "$scratch/wasix-app/Cargo.toml" --target-dir "$scratch/cargo-target"
 bun "$fixture" verify-compiler "$scratch"
 echo 'Compiled facade target selection and exact selected Cargo payload propagation passed'

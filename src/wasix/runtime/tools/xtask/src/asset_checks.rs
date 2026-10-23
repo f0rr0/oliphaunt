@@ -386,6 +386,7 @@ fn check_extension_archive_layout(path: &Path) -> Result<()> {
                 | "share"
                 | "share/proj"
                 | "share/postgresql"
+                | "share/gdal"
                 | "share/postgresql/extension"
                 | "share/postgresql/tsearch_data"
         ) {
@@ -393,6 +394,7 @@ fn check_extension_archive_layout(path: &Path) -> Result<()> {
         }
         if entry.starts_with("lib/postgresql/")
             || entry.starts_with("share/proj/")
+            || entry.starts_with("share/gdal/")
             || entry.starts_with("share/postgresql/extension/")
             || entry.starts_with("share/postgresql/tsearch_data/")
         {

@@ -1172,12 +1172,14 @@
       "bundle-size": 8551161,
       "control-file": "target/oliphaunt-sources/checkouts/postgis/extensions/postgis/postgis.control.in",
       "control": {
-        "default-version": "3.6.3",
+        "default-version": "3.6.4",
         "module-pathname": "@MODULEPATH@",
         "requires": [],
         "relocatable": "false"
       },
-      "dependencies": [],
+      "dependencies": [
+        "fuzzystrmatch"
+      ],
       "load-order": [
         "lib/postgresql/postgis-3.so"
       ],

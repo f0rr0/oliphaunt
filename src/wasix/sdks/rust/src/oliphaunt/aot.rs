@@ -100,6 +100,19 @@ pub(crate) fn load_artifact_module(engine: &Engine, artifact_name: &str) -> Resu
     Ok(module)
 }
 
+/// Read the original module identities through the existing AOT manifest validator.
+#[cfg(feature = "extensions")]
+pub(crate) fn package_module_identities(manifest: &str) -> Result<Vec<(String, String)>> {
+    let manifest: AotManifest =
+        serde_json::from_str(manifest).context("parse selected extension AOT manifest")?;
+    validate_aot_manifest(&manifest)?;
+    Ok(manifest
+        .artifacts
+        .into_iter()
+        .map(|artifact| (artifact.name, artifact.module_sha256))
+        .collect())
+}
+
 /// Load AOT from a trusted package descriptor, checking its exact module identity.
 #[cfg(feature = "extensions")]
 #[allow(unsafe_code)]

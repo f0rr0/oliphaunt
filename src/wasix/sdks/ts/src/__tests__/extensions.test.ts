@@ -307,6 +307,37 @@ describe('WASIX TypeScript extensions', () => {
     );
   });
 
+  it('mounts declared PostGIS raster modules and GDAL resources', () => {
+    const files = new Map([
+      ['lib/postgresql/postgis_raster-3.so', Uint8Array.of(1)],
+      ['share/gdal/gdalvrt.xsd', Uint8Array.of(2)],
+    ]);
+    const postgis = extension('postgis', { installedFiles: [...files.keys()] });
+    const layout = runtimeLayout();
+    overlayExtensionArchive(
+      layout,
+      {
+        files,
+        directories: new Set(['lib/postgresql', 'share/gdal']),
+      },
+      postgis,
+    );
+    expect(layout.mounts['/lib']?.files['postgresql/postgis_raster-3.so']).toEqual(
+      Uint8Array.of(1),
+    );
+    expect(layout.mounts['/share']?.files['gdal/gdalvrt.xsd']).toEqual(Uint8Array.of(2));
+    expect(() =>
+      overlayExtensionArchive(
+        runtimeLayout(),
+        {
+          files: new Map([...files, ['share/gdal/undeclared.csv', Uint8Array.of(3)]]),
+          directories: new Set(),
+        },
+        postgis,
+      ),
+    ).toThrow('unexpected share/gdal/undeclared.csv');
+  });
+
   it('rejects undeclared, foreign-root, and colliding extension files', () => {
     const layout = runtimeLayout();
     const declared = extension('pgtap', {

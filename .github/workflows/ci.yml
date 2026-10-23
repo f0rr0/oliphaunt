@@ -1800,7 +1800,7 @@ jobs:
         if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-kotlin:test-native-bindings') }}
         uses: ./.github/actions/setup-android
         with:
-          native-tools: "false"
+          native-tools: "true"
           gradle-cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
       - name: Download Rust SDK package for installed consumer
         if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}

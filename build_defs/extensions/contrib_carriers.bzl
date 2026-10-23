@@ -6,7 +6,7 @@ load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "merge_shipping_suppliers")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_identity")
 load(":final_leaf.bzl", "ExtensionFinalLeafInfo")
-load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extension_carrier_legal")
+load(":native_carriers.bzl", "extension_owner_metadata", "native_extension_carrier_helpers", "native_extension_carrier_legal")
 load(":platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_LINUX_COMPATIBLE")
 load(":smoke.bzl", "extension_smoke_plan")
 
@@ -37,7 +37,7 @@ def native_contrib_carrier_metadata(target, family = "native"):
         spec = dict(common)
         spec.update({"sqlName": sql_name, "contrib": member, "descriptor": descriptor, "recipe": {}, "selectedDependencies": sorted([name for name in descriptor.get("dependencies", []) if name in expected])})
         members.append(spec)
-    common.update({"sqlName": "", "descriptor": {}, "recipe": {}, "selectedDependencies": [], "expectedMembers": expected, "members": members, "sourceIdentity": metadata["sourceIdentity"]})
+    common.update({"sqlName": "", "descriptor": {}, "recipe": {}, "selectedDependencies": [], "expectedMembers": expected, "members": members, "sourceIdentity": metadata["sourceIdentity"], "ownerMetadata": extension_owner_metadata()})
     return common
 
 def _leaf(spec, ecosystem):

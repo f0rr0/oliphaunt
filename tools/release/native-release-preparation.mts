@@ -402,7 +402,8 @@ export async function acquireNativePublicationInputs(
     catalog.products.find(({ id }) => id === 'liboliphaunt-wasix')!.version,
   );
   const authoredProducts = loadProducts();
-  const wasixExtensions = loadReleaseMetadata(ROOT).wasixExtensions;
+  const releaseMetadata = loadReleaseMetadata(ROOT);
+  const wasixExtensions = releaseMetadata.wasixExtensions;
   const conventionalFiles = new Map<string, string>();
   const conventionalText = (file: string) => {
     if (!conventionalFiles.has(file))
@@ -855,6 +856,38 @@ export async function acquireNativePublicationInputs(
           (row.kind === 'runtime-resources' && row.target === 'ios-datum64'),
       );
       assert.equal(rows.length, 2);
+      await retainPublicAssets(completed, rows);
+    }
+    const contribMembers = new Set(
+      releaseMetadata.extensionReleaseMetadata
+        .filter((row) => row.class === 'contrib')
+        .map((row) => row.sqlName),
+    );
+    const contribRequirements = new Set(
+      bindings
+        .filter((binding) => {
+          const extension = authoredProducts[binding.consumer]?.extension;
+          return (
+            binding.producer === 'liboliphaunt-wasix' &&
+            extension?.class === 'external' &&
+            wasixExtensions[extension.sql_name]?.dependencies.some((sqlName) =>
+              contribMembers.has(sqlName),
+            )
+          );
+        })
+        .map((binding) => binding.producerVersion),
+    );
+    for (const version of contribRequirements) {
+      const completed = await completeSupplier('liboliphaunt-wasix', version);
+      const name = `oliphaunt-extension-contrib-pg18-${version}-manifest.json`;
+      const rows = (await completedInventory(completed)).publicRows.filter(
+        (row) => row.name === name,
+      );
+      assert.equal(
+        rows.length,
+        1,
+        'WASIX extension dependency needs its original contrib public manifest',
+      );
       await retainPublicAssets(completed, rows);
     }
     for (const binding of bindings.filter(

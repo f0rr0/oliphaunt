@@ -44,7 +44,7 @@ _HEADERS = [
 ]
 
 _FUNCTIONS = [
-    "arc4random", "fseeko", "getc_unlocked", "getrandom", "getrusage",
+    "arc4random", "duplocale", "fseeko", "getc_unlocked", "getrandom", "getrusage",
     "localeconv", "mbrtowc", "open", "realloc", "setlocale", "snprintf",
     "strcasecmp", "strdup", "strerror", "strncasecmp", "strtoll", "strtoull",
     "uselocale", "vasprintf", "vprintf", "vsnprintf", "vsyslog", "wcrtomb",

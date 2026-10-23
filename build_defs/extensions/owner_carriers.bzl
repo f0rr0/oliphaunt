@@ -6,17 +6,20 @@ require every canonical native target and the genuine WASIX constructor for
 external owners. Contrib retains separate native and WASIX runtime owners.
 """
 
-load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_OWNERS", "EXTENSIONS", "EXTENSION_GITHUB_ARTIFACTS", "EXTENSION_PROFILES", "EXTENSION_RELEASE_METADATA", "PRODUCTS")
+load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_ARTIFACTS", "CONTRIB_OWNERS", "EXTENSIONS", "EXTENSION_FINAL_INPUTS", "EXTENSION_GITHUB_ARTIFACTS", "EXTENSION_PROFILES", "EXTENSION_RELEASE_METADATA", "PRODUCTS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "merge_shipping_suppliers")
 load(":contrib_carriers.bzl", "native_contrib_carrier_legal", "native_contrib_carrier_metadata")
 load(":construction.bzl", "desktop_member_inventory")
 load(":final_leaf.bzl", "ExtensionFinalLeafInfo", "NativeAppleBaseInfo")
-load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extension_carrier_legal", "native_external_carrier_metadata")
+load(":native_carriers.bzl", "extension_owner_metadata", "native_extension_carrier_helpers", "native_extension_carrier_legal", "native_external_carrier_metadata")
 
 def native_owner_carrier_helpers():
     return native_extension_carrier_helpers() + [
+        "//:src/extensions/artifacts/packages/package.json",
+        "//:src/extensions/artifacts/packages/Cargo.toml",
         "//build_defs/extensions:native_carriers.mts",
+        "//build_defs/extensions:declared_final_inputs.mts",
         "//:src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts",
         "//:src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts",
         "//:src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts",
@@ -55,15 +58,14 @@ def native_owner_carrier_metadata(product, family = "native"):
     return {
         "schema": "oliphaunt-native-extension-final-join-inputs-v1", "product": product,
         "owner": owner, "version": PRODUCTS[owner]["version"], "runtimeVersion": leaf["runtimeVersion"],
-        "releaseMetadata": release, "profiles": targets if family == "native" else [], "allProfiles": [target for profile in EXTENSION_PROFILES["profiles"] for target in profile["targets"]],
+        "releaseMetadata": release, "ownerMetadata": extension_owner_metadata(), "profiles": targets if family == "native" else [], "allProfiles": [target for profile in EXTENSION_PROFILES["profiles"] for target in profile["targets"]],
         "catalogSqlNames": sorted([row["sql-name"] for row in EXTENSIONS.values()]), "members": members, "carriers": leaf["carriers"],
         "ownerFamilies": ["wasix"] if family == "wasix" else (["native"] if owner != wasix_owner else ["native", "wasix"]),
         "cargoFacadeMetadata": {
             "nativeOwner": owner, "wasixOwner": wasix_owner, "version": leaf["version"],
             "sqlNames": sorted([member["sqlName"] for member in members]),
             "targets": {"nativeCargoTargets": dynamic, "includeWasixAot": any([member["descriptor"].get("native-module-file") for member in members])},
-            "sdkVersion": PRODUCTS["oliphaunt-rust"]["version"], "bindingVersion": PRODUCTS["liboliphaunt-native-bindings"]["version"],
-            "wasixSdkVersion": PRODUCTS["oliphaunt-wasix-rust"]["version"], "compatibility": release["compatibility"],
+            "compatibility": release["compatibility"],
         },
     }
 
@@ -148,6 +150,23 @@ native_extension_final_receipt_fixture = rule(implementation = _receipt_fixture_
 
 def _join_impl(ctx):
     spec = native_owner_carrier_metadata(ctx.attr.product, ctx.attr.family)
+    if ctx.attr.wasix_dependency_error:
+        fail(ctx.attr.wasix_dependency_error)
+    dependency_manifests = []
+    dependency_suppliers = []
+    dependency_files = []
+    for target, value in ctx.attr.wasix_dependency_manifests.items():
+        record = json.decode(value)
+        files = target[DefaultInfo].files.to_list()
+        if len(files) != 1 or files[0].is_directory:
+            fail("WASIX dependency metadata requires its original regular File")
+        file = files[0]
+        record["file"]["path"] = file.path
+        dependency_files.append(file)
+        dependency_manifests.append(record)
+        completed = "publication" in record
+        origin = {"kind": "completed-publication", "publication": record["publication"], "artifact": record["artifact"]} if completed else {"kind": "current-source", "producer": dict(record["file"]["producer"], **({"member": record["file"]["member"]} if "member" in record["file"] else {}))}
+        dependency_suppliers.append(ShippingSupplierInfo(suppliers = [{"product": record["owner"], "version": record["version"], "configuration": "wasix-portable", "binding": "abi-contract", "origin": origin, "files": [{"path": file.path}]}], files = depset([file])))
     leaves = [target[ExtensionFinalLeafInfo] for target in ctx.attr.leaves + ctx.attr.wasix_leaves]
     for leaf in leaves:
         if leaf.product != spec["product"] or leaf.owner != spec["owner"] or leaf.version != spec["version"] or leaf.family not in spec["ownerFamilies"]:
@@ -181,32 +200,55 @@ def _join_impl(ctx):
     spec.update({"operation": "compose" if ctx.attr.complete else "collect", "leaves": [_leaf_input(leaf) for leaf in leaves],
                  "baseCarrierManifest": ctx.file.base_carrier_manifest.path if ctx.file.base_carrier_manifest else None,
                  "baseArchiveInputs": base.archives if base else None,
-                 "components": ctx.file._components.path,
+                 "components": ctx.file._components.path, "wasixDependencyManifests": dependency_manifests,
                  "outputs": {name: file.path for name, file in outputs.items()}})
     action = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(action, json.encode(spec))
-    files = [file for leaf in leaves for file in _leaf_files(leaf)] + [action, ctx.file._components] + ctx.files.legal + ctx.files.base_carrier_manifest + (base.archive_files if base else [])
+    files = [file for leaf in leaves for file in _leaf_files(leaf)] + dependency_files + [action, ctx.file._components] + ctx.files.legal + ctx.files.base_carrier_manifest + (base.archive_files if base else [])
     bun_file_action(ctx, ctx.file._tool, arguments = [action.path], inputs = files,
                     source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal,
                     outputs = outputs.values(), mnemonic = "NativeExtensionFamilyJoin")
     groups = {name: depset([file]) for name, file in outputs.items()}
     groups["spec"] = depset([action])
+    groups["dependency_manifests"] = depset(dependency_files)
     targets = ctx.attr.leaves + ctx.attr.wasix_leaves + ([ctx.attr.base_carrier_manifest] if ctx.attr.base_carrier_manifest else [])
     suppliers = [target[ShippingSupplierInfo] for target in targets if ShippingSupplierInfo in target]
-    supplier = merge_shipping_suppliers(suppliers) if len(suppliers) == len(targets) else ShippingSupplierInfo(suppliers = None, files = depset(transitive = [info.files for info in suppliers]))
+    supplier = merge_shipping_suppliers(suppliers + dependency_suppliers) if len(suppliers) == len(targets) else ShippingSupplierInfo(suppliers = None, files = depset(transitive = [info.files for info in suppliers + dependency_suppliers]))
     return [DefaultInfo(files = depset(outputs.values())), OutputGroupInfo(**groups), supplier]
 
 _native_extension_final_join = rule(implementation = _join_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = dict(_TOOLS, **{"product": attr.string(mandatory = True), "leaves": attr.label_list(providers = [ExtensionFinalLeafInfo], mandatory = True),
         "wasix_leaves": attr.label_list(providers = [ExtensionFinalLeafInfo]), "family": attr.string(default = "native", values = ["native", "wasix"]),
+        "wasix_dependency_manifests": attr.label_keyed_string_dict(allow_files = True), "wasix_dependency_error": attr.string(),
         "complete": attr.bool(default = False), "base_carrier_manifest": attr.label(allow_single_file = True), "legal": attr.label_list(allow_files = True)}))
 
 def native_extension_final_collection(name, product, leaves, **kwargs):
     _native_extension_final_join(name = name, product = product, leaves = leaves, legal = native_owner_carrier_legal(product), **kwargs)
 
 def native_extension_family_carriers(name, product, leaves, base_carrier_manifest = None, wasix_leaves = [], family = "native", **kwargs):
+    spec = native_owner_carrier_metadata(product, family)
+    own = {member["sqlName"]: True for member in spec["members"]}
+    contrib = {row["sqlName"]: True for row in EXTENSION_RELEASE_METADATA if row["class"] == "contrib"}
+    needs_contrib = "native" in spec["ownerFamilies"] and "wasix" in spec["ownerFamilies"] and any([dependency in contrib and dependency not in own for member in spec["members"] for dependency in member["descriptor"].get("dependencies", [])])
+    requirements, error = {}, ""
+    if needs_contrib:
+        required = spec["releaseMetadata"]["compatibility"]["wasixRuntimeVersion"]
+        dependency_product, owner = "oliphaunt-extension-contrib-pg18", CONTRIB_OWNERS["wasix"]
+        artifact = "github-release:" + dependency_product + "-" + required + "-manifest.json"
+        completed = COMPLETED_SUPPLIER_ARTIFACTS.get(owner + "/" + required + "/" + artifact)
+        current = EXTENSION_FINAL_INPUTS.get(dependency_product + "/wasix/wasix-portable")
+        if completed:
+            record = dict(completed, product = dependency_product, owner = owner, version = required, kind = "public")
+        elif current and current["owner"] == owner and current["version"] == required:
+            record = {"product": dependency_product, "owner": owner, "version": required, "kind": "frozen", "file": current["frozen"]}
+        else:
+            record = None
+            error = "WASIX extension facade needs its original qualified or completed contrib manifest at " + required
+        if record:
+            requirements[record["file"]["path"]] = json.encode(record)
     _native_extension_final_join(name = name, product = product, leaves = leaves, complete = True,
                                  wasix_leaves = wasix_leaves, family = family,
+                                 wasix_dependency_manifests = requirements, wasix_dependency_error = error,
                                  base_carrier_manifest = base_carrier_manifest, legal = native_owner_carrier_legal(product), **kwargs)
 
 def _final_contract_test_impl(ctx):

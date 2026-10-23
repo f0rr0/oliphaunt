@@ -14,7 +14,7 @@ def _contract_impl(ctx):
     spec = ctx.attr.family[OutputGroupInfo].spec.to_list()
     if len(spec) != 1:
         fail("extension family contract requires its actual construction spec")
-    files = depset(ctx.files.legal, transitive = [ctx.attr.family[DefaultInfo].files] + [target[DefaultInfo].files for target in ctx.attr.inputs]).to_list()
+    files = depset(ctx.files.legal, transitive = [ctx.attr.family[DefaultInfo].files, ctx.attr.family[OutputGroupInfo].dependency_manifests] + [target[DefaultInfo].files for target in ctx.attr.inputs]).to_list()
     locations = ctx.actions.declare_file(ctx.label.name + ".locations.json")
     ctx.actions.write(locations, json.encode({file.path: _runfile(ctx, file) for file in files}))
     return bun_test_entrypoint(ctx, ctx.file._runner, [spec[0], locations], files + [locations] + ctx.files._helpers,

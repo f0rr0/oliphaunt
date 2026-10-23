@@ -244,6 +244,90 @@ function payloadAcquisitionTransport({ failure = '', heldRuntime = '' } = {}) {
   return { requests, transport };
 }
 
+test('PostGIS retains its completed WASIX contrib manifest once without retaining unrelated owner metadata', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'postgis-original-contrib-input-'));
+  const fixture = payloadAcquisitionTransport();
+  const downloaded: string[] = [];
+  const assets = new Map();
+  let omitManifest = false;
+  const compatibility = extensionMetadata('oliphaunt-extension-postgis').compatibility;
+  for (const [product, version] of [
+    ['liboliphaunt-native', compatibility.nativeRuntimeVersion],
+    ['liboliphaunt-wasix', compatibility.wasixRuntimeVersion],
+  ]) {
+    const original = await fixture.transport.inventory({ product, version });
+    for (const row of original.publicRows) {
+      if (assets.has(row.name)) continue;
+      const bytes = Buffer.from(`retained original ${row.name}`);
+      assets.set(row.name, {
+        id: assets.size + 1,
+        name: row.name,
+        state: 'uploaded',
+        size: bytes.length,
+        url: `https://api.github.com/repos/f0rr0/oliphaunt/releases/assets/${assets.size + 1}`,
+        digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+        bytes,
+      });
+    }
+  }
+  const transport = {
+    ...fixture.transport,
+    inventory: async (publication) => {
+      const original = await fixture.transport.inventory(publication);
+      return {
+        ...original,
+        publicRows: omitManifest
+          ? original.publicRows.filter(
+              (row) => !row.name.startsWith('oliphaunt-extension-contrib-pg18-'),
+            )
+          : original.publicRows,
+      };
+    },
+    readPages: async () => [...assets.values()],
+    proveAsset: async (_url, name, _size, options) => {
+      const asset = assets.get(name);
+      mkdirSync(path.dirname(options.retainedPath), { recursive: true });
+      writeFileSync(options.retainedPath, asset.bytes);
+      downloaded.push(name);
+      return { bytes: asset.bytes.length, sha256: asset.digest.slice(7) };
+    },
+  };
+  try {
+    const result = await acquireNativePublicationInputs(
+      {
+        source,
+        directory: path.join(directory, 'held'),
+        consumerProducts: ['oliphaunt-extension-postgis'],
+      },
+      transport,
+    );
+    const version = extensionMetadata('oliphaunt-extension-postgis').compatibility
+      .wasixRuntimeVersion;
+    const name = `oliphaunt-extension-contrib-pg18-${version}-manifest.json`;
+    expect(downloaded.filter((file) => file === name)).toHaveLength(1);
+    const captured = result.snapshot.supplierArtifacts!.filter(
+      (row) => row.artifact === `github-release:${name}`,
+    );
+    expect(captured).toHaveLength(1);
+    expect(captured[0].publication.version).toBe(version);
+    expect(fileIdentity(captured[0].file.path).sha256).toBe(captured[0].file.sha256);
+    expect(downloaded.some((file) => file.includes('contrib') && file !== name)).toBe(false);
+    omitManifest = true;
+    await expect(
+      acquireNativePublicationInputs(
+        {
+          source,
+          directory: path.join(directory, 'missing'),
+          consumerProducts: ['oliphaunt-extension-postgis'],
+        },
+        transport,
+      ),
+    ).rejects.toThrow('original contrib public manifest');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('source payload acquisition retains actual native parts once through the existing snapshot', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'actual-native-payload-inputs-'));
   try {

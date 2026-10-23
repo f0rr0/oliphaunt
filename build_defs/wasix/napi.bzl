@@ -13,7 +13,7 @@ load(":platform.bzl", "WASIX_PAYLOAD_PROFILE")
 
 WasixNapiInputsInfo = provider(fields = ["tree", "target", "triple", "sql_names", "sdk_version"])
 WasixNapiReleaseInfo = provider(fields = ["binary", "inputs"])
-WasixNapiCarrierInfo = provider(fields = ["npm", "github", "provenance", "target", "construction_contract"])
+WasixNapiCarrierInfo = provider(fields = ["npm", "github", "provenance", "target", "construction_contract", "inputs"])
 
 NAPI_NOTICES = RUNTIME_NPM_NOTICES | {
     "//src/third-party/openssl:LICENSE.txt": "src/third-party/openssl/LICENSE.txt",
@@ -206,7 +206,7 @@ def _carrier_impl(ctx):
     inputs += ctx.files.windows_runtime
     bun_file_action(ctx, ctx.file._packager, arguments = [spec.path], inputs = inputs + [spec], source_files = ctx.files._helpers,
                     outputs = [npm, github, provenance], mnemonic = "WasixNapiReleaseEnvelopes")
-    return [DefaultInfo(files = depset([npm, github, provenance])), WasixNapiCarrierInfo(npm = npm, github = github, provenance = provenance, target = producer.inputs.target,
+    return [DefaultInfo(files = depset([npm, github, provenance])), WasixNapiCarrierInfo(npm = npm, github = github, provenance = provenance, target = producer.inputs.target, inputs = producer.inputs.tree,
             construction_contract = {"targetTriple": producer.inputs.triple, "sdkVersion": producer.inputs.sdk_version, "sqlNames": producer.inputs.sql_names}),
             ctx.attr.producer[ShippingSupplierInfo],
             OutputGroupInfo(npm = depset([npm]), github = depset([github]), provenance = depset([provenance]))]

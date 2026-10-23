@@ -25,6 +25,7 @@ import {
   writeReleaseControls,
 } from '../../src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts';
 import {
+  extensionArtifactMemberClosure,
   isDesktopNativeTarget,
   nativeDependencyModuleBasenames,
   nativeModuleHostTarget,
@@ -37,6 +38,7 @@ import {
 import { packageExtensionCargoFacades } from '../../src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts';
 import {
   frozenExtensionMemberInventory,
+  frozenExtensionPublicMetadata,
   stageExtensionNativeNpmFacade,
 } from '../../src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts';
 import {
@@ -57,9 +59,11 @@ import {
   assertReleaseNoticesInArchive,
   releaseNoticeRows,
 } from '../../tools/packaging/release-notices.mts';
+import type { ExtensionOwnerMetadata } from '../../tools/release/extension-release-metadata.mts';
 import type { ExtensionFinalInput } from '../../tools/release/native-extension-final-inputs.mts';
 import { stageDeclaredExtensionReleaseFiles } from '../../tools/release/native-extension-release-files.mts';
 import { safeRelative } from '../../tools/release/native-file-identity.mts';
+import { declaredWasixDependencyManifest } from './declared_final_inputs.mts';
 import {
   type NativeCarrierSpec,
   stageNativeRegistryCarriers,
@@ -91,6 +95,7 @@ export interface NativeOwnerSpec {
   schema: string;
   product: string;
   owner: string;
+  ownerMetadata?: ExtensionOwnerMetadata;
   version: string;
   runtimeVersion: string;
   releaseMetadata: Record<string, any>;
@@ -101,6 +106,7 @@ export interface NativeOwnerSpec {
   carriers: any[];
   ownerFamilies: string[];
   cargoFacadeMetadata: any;
+  wasixDependencyManifests?: any[];
   components: string;
   leaves: FinalLeaf[];
   operation: 'import' | 'collect' | 'compose';
@@ -241,10 +247,16 @@ export function validateFinalFileReceipt(leaf: FinalLeaf) {
 function expectedMember(spec: NativeCarrierSpec, target: string, selected?: any) {
   const artifact = spec.recipe.artifacts ?? {};
   const startup = spec.descriptor.lifecycle['startup-config'] ?? [];
+  const nativeModuleStem = spec.descriptor['native-module-file']?.replace(/\.[^.]+$/u, '') ?? null;
   return {
     sqlName: spec.sqlName,
     createsExtension: spec.descriptor.lifecycle['create-extension'],
-    nativeModuleStem: spec.descriptor['native-module-file']?.replace(/\.[^.]+$/u, '') ?? null,
+    nativeModuleStem,
+    ...extensionArtifactMemberClosure({
+      sqlName: spec.sqlName,
+      createsExtension: spec.descriptor.lifecycle['create-extension'],
+      nativeModuleStem,
+    }),
     dependencies: sorted(spec.selectedDependencies),
     dataFiles: sorted(spec.contrib ? spec.contrib['data-files'] : artifact.data_files).map(
       (file) => {
@@ -703,6 +715,7 @@ export function validateNativeFinalLeaf(spec: NativeOwnerSpec, leaf: FinalLeaf, 
       ...canonical,
       product: spec.product,
       owner: spec.owner,
+      ownerMetadata: spec.ownerMetadata,
       target: leaf.target,
       version: spec.version,
       runtimeVersion: spec.runtimeVersion,
@@ -780,6 +793,8 @@ export function mergeNativeFinalMembers(spec: NativeOwnerSpec, cohorts: { member
     for (const field of [
       'createsExtension',
       'nativeModuleStem',
+      'sqlMembers',
+      'nativeModuleStems',
       'dependencies',
       'dataFiles',
       'extensionSqlFileNames',
@@ -844,11 +859,27 @@ export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
   }
   const root = mkdtempSync(path.join(tmpdir(), 'native-extension-final-join-'));
   try {
-    const validated = spec.leaves.map((leaf, index) =>
-      leaf.originalFiles
-        ? stageDeclaredFinalLeaf(spec, leaf, path.join(root, String(index)))
-        : validateNativeFinalLeaf(spec, leaf, path.join(root, String(index))),
-    );
+    const validated = spec.leaves.map((leaf, index) => {
+      if (!leaf.originalFiles)
+        return validateNativeFinalLeaf(spec, leaf, path.join(root, String(index)));
+      const staged = stageDeclaredFinalLeaf(spec, leaf, path.join(root, String(index)));
+      assert.deepEqual(
+        frozenExtensionPublicMetadata(
+          { id: spec.product, version: spec.version },
+          json(leaf.frozen),
+          json(leaf.manifest),
+          staged.members,
+        ),
+        {
+          extensionClass: spec.releaseMetadata.class,
+          versioning: spec.releaseMetadata.versioning,
+          sourceIdentity: spec.releaseMetadata.sourceIdentity,
+          compatibility: spec.releaseMetadata.compatibility,
+        },
+        'current extension join metadata differs from its original constructor',
+      );
+      return staged;
+    });
     const collection = {
       schema: 'oliphaunt-native-extension-final-collection-v1',
       scope: 'construction',
@@ -953,6 +984,7 @@ export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
             product: spec.product,
             version: spec.version,
             members: members.map((member) => member.sqlName),
+            memberContracts: members,
             targets: spec.profiles
               .filter((profile) => profile.kind === 'native-dynamic')
               .map((profile) => profile.target)
@@ -960,6 +992,8 @@ export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
             iosCarrier,
             liboliphauntVersion: spec.runtimeVersion,
             runtimeBound: spec.releaseMetadata.versioning === 'runtime-bound',
+            releaseProduct: spec.owner,
+            ownerMetadata: spec.ownerMetadata,
           },
           result,
         );
@@ -981,7 +1015,17 @@ export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
           [spec.product],
           path.join(root, 'cargo-facade'),
           {
-            metadataByProduct: { [spec.product]: spec.cargoFacadeMetadata },
+            metadataByProduct: {
+              [spec.product]: {
+                ...spec.cargoFacadeMetadata,
+                ownerMetadata: spec.ownerMetadata,
+                compatibility: documents.manifest.compatibility,
+                memberContracts: members,
+                wasixDependencies: (spec.wasixDependencyManifests ?? []).map(
+                  declaredWasixDependencyManifest,
+                ),
+              },
+            },
           },
         );
         assert.equal(packages.length, 1);

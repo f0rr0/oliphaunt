@@ -541,3 +541,74 @@ test('ordinary npm install consumes the exact candidate while retaining an older
     rmSync(root, { recursive: true, force: true });
   }
 }, 30_000);
+
+test('native facade optional SDK peers reject old consumers without installing an unused SDK', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'frozen-native-peers-'));
+  let registry;
+  try {
+    const { peerDependencies, peerDependenciesMeta } = JSON.parse(
+      readFileSync(path.join(ROOT, 'src/extensions/artifacts/packages/package.json'), 'utf8'),
+    );
+    const facade = {
+      name: '@oliphaunt/fixture-native-extension',
+      version: '1.0.0',
+      peerDependencies,
+      peerDependenciesMeta,
+    };
+    const sdkCases = [
+      ['@oliphaunt/ts', '0.3.1'],
+      ['@oliphaunt/react-native', '0.3.2'],
+      ['@oliphaunt/ts', '0.4.0'],
+      ['@oliphaunt/react-native', '0.4.0'],
+    ];
+    registry = await frozenNpmRegistry(
+      [
+        packageFixture(root, facade),
+        ...sdkCases.map(([name, version]) => packageFixture(root, { name, version })),
+      ],
+      { fetchImpl: async () => new Response('', { status: 404 }) },
+    );
+    for (const [index, sdk] of [null, ...sdkCases].entries()) {
+      const app = path.join(root, String(index));
+      mkdirSync(app);
+      writeFileSync(
+        path.join(app, 'package.json'),
+        JSON.stringify({
+          private: true,
+          dependencies: { [facade.name]: facade.version, ...(sdk ? { [sdk[0]]: sdk[1] } : {}) },
+        }),
+      );
+      writeFileSync(path.join(app, '.npmrc'), `@oliphaunt:registry=${registry.url}\n`);
+      const process = Bun.spawn(
+        ['npm', 'install', '--no-audit', '--no-fund', '--cache', path.join(root, 'cache')],
+        {
+          cwd: app,
+          env: { PATH: globalThis.process.env.PATH, HOME: root },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        },
+      );
+      const [status, stderr] = await Promise.all([
+        process.exited,
+        new Response(process.stderr).text(),
+        new Response(process.stdout).text(),
+      ]);
+      if (sdk && !Bun.semver.satisfies(sdk[1], peerDependencies[sdk[0]])) {
+        expect(status, stderr).not.toBe(0);
+        expect(stderr).toContain('ERESOLVE');
+        continue;
+      }
+      expect(status, stderr).toBe(0);
+      const installed = JSON.parse(
+        readFileSync(path.join(app, 'package-lock.json'), 'utf8'),
+      ).packages;
+      for (const name of Object.keys(peerDependencies))
+        expect(installed[`node_modules/${name}`]?.version).toBe(
+          sdk?.[0] === name ? sdk[1] : undefined,
+        );
+    }
+  } finally {
+    registry?.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);

@@ -181,33 +181,6 @@ function extensionPackageName(sqlName) {
   return extension['npm-package'];
 }
 
-function selectedExtensionClosure(extensions) {
-  const selected = new Set();
-  const visiting = new Set();
-  function visit(sqlName) {
-    if (selected.has(sqlName)) {
-      return;
-    }
-    if (visiting.has(sqlName)) {
-      throw new Error(`generated extension dependency cycle includes ${sqlName}`);
-    }
-    const extension = EXTENSION_METADATA_BY_SQL_NAME.get(sqlName);
-    if (!extension) {
-      throw new Error(`unknown Oliphaunt extension SQL name ${sqlName}`);
-    }
-    visiting.add(sqlName);
-    for (const dependency of extension['selected-extension-dependencies'] ?? []) {
-      visit(dependency);
-    }
-    visiting.delete(sqlName);
-    selected.add(sqlName);
-  }
-  for (const sqlName of extensions) {
-    visit(sqlName);
-  }
-  return [...selected].sort();
-}
-
 function releaseOwnerForSqlName(sqlName) {
   const extension = EXTENSION_METADATA_BY_SQL_NAME.get(sqlName);
   if (!extension) {
@@ -349,15 +322,6 @@ function readCarrierSummary(file, label = 'iOS carrier manifest') {
     const expectedTag = `${owner.releaseProduct}-v${row.version}`;
     if (row.tag !== expectedTag) {
       throw new Error(`${label} at ${file} extension ${row.sqlName}.tag must be ${expectedTag}`);
-    }
-    const generatedDependencies = [
-      ...(EXTENSION_METADATA_BY_SQL_NAME.get(row.sqlName)?.['selected-extension-dependencies'] ??
-        []),
-    ].sort();
-    if (JSON.stringify(dependencies) !== JSON.stringify(generatedDependencies)) {
-      throw new Error(
-        `${label} at ${file} extension ${row.sqlName} dependencies do not match generated metadata`,
-      );
     }
     const release = `${row.version}\0${row.tag}`;
     const previousRelease = releasesByOwner.get(row.releaseProduct);
@@ -508,7 +472,8 @@ function resolveInstalledExtensionOwners(
   extensions,
   { liboliphauntVersion, packageJsonResolver = resolvePackageJson } = {},
 ) {
-  const closure = selectedExtensionClosure(extensions);
+  // Maven resolves each selected owner's frozen transitive package requirements.
+  const closure = [...new Set(extensions)].sort();
   const ownersByPackage = new Map();
   for (const sqlName of closure) {
     const owner = releaseOwnerForSqlName(sqlName);
@@ -1334,7 +1299,6 @@ module.exports.withOliphaunt = withOliphaunt;
 module.exports.normalizeOptions = normalizeOptions;
 module.exports.resolveInstalledResources = resolveInstalledResources;
 module.exports.extensionPackageName = extensionPackageName;
-module.exports.selectedExtensionClosure = selectedExtensionClosure;
 module.exports.releaseOwnerForSqlName = releaseOwnerForSqlName;
 module.exports.resolveInstalledExtensionOwners = resolveInstalledExtensionOwners;
 module.exports.serializeExtensionVersions = serializeExtensionVersions;

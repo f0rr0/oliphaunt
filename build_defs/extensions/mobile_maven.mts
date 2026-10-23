@@ -49,6 +49,7 @@ export async function packageMobileMaven(
             ),
             registryPackages: spec.mavenCoordinates,
             memberContracts,
+            ownerMetadata: spec.ownerMetadata,
           },
         },
       },

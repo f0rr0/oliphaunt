@@ -688,6 +688,11 @@ function stageMember(
       `${sqlName}.extension-sql-file-prefixes`,
     ),
     nativeModuleStem: extensionRow['native-module-stem'],
+    sqlMembers: stringList(extensionRow['sql-members'], `${sqlName}.sql-members`),
+    nativeModuleStems: stringList(
+      extensionRow['native-module-stems'],
+      `${sqlName}.native-module-stems`,
+    ),
     iosNativeDependencies: assets
       .filter((asset) => asset.kind === 'ios-dependency-xcframework')
       .map((asset) => asset.identity)
@@ -738,6 +743,8 @@ export function extensionReleasePropertiesText({
       `extensionSqlFileNames=${propertiesCsv(manifest.extensionSqlFileNames)}\n`,
       `extensionSqlFilePrefixes=${propertiesCsv(manifest.extensionSqlFilePrefixes)}\n`,
       `nativeModuleStem=${manifest.nativeModuleStem || ''}\n`,
+      `sqlMembers=${propertiesCsv(manifest.sqlMembers)}\n`,
+      `nativeModuleStems=${propertiesCsv(manifest.nativeModuleStems)}\n`,
       `iosNativeDependencies=${propertiesCsv(manifest.iosNativeDependencies)}\n`,
       `sharedPreloadLibraries=${propertiesCsv(manifest.sharedPreloadLibraries)}\n`,
     );
@@ -764,6 +771,8 @@ export function extensionReleasePropertiesText({
         `${prefix}.extensionSqlFileNames=${propertiesCsv(member.extensionSqlFileNames)}\n`,
         `${prefix}.extensionSqlFilePrefixes=${propertiesCsv(member.extensionSqlFilePrefixes)}\n`,
         `${prefix}.nativeModuleStem=${member.nativeModuleStem || ''}\n`,
+        `${prefix}.sqlMembers=${propertiesCsv(member.sqlMembers)}\n`,
+        `${prefix}.nativeModuleStems=${propertiesCsv(member.nativeModuleStems)}\n`,
         `${prefix}.iosNativeDependencies=${propertiesCsv(member.iosNativeDependencies)}\n`,
         `${prefix}.sharedPreloadLibraries=${propertiesCsv(member.sharedPreloadLibraries)}\n`,
       );
@@ -797,7 +806,17 @@ export function composeExtensionReleaseDocuments({
   directAssets,
   releaseMetadata,
   sourceIdentity = releaseMetadata.sourceIdentity,
+  schema = members.length > 1
+    ? 'oliphaunt-extension-ci-artifacts-v2'
+    : 'oliphaunt-extension-ci-artifacts-v1',
 }) {
+  if (
+    !['oliphaunt-extension-ci-artifacts-v1', 'oliphaunt-extension-ci-artifacts-v2'].includes(
+      schema,
+    ) ||
+    (schema.endsWith('-v1') && members.length !== 1)
+  )
+    throw new Error(`${PREFIX}: extension document schema differs from its member shape`);
   // A singleton frozen document also carries its leaf envelope, unlike a bundle member.
   members = members.map(
     ({
@@ -814,7 +833,7 @@ export function composeExtensionReleaseDocuments({
     releaseProduct === product && family === null
       ? {}
       : { releaseProduct, family: family ?? 'combined' };
-  if (members.length > 1) {
+  if (schema === 'oliphaunt-extension-ci-artifacts-v2') {
     return {
       manifest: {
         schema: 'oliphaunt-extension-ci-artifacts-v2',
@@ -868,6 +887,8 @@ export function composeExtensionReleaseDocuments({
       extensionSqlFilePrefixes: member.extensionSqlFilePrefixes,
       createsExtension: member.createsExtension,
       nativeModuleStem: member.nativeModuleStem,
+      sqlMembers: member.sqlMembers,
+      nativeModuleStems: member.nativeModuleStems,
       ...(member.nativeDependencyModules === undefined
         ? {}
         : { nativeDependencyModules: member.nativeDependencyModules }),

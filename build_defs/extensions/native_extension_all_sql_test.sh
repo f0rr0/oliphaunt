@@ -10,6 +10,8 @@ smoke="$PWD/$4"
 startup="$PWD/$5"
 environment="$PWD/$6"
 dependencies="$PWD/$7"
+# Match a returned row, rather than a failed statement echo containing its SQL.
+server_success_row='?column? = "candidate-extension-smoke-ok"'
 mkdir -p "$carrier" "${consumer%/*}"
 cp "$PWD/$2" "$consumer"
 tar -xf "$PWD/$1" -C "$carrier"
@@ -51,6 +53,12 @@ initialize() {
   printf '%s\n' '{"schema":"oliphaunt-database-root-v1","engineFamily":"native","pgdata":"pgdata","postgresMajor":18,"physicalFormat":"native-pg18-v1"}' > "$database/.oliphaunt.json"
 }
 
+server_sql() {
+  # Stand-alone PostgreSQL returns zero after SQL errors. A transaction prevents
+  # later statements from printing the success sentinel after any earlier error.
+  { printf 'BEGIN;\n\n'; cat "$install" "$smoke"; printf '\nCOMMIT;\n\n'; } | sed 's/^-- oliphaunt-statement$//'
+}
+
 while IFS= read -r name; do
   [[ -z "$name" ]] && continue
   for profile in postgresql modules; do
@@ -63,13 +71,16 @@ while IFS= read -r name; do
     if [[ "$profile" == modules ]]; then
       "$consumer" "$database/pgdata" "$runtime" --sql-plan "$install" "$smoke" "$startup" > "$database/consumer.log" 2>&1
     else
-      cat "$install" "$smoke" | sed 's/^-- oliphaunt-statement$//' | "$runtime/bin/postgres" --single -j -D "$database/pgdata" postgres > "$database/consumer.log" 2>&1
+      server_sql | "$runtime/bin/postgres" --single -j -D "$database/pgdata" postgres > "$database/consumer.log" 2>&1
     fi
     status=$?
     set -e
     mv "$directory/$name.hidden" "$directory/$name"
     response=$(<"$database/consumer.log")
-    if [[ "$response" != *"$name"* || ( "$profile" == modules && "$status" == 0 ) || ( "$profile" == postgresql && "$response" != *ERROR:* && "$response" != *FATAL:* ) ]]; then
+    stem=${name%.*}
+    if [[ ( "$response" != *"$name"* && "$response" != *"\"$stem\""* ) ||
+      ( "$profile" == modules && "$status" == 0 ) ||
+      ( "$profile" == postgresql && ( ( "$response" != *ERROR:* && "$response" != *FATAL:* ) || "$response" == *"$server_success_row"* ) ) ]]; then
       printf 'relocated %s consumer did not reject missing candidate dependency %s (status %s)\n%s\n' "$profile" "$name" "$status" "$response" >&2
       exit 1
     fi
@@ -88,9 +99,9 @@ while IFS= read -r assignment; do
   [[ -z "$assignment" ]] || startup_args+=(-c "$assignment")
 done < "$startup"
 log="$TEST_TMPDIR/server.log"
-cat "$install" "$smoke" | sed 's/^-- oliphaunt-statement$//' | "$runtime/bin/postgres" --single -j -D "$database/pgdata" "${startup_args[@]}" postgres > "$log" 2>&1
+server_sql | "$runtime/bin/postgres" --single -j -D "$database/pgdata" "${startup_args[@]}" postgres > "$log" 2>&1
 response=$(<"$log")
-if [[ "$response" != *candidate-extension-smoke-ok* || "$response" == *ERROR:* || "$response" == *FATAL:* || "$response" == *"not ok"* ]]; then
+if [[ "$response" != *"$server_success_row"* || "$response" == *ERROR:* || "$response" == *FATAL:* || "$response" == *"not ok"* ]]; then
   printf '%s\n' "$response" >&2
   exit 1
 fi

@@ -78,7 +78,18 @@ _TOOLS_PATH_DEPS = _QUALITY_PATH_DEPS | {
 }
 cargo_generator(name = "quality_build_script", path_dependencies = _QUALITY_PATH_DEPS, proc_macro_names = ["async-trait"])
 cargo_library(name = "quality_lib", path_dependencies = _QUALITY_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":quality_build_script")
-cargo_library_test(name = "quality_unit_test", crate = ":quality_lib", data = _UNIT_TEST_DATA)
+# Exercise extension descriptors with source-only carriers. Runtime execution
+# and embedded-payload checks remain in the constructed carrier qualifications.
+cargo_library_test(
+    name = "quality_unit_test",
+    crate = ":quality_lib",
+    features = ["extensions"],
+    args = [
+        "--skip", "oliphaunt::extensions::extension_tests::",
+        "--skip", "oliphaunt::base::tests::embedded_runtime_archive_hash_is_validated",
+    ],
+    data = _UNIT_TEST_DATA,
+)
 cargo_generator(name = "tools_build_script", path_dependencies = _TOOLS_PATH_DEPS, proc_macro_names = ["async-trait"], features = ["tools"])
 cargo_library(name = "tools_lib", path_dependencies = _TOOLS_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":tools_build_script", features = ["extensions", "tools", "extension-vector"])
 # Runtime integration consumes the genuine constructed payloads. The quality

@@ -218,6 +218,8 @@ export function extensionGithubReleaseFixture(
       extensionSqlFileNames: [...extension['extension-sql-file-names']].sort(),
       extensionSqlFilePrefixes: [...extension['extension-sql-file-prefixes']].sort(),
       nativeModuleStem,
+      sqlMembers: [...extension['sql-members']],
+      nativeModuleStems: [...extension['native-module-stems']],
       iosNativeDependencies: stagesIos ? iosNativeDependencies : [],
       iosRegistration:
         nativeModuleStem === null || !stagesIos
@@ -426,6 +428,8 @@ export function extensionGithubReleaseFixture(
               extensionSqlFileNames: extensions[0].extensionSqlFileNames,
               extensionSqlFilePrefixes: extensions[0].extensionSqlFilePrefixes,
               nativeModuleStem: extensions[0].nativeModuleStem,
+              sqlMembers: extensions[0].sqlMembers,
+              nativeModuleStems: extensions[0].nativeModuleStems,
               iosNativeDependencies: extensions[0].iosNativeDependencies,
               iosRegistration: extensions[0].iosRegistration,
               wasixInstall: extensions[0].wasixInstall,

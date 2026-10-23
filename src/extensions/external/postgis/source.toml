@@ -1,14 +1,14 @@
 name = "postgis"
 url = "https://github.com/postgis/postgis.git"
-branch = "3.6.3"
-commit = "3d12666588a84b23a3147618eaa9b40b0fe5e796"
-source_date_epoch = 1776193981
+branch = "3.6.4"
+commit = "94d984bd083635c1d253db0f87cf80b32548e406"
+source_date_epoch = 1780943336
 
 [extension-control]
 sql-name = "postgis"
 source-path = "extensions/postgis/postgis.control.in"
 source-default-version = "@EXTVERSION@"
-default-version = "3.6.3"
+default-version = "3.6.4"
 
 [archive]
-sha256 = "0cab012a4e470b2479d4dcaa6a64f5322fe64092e5c3018da94dfcfd106ef874"
+sha256 = "8df008472ba1e0af19a184aaa92244cfd7c65954002e338dde76e60d5269f000"

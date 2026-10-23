@@ -120,9 +120,9 @@ wasix_compiled_extension_carriers(
     name = "postgis",
     sql_name = "postgis",
     module = "//build_defs/wasix/dependencies:postgis",
-    support_modules = ["//build_defs/wasix/dependencies:postgis_dependency_module"],
+    support_modules = ["//build_defs/wasix/dependencies:postgis_dependency_module", "//build_defs/wasix/dependencies:postgis_raster", "//build_defs/wasix/dependencies:postgis_topology"],
     host = ":postgis_declared_host",
-    resources = ["//build_defs/wasix/dependencies:postgis_extension_sql", "//build_defs/wasix/dependencies:postgis_control"],
+    resources = ["//build_defs/wasix/dependencies:postgis_extension_sql", "//build_defs/wasix/dependencies:postgis_control", "//build_defs/extensions/postgis:gdal_payload_data"],
     data_resources = {
         "//build_defs/wasix/dependencies:postgis_data_sql": "/".join([path for path in _POSTGIS_DATA if path.endswith("/postgis.sql")][0].split("/")[:-1]),
         "//build_defs/wasix/dependencies:proj_database": [path for path in _POSTGIS_DATA if path.endswith("/proj.db")][0],

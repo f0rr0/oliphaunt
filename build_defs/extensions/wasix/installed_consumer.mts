@@ -11,9 +11,17 @@ import {
   startupPacket,
 } from '../../../src/wasix/sdks/ts/tools/pgwire-client.mts';
 
-const [addonName, product, sqlName, specPath, frozenPath, fixturePath, hostManifestPath] =
-  process.argv.slice(2);
-assert.equal(process.argv.length, 9);
+const [
+  addonName,
+  product,
+  sqlName,
+  specPath,
+  frozenPath,
+  fixturePath,
+  hostManifestPath,
+  dependenciesPath,
+] = process.argv.slice(2);
+assert.equal(process.argv.length, 10);
 const hostManifest = JSON.parse(readFileSync(hostManifestPath, 'utf8'));
 assert(
   addonName && product && sqlName && specPath && frozenPath && fixturePath && hostManifestPath,
@@ -60,6 +68,14 @@ const addonManifest = require(require.resolve(`${addonName}/package.json`));
 assert.equal(addon.addonAbiVersion(), addonManifest.oliphaunt.addonAbiVersion);
 assert.equal(addon.nodeApiVersion(), addonManifest.oliphaunt.nodeApiVersion);
 assert.equal(addon.runtimeVersion(), spec.compatibility.wasix_runtime_version);
+const dependencies: { sqlName: string; sha256: string; size: number; modules: string[] }[] =
+  JSON.parse(readFileSync(dependenciesPath, 'utf8'));
+for (const dependency of dependencies)
+  assert.equal(
+    addon.extensionIdentity(dependency.sqlName),
+    `${dependency.sha256}:${dependency.size}`,
+    `${dependency.sqlName} facts differ from the executing addon`,
+  );
 const runtimeIdentity = addon.payloadIdentity('runtimeArchive');
 assert.match(runtimeIdentity, /^[0-9a-f]{64}:[1-9][0-9]*$/u);
 assert.equal(
@@ -178,6 +194,11 @@ function assertSelectedModules() {
     assert(module['runtime-path'].startsWith(prefix));
     expected.add(module['runtime-path'].slice(prefix.length));
   }
+  for (const dependency of dependencies)
+    for (const module of dependency.modules) {
+      assert(module.startsWith(prefix));
+      expected.add(module.slice(prefix.length));
+    }
   const roots = readdirSync(workspaces, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => path.join(workspaces, entry.name, 'tmp/oliphaunt'))

@@ -13,6 +13,7 @@ import type { ExtensionFinalInput } from '../../tools/release/native-extension-f
 import { fileIdentity } from '../../tools/release/native-file-identity.mts';
 import {
   declaredNativeAppleBaseManifest,
+  declaredWasixDependencyManifest,
   validateDeclaredExtensionFinalInput,
   validateDeclaredNativeAppleBase,
 } from './declared_final_inputs.mts';
@@ -28,14 +29,97 @@ afterEach(() => {
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
 });
+
+test('WASIX foreign requirements retain their authenticated original install facts and reject missing or substituted metadata', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'wasix-original-dependency-'));
+  directories.push(directory);
+  const product = 'oliphaunt-extension-contrib-pg18';
+  const version = '4.5.6';
+  const install = {
+    schema: 'oliphaunt-wasix-extension-install-v1',
+    name: 'fuzzystrmatch',
+    nativeModule: null,
+    nativeModules: [],
+    dependencies: [],
+    coreExportsRequired: [],
+    loadOrder: [],
+    unresolvedImports: [],
+    installedFiles: ['share/postgresql/extension/fuzzystrmatch.control'],
+    lifecycle: {
+      createExtension: true,
+      createSchema: null,
+      loadSql: [],
+      postCreateSql: [],
+      startupConfig: [],
+      preloadRequired: false,
+      restartRequired: false,
+      sharedMemoryRequired: false,
+    },
+  };
+  const member = {
+    sqlName: 'fuzzystrmatch',
+    wasixInstall: install,
+    assets: [{ family: 'wasix', kind: 'wasix-runtime', target: 'wasix-portable' }],
+  };
+  for (const kind of ['frozen', 'public']) {
+    const document = {
+      schema: `oliphaunt-extension-${kind === 'public' ? 'release-manifest' : 'ci-artifacts'}-v2`,
+      product,
+      releaseProduct: 'liboliphaunt-wasix',
+      family: 'wasix',
+      version,
+      compatibility,
+      extensions: [member],
+      extensionClass: 'contrib',
+      versioning: 'runtime-bound',
+      sourceIdentity: {
+        kind: 'postgres-contrib',
+        name: 'postgresql',
+        version: '18.0',
+        url: 'https://example.invalid/postgres.tar.gz',
+        sha256: 'a'.repeat(64),
+      },
+    };
+    const file = path.join(directory, `${kind}.json`);
+    writeFileSync(file, JSON.stringify(document));
+    const record = {
+      kind,
+      product,
+      owner: 'liboliphaunt-wasix',
+      version,
+      file: { path: file, ...fileIdentity(file) },
+    };
+    expect(declaredWasixDependencyManifest(record)).toEqual({
+      product,
+      version,
+      members: [{ sqlName: 'fuzzystrmatch', wasixInstall: install }],
+    });
+    document.extensions[0] = { ...member, wasixInstall: undefined };
+    writeFileSync(file, JSON.stringify(document));
+    expect(() => declaredWasixDependencyManifest(record)).toThrow(
+      'original WASIX dependency manifest bytes differ',
+    );
+    expect(() =>
+      declaredWasixDependencyManifest({ ...record, file: { path: file, ...fileIdentity(file) } }),
+    ).toThrow('wasixInstall');
+  }
+});
 const product = 'oliphaunt-extension-pgtap';
 const compatibility = {
+  extensionRuntimeContract: 'src/extensions/contracts/contract.toml',
+  postgresMajor: '18',
   nativeRuntimeProduct: 'liboliphaunt-native',
   nativeRuntimeVersion: '1.2.3',
   wasixRuntimeProduct: 'liboliphaunt-wasix',
   wasixRuntimeVersion: '4.5.6',
 };
-const sourceIdentity = { type: 'git', commit: 'a'.repeat(40) };
+const sourceIdentity = {
+  kind: 'external',
+  name: 'pgtap',
+  url: 'https://example.test/pgtap.git',
+  branch: 'main',
+  commit: 'a'.repeat(40),
+};
 
 test('original Apple base stays selection-neutral and pins the actual conventional runtime', () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'declared-original-apple-base-'));
@@ -128,6 +212,8 @@ function fixture(family: 'native' | 'wasix' = 'native') {
     extensionSqlFilePrefixes: [],
     createsExtension: true,
     nativeModuleStem: null,
+    sqlMembers: ['pgtap'],
+    nativeModuleStems: [],
     iosNativeDependencies: [],
     iosRegistration: null,
     wasixInstall:
@@ -216,6 +302,55 @@ test('checks original bytes and canonical documents without treating fixtures as
       'original File bytes differ',
     );
   }
+});
+test('held original documents retain their own source and host compatibility', () => {
+  const { input } = fixture();
+  expect(
+    validateDeclaredExtensionFinalInput(input, {
+      ...canonical,
+      sourceIdentity: { ...sourceIdentity, commit: 'b'.repeat(40) },
+      compatibility: { ...compatibility, nativeRuntimeVersion: '9.8.7' },
+    }),
+  ).toBe(input);
+  replaceDocument(input, 'manifest', (document) => {
+    document.compatibility.nativeRuntimeVersion = '9.8.7';
+  });
+  expect(() => validateDeclaredExtensionFinalInput(input, canonical)).toThrow(
+    'public and frozen compatibility differ',
+  );
+});
+test('a declared one-member v2 envelope retains its original schema', () => {
+  const { input, member } = fixture();
+  const documents = composeExtensionReleaseDocuments({
+    product,
+    releaseProduct: product,
+    family: 'native',
+    version: input.version,
+    schema: 'oliphaunt-extension-ci-artifacts-v2',
+    members: [member],
+    directAssets: [{ ...member.assets[0], kind: 'extension-bundle', memberCount: 1 }],
+    releaseMetadata: {
+      class: 'external',
+      versioning: 'upstream-bound',
+      sourceIdentity,
+      compatibility,
+    },
+  });
+  for (const [which, document] of [
+    ['frozen', documents.manifest],
+    ['manifest', documents.releaseData],
+  ] as const)
+    replaceDocument(input, which, (current) => {
+      for (const key of Object.keys(current)) delete current[key];
+      Object.assign(current, document);
+    });
+  expect(validateDeclaredExtensionFinalInput(input, canonical)).toBe(input);
+  replaceDocument(input, 'frozen', (document) => {
+    document.schema = 'oliphaunt-extension-ci-artifacts-v3';
+  });
+  expect(() => validateDeclaredExtensionFinalInput(input, canonical)).toThrow(
+    'unknown frozen extension schema',
+  );
 });
 test('rejects changed Apple/WASIX/member fields even when document hashes are freshly captured', () => {
   for (const field of [
@@ -351,6 +486,8 @@ test('final single and bundle controls supply absent Apple fields without changi
         members: Array.from({ length: count }, (_, index) => ({
           ...row,
           sqlName: `member${index}`,
+          sqlMembers: [`member${index}`],
+          nativeModuleStems: [],
         })),
       }));
       const before = structuredClone(cohorts);
@@ -533,6 +670,8 @@ test('nested closed bundle follows only its declared outer File alias and retain
   const members = ['pgtap', 'second-document-fixture'].map((sqlName) => ({
     ...member,
     sqlName,
+    sqlMembers: [sqlName],
+    nativeModuleStems: [],
     assets: member.assets.map((asset) => ({
       ...asset,
       carrierAsset: 'closed-bundle.tar.gz',

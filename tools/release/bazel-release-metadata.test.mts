@@ -27,6 +27,23 @@ import {
   wasixArtifactRows,
 } from './release-artifact-targets.mts';
 
+test('real repository metadata tracks optional native target overrides and their absence', () => {
+  const metadata = loadReleaseMetadata(path.resolve(import.meta.dirname, '../..'));
+  expect(Object.keys(metadata.extensionNativeTargets).sort()).toEqual(
+    Object.keys(metadata.extensionSources).sort(),
+  );
+  expect(metadata.extensionNativeTargets.pg_hashids).toEqual({});
+  expect(metadata.inputs['src/extensions/external/pg_hashids/targets/native.toml']).toBeNull();
+  expect(metadata.extensionNativeTargets.postgis.module_files).toEqual([
+    'lib/postgresql/postgis-3.so',
+    'lib/postgresql/postgis_raster-3.so',
+    'lib/postgresql/postgis_topology-3.so',
+  ]);
+  expect(metadata.inputs['src/extensions/external/postgis/targets/native.toml']).toContain(
+    'postgis_raster-3.so',
+  );
+});
+
 test('one per-run metadata snapshot projects exact completed suppliers without an auth claim', () => {
   const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
   const publication = {
@@ -166,6 +183,10 @@ function fixture(run: (root: string, write: (name: string, content: string) => v
   );
   write('src/extensions/external/example/native-version', '1.0.0\n');
   write(
+    'src/extensions/external/example/targets/native.toml',
+    'module_files=["lib/postgresql/example.so"]\n',
+  );
+  write(
     'src/extensions/external/example/source.toml',
     `name="example"\nurl="https://github.com/upstream/example.git"\nbranch="0.8.2"\ncommit="${'a'.repeat(40)}"\nversion="0.8.2"\n[archive]\nsha256="${'c'.repeat(64)}"\n`,
   );
@@ -266,11 +287,25 @@ test('WASIX extension projection preserves all canonical members and PostGIS sup
         'runtime-path': 'lib/postgresql/liboliphaunt_postgis_deps.so',
         'aot-file': 'postgis_deps-llvm-opta.bin.zst',
       },
+      {
+        name: 'postgis_raster',
+        'build-path': 'postgis/raster/rt_pg/postgis_raster-3.so',
+        'runtime-path': 'lib/postgresql/postgis_raster-3.so',
+        'aot-file': 'postgis_raster-llvm-opta.bin.zst',
+      },
+      {
+        name: 'postgis_topology',
+        'build-path': 'postgis/topology/postgis_topology-3.so',
+        'runtime-path': 'lib/postgresql/postgis_topology-3.so',
+        'aot-file': 'postgis_topology-llvm-opta.bin.zst',
+      },
     ]);
     expect(metadata.inputs[file]).toBe(source);
     const rendered = renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl');
     expect(rendered.bzl).toContain('WASIX_EXTENSIONS =');
     expect(rendered.bzl).toContain('"aot-file": "postgis_deps-llvm-opta.bin.zst"');
+    expect(rendered.bzl).toContain('"aot-file": "postgis_raster-llvm-opta.bin.zst"');
+    expect(rendered.bzl).toContain('"aot-file": "postgis_topology-llvm-opta.bin.zst"');
     expect(rendered.extensionSourcesBzl).not.toContain('WASIX_EXTENSIONS');
   });
 });
@@ -656,6 +691,12 @@ test('publication versions, upstream versions and contrib ownership stay indepen
     });
     expect(initial.inputs['src/extensions/external/example/native-version']).toBe('1.0.0\n');
     expect(initial.inputs['src/extensions/external/example/recipe.toml']).toBeNull();
+    expect(initial.extensionNativeTargets.example.module_files).toEqual([
+      'lib/postgresql/example.so',
+    ]);
+    expect(initial.inputs['src/extensions/external/example/targets/native.toml']).toContain(
+      'example.so',
+    );
     expect(initial.products['oliphaunt-extension-example'].registry_packages).toEqual([
       'crates:example',
       'npm:@oliphaunt/example',

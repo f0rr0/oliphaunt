@@ -594,6 +594,47 @@ test('validator requires dependency ELF bytes in both ABI layouts and exact data
   expect(() => inspect(archive)).toThrow('data resource');
 });
 
+test('validator requires every declared PostGIS SQL member without admitting foreign controls', async () => {
+  const archive = join(temporary(), 'payload.tar.gz');
+  const members = ['postgis', 'postgis_raster', 'postgis_tiger_geocoder', 'postgis_topology'];
+  const facts = descriptor({
+    sql_name: 'postgis',
+    default_version: '3.6.4',
+    sql_members: members,
+  });
+  const files = new Map<string, Buffer>();
+  for (const member of members) {
+    files.set(`${sqlPrefix}${member}.control`, Buffer.from("default_version = '3.6.4'\n"));
+    files.set(`${sqlPrefix}${member}--3.6.4.sql`, Buffer.from('SELECT 1;\n'));
+    files.set(
+      `${sqlPrefix}${member}--TEMPLATED--TO--ANY.sql`,
+      Buffer.from('-- upstream template\n'),
+    );
+  }
+  await writeArchive(archive, files, facts);
+  expect(inspect(archive).sql_members).toEqual(members);
+  for (const member of members) {
+    for (const suffix of ['.control', '--3.6.4.sql']) {
+      const name = `${sqlPrefix}${member}${suffix}`;
+      const bytes = files.get(name)!;
+      files.delete(name);
+      await writeArchive(archive, files, facts);
+      expect(() => inspect(archive)).toThrow(
+        suffix === '.control' ? 'required extension control' : 'not installable',
+      );
+      files.set(name, bytes);
+    }
+  }
+  files.set(`${sqlPrefix}postgis_sfcgal.control`, Buffer.from("default_version = '3.6.4'\n"));
+  await writeArchive(archive, files, facts);
+  expect(() => inspect(archive)).toThrow('foreign SQL/control');
+  files.delete(`${sqlPrefix}postgis_sfcgal.control`);
+  for (const sql_members of [members.slice(1), [...members, 'postgis']]) {
+    await writeArchive(archive, files, { ...facts, sql_members });
+    expect(() => inspect(archive)).toThrow('owned SQL identities');
+  }
+});
+
 test('validator recognizes the upstream PostGIS upgrade template without creating a version edge', async () => {
   const archive = join(temporary(), 'payload.tar.gz');
   const files = new Map([

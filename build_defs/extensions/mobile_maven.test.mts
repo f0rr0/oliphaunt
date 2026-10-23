@@ -8,7 +8,10 @@ import {
   stageExtensionUpstreamLicenses,
 } from '../../src/extensions/tools/extension-upstream-licenses.mts';
 import { archiveDirectory } from '../../tools/packaging/archive-directory.mts';
-import { buildMavenArtifactManifest } from '../../tools/packaging/build-maven-artifact-manifest.mts';
+import {
+  buildMavenArtifactManifest,
+  extensionMavenDependencies,
+} from '../../tools/packaging/build-maven-artifact-manifest.mts';
 import { parseMavenArtifactManifest } from '../../tools/packaging/maven-artifact-manifest.mts';
 import { renderMavenArtifactPom } from '../../tools/packaging/maven-artifact-staging.mts';
 import { stageReleaseNotices } from '../../tools/packaging/release-notices.mts';
@@ -33,6 +36,83 @@ function compilerRuntimeLicenseFixture() {
 }
 
 const compilerRuntimeLicense = compilerRuntimeLicenseFixture();
+
+test('Maven acquisition edges come only from frozen same-ABI member dependencies', () => {
+  const contrib = {
+    product: 'oliphaunt-extension-contrib-pg18',
+    versioning: 'runtime-bound',
+    native: 'liboliphaunt-native',
+    wasix: 'liboliphaunt-wasix',
+  };
+  const ownerMetadata = {
+    cube: contrib,
+    fuzzystrmatch: contrib,
+    vector: {
+      product: 'oliphaunt-extension-vector',
+      versioning: 'upstream-bound',
+      native: 'oliphaunt-extension-vector',
+      wasix: 'oliphaunt-extension-vector',
+    },
+  };
+  for (const target of ['android-arm64-v8a', 'android-x86_64']) {
+    const owner = {
+      product: 'oliphaunt-extension-postgis',
+      releaseProduct: 'oliphaunt-extension-postgis',
+      runtimeVersion: '1.2.3',
+      target,
+      ownerMetadata,
+    };
+    // The current catalog adds fuzzystrmatch; an old frozen release did not.
+    expect(
+      extensionMavenDependencies({ ...owner, members: [{ sqlName: 'postgis', dependencies: [] }] }),
+    ).toEqual([]);
+    const dependencies = extensionMavenDependencies({
+      ...owner,
+      members: [
+        { sqlName: 'postgis', dependencies: [] },
+        { sqlName: 'postgis_tiger_geocoder', dependencies: ['postgis', 'fuzzystrmatch'] },
+        { sqlName: 'postgis_raster', dependencies: ['fuzzystrmatch'] },
+      ],
+    });
+    expect(dependencies).toEqual([
+      {
+        groupId: 'dev.oliphaunt.extensions',
+        artifactId: `oliphaunt-extension-contrib-pg18-${target}`,
+        version: '1.2.3',
+        type: 'tar.gz',
+        scope: 'runtime',
+      },
+    ]);
+    expect(
+      extensionMavenDependencies({
+        ...owner,
+        product: 'oliphaunt-extension-contrib-pg18',
+        releaseProduct: 'liboliphaunt-native',
+        members: [{ sqlName: 'earthdistance', dependencies: ['cube'] }],
+      }),
+    ).toEqual([]);
+    expect(
+      extensionMavenDependencies({
+        ...owner,
+        product: 'oliphaunt-extension-pgtap',
+        releaseProduct: 'oliphaunt-extension-pgtap',
+        members: [{ sqlName: 'pgtap', dependencies: ['plpgsql'] }],
+      }),
+    ).toEqual([]);
+    expect(() =>
+      extensionMavenDependencies({
+        ...owner,
+        members: [{ sqlName: 'postgis', dependencies: ['vector'] }],
+      }),
+    ).toThrow(/explicit frozen version for independent release owner oliphaunt-extension-vector/u);
+    expect(() =>
+      extensionMavenDependencies({
+        ...owner,
+        members: [{ sqlName: 'postgis', dependencies: ['pgtap'] }],
+      }),
+    ).toThrow('has no declared release owner');
+  }
+});
 
 test.skipIf(!compilerRuntimeLicense)(
   'declared vector Maven inputs require exact construction receipts for both Android targets',
@@ -80,7 +160,10 @@ test.skipIf(!compilerRuntimeLicense)(
             file.sha256,
           );
         }
-        return [target, [{ sqlName: 'vector', nativeConstructionLicenseFiles: files }]];
+        return [
+          target,
+          [{ sqlName: 'vector', dependencies: [], nativeConstructionLicenseFiles: files }],
+        ];
       }),
     );
     const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-mobile-maven-legal-'));

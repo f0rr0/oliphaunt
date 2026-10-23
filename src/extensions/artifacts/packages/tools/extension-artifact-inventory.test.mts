@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -21,11 +22,37 @@ import {
   stageExtensionUpstreamLicenses,
 } from '../../../tools/extension-upstream-licenses.mts';
 import {
+  assertExtensionArtifactClosure,
   EXTENSION_ARTIFACT_PROPERTY_KEYS,
+  frozenExtensionArtifactLegalInventory,
   nativeDependencyModuleBasenames,
   parseExtensionArtifactProperties,
+  readCanonicalExtensionArtifactArchive,
+  validateFrozenExtensionLegalInventory,
   validateExtensionArtifactArchive,
 } from './extension-artifact-inventory.mts';
+import {
+  extractExtensionRuntime,
+  frozenExtensionCompatibility,
+  frozenExtensionMemberInventory,
+} from './package-extension-release-carriers.mts';
+
+test('frozen compatibility requires string runtime versions instead of coerced arrays', () => {
+  const compatibility = {
+    extensionRuntimeContract: 'src/extensions/contracts/contract.toml',
+    nativeRuntimeProduct: 'liboliphaunt-native',
+    nativeRuntimeVersion: '1.2.3',
+    postgresMajor: '18',
+    wasixRuntimeProduct: 'liboliphaunt-wasix',
+    wasixRuntimeVersion: '1.2.3',
+  };
+  assert.deepEqual(frozenExtensionCompatibility(compatibility, 'fixture'), compatibility);
+  for (const field of ['nativeRuntimeVersion', 'wasixRuntimeVersion'])
+    assert.throws(
+      () => frozenExtensionCompatibility({ ...compatibility, [field]: ['1.2.3'] }, 'fixture'),
+      /invalid frozen extension compatibility/u,
+    );
+});
 
 test('canonical native dependency stems project into desktop and mobile host module suffixes', async () => {
   const recipe = Bun.TOML.parse(
@@ -65,7 +92,7 @@ test('canonical native dependency stems project into desktop and mobile host mod
       'windows-x64-msvc',
       recipe.artifacts.native_dependency_modules_by_target,
     ),
-    [],
+    ['postgis_raster-3.dll', 'postgis_topology-3.dll'],
   );
   for (const target of [
     'linux-x64-gnu',
@@ -204,10 +231,13 @@ function manifest(overrides = {}) {
     staticSymbolAliases: '',
     licenseFiles: legal.licenseFiles.join(','),
     licenseProfile: legal.profile,
+    sqlMembers: overrides.createsExtension === 'no' ? '' : sqlName,
+    nativeModuleStems: overrides.nativeModuleStem ?? '',
     files: 'files',
     ...overrides,
   };
-  return `${EXTENSION_ARTIFACT_PROPERTY_KEYS.map((key) => `${key}=${values[key]}`).join('\n')}\n`;
+  const keys = EXTENSION_ARTIFACT_PROPERTY_KEYS;
+  return `${keys.map((key) => `${key}=${values[key]}`).join('\n')}\n`;
 }
 
 async function canonicalLegalEntries(root, sqlName, target = 'linux-x64-gnu') {
@@ -244,6 +274,8 @@ const pgtapMetadata = {
   sqlName: 'pgtap',
   createsExtension: true,
   nativeModuleStem: null,
+  sqlMembers: ['pgtap'],
+  nativeModuleStems: [],
   dependencies: [],
   dataFiles: [],
   extensionSqlFileNames: ['uninstall_pgtap.sql'],
@@ -659,6 +691,8 @@ async function main() {
       sqlName: 'auto_explain',
       createsExtension: false,
       nativeModuleStem: 'auto_explain',
+      sqlMembers: [],
+      nativeModuleStems: ['auto_explain'],
       extensionSqlFileNames: [],
       extensionSqlFilePrefixes: [],
     };
@@ -689,6 +723,8 @@ async function main() {
       sqlName: 'postgis',
       createsExtension: true,
       nativeModuleStem: 'postgis-3',
+      sqlMembers: ['postgis', 'postgis_raster', 'postgis_tiger_geocoder', 'postgis_topology'],
+      nativeModuleStems: ['postgis-3', 'postgis_raster-3', 'postgis_topology-3'],
       dependencies: [],
       dataFiles: [
         'contrib/postgis-3.6/legacy.sql',
@@ -713,6 +749,8 @@ async function main() {
           sqlName: 'postgis',
           nativeModuleStem: 'postgis-3',
           nativeModuleFile: 'postgis-3.so',
+          sqlMembers: postgisMetadata.sqlMembers.join(','),
+          nativeModuleStems: postgisMetadata.nativeModuleStems.join(','),
           dataFiles: postgisMetadata.dataFiles.join(','),
           extensionSqlFileNames: postgisMetadata.extensionSqlFileNames.join(','),
           extensionSqlFilePrefixes: postgisMetadata.extensionSqlFilePrefixes.join(','),
@@ -720,6 +758,14 @@ async function main() {
       ],
       ['files/lib/postgresql/postgis-3.so', 'module'],
       ['files/lib/modules/postgis-3.so', 'embedded module'],
+      ...['postgis_raster-3', 'postgis_topology-3'].flatMap((stem) => [
+        [`files/lib/postgresql/${stem}.so`, 'module'],
+        [`files/lib/modules/${stem}.so`, 'embedded module'],
+      ]),
+      ...['postgis_raster', 'postgis_topology', 'postgis_tiger_geocoder'].flatMap((name) => [
+        [`files/share/postgresql/extension/${name}.control`, "default_version = '3.6.3'\n"],
+        [`files/share/postgresql/extension/${name}--3.6.3.sql`, 'install'],
+      ]),
       ['files/share/postgresql/extension/postgis--3.6.1--3.6.2.sql', 'upgrade'],
       ['files/share/postgresql/extension/postgis--3.6.2--3.6.3.sql', 'upgrade'],
       ['files/share/postgresql/extension/postgis--3.6.3.sql', 'install'],
@@ -731,6 +777,14 @@ async function main() {
       ...postgisLegal,
     ]);
     const postgisFile = await writeArchive(root, 'postgis-legitimate.tar.gz', postgis);
+    assert.throws(
+      () =>
+        parseExtensionArtifactProperties(
+          postgis.get('manifest.properties').replace(/^nativeModuleStems=.*\n/mu, ''),
+          'partial frozen closure',
+        ),
+      /property fields/u,
+    );
     const validatedPostgis = validateExtensionArtifactArchive({
       file: postgisFile,
       metadata: postgisMetadata,
@@ -738,6 +792,25 @@ async function main() {
       nativeRuntimeVersion: '1.2.3',
       label: 'postgis legitimate',
     });
+    const extracted = path.join(root, 'extracted-postgis');
+    extractExtensionRuntime(postgisFile, extracted, {
+      metadata: postgisMetadata,
+      target: 'linux-x64-gnu',
+      nativeRuntimeVersion: '1.2.3',
+    });
+    await assert.rejects(fs.access(path.join(extracted, '.oliphaunt')), { code: 'ENOENT' });
+    assert.equal(
+      await fs.readFile(path.join(extracted, 'lib/modules/postgis_topology-3.so'), 'utf8'),
+      'embedded module',
+    );
+    assert.deepEqual(
+      frozenExtensionMemberInventory(postgisMetadata).nativeModuleStems,
+      postgisMetadata.nativeModuleStems,
+    );
+    assert.throws(
+      () => frozenExtensionMemberInventory({ ...postgisMetadata, nativeModuleStems: undefined }),
+      /nativeModuleStems/u,
+    );
     assert.equal(
       validatedPostgis.runtimeFiles.length,
       [...postgis.keys()].filter((member) => member.startsWith('files/')).length,
@@ -745,6 +818,229 @@ async function main() {
     assert.deepEqual(
       validatedPostgis.legalFiles.map(({ path: member }) => member),
       [...postgisLegal.keys()].sort(),
+    );
+    const legacyPostgis = new Map(
+      [...postgis].filter(([name]) => !/postgis_(raster|topology|tiger_geocoder)/u.test(name)),
+    );
+    legacyPostgis.set(
+      'manifest.properties',
+      legacyPostgis
+        .get('manifest.properties')
+        .split('\n')
+        .filter((line) => !/^(sqlMembers|nativeModuleStems)=/u.test(line))
+        .join('\n'),
+    );
+    const legacyFile = await writeArchive(root, 'postgis-legacy-core-only.tar.gz', legacyPostgis);
+    const {
+      sqlMembers: _sqlMembers,
+      nativeModuleStems: _nativeModuleStems,
+      ...legacyMetadata
+    } = postgisMetadata;
+    assert.deepEqual(frozenExtensionMemberInventory(legacyMetadata), legacyMetadata);
+    assert.throws(
+      () => frozenExtensionMemberInventory({ ...legacyMetadata, sqlMembers: ['postgis'] }),
+      /declared together/u,
+    );
+    assert.doesNotThrow(() =>
+      validateExtensionArtifactArchive({
+        file: legacyFile,
+        metadata: legacyMetadata,
+        target: 'linux-x64-gnu',
+        nativeRuntimeVersion: '1.2.3',
+        label: 'immutable primary-only PostGIS',
+      }),
+    );
+    assert.throws(
+      () =>
+        validateExtensionArtifactArchive({
+          file: postgisFile,
+          metadata: legacyMetadata,
+          target: 'linux-x64-gnu',
+          nativeRuntimeVersion: '1.2.3',
+          label: 'legacy metadata cannot adopt a new companion payload',
+        }),
+      /closure fields.*frozen release inventory/u,
+    );
+    assert.throws(
+      () =>
+        frozenExtensionMemberInventory({
+          ...postgisMetadata,
+          sqlMembers: undefined,
+          nativeModuleStems: undefined,
+        }),
+      /sqlMembers/u,
+    );
+    assert.throws(
+      () =>
+        validateExtensionArtifactArchive({
+          file: legacyFile,
+          metadata: postgisMetadata,
+          target: 'linux-x64-gnu',
+          nativeRuntimeVersion: '1.2.3',
+          label: 'new frozen PostGIS rejects incomplete legacy payload',
+        }),
+      /closure fields.*frozen release inventory/u,
+    );
+    const incompleteMetadata = {
+      ...postgisMetadata,
+      sqlMembers: ['postgis'],
+      nativeModuleStems: ['postgis-3'],
+    };
+    assert.deepEqual(frozenExtensionMemberInventory(incompleteMetadata), incompleteMetadata);
+    assert.throws(
+      () =>
+        assertExtensionArtifactClosure(
+          incompleteMetadata,
+          'linux-x64-gnu',
+          'current PostGIS producer',
+        ),
+      /current source-owned closure/u,
+    );
+    assert.throws(
+      () =>
+        assertExtensionArtifactClosure(
+          { ...postgisMetadata, nativeModuleStems: ['postgis-3'] },
+          'linux-x64-gnu',
+          'current PostGIS producer',
+        ),
+      /nativeModuleStems must match the current source-owned closure/u,
+    );
+    for (const invalid of [
+      { sqlMembers: [] },
+      { nativeModuleStems: [] },
+      { sqlMembers: ['postgis', 'postgis'] },
+      { nativeModuleStems: ['../postgis-3'] },
+      { createsExtension: false, sqlMembers: ['another_extension'] },
+      { nativeModuleStem: null, nativeModuleStems: ['another_module'] },
+    ])
+      assert.throws(
+        () => frozenExtensionMemberInventory({ ...incompleteMetadata, ...invalid }),
+        /sqlMembers|nativeModuleStems/u,
+      );
+    const incompletePostgis = new Map(legacyPostgis);
+    incompletePostgis.set(
+      'manifest.properties',
+      manifest({
+        sqlName: 'postgis',
+        nativeModuleStem: 'postgis-3',
+        nativeModuleFile: 'postgis-3.so',
+        dataFiles: postgisMetadata.dataFiles.join(','),
+        extensionSqlFileNames: '',
+        extensionSqlFilePrefixes: postgisMetadata.extensionSqlFilePrefixes.join(','),
+      }),
+    );
+    const historicalFile = await writeArchive(
+      root,
+      'postgis-older-frozen-closure.tar.gz',
+      incompletePostgis,
+    );
+    assert.doesNotThrow(() =>
+      validateExtensionArtifactArchive({
+        file: historicalFile,
+        metadata: incompleteMetadata,
+        target: 'linux-x64-gnu',
+        nativeRuntimeVersion: '1.2.3',
+        label: 'older complete frozen closure remains valid after source adds companions',
+      }),
+    );
+
+    const oldCompiler = Buffer.from('original compiler license\n');
+    const oldConstruction = [
+      {
+        path: 'share/licenses/original-compiler/LICENSE',
+        mode: '0644',
+        sha256: createHash('sha256').update(oldCompiler).digest('hex'),
+      },
+    ];
+    const capturedMetadata = {
+      ...incompleteMetadata,
+      nativeConstructionLicenseFiles: oldConstruction,
+    };
+    const originalLegal = new Map(incompletePostgis);
+    originalLegal.delete('files/share/licenses/gdal/LICENSE.TXT');
+    originalLegal.set('LICENSE', 'original release license bytes\n');
+    originalLegal.set(`files/${oldConstruction[0].path}`, oldCompiler);
+    const originalLicenseFiles = [
+      ...legalContract('postgis', 'linux-x64-gnu').licenseFiles.filter(
+        (file) => !file.startsWith('share/licenses/gdal/'),
+      ),
+      oldConstruction[0].path,
+    ].sort();
+    originalLegal.set(
+      'manifest.properties',
+      originalLegal
+        .get('manifest.properties')
+        .replace(/^licenseFiles=.*$/mu, `licenseFiles=${originalLicenseFiles.join(',')}`),
+    );
+    const capturedFile = await writeArchive(
+      root,
+      'postgis-original-legal-inventory.tar.gz',
+      originalLegal,
+    );
+    const capturedEntries = readCanonicalExtensionArtifactArchive(capturedFile);
+    const legalInventory = {
+      ...frozenExtensionArtifactLegalInventory(capturedEntries, 'original legal fixture'),
+      extensionClass: 'external',
+    };
+    const capturedOptions = {
+      file: capturedFile,
+      metadata: capturedMetadata,
+      target: 'linux-x64-gnu',
+      nativeRuntimeVersion: '1.2.3',
+      label: 'authenticated original legal fixture',
+    };
+    assert.doesNotThrow(() =>
+      validateExtensionArtifactArchive({ ...capturedOptions, legalInventory }),
+    );
+    assert.throws(
+      () =>
+        validateExtensionArtifactArchive({
+          ...capturedOptions,
+          legalInventory: { ...legalInventory, profile: 'external-wasix' },
+        }),
+      /native extension legal profile/u,
+    );
+    assert.throws(
+      () => validateExtensionArtifactArchive(capturedOptions),
+      /canonical legal|construction legal|immutable construction source/u,
+    );
+    assert.throws(
+      () =>
+        validateFrozenExtensionLegalInventory(
+          {
+            ...legalInventory,
+            files: legalInventory.files.filter((row) => row.path !== 'LICENSE'),
+          },
+          'missing notice',
+        ),
+      /exactly cover/u,
+    );
+    assert.throws(
+      () =>
+        validateFrozenExtensionLegalInventory(
+          {
+            ...legalInventory,
+            constructionLicenseFiles: [{ ...oldConstruction[0], sha256: '0'.repeat(64) }],
+          },
+          'changed receipt',
+        ),
+      /construction license.*original legal inventory/u,
+    );
+    const substitutedLegal = new Map(originalLegal);
+    substitutedLegal.set('LICENSE', 'changed after original inventory capture\n');
+    const substitutedFile = await writeArchive(
+      root,
+      'postgis-substituted-original-license.tar.gz',
+      substitutedLegal,
+    );
+    assert.throws(
+      () =>
+        validateExtensionArtifactArchive({
+          ...capturedOptions,
+          file: substitutedFile,
+          legalInventory,
+        }),
+      /legal member LICENSE.*canonical bytes/u,
     );
 
     // These synthetic archive bytes exercise the reader's alias contract;
@@ -763,13 +1059,20 @@ async function main() {
         symbolAliases: aliases,
       };
       const entries = new Map(postgis);
-      entries.delete('files/lib/modules/postgis-3.so');
+      for (const name of entries.keys())
+        if (
+          name.startsWith('files/lib/modules/') ||
+          /^files\/lib\/postgresql\/postgis_(raster|topology)-3\.so$/u.test(name)
+        )
+          entries.delete(name);
       entries.set(archive, 'synthetic target archive');
       const properties = {
         sqlName: 'postgis',
         nativeTarget: target,
         nativeModuleStem: 'postgis-3',
         nativeModuleFile: 'postgis-3.so',
+        sqlMembers: postgisMetadata.sqlMembers.join(','),
+        nativeModuleStems: postgisMetadata.nativeModuleStems.join(','),
         dataFiles: postgisMetadata.dataFiles.join(','),
         extensionSqlFileNames: '',
         extensionSqlFilePrefixes: postgisMetadata.extensionSqlFilePrefixes.join(','),

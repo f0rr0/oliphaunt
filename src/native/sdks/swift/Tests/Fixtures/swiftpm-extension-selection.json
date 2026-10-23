@@ -17,7 +17,9 @@
       "sqlName": "earthdistance",
       "createsExtension": true,
       "dataFiles": [],
-      "dependencies": ["cube"],
+      "dependencies": [
+        "cube"
+      ],
       "extensionSqlFileNames": [],
       "extensionSqlFilePrefixes": [],
       "nativeModuleStem": "earthdistance",
@@ -37,7 +39,13 @@
             "address": "geo_distance"
           }
         ]
-      }
+      },
+      "sqlMembers": [
+        "earthdistance"
+      ],
+      "nativeModuleStems": [
+        "earthdistance"
+      ]
     },
     {
       "product": "oliphaunt-extension-contrib-pg18",
@@ -70,7 +78,13 @@
             "address": "pg_finfo_cube_in"
           }
         ]
-      }
+      },
+      "sqlMembers": [
+        "cube"
+      ],
+      "nativeModuleStems": [
+        "cube"
+      ]
     },
     {
       "product": "oliphaunt-extension-postgis",
@@ -89,8 +103,12 @@
         "contrib/postgis-3.6/uninstall_postgis.sql",
         "proj/proj.db"
       ],
-      "dependencies": [],
-      "extensionSqlFileNames": ["uninstall_postgis.sql"],
+      "dependencies": [
+        "fuzzystrmatch"
+      ],
+      "extensionSqlFileNames": [
+        "uninstall_postgis.sql"
+      ],
       "extensionSqlFilePrefixes": [
         "postgis_comments",
         "postgis_proc_set_search_path",
@@ -126,7 +144,16 @@
             "address": "pg_finfo_oliphaunt_static_postgis_3_difference"
           }
         ]
-      }
+      },
+      "sqlMembers": [
+        "postgis",
+        "postgis_raster",
+        "postgis_tiger_geocoder",
+        "postgis_topology"
+      ],
+      "nativeModuleStems": [
+        "postgis-3"
+      ]
     },
     {
       "product": "oliphaunt-extension-pgtap",
@@ -136,14 +163,49 @@
       "createsExtension": true,
       "dataFiles": [],
       "dependencies": [],
-      "extensionSqlFileNames": ["uninstall_pgtap.sql"],
-      "extensionSqlFilePrefixes": ["pgtap-core", "pgtap-schema"],
+      "extensionSqlFileNames": [
+        "uninstall_pgtap.sql"
+      ],
+      "extensionSqlFilePrefixes": [
+        "pgtap-core",
+        "pgtap-schema"
+      ],
       "nativeModuleStem": null,
       "nativeDependencies": [],
       "resourceRoot": "swiftpm-extension-resources/pgtap",
       "sharedPreloadLibraries": [],
       "asset": null,
       "registration": null
+    },
+    {
+      "product": "oliphaunt-extension-contrib-pg18",
+      "releaseProduct": "liboliphaunt-native",
+      "version": "0.1.0",
+      "sqlName": "fuzzystrmatch",
+      "createsExtension": true,
+      "dataFiles": [],
+      "dependencies": [],
+      "extensionSqlFileNames": [],
+      "extensionSqlFilePrefixes": [],
+      "nativeModuleStem": "fuzzystrmatch",
+      "nativeDependencies": [],
+      "resourceRoot": "swiftpm-extension-resources/fuzzystrmatch",
+      "sharedPreloadLibraries": [],
+      "asset": {
+        "name": "liboliphaunt-0.1.0-apple-spm-extension-fuzzystrmatch.zip",
+        "url": "https://github.com/f0rr0/oliphaunt/releases/download/oliphaunt-extension-contrib-pg18-v0.1.0/liboliphaunt-0.1.0-apple-spm-extension-fuzzystrmatch.zip",
+        "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "registration": {
+        "hasInit": false,
+        "symbols": []
+      },
+      "sqlMembers": [
+        "fuzzystrmatch"
+      ],
+      "nativeModuleStems": [
+        "fuzzystrmatch"
+      ]
     }
   ]
 }

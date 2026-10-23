@@ -227,6 +227,24 @@ cmp "$scratch/lf" "$checkout/source.txt"
 printf '%s\n' "$primary" "$primary" > "$scratch/expected"
 cmp "$scratch/expected" "$root/requests"
 
+root="$scratch/git-longpaths"
+init_repo "$root/upstream" trusted upstream
+git -C "$root/upstream" config --local core.longpaths true
+long_path=''
+for part in {1..6}; do
+  long_path+="source-directory-with-long-upstream-fixture-path-$part/"
+done
+mkdir -p "$root/upstream/$long_path"
+printf 'long path bytes' > "$root/upstream/${long_path}source.txt"
+git -C "$root/upstream" add .
+git -C "$root/upstream" commit --quiet -m 'long source path'
+bun "$test_data" git-pin "$root" "$(git -C "$root/upstream" rev-parse HEAD)"
+fetch "$root" "$root/pin.json"
+checkout="$root/checkouts/source"
+cmp "$root/upstream/${long_path}source.txt" "$checkout/${long_path}source.txt"
+[[ -z "$(git -C "$checkout" status --porcelain=v1 --untracked-files=all)" ]]
+FETCH_TEST_FAULT=all fetch "$root" "$root/pin.json" verify
+
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) echo 'Git symlink creation proof requires a Unix host'; exit 0;; esac
 root="$scratch/git-links"
 init_repo "$root/upstream" trusted upstream

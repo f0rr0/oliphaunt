@@ -19,6 +19,7 @@ exports_files([
     "release.toml",
     "postgres/series",
     "assets/build/docker/pinned-wasixcc-assets.tsv",
+    "assets/build/wasix_shim/gdal_wasix_compat.h",
     "tools/wasix-runtime-npm-payload.mts",
     "tools/wasix-runtime-npm-contract.mts",
     "tools/wasix-runtime-npm-descriptor.mts",
@@ -62,6 +63,8 @@ wasix_module(
 _EXTENSION_MODULES = wasix_contrib_modules(crypto = "@openssl//:wasix_crypto") + wasix_external_c_modules() + [
     "//build_defs/wasix/dependencies:postgis",
     "//build_defs/wasix/dependencies:postgis_dependency_module",
+    "//build_defs/wasix/dependencies:postgis_raster",
+    "//build_defs/wasix/dependencies:postgis_topology",
 ]
 
 # Every policy symbol comes from the admitted compiled side-module closure.

@@ -101,9 +101,11 @@ physical carrier manifest where the expanded npm index is required.
 
 Every direct or bundle npm platform package also carries and exports
 `extension-contract.json` with schema `oliphaunt-npm-extension-contract-v1`.
-That manifest freezes each member's `createsExtension`, native module stem,
-dependencies, data files, additional SQL names/prefixes, and preload libraries
-at the independently versioned extension release. It also freezes the exact,
+That manifest freezes each member's `createsExtension`, primary and companion
+native module stems, SQL members, dependencies, data files, additional SQL
+names/prefixes, and preload libraries at the independently versioned extension
+release. Published v1 carriers without companion fields retain only their
+primary SQL/module identities. The manifest also freezes the exact,
 sorted `share/licenses/` file inventory derived from that member's canonical
 carrier legal metadata. Every row binds the portable path, canonical SHA-256,
 and archive mode `0644`; contrib members therefore declare an explicit empty
@@ -117,8 +119,8 @@ packed carrier check proves exact mode `0644` on every platform. The runtime
 also requires every declared legal file and no undeclared runtime leaf. It uses
 this frozen contract—not the SDK's current catalog snapshot—to qualify the
 installed package's runtime leaf inventory. The SDK catalog remains
-authoritative for selection, release/package ownership, and dependency
-compatibility.
+authoritative for selection, release/package ownership, and compatibility of
+primary identities, companion SQL/modules, and dependencies.
 
 ## Carrier license and notice contract
 
@@ -458,10 +460,19 @@ OpenSSL checkout and links `pgcrypto` against the staged static `libcrypto`.
 `uuid-ossp` is mobile-prebuilt through the first-party portable UUID static
 `libuuid` archive. The Windows native producer links the same portable UUID
 source directly into the `uuid-ossp` module and installs the matching
-control/SQL files. The Windows native PostGIS producer builds the pinned GEOS,
-PROJ, SQLite, json-c, and libxml2 dependency stack, links the generated
-`postgis-3` module against those static archives, and stages the matching
-extension SQL plus `proj/proj.db`.
+control/SQL files. The Windows native PostGIS producer builds the pinned GDAL,
+GEOS, PROJ, SQLite, json-c, and libxml2 dependency stack, links the generated
+`postgis-3`, `postgis_raster-3`, and `postgis_topology-3` modules against those
+static archives, and stages the matching extension SQL, GDAL data, and
+`proj/proj.db`. The PostGIS product owns the core, raster, topology, and tiger
+geocoder SQL extensions and selects `fuzzystrmatch` from the contrib product.
+Applications enable the companions with `CREATE EXTENSION postgis_raster`,
+`CREATE EXTENSION postgis_topology`, and `CREATE EXTENSION postgis_tiger_geocoder`
+after enabling their prerequisites. Mobile carriers register the combined
+core/raster/topology archive. Desktop and WASIX carriers ship separate modules.
+GDAL includes GTiff/VRT and GeoJSON/Shapefile drivers. Shared lifecycle fixtures
+verify GeoTIFF pixel values, dimensions, and SRID, persistent topology, and
+address normalization after creation, restart, and backup/restore.
 
 ## Target-Specific PG18.4 Support
 

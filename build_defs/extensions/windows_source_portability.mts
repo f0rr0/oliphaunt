@@ -26,7 +26,11 @@ export function windowsExtensionHeaders(extension: string): Record<string, strin
 /** Transform only the reviewed named files; retain every other source byte. */
 export function windowsExtensionSource(extension: string, file: string, text: string): string {
   if (extension === 'postgis') {
-    if (/^(?:postgis|libpgcommon|liblwgeom)\/.*\.[ch]$/u.test(file)) {
+    if (
+      /^(?:postgis|libpgcommon|liblwgeom|raster\/rt_core|raster\/rt_pg|topology)\/.*\.[ch]$/u.test(
+        file,
+      )
+    ) {
       if (file.endsWith('.c')) {
         // These cross-unit definitions need an out-of-line body under MSVC.
         text = text.replace(
@@ -38,6 +42,15 @@ export function windowsExtensionSource(extension: string, file: string, text: st
         /^[ \t]*(?!(?:extern\s+)?PGDLLEXPORT\s+)(?:extern\s+)?Datum\s+(\w+)\s*\(PG_FUNCTION_ARGS\);\r?$/gm,
         'extern PGDLLEXPORT Datum $1(PG_FUNCTION_ARGS);',
       );
+      text = text.replace(
+        '# define __attribute__ (x)',
+        '# ifndef __attribute__\n#  define __attribute__(x)\n# endif',
+      );
+    }
+    if (file === 'topology/postgis_topology.c') {
+      for (const hook of ['_PG_init', '_PG_fini']) {
+        text = replaceOne(text, `void ${hook}(void);`, `PGDLLEXPORT void ${hook}(void);`, file);
+      }
     }
     if (file === 'postgis/postgis_legacy.c') {
       text = replaceOne(

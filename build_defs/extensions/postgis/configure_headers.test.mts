@@ -4,7 +4,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compilerFacts, configure, targetSubstitutions } from './configure_headers.mts';
+import {
+  compilerFacts,
+  configure,
+  geosHeaderValues,
+  targetSubstitutions,
+} from './configure_headers.mts';
 
 const facts = (target: string) =>
   compilerFacts(
@@ -23,6 +28,72 @@ const facts = (target: string) =>
       '/* #undef HAVE_UNISTD_H */',
     ].join('\n'),
   );
+
+test('the pinned GEOS C API configures its curve documentation without accepting unknown keys', () => {
+  const root = fileURLToPath(new URL('./geos_templates/', import.meta.url));
+  const values = geosHeaderValues(
+    readFileSync(join(root, 'Version.txt'), 'utf8'),
+    readFileSync(join(root, 'capi/CMakeLists.txt'), 'utf8'),
+  );
+  const header = configure(readFileSync(join(root, 'capi/geos_c.h.in'), 'utf8'), values);
+  assert.match(header, /This function does not support curved types directly/u);
+  assert.match(header, /This function outputs linear geometry types only/u);
+  assert.doesNotMatch(header, /@[A-Z_]+@/u);
+  assert.throws(
+    () => configure('@UNKNOWN_UPSTREAM_KEY@', values),
+    /unconfigured upstream template key/u,
+  );
+});
+
+test('native and WASIX JSON-C templates duplicate the global locale before calling newlocale', () => {
+  const root = mkdtempSync(join(process.env.TEST_TMPDIR ?? tmpdir(), 'json-c-locale-'));
+  try {
+    for (const [name, script, args] of [
+      ['native', './configure_headers.mts', ['--target', 'linux-x64-gnu']],
+      ['wasix', '../../wasix/dependencies/configure_headers.mts', []],
+    ] as const) {
+      const output = join(root, name);
+      const result = Bun.spawnSync(
+        [
+          process.execPath,
+          '--no-install',
+          '--no-env-file',
+          fileURLToPath(new URL(script, import.meta.url)),
+          '--kind',
+          'json_c',
+          '--source',
+          fileURLToPath(new URL('./json_c_templates/', import.meta.url)),
+          '--output',
+          output,
+          ...args,
+        ],
+        { stdout: 'pipe', stderr: 'pipe' },
+      );
+      assert.equal(result.exitCode, 0, result.stderr.toString());
+      const header = readFileSync(join(output, 'config.h'), 'utf8');
+      assert.match(header, /^#define HAVE_USELOCALE$/mu);
+      assert.match(header, /^#define HAVE_DUPLOCALE$/mu);
+      assert.match(header, /^\/\* #undef NEWLOCALE_NEEDS_FREELOCALE \*\/$/mu);
+    }
+    const original = {
+      HAVE_USELOCALE: '1',
+      HAVE_DUPLOCALE: '1',
+      JSON_C_HAVE_INTTYPES_H: '1',
+    };
+    const apple = targetSubstitutions(original, 'macos-arm64', {
+      ...facts('macos-arm64'),
+      HAVE_USELOCALE: '1',
+      HAVE_DUPLOCALE: '1',
+    });
+    assert.equal(apple.HAVE_DUPLOCALE, '1');
+    assert.equal(apple.NEWLOCALE_NEEDS_FREELOCALE, '1');
+    const windows = targetSubstitutions(original, 'windows-x64-msvc', facts('windows-x64-msvc'));
+    assert(!Object.hasOwn(windows, 'HAVE_USELOCALE'));
+    assert(!Object.hasOwn(windows, 'HAVE_DUPLOCALE'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('foreign substitutions consume explicit facts and retain incorporated dependency policy', () => {
   const before = {

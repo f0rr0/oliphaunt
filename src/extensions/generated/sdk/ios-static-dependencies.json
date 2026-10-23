@@ -9,6 +9,7 @@
     {
       "sql-name": "postgis",
       "static-dependencies": [
+        "gdal",
         "geos",
         "geos-c",
         "json-c",

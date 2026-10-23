@@ -41,6 +41,7 @@ const [
   startupFile,
   manifestFile,
   frozenFile,
+  ...dependencyNpmFiles
 ] = process.argv.slice(2);
 const spec = JSON.parse(readFileSync(specFile, 'utf8')) as NativeCarrierSpec;
 spec.outputs = {
@@ -174,7 +175,7 @@ try {
     await prepareNativeCarrierSdk({
       root,
       runtimeFile,
-      npmFiles: [npmFile],
+      npmFiles: [npmFile, ...dependencyNpmFiles],
       runtimeVersion: spec.runtimeVersion,
       selected: [spec.sqlName],
     });

@@ -12,11 +12,25 @@ const companions = ['oliphaunt_flatgeobuf_windows_compat.h', 'oliphaunt_postgis_
 // Captured from windows-extension-sources.mts before 3b7718a9. Do not call the
 // shared transform to compute expected bytes: this checks its extraction.
 function oldPostgisSource(file: string, text: string): string {
-  if (/^(postgis|libpgcommon|liblwgeom)\/.*\.[ch]$/u.test(file))
+  if (
+    /^(postgis|libpgcommon|liblwgeom|raster\/rt_core|raster\/rt_pg|topology)\/.*\.[ch]$/u.test(file)
+  ) {
     text = text.replace(
       /^[ \t]*(?!(?:extern\s+)?PGDLLEXPORT\s+)(?:extern\s+)?Datum\s+(\w+)\s*\(PG_FUNCTION_ARGS\);\r?$/gm,
       'extern PGDLLEXPORT Datum $1(PG_FUNCTION_ARGS);',
     );
+    text = text.replace(
+      '# define __attribute__ (x)',
+      '# ifndef __attribute__\n#  define __attribute__(x)\n# endif',
+    );
+  }
+  if (file === 'topology/postgis_topology.c') {
+    for (const hook of ['_PG_init', '_PG_fini']) {
+      const before = `void ${hook}(void);`;
+      assert.equal(text.split(before).length - 1, 1, `pinned topology hook anchor ${hook}`);
+      text = text.replace(before, `PGDLLEXPORT ${before}`);
+    }
+  }
   if (file === 'postgis/postgis_legacy.c') {
     const macro = /^([ \t]*)Datum[ \t]+funcname[ \t]*\(PG_FUNCTION_ARGS\);[ \t]*\\\r?$/gm;
     assert.equal([...text.matchAll(macro)].length, 1, 'pinned funcname macro anchor');

@@ -22,6 +22,10 @@ _PGCOMMON = "gserialized_gist lwgeom_transform lwgeom_cache lwgeom_pg shared_gse
 
 POSTGIS_LWGEOM_SOURCES = ["liblwgeom/" + source + ".c" for source in _LWGEOM]
 POSTGIS_PG_SOURCES = ["postgis/" + source + ".c" for source in _PG] + ["libpgcommon/" + source + ".c" for source in _PGCOMMON]
+POSTGIS_PGCOMMON_SOURCES = ["libpgcommon/" + source + ".c" for source in _PGCOMMON]
+POSTGIS_RTCORE_SOURCES = ["raster/rt_core/" + source + ".c" for source in "rt_util rt_spatial_relationship rt_mapalgebra rt_geometry rt_statistics rt_pixel rt_warp rt_gdal rt_band rt_raster rt_serialize rt_wkb rt_context".split(" ")]
+POSTGIS_RASTER_SOURCES = ["raster/rt_pg/" + source + ".c" for source in "rtpostgis rtpg_internal rtpg_legacy rtpg_spatial_relationship rtpg_mapalgebra rtpg_utility rtpg_inout rtpg_wkb rtpg_geometry rtpg_raster_properties rtpg_band_properties rtpg_pixel rtpg_create rtpg_gdal rtpg_statistics".split(" ")]
+POSTGIS_TOPOLOGY_SOURCES = ["topology/postgis_topology.c"]
 
 def postgis_standalone(name, profile = "desktop"):
     if profile != "desktop":
@@ -29,31 +33,36 @@ def postgis_standalone(name, profile = "desktop"):
         return
     prefix = "@postgis//:"
     flatgeobuf_sources = ["deps/flatgeobuf/" + source + ".cpp" for source in ["flatgeobuf_c", "geometrywriter", "geometryreader", "packedrtree"]]
-    windows_srcs = [prefix + source for source in POSTGIS_LWGEOM_SOURCES + POSTGIS_PG_SOURCES + flatgeobuf_sources]
+    windows_srcs = [prefix + source for source in POSTGIS_LWGEOM_SOURCES + POSTGIS_PG_SOURCES + POSTGIS_RTCORE_SOURCES + POSTGIS_RASTER_SOURCES + POSTGIS_TOPOLOGY_SOURCES + flatgeobuf_sources]
     windows_hdrs = [prefix + "postgis_headers"]
     windows_companions = {"//src/extensions/external/postgis:tools/windows/postgis-compat.h": "oliphaunt_postgis_windows_compat.h", "//src/extensions/external/postgis:tools/windows/flatgeobuf-compat.h": "oliphaunt_flatgeobuf_windows_compat.h"}
     windows_extension_sources(
         name = name + "_windows_sources", sql_name = "postgis",
         srcs = windows_srcs, hdrs = windows_hdrs, anchor = prefix + "Version.config", anchor_name = "Version.config",
         companions = windows_companions,
-        include_dirs = ["liblwgeom", "libpgcommon", "postgis", "deps", "deps/flatgeobuf", "deps/flatgeobuf/include", ""],
-        source_groups = ["liblwgeom", "postgis", "libpgcommon", "deps/flatgeobuf"], target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
+        include_dirs = ["liblwgeom", "libpgcommon", "postgis", "raster", "raster/rt_core", "raster/rt_pg", "topology", "deps", "deps/flatgeobuf", "deps/flatgeobuf/include", ""],
+        source_groups = ["liblwgeom", "postgis", "libpgcommon", "deps/flatgeobuf", "raster/rt_core", "raster/rt_pg", "topology"], target_compatible_with = NATIVE_WINDOWS_COMPATIBLE,
     )
     postgis_windows_sources_test(name = name + "_windows_sources_test", prepared = ":" + name + "_windows_sources",
                                 srcs = windows_srcs, hdrs = windows_hdrs, anchor = prefix + "Version.config", anchor_name = "Version.config", companions = windows_companions)
-    for group in ["liblwgeom", "postgis", "libpgcommon", "flatgeobuf"]:
+    for group in ["liblwgeom", "postgis", "libpgcommon", "flatgeobuf", "rt_core", "rt_pg", "topology"]:
         native.filegroup(name = name + "_windows_" + group, srcs = [":" + name + "_windows_sources"], output_group = group + "_sources")
     native.filegroup(name = name + "_windows_pg_sources", srcs = [":" + name + "_windows_postgis", ":" + name + "_windows_libpgcommon"])
     postgis_configuration(name = name + "_config")
     postgis_source_headers(name = name + "_headers", root = prefix + "Version.config",
                            headers = [prefix + "postgis_headers"],
-                           include_dirs = ["liblwgeom", "libpgcommon", "postgis", "deps", "deps/flatgeobuf", "deps/flatgeobuf/include", ""])
+                           include_dirs = ["liblwgeom", "libpgcommon", "postgis", "raster", "raster/rt_core", "raster/rt_pg", "topology", "deps", "deps/flatgeobuf", "deps/flatgeobuf/include", ""])
     contrib_generated_sources(name = name + "_wkt", grammar = prefix + "liblwgeom/lwin_wkt_parse.y",
                                scanner = prefix + "liblwgeom/lwin_wkt_lex.l",
                                grammar_options = ["-d", "-p", "wkt_yy"], scanner_options = ["-i"], scanner_rule = postgis_flex)
     cc_library(name = name + "_ryu", srcs = [prefix + "deps/ryu/d2s.c"],
                deps = [":" + name + "_headers"], defines = ["RYU_NO_TRAILING_ZEROS"], copts = POSTGIS_NATIVE_COPTS,
                target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+    cc_library(name = name + "_rtcore",
+               srcs = select({"//build_defs/native:windows_x64": [":" + name + "_windows_rt_core"], "//conditions:default": [prefix + source for source in POSTGIS_RTCORE_SOURCES]}),
+               deps = [":" + name + "_config", ":" + name + "_lwgeom", "//build_defs/extensions/postgis:gdal"] + select({"//build_defs/native:windows_x64": [":" + name + "_windows_sources"], "//conditions:default": [":" + name + "_headers"]}),
+               copts = POSTGIS_NATIVE_COPTS + select({"//build_defs/native:windows_x64": ["/FI$(location //src/extensions/external/postgis:tools/windows/postgis-compat.h)"], "//conditions:default": []}),
+               additional_compiler_inputs = select({"//build_defs/native:windows_x64": ["//src/extensions/external/postgis:tools/windows/postgis-compat.h"], "//conditions:default": []}), target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
     cc_library(name = name + "_lwgeom",
                srcs = select({"//build_defs/native:windows_x64": [":" + name + "_windows_liblwgeom"], "//conditions:default": [prefix + source for source in POSTGIS_LWGEOM_SOURCES]}) + [":" + name + "_wkt"],
                deps = [":" + name + "_config"] + select({"//build_defs/native:windows_x64": [":" + name + "_windows_sources"], "//conditions:default": [":" + name + "_headers"]}) + [":" + name + "_wkt", ":" + name + "_ryu",
@@ -73,17 +82,26 @@ def postgis_standalone(name, profile = "desktop"):
 _DEPENDENCY_ARTIFACTS = EXTENSION_RECIPES["postgis"]["artifacts"]
 _DEPENDENCY_MODULES = {condition: extension_native_dependency_modules(_DEPENDENCY_ARTIFACTS.get("native_dependency_modules", []), configuration, _DEPENDENCY_ARTIFACTS.get("native_dependency_modules_by_target", {})) for condition, configuration in NATIVE_EXTENSION_PROFILES.items()}
 
+def _gdal_resources_impl(ctx):
+    names = [path.split("/")[-1] for path in _DEPENDENCY_ARTIFACTS["data_files"] if path.startswith("share/postgresql/gdal/")]
+    files = [file for file in ctx.files.inputs if file.basename in names]
+    if sorted([file.basename for file in files]) != sorted(names):
+        fail("GDAL resources differ from the canonical PostGIS runtime file inventory")
+    return [DefaultInfo(files = depset(files))]
+
+postgis_gdal_resources = rule(implementation = _gdal_resources_impl, attrs = {"inputs": attr.label_list(default = ["@postgis_gdal//:data"], allow_files = True)})
+
 def postgis_dependency_module_labels(label):
     """Use the dependency DLL only in profiles whose recipe carries one."""
-    return select({condition: [label] if modules else [] for condition, modules in _DEPENDENCY_MODULES.items()} | {"//conditions:default": []})
+    return select({condition: [label] if any([module.startswith("liboliphaunt_postgis_deps.") for module in modules]) else [] for condition, modules in _DEPENDENCY_MODULES.items()} | {"//conditions:default": []})
 
 def postgis_dependency_module(name):
     # A maintained direct shared-library rule whole-archives the six real roots;
     # module consumers use dynamic_deps to prevent a second static dependency copy.
     cc_shared_library(name = name, shared_lib_name = select({"//build_defs/native:windows_x64": "liboliphaunt_postgis_deps.dll", "//build_defs/native:macos_arm64": "liboliphaunt_postgis_deps.dylib", "//conditions:default": "liboliphaunt_postgis_deps.so"}),
-                      deps = ["//build_defs/extensions/postgis:" + library for library in ["geos", "proj", "json_c", "libxml2", "iconv", "sqlite"]],
+                      deps = ["//build_defs/extensions/postgis:" + library for library in ["gdal", "geos", "proj", "json_c", "libxml2", "iconv", "sqlite"]],
                       features = select({"//build_defs/native:windows_x64": ["windows_export_all_symbols"], "//conditions:default": []}),
-                      user_link_flags = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": ["-Wl,-install_name,@rpath/liboliphaunt_postgis_deps.dylib"], "//conditions:default": ["-Wl,-z,defs"]}) + NATIVE_RELEASE_LINKOPTS, target_compatible_with = select({condition: [] if modules else ["@platforms//:incompatible"] for condition, modules in _DEPENDENCY_MODULES.items()} | {"//conditions:default": ["@platforms//:incompatible"]}))
+                      user_link_flags = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": ["-Wl,-install_name,@rpath/liboliphaunt_postgis_deps.dylib"], "//conditions:default": ["-Wl,-z,defs"]}) + NATIVE_RELEASE_LINKOPTS, target_compatible_with = select({condition: [] if any([module.startswith("liboliphaunt_postgis_deps.") for module in modules]) else ["@platforms//:incompatible"] for condition, modules in _DEPENDENCY_MODULES.items()} | {"//conditions:default": ["@platforms//:incompatible"]}))
 
 def native_postgis_modules(name, standalone, dependency_module):
     prefix = "@postgis//:"
@@ -95,6 +113,27 @@ def native_postgis_modules(name, standalone, dependency_module):
                              hdrs = compatibility_inputs,
                              additional_compiler_inputs = compatibility_inputs,
                              dynamic_deps = postgis_dependency_module_labels(dependency_module), linkopts = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": ["-Wl,-rpath,@loader_path"], "//conditions:default": ["-Wl,-rpath,$$ORIGIN"]}))
+    for member, sources, group, extra in [
+        ("postgis_raster", POSTGIS_RASTER_SOURCES, "rt_pg", [standalone + "_rtcore", "//build_defs/extensions/postgis:gdal"]),
+        ("postgis_topology", POSTGIS_TOPOLOGY_SOURCES, "topology", []),
+    ]:
+        native_extension_modules(name = member,
+                                 srcs = select({"//build_defs/native:windows_x64": [standalone + "_windows_" + group, standalone + "_windows_libpgcommon"], "//conditions:default": [prefix + source for source in sources + POSTGIS_PGCOMMON_SOURCES]}),
+                                 deps = [standalone + "_config", standalone + "_lwgeom"] + extra + select({"//build_defs/native:windows_x64": [standalone + "_windows_sources"], "//conditions:default": [standalone + "_headers"]}),
+                                 copts = select({"//build_defs/native:windows_x64": ["/D_USE_MATH_DEFINES", "/FI$(location //src/extensions/external/postgis:tools/windows/postgis-compat.h)"], "//conditions:default": []}),
+                                 hdrs = compatibility_inputs, additional_compiler_inputs = compatibility_inputs,
+                                 dynamic_deps = postgis_dependency_module_labels(dependency_module),
+                                 linkopts = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": ["-Wl,-rpath,@loader_path"], "//conditions:default": ["-Wl,-rpath,$$ORIGIN"]}))
+        for variant in ["server", "embedded"]:
+            _companion_module(name = member + "_" + variant + "_file", module = ":" + member + "_" + variant + "_module", stem = member + "-3",
+                              suffix = select({"//build_defs/native:windows_x64": ".dll", "//build_defs/native:macos_arm64": ".dylib", "//conditions:default": ".so"}), target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+
+def _companion_module_impl(ctx):
+    output = ctx.actions.declare_file(ctx.label.name + "/" + ctx.attr.stem + ctx.attr.suffix)
+    ctx.actions.symlink(output = output, target_file = ctx.file.module)
+    return [DefaultInfo(files = depset([output]))]
+
+_companion_module = rule(implementation = _companion_module_impl, attrs = {"module": attr.label(allow_single_file = True), "stem": attr.string(), "suffix": attr.string()})
 
 def _mobile_standalone(name, profile):
     settings = postgis_profile(profile)
@@ -103,7 +142,7 @@ def _mobile_standalone(name, profile):
     postgis_configuration(name = name + "_config", profile = profile)
     postgis_source_headers(name = name + "_headers", root = prefix + "Version.config",
                            headers = [prefix + "postgis_headers"],
-                           include_dirs = ["liblwgeom", "libpgcommon", "postgis", "deps", "deps/flatgeobuf", "deps/flatgeobuf/include", ""])
+                           include_dirs = ["liblwgeom", "libpgcommon", "postgis", "raster", "raster/rt_core", "raster/rt_pg", "topology", "deps", "deps/flatgeobuf", "deps/flatgeobuf/include", ""])
     contrib_generated_sources(name = name + "_wkt", grammar = prefix + "liblwgeom/lwin_wkt_parse.y",
                                scanner = prefix + "liblwgeom/lwin_wkt_lex.l",
                                grammar_options = ["-d", "-p", "wkt_yy"], scanner_options = ["-i"], scanner_rule = postgis_flex)
@@ -117,3 +156,6 @@ def _mobile_standalone(name, profile):
                srcs = [prefix + "deps/flatgeobuf/" + source + ".cpp" for source in ["flatgeobuf_c", "geometrywriter", "geometryreader", "packedrtree"]],
                deps = [":" + name + "_config", ":" + name + "_headers", dependencies + "proj_objects"],
                copts = settings.cxx, defines = ["flatbuffers=postgis_flatbuffers"], target_compatible_with = MOBILE_EXTENSION_COMPATIBLE)
+    cc_library(name = name + "_rtcore", srcs = [prefix + source for source in POSTGIS_RTCORE_SOURCES],
+               deps = [":" + name + "_config", ":" + name + "_headers", ":" + name + "_lwgeom", dependencies + "gdal_objects"],
+               copts = settings.c, target_compatible_with = settings.compatible)

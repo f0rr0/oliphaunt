@@ -1,10 +1,20 @@
 /** Actual Linux leaves remain partial; immutable import rejects changed bytes. */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { composeExtensionReleaseDocuments } from '../../src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts';
 import { frozenExtensionMemberInventory } from '../../src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts';
+import { fileIdentity } from '../../tools/release/native-file-identity.mts';
+import { validateDeclaredExtensionFinalInput } from './declared_final_inputs.mts';
 import { stageNativeRegistryCarriers, writeJson } from './native_carriers.mts';
 import {
   composeNativeFinalCarriers,
@@ -12,6 +22,7 @@ import {
   mergeNativeFinalMembers,
   type NativeOwnerSpec,
   nativeFamilyCompleteness,
+  stageDeclaredFinalLeaf,
   validateFinalFileReceipt,
   validateNativeFinalLeaf,
 } from './owner_carriers.mts';
@@ -153,6 +164,81 @@ try {
     );
     assert.throws(() => nativeFamilyCompleteness(spec, ['fabricated-platform']), /undeclared/u);
   }
+
+  // Use the real original GitHub/control bytes. Producer provenance below is
+  // test-only; this regression checks metadata policy, not authentication.
+  const originalFile = (file: string) => {
+    const { size, sha256 } = fileIdentity(realpathSync(file));
+    return {
+      path: file,
+      size,
+      sha256,
+      producer: {
+        evidenceDigest: `sha256:${'1'.repeat(64)}`,
+        invocationId: 'test-only-current-join',
+        root: '//src/extensions/external/pgtap:native_carriers',
+        configuration: '2'.repeat(64),
+        output: path.basename(file),
+      },
+    };
+  };
+  const originalLeaf = {
+    ...pgtap.leaves[0],
+    npm: [],
+    cargo: [],
+    originalFiles: path.join(root, 'original-pgtap-files.json'),
+  };
+  const original = {
+    product: originalLeaf.product,
+    owner: originalLeaf.owner,
+    version: originalLeaf.version,
+    family: originalLeaf.family as 'native',
+    target: originalLeaf.target,
+    github: originalLeaf.github.map(originalFile),
+    npm: [],
+    cargo: [],
+    manifest: originalFile(originalLeaf.manifest),
+    frozen: originalFile(originalLeaf.frozen),
+  };
+  writeJson(originalLeaf.originalFiles, original);
+  const currentOriginal = composeNativeFinalCarriers({
+    ...pgtap,
+    operation: 'collect',
+    leaves: [originalLeaf],
+    outputs: { collection: path.join(root, 'current-original.json') },
+  });
+  assert.deepEqual(currentOriginal.sourceIdentity, pgtap.releaseMetadata.sourceIdentity);
+  assert.deepEqual(currentOriginal.compatibility, pgtap.releaseMetadata.compatibility);
+  for (const field of ['sourceIdentity', 'compatibility']) {
+    const requested = structuredClone(pgtap);
+    if (field === 'sourceIdentity')
+      requested.releaseMetadata.sourceIdentity.commit = 'f'.repeat(40);
+    else requested.releaseMetadata.compatibility.nativeRuntimeVersion = '999.0.0';
+    assert.notDeepEqual(requested.releaseMetadata[field], pgtap.releaseMetadata[field]);
+    validateDeclaredExtensionFinalInput(original, {
+      owner: requested.owner,
+      version: requested.version,
+      sqlNames: requested.members.map((member) => member.sqlName),
+      sourceIdentity: requested.releaseMetadata.sourceIdentity,
+      compatibility: requested.releaseMetadata.compatibility,
+      extensionClass: requested.releaseMetadata.class,
+      versioning: requested.releaseMetadata.versioning,
+      targets: requested.profiles.map((profile) => profile.target),
+    });
+    stageDeclaredFinalLeaf(requested, originalLeaf, path.join(root, `historical-${field}`));
+    const collection = path.join(root, `relabelled-${field}.json`);
+    assert.throws(
+      () =>
+        composeNativeFinalCarriers({
+          ...requested,
+          operation: 'collect',
+          leaves: [originalLeaf],
+          outputs: { collection },
+        }),
+      /current extension join metadata differs from its original constructor/u,
+    );
+    assert.equal(existsSync(collection), false);
+  }
   const allTargets = pgtap.profiles.map((row) => row.target);
   const native = nativeFamilyCompleteness(pgtap, allTargets);
   assert.equal(native.completeNativeFamily, true);
@@ -224,7 +310,7 @@ try {
       nativeConstructionLicenseFiles: linuxAsset.nativeConstructionLicenseFiles,
     }).nativeConstructionLicenseFiles.length,
     2,
-    'mobile metadata accepts only the canonical construction receipts from its declared host',
+    'frozen mobile metadata preserves its declared host construction receipts',
   );
   assert.throws(
     () =>
@@ -232,20 +318,30 @@ try {
         ...androidAsset,
         nativeConstructionLicenseFiles: linuxAsset.nativeConstructionLicenseFiles.map(
           (row: any, index: number) =>
-            index === 0 ? { ...row, path: 'share/licenses/undeclared-source/LICENSE' } : row,
+            index === 0 ? { ...row, path: '../undeclared-source/LICENSE' } : row,
         ),
       }),
-    /construction|immutable|inventory/u,
+    /nativeConstructionLicenseFiles.*portable/u,
   );
   assert.throws(
     () =>
       selected({
         ...linuxAsset,
         nativeConstructionLicenseFiles: linuxAsset.nativeConstructionLicenseFiles.map(
-          (row: any, index: number) => (index === 0 ? { ...row, sha256: '0'.repeat(64) } : row),
+          (row: any, index: number) => (index === 0 ? { ...row, sha256: 'invalid' } : row),
         ),
       }),
-    /construction|immutable|inventory/u,
+    /nativeConstructionLicenseFiles.*SHA-256/u,
+  );
+  const historicalLicenses = linuxAsset.nativeConstructionLicenseFiles.map((row: any) => ({
+    ...row,
+    sha256: '0'.repeat(64),
+  }));
+  assert.deepEqual(
+    selected({ ...linuxAsset, nativeConstructionLicenseFiles: historicalLicenses })
+      .nativeConstructionLicenseFiles,
+    historicalLicenses,
+    'frozen metadata preserves captured license hashes; archive validation checks the actual bytes',
   );
   assert.throws(
     () =>
@@ -287,7 +383,23 @@ try {
     (asset: any) => asset.target === 'linux-x64-gnu',
   );
   const postgisMacAsset = postgisMember.assets.find((asset: any) => asset.target === 'macos-arm64');
-  assert.deepEqual(postgisLinuxAsset.nativeDependencyModules, ['liboliphaunt_postgis_deps.so']);
+  const postgisDependencies = [
+    'liboliphaunt_postgis_deps.so',
+    'postgis_raster-3.so',
+    'postgis_topology-3.so',
+  ];
+  assert.deepEqual(postgisMember.sqlMembers, [
+    'postgis',
+    'postgis_raster',
+    'postgis_tiger_geocoder',
+    'postgis_topology',
+  ]);
+  assert.deepEqual(postgisMember.nativeModuleStems, [
+    'postgis-3',
+    'postgis_raster-3',
+    'postgis_topology-3',
+  ]);
+  assert.deepEqual(postgisLinuxAsset.nativeDependencyModules, postgisDependencies);
   assert.equal(postgisMacAsset.nativeDependencyModules, undefined);
   assert.deepEqual(
     frozenExtensionMemberInventory(postgisMember, {
@@ -295,7 +407,7 @@ try {
       version: postgis.version,
       asset: postgisLinuxAsset,
     }).nativeDependencyModules,
-    ['liboliphaunt_postgis_deps.so'],
+    postgisDependencies,
   );
   assert.throws(
     () =>

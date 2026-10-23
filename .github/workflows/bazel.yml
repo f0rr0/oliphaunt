@@ -845,6 +845,7 @@ jobs:
             //src/database-resources:android_datum64_standard_carriers
             //src/database-resources:android_datum64_icu_carriers
             //src/native/sdks/react-native:lifecycle_test
+            //src/native/sdks/react-native:ios_stager_test
             //src/native/sdks/kotlin:android_maven
             //src/native/sdks/kotlin:installed_public_api_consumer
             //src/native/sdks/kotlin:android_test

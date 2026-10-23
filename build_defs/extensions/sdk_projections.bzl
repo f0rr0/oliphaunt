@@ -1,6 +1,6 @@
 """SDK metadata generation from the canonical, explicitly imported inputs."""
 
-load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "EXTENSIONS", "EXTENSION_PROFILES", "EXTENSION_RECIPES", "EXTENSION_RELEASE_METADATA")
+load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "EXTENSIONS", "EXTENSION_NATIVE_TARGETS", "EXTENSION_PROFILES", "EXTENSION_RECIPES", "EXTENSION_RELEASE_METADATA")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 
 def _spec(ctx):
@@ -12,6 +12,7 @@ def _spec(ctx):
         "contrib": CONTRIB_MEMBERS,
         "profiles": EXTENSION_PROFILES,
         "recipes": EXTENSION_RECIPES,
+        "nativeTargets": EXTENSION_NATIVE_TARGETS,
     }))
     return spec
 

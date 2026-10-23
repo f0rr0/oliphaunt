@@ -1,10 +1,10 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import test from 'node:test';
 import { expectedExtensionBundleManifest } from './check-carriers.mts';
 import {
   composeExtensionReleaseDocuments,
@@ -161,6 +161,8 @@ test('explicit external native controls retain their family while combined defau
         extensionSqlFileNames: [],
         extensionSqlFilePrefixes: [],
         nativeModuleStem: null,
+        sqlMembers: ['pgtap'],
+        nativeModuleStems: [],
         iosNativeDependencies: [],
         iosRegistration: null,
         wasixInstall: null,
@@ -384,6 +386,8 @@ test('renders every single-extension asset identity into the public properties m
       extensionSqlFileNames: ['uninstall_postgis.sql'],
       extensionSqlFilePrefixes: ['postgis_comments', 'rtpostgis'],
       nativeModuleStem: 'postgis-3',
+      sqlMembers: ['postgis', 'postgis_raster', 'postgis_tiger_geocoder', 'postgis_topology'],
+      nativeModuleStems: ['postgis-3', 'postgis_raster-3', 'postgis_topology-3'],
       iosNativeDependencies: dependencyIdentities,
       sharedPreloadLibraries: [],
       assets,
@@ -417,6 +421,11 @@ test('renders every single-extension asset identity into the public properties m
   assert.equal(properties.dataFiles, 'contrib/postgis-3.6/postgis.sql,proj/proj.db');
   assert.equal(properties.extensionSqlFileNames, 'uninstall_postgis.sql');
   assert.equal(properties.extensionSqlFilePrefixes, 'postgis_comments,rtpostgis');
+  assert.equal(
+    properties.sqlMembers,
+    'postgis,postgis_raster,postgis_tiger_geocoder,postgis_topology',
+  );
+  assert.equal(properties.nativeModuleStems, 'postgis-3,postgis_raster-3,postgis_topology-3');
   assert.doesNotMatch(text, /^carrier\./mu);
 });
 
@@ -435,6 +444,8 @@ test('freezes each bundle member desktop inventory in the public properties mani
           extensionSqlFileNames: ['uninstall_pgtap.sql'],
           extensionSqlFilePrefixes: ['pgtap-core', 'pgtap-schema'],
           nativeModuleStem: null,
+          sqlMembers: ['pgtap'],
+          nativeModuleStems: [],
           iosNativeDependencies: [],
           sharedPreloadLibraries: [],
           assets: [],
@@ -455,4 +466,6 @@ test('freezes each bundle member desktop inventory in the public properties mani
   assert.equal(properties['extension.pgtap.dataFiles'], '');
   assert.equal(properties['extension.pgtap.extensionSqlFileNames'], 'uninstall_pgtap.sql');
   assert.equal(properties['extension.pgtap.extensionSqlFilePrefixes'], 'pgtap-core,pgtap-schema');
+  assert.equal(properties['extension.pgtap.sqlMembers'], 'pgtap');
+  assert.equal(properties['extension.pgtap.nativeModuleStems'], '');
 });

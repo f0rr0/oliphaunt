@@ -116,9 +116,16 @@ extension_catalog() {
 }
 windows_extension_modules() {
   [ "$build_extensions" != 0 ] || return 0
-  local sql_name stem
+  local sql_name stem postgis_stems
   while IFS=$'\t' read -r sql_name stem; do
-    if selected "$sql_name" && [ "$stem" != - ]; then printf '%s\t%s\n' "$sql_name" "$stem"; fi
+    if selected "$sql_name" && [ "$stem" != - ]; then
+      if [ "$sql_name" = postgis ]; then
+        postgis_stems="$(windows_extension_generate postgis-module-stems)" || return
+        while IFS= read -r stem; do printf '%s\t%s\n' "$sql_name" "$stem"; done <<<"$postgis_stems"
+      else
+        printf '%s\t%s\n' "$sql_name" "$stem"
+      fi
+    fi
   done < <(awk -F '\t' 'NR>1 { print $1 "\t" $2 }' "$catalog")
 }
 windows_extension_prune() {
@@ -294,7 +301,7 @@ desired_hash="$(
       while IFS= read -r -d '' input; do
         printf '%s\n' "$input"
         sha256 "$input"
-      done < <(find extensions/external src/third-party/icu src/third-party/openssl -type f ! -name '*.test.*' ! -path '*/fixtures/*' ! -name '*.md' -print0 | sort -z)
+      done < <(find src/extensions/external src/third-party/icu src/third-party/openssl -type f ! -name '*.test.*' ! -path '*/fixtures/*' ! -name '*.md' -print0 | sort -z)
     fi
   } | sha256sum | awk '{print $1}'
 )"

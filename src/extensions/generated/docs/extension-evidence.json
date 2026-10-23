@@ -1346,7 +1346,7 @@
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:bf765062e908e2e5628e1064e8d1238fd9929ff736980a9351c8452b1d165945",
+  "source-digest": "sha256:cb60da68854002a7f59aae1c038da5211f68910de93cac9841f3b00709b73bb8",
   "source-digest-inputs": [
     "src/third-party/postgres/source.toml",
     "src/extensions/catalog/extensions.source.json",
@@ -1362,6 +1362,7 @@
     "src/extensions/external/pg_textsearch/tests/upgrade/source.toml",
     "src/extensions/external/pg_uuidv7/source.toml",
     "src/extensions/external/pgtap/source.toml",
+    "src/extensions/external/postgis/dependencies/gdal/source.toml",
     "src/extensions/external/postgis/dependencies/geos/source.toml",
     "src/extensions/external/postgis/dependencies/json-c/source.toml",
     "src/extensions/external/postgis/dependencies/libiconv/source.toml",

@@ -16,6 +16,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { extensionArtifactMemberClosure } from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
 import { stageExtensionWasixNpmPackages } from '../../src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts';
 import {
   assertWasixExtensionArchiveInstall,
@@ -43,6 +44,7 @@ import {
 import { validateCrateSize } from '../../tools/packaging/wasix-cargo-payload.mts';
 import { validateCargoPayloadPartSets } from '../../tools/release/cargo-payload-part-contract.mts';
 import {
+  type ExtensionOwnerMetadata,
   extensionCompatibilityMetadata,
   extensionSourceMetadata,
 } from '../../tools/release/extension-release-metadata.mts';
@@ -59,6 +61,8 @@ interface Carrier {
 }
 export interface WasixSqlCarrierSpec {
   product: string;
+  owner?: string;
+  ownerMetadata?: ExtensionOwnerMetadata;
   version: string;
   sqlName: string;
   target: string;
@@ -406,6 +410,11 @@ export function assembleSqlOnlyWasixMember(
     sqlName: spec.sqlName,
     createsExtension: lifecycle['create-extension'],
     nativeModuleStem: null,
+    ...extensionArtifactMemberClosure({
+      sqlName: spec.sqlName,
+      createsExtension: lifecycle['create-extension'],
+      nativeModuleStem: null,
+    }),
     dependencies: spec.selectedDependencies,
     dataFiles: [],
     extensionSqlFileNames: [...(spec.recipe.artifacts.extension_sql_file_names ?? [])].sort(),
@@ -446,7 +455,10 @@ export function packageSqlOnlyWasixCarriers(spec: WasixSqlCarrierSpec, files: st
     writeJson(path.join(assets, path.basename(spec.outputs.manifest)), manifest);
     const result = { staged: [] as string[], skipped: [] as string[] };
     assert(
-      stageExtensionWasixNpmPackages([productRoot], path.join(root, 'npm'), result),
+      stageExtensionWasixNpmPackages([productRoot], path.join(root, 'npm'), result, {
+        releaseProduct: spec.owner ?? spec.product,
+        ownerMetadata: spec.ownerMetadata,
+      }),
       'canonical WASIX npm writer must produce the declared portable leaf',
     );
     assert.equal(
@@ -679,15 +691,22 @@ export async function stageCompiledWasixMember(
       sqlName: spec.sqlName,
       createsExtension: lifecycle['create-extension'],
       nativeModuleStem: spec.descriptor['native-module-file'].slice(0, -3),
-      dependencies: spec.selectedDependencies,
+      ...extensionArtifactMemberClosure({
+        sqlName: spec.sqlName,
+        createsExtension: lifecycle['create-extension'],
+        nativeModuleStem: spec.descriptor['native-module-file'].slice(0, -3),
+      }),
+      dependencies: [...spec.selectedDependencies].sort(),
       dataFiles: (spec.recipe.artifacts?.data_files ?? [])
         .map((file: string) => {
           assert(file.startsWith('share/postgresql/'), 'data resource must use PostgreSQL share');
           return file.slice('share/postgresql/'.length);
         })
         .sort(),
-      extensionSqlFileNames: spec.recipe.artifacts?.extension_sql_file_names ?? [],
-      extensionSqlFilePrefixes: spec.recipe.artifacts?.extension_sql_file_prefixes ?? [],
+      extensionSqlFileNames: [...(spec.recipe.artifacts?.extension_sql_file_names ?? [])].sort(),
+      extensionSqlFilePrefixes: [
+        ...(spec.recipe.artifacts?.extension_sql_file_prefixes ?? []),
+      ].sort(),
       sharedPreloadLibraries: lifecycle['startup-config']
         .flatMap((value: string) =>
           value.startsWith('shared_preload_libraries=')
@@ -803,7 +822,12 @@ export async function packageCompiledWasixCarriers(
     );
     const targets = Object.entries(AOT_TARGET_TRIPLES);
     const result = { staged: [] as string[], skipped: [] as string[] };
-    assert(stageExtensionWasixNpmPackages([productRoot], path.join(root, 'npm-stage'), result));
+    assert(
+      stageExtensionWasixNpmPackages([productRoot], path.join(root, 'npm-stage'), result, {
+        releaseProduct: spec.owner ?? spec.product,
+        ownerMetadata: spec.ownerMetadata,
+      }),
+    );
     assert.equal(
       result.staged.length,
       targets.length + 1,

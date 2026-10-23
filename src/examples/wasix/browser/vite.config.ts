@@ -163,6 +163,7 @@ function wasixAssets(): Plugin {
     ['/extensions/pgtap', resolve(extensionAssetRoot, 'extensions/pgtap.tar.zst')],
     ['/extensions/pg_uuidv7', resolve(extensionAssetRoot, 'extensions/pg_uuidv7.tar.zst')],
     ['/extensions/postgis', resolve(extensionAssetRoot, 'extensions/postgis.tar.zst')],
+    ['/extensions/fuzzystrmatch', resolve(extensionAssetRoot, 'extensions/fuzzystrmatch.tar.zst')],
     ['/pglite.data', resolve(pgliteAssetRoot, 'pglite.data')],
     ['/pglite.wasm', resolve(pgliteAssetRoot, 'pglite.wasm')],
     ['/initdb.wasm', resolve(pgliteAssetRoot, 'initdb.wasm')],
@@ -340,6 +341,21 @@ async function developmentDescriptor(packageName: string): Promise<Record<string
       ),
     },
   };
+  const runtimeSupport = new Set(
+    requireArray(manifest['runtime-support'], 'runtime support').map(
+      (entry) => requireRecord(entry, 'runtime support entry').name,
+    ),
+  );
+  const carriers: unknown[] = [];
+  for (const dependency of requireArray(metadata.dependencies, 'extension dependencies')) {
+    if (typeof dependency !== 'string') {
+      throw new Error('extension dependency must be a SQL name');
+    }
+    if (runtimeSupport.has(dependency)) continue;
+    const descriptor = await developmentDescriptor(dependency);
+    carriers.push(...requireArray(descriptor.carriers, 'dependency carriers'));
+  }
+  carriers.push(carrier);
   return {
     schema: 'oliphaunt-wasix-extension-v1',
     runtime: 'wasix',
@@ -352,7 +368,7 @@ async function developmentDescriptor(packageName: string): Promise<Record<string
       wasixRuntimeVersion: runtimeVersion,
     },
     sqlName: extension.sqlName,
-    carriers: [carrier],
+    carriers,
   };
 }
 
@@ -362,18 +378,27 @@ function extensionPackage(packageName: string): {
   sqlName: string;
 } {
   switch (packageName) {
+    case 'fuzzystrmatch':
+      return {
+        product: 'oliphaunt-extension-contrib-pg18',
+        releasePath: 'src/wasix/runtime',
+        sqlName: 'fuzzystrmatch',
+      };
+    case 'pgtap':
     case '@oliphaunt/extension-pgtap-wasix':
       return {
         product: 'oliphaunt-extension-pgtap',
         releasePath: 'src/extensions/external/pgtap',
         sqlName: 'pgtap',
       };
+    case 'pg_uuidv7':
     case '@oliphaunt/extension-pg-uuidv7-wasix':
       return {
         product: 'oliphaunt-extension-pg-uuidv7',
         releasePath: 'src/extensions/external/pg_uuidv7',
         sqlName: 'pg_uuidv7',
       };
+    case 'postgis':
     case '@oliphaunt/extension-postgis-wasix':
       return {
         product: 'oliphaunt-extension-postgis',

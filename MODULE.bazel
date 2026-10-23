@@ -291,7 +291,7 @@ use_repo(cargo_crates, mobile_bindgen_crates = "m")
 openssl = use_repo_rule("//build_defs/native:openssl_repository.bzl", "openssl_repository")
 openssl(name = "openssl")
 
-use_repo(extension_sources, "postgis", "postgis_geos", "postgis_proj", "postgis_sqlite", "postgis_json_c", "postgis_libxml2", "postgis_libiconv")
+use_repo(extension_sources, "postgis", "postgis_geos", "postgis_proj", "postgis_sqlite", "postgis_json_c", "postgis_libxml2", "postgis_libiconv", "postgis_gdal")
 
 native_cargo_metadata(
     name = "aot_serializer_cargo_metadata",
@@ -634,6 +634,18 @@ cargo_crates.from_cargo(
     ],
 )
 use_repo(cargo_crates, wasix_seed_crates = "s")
+
+# Reuse the postmaster's linked-provider probe for native SDK and AOT contexts.
+cargo_crates.annotation(
+    crate = "wasmer-compiler",
+    version = "=7.2.1",
+    repositories = ["n", "a", "s"],
+    patches = ["//build_defs/wasix:wasmer-linked-unwinder.patch"],
+    patch_args = ["-p1"],
+    rustc_flags = ["--cfg=oliphaunt_linked_libunwind"],
+    link_deps = ["@oliphaunt//build_defs/wasix/postmaster:linked_unwinder"],
+    label_injections = {"//build_defs/wasix/postmaster:linked_unwinder": "@oliphaunt"},
+)
 
 # Keep Mach-O sections valid and serialized GOT relocation ordering repeatable.
 cargo_crates.annotation(

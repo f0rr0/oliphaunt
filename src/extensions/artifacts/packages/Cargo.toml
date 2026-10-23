@@ -1,0 +1,7 @@
+# First compatible APIs used by generated extension facades.
+[dependencies]
+liboliphaunt-native-bindings = "^0.2.1"
+oliphaunt-wasix = "^0.3.3"
+
+[build-dependencies]
+oliphaunt-build = "^0.3.3"

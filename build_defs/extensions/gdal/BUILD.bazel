@@ -1,0 +1,7 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["source.BUILD.bazel", "cpl_config.h"])
+
+source_quality_files()

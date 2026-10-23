@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { extensionManifestMembers } from '../../src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts';
 import {
   assertExtensionUpstreamLicensesInEntries,
   extensionMavenLicenses,
@@ -9,11 +10,13 @@ import {
   nativeExtensionConstructionMavenLicenses,
 } from '../../src/extensions/tools/extension-upstream-licenses.mts';
 import { requireCompatibilityVersionBounds } from '../release/compatibility-version-policy.mts';
+import { frozenExtensionOwnerRequirements } from '../release/extension-release-metadata.mts';
 import { currentVersion } from '../release/product-version.mts';
 import {
   allArtifactTargets,
   extensionArtifactProductRoot,
   extensionMetadata,
+  extensionOwnerForSqlName,
   extensionReleaseProduct,
   extensionReleaseVersion,
   extensionSqlNames,
@@ -91,6 +94,33 @@ function assertMavenPayloadLegal(
     );
   }
   return file;
+}
+
+/** Project frozen SQL dependencies to conventional, same-ABI Maven owner edges. */
+export function extensionMavenDependencies({
+  product,
+  releaseProduct,
+  runtimeVersion,
+  target,
+  members,
+  ownerMetadata = undefined,
+}) {
+  return frozenExtensionOwnerRequirements({
+    product,
+    releaseProduct,
+    runtimeProduct: 'liboliphaunt-native',
+    runtimeVersion,
+    members,
+    ownerForSqlName(sqlName) {
+      return extensionOwnerForSqlName(sqlName, 'native', { ownerMetadata, prefix: PREFIX });
+    },
+  }).map((requirement) => ({
+    groupId: 'dev.oliphaunt.extensions',
+    artifactId: `${requirement.product}-${target}`,
+    version: requirement.version,
+    type: 'tar.gz',
+    scope: 'runtime',
+  }));
 }
 
 function repoPath(value) {
@@ -210,6 +240,7 @@ function tsvRow({
   runtimeVersion = '',
   licenseSpdx,
   licenses,
+  dependencies = [],
 }) {
   if (typeof licenseSpdx !== 'string' || !licenseSpdx)
     fail(`Maven artifact ${groupId}:${artifactId} has no package SPDX expression`);
@@ -226,6 +257,7 @@ function tsvRow({
     runtimeVersion,
     licenseSpdx,
     JSON.stringify(licenses),
+    ...(dependencies.length > 0 ? [JSON.stringify(dependencies)] : []),
   ];
   if (values.some((value) => value.includes('\t') || value.includes('\n'))) {
     fail(`Maven artifact manifest value contains a tab or newline: ${JSON.stringify(values)}`);
@@ -341,6 +373,22 @@ async function extensionRows(extensionRoot, selectedProducts, context) {
         extensionArtifactProductRoot(product, 'native', extensionRoot, PREFIX),
       'release-assets',
     );
+    const frozenMembers = declared?.memberContracts
+      ? null
+      : extensionManifestMembers(
+          JSON.parse(
+            await fs.readFile(
+              path.join(productRoot, `${product}-${version}-manifest.json`),
+              'utf8',
+            ),
+          ),
+        );
+    if (
+      frozenMembers &&
+      JSON.stringify(frozenMembers.map((member) => member.sqlName).sort()) !==
+        JSON.stringify([...sqlNames].sort())
+    )
+      fail(`${product} frozen Maven member inventory differs from its selected SQL members`);
     const targets = [
       ...new Map(
         (
@@ -431,6 +479,14 @@ async function extensionRows(extensionRoot, selectedProducts, context) {
           description: `Package-managed Oliphaunt Android runtime and static-link artifacts for ${memberLabel} on ${target.target}.`,
           runtimeProduct,
           runtimeVersion,
+          dependencies: extensionMavenDependencies({
+            product,
+            releaseProduct,
+            runtimeVersion,
+            target: target.target,
+            members: declared?.memberContracts?.[target.target] ?? frozenMembers,
+            ownerMetadata: declared?.ownerMetadata,
+          }),
           licenseSpdx:
             legal?.packageSpdx ??
             (product === 'oliphaunt-extension-contrib-pg18'

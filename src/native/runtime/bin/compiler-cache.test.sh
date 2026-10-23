@@ -181,3 +181,54 @@ for builder in linux macos android-arm64; do
   done
 done
 printf 'Compiler cache setup, CMake launchers, overrides, and SQLite recipes passed\n'
+
+# A cached core must still build and validate the requested extension selection.
+linux_dispatch="$(awk '/^case "\$script_mode" in$/ {copy=1} copy {print}' "$script_dir/build-postgres18-linux.sh")"
+[ -n "$linux_dispatch" ]
+for selected in postgis postgis,fuzzystrmatch; do
+  (
+    for name in prepare_source build_icu configure_source install_runtime \
+      prune_base_runtime_optional_extensions artifact_ready backend_objects_ready \
+      plpgsql_objects_ready jit_objects_ready runtime_installed; do
+      eval "$name() { return 0; }"
+    done
+    desired_hash() { printf 'cached\n'; }
+    build_native_extension_artifacts() { printf '%s\n' "$OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES" >> "$fixture/extensions-built"; }
+    native_extension_artifacts_current() { return 1; }
+    build_dir="$fixture"
+    stamp="$fixture/core.stamp"
+    desired_hash > "$stamp"
+    lib_out="$fixture/liboliphaunt.so"
+    target_id=linux-x64-gnu
+    OLIPHAUNT_BUILD_EXTENSIONS=1
+    OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$selected"
+    OLIPHAUNT_FORCE_EXTENSION_REBUILD=0
+    script_mode=build
+    (eval "$linux_dispatch") >/dev/null
+    script_mode=--check-current
+    if (eval "$linux_dispatch") >/dev/null 2>&1; then
+      echo "Linux readiness accepted a stale extension selection" >&2
+      exit 1
+    fi
+  )
+done
+[ "$(cat "$fixture/extensions-built")" = "$(printf 'postgis\npostgis,fuzzystrmatch')" ]
+printf 'Linux cached-runtime extension selection checks passed\n'
+
+for target in android-arm64 ios-device ios-simulator; do
+  (
+    load_recipe "$script_dir/build-postgres18-$target.sh" build_mobile_static_dependencies
+    mobile_static_dependency_root="$fixture/dependencies-$target"
+    mkdir -p "$mobile_static_dependency_root"
+    printf stale > "$mobile_static_dependency_root/old-source-archive.a"
+    build_openssl_dependency() {
+      [ ! -e "$mobile_static_dependency_root/old-source-archive.a" ]
+      mkdir -p "$mobile_static_dependency_root"
+      printf rebuilt > "$mobile_static_dependency_root/openssl.a"
+    }
+    build_uuid_dependency() { [ -s "$mobile_static_dependency_root/openssl.a" ]; }
+    build_postgis_mobile_static_dependencies() { [ -s "$mobile_static_dependency_root/openssl.a" ]; }
+    build_mobile_static_dependencies
+  )
+done
+printf 'Mobile stale dependency archive invalidation checks passed\n'

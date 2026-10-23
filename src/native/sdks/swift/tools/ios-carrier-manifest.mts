@@ -27,6 +27,10 @@ import {
 } from '../../../../../tools/release/release-artifact-targets.mts';
 import { compareText, ROOT, tagPrefix } from '../../../../../tools/release/release-graph.mts';
 import {
+  assertExtensionArtifactClosureShape,
+  hasDeclaredExtensionArtifactClosure,
+} from '../../../../extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
+import {
   extensionCarrierLegalContract,
   extensionUpstreamLicenseRow,
 } from '../../../../extensions/tools/extension-upstream-licenses.mts';
@@ -772,6 +776,8 @@ function extensionCarrier(
     );
   }
   const sqlName = portableIdentifier(manifest.sqlName, `${manifestPath}.sqlName`);
+  const declaredClosure = hasDeclaredExtensionArtifactClosure(manifest, manifestPath);
+  if (declaredClosure) assertExtensionArtifactClosureShape(manifest, manifestPath);
   if (typeof manifest.createsExtension !== 'boolean') {
     throw error(`${manifestPath} ${sqlName}.createsExtension must be boolean`);
   }
@@ -970,6 +976,13 @@ function extensionCarrier(
       tag,
       sqlName,
       createsExtension: manifest.createsExtension,
+      ...(declaredClosure
+        ? {
+            sqlMembers: manifest.sqlMembers,
+            // Mobile companion symbols share the primary host archive.
+            nativeModuleStems: nativeModuleStem === null ? [] : [nativeModuleStem],
+          }
+        : {}),
       dataFiles,
       dependencies,
       extensionSqlFileNames,

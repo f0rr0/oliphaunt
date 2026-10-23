@@ -183,6 +183,7 @@ export function wasixPostgresEnvironment(
     PGTZ: 'UTC',
     PG_COLOR: 'never',
     PROJ_DATA: '/share/proj',
+    GDAL_DATA: '/share/gdal',
     ...(icuEnabled ? { ICU_DATA: '/share/icu' } : {}),
     // The canonical guest specializes backend atomics for a one-backend
     // WebAssembly instance. Every host placement must enforce that invariant.

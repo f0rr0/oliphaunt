@@ -41,7 +41,7 @@ native_extension_final_families(base_carrier_manifest = ":declared_native_apple_
 bun_test(
     name = "imported_member_test",
     entry_point = "imported_member.test.mts",
-    data = {label: True for label in ["imported_member.mts", "member_payload.mts", "owner_carriers.mts", "declared_final_inputs.mts",
+    data = {label: True for label in ["imported_member.mts", "member_payload.mts", "owner_carriers.mts",
             "//build_defs/native:rust-runtime-test.mts", "//build_defs/native:host-runtime-test-helpers.mts",
             "//:tools/packaging/testdata/release-fixture-utils.mts",
             "//src/extensions/catalog:extensions.source.json", "//src/extensions/contrib:postgres18.toml"] +
@@ -53,7 +53,7 @@ bun_test(
 bun_test(
     name = "declared_final_inputs_test",
     entry_point = "declared_final_inputs.test.mts",
-    data = ["declared_final_inputs.mts", "owner_carriers.mts", "//tools/release:native-extension-final-inputs.mts", "//build_defs/release:testdata/swift-0.8.2-carrier.json"] + native_owner_carrier_helpers(),
+    data = ["owner_carriers.mts", "//tools/release:native-extension-final-inputs.mts", "//build_defs/release:testdata/swift-0.8.2-carrier.json"] + native_owner_carrier_helpers(),
     size = "small",
 )
 

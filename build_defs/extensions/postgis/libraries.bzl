@@ -91,13 +91,13 @@ _source_headers = rule(
 postgis_source_headers = _source_headers
 
 def postgis_configuration(name, profile = "desktop"):
-    if EXTENSION_SOURCES["postgis"]["commit"] != "3d12666588a84b23a3147618eaa9b40b0fe5e796":
+    if EXTENSION_SOURCES["postgis"]["commit"] != "94d984bd083635c1d253db0f87cf80b32548e406":
         fail("review the PostGIS source/configuration recipe before changing its canonical source pin")
     prefix = "@postgis//:"
     _headers(name = name, profile = profile, kind = "postgis", root = prefix + "Version.config",
-             inputs = [prefix + path for path in ["postgis_config.h.in", "liblwgeom/liblwgeom.h.in", "postgis/sqldefines.h.in", "extensions/postgis/postgis.control.in"]],
-             outs = ["postgis_config.h", "liblwgeom/liblwgeom.h", "postgis/sqldefines.h", "extensions/postgis/postgis.control", "postgis_revision.h"],
-             include_dirs = ["", "liblwgeom", "postgis"])
+             inputs = [prefix + path for path in ["postgis_config.h.in", "liblwgeom/liblwgeom.h.in", "postgis/sqldefines.h.in", "raster/raster_config.h.in"]] + [prefix + "extensions/" + member + "/" + member + ".control.in" for member in ["postgis", "postgis_raster", "postgis_topology", "postgis_tiger_geocoder"]],
+             outs = ["postgis_config.h", "liblwgeom/liblwgeom.h", "postgis/sqldefines.h", "raster/rt_core/raster_config.h", "postgis_revision.h"] + ["extensions/" + member + "/" + member + ".control" for member in ["postgis", "postgis_raster", "postgis_topology", "postgis_tiger_geocoder"]],
+             include_dirs = ["", "liblwgeom", "postgis", "raster/rt_core"])
 
 def _pin(name, commit):
     if EXTENSION_DEPENDENCIES["postgis"][name]["commit"] != commit:
@@ -105,10 +105,10 @@ def _pin(name, commit):
 
 def postgis_geos(name, profile = "desktop", capi_name = None):
     settings = postgis_profile(profile)
-    _pin("geos", "c389f532d25fe6228861d9b19339f9cb57ca4bdb")
+    _pin("geos", "d0228513abb0c29c185443cf2bfb06c9281024b5")
     prefix = "@postgis_geos//:"
     _headers(name = name + "_config", profile = profile, kind = "geos", root = prefix + "Version.txt",
-             inputs = [prefix + "include/geos/version.h.in", prefix + "capi/geos_c.h.in"],
+             inputs = [prefix + "include/geos/version.h.in", prefix + "capi/geos_c.h.in", prefix + "capi/CMakeLists.txt"],
              outs = ["geos_c.h", "geos/version.h"])
     _source_headers(name = name + "_headers", root = prefix + "Version.txt", headers = [prefix + "headers"],
                     include_dirs = ["include", "src/deps"])
@@ -131,7 +131,7 @@ def postgis_geos(name, profile = "desktop", capi_name = None):
 
 def postgis_json_c(name, profile = "desktop"):
     settings = postgis_profile(profile)
-    _pin("json-c", "41a55cfcedb54d9c1874f2f0eb07b504091d7e37")
+    _pin("json-c", "aa716cd8d663c976b99b0f30f102ee1d8ef63146")
     prefix = "@postgis_json_c//:"
     _headers(name = name + "_config", profile = profile, kind = "json_c", root = prefix + "CMakeLists.txt",
              inputs = [prefix + "cmake/config.h.in", prefix + "cmake/json_config.h.in", prefix + "json.h.cmakein"],
@@ -148,14 +148,14 @@ def postgis_libxml2(name, iconv = None, profile = "desktop"):
     settings = postgis_profile(profile)
     if profile == "desktop" and not iconv:
         fail("desktop libxml2 requires its pinned iconv dependency")
-    _pin("libxml2", "d23960a130c5bb82779c9405fbbf85e65fb3c57c")
+    _pin("libxml2", "96498992efa48d52b0e8b83058bd88dbdaf153c1")
     prefix = "@postgis_libxml2//:"
     _headers(name = name + "_config", profile = profile, kind = "libxml2", root = prefix + "VERSION",
              inputs = [prefix + "config.h.cmake.in", prefix + "include/libxml/xmlversion.h.in"],
              outs = ["config.h", "libxml/xmlversion.h"])
     _source_headers(name = name + "_headers", root = prefix + "VERSION", headers = [prefix + "headers"], include_dirs = ["include", "."])
     cc_library(name = name,
-               srcs = [prefix + stem + ".c" for stem in ["HTMLparser", "HTMLtree", "SAX2", "buf", "c14n", "catalog", "chvalid", "debugXML", "dict", "encoding", "entities", "error", "globals", "hash", "list", "nanohttp", "parser", "parserInternals", "pattern", "relaxng", "schematron", "threads", "tree", "uri", "valid", "xinclude", "xlink", "xmlIO", "xmlmemory", "xmlmodule", "xmlreader", "xmlregexp", "xmlsave", "xmlschemas", "xmlschemastypes", "xmlstring", "xmlunicode", "xmlwriter", "xpath", "xpointer", "xzlib"]],
+               srcs = [prefix + stem + ".c" for stem in ["HTMLparser", "HTMLtree", "SAX2", "buf", "c14n", "catalog", "chvalid", "debugXML", "dict", "encoding", "entities", "error", "globals", "hash", "list", "parser", "parserInternals", "pattern", "relaxng", "schematron", "threads", "tree", "uri", "valid", "xinclude", "xlink", "xmlIO", "xmlmemory", "xmlmodule", "xmlreader", "xmlregexp", "xmlsave", "xmlschemas", "xmlschemastypes", "xmlstring", "xmlwriter", "xpath", "xpointer"]],
                hdrs = [prefix + "headers"],
                deps = [":" + name + "_config", ":" + name + "_headers"] + ([iconv] if profile == "desktop" else []),
                copts = settings.c,
@@ -165,7 +165,7 @@ def postgis_libxml2(name, iconv = None, profile = "desktop"):
 
 def postgis_proj(name, sqlite, profile = "desktop", database = None):
     settings = postgis_profile(profile)
-    _pin("proj", "f08fa86c478c4bbbf003b1ec751dd84aa6eca486")
+    _pin("proj", "1df2be61c0e4732aa1326126113776b291ae7657")
     prefix = "@postgis_proj//:"
     _headers(name = name + "_config", profile = profile, kind = "proj", root = prefix + "CMakeLists.txt",
              inputs = [prefix + "cmake/proj_config.cmake.in"], outs = ["proj_config.h"])
@@ -180,14 +180,16 @@ def postgis_proj(name, sqlite, profile = "desktop", database = None):
         native.filegroup(name = name + "_embedded_sources", srcs = [":" + name + "_embedded"], output_group = "library_sources")
         embedded_sources = [prefix + "src/embedded_resources.c", prefix + "src/memvfs.c", ":" + name + "_embedded_sources"]
         embedded_deps = [":" + name + "_embedded", sqlite]
-        embedded_defines = ["PROJ_DLL=", "EMBED_RESOURCE_FILES=1", "USE_ONLY_EMBEDDED_RESOURCE_FILES=1"]
+        embedded_defines = ["EMBED_RESOURCE_FILES=1", "USE_ONLY_EMBEDDED_RESOURCE_FILES=1"]
     cc_library(name = name + "_c", srcs = [prefix + "native_c_sources"] + embedded_sources, hdrs = [prefix + "headers"],
                deps = [":" + name + "_config", ":" + name + "_headers"] + embedded_deps,
-               defines = embedded_defines, copts = settings.c, target_compatible_with = settings.compatible)
+               defines = ["PROJ_DLL="] if profile == "mobile-static" else [],
+               local_defines = embedded_defines, copts = settings.c, target_compatible_with = settings.compatible)
     cc_library(name = name, srcs = [prefix + "native_sources"], hdrs = [prefix + "headers"],
                deps = [":" + name + "_config", ":" + name + "_headers", ":" + name + "_c", sqlite],
                copts = settings.cxx,
-               defines = ["PROJ_DLL="] + select({"//build_defs/native:windows_x64": [], "//conditions:default": ["PROJ_HAS_PTHREADS"]}) + (embedded_defines[1:] if profile == "mobile-static" else []),
+               defines = ["PROJ_DLL="] + select({"//build_defs/native:windows_x64": [], "//conditions:default": ["PROJ_HAS_PTHREADS"]}),
+               local_defines = embedded_defines,
                linkopts = select({"//build_defs/native:windows_x64": ["shell32.lib", "ole32.lib"], "//build_defs/native:macos_arm64": [], "//conditions:default": ["-ldl", "-lm", "-pthread"]}) if profile == "desktop" else POSTGIS_THREAD_LINKOPTS,
                target_compatible_with = settings.compatible)
 

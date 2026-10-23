@@ -48,6 +48,7 @@ const outputs = extensionProjections(spec.catalog, spec.releases, {
     inventory: nativeComponentInventory(contract),
     contrib: spec.contrib,
     recipes: new Map(Object.entries(spec.recipes)),
+    nativeTargets: new Map(Object.entries(spec.nativeTargets)),
   },
   sdkOnly: values.sdk as 'ts' | 'react-native' | 'kotlin' | undefined,
   metadataOnly: Boolean(values.metadata),

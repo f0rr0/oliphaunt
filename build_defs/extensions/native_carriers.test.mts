@@ -179,7 +179,10 @@ for (const [target, suffix, wrongSuffix] of [
     dependency_modules: [],
     construction_licenses: [],
   };
-  assert.equal(frozenNativeMember(spec, actual).nativeModuleStem, canonicalStem);
+  const member = frozenNativeMember(spec, actual);
+  assert.equal(member.nativeModuleStem, canonicalStem);
+  assert.deepEqual(member.sqlMembers, [compiled.sqlName]);
+  assert.deepEqual(member.nativeModuleStems, [canonicalStem]);
   for (const module_file of [canonicalModule, canonicalStem + wrongSuffix, 'foreign' + suffix]) {
     assert.throws(() => frozenNativeMember(spec, { ...actual, module_file }));
   }
@@ -257,6 +260,9 @@ try {
     packageNativeCarriers(spec);
     const github = readPortableArchiveEntries(spec.outputs.github);
     assert(github.has('manifest.properties'));
+    const properties = github.get('manifest.properties')!.data().toString('utf8');
+    assert.match(properties, /^sqlMembers=pgtap$/mu);
+    assert.match(properties, /^nativeModuleStems=$/mu);
     assert(github.has('files/share/postgresql/extension/pgtap.control'));
     assert(
       !github.has('extension.json'),
@@ -351,6 +357,7 @@ try {
     state ^= state << 5;
     splitPayload.writeUInt32LE(state >>> 0, offset);
   }
+  const controls = artifacts.control_files.map((file: string) => path.posix.basename(file));
   const actual = {
     schema: 'oliphaunt-extension-member-payload-v1',
     sql_name: postgis.sqlName,
@@ -362,6 +369,12 @@ try {
     postgres_major: 18,
     default_version: postgis.source['extension-control']['default-version'],
     creates_extension: postgis.descriptor.lifecycle['create-extension'],
+    sql_members: [
+      ...new Set([
+        postgis.sqlName,
+        ...controls.map((control: string) => control.slice(0, -'.control'.length)),
+      ]),
+    ].sort(),
     dependencies: postgis.descriptor.dependencies,
     module_profiles: ['postgresql', 'modules'],
     module_file: moduleFile,
@@ -373,9 +386,13 @@ try {
   };
   const inputs = [
     ...[
-      `${postgis.sqlName}.control`,
-      `${postgis.sqlName}--${actual.default_version}.sql`,
+      ...controls,
+      ...controls.map(
+        (control: string) =>
+          `${control.slice(0, -'.control'.length)}--${actual.default_version}.sql`,
+      ),
       ...actual.sql_files,
+      ...actual.sql_prefixes.map((prefix: string) => `${prefix}.sql`),
     ].map((name) => ({
       source: put(
         `inputs/sql/${name}`,
@@ -463,6 +480,26 @@ try {
     mkdirSync(path.join(install, 'lib/postgresql'), { recursive: true });
     for (const name of ['dict_snowball', 'plpgsql'])
       put(`out/modules/${name}${process.platform === 'darwin' ? '.dylib' : '.so'}`, 'core fixture');
+    const dependencyFixtures = actual.dependencies.flatMap((name: string) => {
+      assert.equal(postgis.ownerMetadata[name].native, 'liboliphaunt-native');
+      const module = `${name}${process.platform === 'darwin' ? '.dylib' : '.so'}`;
+      const files = [
+        {
+          relative: `share/postgresql/extension/${name}.control`,
+          bytes: `default_version = '1.0'\nmodule_pathname = '$libdir/${name}'\n`,
+        },
+        { relative: `share/postgresql/extension/${name}--1.0.sql`, bytes: 'SELECT 1;\n' },
+        { relative: `lib/postgresql/${module}`, bytes: `${name} module fixture` },
+      ];
+      for (const file of files)
+        put(
+          file.relative.startsWith('lib/postgresql/')
+            ? `out/modules/${module}`
+            : `install/${file.relative}`,
+          file.bytes,
+        );
+      return files;
+    });
     const run = (input: string, name: string) =>
       Bun.spawnSync({
         cmd: [
@@ -491,6 +528,8 @@ try {
     const accepted = run(spec.outputs.github, 'accepted');
     assert.equal(accepted.exitCode, 0, accepted.stderr.toString());
     const runtime = path.join(directory, 'accepted/oliphaunt/runtime/files');
+    for (const file of dependencyFixtures)
+      assert.equal(readFileSync(path.join(runtime, file.relative), 'utf8'), file.bytes);
     for (const name of [moduleFile, ...dependencyModules])
       assert.deepEqual(
         readFileSync(path.join(runtime, 'lib/postgresql', name)),
@@ -502,10 +541,13 @@ try {
         entry.name.startsWith('files/') &&
         !entry.name.startsWith('files/lib/postgresql/'),
     );
-    const report = readFileSync(path.join(directory, 'accepted/oliphaunt/package-size.tsv'), 'utf8')
-      .split('\n')
-      .find((line) => line.startsWith('extension\tpostgis\t'))!
-      .split('\t');
+    const reportLines = readFileSync(
+      path.join(directory, 'accepted/oliphaunt/package-size.tsv'),
+      'utf8',
+    ).split('\n');
+    for (const name of actual.dependencies)
+      assert(reportLines.some((line) => line.startsWith(`extension\t${name}\t`)));
+    const report = reportLines.find((line) => line.startsWith('extension\tpostgis\t'))!.split('\t');
     assert.equal(Number(report[3]), delivered.length);
     assert.equal(
       Number(report[4]),

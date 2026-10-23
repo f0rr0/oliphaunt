@@ -3,6 +3,7 @@ import { afterAll, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
   appendFileSync,
+  cpSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -11,18 +12,22 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { zstdCompressSync } from 'node:zlib';
 
 import { createDeterministicTar } from '../../../../../tools/packaging/cargo-source-package.mts';
 import {
   canonicalGzipSync,
   extractPortableArchiveTree,
+  readPortableArchiveEntries,
 } from '../../../../../tools/packaging/portable-archive.mts';
 import {
   currentProductVersionSync,
   extensionRegistryPackageTargetSets,
   extensionReleaseVersion,
 } from '../../../../../tools/release/release-artifact-targets.mts';
+import { canonicalWasixAotMetadata } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
+import { serializeWasixExtensionDescriptors } from '../../../../wasix/sdks/ts/src/resources/extension-descriptor.ts';
 import {
   extensionNpmPackageForProduct,
   extensionNpmWasixPackageForProduct,
@@ -33,7 +38,6 @@ import {
   stageExtensionWasixNpmPackages,
   writeWasixExtensionAotNpmPackage,
 } from './package-extension-release-carriers.mts';
-import { canonicalWasixAotMetadata } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../../../../..');
 const directories = [];
@@ -119,6 +123,8 @@ function inventory(sqlName, dependencies = []) {
     sqlName,
     createsExtension: true,
     nativeModuleStem: null,
+    sqlMembers: [sqlName],
+    nativeModuleStems: [],
     dependencies,
     dataFiles: [],
     extensionSqlFileNames: [`${sqlName}.control`],
@@ -127,10 +133,17 @@ function inventory(sqlName, dependencies = []) {
   };
 }
 
-function singletonFixture(root, { dependencies = ['plpgsql'] } = {}) {
-  const product = 'oliphaunt-extension-pgtap';
-  const version = '9.8.7';
-  const sqlName = 'pgtap';
+function singletonFixture(
+  root,
+  {
+    dependencies = ['plpgsql'],
+    sqlName = 'pgtap',
+    product = `oliphaunt-extension-${sqlName}`,
+    version = '9.8.7',
+    runtimeVersion = compatibility().wasixRuntimeVersion,
+    legacy = false,
+  } = {},
+) {
   const extensionRoot = path.join(root, product);
   const releaseAssets = path.join(extensionRoot, 'release-assets');
   const name = `${product}-${version}-wasix-portable.tar.zst`;
@@ -139,6 +152,10 @@ function singletonFixture(root, { dependencies = ['plpgsql'] } = {}) {
   mkdirSync(releaseAssets, { recursive: true });
   writeFileSync(archive, bytes);
   const member = inventory(sqlName, dependencies);
+  if (legacy) {
+    delete member.sqlMembers;
+    delete member.nativeModuleStems;
+  }
   member.wasixInstall = wasixInstall(sqlName, dependencies);
   const asset = {
     name,
@@ -151,6 +168,7 @@ function singletonFixture(root, { dependencies = ['plpgsql'] } = {}) {
     bytes: bytes.length,
   };
   const frozenCompatibility = compatibility();
+  frozenCompatibility.wasixRuntimeVersion = runtimeVersion;
   writeFileSync(
     path.join(extensionRoot, 'extension-artifacts.json'),
     `${JSON.stringify(
@@ -185,18 +203,30 @@ function singletonFixture(root, { dependencies = ['plpgsql'] } = {}) {
   return { extensionRoot, product, sqlName, version };
 }
 
-function bundleFixture(root, { cycle = false } = {}) {
+function bundleFixture(
+  root,
+  {
+    cycle = false,
+    version = extensionReleaseVersion(
+      'oliphaunt-extension-contrib-pg18',
+      'wasix',
+      'extension-wasix-npm-packages.test',
+    ),
+    memberRows = undefined,
+  } = {},
+) {
   const product = 'oliphaunt-extension-contrib-pg18';
-  const version = extensionReleaseVersion(product, 'wasix', 'extension-wasix-npm-packages.test');
   const extensionRoot = path.join(root, product);
   const releaseAssets = path.join(extensionRoot, 'release-assets');
   const archiveRoot = `${product}-${version}-wasix-wasix-portable-bundle`;
   const carrierName = `${archiveRoot}.tar.gz`;
   const aggregateStage = path.join(root, 'aggregate-stage');
-  const members = [
-    inventory('cube', cycle ? ['earthdistance'] : []),
-    inventory('earthdistance', ['cube']),
-  ].map((member) => {
+  const members = (
+    memberRows ?? [
+      inventory('cube', cycle ? ['earthdistance'] : []),
+      inventory('earthdistance', ['cube']),
+    ]
+  ).map((member) => {
     const bytes = portableExtensionBytes(root, member.sqlName);
     const name = `${product}-${version}-wasix-portable.tar.zst`;
     const memberPath = `extensions/${member.sqlName}/${name}`;
@@ -237,6 +267,7 @@ function bundleFixture(root, { cycle = false } = {}) {
     memberCount: members.length,
   };
   const frozenCompatibility = compatibility();
+  frozenCompatibility.wasixRuntimeVersion = version;
   writeFileSync(
     path.join(extensionRoot, 'extension-artifacts.json'),
     `${JSON.stringify(
@@ -472,6 +503,141 @@ test('rejects a cyclic descriptor dependency without recursing indefinitely', as
   ).toThrow(/dependency cycle/u);
 });
 
+test('a PostGIS-only import composes its pinned contrib WASIX dependency without copying it', async () => {
+  const root = temporaryRoot('oliphaunt-wasix-npm-postgis-');
+  const runtimeVersion = '0.0.73';
+  const fixture = singletonFixture(root, {
+    sqlName: 'postgis',
+    dependencies: ['fuzzystrmatch'],
+    runtimeVersion,
+  });
+  const contrib = bundleFixture(root, {
+    version: runtimeVersion,
+    memberRows: [inventory('cube'), inventory('fuzzystrmatch')],
+  });
+  const result = { staged: [], skipped: [] };
+  stageExtensionWasixNpmPackages([fixture.extensionRoot], path.join(root, 'staging'), result, {
+    releaseProduct: fixture.product,
+    ownerMetadata: {
+      fuzzystrmatch: {
+        product: 'oliphaunt-extension-contrib-pg18',
+        versioning: 'runtime-bound',
+        native: 'liboliphaunt-native',
+        wasix: 'liboliphaunt-wasix',
+      },
+    },
+  });
+  const dependencyResult = { staged: [], skipped: [] };
+  stageExtensionWasixNpmPackages(
+    [contrib.extensionRoot],
+    path.join(root, 'contrib-staging'),
+    dependencyResult,
+  );
+  const unpacked = extractPackage(packedTarball(result), path.join(root, 'unpacked'));
+  const contribPackage = extractPackage(
+    packedTarball(dependencyResult),
+    path.join(root, 'contrib-unpacked'),
+  );
+  const dependencyPackageName = extensionNpmWasixPackageForProduct(contrib.product);
+  const nestedDependency = path.join(unpacked, 'node_modules', dependencyPackageName);
+  mkdirSync(path.dirname(nestedDependency), { recursive: true });
+  cpSync(contribPackage, nestedDependency, { recursive: true });
+
+  const inspected = await inspectPackedDescriptor(path.join(unpacked, 'index.js'));
+  expect(inspected.descriptor.carriers.map(({ sqlName }) => sqlName)).toEqual([
+    'fuzzystrmatch',
+    'postgis',
+  ]);
+  expect(inspected.descriptor.carriers[0]).toMatchObject({
+    product: contrib.product,
+    version: runtimeVersion,
+    sqlName: 'fuzzystrmatch',
+  });
+  expect(inspected.descriptor.carriers[0].source).toContain(
+    `${dependencyPackageName}/extensions/fuzzystrmatch/extension.tar.zst`,
+  );
+  expect(inspected.descriptor.carriers[1]).toMatchObject({
+    product: fixture.product,
+    version: fixture.version,
+    sqlName: 'postgis',
+  });
+  const packageJson = JSON.parse(readFileSync(path.join(unpacked, 'package.json'), 'utf8'));
+  expect(packageJson.dependencies).toEqual({ [dependencyPackageName]: runtimeVersion });
+  expect(Object.keys(packageJson.oliphaunt.carriers)).toEqual(['postgis']);
+  expect(
+    [...readPortableArchiveEntries(packedTarball(result)).keys()].filter((name) =>
+      /^package\/extensions\/[^/]+\/extension[.]tar[.]zst$/u.test(name),
+    ),
+  ).toEqual(['package/extensions/postgis/extension.tar.zst']);
+
+  const descriptor = (await import(pathToFileURL(path.join(unpacked, 'index.js')).href)).default;
+  const dependencyDescriptor = (
+    await import(pathToFileURL(path.join(nestedDependency, 'descriptors/fuzzystrmatch.js')).href)
+  ).default;
+  expect(descriptor.carriers[0]).toBe(dependencyDescriptor.carriers[0]);
+  const selected = serializeWasixExtensionDescriptors([descriptor]);
+  expect(selected.selectedSqlNames).toEqual(['postgis']);
+  expect(Object.keys(selected.carriers)).toEqual(['fuzzystrmatch', 'postgis']);
+  expect(
+    Object.keys(serializeWasixExtensionDescriptors([descriptor, dependencyDescriptor]).carriers),
+  ).toEqual(['fuzzystrmatch', 'postgis']);
+  expect(() =>
+    serializeWasixExtensionDescriptors([
+      descriptor,
+      {
+        ...dependencyDescriptor,
+        carriers: dependencyDescriptor.carriers.map((carrier) => ({
+          ...carrier,
+          sha256: 'f'.repeat(64),
+        })),
+      },
+    ]),
+  ).toThrow(/conflicting identity, install, or compatibility/u);
+
+  const wrongPin = path.join(root, 'wrong-pin');
+  cpSync(unpacked, wrongPin, { recursive: true });
+  const wrongDependency = path.join(
+    wrongPin,
+    'node_modules',
+    dependencyPackageName,
+    'descriptors/fuzzystrmatch.js',
+  );
+  writeFileSync(
+    wrongDependency,
+    readFileSync(wrongDependency, 'utf8').replaceAll(
+      JSON.stringify(runtimeVersion),
+      JSON.stringify('0.0.74'),
+    ),
+  );
+  await expect(import(pathToFileURL(path.join(wrongPin, 'index.js')).href)).rejects.toThrow(
+    /does not match its frozen requirement/u,
+  );
+});
+
+test('old PostGIS contracts without a foreign edge acquire no newer contrib package', async () => {
+  for (const legacy of [false, true]) {
+    const root = temporaryRoot('oliphaunt-wasix-npm-old-postgis-');
+    const fixture = singletonFixture(root, {
+      sqlName: 'postgis',
+      dependencies: [],
+      runtimeVersion: '0.0.73',
+      legacy,
+    });
+    const result = { staged: [], skipped: [] };
+    stageExtensionWasixNpmPackages([fixture.extensionRoot], path.join(root, 'staging'), result);
+    const unpacked = extractPackage(packedTarball(result), path.join(root, 'unpacked'));
+    const inspected = await inspectPackedDescriptor(path.join(unpacked, 'index.js'));
+    expect(inspected.descriptor.carriers.map(({ sqlName }) => sqlName)).toEqual(['postgis']);
+    expect(
+      JSON.parse(readFileSync(path.join(unpacked, 'package.json'), 'utf8')).dependencies,
+    ).toBeUndefined();
+    const descriptor = (await import(pathToFileURL(path.join(unpacked, 'index.js')).href)).default;
+    expect(Object.keys(serializeWasixExtensionDescriptors([descriptor]).carriers)).toEqual([
+      'postgis',
+    ]);
+  }
+});
+
 test('fails closed instead of publishing an incomplete cross-product descriptor', async () => {
   const root = temporaryRoot('oliphaunt-wasix-npm-cross-product-');
   const fixture = singletonFixture(root, { dependencies: ['vector'] });
@@ -480,5 +646,7 @@ test('fails closed instead of publishing an incomplete cross-product descriptor'
       staged: [],
       skipped: [],
     }),
-  ).toThrow(/unsupported cross-product or unavailable WASIX dependency "vector"/u);
+  ).toThrow(
+    /requires an explicit frozen version for independent release owner oliphaunt-extension-vector/u,
+  );
 });

@@ -254,12 +254,32 @@ export function inspect(
   }
   const sqlPrefixes = strings(descriptor.sql_prefixes === undefined ? [] : descriptor.sql_prefixes);
   const sqlFiles = strings(descriptor.sql_files === undefined ? [] : descriptor.sql_files);
+  if (typeof descriptor.creates_extension !== 'boolean') {
+    throw new Error('member descriptor must declare creates_extension');
+  }
+  const sqlMembers = strings(
+    descriptor.sql_members === undefined
+      ? descriptor.creates_extension
+        ? [name]
+        : []
+      : descriptor.sql_members,
+  );
+  if (
+    new Set(sqlMembers).size !== sqlMembers.length ||
+    sqlMembers.some((member) => !fullMatch(/^[a-z][a-z0-9_-]*$/u, member)) ||
+    (descriptor.creates_extension ? !sqlMembers.includes(name) : sqlMembers.length !== 0)
+  ) {
+    throw new Error('member descriptor has invalid owned SQL identities');
+  }
   for (const filename of files.keys()) {
     if (filename.startsWith(sqlPrefix)) {
       const basename = filename.slice(sqlPrefix.length);
       const valid =
-        basename === `${name}.control` ||
-        (basename.endsWith('.sql') && basename.startsWith(`${name}--`)) ||
+        sqlMembers.some(
+          (member) =>
+            basename === `${member}.control` ||
+            (basename.endsWith('.sql') && basename.startsWith(`${member}--`)),
+        ) ||
         sqlPrefixes.some((prefix) => basename.startsWith(prefix) && basename.endsWith('.sql')) ||
         sqlFiles.includes(basename);
       if (!valid) throw new Error('member archive contains foreign SQL/control resources');
@@ -305,20 +325,17 @@ export function inspect(
     if (!data) throw new Error('member archive is missing a required ABI profile');
     validateNativeMemberModule(data, descriptor.configuration as string, module);
   }
-  if (typeof descriptor.creates_extension !== 'boolean') {
-    throw new Error('member descriptor must declare creates_extension');
-  }
-  if (descriptor.creates_extension) {
-    const controlBytes = files.get(`${sqlPrefix}${name}.control`);
+  for (const member of sqlMembers) {
+    const controlBytes = files.get(`${sqlPrefix}${member}.control`);
     if (!controlBytes) throw new Error('member has no required extension control');
     const control = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(controlBytes);
     const match = /^default_version\s*=\s*'([^']+)'/m.exec(control);
-    if (!match || match[1] !== descriptor.default_version) {
+    if (!match || (member === name && match[1] !== descriptor.default_version)) {
       throw new Error('member control disagrees with the canonical default version');
     }
     const reachable = new Set<string>();
     const edges = new Map<string, string[]>();
-    const prefix = `${sqlPrefix}${name}--`;
+    const prefix = `${sqlPrefix}${member}--`;
     for (const filename of files.keys()) {
       if (!filename.startsWith(prefix) || !filename.endsWith('.sql')) continue;
       const versionsPart = filename.slice(prefix.length, -'.sql'.length);
@@ -341,10 +358,7 @@ export function inspect(
         }
       }
     }
-    if (
-      typeof descriptor.default_version !== 'string' ||
-      !reachable.has(descriptor.default_version)
-    ) {
+    if (!reachable.has(match[1])) {
       throw new Error('member default SQL version is not installable');
     }
   }

@@ -24,7 +24,6 @@ const {
   resolveInstalledExtensionOwners,
   resolveInstalledResources,
   resolveIosCarrierManifests,
-  selectedExtensionClosure,
   serializeExtensionVersions,
   stageIosAppPayload,
 } = require('../../app.plugin.cts');
@@ -321,7 +320,6 @@ test('normalizes exact extension selection', () => {
   assert.throws(() => normalizeOptions({ seedProfile: 'both' }), /seedProfile/);
   assert.equal(extensionPackageName('uuid-ossp'), '@oliphaunt/extension-contrib-pg18');
   assert.equal(extensionPackageName('vector'), '@oliphaunt/extension-vector');
-  assert.deepEqual(selectedExtensionClosure(['earthdistance']), ['cube', 'earthdistance']);
   assert.deepEqual(releaseOwnerForSqlName('hstore'), {
     artifactProduct: 'oliphaunt-extension-contrib-pg18',
     members: releaseOwnerForSqlName('earthdistance').members,
@@ -540,7 +538,7 @@ test('Android package discovery passes exact owner versions and rejects compatib
     const resolution = resolveInstalledExtensionOwners(projectRoot, ['earthdistance', 'vector'], {
       liboliphauntVersion: '1.2.3',
     });
-    assert.deepEqual(resolution.closure, ['cube', 'earthdistance', 'vector']);
+    assert.deepEqual(resolution.closure, ['earthdistance', 'vector']);
     assert.equal(resolution.owners.length, 2);
     assert.deepEqual(resolution.extensionVersions, {
       'liboliphaunt-native': '1.2.3',
@@ -574,6 +572,34 @@ test('Android package discovery passes exact owner versions and rejects compatib
     assert.throws(
       () => resolveInstalledExtensionOwners(projectRoot, ['earthdistance']),
       /is runtime-bound but version 1\.2\.4 does not match liboliphauntVersion 1\.2\.3/,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('Android package discovery leaves transitive owners to frozen Maven metadata', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-plugin-android-postgis-'));
+  try {
+    const projectRoot = path.join(root, 'app');
+    writeCarrierPackage(
+      path.join(projectRoot, 'node_modules', '@oliphaunt', 'extension-postgis'),
+      '@oliphaunt/extension-postgis',
+      [{ dependencies: [], sqlName: 'postgis' }],
+      {
+        kind: 'exact-extension',
+        liboliphauntVersion: '1.2.3',
+        members: ['postgis'],
+        product: 'oliphaunt-extension-postgis',
+        version: '0.9.0',
+      },
+    );
+    const resolution = resolveInstalledExtensionOwners(projectRoot, ['postgis']);
+    assert.deepEqual(resolution.closure, ['postgis']);
+    assert.deepEqual(resolution.extensionVersions, { 'oliphaunt-extension-postgis': '0.9.0' });
+    assert.deepEqual(
+      resolution.owners.map((owner: { artifactProduct: string }) => owner.artifactProduct),
+      ['oliphaunt-extension-postgis'],
     );
   } finally {
     fs.rmSync(root, { force: true, recursive: true });

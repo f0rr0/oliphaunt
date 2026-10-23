@@ -303,6 +303,8 @@ export function assemblePublicMobileMember(spec: MobileCarrierSpec, output: stri
       createsExtension: metadata.createsExtension ? 'yes' : 'no',
       nativeModuleStem: metadata.nativeModuleStem ?? '',
       nativeModuleFile: String(actual.module_file),
+      sqlMembers: metadata.sqlMembers.join(','),
+      nativeModuleStems: metadata.nativeModuleStems.join(','),
       nativeTarget: spec.target,
       nativeRuntimeProduct: compatibility.nativeRuntimeProduct,
       nativeRuntimeVersion: compatibility.nativeRuntimeVersion,

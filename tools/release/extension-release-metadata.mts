@@ -4,6 +4,32 @@ export const EXTENSION_VERSIONING_BY_CLASS = {
   'first-party': 'repo-bound',
 };
 
+/** Stable ownership only; dependency lists and versions come from delivered members. */
+export type ExtensionOwnerMetadata = Record<
+  string,
+  {
+    product: string;
+    versioning: 'runtime-bound' | 'upstream-bound' | 'repo-bound';
+    native: string;
+    wasix: string;
+  }
+>;
+
+export function declaredExtensionOwner(
+  sqlName: string,
+  family: 'native' | 'wasix',
+  owners: ExtensionOwnerMetadata,
+) {
+  const owner = owners?.[sqlName];
+  if (!owner || !Object.values(EXTENSION_VERSIONING_BY_CLASS).includes(owner.versioning))
+    throw new Error(`extension SQL name ${sqlName} has no declared release owner`);
+  return {
+    product: string(owner.product, `${sqlName} artifact product`),
+    releaseProduct: string(owner[family], `${sqlName} ${family} release owner`),
+    versioning: owner.versioning,
+  };
+}
+
 function string(value, context) {
   if (typeof value !== 'string' || !value) throw new Error(`${context} must be a nonempty string`);
   return value;
@@ -104,4 +130,44 @@ export function extensionPublicationMetadataRows(product, metadata, sourceIdenti
     memberPath: memberPath(sqlName),
     sourceIdentity,
   }));
+}
+
+/** Project frozen member requirements onto conventional package owners. */
+export function frozenExtensionOwnerRequirements({
+  product,
+  releaseProduct,
+  members,
+  runtimeProduct,
+  runtimeVersion,
+  ownerForSqlName,
+}) {
+  const provided = new Set(members.map((member) => member.sqlName));
+  const requirements = new Map();
+  for (const member of members) {
+    if (!Array.isArray(member.dependencies))
+      throw new Error(`${product} ${member.sqlName} must declare frozen dependencies`);
+    for (const sqlName of member.dependencies) {
+      // PostgreSQL supplies this language without an extension carrier.
+      if (sqlName === 'plpgsql' || provided.has(sqlName)) continue;
+      const owner = ownerForSqlName(sqlName);
+      if (owner.releaseProduct === releaseProduct) continue;
+      if (owner.releaseProduct !== runtimeProduct || owner.versioning !== 'runtime-bound')
+        throw new Error(
+          `${product} dependency ${sqlName} requires an explicit frozen version for independent release owner ${owner.releaseProduct}`,
+        );
+      const requirement = {
+        product: string(owner.product, `${product} dependency ${sqlName} product`),
+        version: string(runtimeVersion, `${product} frozen runtime version`),
+      };
+      const previous = requirements.get(owner.releaseProduct);
+      if (previous && previous.product !== requirement.product)
+        throw new Error(
+          `${product} dependency owner ${owner.releaseProduct} maps to multiple carriers`,
+        );
+      requirements.set(owner.releaseProduct, requirement);
+    }
+  }
+  return [...requirements.values()].sort((left, right) =>
+    left.product < right.product ? -1 : left.product > right.product ? 1 : 0,
+  );
 }

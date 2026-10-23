@@ -44,16 +44,7 @@ pub fn try_configure() -> Result<BuildOutput> {
 /// The generated slice contains (resource path, bytes, SHA-256, executable) tuples.
 pub fn embed_resolved_artifacts() -> Result<PathBuf> {
     let mut context = BuildContext::from_env()?;
-    context.artifact_manifest_paths = env::vars_os()
-        .filter_map(|(key, value)| {
-            let key = key.to_str()?;
-            let artifact =
-                key.starts_with(ARTIFACT_ENV_PREFIX) && key.ends_with(ARTIFACT_ENV_SUFFIX);
-            let sdk_relay = key.starts_with("DEP_OLIPHAUNT_ARTIFACT_RELAY_")
-                && !key.starts_with("DEP_OLIPHAUNT_ARTIFACT_RELAY_EXTENSION_");
-            (artifact && !sdk_relay && !value.is_empty()).then(|| PathBuf::from(value))
-        })
-        .collect();
+    context.artifact_manifest_paths = embedded_artifact_manifest_paths(env::vars_os());
     let artifacts = context.read_artifact_manifests()?;
     for artifact in &artifacts {
         if artifact.target != context.target && artifact.target != "portable" {
@@ -100,12 +91,118 @@ pub fn embed_resolved_artifacts() -> Result<PathBuf> {
         versions.first().copied().unwrap_or(fallback)
     );
     let resources = context.out_dir.join("embedded-resources");
-    let staged = stage_artifacts(&artifacts, &resources)?;
+    let output = context.out_dir.join("embedded_resources.rs");
+    write_embedded_resource_index(&artifacts, &resources, &output)?;
+    for manifest in &context.artifact_manifest_paths {
+        println!("cargo::rerun-if-changed={}", manifest.display());
+    }
+    for artifact in artifacts {
+        for file in artifact.files {
+            println!("cargo::rerun-if-changed={}", file.source.display());
+        }
+    }
+    Ok(output)
+}
+
+fn embedded_artifact_manifest_paths(
+    vars: impl Iterator<Item = (OsString, OsString)>,
+) -> Vec<PathBuf> {
+    vars.filter_map(|(key, value)| {
+        let key = key.to_str()?;
+        let artifact = key.starts_with(ARTIFACT_ENV_PREFIX) && key.ends_with(ARTIFACT_ENV_SUFFIX);
+        let sdk_relay = key.starts_with("DEP_OLIPHAUNT_ARTIFACT_RELAY_");
+        (artifact && !sdk_relay && !value.is_empty()).then(|| PathBuf::from(value))
+    })
+    .collect()
+}
+
+fn write_embedded_resource_index(
+    artifacts: &[ArtifactManifest],
+    resources: &Path,
+    output: &Path,
+) -> Result<()> {
+    let staged = stage_artifacts(artifacts, resources)?;
     let mut files = BTreeMap::new();
     for artifact in staged {
         for file in artifact.files {
+            let mut components = file.path.split('/');
+            if components.next() == Some("extension")
+                && components.next().is_some()
+                && components.next() == Some(".oliphaunt")
+            {
+                return Err(Error::new(format!(
+                    "artifact payload uses reserved native extension requirements namespace: {}",
+                    file.path
+                )));
+            }
             files.insert(file.path.clone(), file);
         }
+    }
+    let mut requirements = BTreeMap::new();
+    for artifact in artifacts.iter().filter(|artifact| {
+        artifact.kind == ArtifactKind::Extension
+            && artifact.runtime_product.as_deref() == Some("liboliphaunt-native")
+            && artifact.dependencies_declared
+    }) {
+        #[derive(Serialize)]
+        struct Requirements<'a> {
+            schema: &'static str,
+            product: &'a str,
+            version: &'a str,
+            runtime_version: &'a str,
+            sql_name: &'a str,
+            dependencies: &'a [String],
+        }
+        let sql_name = artifact
+            .extension
+            .as_deref()
+            .expect("validated extension name");
+        let relative = format!("extension/{}/.oliphaunt/{sql_name}.json", artifact.product);
+        checked_relative_path(&relative)?;
+        let bytes = serde_json::to_vec(&Requirements {
+            schema: "oliphaunt-native-extension-requirements-v1",
+            product: &artifact.product,
+            version: &artifact.version,
+            runtime_version: artifact
+                .runtime_version
+                .as_deref()
+                .expect("validated runtime version"),
+            sql_name,
+            dependencies: &artifact.dependencies,
+        })
+        .map_err(|error| Error::new(format!("encode native extension requirements: {error}")))?;
+        if let Some(previous) = requirements.insert(relative.clone(), bytes.clone())
+            && previous != bytes
+        {
+            return Err(Error::new(format!(
+                "conflicting embedded native extension requirements: {relative}"
+            )));
+        }
+    }
+    for (relative, bytes) in requirements {
+        if files.contains_key(&relative) {
+            return Err(Error::new(format!(
+                "artifact payload uses reserved native extension requirements path: {relative}"
+            )));
+        }
+        let path = resources.join(&relative);
+        fs::create_dir_all(path.parent().expect("requirements parent")).map_err(|error| {
+            Error::io(
+                "create native extension requirements directory",
+                &path,
+                error,
+            )
+        })?;
+        fs::write(&path, &bytes)
+            .map_err(|error| Error::io("write native extension requirements", &path, error))?;
+        files.insert(
+            relative.clone(),
+            LockedFile {
+                path: relative,
+                sha256: sha256_hex(&bytes),
+                executable: false,
+            },
+        );
     }
     let mut source = String::from("&[\n");
     for (relative, file) in files {
@@ -116,18 +213,9 @@ pub fn embed_resolved_artifacts() -> Result<PathBuf> {
         ));
     }
     source.push_str("]\n");
-    let output = context.out_dir.join("embedded_resources.rs");
-    fs::write(&output, source)
-        .map_err(|error| Error::io("write embedded resource index", &output, error))?;
-    for manifest in &context.artifact_manifest_paths {
-        println!("cargo::rerun-if-changed={}", manifest.display());
-    }
-    for artifact in artifacts {
-        for file in artifact.files {
-            println!("cargo::rerun-if-changed={}", file.source.display());
-        }
-    }
-    Ok(output)
+    fs::write(output, source)
+        .map_err(|error| Error::io("write embedded resource index", output, error))?;
+    Ok(())
 }
 
 /// Successful build-script output.
@@ -903,8 +991,7 @@ struct ArtifactManifestDocument {
     runtime_product: Option<String>,
     runtime_version: Option<String>,
     extension: Option<String>,
-    #[serde(default)]
-    dependencies: Vec<String>,
+    dependencies: Option<Vec<String>>,
     #[serde(default)]
     files: Vec<ArtifactFile>,
     #[serde(default)]
@@ -915,8 +1002,7 @@ struct ArtifactManifestDocument {
 #[serde(deny_unknown_fields)]
 struct ArtifactBundleMember {
     extension: String,
-    #[serde(default)]
-    dependencies: Vec<String>,
+    dependencies: Option<Vec<String>>,
     files: Vec<ArtifactFile>,
 }
 
@@ -946,7 +1032,8 @@ impl ArtifactManifestDocument {
                 runtime_product: self.runtime_product,
                 runtime_version: self.runtime_version,
                 extension: self.extension,
-                dependencies: self.dependencies,
+                dependencies_declared: self.dependencies.is_some(),
+                dependencies: self.dependencies.unwrap_or_default(),
                 files: self.files,
                 bundle_member: false,
                 source_manifest: None,
@@ -960,7 +1047,10 @@ impl ArtifactManifestDocument {
         }
         if self.kind != ArtifactKind::Extension
             || self.extension.is_some()
-            || !self.dependencies.is_empty()
+            || self
+                .dependencies
+                .as_ref()
+                .is_some_and(|dependencies| !dependencies.is_empty())
             || !self.files.is_empty()
             || self.extensions.len() < 2
         {
@@ -987,7 +1077,8 @@ impl ArtifactManifestDocument {
                 runtime_product: self.runtime_product.clone(),
                 runtime_version: self.runtime_version.clone(),
                 extension: Some(member.extension),
-                dependencies: member.dependencies,
+                dependencies_declared: member.dependencies.is_some(),
+                dependencies: member.dependencies.unwrap_or_default(),
                 files: member.files,
                 bundle_member: true,
                 source_manifest: None,
@@ -1017,6 +1108,7 @@ struct ArtifactManifest {
     runtime_version: Option<String>,
     extension: Option<String>,
     dependencies: Vec<String>,
+    dependencies_declared: bool,
     files: Vec<ArtifactFile>,
     bundle_member: bool,
     source_manifest: Option<PathBuf>,
@@ -1395,6 +1487,85 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::TempDir;
+
+    #[test]
+    fn embedded_extension_requirements_preserve_explicit_and_missing_dependency_facts() {
+        let temp = app_with_metadata(
+            "[package.metadata.oliphaunt]\nruntime = \"liboliphaunt-native\"\nruntime-version = \"0.1.0\"\n",
+        );
+        let manifest = write_artifact_manifest(
+            &temp,
+            "vector.toml",
+            "oliphaunt-extension-vector",
+            "1.2.3",
+            "extension",
+            "x86_64-unknown-linux-gnu",
+            Some("vector"),
+            "share/postgresql/extension/vector.control",
+        );
+        let original = fs::read_to_string(&manifest).unwrap();
+        for (index, dependencies) in [Some("[]"), Some("[\"cube\"]"), None]
+            .into_iter()
+            .enumerate()
+        {
+            let field = dependencies
+                .map(|value| format!("dependencies = {value}\n"))
+                .unwrap_or_default();
+            fs::write(&manifest, original.replace("dependencies = []\n", &field)).unwrap();
+            let context = BuildContext {
+                manifest_dir: temp.path().to_path_buf(),
+                out_dir: temp.path().join(format!("out-{index}")),
+                target: "x86_64-unknown-linux-gnu".to_owned(),
+                artifact_manifest_paths: vec![manifest.clone()],
+            };
+            let artifacts = context.read_artifact_manifests().unwrap();
+            let resources = context.out_dir.join("resources");
+            let output = context.out_dir.join("embedded.rs");
+            write_embedded_resource_index(&artifacts, &resources, &output).unwrap();
+            let mut injected = artifacts[0].clone();
+            let mut reserved = injected.files[0].clone();
+            reserved.relative = ".oliphaunt/injected.json".to_owned();
+            injected.files.push(reserved);
+            assert!(
+                write_embedded_resource_index(&[injected], &resources, &output)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("reserved native extension requirements namespace")
+            );
+            let relative = "extension/oliphaunt-extension-vector/.oliphaunt/vector.json";
+            if dependencies.is_none() {
+                assert!(!resources.join(relative).exists());
+                assert!(!fs::read_to_string(&output).unwrap().contains(relative));
+                continue;
+            }
+            let bytes = fs::read(resources.join(relative)).unwrap();
+            let requirements: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(requirements["product"], "oliphaunt-extension-vector");
+            assert_eq!(requirements["version"], "1.2.3");
+            assert_eq!(requirements["runtime_version"], "0.1.0");
+            assert_eq!(requirements["sql_name"], "vector");
+            assert_eq!(
+                requirements["dependencies"],
+                serde_json::from_str::<serde_json::Value>(dependencies.unwrap()).unwrap()
+            );
+            let index_source = fs::read_to_string(&output).unwrap();
+            assert!(index_source.contains(relative));
+            assert!(index_source.contains(&sha256_hex(&bytes)));
+
+            let mut conflicting = artifacts[0].clone();
+            conflicting.dependencies = vec!["hstore".to_owned()];
+            assert!(
+                write_embedded_resource_index(
+                    &[artifacts[0].clone(), conflicting],
+                    &resources,
+                    &output,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("conflicting embedded native extension requirements")
+            );
+        }
+    }
 
     #[test]
     fn missing_application_metadata_fails() {
@@ -1896,6 +2067,34 @@ extensions = ["earthdistance", "vector"]
             Some("vector"),
             "share/postgresql/extension/vector.control",
         );
+        let facade = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("facade"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: embedded_artifact_manifest_paths(
+                [
+                    (
+                        OsString::from("DEP_OLIPHAUNT_ARTIFACT_EXTENSION_VECTOR_MANIFEST"),
+                        vector_manifest.as_os_str().to_owned(),
+                    ),
+                    (
+                        OsString::from("DEP_OLIPHAUNT_ARTIFACT_RELAY_EXTENSION_CONTRIB_MANIFEST"),
+                        bundle_manifest.as_os_str().to_owned(),
+                    ),
+                ]
+                .into_iter(),
+            ),
+        };
+        let embedded = facade.out_dir.join("embedded.rs");
+        write_embedded_resource_index(
+            &facade.read_artifact_manifests().unwrap(),
+            &facade.out_dir.join("resources"),
+            &embedded,
+        )
+        .unwrap();
+        let embedded = fs::read_to_string(embedded).unwrap();
+        assert!(embedded.contains("extension/oliphaunt-extension-vector/"));
+        assert!(!embedded.contains("extension/oliphaunt-extension-contrib-pg18/"));
         let context = BuildContext {
             manifest_dir: temp.path().to_path_buf(),
             out_dir: temp.path().join("out"),

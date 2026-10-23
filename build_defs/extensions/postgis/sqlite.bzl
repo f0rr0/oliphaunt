@@ -1,4 +1,4 @@
-"""Direct SQLite 3.53.1 construction from its canonical Git source.
+"""Direct SQLite 3.54.1 construction from its canonical Git source.
 
 The source-built execution Jim/Lemon helpers run upstream Tcl generators; the
 target library compiles the individual upstream non-amalgamation object recipe.
@@ -60,7 +60,7 @@ sqlite_generate = _sqlite_generate
 
 def postgis_sqlite(name, profile = "desktop"):
     settings = postgis_profile(profile)
-    if EXTENSION_DEPENDENCIES["postgis"]["sqlite"]["commit"] != "ccd445d76a9362c63add000354fac84ba9022176":
+    if EXTENSION_DEPENDENCIES["postgis"]["sqlite"]["commit"] != "57520227c95396ce39ba6ecaac8d475b78dd3964":
         fail("review the upstream SQLite object/generator recipe before changing its canonical source pin")
     prefix = "@postgis_sqlite//:"
     for tool in (["jim", "lemon", "mksourceid", "mkkeywordhash"] if profile == "desktop" else []):

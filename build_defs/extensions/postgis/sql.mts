@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 const { values } = parseArgs({
@@ -41,7 +41,19 @@ const work = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'postgis-sql-'));
 const postgisWork = join(work, 'postgis');
 const extensionWork = join(work, 'extensions', 'postgis');
 const rasterWork = join(work, 'raster', 'rt_pg');
-for (const directory of [postgisWork, join(extensionWork, 'sql'), rasterWork])
+const topologyWork = join(work, 'topology');
+const rasterExtensionWork = join(work, 'extensions', 'postgis_raster');
+const topologyExtensionWork = join(work, 'extensions', 'postgis_topology');
+const tigerExtensionWork = join(work, 'extensions', 'postgis_tiger_geocoder');
+for (const directory of [
+  postgisWork,
+  join(extensionWork, 'sql'),
+  rasterWork,
+  topologyWork,
+  ...[rasterExtensionWork, topologyExtensionWork, tigerExtensionWork].map((root) =>
+    join(root, 'sql'),
+  ),
+])
   mkdirSync(directory, { recursive: true });
 // Upstream generators print $0 and input names in their output. Preserve their
 // source-relative invocation paths rather than embedding a sandbox directory.
@@ -55,6 +67,13 @@ const recipes = {
   'extensions/upgrade-paths-rules.mk':
     '6653c117a96c45c26cfd028c4e5bba3bf4a8dd4f7652b1a3f08d131575da88fa',
   'raster/rt_pg/Makefile.in': '21fc84b18248f4ee7d345541900aff4f59aa3832a2b048be6d46ad8c5b370a1d',
+  'extensions/postgis_raster/Makefile.in':
+    'a7cba5ff34fc0c5fc5635f8cb4f7d88d074a092a117dc1b98a2415099bc3203e',
+  'extensions/postgis_topology/Makefile.in':
+    '5972c9f01d5fce2408b7ee5f9d75cb2d6d5549fec36cb38c4434509f54337e6a',
+  'extensions/postgis_tiger_geocoder/Makefile.in':
+    '7f53ea178963ab1e34afc9c963ed951134f584cc19b935e0112b9fa32b06ca7e',
+  'topology/Makefile.in': '542f0cf5ad94c1cda57e991bf73a3774861fbb457fcf41eb16adfc641633992c',
 };
 for (const [path, digest] of Object.entries(recipes)) {
   if (
@@ -96,7 +115,7 @@ const transform = (program: string, text: string, lines = false) =>
   run([lines ? '-lpe' : '-pe', program], text);
 const strip = (text: string) => transform('s/BEGIN\\;//g ; s/COMMIT\\;//g', text);
 const upstream = (name: string, args: string[], stdin?: string, cwd = postgisWork) =>
-  run([`${cwd === postgisWork ? '..' : '../..'}/utils/${name}.pl`, ...args], stdin, cwd);
+  run([relative(cwd, join(work, 'utils', `${name}.pl`)), ...args], stdin, cwd);
 const file = (name: string, text: string, cwd = postgisWork) => {
   writeFileSync(join(cwd, name), text);
   return name;
@@ -160,7 +179,7 @@ try {
     extensionUpgrade,
     true,
   );
-  const rasterModule = `$libdir/rtpostgis-${spec.version.split('.')[0]}`;
+  const rasterModule = `$libdir/postgis_raster-${spec.version.split('.')[0]}`;
   const rasterMain = preprocessed('rtpostgis', rasterModule, true);
   file('rtpostgis.sql', rasterMain, rasterWork);
   const rasterDrops =
@@ -199,6 +218,124 @@ try {
   const template = `-- Just tag extension postgis version as "ANY"\n-- Installed by postgis ${spec.version}\n-- Built on ${date}\n`;
   writeFileSync(join(extension, 'postgis--TEMPLATED--TO--ANY.sql'), template);
   writeFileSync(join(extension, `postgis--${spec.version}--ANY.sql`), template);
+  const commonBefore = read(join(source, 'postgis/common_before_upgrade.sql'));
+  const commonAfter = read(join(source, 'postgis/common_after_upgrade.sql'));
+  const helper = preprocessed('postgis_extension_helper', '', false);
+  const helperUninstall = read(join(source, 'extensions/postgis_extension_helper_uninstall.sql'));
+  const dropGuards = (member: string, text: string) =>
+    text.replace(
+      /^(DROP .*);/gm,
+      (_line, statement: string) =>
+        `SELECT @extschema@.postgis_extension_drop_if_exists('${member}', '${statement}');\n${statement};`,
+    );
+  const companion = (
+    member: string,
+    install: string,
+    upgrade: string,
+    cwd: string,
+    unpackaged = install,
+  ) => {
+    writeFileSync(join(extension, `${member}--${spec.version}.sql`), install);
+    writeFileSync(join(extension, `${member}--ANY--${spec.version}.sql`), upgrade);
+    writeFileSync(
+      join(extension, `${member}--unpackaged--${spec.version}.sql`),
+      upstream('create_unpackaged', [member], unpackaged, cwd) + upgrade,
+    );
+    writeFileSync(join(extension, `${member}--unpackaged.sql`), '-- Nothing to do here\n');
+    const tag = template.replaceAll('extension postgis ', `extension ${member} `);
+    writeFileSync(join(extension, `${member}--TEMPLATED--TO--ANY.sql`), tag);
+    writeFileSync(join(extension, `${member}--${spec.version}--ANY.sql`), tag);
+  };
+  const rasterForExtension = strip(preprocessed('rtpostgis', rasterModule, false));
+  file('sql/rtpostgis.sql', rasterForExtension, rasterExtensionWork);
+  const rasterUpgrade = dropGuards(
+    'postgis_raster',
+    strip(
+      commonBefore +
+        preprocessed('rtpostgis_upgrade_cleanup', rasterModule, true) +
+        upstream('create_upgrade', ['sql/rtpostgis.sql'], undefined, rasterExtensionWork) +
+        preprocessed('rtpostgis_drop', rasterModule, true) +
+        commonAfter,
+    ),
+  );
+  companion(
+    'postgis_raster',
+    '\\echo Use "CREATE EXTENSION postgis_raster" to load this file. \\quit\n' + rasterForExtension,
+    helper + rasterUpgrade + helperUninstall,
+    rasterExtensionWork,
+  );
+
+  const topologyModule = `$libdir/postgis_topology-${spec.version.split('.')[0]}`;
+  const topology = preprocessed('topology', topologyModule, false);
+  file('topology.sql', topology, topologyWork);
+  const topologyBody = (text: string) =>
+    strip(text).replace(/^CREATE SCHEMA[^\r\n]*(?:\r?\n|$)/gm, '');
+  const topologyUpgrade = topologyBody(
+    commonBefore +
+      preprocessed('topology_before_upgrade', topologyModule, false) +
+      upstream('create_upgrade', ['topology.sql'], undefined, topologyWork) +
+      preprocessed('topology_after_upgrade', topologyModule, false) +
+      commonAfter,
+  );
+  companion(
+    'postgis_topology',
+    topologyBody(topology) +
+      read(join(source, 'extensions/postgis_topology/sql_bits/mark_editable_objects.sql.in')),
+    read(join(source, 'extensions/postgis_topology/extlock.sql')) +
+      helper +
+      topologyUpgrade +
+      read(join(source, 'extensions/postgis_topology/sql_bits/mark_editable_objects.sql.in')) +
+      helperUninstall,
+    topologyExtensionWork,
+    topology,
+  );
+
+  const tigerSource = join(source, 'extensions/postgis_tiger_geocoder');
+  const tigerInputs = (name: string) => {
+    const rule = read(join(tigerSource, 'Makefile.in'))
+      .replace(/\\\r?\n/g, ' ')
+      .split(/\r?\n/)
+      .find((line) => line.startsWith(`sql/${name}.sql.in:`));
+    if (!rule) throw new Error(`missing pinned tiger SQL recipe ${name}`);
+    const files = rule
+      .slice(rule.indexOf(':') + 1)
+      .split('|')[0]
+      .trim()
+      .split(/\s+/);
+    if (!files.length || files.some((file) => !/^[\w./-]+\.sql(?:\.in)?$/.test(file)))
+      throw new Error(`unsupported tiger SQL prerequisites ${name}`);
+    return [...new Set(files)]
+      .map((file) => {
+        if (file === '../postgis_extension_helper.sql') return helper;
+        if (file === 'sql/add_search_path.sql')
+          return read(join(tigerSource, 'sql_bits/add_search_path.sql.in'));
+        return read(resolve(tigerSource, file));
+      })
+      .join('');
+  };
+  const tigerDrop =
+    "SELECT postgis_extension_drop_if_exists('postgis_tiger_geocoder', 'DROP SCHEMA tiger_data');\n";
+  const tigerEditable = read(join(tigerSource, 'sql_bits/mark_editable_objects.sql.in'));
+  const tigerPre =
+    strip(tigerInputs('tiger_geocoder') + tigerDrop + helperUninstall) + tigerEditable;
+  file('sql/postgis_tiger_geocoder_pre.sql', tigerPre, tigerExtensionWork);
+  const tigerInstall = upstream(
+    'create_or_replace_to_create',
+    ['sql/postgis_tiger_geocoder_pre.sql'],
+    tigerPre,
+    tigerExtensionWork,
+  );
+  const tigerUpgrade =
+    helper +
+    strip(tigerInputs('tiger_geocoder_minor')) +
+    tigerEditable +
+    tigerDrop +
+    helperUninstall;
+  companion('postgis_tiger_geocoder', tigerInstall, tigerUpgrade, tigerExtensionWork);
+  writeFileSync(
+    join(extension, `postgis_tiger_geocoder--unpackaged--${spec.version}.sql`),
+    read(join(tigerSource, 'sql_bits/tiger_geocoder--unpackaged.sql.in')),
+  );
 } finally {
   rmSync(work, { recursive: true, force: true });
 }

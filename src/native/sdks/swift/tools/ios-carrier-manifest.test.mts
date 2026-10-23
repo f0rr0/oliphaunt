@@ -124,6 +124,8 @@ function writeManifest(root, product, body) {
         version: currentProductVersionSync(product, 'ios-carrier-manifest.test'),
         compatibility: compatibility(),
         createsExtension: true,
+        sqlMembers: [body.sqlName],
+        nativeModuleStems: body.nativeModuleStem === null ? [] : [body.nativeModuleStem],
         dataFiles: [],
         dependencies: [],
         extensionSqlFileNames: [],
@@ -443,6 +445,8 @@ test('produces exact local and GitHub carrier envelopes ', async () => {
     );
     const postgis = writeManifest(root, 'oliphaunt-extension-postgis', {
       sqlName: 'postgis',
+      sqlMembers: ['postgis', 'postgis_raster', 'postgis_tiger_geocoder', 'postgis_topology'],
+      nativeModuleStems: ['postgis-3', 'postgis_raster-3', 'postgis_topology-3'],
       nativeModuleStem: 'postgis-3',
       iosNativeDependencies: ['geos'],
       iosRegistration: {
@@ -465,6 +469,15 @@ test('produces exact local and GitHub carrier envelopes ', async () => {
       extensionManifests: [postgis, pgtap],
       localUrls: true,
     });
+    assert.deepEqual(local.extensions.find((row) => row.sqlName === 'postgis').sqlMembers, [
+      'postgis',
+      'postgis_raster',
+      'postgis_tiger_geocoder',
+      'postgis_topology',
+    ]);
+    assert.deepEqual(local.extensions.find((row) => row.sqlName === 'postgis').nativeModuleStems, [
+      'postgis-3',
+    ]);
     assert.deepEqual(
       local.base.assets.map(({ role }) => role),
       ['base-xcframework', 'runtime-resources'],
@@ -566,6 +579,54 @@ test('produces exact local and GitHub carrier envelopes ', async () => {
     );
 
     const canonicalPgtap = JSON.parse(readFileSync(pgtap, 'utf8'));
+    const historicalPostgis = JSON.parse(readFileSync(postgis, 'utf8'));
+    historicalPostgis.version = '0.0.1';
+    historicalPostgis.compatibility.nativeRuntimeVersion = '0.0.2';
+    historicalPostgis.sqlMembers = ['postgis'];
+    historicalPostgis.nativeModuleStems = ['postgis-3'];
+    const historicalManifest = path.join(root, 'historical-postgis.json');
+    const historicalOptions = {
+      extensionManifest: historicalManifest,
+      nativeRuntimeVersion: '0.0.2',
+      baseTag: 'liboliphaunt-native-v0.0.2',
+      declaredProducts: {
+        [historicalPostgis.product]: {
+          product: historicalPostgis.product,
+          releaseProduct: historicalPostgis.product,
+          version: historicalPostgis.version,
+          tag: `${historicalPostgis.product}-v${historicalPostgis.version}`,
+          sqlNames: ['postgis'],
+        },
+      },
+    };
+    writeFileSync(historicalManifest, JSON.stringify(historicalPostgis));
+    const historicalCarrier = buildSwiftExtensionCarrierManifest(historicalOptions);
+    assert.equal(historicalCarrier.release.version, '0.0.1');
+    assert.equal(historicalCarrier.base.version, '0.0.2');
+    assert.deepEqual(historicalCarrier.entries[0].extension.sqlMembers, ['postgis']);
+    assert.deepEqual(historicalCarrier.entries[0].extension.nativeModuleStems, ['postgis-3']);
+    assert.deepEqual(
+      historicalCarrier.entries[0].extension.registration,
+      local.extensions.find(({ sqlName }) => sqlName === 'postgis').registration,
+    );
+    for (const missing of ['sqlMembers', 'nativeModuleStems']) {
+      const partial = structuredClone(historicalPostgis);
+      delete partial[missing];
+      writeFileSync(historicalManifest, JSON.stringify(partial));
+      assert.throws(
+        () => buildSwiftExtensionCarrierManifest(historicalOptions),
+        /sqlMembers and nativeModuleStems must be declared together/u,
+      );
+    }
+    delete historicalPostgis.sqlMembers;
+    delete historicalPostgis.nativeModuleStems;
+    writeFileSync(historicalManifest, JSON.stringify(historicalPostgis));
+    const legacyCarrier = buildSwiftExtensionCarrierManifest(historicalOptions);
+    const legacyExtension = legacyCarrier.entries[0].extension;
+    assert.equal(Object.hasOwn(legacyExtension, 'sqlMembers'), false);
+    assert.equal(Object.hasOwn(legacyExtension, 'nativeModuleStems'), false);
+    assert.equal(legacyCarrier.base.version, '0.0.2');
+    assert.deepEqual(legacyExtension.assets, historicalCarrier.entries[0].extension.assets);
     for (const [label, mutate, pattern] of [
       [
         'self dependency',
@@ -684,6 +745,8 @@ test('bundle carriers verify exact nested bytes ', async () => {
       extensions.push({
         sqlName,
         createsExtension: true,
+        sqlMembers: [sqlName],
+        nativeModuleStems: [],
         dataFiles: [],
         dependencies: [],
         extensionSqlFileNames: [],

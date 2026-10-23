@@ -689,6 +689,8 @@ build_uuid_dependency() {
 }
 
 build_mobile_static_dependencies() {
+  # Reaching this path invalidated the runtime fingerprint, including dependency sources and flags.
+  rm -rf "$mobile_static_dependency_root"
   build_openssl_dependency
   build_uuid_dependency
   build_postgis_mobile_static_dependencies

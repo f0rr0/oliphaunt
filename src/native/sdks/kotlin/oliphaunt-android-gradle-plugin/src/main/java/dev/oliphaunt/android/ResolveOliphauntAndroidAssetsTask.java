@@ -109,6 +109,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
           "staticSymbolAliases",
           "licenseFiles",
           "licenseProfile",
+          "sqlMembers",
+          "nativeModuleStems",
           "files");
   private static final List<String> TARGET_INVARIANT_EXTENSION_PROPERTY_KEYS =
       List.of(
@@ -130,6 +132,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
           "staticSymbolAliases",
           "licenseFiles",
           "licenseProfile",
+          "sqlMembers",
+          "nativeModuleStems",
           "files");
   private final ArchiveOperations archiveOperations;
   private final FileSystemOperations fileSystemOperations;
@@ -659,15 +663,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
         manifest, "licenseProfile", manifestFile, legalContract.profile());
     List<String> declaredLicenseFiles =
         requireJsonStringList(manifest, "licenseFiles", manifestFile);
-    if (!declaredLicenseFiles.equals(legalContract.licenseFiles())) {
-      throw new GradleException(
-          "Oliphaunt extension bundle manifest "
-              + manifestFile
-              + " licenseFiles do not match the exact legal contract: expected="
-              + legalContract.licenseFiles()
-              + ", actual="
-              + declaredLicenseFiles);
-    }
+    List<String> legalMembers = declaredLegalMembers(
+        legalContract.profile(), declaredLicenseFiles, false, manifestFile.toString());
     validateBundleCompatibility(manifest, manifestFile, selectedRuntimeVersion);
     Object rawMembers = manifest.get("members");
     if (!(rawMembers instanceof List<?> members) || members.isEmpty()) {
@@ -771,10 +768,9 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
               + ", actual="
               + actualMembers);
     }
-    requireExactBundleFiles(root, memberPaths, legalContract, manifestFile);
-    validateExactLegalMemberFiles(root, legalContract, manifestFile.toString());
-    validateExactLegalArchiveMembers(
-        legalContract, inspection, archivePrefix, manifestFile.toString());
+    requireExactBundleFiles(root, memberPaths, legalMembers, manifestFile);
+    validateDeliveredLegalMembers(
+        root, legalMembers, inspection, archivePrefix, manifestFile.toString());
     return result;
   }
 
@@ -1010,13 +1006,11 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
   private static void requireExactBundleFiles(
       File root,
       Set<String> memberPaths,
-      OliphauntExtensionLegalCatalog.Contract legalContract,
+      List<String> legalMembers,
       File manifestFile) {
     TreeSet<String> expected = new TreeSet<>(memberPaths);
     expected.add("bundle-manifest.json");
-    for (OliphauntExtensionLegalCatalog.LegalMember member : legalContract.members()) {
-      expected.add(member.path());
-    }
+    expected.addAll(legalMembers);
     TreeSet<String> actual = new TreeSet<>();
     TreeSet<String> actualDirectories = new TreeSet<>();
     Path rootPath = root.toPath().toAbsolutePath().normalize();
@@ -1069,16 +1063,22 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     }
   }
 
-  private static void validateExactLegalMemberFiles(
+  private static void validateDeliveredLegalMembers(
       File root,
-      OliphauntExtensionLegalCatalog.Contract legalContract,
+      List<String> legalMembers,
+      PublicTarGzArchivePreflight.Inspection inspection,
+      String archivePrefix,
       String source) {
+    // Producer qualification binds notices to source pins. Delivered archives
+    // retain their own legal bytes, including older pins, in the private snapshot.
+    // Bundle member SHA-256/length and cross-ABI legal digests remain authoritative.
     Path normalizedRoot = root.toPath().toAbsolutePath().normalize();
-    for (OliphauntExtensionLegalCatalog.LegalMember member : legalContract.members()) {
-      Path file = normalizedRoot.resolve(member.path()).normalize();
+    String prefix = archivePrefix == null || archivePrefix.isEmpty() ? "" : archivePrefix + "/";
+    for (String path : legalMembers) {
+      Path file = normalizedRoot.resolve(path).normalize();
       if (!file.startsWith(normalizedRoot)) {
         throw new GradleException(
-            "Oliphaunt extension legal member escapes its artifact root: " + member.path());
+            "Oliphaunt extension legal member escapes its artifact root: " + path);
       }
       final BasicFileAttributes attributes;
       try {
@@ -1086,30 +1086,25 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
             Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
       } catch (IOException error) {
         throw new GradleException(
-            source + " is missing exact legal member " + member.path(), error);
+            source + " is missing exact legal member " + path, error);
       }
       if (!attributes.isRegularFile()
           || attributes.isSymbolicLink()
-          || attributes.size() != member.bytes()) {
+          || attributes.size() <= 0) {
         throw new GradleException(
             source
                 + " legal member "
-                + member.path()
-                + " must be a regular non-symlink file of exactly "
-                + member.bytes()
-                + " bytes, got "
+                + path
+                + " must be a nonempty regular non-symlink file, got "
                 + attributes.size());
       }
-      String actualSha256 = sha256(file.toFile());
-      if (!actualSha256.equals(member.sha256())) {
-        throw new GradleException(
-            source
-                + " legal member "
-                + member.path()
-                + " does not match its canonical SHA-256: expected "
-                + member.sha256()
-                + ", got "
-                + actualSha256);
+      if (inspection != null) {
+        PublicTarGzArchivePreflight.Member member = inspection.members().get(prefix + path);
+        if (member == null || member.directory() || member.bytes() != attributes.size()
+            || member.mode() != 0644) {
+          throw new GradleException(source + " legal member " + prefix + path
+              + " must be one regular ustar mode=0644 file of exactly " + attributes.size() + " bytes");
+        }
       }
     }
   }
@@ -1243,20 +1238,21 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
 
   private static Map<String, String> targetInvariantLegalFiles(
       String sqlName, String target, ExtensionArchive archive) {
-    OliphauntExtensionLegalCatalog.Contract contract =
-        OliphauntExtensionLegalCatalog.requireLeaf(sqlName, target);
+    List<String> legalMembers = validateExtensionLegalManifest(
+        OliphauntExtensionCatalog.require(sqlName).artifactProduct(),
+        sqlName, target, archive.manifest(), archive.assetName());
     Map<String, String> result = new java.util.TreeMap<>();
     Path root = archive.root().toPath().toAbsolutePath().normalize();
-    for (OliphauntExtensionLegalCatalog.LegalMember member : contract.members()) {
-      Path file = root.resolve(member.path()).normalize();
+    for (String path : legalMembers) {
+      Path file = root.resolve(path).normalize();
       if (!file.startsWith(root) || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
         throw new GradleException(
             "extension artifact "
                 + archive.assetName()
                 + " is missing exact legal member "
-                + member.path());
+                + path);
       }
-      result.put(member.path(), sha256(file.toFile()));
+      result.put(path, sha256(file.toFile()));
     }
     return Collections.unmodifiableMap(result);
   }
@@ -1293,6 +1289,12 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
       Properties manifest,
       String assetName,
       String expectedRuntimeVersion) {
+    // Published v1 artifacts encode only the primary SQL and module identities.
+    if (!manifest.containsKey("sqlMembers") && !manifest.containsKey("nativeModuleStems")) {
+      manifest.setProperty("sqlMembers", "yes".equals(manifest.getProperty("createsExtension"))
+          ? manifest.getProperty("sqlName", "") : "");
+      manifest.setProperty("nativeModuleStems", manifest.getProperty("nativeModuleStem", ""));
+    }
     TreeSet<String> actualKeys = new TreeSet<>(manifest.stringPropertyNames());
     TreeSet<String> expectedKeys = new TreeSet<>(EXTENSION_ARTIFACT_PROPERTY_KEYS);
     if (!actualKeys.equals(expectedKeys)) {
@@ -1328,16 +1330,10 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
               + " belongs to release product "
               + catalogEntry.artifactProduct());
     }
-    String expectedDependencies = String.join(",", catalogEntry.dependencies());
-    if (!expectedDependencies.equals(manifest.getProperty("dependencies"))) {
-      throw new GradleException(
-          product
-              + " Android artifact "
-              + assetName
-              + " must declare dependencies="
-              + expectedDependencies
-              + ", got "
-              + manifest.getProperty("dependencies"));
+    List<String> dependencies = strictManifestCsv(manifest, "dependencies", assetName);
+    requireSortedManifestList(dependencies, assetName, "dependencies");
+    for (String dependency : dependencies) {
+      OliphauntExtensionCatalog.require(dependency);
     }
     if (!target.equals(manifest.getProperty("nativeTarget"))) {
       throw new GradleException(
@@ -1381,7 +1377,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     validateExtensionManifestSemantics(manifest, assetName, target);
   }
 
-  private static OliphauntExtensionLegalCatalog.Contract validateExtensionLegalManifest(
+  private static List<String> validateExtensionLegalManifest(
       String product,
       String sqlName,
       String target,
@@ -1409,29 +1405,34 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
               + profile);
     }
     List<String> licenseFiles = strictManifestCsv(manifest, "licenseFiles", assetName);
-    requireSortedManifestList(licenseFiles, assetName, "licenseFiles");
-    if (!licenseFiles.equals(legalContract.licenseFiles())) {
-      throw new GradleException(
-          product
-              + " Android artifact "
-              + assetName
-              + " licenseFiles do not match the exact legal contract: expected="
-              + legalContract.licenseFiles()
-              + ", actual="
-              + licenseFiles);
+    return declaredLegalMembers(profile, licenseFiles, true, assetName);
+  }
+
+  private static List<String> declaredLegalMembers(
+      String profile, List<String> licenseFiles, boolean leaf, String source) {
+    requireSortedManifestList(licenseFiles, source, "licenseFiles");
+    if ((profile.startsWith("contrib-native") && !licenseFiles.isEmpty())
+        || (profile.equals("external-native") && licenseFiles.isEmpty())) {
+      throw new GradleException(source + " licenseFiles do not match the exact legal contract for " + profile);
+    }
+    TreeSet<String> members = new TreeSet<>(List.of("LICENSE", "THIRD_PARTY_NOTICES.md"));
+    if (profile.startsWith("contrib-native")) {
+      members.add("THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT");
+      if (profile.equals("contrib-native-openssl")) {
+        members.add("THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt");
+      }
     }
     for (String licenseFile : licenseFiles) {
-      String canonical = canonicalDeclaredPath(licenseFile, assetName, "licenseFiles");
+      String canonical = canonicalDeclaredPath(licenseFile, source, "licenseFiles");
       if (!canonical.startsWith("share/licenses/")) {
         throw new GradleException(
-            product
-                + " Android artifact "
-                + assetName
+            source
                 + " licenseFiles must live under share/licenses/: "
                 + licenseFile);
       }
+      members.add((leaf ? "files/" : "") + canonical);
     }
-    return legalContract;
+    return List.copyOf(members);
   }
 
   private static void validateExtensionManifestSemantics(
@@ -1440,6 +1441,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     String moduleFile = manifest.getProperty("nativeModuleFile");
     String mobilePrebuilt = manifest.getProperty("mobilePrebuilt");
     String symbolPrefix = manifest.getProperty("staticSymbolPrefix");
+    extensionSqlMembers(manifest, assetName);
     List<String> staticArchiveValues =
         strictManifestCsv(manifest, "mobileStaticArchives", assetName);
     List<String> dependencyArchiveValues =
@@ -1658,15 +1660,15 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
 
     String nativeTarget = manifest.getProperty("nativeTarget", "");
     String product = OliphauntExtensionCatalog.require(sqlName).artifactProduct();
-    OliphauntExtensionLegalCatalog.Contract legalContract =
+    List<String> legalMembers =
         validateExtensionLegalManifest(
             product, sqlName, nativeTarget, manifest, assetName);
 
     TreeSet<String> declaredFiles = new TreeSet<>();
     addDeclaredArtifactFile(declaredFiles, "manifest.properties", assetName, "manifest");
-    for (OliphauntExtensionLegalCatalog.LegalMember legalMember : legalContract.members()) {
+    for (String path : legalMembers) {
       addDeclaredArtifactFile(
-          declaredFiles, legalMember.path(), assetName, "exact legal contract");
+          declaredFiles, path, assetName, "exact legal contract");
     }
     String nativeModuleFile = manifest.getProperty("nativeModuleFile", "");
     if (!nativeModuleFile.isEmpty()) {
@@ -1768,6 +1770,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     }
 
     String extensionDirectory = "files/share/postgresql/extension/";
+    List<String> sqlMembers = extensionSqlMembers(manifest, assetName);
     String controlFile = extensionDirectory + sqlName + ".control";
     boolean hasControl = actualFiles.contains(controlFile);
     boolean hasInstallSql = false;
@@ -1779,7 +1782,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
         continue;
       }
       if (isOwnedExtensionSqlOrControl(
-          actual, sqlName, extensionSqlFileNames, extensionSqlFilePrefixes)) {
+          actual, sqlMembers, extensionSqlFileNames, extensionSqlFilePrefixes)) {
         expectedFiles.add(actual);
         hasInstallSql |= isInstallSql(actual, sqlName);
         hasMainExtensionCreationFile |= isMainExtensionCreationFile(actual, sqlName);
@@ -1802,6 +1805,13 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
               + assetName
               + " declares createsExtension=no but contains extension creation files for "
               + sqlName);
+    }
+    for (String member : sqlMembers) {
+      if (!actualFiles.contains(extensionDirectory + member + ".control")
+          || actualFiles.stream().noneMatch(file -> file.startsWith(extensionDirectory) && isInstallSql(file, member))) {
+        throw new GradleException("Oliphaunt extension artifact " + assetName
+            + " must contain " + member + ".control and a canonical install SQL file for " + member);
+      }
     }
     TreeSet<String> missing = new TreeSet<>(declaredFiles);
     missing.removeAll(actualFiles);
@@ -1828,11 +1838,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
               + ", unexpected="
               + unexpectedDirectories);
     }
-    validateExactLegalMemberFiles(root, legalContract, "Oliphaunt extension artifact " + assetName);
-    validateExactLegalArchiveMembers(
-        legalContract,
-        inspection,
-        archivePrefix,
+    validateDeliveredLegalMembers(root, legalMembers, inspection, archivePrefix,
         "Oliphaunt extension artifact " + assetName);
   }
 
@@ -1943,9 +1949,31 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     return normalized;
   }
 
+  private static List<String> extensionSqlMembers(Properties manifest, String source) {
+    String sqlName = manifest.getProperty("sqlName");
+    boolean legacy = !manifest.containsKey("sqlMembers") && !manifest.containsKey("nativeModuleStems");
+    String stem = manifest.getProperty("nativeModuleStem", "");
+    List<String> members = legacy
+        ? ("yes".equals(manifest.getProperty("createsExtension")) ? List.of(sqlName) : List.of())
+        : strictManifestCsv(manifest, "sqlMembers", source);
+    List<String> modules = legacy ? (stem.isEmpty() ? List.of() : List.of(stem))
+        : strictManifestCsv(manifest, "nativeModuleStems", source);
+    requireSortedManifestList(members, source, "sqlMembers");
+    requireSortedManifestList(modules, source, "nativeModuleStems");
+    boolean createsExtension = "yes".equals(manifest.getProperty("createsExtension"));
+    if (createsExtension != members.contains(sqlName) || (!createsExtension && !members.isEmpty())
+        || members.stream().anyMatch(member -> !member.matches(PORTABLE_ID_PATTERN))) {
+      throw new GradleException(source + " sqlMembers must identify the declared primary SQL closure");
+    }
+    if (!modules.equals(stem.isEmpty() ? List.of() : List.of(stem))) {
+      throw new GradleException(source + " nativeModuleStems must contain only the merged primary mobile module");
+    }
+    return members;
+  }
+
   private static boolean isOwnedExtensionSqlOrControl(
       String path,
-      String sqlName,
+      List<String> sqlMembers,
       List<String> extensionSqlFileNames,
       List<String> extensionSqlFilePrefixes) {
     String prefix = "files/share/postgresql/extension/";
@@ -1956,14 +1984,13 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     if (name.indexOf('/') >= 0) {
       return false;
     }
-    if (name.equals(sqlName + ".control")) {
+    if (sqlMembers.stream().anyMatch(member -> name.equals(member + ".control"))) {
       return true;
     }
     if (!name.endsWith(".sql")) {
       return false;
     }
-    return name.equals(sqlName + ".sql")
-        || name.startsWith(sqlName + "--")
+    return sqlMembers.stream().anyMatch(member -> name.equals(member + ".sql") || name.startsWith(member + "--"))
         || extensionSqlFileNames.contains(name)
         || extensionSqlFilePrefixes.stream().anyMatch(name::startsWith);
   }
@@ -2187,7 +2214,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
                       : dashToNull(row.get("static_symbol_aliases")),
                   "selected " + sqlName + " Android artifact"),
               splitCsv(dashToNull(row.get("archive_targets"))),
-              splitCsv(dashToNull(row.get("dependency_archives")))));
+              splitCsv(dashToNull(row.get("dependency_archives"))),
+              extensionSqlMembers(artifactManifest, artifact.getName())));
     }
     validateSelectedExtensionRuntimeFiles(runtimeFiles, artifacts);
     List<ExtensionRuntimeArtifact> nativeArtifacts =
@@ -2268,12 +2296,14 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
       if (!artifact.createsExtension) {
         continue;
       }
-      File control = new File(extensionDir, artifact.sqlName + ".control");
-      if (!control.isFile()) {
-        throw new GradleException(
-            "selected extension " + artifact.sqlName + " is missing packaged control file " + control);
+      for (String member : artifact.sqlMembers) {
+        File control = new File(extensionDir, member + ".control");
+        if (!control.isFile()) {
+          throw new GradleException(
+              "selected extension " + artifact.sqlName + " is missing packaged control file " + control);
+        }
+        extensionSqlFiles(runtimeFiles, member, List.of(member));
       }
-      extensionSqlFiles(runtimeFiles, artifact.sqlName);
     }
   }
 
@@ -2767,7 +2797,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
               prefix,
               artifact.createsExtension
                   ? collectExtensionSqlSymbols(
-                      runtimeFiles, artifact.sqlName, artifact.nativeModuleStem)
+                      runtimeFiles, artifact.sqlName, artifact.nativeModuleStem, artifact.sqlMembers)
                   : List.of(),
               Collections.unmodifiableMap(aliases)));
     }
@@ -2890,7 +2920,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
             symbolPrefix,
             parseStaticSymbolAliases(symbolAliases, "contract-test " + sqlName),
             List.of(),
-            List.of());
+            List.of(),
+            OliphauntExtensionCatalog.require(sqlName).sqlMembers());
     return staticRegistrySourceText(staticRegistryModules(runtimeFiles, List.of(artifact)));
   }
 
@@ -2913,7 +2944,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
             symbolPrefix,
             parseStaticSymbolAliases(symbolAliases, "contract-test " + sqlName),
             archiveTargets,
-            dependencyArchives);
+            dependencyArchives,
+            OliphauntExtensionCatalog.require(sqlName).sqlMembers());
     List<StaticRegistryModule> modules =
         staticRegistryModules(runtimeFiles, List.of(artifact));
     return staticRegistryManifestText(List.of(artifact), modules);
@@ -2941,8 +2973,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
   }
 
   private static List<String> collectExtensionSqlSymbols(
-      File runtimeFiles, String sqlName, String moduleStem) {
-    List<File> sqlFiles = extensionSqlFiles(runtimeFiles, sqlName);
+      File runtimeFiles, String sqlName, String moduleStem, List<String> sqlMembers) {
+    List<File> sqlFiles = extensionSqlFiles(runtimeFiles, sqlName, sqlMembers);
     TreeSet<String> symbols = new TreeSet<>();
     for (File file : sqlFiles) {
       try {
@@ -2956,11 +2988,12 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     return new ArrayList<>(symbols);
   }
 
-  private static List<File> extensionSqlFiles(File runtimeFiles, String sqlName) {
+  private static List<File> extensionSqlFiles(File runtimeFiles, String sqlName, List<String> sqlMembers) {
     File extensionDir = new File(runtimeFiles, "share/postgresql/extension");
     File[] sqlFiles =
         extensionDir.listFiles(
-            file -> file.isFile() && file.getName().startsWith(sqlName + "--") && file.getName().endsWith(".sql"));
+            file -> file.isFile() && file.getName().endsWith(".sql")
+                && sqlMembers.stream().anyMatch(member -> file.getName().startsWith(member + "--")));
     if (sqlFiles == null || sqlFiles.length == 0) {
       throw new GradleException("selected extension " + sqlName + " has no packaged SQL files in " + extensionDir);
     }
@@ -3790,7 +3823,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
       String staticSymbolPrefix,
       List<StaticSymbolAlias> staticSymbolAliases,
       List<String> archiveTargets,
-      List<String> dependencyArchives) {}
+      List<String> dependencyArchives,
+      List<String> sqlMembers) {}
 
   private record StaticRegistryModule(
       String moduleStem,

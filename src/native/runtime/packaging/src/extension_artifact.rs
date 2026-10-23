@@ -142,6 +142,7 @@ pub(super) fn validate_prebuilt_extension_leaf_inventory(
     root: &Path,
     manifest_path: &Path,
     extension: &mut RuntimeResourceExtension,
+    legacy: bool,
 ) -> Result<()> {
     let profile = extension.license_profile.ok_or_else(|| {
         Error::Engine(format!(
@@ -163,8 +164,8 @@ pub(super) fn validate_prebuilt_extension_leaf_inventory(
     }
 
     let extension_prefix = Path::new("files/share/postgresql/extension");
-    let mut has_control = false;
-    let mut has_install_sql = false;
+    let mut controls = BTreeSet::new();
+    let mut installs = BTreeSet::new();
     for relative in &actual {
         let Ok(file_name) = relative.strip_prefix(extension_prefix) else {
             continue;
@@ -191,21 +192,30 @@ pub(super) fn validate_prebuilt_extension_leaf_inventory(
             )));
         }
         expected.insert(relative.clone());
-        has_control |= file_name == format!("{}.control", extension.sql_name);
-        has_install_sql |= extension_install_sql_file_belongs(&extension.sql_name, file_name);
+        for member in &extension.sql_members {
+            if file_name == format!("{member}.control") {
+                controls.insert(member);
+            }
+            if extension_install_sql_file_belongs(member, file_name) {
+                installs.insert(member);
+            }
+        }
     }
-    if extension.creates_extension && (!has_control || !has_install_sql) {
-        return Err(Error::InvalidConfig(format!(
-            "prebuilt extension artifact {} for '{}' must include its control file and at least one canonical base install SQL file",
-            root.display(),
-            extension.sql_name
-        )));
+    for member in &extension.sql_members {
+        if !controls.contains(member) || !installs.contains(member) {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact {} for '{}' must include its control file and at least one canonical base install SQL file",
+                root.display(),
+                member
+            )));
+        }
     }
     for relative in &extension.data_files {
         expected.insert(PathBuf::from("files/share/postgresql").join(relative));
     }
-    if let Some(module) = &extension.native_module_file
-        && let Some((_, suffix @ ("so" | "dylib" | "dll"))) = module.rsplit_once('.')
+    if let Some(module) = extension.native_module_files.iter().find(|module| {
+        module.rsplit_once('.').map(|(stem, _)| stem) == extension.native_module_stem.as_deref()
+    }) && let Some((_, suffix @ ("so" | "dylib" | "dll"))) = module.rsplit_once('.')
         && let Some(canonical) = Extension::by_sql_name(&extension.sql_name)
         && let Some(stem) = canonical.native_module_stem()
         && extension.native_module_stem.as_deref() == Some(stem)
@@ -215,14 +225,28 @@ pub(super) fn validate_prebuilt_extension_leaf_inventory(
             .native_dependency_module_stems()
             .iter()
             .map(|stem| format!("{stem}.{suffix}"))
+            // Historical primary-only manifests cannot acquire companions
+            // introduced by the current catalog through its dependency list.
+            .filter(|module| {
+                !legacy
+                    || !catalog::for_extension(canonical)
+                        .native_module_stems
+                        .iter()
+                        .any(|stem| module == &format!("{stem}.{suffix}"))
+            })
             .collect::<Vec<_>>();
         // Historical carriers may incorporate these dependencies into the main
-        // module. A separate canonical sidecar requires its complete profile.
-        if dependencies.iter().any(|module| {
-            ["files/lib/postgresql", "files/lib/modules"]
-                .iter()
-                .any(|prefix| actual.contains(&PathBuf::from(prefix).join(module)))
-        }) {
+        // module. Owned companions do not imply an additional supplier exists;
+        // an actual separate sidecar still requires its complete profile.
+        if dependencies
+            .iter()
+            .filter(|module| !extension.native_module_files.contains(module))
+            .any(|module| {
+                ["files/lib/postgresql", "files/lib/modules"]
+                    .iter()
+                    .any(|prefix| actual.contains(&PathBuf::from(prefix).join(module)))
+            })
+        {
             extension.native_dependency_module_files = dependencies;
         }
     }

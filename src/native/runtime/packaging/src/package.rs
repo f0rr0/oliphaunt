@@ -186,7 +186,7 @@ fn prune_built_in_extension_module_files(
         }
     }
     for extension in Extension::ALL {
-        let modules = extension.native_module_file().into_iter().chain(
+        let modules = extension.native_module_files().chain(
             extension
                 .native_dependency_module_stems()
                 .iter()
@@ -512,7 +512,7 @@ fn extension_dynamic_module_required(
     if let RuntimeResourceExtensionSource::Prebuilt { .. } = &extension.source {
         validate_prebuilt_extension_target(extension, extension_target)?;
     }
-    Ok(extension.native_module_file.is_some())
+    Ok(!extension.native_module_files.is_empty())
 }
 
 fn prebuilt_extension_dynamic_module_required(

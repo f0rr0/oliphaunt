@@ -308,7 +308,7 @@ fn start_postgres(
     }
     let mut command = Command::new(executable);
     command.env("PGDATA", &root.pgdata);
-    configure_native_runtime_env(&mut command, &root.runtime_dir, extensions);
+    configure_native_runtime_env(&mut command, &root.runtime_dir, extensions)?;
     command
         .args(postgres_startup_args(
             &root.pgdata,
@@ -327,10 +327,10 @@ fn configure_native_runtime_env(
     command: &mut Command,
     runtime_dir: &Path,
     extensions: &[Extension],
-) {
+) -> Result<()> {
     configure_native_tool_env(command, runtime_dir);
     configure_icu_data_env(command, runtime_dir);
-    configure_extension_runtime_env(command, runtime_dir, extensions);
+    configure_extension_runtime_env(command, runtime_dir, extensions)
 }
 
 fn configure_icu_data_env(command: &mut Command, runtime_dir: &Path) {
@@ -345,15 +345,35 @@ fn configure_extension_runtime_env(
     command: &mut Command,
     runtime_dir: &Path,
     extensions: &[Extension],
-) {
+) -> Result<()> {
     for extension in extensions {
         for entry in extension_runtime_environment(*extension) {
-            let value = runtime_dir.join(entry.relative_path);
-            if value.join(entry.required_file).is_file() {
-                command.env(entry.name, value);
+            command.env_remove(entry.name);
+            if let Some(package) = extension.package() {
+                let required = format!(
+                    "extension/{}/{}/{}",
+                    package.product, entry.relative_path, entry.required_file
+                );
+                if !package
+                    .resources
+                    .iter()
+                    .any(|resource| resource.0 == required)
+                {
+                    continue;
+                }
             }
+            let value = runtime_dir.join(entry.relative_path);
+            if !value.join(entry.required_file).is_file() {
+                return Err(Error::Engine(format!(
+                    "native extension '{}' runtime data is missing {}",
+                    extension.sql_name(),
+                    value.join(entry.required_file).display()
+                )));
+            }
+            command.env(entry.name, value);
         }
     }
+    Ok(())
 }
 
 fn postgres_startup_args(
@@ -815,7 +835,7 @@ mod tests {
     }
 
     #[test]
-    fn extension_runtime_env_is_set_only_when_required_file_is_materialized() {
+    fn extension_runtime_env_follows_selected_package_data_and_requires_its_files() {
         let runtime_dir = std::env::temp_dir().join(format!(
             "oliphaunt-extension-runtime-env-{}-{}",
             std::process::id(),
@@ -826,31 +846,74 @@ mod tests {
         ));
         let _cleanup = RuntimeDirCleanup(runtime_dir.clone());
         let mut missing = Command::new("postgres");
-        configure_extension_runtime_env(&mut missing, &runtime_dir, &[Extension::POSTGIS]);
-        assert_eq!(
-            missing
-                .get_envs()
-                .find(|(key, _)| *key == std::ffi::OsStr::new("PROJ_DATA")),
-            None
-        );
+        let error =
+            configure_extension_runtime_env(&mut missing, &runtime_dir, &[Extension::POSTGIS])
+                .unwrap_err();
+        assert!(error.to_string().contains("gdalvrt.xsd"), "{error}");
 
         let proj_data = runtime_dir.join("share/postgresql/proj");
         std::fs::create_dir_all(&proj_data).expect("create proj data dir");
         std::fs::write(proj_data.join("proj.db"), b"fixture").expect("write proj.db");
+        static OLD_PACKAGE: liboliphaunt_native_bindings::ExtensionPackage =
+            liboliphaunt_native_bindings::ExtensionPackage {
+                product: "oliphaunt-extension-postgis",
+                version: "3.6.3",
+                runtime_version: "0.3.3",
+                resources: &[(
+                    "extension/oliphaunt-extension-postgis/share/postgresql/proj/proj.db",
+                    b"fixture",
+                    "unused-in-environment-test",
+                    false,
+                )],
+            };
+        let old_extension = Extension::POSTGIS.with_package(&OLD_PACKAGE);
+        let mut old = Command::new("postgres");
+        configure_extension_runtime_env(&mut old, &runtime_dir, &[old_extension]).unwrap();
+        assert_eq!(
+            old.get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new("PROJ_DATA"))
+                .and_then(|(_, value)| value)
+                .map(PathBuf::from),
+            Some(proj_data.clone())
+        );
+
+        let gdal_data = runtime_dir.join("share/postgresql/gdal");
+        std::fs::create_dir_all(&gdal_data).expect("create GDAL data dir");
+        std::fs::write(gdal_data.join("gdalvrt.xsd"), b"fixture").expect("write gdalvrt.xsd");
+        old.env("GDAL_DATA", "inherited unrelated data");
+        configure_extension_runtime_env(&mut old, &runtime_dir, &[old_extension]).unwrap();
+        assert_eq!(
+            old.get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new("GDAL_DATA"))
+                .map(|(_, value)| value),
+            Some(None),
+            "a frozen package without GDAL must not select newly present or inherited GDAL data"
+        );
 
         let mut present = Command::new("postgres");
-        configure_extension_runtime_env(&mut present, &runtime_dir, &[Extension::POSTGIS]);
+        configure_extension_runtime_env(&mut present, &runtime_dir, &[Extension::POSTGIS]).unwrap();
         assert_eq!(
             present
                 .get_envs()
                 .find(|(key, _)| *key == std::ffi::OsStr::new("PROJ_DATA"))
                 .and_then(|(_, value)| value)
                 .map(PathBuf::from),
-            Some(proj_data)
+            Some(proj_data.clone())
         );
-
+        assert_eq!(
+            present
+                .get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new("GDAL_DATA"))
+                .and_then(|(_, value)| value)
+                .map(PathBuf::from),
+            Some(gdal_data)
+        );
+        std::fs::remove_file(proj_data.join("proj.db")).unwrap();
+        let error =
+            configure_extension_runtime_env(&mut old, &runtime_dir, &[old_extension]).unwrap_err();
+        assert!(error.to_string().contains("proj.db"), "{error}");
         let mut unselected = Command::new("postgres");
-        configure_extension_runtime_env(&mut unselected, &runtime_dir, &[]);
+        configure_extension_runtime_env(&mut unselected, &runtime_dir, &[]).unwrap();
         assert_eq!(
             unselected
                 .get_envs()
@@ -880,7 +943,7 @@ mod tests {
         ] {
             missing.env(key, "ambient");
         }
-        configure_native_runtime_env(&mut missing, &runtime_dir, &[]);
+        configure_native_runtime_env(&mut missing, &runtime_dir, &[]).unwrap();
         assert_eq!(
             missing
                 .get_envs()
@@ -905,7 +968,7 @@ mod tests {
         let icu_data = runtime_dir.join("share/icu");
         std::fs::create_dir_all(&icu_data).expect("create ICU data dir");
         let mut present = Command::new("postgres");
-        configure_native_runtime_env(&mut present, &runtime_dir, &[]);
+        configure_native_runtime_env(&mut present, &runtime_dir, &[]).unwrap();
         assert_eq!(
             present
                 .get_envs()

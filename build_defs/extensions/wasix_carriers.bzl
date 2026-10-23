@@ -155,7 +155,10 @@ def _compiled_carriers_impl(ctx):
         elif file.basename.endswith(".control") or file.basename.endswith(".sql"):
             resources.append({"source": file.path, "destination": "share/postgresql/extension/" + file.basename})
         else:
-            fail("compiled WASIX SQL resource needs a canonical SQL/control destination")
+            destinations = [destination for destination in spec["recipe"].get("artifacts", {}).get("data_files", []) if destination.split("/")[-1] == file.basename]
+            if len(destinations) != 1:
+                fail("compiled WASIX resource needs one canonical data destination")
+            resources.append({"source": file.path, "destination": destinations[0]})
     if ctx.file.main_sql:
         resources.append({"source": ctx.file.main_sql.path, "destination": "share/postgresql/extension/" + ctx.attr.sql_name + "--" + spec["source"]["extension-control"]["default-version"] + ".sql"})
         resource_files = resource_files + [ctx.file.main_sql]
@@ -348,11 +351,13 @@ def _compiled_installed_impl(ctx):
     if not ctx.attr.addon:
         fail("installed WASIX extension requires unambiguous original addon/facade Files for its declared host " + host.version)
     napi = json.decode(ctx.attr.napi_contract)
+    addon_inputs = None
     if WasixNapiCarrierInfo in ctx.attr.addon:
         carrier = ctx.attr.addon[WasixNapiCarrierInfo]
         if carrier.target != napi["target"]["target"]:
             fail("installed WASIX addon target differs from its canonical carrier")
         addon = carrier.npm
+        addon_inputs = carrier.inputs if leaf.metadata["selectedDependencies"] else None
         napi["constructionContract"] = carrier.construction_contract
     else:
         originals = ctx.attr.addon[DefaultInfo].files.to_list()
@@ -360,11 +365,13 @@ def _compiled_installed_impl(ctx):
             fail("installed held WASIX addon requires one original npm archive File")
         addon = originals[0]
     current_addon = None
+    current_addon_inputs = None
     if ctx.attr.current_addon:
         current_carrier = ctx.attr.current_addon[WasixNapiCarrierInfo]
         if current_carrier.target != napi["target"]["target"]:
             fail("current WASIX addon target differs from its canonical carrier")
         current_addon = current_carrier.npm
+        current_addon_inputs = current_carrier.inputs if leaf.metadata["selectedDependencies"] else None
         napi["currentConstructionContract"] = current_carrier.construction_contract
     napi_input = ctx.actions.declare_file(ctx.label.name + ".napi.json")
     ctx.actions.write(napi_input, json.encode(napi))
@@ -372,9 +379,10 @@ def _compiled_installed_impl(ctx):
     fixtures = [file for file in ctx.files._fixtures if file.basename == leaf.metadata["sqlName"] + ".sql"]
     if len(fixtures) != 1:
         fail("compiled WASIX installed test requires its canonical source-owned SQL fixture")
-    files = leaf.github + leaf.npm + leaf.cargo + [leaf.manifest, leaf.frozen, leaf.spec, addon, node, ctx.file._runner, ctx.file._consumer, host.module, host.manifest, napi_input, ctx.file.addon_template] + ([current_addon] if current_addon else []) + ([ctx.file.addon_facade] if ctx.file.addon_facade else []) + ([module, leaf.validation] if module else []) + fixtures + ctx.files._helpers
+    dependency_inputs = [file for file in [addon_inputs, current_addon_inputs, ctx.file.contrib_portable] if file]
+    files = leaf.github + leaf.npm + leaf.cargo + [leaf.manifest, leaf.frozen, leaf.spec, addon, node, ctx.file._runner, ctx.file._consumer, host.module, host.manifest, napi_input, ctx.file.addon_template] + ([current_addon] if current_addon else []) + ([ctx.file.addon_facade] if ctx.file.addon_facade else []) + ([module, leaf.validation] if module else []) + dependency_inputs + fixtures + ctx.files._helpers
     parts = [file for file in leaf.cargo if file.is_directory]
-    return bun_test_entrypoint(ctx, ctx.file._runner, [leaf.spec, leaf.github[0], leaf.npm[0], leaf.cargo[0], leaf.frozen, module or "-", addon, node, ctx.file._consumer, leaf.validation or "-", fixtures[0], host.module, host.manifest, napi_input, ctx.file.addon_facade or "-", ctx.file.addon_template, current_addon or "-"] + parts, files, source_files = [ctx.file._runner, ctx.file._consumer] + ctx.files._helpers)
+    return bun_test_entrypoint(ctx, ctx.file._runner, [leaf.spec, leaf.github[0], leaf.npm[0], leaf.cargo[0], leaf.frozen, module or "-", addon, node, ctx.file._consumer, leaf.validation or "-", fixtures[0], host.module, host.manifest, napi_input, ctx.file.addon_facade or "-", ctx.file.addon_template, current_addon or "-", addon_inputs or "-", current_addon_inputs or "-", ctx.file.contrib_portable or "-"] + parts, files, source_files = [ctx.file._runner, ctx.file._consumer] + ctx.files._helpers)
 
 _compiled_installed_test = rule(implementation = _compiled_installed_impl, test = True, toolchains = BUN_SOURCE_TOOLCHAINS + ["@rules_nodejs//nodejs:toolchain_type"], attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
     "leaf": attr.label(mandatory = True, providers = [ExtensionFinalLeafInfo]), "module": attr.label(cfg = WASIX_PORTABLE_TRANSITION),
@@ -382,6 +390,7 @@ _compiled_installed_test = rule(implementation = _compiled_installed_impl, test 
     "addon": attr.label(providers = [[WasixNapiCarrierInfo], [ShippingSupplierInfo]]),
     "addon_facade": attr.label(allow_single_file = True), "addon_template": attr.label(allow_single_file = True, mandatory = True),
     "current_addon": attr.label(providers = [WasixNapiCarrierInfo]),
+    "contrib_portable": attr.label(allow_single_file = [".crate"]),
     "napi_contract": attr.string(mandatory = True),
     "_runner": attr.label(default = "//build_defs/extensions/wasix:compiled_carriers.test.mts", allow_single_file = True),
     "_consumer": attr.label(default = "//build_defs/extensions/wasix:installed_consumer.mts", allow_single_file = True),
@@ -398,6 +407,9 @@ def wasix_compiled_extension_installed_test(name, sql_name, **kwargs):
     current = PREPARED_NATIVE_INPUTS and wasix_extension_uses_current_host(requirement, PRODUCTS["liboliphaunt-wasix"]["version"], PREPARED_NATIVE_SELECTED_PRODUCTS)
     candidate = kwargs.get("module") and wasix_extension_source_candidate(requirement, PRODUCTS["liboliphaunt-wasix"]["version"], PREPARED_NATIVE_INPUTS)
     napi = {"current": current, "version": PRODUCTS["oliphaunt-wasix-napi"]["version"], "target": target}
+    contrib = COMPLETED_SUPPLIER_ARTIFACTS.get("liboliphaunt-wasix/" + requirement + "/cargo:oliphaunt-extension-contrib-pg18-wasix") if native_external_carrier_metadata(sql_name, "wasix-portable")["selectedDependencies"] else None
+    if contrib:
+        napi["contribPortable"] = contrib
     if candidate:
         napi["currentVersion"] = PRODUCTS["oliphaunt-wasix-napi"]["version"]
     addon = "//src/wasix/node-addon:release_carriers" if current else None
@@ -418,6 +430,7 @@ def wasix_compiled_extension_installed_test(name, sql_name, **kwargs):
             napi.update({"version": original["publication"]["version"], "original": original, "facade": facades[0]})
     directory = target["npm_os"] + "-" + target["npm_cpu"] + "-gnu"
     _compiled_installed_test(name = name, args = bun_test_entrypoint_args(name), addon = addon, addon_facade = facade,
+        contrib_portable = contrib["file"]["path"] if contrib else None,
         addon_template = "//src/wasix/node-addon:packages/" + directory + "/package.json", napi_contract = json.encode(napi),
         current_addon = "//src/wasix/node-addon:release_carriers" if candidate else None, **kwargs)
 

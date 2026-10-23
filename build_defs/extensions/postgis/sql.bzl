@@ -58,6 +58,7 @@ def postgis_sql(name, configuration, headers, target_compatible_with = NATIVE_EX
     _preprocess(name = preprocessed,
                 srcs = [prefix + "postgis/" + source + ".sql.in" for source in ["postgis", "legacy", "legacy_minimal", "legacy_gist"]] +
                        [prefix + "raster/rt_pg/" + source + ".sql.in" for source in ["rtpostgis", "rtpostgis_drop", "rtpostgis_upgrade_cleanup"]] +
+                       [prefix + "topology/" + source + ".sql.in" for source in ["topology", "topology_before_upgrade", "topology_after_upgrade"]] +
                        [prefix + "extensions/postgis_extension_helper.sql.in"],
                 inputs = inputs, headers = [configuration, headers], target_compatible_with = target_compatible_with)
     _sql(name = name, root = prefix + "Version.config", inputs = inputs, preprocessed = [":" + preprocessed], target_compatible_with = target_compatible_with)

@@ -16,12 +16,14 @@ import {
 } from '../../../../../tools/packaging/testdata/zip-fixture.mts';
 import { iosBaseLegalMetadata } from './ios-carrier-manifest.mts';
 import { renderExtensionProducts } from './render-extension-products.mts';
+import { loadSwiftExtensionInventoryCatalog } from './extension-resource-inventory.mts';
 import {
   extractVerifiedZipArchive,
   resolveSwiftCarrierSelection,
 } from './swift-carrier-resolver.mts';
 
 const sdk = path.resolve(import.meta.dirname, '..');
+const canonicalCatalog = await loadSwiftExtensionInventoryCatalog();
 const root = path.resolve(
   process.argv[2] ?? path.join(sdk, '../../../../target/liboliphaunt-sdk-check/swift-carrier-test'),
 );
@@ -297,6 +299,7 @@ async function productionExtensionResource(sqlName, stem, nativeDependencies) {
 }
 
 async function extension(sqlName, stem, dependencies = [], nativeDependencies = []) {
+  dependencies = canonicalCatalog.get(sqlName).dependencies;
   const resource = await productionExtensionResource(sqlName, stem, nativeDependencies);
   const runtime = path.join(root, 'archives', `${sqlName}-runtime.tar.gz`);
   await fs.mkdir(path.dirname(runtime), { recursive: true });
@@ -321,7 +324,7 @@ async function extension(sqlName, stem, dependencies = [], nativeDependencies = 
   }
   const prefix =
     stem === null ? null : `oliphaunt_static_${stem.replaceAll(/[^A-Za-z0-9_]/gu, '_')}`;
-  const product = new Set(['cube', 'earthdistance', 'pg_trgm']).has(sqlName)
+  const product = new Set(['cube', 'earthdistance', 'fuzzystrmatch', 'pg_trgm']).has(sqlName)
     ? 'oliphaunt-extension-contrib-pg18'
     : `oliphaunt-extension-${sqlName.replaceAll('_', '-')}`;
   const releaseProduct =
@@ -339,6 +342,8 @@ async function extension(sqlName, stem, dependencies = [], nativeDependencies = 
     tag: `${releaseProduct}-v${version}`,
     sqlName,
     createsExtension: true,
+    sqlMembers: canonicalCatalog.get(sqlName).sqlMembers,
+    nativeModuleStems: stem === null ? [] : [stem],
     dataFiles: content.dataFiles,
     dependencies,
     extensionSqlFileNames: content.extensionSqlFileNames,
@@ -486,6 +491,7 @@ async function main() {
   await fs.mkdir(root, { recursive: true });
   const carrierized = carrierize([
     await extension('cube', 'cube'),
+    await extension('fuzzystrmatch', 'fuzzystrmatch'),
     await extension('earthdistance', 'earthdistance', ['cube']),
     await extension('pgtap', null),
     await extension(
@@ -520,6 +526,11 @@ async function main() {
   frozenOldCarrier.carriers = frozenOldCarrier.carriers.filter(({ name }) =>
     frozenCarrierNames.has(name),
   );
+  const frozenFullCarrier = structuredClone(frozenOldCarrier);
+  const frozenFullCarrierFile = path.join(root, 'pgtap-frozen-full-carrier.json');
+  await fs.writeFile(frozenFullCarrierFile, `${JSON.stringify(frozenFullCarrier, null, 2)}\n`);
+  delete frozenOldCarrier.extensions[0].sqlMembers;
+  delete frozenOldCarrier.extensions[0].nativeModuleStems;
   const frozenOldCarrierFile = path.join(root, 'pgtap-frozen-old-carrier.json');
   await fs.writeFile(frozenOldCarrierFile, `${JSON.stringify(frozenOldCarrier, null, 2)}\n`);
   const mutableNewCatalogFile = path.join(root, 'mutable-new-swift-catalog.json');
@@ -534,6 +545,7 @@ async function main() {
             'artifact-product': 'oliphaunt-extension-pgtap',
             'release-product': 'oliphaunt-extension-pgtap',
             'creates-extension': false,
+            'sql-members': ['future_pgtap', 'pgtap'],
             'native-module-stem': 'future_pgtap',
             'selected-extension-dependencies': ['cube'],
             'runtime-share-data-files': ['future/data.dat'],
@@ -557,6 +569,17 @@ async function main() {
   });
   assert.equal(frozenOldSelection.extensions[0].version, '0.9.0');
   assert.deepEqual(frozenOldSelection.extensions[0].extensionSqlFileNames, ['uninstall_pgtap.sql']);
+  const frozenFullSelection = await resolveSwiftCarrierSelection({
+    allowFileUrls: true,
+    basePackageVersion: '0.1.0',
+    cacheDir: path.join(root, 'frozen-full-cache'),
+    carrierFile: frozenFullCarrierFile,
+    extensions: ['pgtap'],
+    ownerCatalogFile: mutableNewCatalogFile,
+  });
+  assert.deepEqual(frozenFullSelection.extensions[0].sqlMembers, ['pgtap']);
+  assert.deepEqual(frozenFullSelection.extensions[0].nativeModuleStems, []);
+  assert.equal(frozenFullSelection.extensions[0].version, '0.9.0');
   const pgtapOverride = structuredClone(
     manifest.extensions.find(({ sqlName }) => sqlName === 'pgtap'),
   );
@@ -611,6 +634,19 @@ async function main() {
     '0.1.0',
   ];
   await render([...common, '--output-dir', output]);
+  const renderedFiles = await fs.readdir(output, { recursive: true });
+  for (const member of canonicalCatalog.get('postgis').sqlMembers) {
+    assert.ok(
+      renderedFiles.some((file) => file.endsWith(`/extension/${member}.control`)),
+      `clean Swift package must contain ${member}.control`,
+    );
+    assert.ok(
+      renderedFiles.some(
+        (file) => file.includes(`/extension/${member}--`) && file.endsWith('.sql'),
+      ),
+      `clean Swift package must contain ${member} install SQL`,
+    );
+  }
   assert.deepEqual(
     (await fs.readdir(output, { recursive: true })).filter((entry) => entry.endsWith('.a')),
     [],
@@ -625,7 +661,7 @@ async function main() {
   });
   assert.deepEqual(
     products.selected.map(({ sqlName }) => sqlName),
-    ['cube', 'earthdistance', 'pgtap', 'postgis'],
+    ['cube', 'earthdistance', 'fuzzystrmatch', 'pgtap', 'postgis'],
   );
   assert.equal(products.selected.find(({ sqlName }) => sqlName === 'pgtap').version, '1.1.0');
   const selectedPostgis = products.selected.find(({ sqlName }) => sqlName === 'postgis');
@@ -1441,7 +1477,7 @@ async function main() {
     'mismatched-creates-extension',
     mismatchedCreatesExtension,
     'pgtap',
-    /manifest createsExtension must be "no"/u,
+    /sqlMembers must contain the primary extension exactly when createsExtension is true/u,
   );
 
   const duplicateName = structuredClone(manifest);

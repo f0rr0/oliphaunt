@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   EXTENSION_ARTIFACT_PROPERTY_KEYS,
+  extensionArtifactMemberClosure,
   moduleSuffix,
   nativeDependencyModuleBasenames,
   validateExtensionArtifactArchive,
@@ -35,6 +36,7 @@ import {
   readPortableArchiveEntries,
 } from '../../tools/packaging/portable-archive.mts';
 import { stageReleaseNotices } from '../../tools/packaging/release-notices.mts';
+import type { ExtensionOwnerMetadata } from '../../tools/release/extension-release-metadata.mts';
 import { inspect, validateNativeMemberModule } from './validate_member_payload.mts';
 
 interface Carrier {
@@ -60,6 +62,7 @@ export interface NativeCarrierSpec {
   compatibility: Record<string, string>;
   carriers: Carrier[];
   releaseMetadata?: Record<string, any>;
+  ownerMetadata?: ExtensionOwnerMetadata;
   archive: string;
   outputs: { github: string; npm: string; cargo: string; manifest: string; frozen: string };
 }
@@ -148,6 +151,11 @@ export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<strin
     sqlName: spec.sqlName,
     createsExtension: actual.creates_extension,
     nativeModuleStem: stem,
+    ...extensionArtifactMemberClosure({
+      sqlName: spec.sqlName,
+      createsExtension: actual.creates_extension,
+      nativeModuleStem: stem,
+    }),
     dependencies: spec.selectedDependencies,
     dataFiles: canonical(actual.data_files).map((file) => {
       assert(
@@ -264,6 +272,8 @@ export function assemblePublicNativeMember(spec: NativeCarrierSpec, output: stri
       createsExtension: metadata.createsExtension ? 'yes' : 'no',
       nativeModuleStem: metadata.nativeModuleStem ?? '',
       nativeModuleFile: actual.module_file,
+      sqlMembers: metadata.sqlMembers.join(','),
+      nativeModuleStems: metadata.nativeModuleStems.join(','),
       nativeTarget: spec.target,
       nativeRuntimeProduct: compatibility.nativeRuntimeProduct,
       nativeRuntimeVersion: compatibility.nativeRuntimeVersion,
@@ -325,7 +335,11 @@ export function stageNativeRegistryCarriers(
     path.join(root, 'npm'),
     spec.target,
     result,
-    { metaTargets: [] },
+    {
+      metaTargets: [],
+      releaseProduct: spec.owner ?? spec.product,
+      ownerMetadata: spec.ownerMetadata,
+    },
   );
   assert(npmRoot, `native npm packaging failed: ${result.skipped.join('; ')}`);
   const npmFiles = result.staged.filter((file) => file.endsWith('.tgz'));

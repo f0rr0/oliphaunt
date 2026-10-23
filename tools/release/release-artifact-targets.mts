@@ -15,7 +15,9 @@ import { RUST_PAYLOAD_LICENSE as MOBILE_BINDINGS_LICENSE } from '../../src/nativ
 import {
   contribExtensionMetadata,
   declaredExtensionMetadata,
+  declaredExtensionOwner,
   EXTENSION_VERSIONING_BY_CLASS,
+  type ExtensionOwnerMetadata,
   extensionSourceMetadata,
 } from './extension-release-metadata.mts';
 import {
@@ -1618,6 +1620,23 @@ export function extensionProductForSqlName(sqlName, prefix = 'release-artifact-t
     );
   }
   return owners[0];
+}
+
+export function extensionOwnerForSqlName(
+  sqlName: string,
+  family: 'native' | 'wasix',
+  {
+    ownerMetadata,
+    prefix = 'release-artifact-targets.mts',
+  }: { ownerMetadata?: ExtensionOwnerMetadata; prefix?: string } = {},
+) {
+  if (ownerMetadata !== undefined) return declaredExtensionOwner(sqlName, family, ownerMetadata);
+  const product = extensionProductForSqlName(sqlName, prefix);
+  return {
+    product,
+    releaseProduct: extensionReleaseProduct(product, family, prefix),
+    versioning: extensionMetadata(product, prefix).versioning,
+  };
 }
 
 export function extensionReleaseProductForSqlName(

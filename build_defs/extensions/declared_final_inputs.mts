@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import { copyFileSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { composeExtensionReleaseDocuments } from '../../src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts';
+import {
+  frozenExtensionMemberInventory,
+  frozenExtensionCompatibility,
+  frozenExtensionPublicMetadata,
+} from '../../src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts';
+import { assertWasixExtensionMemberInstall } from '../../src/extensions/contracts/wasix-extension-install.mts';
 import { buildIosCarrierManifest } from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { validateSelectionNeutralSwiftSourceCarrier } from '../../src/native/sdks/swift/tools/swift-native-carrier-contract.mts';
 import type {
@@ -10,6 +16,59 @@ import type {
   NativeAppleBaseInput,
 } from '../../tools/release/native-extension-final-inputs.mts';
 import { fileIdentity } from '../../tools/release/native-file-identity.mts';
+
+/** Read the original qualified/completed owner's metadata without rebuilding its carriers. */
+export function declaredWasixDependencyManifest(record) {
+  const actual = fileIdentity(realpathSync(record.file.path));
+  assert.deepEqual(
+    { size: actual.size, sha256: actual.sha256 },
+    { size: record.file.size, sha256: record.file.sha256 },
+    'original WASIX dependency manifest bytes differ',
+  );
+  const document = JSON.parse(readFileSync(record.file.path, 'utf8'));
+  const prefix =
+    record.kind === 'public'
+      ? 'oliphaunt-extension-release-manifest'
+      : record.kind === 'frozen'
+        ? 'oliphaunt-extension-ci-artifacts'
+        : null;
+  assert(
+    prefix && [`${prefix}-v1`, `${prefix}-v2`].includes(document.schema),
+    'unknown original WASIX dependency manifest schema',
+  );
+  assert.equal(document.product, record.product);
+  assert.equal(document.version, record.version);
+  assert.equal(document.releaseProduct ?? document.product, record.owner);
+  assert.equal(document.family, 'wasix');
+  const compatibility = frozenExtensionCompatibility(document.compatibility, record.product);
+  assert.equal(compatibility.wasixRuntimeProduct, record.owner);
+  assert.equal(compatibility.wasixRuntimeVersion, record.version);
+  const members = document.schema.endsWith('-v2') ? document.extensions : [document];
+  assert(
+    Array.isArray(members) && members.length > 0,
+    'original WASIX dependency manifest lacks members',
+  );
+  assert.equal(new Set(members.map((member) => member.sqlName)).size, members.length);
+  if (record.kind === 'public') {
+    const metadata = frozenExtensionPublicMetadata(
+      { id: record.product, version: record.version },
+      document,
+      document,
+      members,
+    );
+    assert.equal(metadata.extensionClass, 'contrib');
+  }
+  return {
+    product: record.product,
+    version: record.version,
+    members: members.map((member) => ({
+      sqlName: member.sqlName,
+      wasixInstall: assertWasixExtensionMemberInstall(member, {
+        label: `${record.product}/${member.sqlName} original WASIX dependency`,
+      }),
+    })),
+  };
+}
 
 export function validateDeclaredNativeAppleBase(
   input:
@@ -115,15 +174,25 @@ export function validateDeclaredExtensionFinalInput(
   }
   const frozen = JSON.parse(readFileSync(input.frozen.path, 'utf8'));
   const manifest = JSON.parse(readFileSync(input.manifest.path, 'utf8'));
-  const members = frozen.extensions ?? [frozen];
-  const version = members.length > 1 ? 2 : 1;
-  assert.equal(frozen.schema, `oliphaunt-extension-ci-artifacts-v${version}`);
+  assert(
+    ['oliphaunt-extension-ci-artifacts-v1', 'oliphaunt-extension-ci-artifacts-v2'].includes(
+      frozen.schema,
+    ),
+    'unknown frozen extension schema',
+  );
+  const version = frozen.schema.endsWith('-v2') ? 2 : 1;
+  const members = version === 2 ? frozen.extensions : [frozen];
+  assert(Array.isArray(members) && members.length > 0, 'imported extension document lacks members');
+  assert.equal(
+    new Set(members.map((member) => member.sqlName)).size,
+    members.length,
+    'imported extension members repeat',
+  );
   assert.equal(manifest.schema, `oliphaunt-extension-release-manifest-v${version}`);
   for (const document of [frozen, manifest]) {
     assert.equal(document.product, input.product);
     assert.equal(document.releaseProduct ?? document.product, input.owner);
     assert.equal(document.version, input.version);
-    assert.deepEqual(document.compatibility, canonical.compatibility);
     if (document.family !== undefined)
       assert.equal(
         document.family,
@@ -131,21 +200,32 @@ export function validateDeclaredExtensionFinalInput(
         'selected constructor document belongs to another family',
       );
   }
-  assert.deepEqual(manifest.sourceIdentity, canonical.sourceIdentity);
   assert.deepEqual(members.map((member) => member.sqlName).sort(), [...canonical.sqlNames].sort());
-  const assets = frozen.carrierAssets ?? members[0].assets;
+  for (const member of members) frozenExtensionMemberInventory(member);
+  const metadata = frozenExtensionPublicMetadata(
+    { id: input.product, version: input.version },
+    frozen,
+    manifest,
+    members,
+  );
+  const assets = version === 2 ? frozen.carrierAssets : members[0].assets;
+  assert(
+    Array.isArray(assets) && assets.length > 0,
+    'imported extension document lacks direct assets',
+  );
   const releaseData = composeExtensionReleaseDocuments({
     product: input.product,
     releaseProduct: input.owner,
     family: frozen.family ?? null,
     version: input.version,
+    schema: frozen.schema,
     members,
     directAssets: assets,
     releaseMetadata: {
-      class: canonical.extensionClass,
-      versioning: canonical.versioning,
-      sourceIdentity: canonical.sourceIdentity,
-      compatibility: canonical.compatibility,
+      class: metadata.extensionClass,
+      versioning: metadata.versioning,
+      sourceIdentity: metadata.sourceIdentity,
+      compatibility: metadata.compatibility,
     },
   }).releaseData;
   assert.deepEqual(
@@ -160,7 +240,15 @@ export function validateDeclaredExtensionFinalInput(
     assets.map((asset) => asset.name).sort(),
     'imported GH Files differ from their frozen asset set',
   );
-  for (const member of members)
+  for (const member of members) {
+    assert(
+      Array.isArray(member.assets) && member.assets.length > 0,
+      'imported extension member lacks assets',
+    );
+    const roles = member.assets.map(
+      (asset) => `${asset.family}\0${asset.target}\0${asset.kind}\0${asset.identity ?? ''}`,
+    );
+    assert.equal(new Set(roles).size, roles.length, 'imported extension member roles repeat');
     for (const asset of member.assets) {
       assert.equal(asset.family, input.family);
       assert(canonical.targets.includes(asset.target), 'imported member target is undeclared');
@@ -168,6 +256,7 @@ export function validateDeclaredExtensionFinalInput(
       // envelopes. Native constructors each own exactly one target cohort.
       if (input.family === 'native') assert.equal(asset.target, input.target);
     }
+  }
   for (const asset of assets) {
     assert.equal(asset.family, input.family);
     assert(canonical.targets.includes(asset.target), 'imported carrier target is undeclared');

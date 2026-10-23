@@ -1,6 +1,7 @@
 package dev.oliphaunt.android;
 
 import java.lang.reflect.Method;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -8,6 +9,9 @@ import org.gradle.api.GradleException;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.artifacts.ExternalModuleDependency;
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
+import org.gradle.api.artifacts.result.ResolvedArtifactResult;
 import org.gradle.api.file.Directory;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.Sync;
@@ -129,9 +133,12 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
                       .set(
                           project.provider(
                               () ->
-                                  OliphauntExtensionCatalog.ownerVersions(
-                                      extension.getSelectedExtensions().get(),
-                                      extension.getExtensionVersions().get(),
+                                  resolvedExtensionOwnerVersions(
+                                      extensionArtifacts,
+                                      OliphauntExtensionCatalog.resolveOwners(
+                                          extension.getSelectedExtensions().get(),
+                                          extension.getExtensionVersions().get(),
+                                          extension.getLiboliphauntVersion().get()),
                                       extension.getLiboliphauntVersion().get())));
                   task.getIcu().set(extension.getIcu());
                   task.getSelectedAbis().set(extension.getAndroidAbis());
@@ -319,22 +326,64 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
             extension.getSelectedExtensions().get(),
             extension.getExtensionVersions().get(),
             runtimeVersion);
+    addExtensionArtifactDependencies(
+        project, extensionArtifacts, extensionOwners, extension.getAndroidAbis().get());
+  }
+
+  static void addExtensionArtifactDependencies(
+      Project project,
+      Configuration extensionArtifacts,
+      List<OliphauntExtensionCatalog.Owner> extensionOwners,
+      List<String> abis) {
     for (OliphauntExtensionCatalog.Owner owner : extensionOwners) {
-      for (String abi : extension.getAndroidAbis().get()) {
-        project
-            .getDependencies()
-            .add(
-                extensionArtifacts.getName(),
-                owner.mavenGroup()
-                    + ":"
-                    + owner.mavenArtifact()
-                    + "-"
-                    + androidTarget(abi)
-                    + ":"
-                    + owner.version()
-                    + "@tar.gz");
+      for (String abi : abis) {
+        ExternalModuleDependency dependency =
+            (ExternalModuleDependency)
+                project.getDependencies().create(
+                    owner.mavenGroup() + ":" + owner.mavenArtifact() + "-"
+                        + androidTarget(abi) + ":" + owner.version());
+        dependency.setTransitive(true);
+        dependency.artifact(
+            artifact -> {
+              artifact.setType("tar.gz");
+              artifact.setExtension("tar.gz");
+            });
+        project.getDependencies().add(extensionArtifacts.getName(), dependency);
       }
     }
+  }
+
+  static Map<String, String> resolvedExtensionOwnerVersions(
+      Configuration artifacts,
+      List<OliphauntExtensionCatalog.Owner> requested,
+      String runtimeVersion) {
+    Map<String, String> versions = new LinkedHashMap<>();
+    for (ResolvedArtifactResult artifact : artifacts.getIncoming().getArtifacts().getArtifacts()) {
+      if (!(artifact.getId().getComponentIdentifier() instanceof ModuleComponentIdentifier module)) {
+        throw new GradleException("Oliphaunt extension carriers must resolve from Maven modules");
+      }
+      OliphauntExtensionCatalog.Entry owner =
+          OliphauntExtensionCatalog.mavenArtifactOwner(module.getGroup(), module.getModule());
+      ResolveOliphauntAndroidAssetsTask.validateReleaseVersion(module.getVersion());
+      if (owner.runtimeBound() && !runtimeVersion.equals(module.getVersion())) {
+        throw new GradleException(
+            "runtime-bound Oliphaunt extension release owner " + owner.releaseProduct()
+                + " must use liboliphaunt version " + runtimeVersion + ", got " + module.getVersion());
+      }
+      String previous = versions.putIfAbsent(owner.releaseProduct(), module.getVersion());
+      if (previous != null && !previous.equals(module.getVersion())) {
+        throw new GradleException(
+            "inconsistent resolved versions for Oliphaunt release owner " + owner.releaseProduct());
+      }
+    }
+    for (OliphauntExtensionCatalog.Owner owner : requested) {
+      if (!owner.version().equals(versions.get(owner.releaseProduct()))) {
+        throw new GradleException(
+            "resolved Oliphaunt extension release owner " + owner.releaseProduct()
+                + " does not match requested version " + owner.version());
+      }
+    }
+    return Map.copyOf(versions);
   }
 
   private static List<String> parsePortableList(String raw) {

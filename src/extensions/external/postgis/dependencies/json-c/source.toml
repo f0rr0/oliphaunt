@@ -1,7 +1,7 @@
 name = "json-c"
 url = "https://github.com/json-c/json-c.git"
-branch = "json-c-0.18-20240915"
-commit = "41a55cfcedb54d9c1874f2f0eb07b504091d7e37"
+branch = "json-c-0.19-20260627"
+commit = "aa716cd8d663c976b99b0f30f102ee1d8ef63146"
 
 [archive]
-sha256 = "a090046b2d24901eb8dca4d370c28991299e8c7cfb698b44e09ce809b1ff20b4"
+sha256 = "c1bd272eada097536379081c6a49041b58fbedb742dcd4479e6063784595ad59"

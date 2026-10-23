@@ -6,7 +6,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -68,14 +67,10 @@ final class OliphauntExtensionCatalog {
   static List<Owner> resolveOwners(
       List<String> requestedSqlNames, Map<String, String> overrides, String runtimeVersion) {
     validateVersion(runtimeVersion, "liboliphaunt runtime");
-    LinkedHashSet<String> closure = new LinkedHashSet<>();
-    LinkedHashSet<String> visiting = new LinkedHashSet<>();
-    for (String sqlName : requestedSqlNames) {
-      addClosure(sqlName, closure, visiting);
-    }
-
     TreeMap<String, OwnerBuilder> builders = new TreeMap<>();
-    for (String sqlName : closure) {
+    // Published module metadata owns transitive acquisition. The bundled
+    // catalog maps requested SQL names to coordinates, never release history.
+    for (String sqlName : requestedSqlNames) {
       Entry entry = require(sqlName);
       String coordinate = entry.mavenCoordinate();
       OwnerBuilder builder = builders.computeIfAbsent(coordinate, ignored -> new OwnerBuilder(entry));
@@ -202,6 +197,9 @@ final class OliphauntExtensionCatalog {
             "bundled Oliphaunt extension catalog has invalid Maven coordinates for " + sqlName);
       }
       List<String> dependencies = portableList(properties.getProperty(prefix + "dependencies", ""));
+      if (!properties.containsKey(prefix + "sqlMembers")) {
+        throw new GradleException("bundled Oliphaunt extension catalog is missing " + prefix + "sqlMembers");
+      }
       entries.put(
           sqlName,
           new Entry(
@@ -211,7 +209,8 @@ final class OliphauntExtensionCatalog {
               mavenGroup,
               mavenArtifact,
               runtimeBound,
-              dependencies));
+              dependencies,
+              portableList(properties.getProperty(prefix + "sqlMembers"))));
     }
     for (Entry entry : entries.values()) {
       for (String dependency : entry.dependencies()) {
@@ -231,21 +230,27 @@ final class OliphauntExtensionCatalog {
     return load(OliphauntExtensionCatalog.class.getResourceAsStream(RESOURCE));
   }
 
-  private static void addClosure(
-      String sqlName, LinkedHashSet<String> closure, LinkedHashSet<String> visiting) {
-    if (closure.contains(sqlName)) {
-      return;
+  static Entry mavenArtifactOwner(String group, String artifact) {
+    Entry result = null;
+    for (Entry entry : ENTRIES.values()) {
+      if (entry.mavenGroup().equals(group)
+          && List.of("android-arm64-v8a", "android-x86_64").stream()
+              .anyMatch(target -> artifact.equals(entry.mavenArtifact() + "-" + target))) {
+        if (result != null
+            && (!result.releaseProduct().equals(entry.releaseProduct())
+                || !result.artifactProduct().equals(entry.artifactProduct())
+                || result.runtimeBound() != entry.runtimeBound())) {
+          throw new GradleException(
+              "ambiguous Oliphaunt Maven release owner for " + group + ":" + artifact);
+        }
+        result = entry;
+      }
     }
-    if (!visiting.add(sqlName)) {
+    if (result == null) {
       throw new GradleException(
-          "cyclic generated Oliphaunt extension dependency involving " + sqlName);
+          "unknown Oliphaunt Maven extension artifact " + group + ":" + artifact);
     }
-    Entry entry = require(sqlName);
-    for (String dependency : entry.dependencies()) {
-      addClosure(dependency, closure, visiting);
-    }
-    visiting.remove(sqlName);
-    closure.add(sqlName);
+    return result;
   }
 
   private static List<String> portableList(String raw) {
@@ -292,7 +297,8 @@ final class OliphauntExtensionCatalog {
       String mavenGroup,
       String mavenArtifact,
       boolean runtimeBound,
-      List<String> dependencies) {
+      List<String> dependencies,
+      List<String> sqlMembers) {
     String mavenCoordinate() {
       return mavenGroup + ":" + mavenArtifact;
     }

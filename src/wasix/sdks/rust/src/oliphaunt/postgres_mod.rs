@@ -415,36 +415,23 @@ impl PostgresMod {
 
     #[cfg(feature = "extensions")]
     pub fn preload_extension_module(&self, extension: Extension) -> Result<()> {
-        for module in extension.native_support_modules() {
+        for (runtime_path, aot_name) in extension.required_native_modules()? {
             seed_extension_side_module(
                 &self.tokio_runtime,
                 &self.engine,
                 &self.wasix_module_cache,
                 &self.runtime_storage,
-                module.runtime_path(),
-                module.aot_name(),
+                &runtime_path,
+                aot_name.as_deref(),
                 extension.package(),
                 &format!(
                     "extension '{}' support module '{}'",
                     extension.sql_name(),
-                    module.runtime_path()
+                    runtime_path
                 ),
             )?;
         }
 
-        let Some(module_file) = extension.native_module_file() else {
-            return Ok(());
-        };
-        seed_extension_side_module(
-            &self.tokio_runtime,
-            &self.engine,
-            &self.wasix_module_cache,
-            &self.runtime_storage,
-            &format!("lib/postgresql/{module_file}"),
-            extension.aot_name(),
-            extension.package(),
-            &format!("extension '{}'", extension.sql_name()),
-        )?;
         Ok(())
     }
 
@@ -1407,7 +1394,7 @@ fn seed_extension_side_module(
     module_cache: &Arc<SharedCache>,
     runtime_root: &StorageRoot,
     runtime_path: &str,
-    aot_name: Option<&'static str>,
+    aot_name: Option<&str>,
     package: Option<&super::extensions::ExtensionPackage>,
     label: &str,
 ) -> Result<()> {
@@ -1789,6 +1776,7 @@ fn add_oliphaunt_env(
         ("PGTZ", "UTC"),
         ("PG_COLOR", "never"),
         ("PROJ_DATA", "/share/proj"),
+        ("GDAL_DATA", "/share/gdal"),
     ] {
         builder.add_env(key, value);
     }

@@ -812,19 +812,24 @@ fn archive_destination(root: &Path, archive_path: &Path) -> Result<PathBuf> {
 }
 
 #[cfg(any(feature = "extensions", test))]
-fn install_extension_reader<R: Read>(root: &StorageRoot, mut reader: R) -> Result<()> {
-    let mut bytes = Vec::new();
-    reader
-        .read_to_end(&mut bytes)
-        .context("read extension archive")?;
-    let archive_reader: Box<dyn Read> = if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+pub(crate) fn extension_archive(bytes: &[u8]) -> Result<Archive<Box<dyn Read + '_>>> {
+    let reader: Box<dyn Read> = if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
         Box::new(ZstdDecoder::new(Cursor::new(bytes)).context("decode zstd extension archive")?)
     } else if bytes.starts_with(&[0x1f, 0x8b]) {
         Box::new(GzDecoder::new(Cursor::new(bytes)))
     } else {
         Box::new(Cursor::new(bytes))
     };
-    let mut ar = Archive::new(archive_reader);
+    Ok(Archive::new(reader))
+}
+
+#[cfg(any(feature = "extensions", test))]
+fn install_extension_reader<R: Read>(root: &StorageRoot, mut reader: R) -> Result<()> {
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .context("read extension archive")?;
+    let mut ar = extension_archive(&bytes)?;
     match root {
         StorageRoot::HostDirectory(target) => {
             fs::create_dir_all(target)

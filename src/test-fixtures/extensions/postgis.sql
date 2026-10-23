@@ -1,3 +1,19 @@
+CREATE EXTENSION IF NOT EXISTS postgis_raster;
+-- oliphaunt-statement
+CREATE EXTENSION IF NOT EXISTS postgis_topology;
+-- oliphaunt-statement
+CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
+-- oliphaunt-statement
+CREATE EXTENSION IF NOT EXISTS postgis_tiger_geocoder;
+-- oliphaunt-statement
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM topology.topology WHERE name = 'oliphaunt_postgis_topology') THEN
+    PERFORM topology.DropTopology('oliphaunt_postgis_topology');
+  END IF;
+  PERFORM topology.CreateTopology('oliphaunt_postgis_topology', 4326);
+  PERFORM topology.ST_AddIsoNode('oliphaunt_postgis_topology', NULL, ST_SetSRID(ST_MakePoint(1, 1), 4326));
+END $$;
+-- oliphaunt-statement
 DROP TABLE IF EXISTS oliphaunt_postgis_points;
 -- oliphaunt-statement
 CREATE TABLE oliphaunt_postgis_points(id int PRIMARY KEY, geom geometry(Point, 4326));
@@ -16,7 +32,27 @@ DECLARE
   area float8;
   polygons int;
   nearby int;
+  gdal_drivers int;
+  raster_roundtrip raster;
+  raster_value float8;
+  topology_nodes int;
+  normalized tiger.norm_addy;
 BEGIN
+  SELECT count(*) INTO topology_nodes FROM oliphaunt_postgis_topology.node
+  WHERE ST_Equals(geom, ST_SetSRID(ST_MakePoint(1, 1), 4326));
+  IF topology_nodes <> 1 OR EXISTS (SELECT 1 FROM topology.ValidateTopology('oliphaunt_postgis_topology')) THEN
+    RAISE EXCEPTION 'postgis topology persistence or validation failed: % nodes', topology_nodes;
+  END IF;
+  -- Tiger resolves its internal functions and types through the session search path.
+  SET LOCAL search_path = public, tiger;
+  normalized := tiger.normalize_address('1 Devonshire Place, Boston, MA 02109');
+  IF normalized.address IS DISTINCT FROM 1 OR normalized.streetname IS DISTINCT FROM 'Devonshire'
+    OR normalized.streettypeabbrev IS DISTINCT FROM 'Pl' OR normalized.location IS DISTINCT FROM 'Boston'
+    OR normalized.stateabbrev IS DISTINCT FROM 'MA' OR normalized.zip IS DISTINCT FROM '02109'
+    OR normalized.parsed IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'postgis tiger address normalization failed: %', normalized;
+  END IF;
+  SET LOCAL postgis.gdal_enabled_drivers = 'GTiff';
   SELECT ST_Distance(ST_GeomFromText('POINT(0 0)'), ST_GeomFromText('POINT(3 4)')) INTO distance;
   IF distance IS DISTINCT FROM 5 THEN
     RAISE EXCEPTION 'postgis geometry distance failed: %', distance;
@@ -56,5 +92,29 @@ BEGIN
   );
   IF nearby IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'postgis dwithin failed: %', nearby;
+  END IF;
+  SELECT count(*) INTO gdal_drivers
+  FROM ST_GDALDrivers()
+  WHERE short_name = 'GTiff' AND can_read AND can_write;
+  IF gdal_drivers <> 1 THEN
+    RAISE EXCEPTION 'postgis raster GeoTIFF driver is unavailable';
+  END IF;
+  SELECT ST_FromGDALRaster(
+    ST_AsGDALRaster(
+      ST_AddBand(
+        ST_MakeEmptyRaster(2, 2, 0, 0, 1, -1, 0, 0, 4326),
+        '8BUI'::text,
+        7::double precision,
+        0::double precision
+      ),
+      'GTiff'
+    )
+  ) INTO raster_roundtrip;
+  SELECT ST_Value(raster_roundtrip, 1, 1, 1) INTO raster_value;
+  IF raster_value IS DISTINCT FROM 7 OR ST_SRID(raster_roundtrip) IS DISTINCT FROM 4326
+    OR ST_Width(raster_roundtrip) IS DISTINCT FROM 2 OR ST_Height(raster_roundtrip) IS DISTINCT FROM 2 THEN
+    RAISE EXCEPTION 'postgis raster GDAL round-trip failed: value %, srid %',
+      raster_value,
+      ST_SRID(raster_roundtrip);
   END IF;
 END $$;

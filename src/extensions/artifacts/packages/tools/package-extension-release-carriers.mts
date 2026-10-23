@@ -4,7 +4,6 @@ import {
   chmodSync,
   closeSync,
   copyFileSync,
-  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -39,7 +38,13 @@ import {
 } from '../../../../../tools/packaging/release-notices.mts';
 import { RUST_BUILD_SCRIPT_SHA256 } from '../../../../../tools/packaging/rust-build-script-sha256.mts';
 import {
+  EXTENSION_VERSIONING_BY_CLASS,
+  extensionSourceMetadata,
+  frozenExtensionOwnerRequirements,
+} from '../../../../../tools/release/extension-release-metadata.mts';
+import {
   compareText,
+  extensionOwnerForSqlName,
   extensionRegistryPackageTargetSets,
 } from '../../../../../tools/release/release-artifact-targets.mts';
 import {
@@ -75,7 +80,11 @@ import {
 
 export { nativeExtensionCarrierLegal } from '../../../tools/extension-upstream-licenses.mts';
 
-import { validateExtensionArtifactArchive } from './extension-artifact-inventory.mts';
+import {
+  assertExtensionArtifactClosureShape,
+  hasDeclaredExtensionArtifactClosure,
+  validateExtensionArtifactArchive,
+} from './extension-artifact-inventory.mts';
 import {
   extensionNpmPackageForProduct,
   extensionNpmTargetPackageForProduct,
@@ -471,9 +480,7 @@ const FROZEN_EXTENSION_INVENTORY_LIST_FIELDS = Object.freeze([
 /**
  * Return the exact desktop inventory frozen into one product/member release row.
  *
- * Registry materialization deliberately does not consult the repository-wide
- * generated SDK catalog: independently versioned external products must remain
- * bound to the metadata that was qualified and versioned with that product.
+ * New releases freeze the complete closure; legacy releases keep their original primary-only shape.
  */
 export function frozenExtensionMemberInventory(
   member,
@@ -505,6 +512,7 @@ export function frozenExtensionMemberInventory(
     createsExtension: member.createsExtension,
     nativeModuleStem: member.nativeModuleStem,
   };
+  const declaredClosure = hasDeclaredExtensionArtifactClosure(member, `${owner}/${sqlName}`);
   for (const field of FROZEN_EXTENSION_INVENTORY_LIST_FIELDS) {
     const values = member[field];
     if (
@@ -518,6 +526,11 @@ export function frozenExtensionMemberInventory(
       throw new Error(`${TOOL}: ${owner}/${sqlName} frozen ${field} must be sorted and unique`);
     }
     inventory[field] = canonical;
+  }
+  if (declaredClosure) {
+    assertExtensionArtifactClosureShape(member, `${owner}/${sqlName}`);
+    inventory.sqlMembers = [...member.sqlMembers];
+    inventory.nativeModuleStems = [...member.nativeModuleStems];
   }
   if (Object.hasOwn(member, 'nativeDependencyModules')) {
     const values = member.nativeDependencyModules;
@@ -537,10 +550,9 @@ export function frozenExtensionMemberInventory(
     inventory.nativeDependencyModules = [...values];
   }
   if (Object.hasOwn(member, 'nativeConstructionLicenseFiles')) {
-    inventory.nativeConstructionLicenseFiles = validateNativeExtensionConstructionLicenseInventory(
-      sqlName,
-      target,
+    inventory.nativeConstructionLicenseFiles = parseNpmExtensionLicenseFiles(
       member.nativeConstructionLicenseFiles,
+      `${owner}/${sqlName} nativeConstructionLicenseFiles`,
     );
   }
   if (inventory.dependencies.includes(sqlName)) {
@@ -558,7 +570,7 @@ const FROZEN_EXTENSION_COMPATIBILITY_FIELDS = Object.freeze([
   'wasixRuntimeVersion',
 ]);
 
-function frozenExtensionCompatibility(value, label) {
+export function frozenExtensionCompatibility(value, label) {
   if (value === null || Array.isArray(value) || typeof value !== 'object') {
     throw new Error(`${TOOL}: ${label} must freeze extension compatibility as an object`);
   }
@@ -574,6 +586,8 @@ function frozenExtensionCompatibility(value, label) {
     value.nativeRuntimeProduct !== 'liboliphaunt-native' ||
     value.wasixRuntimeProduct !== 'liboliphaunt-wasix' ||
     value.extensionRuntimeContract !== EXTENSION_RUNTIME_CONTRACT_PATH ||
+    typeof value.nativeRuntimeVersion !== 'string' ||
+    typeof value.wasixRuntimeVersion !== 'string' ||
     !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u.test(
       value.nativeRuntimeVersion ?? '',
     ) ||
@@ -586,6 +600,44 @@ function frozenExtensionCompatibility(value, label) {
   return Object.freeze(
     Object.fromEntries(FROZEN_EXTENSION_COMPATIBILITY_FIELDS.map((field) => [field, value[field]])),
   );
+}
+
+export function frozenExtensionPublicMetadata(product, manifest, publicManifest, members) {
+  const extensionClass = publicManifest.extensionClass;
+  if (
+    !Object.hasOwn(EXTENSION_VERSIONING_BY_CLASS, extensionClass) ||
+    publicManifest.versioning !== EXTENSION_VERSIONING_BY_CLASS[extensionClass]
+  )
+    throw new Error(
+      `${TOOL}: ${product.id} release manifest has non-canonical extension identity class/versioning`,
+    );
+  const source = publicManifest.sourceIdentity;
+  if (source === null || Array.isArray(source) || typeof source !== 'object')
+    throw new Error(
+      `${TOOL}: ${product.id} release manifest must freeze an extension source identity`,
+    );
+  if (extensionClass === 'first-party' && (typeof source.path !== 'string' || !source.path))
+    throw new Error(
+      `${TOOL}: ${product.id} release manifest must freeze its extension source path`,
+    );
+  const sourceIdentity = extensionSourceMetadata(
+    product.id,
+    {
+      class: extensionClass,
+      sourcePath: source.path ?? `${product.id} frozen source identity`,
+      sqlName: members.length === 1 ? members[0].sqlName : undefined,
+    },
+    extensionClass === 'contrib' ? { postgresql: source } : source,
+    product.version,
+  );
+  if (!sameFrozenValue(source, sourceIdentity))
+    throw new Error(
+      `${TOOL}: ${product.id} release manifest has a non-canonical frozen source identity`,
+    );
+  const compatibility = frozenExtensionCompatibility(manifest.compatibility, product.id);
+  if (!sameFrozenValue(publicManifest.compatibility, compatibility))
+    throw new Error(`${TOOL}: ${product.id} public and frozen compatibility differ`);
+  return { extensionClass, versioning: publicManifest.versioning, sourceIdentity, compatibility };
 }
 
 function extensionReleaseManifestMembers(manifest) {
@@ -856,7 +908,7 @@ function checkedPortableWasixMemberBytes(member, bytes, label) {
   return portable;
 }
 
-function portableWasixExtensionAssets(extensionDir, manifest, releaseManifest) {
+function portableWasixExtensionAssets(extensionDir, manifest, releaseManifest, options = {}) {
   const manifestPath = path.join(extensionDir, 'extension-artifacts.json');
   const frozen = frozenExtensionRelease(manifestPath, manifest, releaseManifest);
   if (frozen === null) return null;
@@ -925,13 +977,41 @@ function portableWasixExtensionAssets(extensionDir, manifest, releaseManifest) {
   }
 
   const memberNames = new Set(members.map(({ sqlName }) => sqlName));
+  const ownerForSqlName = (sqlName) =>
+    extensionOwnerForSqlName(sqlName, 'wasix', {
+      ownerMetadata: options.ownerMetadata,
+      prefix: TOOL,
+    });
+  const requirements = frozenExtensionOwnerRequirements({
+    product,
+    releaseProduct:
+      options.releaseProduct ??
+      (frozen.versioning === 'runtime-bound' ? frozen.compatibility.wasixRuntimeProduct : product),
+    members: members.map(({ sqlName, install }) => ({
+      sqlName,
+      dependencies: install.dependencies,
+    })),
+    runtimeProduct: frozen.compatibility.wasixRuntimeProduct,
+    runtimeVersion: frozen.compatibility.wasixRuntimeVersion,
+    ownerForSqlName,
+  });
+  const dependencyImports = new Map();
   for (const { sqlName, install } of members) {
     for (const dependency of install.dependencies) {
       if (memberNames.has(dependency) || WASIX_RUNTIME_SUPPORT_SQL_NAMES.has(dependency)) continue;
-      fail(
-        TOOL,
-        `${product}@${version}/${sqlName} has unsupported cross-product or unavailable WASIX dependency ${JSON.stringify(dependency)}`,
-      );
+      const dependencyProduct = ownerForSqlName(dependency).product;
+      const requirement = requirements.find(({ product }) => product === dependencyProduct);
+      if (requirement === undefined) {
+        fail(
+          TOOL,
+          `${product}@${version}/${sqlName} has unrepresented WASIX dependency ${JSON.stringify(dependency)}`,
+        );
+      }
+      dependencyImports.set(dependency, {
+        ...requirement,
+        sqlName: dependency,
+        specifier: `${extensionNpmWasixPackageForProduct(requirement.product)}/${dependency}`,
+      });
     }
   }
 
@@ -956,6 +1036,8 @@ function portableWasixExtensionAssets(extensionDir, manifest, releaseManifest) {
     return {
       bundle: false,
       compatibility: frozen.compatibility,
+      requirements,
+      dependencyImports: [...dependencyImports.values()],
       members: [{ ...member, bytes }],
       versioning: frozen.versioning,
     };
@@ -1008,6 +1090,8 @@ function portableWasixExtensionAssets(extensionDir, manifest, releaseManifest) {
   return {
     bundle: true,
     compatibility: frozen.compatibility,
+    requirements,
+    dependencyImports: [...dependencyImports.values()],
     members: members.map((member) => {
       const carrierRoot = carrierName.replace(/[.]tar[.]gz$/u, '');
       const expectedMember = `${carrierRoot}/extensions/${member.sqlName}/${member.asset.name}`;
@@ -1065,7 +1149,7 @@ function checkedArchiveMemberPath(name, archive) {
   return parts.join('/');
 }
 
-function extractExtensionRuntime(
+export function extractExtensionRuntime(
   asset,
   runtimeDir,
   { metadata, target, nativeRuntimeVersion, product },
@@ -1186,6 +1270,7 @@ export function renderWasixExtensionDescriptorModule({
   carriers,
   compatibility,
   descriptorPath = 'index.js',
+  dependencyImports = [],
 }) {
   let frozenCompatibility;
   try {
@@ -1243,6 +1328,10 @@ export function renderWasixExtensionDescriptorModule({
     ].join('\n'),
   );
   return [
+    ...dependencyImports.map(
+      ({ specifier }, index) => `import dependency${index} from ${JSON.stringify(specifier)};`,
+    ),
+    ...(dependencyImports.length === 0 ? [] : ['']),
     'function deepFreeze(value) {',
     '  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {',
     '    for (const child of Object.values(value)) deepFreeze(child);',
@@ -1260,9 +1349,46 @@ export function renderWasixExtensionDescriptorModule({
     `  wasixRuntimeVersion: ${JSON.stringify(frozenCompatibility.wasixRuntimeVersion)},`,
     '});',
     '',
-    'const carriers = deepFreeze([',
+    ...dependencyImports.flatMap(({ product, version, sqlName }, index) => [
+      `if (dependency${index}.schema !== "oliphaunt-wasix-extension-v1" ||`,
+      `    Object.keys(dependency${index}).sort().join(",") !== "carriers,compatibility,product,runtime,schema,sqlName,version" ||`,
+      `    dependency${index}.runtime !== "wasix" ||`,
+      `    dependency${index}.product !== ${JSON.stringify(product)} ||`,
+      `    dependency${index}.version !== ${JSON.stringify(version)} ||`,
+      `    dependency${index}.sqlName !== ${JSON.stringify(sqlName)} ||`,
+      `    !Array.isArray(dependency${index}.carriers) ||`,
+      `    new Set(dependency${index}.carriers.map(({ sqlName }) => sqlName)).size !== dependency${index}.carriers.length ||`,
+      `    !dependency${index}.carriers.some((carrier) => carrier.sqlName === ${JSON.stringify(sqlName)} && carrier.product === ${JSON.stringify(product)} && carrier.version === ${JSON.stringify(version)}) ||`,
+      `    Object.keys(dependency${index}.compatibility ?? {}).sort().join(",") !== Object.keys(compatibility).sort().join(",") ||`,
+      `    Object.entries(compatibility).some(([key, value]) => dependency${index}.compatibility?.[key] !== value)) {`,
+      `  throw new Error(${JSON.stringify(`WASIX dependency ${product}@${version}/${sqlName} does not match its frozen requirement`)});`,
+      '}',
+    ]),
+    ...(dependencyImports.length === 0
+      ? []
+      : [
+          'function mergeCarriers(groups) {',
+          '  const bySqlName = new Map();',
+          '  const identity = ({ product, version, sqlName, archive, sha256, size, install }) =>',
+          '    JSON.stringify([product, version, sqlName, archive, sha256, size, install], (_, value) =>',
+          '      value !== null && typeof value === "object" && !Array.isArray(value)',
+          '        ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))',
+          '        : value);',
+          '  for (const group of groups) for (const carrier of group) {',
+          '    const prior = bySqlName.get(carrier.sqlName);',
+          '    if (prior !== undefined && identity(prior) !== identity(carrier))',
+          '      throw new Error(`conflicting WASIX dependency carrier ${carrier.sqlName}`);',
+          '    if (prior === undefined) bySqlName.set(carrier.sqlName, carrier);',
+          '  }',
+          '  return [...bySqlName.values()];',
+          '}',
+          '',
+        ]),
+    dependencyImports.length === 0
+      ? 'const carriers = deepFreeze(['
+      : `const carriers = deepFreeze(mergeCarriers([${dependencyImports.map((_, index) => `dependency${index}.carriers`).join(', ')}, [`,
     ...carrierRows,
-    ']);',
+    dependencyImports.length === 0 ? ']);' : ']]));',
     '',
     'const descriptor = deepFreeze({',
     '  schema: "oliphaunt-wasix-extension-v1",',
@@ -1419,6 +1545,9 @@ function writeWasixExtensionNpmPackage(packageDir, { product, version, runtimeSe
         size: carrier.asset.bytes,
         install: carrier.install,
       })),
+      dependencyImports: runtimeSet.dependencyImports.filter(({ sqlName }) =>
+        closure.some(({ install }) => install.dependencies.includes(sqlName)),
+      ),
       descriptorPath,
     });
     const modulePath = path.join(packageDir, ...descriptorPath.split('/'));
@@ -1448,6 +1577,16 @@ function writeWasixExtensionNpmPackage(packageDir, { product, version, runtimeSe
     license: legal.packageSpdx,
     type: 'module',
     sideEffects: false,
+    ...(runtimeSet.requirements.length === 0
+      ? {}
+      : {
+          dependencies: Object.fromEntries(
+            runtimeSet.requirements.map(({ product, version }) => [
+              extensionNpmWasixPackageForProduct(product),
+              version,
+            ]),
+          ),
+        }),
     repository: { type: 'git', url: NPM_TRUSTED_PUBLISHING_REPOSITORY },
     oliphaunt: {
       product,
@@ -1600,16 +1739,37 @@ function writeExtensionMetaPackage(
     product,
     version,
     members,
+    memberContracts,
     target,
     targets = [target],
     iosCarrier,
     liboliphauntVersion,
     runtimeBound,
+    releaseProduct = runtimeBound ? 'liboliphaunt-native' : product,
+    ownerMetadata,
     legal,
   },
 ) {
+  const { peerDependencies, peerDependenciesMeta } = readJsonFile(
+    path.resolve(import.meta.dirname, '../package.json'),
+  );
   const bundle = members.length > 1;
   const packageName = extensionNpmPackageForProduct(product);
+  if (
+    !Array.isArray(memberContracts) ||
+    JSON.stringify(memberContracts.map((member) => member.sqlName)) !== JSON.stringify(members)
+  )
+    fail(TOOL, `${product} native facade must supply its exact frozen member contracts`);
+  const requirements = frozenExtensionOwnerRequirements({
+    product,
+    releaseProduct,
+    members: memberContracts,
+    runtimeProduct: 'liboliphaunt-native',
+    runtimeVersion: liboliphauntVersion,
+    ownerForSqlName(sqlName) {
+      return extensionOwnerForSqlName(sqlName, 'native', { ownerMetadata, prefix: TOOL });
+    },
+  });
   const targetPackageNames = Object.fromEntries(
     targets
       .filter((item) => typeof item === 'string' && item.length > 0)
@@ -1656,9 +1816,21 @@ function writeExtensionMetaPackage(
     license: legal.packageSpdx,
     type: 'module',
     repository: { type: 'git', url: NPM_TRUSTED_PUBLISHING_REPOSITORY },
+    peerDependencies,
+    peerDependenciesMeta,
     optionalDependencies: Object.fromEntries(
       Object.values(targetPackageNames).map((name) => [name, version]),
     ),
+    ...(requirements.length > 0
+      ? {
+          dependencies: Object.fromEntries(
+            requirements.map((requirement) => [
+              extensionNpmPackageForProduct(requirement.product),
+              requirement.version,
+            ]),
+          ),
+        }
+      : {}),
     oliphaunt: {
       product,
       kind: bundle ? 'exact-extension-bundle' : 'exact-extension',
@@ -2039,11 +2211,14 @@ export function stageExtensionNativeNpmPackages(roots, stagingRoot, target, resu
           product,
           version,
           members,
+          memberContracts: runtimeSet.members.map(({ metadata }) => metadata),
           target,
           targets: metaTargets ?? [target],
           iosCarrier,
           liboliphauntVersion,
           runtimeBound,
+          releaseProduct: options.releaseProduct,
+          ownerMetadata: options.ownerMetadata,
         },
         result,
       );
@@ -2108,7 +2283,7 @@ function assertWasixExtensionNpmArchive(
   }
 }
 
-export function stageExtensionWasixNpmPackages(roots, stagingRoot, result) {
+export function stageExtensionWasixNpmPackages(roots, stagingRoot, result, options = {}) {
   const manifests = discoverExtensionManifests(roots);
   if (manifests.length === 0) return null;
 
@@ -2124,7 +2299,12 @@ export function stageExtensionWasixNpmPackages(roots, stagingRoot, result) {
     if (![product, version].every((value) => typeof value === 'string' && value.length > 0))
       continue;
     const releaseManifest = extensionReleaseManifest(extensionDir, product, version);
-    const runtimeSet = portableWasixExtensionAssets(extensionDir, manifest, releaseManifest);
+    const runtimeSet = portableWasixExtensionAssets(
+      extensionDir,
+      manifest,
+      releaseManifest,
+      options,
+    );
     if (runtimeSet === null) continue;
     const runtimeVersion = runtimeSet.compatibility.wasixRuntimeVersion;
     if (runtimeSet.versioning === 'runtime-bound' && version !== runtimeVersion) {

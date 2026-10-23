@@ -148,7 +148,12 @@ export async function packageWasixContribCarriers(spec: WasixContribCarrierSpec)
     writeJson(frozen, manifest);
     writeJson(releaseManifest, releaseData);
     const result = { staged: [] as string[], skipped: [] as string[] };
-    assert(stageExtensionWasixNpmPackages([productRoot], path.join(root, 'npm-stage'), result));
+    assert(
+      stageExtensionWasixNpmPackages([productRoot], path.join(root, 'npm-stage'), result, {
+        releaseProduct: spec.owner,
+        ownerMetadata: spec.ownerMetadata,
+      }),
+    );
     assert.equal(result.staged.length, 1, 'contrib must retain its single canonical npm bundle');
     mkdirSync(spec.outputs.npm, { recursive: true });
     const npm = result.staged[0];

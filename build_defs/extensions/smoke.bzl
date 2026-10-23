@@ -4,7 +4,7 @@ load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILIT
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE", _desktop_compatible = "NATIVE_EXTENSION_COMPATIBLE")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_default_version", "extension_native_dependency_modules")
-load(":construction.bzl", "desktop_member_payloads")
+load(":construction.bzl", "desktop_member_inventory", "desktop_member_payloads")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
 
 def _smoke_plan_impl(ctx):
@@ -78,9 +78,36 @@ extension_smoke_plan = rule(
     },
 )
 
+def native_extension_payload_closure(members):
+    """Select current canonical payloads for every declared SQL dependency."""
+    inventory = desktop_member_inventory(include_postgis = True)
+    labels = {str(Label(row.label)): row for row in inventory}
+    names = {row.name: row for row in inventory}
+    selected = {}
+    for member in members:
+        label = str(native.package_relative_label(member))
+        if label not in labels:
+            fail("native SQL proof requires a canonical candidate payload: " + label)
+        selected[labels[label].name] = True
+    for _ in range(len(inventory)):
+        added = False
+        for name in selected.keys():
+            for dependency in names[name].descriptor.get("dependencies", []):
+                if dependency == "plpgsql":
+                    continue
+                if dependency not in names:
+                    fail("native SQL dependency has no canonical payload: " + dependency)
+                if dependency not in selected:
+                    selected[dependency] = True
+                    added = True
+        if not added:
+            break
+    return [names[name].label for name in sorted(selected.keys())]
+
 def native_extension_sql_test(name, members, runtime = "//src/native/runtime:runtime_payload", consumer = "//build_defs/extensions:native_extension_smoke", host_version = "", host_product = "", runtime_prefix = ".", library_prefix = "lib", target_compatible_with = NATIVE_EXTENSION_COMPATIBLE):
     """Exercise selected archives in the embedded and ordinary PG ABI profiles."""
     plan = name + "_plan"
+    members = native_extension_payload_closure(members)
     if bool(host_version) != bool(host_product):
         fail("immutable host tests require both the canonical product and version")
     for prefix in [runtime_prefix, library_prefix]:

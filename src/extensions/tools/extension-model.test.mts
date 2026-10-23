@@ -191,6 +191,12 @@ test('extension projections retain dependency and runtime data while deriving mo
         return [row['sql-name'], existsSync(file) ? readToml(file) : {}];
       }),
     ),
+    nativeTargets: new Map(
+      source.extensions.map((row: any) => {
+        const file = `src/extensions/external/${row['sql-name']}/targets/native.toml`;
+        return [row['sql-name'], existsSync(file) ? readToml(file) : {}];
+      }),
+    ),
   };
   for (const sdk of ['ts', 'react-native', 'kotlin'] as const) {
     const selected = extensionProjections(source, releases, { context, sdkOnly: sdk });
@@ -205,12 +211,18 @@ test('extension projections retain dependency and runtime data while deriving mo
     metadata,
   );
   const rustPath = 'src/native/rust-bindings/src/generated/extensions.rs';
-  assert.match(outputs.get(rustPath)!, /ExtensionId::Postgis => &\["liboliphaunt_postgis_deps"\]/u);
+  assert.match(
+    outputs.get(rustPath)!,
+    /ExtensionId::Postgis => &\["liboliphaunt_postgis_deps", "postgis_raster-3", "postgis_topology-3"\]/u,
+  );
   assert.match(
     outputs.get(rustPath)!,
     /if cfg!\(all\(target_os = "windows", target_arch = "x86_64"\)\)/u,
   );
-  assert.match(outputs.get(rustPath)!, /ExtensionId::Postgis => &\[\]/u);
+  assert.match(
+    outputs.get(rustPath)!,
+    /ExtensionId::Postgis => &\["postgis_raster-3", "postgis_topology-3"\]/u,
+  );
   const postgisRecipe = context.recipes.get('postgis')!;
   const dependencyRecipes = new Map(context.recipes);
   dependencyRecipes.set('postgis', {
@@ -218,6 +230,7 @@ test('extension projections retain dependency and runtime data while deriving mo
     artifacts: {
       ...postgisRecipe.artifacts,
       native_dependency_modules: ['lib/postgresql/lib_fixture_dependency.so'],
+      native_dependency_modules_by_target: {},
     },
   });
   const dependencyOutputs = extensionProjections(source, releases, {
@@ -232,7 +245,11 @@ test('extension projections retain dependency and runtime data while deriving mo
   }
   dependencyRecipes.set('postgis', {
     ...postgisRecipe,
-    artifacts: { ...postgisRecipe.artifacts, native_dependency_modules: ['../undeclared.so'] },
+    artifacts: {
+      ...postgisRecipe.artifacts,
+      native_dependency_modules: ['../undeclared.so'],
+      native_dependency_modules_by_target: {},
+    },
   });
   assert.throws(
     () =>
@@ -240,6 +257,47 @@ test('extension projections retain dependency and runtime data while deriving mo
         context: { ...context, recipes: dependencyRecipes },
       }),
     /requires a canonical native dependency module/u,
+  );
+  const postgis = metadata.extensions.find((row: any) => row['sql-name'] === 'postgis');
+  assert.deepEqual(postgis['native-module-stems'], [
+    'postgis-3',
+    'postgis_raster-3',
+    'postgis_topology-3',
+  ]);
+  assert.deepEqual(postgis['sql-members'], [
+    'postgis',
+    'postgis_raster',
+    'postgis_tiger_geocoder',
+    'postgis_topology',
+  ]);
+  const loadOnly = metadata.extensions.find((row: any) => row['sql-name'] === 'auto_explain');
+  assert.deepEqual(loadOnly['sql-members'], []);
+  assert.deepEqual(loadOnly['native-module-stems'], ['auto_explain']);
+  const metadataPath = 'src/extensions/generated/sdk/extensions.json';
+  assert.equal(
+    extensionProjections(source, releases, { context, metadataOnly: true }).get(metadataPath),
+    outputs.get(metadataPath),
+  );
+  const nativeTargets = new Map(context.nativeTargets);
+  nativeTargets.set('postgis', { module_files: ['lib/postgresql/postgis-3.so'] });
+  const injected = extensionProjections(source, releases, {
+    context: { ...context, nativeTargets },
+    metadataOnly: true,
+  });
+  assert.deepEqual(
+    JSON.parse(injected.get(metadataPath)!).extensions.find(
+      (row: any) => row['sql-name'] === 'postgis',
+    )['native-module-stems'],
+    ['postgis-3'],
+  );
+  nativeTargets.delete('postgis');
+  assert.throws(
+    () =>
+      extensionProjections(source, releases, {
+        context: { ...context, nativeTargets },
+        metadataOnly: true,
+      }),
+    /postgis requires declared native target metadata/u,
   );
   const extension = source.extensions.find((row: any) => row.id === 'pg_textsearch');
   extension.control['default-version'] = '9.8.7';

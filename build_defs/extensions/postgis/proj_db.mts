@@ -15,8 +15,8 @@ export function databaseSql(source: string): string {
   const recipes = {
     'data/sql_filelist.cmake': 'd187728c432ce56160083f4ffab4329c34f4adb0404bbf03f1a8343aa82f59f6',
     'data/generate_proj_db.cmake':
-      'eb458b6a382dbd394ce35b0f6b6d66a5068cad92f72dc70c3d3daeee6fe9dfbf',
-    'data/CMakeLists.txt': '709bb6a4e24d5a198c721269e9557abdf2bfa05cd5a0343a917c1463d89e5da7',
+      '364c953ee498c3c9da69a428b47c710fdf071e70839fb600e82e838633c711b3',
+    'data/CMakeLists.txt': '6ec06672a8ec902e438d193e31f5c1106428d98b551dc798ff6e783febe9ad3f',
   };
   for (const [path, expected] of Object.entries(recipes)) {
     if (
@@ -27,6 +27,12 @@ export function databaseSql(source: string): string {
       throw new Error(`review PROJ's upstream database recipe before changing ${path}`);
     }
   }
+  // PROJ 9.9 reads this declared checksum file before running the unchanged
+  // ordered SQL recipe; it no longer embeds the value in data/CMakeLists.txt.
+  const expectedMd5 = /^([a-f0-9]{32})\r?\n?$/u.exec(
+    read(join(source, 'data/sql/proj.db.sql.expected.md5')),
+  )?.[1];
+  if (!expectedMd5) throw new Error('invalid PROJ expected SQL checksum');
   const vars: Record<string, string[]> = { CMAKE_CURRENT_LIST_DIR: [join(source, 'data')] };
   let enabled = true;
   const recipe = read(join(source, 'data/sql_filelist.cmake')).replace(/^\s*#.*$/gm, '');
@@ -70,9 +76,6 @@ export function databaseSql(source: string): string {
   if (!paths?.length || new Set(paths).size !== paths.length)
     throw new Error('invalid PROJ SQL input list');
   const sql = paths.map((path) => read(path)).join('');
-  const expectedMd5 = /set\(PROJ_DB_SQL_EXPECTED_MD5 "([a-f0-9]{32})"\)/.exec(
-    read(join(source, 'data/CMakeLists.txt')),
-  )?.[1];
   // Exact upstream generate_proj_db.cmake metadata-independent SQL checksum.
   const md5 = createHash('md5')
     .update(sql.replace(/INSERT INTO "metadata"[^\n]*\n?/g, ''))

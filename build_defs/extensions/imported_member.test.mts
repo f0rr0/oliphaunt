@@ -14,6 +14,7 @@ import { type ImportedMemberSpec, importMembers } from './imported_member.mts';
 import { assemble } from './member_payload.mts';
 import {
   assemblePublicNativeMember,
+  exactArchive,
   type NativeCarrierSpec,
   nativeCarrierCompatibility,
 } from './native_carriers.mts';
@@ -144,7 +145,20 @@ async function fixture(sqlNames: string[]): Promise<ImportedMemberSpec> {
   const releaseMetadata = {
     class: external ? 'external' : 'contrib',
     versioning: external ? 'upstream-bound' : 'runtime-bound',
-    sourceIdentity: { parsingFixture: product },
+    sourceIdentity: external
+      ? {
+          kind: 'external',
+          ...Object.fromEntries(
+            ['name', 'url', 'branch', 'commit'].map((field) => [field, members[0].source[field]]),
+          ),
+        }
+      : {
+          kind: 'postgres-contrib',
+          name: 'postgresql',
+          ...Bun.TOML.parse(
+            readFileSync(path.join(repository, 'src/third-party/postgres/source.toml'), 'utf8'),
+          ).postgresql,
+        },
     compatibility,
   };
   const documents = composeExtensionReleaseDocuments({
@@ -252,6 +266,94 @@ test('imports requested contrib nested originals once and the unchanged wrapper 
         'original auxiliary data\n',
       );
   }
+});
+
+test('historical imports preserve their authenticated original notice bytes', async () => {
+  const spec = await fixture(['vector']);
+  const root = path.dirname(spec.leaf.frozen);
+  const stage = path.join(root, 'original-notices');
+  for (const [name, entry] of readPortableArchiveEntries(spec.leaf.github[0])) {
+    const file = path.join(stage, name);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, name === 'LICENSE' ? 'original release notice bytes\n' : entry.data(), {
+      mode: entry.mode,
+    });
+  }
+  exactArchive(stage, spec.leaf.github[0]);
+  const identity = fileIdentity(spec.leaf.github[0]);
+  for (const file of [spec.leaf.frozen, spec.leaf.manifest]) {
+    const document = JSON.parse(readFileSync(file, 'utf8'));
+    Object.assign(document.assets[0], { bytes: identity.size, sha256: identity.sha256 });
+    writeFileSync(file, JSON.stringify(document));
+  }
+  const originals = JSON.parse(readFileSync(spec.leaf.originalFiles!, 'utf8'));
+  for (const file of [originals.github[0], originals.frozen, originals.manifest])
+    Object.assign(file, fileIdentity(file.path));
+  writeFileSync(spec.leaf.originalFiles!, JSON.stringify(originals));
+
+  await importMembers(spec);
+  const descriptor = inspect(spec.members[0].archive, 'vector', spec.owner) as any;
+  const notice = descriptor.imported.publicLegalFiles.find((file: any) => file.path === 'LICENSE');
+  expect(notice).toBeDefined();
+  expect(notice.bytes).toBe(Buffer.byteLength('original release notice bytes\n'));
+});
+
+test('historical imports retain the original host, upstream version and source identity', async () => {
+  const spec = await fixture(['vector']);
+  const original = JSON.parse(readFileSync(spec.leaf.manifest, 'utf8'));
+  const originalVersion = spec.canonical.members[0].source['extension-control']['default-version'];
+  spec.canonical.runtimeVersion = '9.8.7';
+  spec.canonical.members[0].runtimeVersion = '9.8.7';
+  spec.canonical.members[0].source['extension-control']['default-version'] = '9.9.9';
+  spec.canonical.members[0].source.commit = 'f'.repeat(40);
+
+  const originals = JSON.parse(readFileSync(spec.leaf.originalFiles!, 'utf8'));
+  validateDeclaredExtensionFinalInput(originals, {
+    owner: spec.owner,
+    version: spec.version,
+    sqlNames: spec.members.map((member) => member.sqlName),
+    sourceIdentity: { ...original.sourceIdentity, commit: spec.canonical.members[0].source.commit },
+    compatibility: {
+      ...original.compatibility,
+      nativeRuntimeVersion: spec.canonical.runtimeVersion,
+    },
+    extensionClass: original.extensionClass,
+    versioning: original.versioning,
+    targets: [spec.configuration],
+  });
+
+  await importMembers(spec);
+  const descriptor = inspect(spec.members[0].archive, 'vector', spec.owner) as any;
+  expect(descriptor.default_version).toBe(originalVersion);
+  expect(descriptor.source_kind).toBe(original.sourceIdentity.kind);
+  expect(descriptor.source).toEqual(original.sourceIdentity);
+  expect(descriptor.imported.sourceIdentity).toEqual(original.sourceIdentity);
+  expect(descriptor.imported.compatibility).toEqual(original.compatibility);
+  expect(descriptor.imported.compatibility.nativeRuntimeVersion).not.toBe(
+    spec.canonical.runtimeVersion,
+  );
+  expect(descriptor.source.commit).not.toBe(spec.canonical.members[0].source.commit);
+});
+
+test('an imported external notice profile cannot claim a frozen contrib class', async () => {
+  const spec = await fixture(['vector']);
+  const document = JSON.parse(readFileSync(spec.leaf.manifest, 'utf8'));
+  document.extensionClass = 'contrib';
+  document.versioning = 'runtime-bound';
+  document.sourceIdentity = {
+    kind: 'postgres-contrib',
+    name: 'postgresql',
+    ...Bun.TOML.parse(
+      readFileSync(path.join(repository, 'src/third-party/postgres/source.toml'), 'utf8'),
+    ).postgresql,
+  };
+  writeFileSync(spec.leaf.manifest, JSON.stringify(document));
+  const originals = JSON.parse(readFileSync(spec.leaf.originalFiles!, 'utf8'));
+  Object.assign(originals.manifest, fileIdentity(spec.leaf.manifest));
+  writeFileSync(spec.leaf.originalFiles!, JSON.stringify(originals));
+  await expect(importMembers(spec)).rejects.toThrow(
+    'frozen legal profile differs from the original extension class',
+  );
 });
 
 test('rejects wrong configurations, absent members and changed original or nested hashes', async () => {

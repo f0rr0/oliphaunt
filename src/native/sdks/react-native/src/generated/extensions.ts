@@ -15,9 +15,11 @@ export type GeneratedExtensionMetadata = {
   readonly runtimeBound: boolean;
   readonly createsExtension: boolean;
   readonly nativeModuleStem: string | null;
+  readonly nativeModuleStems: readonly string[];
+  readonly sqlMembers: readonly string[];
+  readonly iosStaticDependencies: readonly string[];
   readonly dependencies: readonly string[];
   readonly selectedExtensionDependencies: readonly string[];
-  readonly iosStaticDependencies: readonly string[];
   readonly sharedPreloadLibraries: readonly string[];
   readonly dataFiles: readonly string[];
   readonly runtimeShareDataFiles: readonly string[];
@@ -26,7 +28,7 @@ export type GeneratedExtensionMetadata = {
   readonly sourceKind: string;
 };
 
-export const GENERATED_EXTENSION_METADATA_SHA256 = "c1d2e09905d7ecc0172173b34b9e4104dad58987503dd3dab7af4ae78890d9f3" as const;
+export const GENERATED_EXTENSION_METADATA_SHA256 = "dbe1ab284693ef923cb12e35e1c75bcc7fc1ed42af1fecf9fe9fee0aaf0ef8d0" as const;
 
 export const GENERATED_EXTENSION_METADATA = [
   {
@@ -43,6 +45,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "amcheck",
+    "nativeModuleStems": [
+      "amcheck"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -51,6 +56,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "amcheck"
+    ],
     "sqlName": "amcheck"
   },
   {
@@ -67,6 +75,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "auto_explain",
+    "nativeModuleStems": [
+      "auto_explain"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -75,6 +86,7 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [],
     "sqlName": "auto_explain"
   },
   {
@@ -91,6 +103,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "bloom",
+    "nativeModuleStems": [
+      "bloom"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -99,6 +114,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "bloom"
+    ],
     "sqlName": "bloom"
   },
   {
@@ -115,6 +133,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "btree_gin",
+    "nativeModuleStems": [
+      "btree_gin"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -123,6 +144,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "btree_gin"
+    ],
     "sqlName": "btree_gin"
   },
   {
@@ -139,6 +163,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "btree_gist",
+    "nativeModuleStems": [
+      "btree_gist"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -147,6 +174,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "btree_gist"
+    ],
     "sqlName": "btree_gist"
   },
   {
@@ -163,6 +193,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "citext",
+    "nativeModuleStems": [
+      "citext"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -171,6 +204,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "citext"
+    ],
     "sqlName": "citext"
   },
   {
@@ -187,6 +223,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "cube",
+    "nativeModuleStems": [
+      "cube"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -195,6 +234,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "cube"
+    ],
     "sqlName": "cube"
   },
   {
@@ -211,6 +253,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "dict_int",
+    "nativeModuleStems": [
+      "dict_int"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -219,6 +264,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "dict_int"
+    ],
     "sqlName": "dict_int"
   },
   {
@@ -237,6 +285,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "dict_xsyn",
+    "nativeModuleStems": [
+      "dict_xsyn"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -247,6 +298,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "dict_xsyn"
+    ],
     "sqlName": "dict_xsyn"
   },
   {
@@ -265,6 +319,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "earthdistance",
+    "nativeModuleStems": [
+      "earthdistance"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -275,6 +332,9 @@ export const GENERATED_EXTENSION_METADATA = [
     ],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "earthdistance"
+    ],
     "sqlName": "earthdistance"
   },
   {
@@ -291,6 +351,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "file_fdw",
+    "nativeModuleStems": [
+      "file_fdw"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -299,6 +362,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "file_fdw"
+    ],
     "sqlName": "file_fdw"
   },
   {
@@ -315,6 +381,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "fuzzystrmatch",
+    "nativeModuleStems": [
+      "fuzzystrmatch"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -323,6 +392,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "fuzzystrmatch"
+    ],
     "sqlName": "fuzzystrmatch"
   },
   {
@@ -339,6 +411,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "hstore",
+    "nativeModuleStems": [
+      "hstore"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -347,6 +422,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "hstore"
+    ],
     "sqlName": "hstore"
   },
   {
@@ -363,6 +441,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "_int",
+    "nativeModuleStems": [
+      "_int"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -371,6 +452,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "intarray"
+    ],
     "sqlName": "intarray"
   },
   {
@@ -387,6 +471,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "isn",
+    "nativeModuleStems": [
+      "isn"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -395,6 +482,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "isn"
+    ],
     "sqlName": "isn"
   },
   {
@@ -411,6 +501,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "lo",
+    "nativeModuleStems": [
+      "lo"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -419,6 +512,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "lo"
+    ],
     "sqlName": "lo"
   },
   {
@@ -435,6 +531,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "ltree",
+    "nativeModuleStems": [
+      "ltree"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -443,6 +542,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "ltree"
+    ],
     "sqlName": "ltree"
   },
   {
@@ -459,6 +561,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "pageinspect",
+    "nativeModuleStems": [
+      "pageinspect"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -467,6 +572,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "pageinspect"
+    ],
     "sqlName": "pageinspect"
   },
   {
@@ -483,6 +591,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "pg_buffercache",
+    "nativeModuleStems": [
+      "pg_buffercache"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -491,6 +602,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "pg_buffercache"
+    ],
     "sqlName": "pg_buffercache"
   },
   {
@@ -507,6 +621,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "pg_freespacemap",
+    "nativeModuleStems": [
+      "pg_freespacemap"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -515,6 +632,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "pg_freespacemap"
+    ],
     "sqlName": "pg_freespacemap"
   },
   {
@@ -531,6 +651,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-pg-hashids",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "pg_hashids",
+    "nativeModuleStems": [
+      "pg_hashids"
+    ],
     "npmPackage": "@oliphaunt/extension-pg-hashids",
     "postgresMajor": 18,
     "releaseProduct": "oliphaunt-extension-pg-hashids",
@@ -539,6 +662,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "oliphaunt-other-extension",
+    "sqlMembers": [
+      "pg_hashids"
+    ],
     "sqlName": "pg_hashids"
   },
   {
@@ -555,6 +681,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-pg-ivm",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "pg_ivm",
+    "nativeModuleStems": [
+      "pg_ivm"
+    ],
     "npmPackage": "@oliphaunt/extension-pg-ivm",
     "postgresMajor": 18,
     "releaseProduct": "oliphaunt-extension-pg-ivm",
@@ -563,6 +692,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "oliphaunt-other-extension",
+    "sqlMembers": [
+      "pg_ivm"
+    ],
     "sqlName": "pg_ivm"
   },
   {
@@ -579,6 +711,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "pg_surgery",
+    "nativeModuleStems": [
+      "pg_surgery"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -587,6 +722,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "pg_surgery"
+    ],
     "sqlName": "pg_surgery"
   },
   {
@@ -603,6 +741,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-pg-textsearch",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "pg_textsearch",
+    "nativeModuleStems": [
+      "pg_textsearch"
+    ],
     "npmPackage": "@oliphaunt/extension-pg-textsearch",
     "postgresMajor": 18,
     "releaseProduct": "oliphaunt-extension-pg-textsearch",
@@ -613,6 +754,9 @@ export const GENERATED_EXTENSION_METADATA = [
       "pg_textsearch"
     ],
     "sourceKind": "oliphaunt-other-extension",
+    "sqlMembers": [
+      "pg_textsearch"
+    ],
     "sqlName": "pg_textsearch"
   },
   {
@@ -629,6 +773,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "pg_trgm",
+    "nativeModuleStems": [
+      "pg_trgm"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -637,6 +784,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "pg_trgm"
+    ],
     "sqlName": "pg_trgm"
   },
   {
@@ -653,6 +803,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-pg-uuidv7",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "pg_uuidv7",
+    "nativeModuleStems": [
+      "pg_uuidv7"
+    ],
     "npmPackage": "@oliphaunt/extension-pg-uuidv7",
     "postgresMajor": 18,
     "releaseProduct": "oliphaunt-extension-pg-uuidv7",
@@ -661,6 +814,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "oliphaunt-other-extension",
+    "sqlMembers": [
+      "pg_uuidv7"
+    ],
     "sqlName": "pg_uuidv7"
   },
   {
@@ -677,6 +833,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "pg_visibility",
+    "nativeModuleStems": [
+      "pg_visibility"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -685,6 +844,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "pg_visibility"
+    ],
     "sqlName": "pg_visibility"
   },
   {
@@ -701,6 +863,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "pg_walinspect",
+    "nativeModuleStems": [
+      "pg_walinspect"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -709,6 +874,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "pg_walinspect"
+    ],
     "sqlName": "pg_walinspect"
   },
   {
@@ -727,6 +895,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "pgcrypto",
+    "nativeModuleStems": [
+      "pgcrypto"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -735,6 +906,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "pgcrypto"
+    ],
     "sqlName": "pgcrypto"
   },
   {
@@ -758,6 +932,7 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-pgtap",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": null,
+    "nativeModuleStems": [],
     "npmPackage": "@oliphaunt/extension-pgtap",
     "postgresMajor": 18,
     "releaseProduct": "oliphaunt-extension-pgtap",
@@ -766,6 +941,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "oliphaunt-other-extension",
+    "sqlMembers": [
+      "pgtap"
+    ],
     "sqlName": "pgtap"
   },
   {
@@ -781,9 +959,37 @@ export const GENERATED_EXTENSION_METADATA = [
       "share/postgresql/contrib/postgis-3.6/spatial_ref_sys.sql",
       "share/postgresql/contrib/postgis-3.6/uninstall_legacy.sql",
       "share/postgresql/contrib/postgis-3.6/uninstall_postgis.sql",
+      "share/postgresql/gdal/GDALLogoBW.svg",
+      "share/postgresql/gdal/GDALLogoColor.svg",
+      "share/postgresql/gdal/GDALLogoGS.svg",
+      "share/postgresql/gdal/LICENSE.TXT",
+      "share/postgresql/gdal/cubewerx_extra.wkt",
+      "share/postgresql/gdal/ecw_cs.wkt",
+      "share/postgresql/gdal/epsg.wkt",
+      "share/postgresql/gdal/esri_StatePlane_extra.wkt",
+      "share/postgresql/gdal/gdal_algorithm.schema.json",
+      "share/postgresql/gdal/gdalicon.png",
+      "share/postgresql/gdal/gdalinfo_output.schema.json",
+      "share/postgresql/gdal/gdalmdiminfo_output.schema.json",
+      "share/postgresql/gdal/gdalvrt.xsd",
+      "share/postgresql/gdal/leaflet_template.html",
+      "share/postgresql/gdal/ogr_fields_override.schema.json",
+      "share/postgresql/gdal/ogrinfo_output.schema.json",
+      "share/postgresql/gdal/ozi_datum.csv",
+      "share/postgresql/gdal/ozi_ellips.csv",
+      "share/postgresql/gdal/pci_datum.txt",
+      "share/postgresql/gdal/pci_ellips.txt",
+      "share/postgresql/gdal/stateplane.csv",
+      "share/postgresql/gdal/template_tiles.mapml",
+      "share/postgresql/gdal/tms_LINZAntarticaMapTileGrid.json",
+      "share/postgresql/gdal/tms_MapML_APSTILE.json",
+      "share/postgresql/gdal/tms_MapML_CBMTILE.json",
+      "share/postgresql/gdal/tms_NZTM2000.json",
       "share/postgresql/proj/proj.db"
     ],
-    "dependencies": [],
+    "dependencies": [
+      "fuzzystrmatch"
+    ],
     "displayName": "PostGIS",
     "extensionSqlFileNames": [
       "uninstall_postgis.sql"
@@ -791,10 +997,14 @@ export const GENERATED_EXTENSION_METADATA = [
     "extensionSqlFilePrefixes": [
       "postgis_comments",
       "postgis_proc_set_search_path",
+      "postgis_raster",
+      "postgis_tiger_geocoder",
+      "postgis_topology",
       "rtpostgis"
     ],
     "id": "postgis",
     "iosStaticDependencies": [
+      "gdal",
       "geos",
       "geos-c",
       "json-c",
@@ -805,6 +1015,11 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-postgis",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "postgis-3",
+    "nativeModuleStems": [
+      "postgis-3",
+      "postgis_raster-3",
+      "postgis_topology-3"
+    ],
     "npmPackage": "@oliphaunt/extension-postgis",
     "postgresMajor": 18,
     "releaseProduct": "oliphaunt-extension-postgis",
@@ -818,11 +1033,45 @@ export const GENERATED_EXTENSION_METADATA = [
       "contrib/postgis-3.6/spatial_ref_sys.sql",
       "contrib/postgis-3.6/uninstall_legacy.sql",
       "contrib/postgis-3.6/uninstall_postgis.sql",
+      "gdal/GDALLogoBW.svg",
+      "gdal/GDALLogoColor.svg",
+      "gdal/GDALLogoGS.svg",
+      "gdal/LICENSE.TXT",
+      "gdal/cubewerx_extra.wkt",
+      "gdal/ecw_cs.wkt",
+      "gdal/epsg.wkt",
+      "gdal/esri_StatePlane_extra.wkt",
+      "gdal/gdal_algorithm.schema.json",
+      "gdal/gdalicon.png",
+      "gdal/gdalinfo_output.schema.json",
+      "gdal/gdalmdiminfo_output.schema.json",
+      "gdal/gdalvrt.xsd",
+      "gdal/leaflet_template.html",
+      "gdal/ogr_fields_override.schema.json",
+      "gdal/ogrinfo_output.schema.json",
+      "gdal/ozi_datum.csv",
+      "gdal/ozi_ellips.csv",
+      "gdal/pci_datum.txt",
+      "gdal/pci_ellips.txt",
+      "gdal/stateplane.csv",
+      "gdal/template_tiles.mapml",
+      "gdal/tms_LINZAntarticaMapTileGrid.json",
+      "gdal/tms_MapML_APSTILE.json",
+      "gdal/tms_MapML_CBMTILE.json",
+      "gdal/tms_NZTM2000.json",
       "proj/proj.db"
     ],
-    "selectedExtensionDependencies": [],
+    "selectedExtensionDependencies": [
+      "fuzzystrmatch"
+    ],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgis",
+    "sqlMembers": [
+      "postgis",
+      "postgis_raster",
+      "postgis_tiger_geocoder",
+      "postgis_topology"
+    ],
     "sqlName": "postgis"
   },
   {
@@ -839,6 +1088,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "seg",
+    "nativeModuleStems": [
+      "seg"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -847,6 +1099,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "seg"
+    ],
     "sqlName": "seg"
   },
   {
@@ -863,6 +1118,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "tablefunc",
+    "nativeModuleStems": [
+      "tablefunc"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -871,6 +1129,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "tablefunc"
+    ],
     "sqlName": "tablefunc"
   },
   {
@@ -887,6 +1148,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "tcn",
+    "nativeModuleStems": [
+      "tcn"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -895,6 +1159,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "tcn"
+    ],
     "sqlName": "tcn"
   },
   {
@@ -911,6 +1178,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "tsm_system_rows",
+    "nativeModuleStems": [
+      "tsm_system_rows"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -919,6 +1189,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "tsm_system_rows"
+    ],
     "sqlName": "tsm_system_rows"
   },
   {
@@ -935,6 +1208,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "tsm_system_time",
+    "nativeModuleStems": [
+      "tsm_system_time"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -943,6 +1219,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "tsm_system_time"
+    ],
     "sqlName": "tsm_system_time"
   },
   {
@@ -961,6 +1240,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "unaccent",
+    "nativeModuleStems": [
+      "unaccent"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -971,6 +1253,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "unaccent"
+    ],
     "sqlName": "unaccent"
   },
   {
@@ -989,6 +1274,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-contrib-pg18",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "uuid-ossp",
+    "nativeModuleStems": [
+      "uuid-ossp"
+    ],
     "npmPackage": "@oliphaunt/extension-contrib-pg18",
     "postgresMajor": 18,
     "releaseProduct": "liboliphaunt-native",
@@ -997,6 +1285,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "postgres-contrib",
+    "sqlMembers": [
+      "uuid-ossp"
+    ],
     "sqlName": "uuid-ossp"
   },
   {
@@ -1013,6 +1304,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "mavenArtifact": "oliphaunt-extension-vector",
     "mavenGroup": "dev.oliphaunt.extensions",
     "nativeModuleStem": "vector",
+    "nativeModuleStems": [
+      "vector"
+    ],
     "npmPackage": "@oliphaunt/extension-vector",
     "postgresMajor": 18,
     "releaseProduct": "oliphaunt-extension-vector",
@@ -1021,6 +1315,9 @@ export const GENERATED_EXTENSION_METADATA = [
     "selectedExtensionDependencies": [],
     "sharedPreloadLibraries": [],
     "sourceKind": "oliphaunt-other-extension",
+    "sqlMembers": [
+      "vector"
+    ],
     "sqlName": "vector"
   }
 ] as const satisfies readonly GeneratedExtensionMetadata[];

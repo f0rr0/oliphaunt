@@ -12,6 +12,7 @@ import {
 } from '../../../../../tools/packaging/portable-archive.mts';
 import {
   loadSwiftExtensionInventoryCatalog,
+  normalizeExtensionMemberClosure,
   validateSwiftExtensionResourceArtifact,
 } from './extension-resource-inventory.mts';
 
@@ -444,7 +445,7 @@ function validateExtensionReleaseReference(value, label) {
   return { product, tag: row.tag, version };
 }
 function validateExtension(value, label, carriers) {
-  const row = object(value, label);
+  const row = normalizeExtensionMemberClosure(object(value, label));
   exactKeys(
     row,
     [
@@ -463,6 +464,8 @@ function validateExtension(value, label, carriers) {
       'sqlName',
       'tag',
       'version',
+      'sqlMembers',
+      'nativeModuleStems',
     ],
     label,
   );
@@ -483,6 +486,8 @@ function validateExtension(value, label, carriers) {
   if (dependencies.includes(sqlName))
     fail(`${label}.dependencies must not include ${sqlName} itself`);
   return {
+    sqlMembers: canonicalIds(row.sqlMembers, `${label}.sqlMembers`),
+    nativeModuleStems: canonicalIds(row.nativeModuleStems, `${label}.nativeModuleStems`),
     assets: assetLocators(row.assets, `${label}.assets`, carriers),
     createsExtension: row.createsExtension,
     dataFiles: canonicalRelativeFiles(row.dataFiles, `${label}.dataFiles`),
@@ -1029,6 +1034,8 @@ export async function resolveSwiftCarrierSelection({
       version: row.version,
       sqlName: row.sqlName,
       createsExtension: row.createsExtension,
+      sqlMembers: row.sqlMembers,
+      nativeModuleStems: row.nativeModuleStems,
       dataFiles: row.dataFiles,
       dependencies: row.dependencies,
       extensionSqlFileNames: row.extensionSqlFileNames,

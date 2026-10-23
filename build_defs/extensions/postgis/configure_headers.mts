@@ -50,6 +50,36 @@ function enabled(names: string): Values {
   );
 }
 
+/** Follow the pinned C API's version and documentation template variables. */
+export function geosHeaderValues(versionText: string, capiCmake: string): Values {
+  const version = Object.fromEntries(
+    [...versionText.matchAll(/^(\w+)=(.*)$/gmu)].map((match) => [match[1], match[2]]),
+  );
+  const major = version.GEOS_VERSION_MAJOR;
+  const minor = version.GEOS_VERSION_MINOR;
+  const patch = version.GEOS_VERSION_PATCH;
+  const apiMajor = Number(version.CAPI_INTERFACE_CURRENT) - Number(version.CAPI_INTERFACE_AGE);
+  if (!major || !minor || !patch || !Number.isInteger(apiMajor))
+    throw new Error('invalid GEOS upstream Version.txt');
+  const values: Values = {
+    VERSION_MAJOR: major,
+    VERSION_MINOR: minor,
+    VERSION_PATCH: patch,
+    VERSION: `${major}.${minor}.${patch}${version.GEOS_PATCH_WORD ?? ''}`,
+    JTS_PORT: version.JTS_PORT,
+    CAPI_VERSION_MAJOR: String(apiMajor),
+    CAPI_VERSION_MINOR: version.CAPI_INTERFACE_AGE,
+    CAPI_VERSION_PATCH: version.CAPI_INTERFACE_REVISION,
+    CAPI_VERSION: `${apiMajor}.${version.CAPI_INTERFACE_AGE}.${version.CAPI_INTERFACE_REVISION}`,
+  };
+  for (const key of ['INPUT_CURVES_CONVERTED_TO_LINES', 'OUTPUT_LINES_CONVERTED_TO_CURVES']) {
+    const matches = [...capiCmake.matchAll(new RegExp(`set\\(${key} "([^"\\\\]*)"\\)`, 'gu'))];
+    if (matches.length !== 1) throw new Error(`review the GEOS C API template variable ${key}`);
+    values[key] = matches[0][1];
+  }
+  return values;
+}
+
 /** Only the maintained checker's explicit defines become template substitutions. */
 export function compilerFacts(header: string): Values {
   const result: Values = {};
@@ -103,6 +133,13 @@ export function targetSubstitutions(
     result.JSON_C_HAVE_INTTYPES_H = facts.HAVE_INTTYPES_H ?? '0';
   if (Object.hasOwn(original, 'JSON_C_HAVE_STDINT_H'))
     result.JSON_C_HAVE_STDINT_H = facts.HAVE_STDINT_H ?? '0';
+  // json-c's pinned CMake recipe enables this newlocale ownership workaround
+  // on Apple targets; the locale functions themselves remain compiler facts.
+  if (
+    Object.hasOwn(original, 'JSON_C_HAVE_INTTYPES_H') &&
+    (target === 'macos-arm64' || target.startsWith('ios-'))
+  )
+    result.NEWLOCALE_NEEDS_FREELOCALE = '1';
   // These facts describe the declared dependency graph, rather than libc probes.
   for (const key of Object.keys(original)) {
     if (
@@ -174,29 +211,10 @@ if (import.meta.main) {
     );
   };
   if (values.kind === 'geos') {
-    const version = Object.fromEntries(
-      [...read(join(source, 'Version.txt')).matchAll(/^(\w+)=(.*)$/gmu)].map((match) => [
-        match[1],
-        match[2],
-      ]),
+    const substitutions = geosHeaderValues(
+      read(join(source, 'Version.txt')),
+      read(join(source, 'capi/CMakeLists.txt')),
     );
-    const major = version.GEOS_VERSION_MAJOR;
-    const minor = version.GEOS_VERSION_MINOR;
-    const patch = version.GEOS_VERSION_PATCH;
-    const apiMajor = Number(version.CAPI_INTERFACE_CURRENT) - Number(version.CAPI_INTERFACE_AGE);
-    if (!major || !minor || !patch || !Number.isInteger(apiMajor))
-      throw new Error('invalid GEOS upstream Version.txt');
-    const substitutions = {
-      VERSION_MAJOR: major,
-      VERSION_MINOR: minor,
-      VERSION_PATCH: patch,
-      VERSION: `${major}.${minor}.${patch}${version.GEOS_PATCH_WORD ?? ''}`,
-      JTS_PORT: version.JTS_PORT,
-      CAPI_VERSION_MAJOR: String(apiMajor),
-      CAPI_VERSION_MINOR: version.CAPI_INTERFACE_AGE,
-      CAPI_VERSION_PATCH: version.CAPI_INTERFACE_REVISION,
-      CAPI_VERSION: `${apiMajor}.${version.CAPI_INTERFACE_AGE}.${version.CAPI_INTERFACE_REVISION}`,
-    };
     emit('include/geos/version.h.in', 'geos/version.h', substitutions);
     emit('capi/geos_c.h.in', 'geos_c.h', substitutions);
   } else if (values.kind === 'json_c') {
@@ -205,7 +223,7 @@ if (import.meta.main) {
     if (!version) throw new Error('review json-c upstream version syntax');
     const substitutions = {
       ...enabled(
-        'HAVE_DLFCN_H HAVE_ENDIAN_H HAVE_FCNTL_H HAVE_INTTYPES_H HAVE_LIMITS_H HAVE_LOCALE_H HAVE_MEMORY_H HAVE_STDARG_H HAVE_STDINT_H HAVE_STDLIB_H HAVE_STRINGS_H HAVE_STRING_H HAVE_SYSLOG_H HAVE_SYS_CDEFS_H HAVE_SYS_PARAM_H HAVE_SYS_RANDOM_H HAVE_SYS_RESOURCE_H HAVE_SYS_STAT_H HAVE_SYS_TYPES_H HAVE_UNISTD_H HAVE_ATOMIC_BUILTINS HAVE_DECL_INFINITY HAVE_DECL_ISINF HAVE_DECL_ISNAN HAVE_DECL_NAN HAVE_OPEN HAVE_REALLOC HAVE_SETLOCALE HAVE_SNPRINTF HAVE_STRCASECMP HAVE_STRDUP HAVE_STRERROR HAVE_STRNCASECMP HAVE_USELOCALE HAVE_VASPRINTF HAVE_VPRINTF HAVE_VSNPRINTF HAVE_VSYSLOG HAVE_GETRANDOM HAVE_GETRUSAGE HAVE_STRTOLL HAVE_STRTOULL HAVE___THREAD JSON_C_HAVE_INTTYPES_H JSON_C_HAVE_STDINT_H STDC_HEADERS',
+        'HAVE_DLFCN_H HAVE_ENDIAN_H HAVE_FCNTL_H HAVE_INTTYPES_H HAVE_LIMITS_H HAVE_LOCALE_H HAVE_MEMORY_H HAVE_STDARG_H HAVE_STDINT_H HAVE_STDLIB_H HAVE_STRINGS_H HAVE_STRING_H HAVE_SYSLOG_H HAVE_SYS_CDEFS_H HAVE_SYS_PARAM_H HAVE_SYS_RANDOM_H HAVE_SYS_RESOURCE_H HAVE_SYS_STAT_H HAVE_SYS_TYPES_H HAVE_UNISTD_H HAVE_ATOMIC_BUILTINS HAVE_DECL_INFINITY HAVE_DECL_ISINF HAVE_DECL_ISNAN HAVE_DECL_NAN HAVE_OPEN HAVE_REALLOC HAVE_SETLOCALE HAVE_SNPRINTF HAVE_STRCASECMP HAVE_STRDUP HAVE_STRERROR HAVE_STRNCASECMP HAVE_USELOCALE HAVE_DUPLOCALE HAVE_VASPRINTF HAVE_VPRINTF HAVE_VSNPRINTF HAVE_VSYSLOG HAVE_GETRANDOM HAVE_GETRUSAGE HAVE_STRTOLL HAVE_STRTOULL HAVE___THREAD JSON_C_HAVE_INTTYPES_H JSON_C_HAVE_STDINT_H STDC_HEADERS',
       ),
       PROJECT_NAME: 'json-c',
       JSON_C_BUGREPORT: 'json-c@googlegroups.com',
@@ -327,6 +345,7 @@ if (import.meta.main) {
       POSTGIS_MINOR_VERSION: minor,
       POSTGIS_MICRO_VERSION: micro,
       POSTGIS_GEOS_VERSION: number(dependencyVersion('geos')),
+      POSTGIS_GDAL_VERSION: number(dependencyVersion('gdal')),
       POSTGIS_PROJ_VERSION: number(dependencyVersion('proj')),
       POSTGIS_LIBXML2_VERSION: dependencyVersion('libxml2'),
       POSTGIS_SFCGAL_VERSION: '0',
@@ -354,11 +373,19 @@ if (import.meta.main) {
     emit('postgis_config.h.in', 'postgis_config.h', quoted);
     emit('liblwgeom/liblwgeom.h.in', 'liblwgeom/liblwgeom.h', substitutions);
     emit('postgis/sqldefines.h.in', 'postgis/sqldefines.h', substitutions);
+    emit('raster/raster_config.h.in', 'raster/rt_core/raster_config.h', substitutions);
     emit(
       'extensions/postgis/postgis.control.in',
       'extensions/postgis/postgis.control',
       substitutions,
     );
+    for (const member of ['postgis_raster', 'postgis_topology', 'postgis_tiger_geocoder']) {
+      emit(`extensions/${member}/${member}.control.in`, `extensions/${member}/${member}.control`, {
+        ...substitutions,
+        EXTENSION: member,
+        MODULEPATH: `$libdir/${member}-${major}`,
+      });
+    }
     writeFileSync(
       join(output, 'postgis_revision.h'),
       `#define POSTGIS_REVISION ${identity.commit}\n`,

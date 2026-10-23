@@ -9,7 +9,7 @@ load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["release.toml", "source.toml", "recipe.toml", "upstream-license-data.json"] + glob(["dependencies/*/source.toml"]))
+exports_files(["release.toml", "source.toml", "recipe.toml", "targets/native.toml", "upstream-license-data.json"] + glob(["dependencies/*/source.toml"]))
 exports_files(["tools/windows/postgis-compat.h", "tools/windows/flatgeobuf-compat.h"])
 
 native_external_extension_carriers(sql_name = "postgis")
@@ -22,10 +22,12 @@ _DATA = EXTENSION_RECIPES["postgis"]["artifacts"]["data_files"]
 _CONTRIB_DIRECTORIES = {"/".join(path.split("/")[:-1]): True for path in _DATA if path.endswith(".sql")}.keys()
 
 extension_member_payload(name = "native_payload", sql_name = "postgis", owner = extension_identity("postgis"),
-                         resources = ["//build_defs/extensions/postgis:extension_sql", "//build_defs/extensions/postgis:control"],
+                         resources = ["//build_defs/extensions/postgis:extension_sql", "//build_defs/extensions/postgis:control", "//build_defs/extensions/postgis:gdal_payload_data"],
                          data_resources = {"//build_defs/extensions/postgis:data_sql": _CONTRIB_DIRECTORIES[0],
                                            "//build_defs/extensions/postgis:database": [path for path in _DATA if path.endswith("/proj.db")][0]},
                          dependency_modules = postgis_dependency_module_labels("//build_defs/extensions/postgis:dependency_module"),
+                         server_companion_modules = [":postgis_raster_server_file", ":postgis_topology_server_file"],
+                         embedded_companion_modules = [":postgis_raster_embedded_file", ":postgis_topology_embedded_file"],
                          server_module = ":postgis_server_module", embedded_module = ":postgis_embedded_module")
 
 shipping_package(name = "native_member", owner = extension_identity("postgis"), artifacts = [":native_payload"],

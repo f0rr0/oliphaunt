@@ -79,6 +79,8 @@ test('iOS qualification keeps the Swift base, independent carriers and binary ch
         },
         sqlName: 'pgtap',
         createsExtension: true,
+        sqlMembers: ['pgtap'],
+        nativeModuleStems: [],
         dependencies: [],
         dataFiles: [],
         extensionSqlFileNames: [],

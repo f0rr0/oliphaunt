@@ -68,6 +68,7 @@ export interface ReleaseMetadata {
   wasixExtensions: Record<string, Record<string, unknown>>;
   extensionSources: Record<string, Record<string, unknown>>;
   extensionRecipes: Record<string, Record<string, unknown>>;
+  extensionNativeTargets: Record<string, Record<string, unknown>>;
   extensionCompatibility: Record<string, Record<string, unknown>>;
   extensionDependencies: Record<string, Record<string, Record<string, unknown>>>;
   extensionReleaseMetadata: Record<string, unknown>[];
@@ -364,6 +365,7 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
   }
   const extensionSources: ReleaseMetadata['extensionSources'] = {};
   const extensionRecipes: ReleaseMetadata['extensionRecipes'] = {};
+  const extensionNativeTargets: ReleaseMetadata['extensionNativeTargets'] = {};
   const extensionCompatibility: ReleaseMetadata['extensionCompatibility'] = {};
   const extensionDependencies: ReleaseMetadata['extensionDependencies'] = {};
   for (const [product, descriptor] of descriptors) {
@@ -405,6 +407,8 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
       directories[directory] = null;
     }
     const recipe = optionalToml(`${path.posix.dirname(sourcePath)}/recipe.toml`);
+    extensionNativeTargets[sqlName] =
+      optionalToml(`${path.posix.dirname(sourcePath)}/targets/native.toml`) ?? {};
     if (recipe) {
       if (recipe.sql_name !== sqlName)
         throw new Error(`${product} recipe disagrees with SQL identity ${sqlName}`);
@@ -712,6 +716,7 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
     wasixExtensions,
     extensionSources,
     extensionRecipes,
+    extensionNativeTargets,
     extensionCompatibility,
     extensionDependencies,
     extensionReleaseMetadata,
@@ -961,6 +966,7 @@ export function renderReleaseMetadata(
     WASIX_EXTENSIONS: metadata.wasixExtensions,
     EXTENSION_SOURCES: metadata.extensionSources,
     EXTENSION_RECIPES: metadata.extensionRecipes,
+    EXTENSION_NATIVE_TARGETS: metadata.extensionNativeTargets,
     EXTENSION_COMPATIBILITY: metadata.extensionCompatibility,
     EXTENSION_DEPENDENCIES: metadata.extensionDependencies,
     EXTENSION_RELEASE_METADATA: metadata.extensionReleaseMetadata,

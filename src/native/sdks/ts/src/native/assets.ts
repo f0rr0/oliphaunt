@@ -30,9 +30,9 @@ import {
   parseNpmExtensionLicenseFiles,
 } from './extension-contract.js';
 import {
+  isCanonicalExtensionInstallSql,
   nativeModuleSuffixForTarget,
   type RuntimeFileHost,
-  selectedExtensionClosure,
   validatePreparedRuntimeExtensions,
 } from './extension-runtime.js';
 import { syncDirectory, syncRuntimeDirectoryTree } from './filesystem-durability.js';
@@ -101,6 +101,8 @@ type NpmExtensionMemberContract = {
   createsExtension: boolean;
   nativeModuleStem: string | null;
   nativeDependencyModules: string[];
+  nativeModuleStems: string[];
+  sqlMembers: string[];
   dependencies: string[];
   dataFiles: string[];
   extensionSqlFileNames: string[];
@@ -143,7 +145,9 @@ const NPM_EXTENSION_CONTRACT_MEMBER_FIELDS = [
   'extensionSqlFilePrefixes',
   'licenseFiles',
   'nativeModuleStem',
+  'nativeModuleStems',
   'sharedPreloadLibraries',
+  'sqlMembers',
   'sqlName',
 ] as const;
 
@@ -227,9 +231,14 @@ export async function materializeExtensionInstall(
   extensions: ReadonlyArray<string> = [],
   descriptors: readonly NativeExtension[] = [],
 ): Promise<ResolvedNativeInstall> {
-  const selected = selectedExtensionClosure(extensions);
+  const selected = [...new Set(extensions)].sort(compareText);
   if (selected.length === 0) {
     return install;
+  }
+  for (const sqlName of selected) {
+    if (generatedExtensionBySqlName(sqlName) === undefined) {
+      throw new Error(`unknown Oliphaunt extension id '${sqlName}'`);
+    }
   }
   if (install.runtimeDirectory === undefined) {
     throw new Error(
@@ -237,18 +246,54 @@ export async function materializeExtensionInstall(
     );
   }
   const installRuntimeDirectory = install.runtimeDirectory;
-
   const versions = await packageVersions();
   const target = liboliphauntPackageTarget(platform(), arch());
-  const packages = await Promise.all(
-    selected.map((sqlName) =>
-      resolveExtensionPackage(
-        sqlName,
-        target.id,
-        versions.liboliphauntVersion,
-        descriptors.find((value) => value.sqlName === sqlName),
+  const resolved = new Map<string, ResolvedExtensionPackage>();
+  const requested = new Set(selected.map((sqlName) => JSON.stringify([sqlName, null])));
+  let pending: Array<{ sqlName: string; parentPackageJsonPath?: string }> = selected.map(
+    (sqlName) => ({ sqlName }),
+  );
+  while (pending.length > 0) {
+    const entries = await Promise.all(
+      pending.map(({ sqlName, parentPackageJsonPath }) =>
+        resolveExtensionPackage(
+          sqlName,
+          target.id,
+          versions.liboliphauntVersion,
+          descriptors.find((value) => value.sqlName === sqlName),
+          parentPackageJsonPath,
+        ),
       ),
-    ),
+    );
+    pending = [];
+    for (const entry of entries) {
+      const prior = resolved.get(entry.sqlName);
+      if (
+        prior !== undefined &&
+        (prior.version !== entry.version ||
+          prior.payloadDigest !== entry.payloadDigest ||
+          JSON.stringify(prior.contract) !== JSON.stringify(entry.contract))
+      ) {
+        throw new Error(`conflicting packages selected for native extension '${entry.sqlName}'`);
+      }
+      if (prior === undefined) resolved.set(entry.sqlName, entry);
+      for (const sqlName of entry.contract.dependencies) {
+        const parentPackageJsonPath = entry.ownerPackageJsonPath;
+        const request = JSON.stringify([sqlName, parentPackageJsonPath]);
+        if (requested.has(request)) continue;
+        requested.add(request);
+        pending.push({ sqlName, parentPackageJsonPath });
+      }
+    }
+    pending.sort((left, right) =>
+      compareText(
+        `${left.sqlName}\0${left.parentPackageJsonPath}`,
+        `${right.sqlName}\0${right.parentPackageJsonPath}`,
+      ),
+    );
+  }
+  const packages = [...resolved.values()].sort((left, right) =>
+    compareText(left.sqlName, right.sqlName),
   );
   const cacheKey = runtimeCacheKey({
     libraryPath: install.libraryPath,
@@ -258,6 +303,7 @@ export async function materializeExtensionInstall(
       name: entry.name,
       version: entry.version,
       contract: entry.contract,
+      payloadDigest: entry.payloadDigest,
       runtimeDirectories: entry.runtimeDirectories,
       moduleDirectories: entry.moduleDirectories,
     })),
@@ -276,6 +322,7 @@ export async function materializeExtensionInstall(
         version: entry.version,
         sqlName: entry.sqlName,
         contract: entry.contract,
+        payloadDigest: entry.payloadDigest,
       })),
     },
     null,
@@ -341,7 +388,9 @@ type ResolvedExtensionPackage = {
   name: string;
   version: string;
   sqlName: string;
+  ownerPackageJsonPath: string;
   contract: NpmExtensionMemberContract;
+  payloadDigest: string;
   runtimeDirectories: string[];
   moduleDirectories: string[];
 };
@@ -351,6 +400,7 @@ async function resolveExtensionPackage(
   target: string,
   liboliphauntVersion: string,
   descriptor?: NativeExtension,
+  parentPackageJsonPath?: string,
 ): Promise<ResolvedExtensionPackage> {
   const extension = generatedExtensionBySqlName(sqlName);
   if (extension === undefined) {
@@ -363,6 +413,7 @@ async function resolveExtensionPackage(
     targetPackageName,
     target,
     descriptor,
+    parentPackageJsonPath,
   );
   const packageJsonPath = resolvedTarget.packageJsonPath;
   const packageRoot = dirname(packageJsonPath);
@@ -474,7 +525,9 @@ async function resolveExtensionPackage(
     name: targetPackageName,
     version: packageJson.version,
     sqlName,
+    ownerPackageJsonPath: resolvedTarget.ownerPackageJsonPath,
     contract: selectedContract,
+    payloadDigest: await extensionPayloadDigest(runtimeDirectories),
     runtimeDirectories,
     moduleDirectories,
   };
@@ -600,7 +653,12 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${label} must be a JSON object`);
   }
-  const row = value as Record<string, unknown>;
+  const row = { ...value } as Record<string, unknown>;
+  // Published v1 carriers without companion fields contain only their primary identities.
+  if (!('sqlMembers' in row) && !('nativeModuleStems' in row)) {
+    row.sqlMembers = row.createsExtension ? [row.sqlName] : [];
+    row.nativeModuleStems = row.nativeModuleStem === null ? [] : [row.nativeModuleStem];
+  }
   if (
     JSON.stringify(
       Object.keys(row)
@@ -624,6 +682,30 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
       !/^[A-Za-z0-9._-]{1,128}$/u.test(row.nativeModuleStem))
   ) {
     throw new Error(`${label}.nativeModuleStem must be null or a portable identifier`);
+  }
+  const sqlMembers = parseExtensionContractStringList(row.sqlMembers, 'sqlMembers', label);
+  const nativeModuleStems = parseExtensionContractStringList(
+    row.nativeModuleStems,
+    'nativeModuleStems',
+    label,
+  );
+  for (const [field, values] of [
+    ['sqlMembers', sqlMembers],
+    ['nativeModuleStems', nativeModuleStems],
+  ] as const) {
+    if (values.some((value) => !/^[A-Za-z0-9._-]{1,128}$/u.test(value))) {
+      throw new Error(`${label}.${field} contains an invalid identifier`);
+    }
+  }
+  if (row.createsExtension ? !sqlMembers.includes(row.sqlName) : sqlMembers.length !== 0) {
+    throw new Error(`${label}.sqlMembers must preserve its primary extension identity`);
+  }
+  if (
+    row.nativeModuleStem === null
+      ? nativeModuleStems.length !== 0
+      : !nativeModuleStems.includes(row.nativeModuleStem as string)
+  ) {
+    throw new Error(`${label}.nativeModuleStems must preserve its primary module identity`);
   }
   const dependencies = parseExtensionContractStringList(row.dependencies, 'dependencies', label);
   if (
@@ -681,6 +763,8 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
     createsExtension: row.createsExtension,
     nativeModuleStem: row.nativeModuleStem as string | null,
     nativeDependencyModules,
+    nativeModuleStems,
+    sqlMembers,
     dependencies,
     dataFiles,
     extensionSqlFileNames,
@@ -760,10 +844,11 @@ async function loadExtensionPackageContract(config: {
     if (
       current === undefined ||
       current.artifactProduct !== config.extension.artifactProduct ||
-      JSON.stringify(current.selectedExtensionDependencies) !== JSON.stringify(member.dependencies)
+      member.createsExtension !== current.createsExtension ||
+      member.nativeModuleStem !== current.nativeModuleStem
     ) {
       throw new Error(
-        `${config.packageName} extension contract member ${member.sqlName} is incompatible with the SDK dependency contract`,
+        `${config.packageName} extension contract member ${member.sqlName} is incompatible with the SDK extension contract`,
       );
     }
   }
@@ -1090,23 +1175,16 @@ function extensionRuntimeSqlFileOwned(
   fileName: string,
 ): boolean {
   return (
-    (extension.createsExtension && fileName === `${extension.sqlName}.control`) ||
-    (extension.createsExtension && fileName === `${extension.sqlName}.sql`) ||
-    (extension.createsExtension &&
-      fileName.startsWith(`${extension.sqlName}--`) &&
-      fileName.endsWith('.sql')) ||
+    extension.sqlMembers.some(
+      (sqlName) =>
+        fileName === `${sqlName}.control` ||
+        fileName === `${sqlName}.sql` ||
+        (fileName.startsWith(`${sqlName}--`) && fileName.endsWith('.sql')),
+    ) ||
     extension.extensionSqlFileNames.includes(fileName) ||
     (fileName.endsWith('.sql') &&
       extension.extensionSqlFilePrefixes.some((prefix) => fileName.startsWith(prefix)))
   );
-}
-
-function isCanonicalExtensionInstallSql(fileName: string, sqlName: string): boolean {
-  if (fileName === `${sqlName}.sql`) return true;
-  const prefix = `${sqlName}--`;
-  if (!fileName.startsWith(prefix) || !fileName.endsWith('.sql')) return false;
-  const version = fileName.slice(prefix.length, -'.sql'.length);
-  return /^[0-9][A-Za-z0-9._-]*$/u.test(version) && !version.includes('--');
 }
 
 async function exactRuntimeLeafPaths(root: string, source: string): Promise<string[]> {
@@ -1162,6 +1240,18 @@ async function exactRuntimeLeafPaths(root: string, source: string): Promise<stri
   return rows;
 }
 
+async function extensionPayloadDigest(roots: readonly string[]): Promise<string> {
+  const digest = createHash('sha256');
+  for (const root of [...roots].sort(compareText)) {
+    const files = await exactRuntimeLeafPaths(root, 'extension cache inputs');
+    for (const file of files.sort(compareText)) {
+      const identity = await fileSha256AndBytes(join(root, file));
+      digest.update(JSON.stringify([file, identity.sha256, identity.bytes]));
+    }
+  }
+  return digest.digest('hex');
+}
+
 async function requireExactExtensionRuntimeInventory(config: {
   contract: NpmExtensionMemberContract;
   runtimeDirectory: string;
@@ -1177,16 +1267,14 @@ async function requireExactExtensionRuntimeInventory(config: {
       `lib/modules/${file}`,
     ]),
   );
-  const moduleFile =
-    config.contract.nativeModuleStem === null
-      ? undefined
-      : `lib/postgresql/${config.contract.nativeModuleStem}${nativeModuleSuffixForTarget(config.target)}`;
-  const embeddedModuleFile =
-    config.contract.nativeModuleStem === null
-      ? undefined
-      : `lib/modules/${config.contract.nativeModuleStem}${nativeModuleSuffixForTarget(config.target)}`;
-  let hasControl = false;
-  let hasSql = false;
+  const moduleFiles = config.contract.nativeModuleStems.map(
+    (stem) => `lib/postgresql/${stem}${nativeModuleSuffixForTarget(config.target)}`,
+  );
+  const embeddedModuleFiles = config.contract.nativeModuleStems.map(
+    (stem) => `lib/modules/${stem}${nativeModuleSuffixForTarget(config.target)}`,
+  );
+  const controls = new Set<string>();
+  const installs = new Set<string>();
   for (const file of files) {
     const extensionPrefix = 'share/postgresql/extension/';
     if (file.startsWith(extensionPrefix)) {
@@ -1194,16 +1282,38 @@ async function requireExactExtensionRuntimeInventory(config: {
       if (fileName.includes('/') || !extensionRuntimeSqlFileOwned(config.contract, fileName)) {
         throw new Error(`${config.source} contains undeclared extension SQL/control file ${file}`);
       }
-      if (fileName === `${config.contract.sqlName}.control`) hasControl = true;
-      if (isCanonicalExtensionInstallSql(fileName, config.contract.sqlName)) hasSql = true;
+      for (const sqlName of config.contract.sqlMembers) {
+        if (fileName === `${sqlName}.control`) {
+          controls.add(sqlName);
+          const control = await readFile(join(config.runtimeDirectory, file), 'utf8');
+          const requires =
+            /^\s*requires\s*=\s*'([^']*)'/mu
+              .exec(control)?.[1]
+              ?.split(',')
+              .map((value) => value.trim())
+              .filter(Boolean) ?? [];
+          for (const dependency of requires) {
+            if (
+              dependency !== 'plpgsql' &&
+              !config.contract.sqlMembers.includes(dependency) &&
+              !config.contract.dependencies.includes(dependency)
+            ) {
+              throw new Error(
+                `${config.source} ${sqlName}.control requires undeclared dependency ${dependency}`,
+              );
+            }
+          }
+        }
+        if (isCanonicalExtensionInstallSql(fileName, sqlName)) installs.add(sqlName);
+      }
       continue;
     }
     if (
       dataFiles.has(file) ||
       dependencyModules.has(file) ||
       licenseFiles.has(file) ||
-      file === moduleFile ||
-      file === embeddedModuleFile
+      moduleFiles.includes(file) ||
+      embeddedModuleFiles.includes(file)
     ) {
       continue;
     }
@@ -1253,18 +1363,23 @@ async function requireExactExtensionRuntimeInventory(config: {
       );
     }
   }
-  if (moduleFile !== undefined && !files.includes(moduleFile)) {
-    throw new Error(`${config.source} is missing declared native module ${moduleFile}`);
+  for (const moduleFile of moduleFiles) {
+    if (!files.includes(moduleFile))
+      throw new Error(`${config.source} is missing declared native module ${moduleFile}`);
   }
-  if (embeddedModuleFile !== undefined && !files.includes(embeddedModuleFile)) {
-    throw new Error(
-      `${config.source} is missing declared embedded native module ${embeddedModuleFile}`,
-    );
+  for (const embeddedModuleFile of embeddedModuleFiles) {
+    if (!files.includes(embeddedModuleFile)) {
+      throw new Error(
+        `${config.source} is missing declared embedded native module ${embeddedModuleFile}`,
+      );
+    }
   }
-  if (config.contract.createsExtension && (!hasControl || !hasSql)) {
-    throw new Error(
-      `${config.source} must contain ${config.contract.sqlName}.control and canonical base installation SQL`,
-    );
+  for (const sqlName of config.contract.sqlMembers) {
+    if (!controls.has(sqlName) || !installs.has(sqlName)) {
+      throw new Error(
+        `${config.source} must contain ${sqlName}.control and canonical base installation SQL`,
+      );
+    }
   }
 }
 
@@ -1423,21 +1538,33 @@ async function resolveExtensionTargetPackageJson(
   targetPackageName: string,
   target: string,
   descriptor?: NativeExtension,
-): Promise<{ packageJsonPath: string; ownerVersion: string }> {
+  parentPackageJsonPath?: string,
+): Promise<{ packageJsonPath: string; ownerVersion: string; ownerPackageJsonPath: string }> {
   const packageName = extension.npmPackage;
   const expectedMembers = extensionOwnerMembers(extension);
   const isBundle = expectedMembers.length > 1;
+  const parentPackage =
+    descriptor?.packageJsonUrl !== undefined || parentPackageJsonPath === undefined
+      ? undefined
+      : (JSON.parse(await readFile(parentPackageJsonPath, 'utf8')) as ExtensionPackageMetadata);
   const packageJsonPath =
-    descriptor?.packageJsonUrl === undefined
-      ? optionalResolvePackageJson(packageName)
-      : fileURLToPath(descriptor.packageJsonUrl);
+    descriptor?.packageJsonUrl !== undefined
+      ? fileURLToPath(descriptor.packageJsonUrl)
+      : parentPackage?.name === packageName
+        ? parentPackageJsonPath
+        : (optionalResolvePackageJson(packageName, parentPackageJsonPath) ??
+          optionalResolvePackageJson(packageName));
   if (packageJsonPath === undefined) {
     if (isBundle) {
       throw new Error(
         `${packageName} is not installed; add it to the application dependencies for CREATE EXTENSION support`,
       );
     }
-    const targetPath = resolveExtensionPackageJson(targetPackageName, packageName);
+    const targetPath = resolveExtensionPackageJson(
+      targetPackageName,
+      packageName,
+      parentPackageJsonPath,
+    );
     const targetMetadata = JSON.parse(
       await readFile(targetPath, 'utf8'),
     ) as ExtensionPackageMetadata;
@@ -1447,6 +1574,7 @@ async function resolveExtensionTargetPackageJson(
     return {
       packageJsonPath: targetPath,
       ownerVersion: targetMetadata.version,
+      ownerPackageJsonPath: targetPath,
     };
   }
 
@@ -1487,6 +1615,7 @@ async function resolveExtensionTargetPackageJson(
         `${resolvedTargetPackageName}/package.json`,
       ),
       ownerVersion: packageJson.version,
+      ownerPackageJsonPath: packageJsonPath,
     };
   } catch (error) {
     throw new Error(
@@ -1496,9 +1625,16 @@ async function resolveExtensionTargetPackageJson(
   }
 }
 
-function resolveExtensionPackageJson(packageName: string, installPackageName: string): string {
+function resolveExtensionPackageJson(
+  packageName: string,
+  installPackageName: string,
+  parentPackageJsonPath?: string,
+): string {
   try {
-    return require.resolve(`${packageName}/package.json`);
+    return (
+      optionalResolvePackageJson(packageName, parentPackageJsonPath) ??
+      require.resolve(`${packageName}/package.json`)
+    );
   } catch (error) {
     throw new Error(
       `${installPackageName} is not installed; add it to the application dependencies for CREATE EXTENSION support`,
@@ -1507,9 +1643,14 @@ function resolveExtensionPackageJson(packageName: string, installPackageName: st
   }
 }
 
-function optionalResolvePackageJson(packageName: string): string | undefined {
+function optionalResolvePackageJson(
+  packageName: string,
+  parentPackageJsonPath?: string,
+): string | undefined {
   try {
-    return require.resolve(`${packageName}/package.json`);
+    const resolver =
+      parentPackageJsonPath === undefined ? require : createRequire(parentPackageJsonPath);
+    return resolver.resolve(`${packageName}/package.json`);
   } catch {
     return undefined;
   }

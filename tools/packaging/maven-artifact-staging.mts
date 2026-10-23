@@ -59,6 +59,17 @@ export function renderMavenArtifactPom(row) {
       : `
     <oliphaunt.runtime.product>${xml(row.runtimeProduct)}</oliphaunt.runtime.product>
     <oliphaunt.runtime.version>${xml(row.runtimeVersion)}</oliphaunt.runtime.version>`;
+  const dependencies = (row.dependencies ?? [])
+    .map(
+      (dependency) => `    <dependency>
+      <groupId>${xml(dependency.groupId)}</groupId>
+      <artifactId>${xml(dependency.artifactId)}</artifactId>
+      <version>${xml(dependency.version)}</version>
+      <type>${xml(dependency.type)}</type>
+      <scope>${xml(dependency.scope)}</scope>
+    </dependency>`,
+    )
+    .join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns="http://maven.apache.org/POM/4.0.0"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -89,7 +100,7 @@ ${licenses}
   <properties>${runtimeProperties}
     <oliphaunt.license.spdx>${xml(row.licenseSpdx)}</oliphaunt.license.spdx>
   </properties>
-</project>
+${dependencies ? `  <dependencies>\n${dependencies}\n  </dependencies>\n` : ''}</project>
 `;
 }
 

@@ -20,6 +20,7 @@ import { arch, platform, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
+import type { NativeExtension } from '../extensions.js';
 import { GENERATED_EXTENSION_METADATA } from '../generated/extensions.js';
 import type { ResolvedNativeInstall } from '../native/assets.js';
 import * as originalNodeAssets from '../native/assets.js';
@@ -36,6 +37,8 @@ type FixtureExtensionContract = {
   sqlName: string;
   createsExtension: boolean;
   nativeModuleStem: string | null;
+  sqlMembers: string[];
+  nativeModuleStems: string[];
   dependencies: string[];
   dataFiles: string[];
   extensionSqlFileNames: string[];
@@ -70,6 +73,8 @@ function fixtureExtensionContract(
     sqlName: extension.sqlName,
     createsExtension: extension.createsExtension,
     nativeModuleStem: extension.nativeModuleStem,
+    sqlMembers: [...extension.sqlMembers],
+    nativeModuleStems: [...extension.nativeModuleStems],
     dependencies: [...extension.selectedExtensionDependencies],
     dataFiles: [...extension.runtimeShareDataFiles],
     extensionSqlFileNames: [...extension.extensionSqlFileNames],
@@ -398,7 +403,7 @@ async function nodeExtensionMaterializationAcceptsBuiltInPostgresDependency(): P
         nodeAssets.materializeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
           'pgtap',
         ]),
-      /member pgtap is incompatible with the SDK dependency contract/,
+      /unknown Oliphaunt extension id 'plpgsql'/,
     );
   } finally {
     if (installedRuntime !== undefined) {
@@ -653,6 +658,10 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
     await mkdir(join(dirname(libraryPath), 'modules'), { recursive: true });
     await writeFile(join(installRuntime, 'base-runtime.txt'), 'base');
     await writeFile(join(dirname(libraryPath), 'modules/base-module.so'), 'base-module');
+    await nodePostgisCompanionClosureInstall(
+      { libraryPath, runtimeDirectory: installRuntime },
+      createdPackageRoots,
+    );
 
     await assert.rejects(
       () =>
@@ -787,13 +796,25 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
         ),
       }),
     );
-    await assert.rejects(
-      () =>
-        nodeAssets.materializeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
-          'hstore',
-        ]),
-      /member hstore is incompatible with the SDK dependency contract/,
+    const declaredDependencyInstall = await nodeAssets.materializeExtensionInstall(
+      { libraryPath, runtimeDirectory: installRuntime },
+      ['hstore'],
     );
+    assert.equal(
+      await readFile(
+        join(
+          declaredDependencyInstall.runtimeDirectory!,
+          'share/postgresql/extension/cube.control',
+        ),
+        'utf8',
+      ),
+      'extension',
+    );
+    assert.notEqual(declaredDependencyInstall.runtimeDirectory, firstInstall.runtimeDirectory);
+    await rm(dirname(declaredDependencyInstall.runtimeDirectory!), {
+      recursive: true,
+      force: true,
+    });
     await writeFile(
       join(targetRoot, 'extension-contract.json'),
       JSON.stringify(extensionContractManifest),
@@ -1123,6 +1144,320 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
   }
 }
 
+async function nodePostgisCompanionClosureInstall(
+  install: ResolvedNativeInstall,
+  createdPackageRoots: string[],
+): Promise<void> {
+  const target = liboliphauntPackageTarget(platform(), arch());
+  const { liboliphauntVersion } = await readTypeScriptPackageVersions();
+  const extension = GENERATED_EXTENSION_METADATA.find((row) => row.sqlName === 'postgis')!;
+  const basePackageName = extension.npmPackage;
+  const targetPackageName = `${basePackageName}-${target.id}`;
+  const version = '9.9.7';
+  const postgisFacadeRoot = await writeFixturePackage(basePackageName, createdPackageRoots, {
+    name: basePackageName,
+    version,
+    oliphaunt: {
+      product: extension.artifactProduct,
+      kind: 'exact-extension',
+      sqlName: 'postgis',
+      targetPackageNames: { [target.id]: targetPackageName },
+    },
+  });
+  const targetRoot = await writeFixturePackage(targetPackageName, createdPackageRoots, {
+    name: targetPackageName,
+    version,
+    oliphaunt: {
+      product: extension.artifactProduct,
+      kind: 'exact-extension-target',
+      sqlName: 'postgis',
+      target: target.id,
+      liboliphauntVersion,
+      extensionContract: 'extension-contract.json',
+      runtimeRelativePath: 'runtime',
+      moduleRelativePath: 'runtime/lib/modules',
+    },
+  });
+  const runtime = join(targetRoot, 'runtime');
+  const sqlRoot = join(runtime, 'share/postgresql/extension');
+  const suffix = nativeModuleSuffixForTarget(target.id);
+  const contractPath = join(targetRoot, 'extension-contract.json');
+  const roots = new Set<string>();
+  const writeContract = async (contract: Partial<FixtureExtensionContract>) =>
+    writeFile(
+      contractPath,
+      JSON.stringify(
+        fixtureExtensionContractManifest(extension.artifactProduct, version, target.id, [
+          contract as FixtureExtensionContract,
+        ]),
+      ),
+    );
+  const complete = fixtureExtensionContract(extension);
+  await mkdir(sqlRoot, { recursive: true });
+  for (const profile of ['postgresql', 'modules']) {
+    await mkdir(join(runtime, 'lib', profile), { recursive: true });
+  }
+  const materialize = async (descriptors: readonly NativeExtension[] = []) => {
+    const result = await nodeAssets.materializeExtensionInstall(install, ['postgis'], descriptors);
+    roots.add(dirname(result.runtimeDirectory!));
+    return result;
+  };
+  const dependency = GENERATED_EXTENSION_METADATA.find((row) => row.sqlName === 'fuzzystrmatch')!;
+  const dependencyFacadeRoot = nativeResolverPackageRoot(dependency.npmPackage);
+  const dependencyTargetName = `${dependency.npmPackage}-${target.id}`;
+  const dependencyTargetRoot = nativeResolverPackageRoot(dependencyTargetName);
+  const heldDependencyFacadeRoot = `${dependencyFacadeRoot}.postgis-held`;
+  const heldDependencyTargetRoot = `${dependencyTargetRoot}.postgis-held`;
+  await rename(dependencyFacadeRoot, heldDependencyFacadeRoot);
+  await rename(dependencyTargetRoot, heldDependencyTargetRoot);
+  const nestedDependencyRoot = join(postgisFacadeRoot, 'node_modules', dependency.npmPackage);
+  await mkdir(dirname(nestedDependencyRoot), { recursive: true });
+  await cp(heldDependencyFacadeRoot, nestedDependencyRoot, { recursive: true });
+  const nestedDependencyTarget = join(nestedDependencyRoot, 'node_modules', dependencyTargetName);
+  await mkdir(dirname(nestedDependencyTarget), { recursive: true });
+  await cp(heldDependencyTargetRoot, nestedDependencyTarget, { recursive: true });
+  const nestedFacadePath = join(nestedDependencyRoot, 'package.json');
+  const nestedFacadeMetadata = await readFile(nestedFacadePath, 'utf8');
+  await writeFile(nestedFacadePath, '{}');
+  try {
+    for (const omitted of [['sqlMembers'], ['nativeModuleStems']] as const) {
+      const incomplete: Partial<FixtureExtensionContract> = { ...complete };
+      for (const field of omitted) delete incomplete[field];
+      await writeContract(incomplete);
+      await assert.rejects(materialize, /fields must be exactly/);
+    }
+    for (const [incomplete, expected] of [
+      [{ ...complete, sqlMembers: ['postgis_raster'] }, /must preserve its primary extension/],
+      [{ ...complete, nativeModuleStems: [] }, /must preserve its primary module/],
+    ] satisfies Array<[Partial<FixtureExtensionContract>, RegExp]>) {
+      await writeContract(incomplete);
+      await assert.rejects(materialize, expected);
+    }
+
+    const historical = fixtureExtensionContract(extension, {
+      sqlMembers: ['postgis'],
+      nativeModuleStems: ['postgis-3'],
+      dependencies: [],
+      dataFiles: ['oliphaunt-history/postgis.dat'],
+      extensionSqlFileNames: ['postgis_history.sql'],
+      extensionSqlFilePrefixes: [],
+    });
+    await writeFile(join(sqlRoot, 'postgis.control'), "default_version='3.6.1'\n");
+    await writeFile(join(sqlRoot, 'postgis--3.6.1.sql'), 'historical install');
+    await writeFile(join(sqlRoot, 'postgis_history.sql'), 'historical ancillary SQL');
+    const historicalData = join(runtime, 'share/postgresql', historical.dataFiles[0]!);
+    await mkdir(dirname(historicalData), { recursive: true });
+    await writeFile(historicalData, 'historical data');
+    for (const profile of ['postgresql', 'modules']) {
+      await writeFile(join(runtime, 'lib', profile, `postgis-3${suffix}`), 'historical module');
+    }
+    for (const legacy of [false, true]) {
+      const frozen: Partial<FixtureExtensionContract> = { ...historical };
+      if (legacy) {
+        delete frozen.sqlMembers;
+        delete frozen.nativeModuleStems;
+      }
+      await writeContract(frozen);
+      const installed = await materialize();
+      assert.equal(
+        await readFile(join(installed.moduleDirectory!, `postgis-3${suffix}`), 'utf8'),
+        'historical module',
+      );
+      assert.equal(
+        await readFile(
+          join(installed.runtimeDirectory!, 'share/postgresql', historical.dataFiles[0]!),
+          'utf8',
+        ),
+        'historical data',
+      );
+      await assert.rejects(
+        readFile(join(installed.moduleDirectory!, `fuzzystrmatch${suffix}`)),
+        { code: 'ENOENT' },
+        'historical PostGIS must not acquire the newer catalog dependency',
+      );
+      const embeddedModule = join(runtime, 'lib/modules', `postgis-3${suffix}`);
+      await rm(embeddedModule);
+      await assert.rejects(materialize, /missing declared embedded native module/);
+      await writeFile(embeddedModule, 'historical module');
+    }
+    await writeFile(nestedFacadePath, nestedFacadeMetadata);
+    await rm(runtime, { recursive: true });
+    await mkdir(sqlRoot, { recursive: true });
+    for (const file of complete.dataFiles) {
+      const destination = join(runtime, 'share/postgresql', file);
+      await mkdir(dirname(destination), { recursive: true });
+      await writeFile(destination, `data:${file}`);
+    }
+    for (const profile of ['postgresql', 'modules']) {
+      await mkdir(join(runtime, 'lib', profile), { recursive: true });
+    }
+    await writeContract(complete);
+    for (const member of extension.sqlMembers) {
+      await writeFile(
+        join(sqlRoot, `${member}.control`),
+        member === 'postgis_tiger_geocoder'
+          ? "default_version='3.6.4'\nrequires='postgis,fuzzystrmatch'\n"
+          : "default_version='3.6.4'\n",
+      );
+      await writeFile(join(sqlRoot, `${member}--3.6.4.sql`), 'install');
+    }
+    for (const stem of extension.nativeModuleStems) {
+      for (const profile of ['postgresql', 'modules']) {
+        await writeFile(join(runtime, 'lib', profile, `${stem}${suffix}`), `complete:${stem}`);
+      }
+    }
+    for (const [incomplete, expected] of [
+      [{ ...complete, dependencies: [] }, /requires undeclared dependency fuzzystrmatch/],
+      [{ ...complete, sqlMembers: ['postgis'] }, /undeclared extension SQL\/control file/],
+      [{ ...complete, nativeModuleStems: ['postgis-3'] }, /undeclared runtime file/],
+    ] satisfies Array<[Partial<FixtureExtensionContract>, RegExp]>) {
+      await writeContract(incomplete);
+      await assert.rejects(materialize, expected);
+    }
+    await writeContract(complete);
+    for (const [file, expected] of [
+      [join(sqlRoot, 'postgis_raster.control'), /postgis_raster\.control and canonical/],
+      [join(sqlRoot, 'postgis_raster--3.6.4.sql'), /postgis_raster\.control and canonical/],
+      [
+        join(runtime, 'lib/postgresql', `postgis_raster-3${suffix}`),
+        /missing declared native module/,
+      ],
+      [
+        join(runtime, 'lib/modules', `postgis_raster-3${suffix}`),
+        /missing declared embedded native module/,
+      ],
+      [join(sqlRoot, 'postgis_topology.control'), /postgis_topology\.control and canonical/],
+      [join(sqlRoot, 'postgis_topology--3.6.4.sql'), /postgis_topology\.control and canonical/],
+      [
+        join(runtime, 'lib/postgresql', `postgis_topology-3${suffix}`),
+        /missing declared native module/,
+      ],
+      [
+        join(runtime, 'lib/modules', `postgis_topology-3${suffix}`),
+        /missing declared embedded native module/,
+      ],
+    ] as const) {
+      const bytes = await readFile(file);
+      await rm(file);
+      await assert.rejects(materialize, expected);
+      await writeFile(file, bytes);
+    }
+    const tigerControl = join(sqlRoot, 'postgis_tiger_geocoder.control');
+    const controlBytes = await readFile(tigerControl);
+    await writeFile(tigerControl, "default_version='3.6.4'\nrequires='cube'\n");
+    await assert.rejects(materialize, /requires undeclared dependency cube/);
+    await writeFile(tigerControl, controlBytes);
+    const installed = await materialize();
+    for (const stem of ['dict_snowball', 'plpgsql']) {
+      await writeFile(
+        join(installed.runtimeDirectory!, 'lib/modules', `${stem}${suffix}`),
+        'embedded core module',
+      );
+    }
+    await nodeAssets.validatePreparedNativeRuntimeExtensions(installed, ['postgis']);
+    for (const relative of [
+      'share/postgresql/extension/postgis_raster.control',
+      'share/postgresql/extension/postgis_raster--3.6.4.sql',
+      `lib/modules/postgis_raster-3${suffix}`,
+    ]) {
+      const file = join(installed.runtimeDirectory!, relative);
+      const original = await readFile(file);
+      await rm(file);
+      await assert.rejects(
+        nodeAssets.validatePreparedNativeRuntimeExtensions(installed, ['postgis']),
+        /postgis_raster/,
+      );
+      await writeFile(file, original);
+    }
+    assert.equal(
+      await readFile(join(installed.moduleDirectory!, `postgis_topology-3${suffix}`), 'utf8'),
+      'complete:postgis_topology-3',
+    );
+    assert.equal(
+      await readFile(join(installed.moduleDirectory!, `fuzzystrmatch${suffix}`), 'utf8'),
+      'embedded-module:fuzzystrmatch',
+    );
+    const explicitDependencyRoot = join(postgisFacadeRoot, 'selected-contrib');
+    await cp(heldDependencyFacadeRoot, explicitDependencyRoot, { recursive: true });
+    const explicitDependencyTarget = join(
+      explicitDependencyRoot,
+      'node_modules',
+      dependencyTargetName,
+    );
+    await mkdir(dirname(explicitDependencyTarget), { recursive: true });
+    await cp(heldDependencyTargetRoot, explicitDependencyTarget, { recursive: true });
+    const dependencyFacadeMetadata = JSON.parse(
+      await readFile(join(heldDependencyFacadeRoot, 'package.json'), 'utf8'),
+    );
+    const selectedDependency: NativeExtension = {
+      schema: 'oliphaunt-native-extension-v1',
+      sqlName: 'fuzzystrmatch',
+      product: dependency.artifactProduct,
+      packageName: dependency.npmPackage,
+      version: dependencyFacadeMetadata.version,
+      packageJsonUrl: pathToFileURL(join(explicitDependencyRoot, 'package.json')).href,
+    };
+    const nestedMetadata = new Map<string, string>();
+    for (const file of [
+      join(nestedDependencyRoot, 'package.json'),
+      ...['package.json', 'extension-contract.json', 'bundle-manifest.json'].map((name) =>
+        join(nestedDependencyTarget, name),
+      ),
+    ]) {
+      nestedMetadata.set(file, await readFile(file, 'utf8'));
+    }
+    try {
+      await writeFile(
+        join(nestedDependencyRoot, 'package.json'),
+        JSON.stringify({ ...dependencyFacadeMetadata, version: '0.0.0' }),
+      );
+      await assert.rejects(materialize, /does not match .* version 0\.0\.0/);
+      const explicitlySelected = await materialize([selectedDependency]);
+      assert.equal(
+        await readFile(join(explicitlySelected.moduleDirectory!, `fuzzystrmatch${suffix}`), 'utf8'),
+        'embedded-module:fuzzystrmatch',
+      );
+      for (const [file, text] of nestedMetadata) {
+        await writeFile(file, JSON.stringify({ ...JSON.parse(text), version: '0.0.0' }));
+      }
+      await rename(heldDependencyFacadeRoot, dependencyFacadeRoot);
+      await rename(heldDependencyTargetRoot, dependencyTargetRoot);
+      try {
+        await assert.rejects(
+          () => nodeAssets.materializeExtensionInstall(install, ['fuzzystrmatch', 'postgis']),
+          /conflicting packages selected for native extension 'fuzzystrmatch'/,
+        );
+      } finally {
+        await rename(dependencyFacadeRoot, heldDependencyFacadeRoot);
+        await rename(dependencyTargetRoot, heldDependencyTargetRoot);
+      }
+    } finally {
+      for (const [file, text] of nestedMetadata) await writeFile(file, text);
+    }
+    assert.equal(
+      await readFile(
+        join(installed.runtimeDirectory!, 'share/postgresql/extension/postgis_topology--3.6.4.sql'),
+        'utf8',
+      ),
+      'install',
+    );
+    await writeFile(
+      join(runtime, 'lib/modules', `postgis_topology-3${suffix}`),
+      'updated topology',
+    );
+    const updated = await materialize();
+    assert.notEqual(updated.runtimeDirectory, installed.runtimeDirectory);
+    assert.equal(
+      await readFile(join(updated.moduleDirectory!, `postgis_topology-3${suffix}`), 'utf8'),
+      'updated topology',
+    );
+  } finally {
+    for (const root of roots) await rm(root, { recursive: true, force: true });
+    await rename(heldDependencyFacadeRoot, dependencyFacadeRoot);
+    await rename(heldDependencyTargetRoot, dependencyTargetRoot);
+  }
+}
+
 async function writePreparedHstoreRuntime(runtimeDirectory: string, target: string): Promise<void> {
   const moduleSuffix = nativeModuleSuffixForTarget(target);
   await mkdir(join(runtimeDirectory, 'share/postgresql/extension'), {
@@ -1256,6 +1591,8 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
         fixtureExtensionContractManifest(product, extensionVersion, target.id, [
           independentlyVersionedContract,
         ]),
+        // Published v1 carriers omit both companion-closure fields.
+        (key, value) => (key === 'sqlMembers' || key === 'nativeModuleStems' ? undefined : value),
       ),
     );
     const skewData = join(canonicalRuntime, 'share/postgresql/oliphaunt-skew/new-version.dat');

@@ -1,16 +1,25 @@
 """Selected desktop extension final envelopes from their typed member producers."""
 
-load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILITY", "EXTENSION_DEPENDENCIES", "EXTENSION_RECIPES", "EXTENSION_RELEASE_METADATA", "EXTENSION_SOURCES", "PRODUCTS", "PUBLICATION_CARRIERS")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILITY", "EXTENSION_DEPENDENCIES", "EXTENSION_NATIVE_TARGETS", "EXTENSION_RECIPES", "EXTENSION_RELEASE_METADATA", "EXTENSION_SOURCES", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action", "bun_script_test")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_identity")
 load(":final_leaf.bzl", "ExtensionFinalLeafInfo")
 load(":platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_LINUX_COMPATIBLE")
-load(":smoke.bzl", "extension_smoke_plan")
+load(":smoke.bzl", "extension_smoke_plan", "native_extension_payload_closure")
 
 _LINUX_TARGETS = {"//build_defs/native:linux_x86_64": "linux-x64-gnu", "//build_defs/native:linux_aarch64_gnu_2_28": "linux-arm64-gnu"}
 _TARGETS = _LINUX_TARGETS | {"//build_defs/native:macos_arm64": "macos-arm64", "//build_defs/native:windows_x64": "windows-x64-msvc"}
+
+def extension_owner_metadata():
+    """Stable ownership projection shared by declared package writers."""
+    return {row["sqlName"]: {
+        "product": row["artifactProduct"],
+        "versioning": row["versioning"],
+        "native": row["compatibility"]["nativeRuntimeProduct"] if row["class"] == "contrib" else row["artifactProduct"],
+        "wasix": row["compatibility"]["wasixRuntimeProduct"] if row["class"] == "contrib" else row["artifactProduct"],
+    } for row in EXTENSION_RELEASE_METADATA}
 
 def native_extension_carrier_helpers():
     return [
@@ -66,6 +75,8 @@ def native_extension_carrier_legal(sql_name):
     inputs += [package + name for name in ["release.toml", "source.toml", "upstream-license-data.json"]]
     if sql_name in EXTENSION_RECIPES:
         inputs.append(package + "recipe.toml")
+    if EXTENSION_NATIVE_TARGETS.get(sql_name):
+        inputs.append(package + "targets/native.toml")
     # Each audited license source is checked against its immutable source manifest.
     inputs += [package + "dependencies/" + name + "/source.toml" for name in EXTENSION_DEPENDENCIES.get(sql_name, {})]
     return inputs
@@ -78,7 +89,7 @@ def native_external_carrier_metadata(sql_name, target, products = PRODUCTS):
     return {"product": product, "version": products[product]["version"], "sqlName": sql_name, "target": target, "runtimeVersion": EXTENSION_COMPATIBILITY[sql_name]["native_runtime_version"],
             "descriptor": EXTENSIONS[sql_name], "recipe": EXTENSION_RECIPES.get(sql_name, {}), "source": EXTENSION_SOURCES[sql_name],
             "selectedDependencies": sorted([name for name in EXTENSIONS[sql_name].get("dependencies", []) if name in EXTENSIONS]),
-            "compatibility": EXTENSION_COMPATIBILITY[sql_name], "releaseMetadata": release[0], "carriers": [row for row in PUBLICATION_CARRIERS if row["product"] == product]}
+            "compatibility": EXTENSION_COMPATIBILITY[sql_name], "releaseMetadata": release[0], "ownerMetadata": extension_owner_metadata(), "carriers": [row for row in PUBLICATION_CARRIERS if row["product"] == product]}
 
 def _leaf(spec, ecosystem):
     facades = [row for row in spec["carriers"] if row["ecosystem"] == "npm" and row["target"] == None]
@@ -151,13 +162,15 @@ def native_external_extension_carriers(sql_name, member = ":native_payload", add
         ] for condition, target in targets.items()
     }) + additional_qualification, testonly = True, target_compatible_with = compatible)
     native.filegroup(name = "native_carrier_spec", srcs = [":native_carriers"], output_group = "spec")
-    extension_smoke_plan(name = "native_final_plan", members = [member], fixtures = ["//src/test-fixtures/extensions:sql"])
+    smoke_members = native_extension_payload_closure([member])
+    dependency_packages = {label.rsplit(":", 1)[0] + ":native_npm_shipping_files": True for label in smoke_members if Label(label) != native.package_relative_label(member)}.keys()
+    extension_smoke_plan(name = "native_final_plan", members = smoke_members, fixtures = ["//src/test-fixtures/extensions:sql"])
     plans = []
     for group in ["install", "smoke", "startup"]:
         native.filegroup(name = "native_final_" + group, srcs = [":native_final_plan"], output_group = group)
         plans.append(":native_final_" + group)
     inputs = [":native_carrier_spec", ":native_github_shipping_files", ":native_npm_shipping_files", ":native_cargo_shipping_files", "//src/native/runtime:runtime_payload", "//build_defs/extensions:native_extension_smoke"] + plans
-    inputs += [":native_manifest_shipping_files", ":native_frozen_shipping_files"]
+    inputs += [":native_manifest_shipping_files", ":native_frozen_shipping_files"] + dependency_packages
     bun_script_test(name = "native_carriers_test", entry_point = "//build_defs/extensions:native_carriers_installed.test.mts",
                     args = ["$(location %s)" % label for label in inputs],
                     data = inputs + native_extension_carrier_helpers() + native_extension_carrier_legal(sql_name) + ["//src/native/sdks/ts:native_asset_sources", "//build_defs/extensions:native_carriers.mts", "//build_defs/extensions:native_carrier_install_helpers.mts"],

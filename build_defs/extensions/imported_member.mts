@@ -4,13 +4,17 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  frozenExtensionArtifactLegalInventory,
+  extensionControlDefaultVersion,
   isDesktopNativeTarget,
-  validateExtensionArtifactArchive,
+  readCanonicalExtensionArtifactArchive,
+  validateExtensionArtifactEntries,
 } from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
 import {
   extensionRuntimeAssetContract,
   projectNativeRuntimeAssetMember,
 } from '../../src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts';
+import { frozenExtensionPublicMetadata } from '../../src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts';
 import { assemble } from './member_payload.mts';
 import { type FinalLeaf, type NativeOwnerSpec, stageDeclaredFinalLeaf } from './owner_carriers.mts';
 import { inspect } from './validate_member_payload.mts';
@@ -48,6 +52,12 @@ export async function importMembers(spec: ImportedMemberSpec): Promise<void> {
     const staged = stageDeclaredFinalLeaf(canonical, leaf, root);
     assert(leaf.originalFiles, 'imported members need the validated original File map');
     const originalFiles = JSON.parse(readFileSync(leaf.originalFiles, 'utf8'));
+    const publicMetadata = frozenExtensionPublicMetadata(
+      { id: leaf.product, version: leaf.version },
+      JSON.parse(readFileSync(leaf.frozen, 'utf8')),
+      JSON.parse(readFileSync(leaf.manifest, 'utf8')),
+      staged.members,
+    );
     for (const request of spec.members) {
       const authored = canonical.members.filter((member) => member.sqlName === request.sqlName);
       const frozen = staged.members.filter((member: any) => member.sqlName === request.sqlName);
@@ -60,13 +70,23 @@ export async function importMembers(spec: ImportedMemberSpec): Promise<void> {
       assert.equal(assets.length, 1, 'requested member needs exactly one selected runtime asset');
       const asset = assets[0];
       const selected = projectNativeRuntimeAssetMember(frozen[0], asset);
-      const runtime = validateExtensionArtifactArchive({
-        file: path.join(root, asset.path),
-        metadata: selected,
-        product: leaf.product,
-        target: configuration,
-        nativeRuntimeVersion: canonical.runtimeVersion,
-      });
+      const archive = path.join(root, asset.path);
+      const entries = readCanonicalExtensionArtifactArchive(archive);
+      const runtime = {
+        entries,
+        ...validateExtensionArtifactEntries({
+          entries,
+          metadata: selected,
+          product: leaf.product,
+          target: configuration,
+          nativeRuntimeVersion: publicMetadata.compatibility.nativeRuntimeVersion,
+          label: archive,
+          legalInventory: {
+            ...frozenExtensionArtifactLegalInventory(entries, archive),
+            extensionClass: publicMetadata.extensionClass,
+          },
+        }),
+      };
       const metadata = runtime.metadata;
       const inputs = runtime.runtimeFiles.map((row: any) => {
         const source = path.join(root, 'runtime', request.sqlName, row.path);
@@ -76,7 +96,17 @@ export async function importMembers(spec: ImportedMemberSpec): Promise<void> {
         writeFileSync(source, entry.data);
         return { source, destination: row.path };
       });
-      const member = authored[0];
+      const sourceIdentity = publicMetadata.sourceIdentity;
+      const control = runtime.entries.get(
+        `files/share/postgresql/extension/${request.sqlName}.control`,
+      );
+      const defaultVersion = metadata.createsExtension
+        ? extensionControlDefaultVersion(
+            new TextDecoder('utf-8', { fatal: true }).decode(control!.data),
+            request.sqlName,
+            archive,
+          )
+        : null;
       const descriptor = {
         schema: 'oliphaunt-extension-member-payload-v1',
         sql_name: request.sqlName,
@@ -84,11 +114,9 @@ export async function importMembers(spec: ImportedMemberSpec): Promise<void> {
         version: spec.version,
         family: 'native',
         configuration,
-        source_kind: member.descriptor['source-kind'],
+        source_kind: sourceIdentity.kind,
         postgres_major: 18,
-        default_version: member.contrib
-          ? (member.contrib['default-version'] ?? null)
-          : member.source['extension-control']['default-version'],
+        default_version: defaultVersion,
         creates_extension: metadata.createsExtension,
         dependencies: metadata.dependencies,
         module_profiles: metadata.nativeModuleStem === null ? [] : ['postgresql', 'modules'],
@@ -100,10 +128,14 @@ export async function importMembers(spec: ImportedMemberSpec): Promise<void> {
         construction_licenses: runtime.runtimeFiles
           .map((row: any) => row.path)
           .filter((file: string) => file.startsWith('share/licenses/')),
-        ...(member.contrib ? { postgres_source: member.source } : { source: member.source }),
+        ...(sourceIdentity.kind === 'postgres-contrib'
+          ? { postgres_source: sourceIdentity }
+          : { source: sourceIdentity }),
         imported: {
           schema: 'oliphaunt-imported-extension-runtime-sidecar-v1',
           scope: 'private-runtime-sidecar',
+          sourceIdentity,
+          compatibility: publicMetadata.compatibility,
           originalFiles,
           publicAsset: extensionRuntimeAssetContract(asset),
           publicLegalFiles: runtime.legalFiles,

@@ -31,10 +31,10 @@ _DEPENDENCY_INPUTS = {
 
 _POSTGIS_INPUTS = """
 filegroup(name = "postgis_headers", srcs = glob(["**/*.h", "**/*.hpp", "**/*.inl", "**/*.inc"], allow_empty = True))
-filegroup(name = "postgis_sql_inputs", srcs = glob(["Version.config", "postgis/*.sql.in", "postgis/*.sql.in.*", "postgis/*.sql", "postgis/*.h", "libpgcommon/*.h", "extensions/**/*.sql", "extensions/**/*.sql.in", "extensions/**/Makefile.in", "extensions/upgrade-paths-rules.mk", "utils/*.pl", "raster/rt_pg/*.sql.in", "raster/rt_pg/*.sql.in.*", "raster/rt_pg/*.sql", "postgis/Makefile.in", "raster/rt_pg/Makefile.in"], allow_empty = True))
+filegroup(name = "postgis_sql_inputs", srcs = glob(["Version.config", "postgis/*.sql.in", "postgis/*.sql.in.*", "postgis/*.sql", "postgis/*.h", "libpgcommon/*.h", "extensions/**/*.sql", "extensions/**/*.sql.in", "extensions/**/Makefile.in", "extensions/upgrade-paths-rules.mk", "utils/*.pl", "raster/rt_pg/*.sql.in", "raster/rt_pg/*.sql.in.*", "raster/rt_pg/*.sql", "postgis/Makefile.in", "raster/rt_pg/Makefile.in", "topology/**/*.sql.in", "topology/*.sql.in.*", "topology/Makefile.in", "extras/tiger_geocoder/**/*.sql"], allow_empty = True))
 """
 
-def _git_source_archive(name, source, build_file_content):
+def _git_source_archive(name, source, build_file_content = None, build_file = None):
     archive = source["archive"]
     http_archive(
         name = name,
@@ -42,7 +42,7 @@ def _git_source_archive(name, source, build_file_content):
         sha256 = archive["sha256"],
         strip_prefix = archive["strip_prefix"],
         type = "tar.gz",
-        build_file_content = build_file_content,
+        **({"build_file": build_file} if build_file else {"build_file_content": build_file_content})
     )
 
 def _extension_sources_impl(module_ctx):
@@ -61,6 +61,7 @@ def _extension_sources_impl(module_ctx):
                     name = name,
                     source = source,
                     build_file_content = _DEPENDENCY_BUILD + _DEPENDENCY_INPUTS.get(directory, ""),
+                    build_file = Label("//build_defs/extensions/gdal:source.BUILD.bazel") if directory == "gdal" else None,
                 )
             elif kind == "archive":
                 digest = source.get("sha256", "")

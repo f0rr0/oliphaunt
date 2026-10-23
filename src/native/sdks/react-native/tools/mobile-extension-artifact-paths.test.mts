@@ -198,6 +198,8 @@ function extensionMember(sqlName, stagesIos = true) {
   return {
     sqlName,
     createsExtension: row['creates-extension'],
+    sqlMembers: row['sql-members'],
+    nativeModuleStems: row['native-module-stems'],
     dependencies: [...row['selected-extension-dependencies']].sort(),
     dataFiles: [...row['runtime-share-data-files']].sort(),
     extensionSqlFileNames: [...row['extension-sql-file-names']].sort(),

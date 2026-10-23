@@ -86,7 +86,7 @@ $dependency_stamp_block
 profile=$(oliphaunt_wasix_wasix_profile_signature)
 wasixcc=$wasixcc_version
 configure=$(oliphaunt_wasix_extension_configure_signature "$REPO_ROOT" postgis)
-link=postgis-plus-selected-support-side-module-v2"
+link=postgis-raster-topology-plus-selected-support-side-module-v4"
 
 if [ -f "$POSTGIS_BUILD_DIR/.oliphaunt-wasix-postgis-build" ] &&
    oliphaunt_wasix_extension_build_outputs_exist "$REPO_ROOT" postgis "$POSTGIS_BUILD_DIR" --quiet &&
@@ -95,7 +95,7 @@ if [ -f "$POSTGIS_BUILD_DIR/.oliphaunt-wasix-postgis-build" ] &&
   exit 0
 fi
 
-{
+(
   rm -rf "$POSTGIS_BUILD_DIR"
   mkdir -p "$(dirname "$POSTGIS_BUILD_DIR")"
   oliphaunt_wasix_copy_source_clean "$POSTGIS_SOURCE_DIR" "$POSTGIS_BUILD_DIR"
@@ -118,6 +118,31 @@ esac
 EOF
   chmod +x "$geos_config"
 
+  gdal_config="$POSTGIS_BUILD_DIR/oliphaunt-gdal-config"
+  cat >"$gdal_config" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  --version)
+    echo "3.13.3"
+    ;;
+  --ogr-enabled)
+    echo "yes"
+    ;;
+  --cflags)
+    echo "-I$GDAL_PREFIX/include"
+    ;;
+  --libs|--dep-libs)
+    echo "-L$GDAL_PREFIX/lib -lgdal -L$GEOS_PREFIX/lib -lgeos_c -lgeos -L$PROJ_PREFIX/lib -lproj -L$SQLITE_PREFIX/lib -lsqlite3 -L$JSONC_PREFIX/lib -ljson-c -L$LIBXML2_PREFIX/lib -lxml2 -L$LIBICONV_PREFIX/lib -liconv -lc++ -lc++abi -lunwind"
+    ;;
+  *)
+    echo "unsupported gdal-config argument: \${1:-}" >&2
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "$gdal_config"
+
   pkg_config="$POSTGIS_BUILD_DIR/oliphaunt-pkg-config"
   cat >"$pkg_config" <<EOF
 #!/usr/bin/env bash
@@ -128,7 +153,7 @@ if [ "\${@: -1}" = "proj" ]; then
       exit 0
       ;;
     *" --modversion "*)
-      echo "9.8.1"
+      echo "9.9.0"
       exit 0
       ;;
     *" --cflags "*)
@@ -171,6 +196,7 @@ EOF
   export JSONC_CFLAGS="-I$JSONC_PREFIX/include -I$JSONC_PREFIX/include/json-c"
   export JSONC_LIBS="-L$JSONC_PREFIX/lib -ljson-c"
   export BUILD_DIR
+  export POSTGIS_BUILD_DIR
   export PGSRC
   export OLIPHAUNT_WASM_SOURCE_LANE="$SOURCE_LANE"
   export CONTAINER_GENERATED_ROOT
@@ -178,13 +204,15 @@ EOF
   export CXX=wasixcc++
   export AR=wasixar
   export RANLIB=wasixranlib
-export CPPFLAGS="$("$ROOT/pg_config_wasix.sh" --cppflags) -I$LIBICONV_PREFIX/include"
+  export CPPFLAGS="$("$ROOT/pg_config_wasix.sh" --cppflags) -I$LIBICONV_PREFIX/include"
   export CFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -Wno-unused-command-line-argument"
   export CXXFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -fvisibility-inlines-hidden -Wno-unused-command-line-argument"
-  export LDFLAGS="-L$LIBICONV_PREFIX/lib -L$SQLITE_PREFIX/lib -liconv -lcharset -lsqlite3 -lc++ -lc++abi -lunwind"
+  export LDFLAGS="-L$LIBICONV_PREFIX/lib -L$SQLITE_PREFIX/lib -liconv -lsqlite3 -lc++ -lc++abi -lunwind"
   export ac_cv_lib_pq_PQserverVersion=yes
   export ac_cv_lib_xml2_xmlInitParser=yes
   oliphaunt_postgis_enable_reproducible_time "$REPO_ROOT"
+  # Upstream revision generation must identify PostGIS, not the enclosing repository.
+  export GIT_DIR="$POSTGIS_SOURCE_DIR/.git"
   [ "$SOURCE_DATE_EPOCH" = "$source_date_epoch" ] || {
     echo "PostGIS WASIX build epoch changed after fingerprinting" >&2
     exit 1
@@ -199,6 +227,7 @@ export CPPFLAGS="$("$ROOT/pg_config_wasix.sh" --cppflags) -I$LIBICONV_PREFIX/inc
     --with-pgconfig="$pg_config" \
     --with-libiconv="$LIBICONV_PREFIX" \
     --with-geosconfig="$geos_config" \
+    --with-gdalconfig="$gdal_config" \
     --with-xml2config="$LIBXML2_PREFIX/bin/xml2-config" \
     "${postgis_configure_flags[@]}"
 
@@ -241,6 +270,7 @@ EOF
     --no-gc-sections \
     "$POSTGIS_BUILD_DIR/postgis/oliphaunt_postgis_deps_stubs.o" \
     --whole-archive \
+    "$GDAL_PREFIX/lib/libgdal.a" \
     "$GEOS_PREFIX/lib/libgeos_c.a" \
     "$GEOS_PREFIX/lib/libgeos.a" \
     "$PROJ_PREFIX/lib/libproj.a" \
@@ -257,7 +287,7 @@ EOF
     "$wasix_sysroot_lib/libclang_rt.builtins-wasm32.a" \
     -o "$postgis_deps_module"
 
-  export OLIPHAUNT_POSTGIS_STATIC_ARCHIVES="$GEOS_PREFIX/lib/libgeos_c.a $GEOS_PREFIX/lib/libgeos.a $PROJ_PREFIX/lib/libproj.a $SQLITE_PREFIX/lib/libsqlite3.a $JSONC_PREFIX/lib/libjson-c.a $LIBXML2_PREFIX/lib/libxml2.a $LIBICONV_PREFIX/lib/libiconv.a $LIBICONV_PREFIX/lib/libcharset.a $wasix_sysroot_lib/libc++.a $wasix_sysroot_lib/libc++abi.a $wasix_sysroot_lib/libunwind.a $wasix_sysroot_lib/libm.a $wasix_sysroot_lib/libc.a $wasix_sysroot_lib/libclang_rt.builtins-wasm32.a"
+  export OLIPHAUNT_POSTGIS_STATIC_ARCHIVES="$GDAL_PREFIX/lib/libgdal.a $GEOS_PREFIX/lib/libgeos_c.a $GEOS_PREFIX/lib/libgeos.a $PROJ_PREFIX/lib/libproj.a $SQLITE_PREFIX/lib/libsqlite3.a $JSONC_PREFIX/lib/libjson-c.a $LIBXML2_PREFIX/lib/libxml2.a $LIBICONV_PREFIX/lib/libiconv.a $wasix_sysroot_lib/libc++.a $wasix_sysroot_lib/libc++abi.a $wasix_sysroot_lib/libunwind.a $wasix_sysroot_lib/libm.a $wasix_sysroot_lib/libc.a $wasix_sysroot_lib/libclang_rt.builtins-wasm32.a"
   perl -0pi -e '
     s|^OBJS=\$\(PG_OBJS\)$|OBJS=\$(PG_OBJS) oliphaunt_postgis_deps_stubs.o $ENV{OLIPHAUNT_POSTGIS_STATIC_ARCHIVES}|m;
     s|^FLATGEOBUF_LIB = .*$|FLATGEOBUF_LIB = ../deps/flatgeobuf/flatgeobuf_c.o ../deps/flatgeobuf/geometrywriter.o ../deps/flatgeobuf/geometryreader.o ../deps/flatgeobuf/packedrtree.o -lc++|m;
@@ -267,6 +297,10 @@ EOF
   perl -0pi -e '
     s|^(CXXFLAGS =.*)$|$1 -fvisibility=hidden -fvisibility-inlines-hidden|m;
   ' deps/flatgeobuf/Makefile
+
+  perl -0pi -e '
+    s|^LIBGDAL_LDFLAGS=.*$|LIBGDAL_LDFLAGS=-L$ENV{POSTGIS_BUILD_DIR}/postgis -loliphaunt_postgis_deps|m;
+  ' raster/rt_pg/Makefile
 
   oliphaunt_wasix_apply_wasix_profile build
   make -s -j"$JOBS" -C liblwgeom liblwgeom.la
@@ -298,21 +332,76 @@ EOF
     -loliphaunt_postgis_deps \
     -rpath '$ORIGIN' \
     -o "$POSTGIS_BUILD_DIR/postgis/postgis-3.so"
+
+  make -s -j"$JOBS" -C raster/rt_core all
+  make -s -j"$JOBS" -C raster/rt_pg all
+  raster_objects=()
+  while IFS= read -r object; do
+    [ -n "$object" ] && raster_objects+=("$object")
+  done < <(find "$POSTGIS_BUILD_DIR/raster/rt_pg" -maxdepth 1 -name '*.o' | sort)
+  "$wasm_ld" \
+    --shared \
+    --shared-memory \
+    --experimental-pic \
+    --unresolved-symbols=import-dynamic \
+    --extra-features=atomics,bulk-memory,mutable-globals \
+    --export=__wasm_call_ctors \
+    --export-if-defined=__wasm_apply_data_relocs \
+    --export-all \
+    --no-gc-sections \
+    "${raster_objects[@]}" \
+    "$POSTGIS_BUILD_DIR/raster/rt_core/librtcore.a" \
+    "$POSTGIS_BUILD_DIR/libpgcommon/libpgcommon.a" \
+    "$POSTGIS_BUILD_DIR/liblwgeom/.libs/liblwgeom.a" \
+    --Bdynamic \
+    -L"$POSTGIS_BUILD_DIR/postgis" \
+    -loliphaunt_postgis_deps \
+    -rpath '$ORIGIN' \
+    -o "$POSTGIS_BUILD_DIR/raster/rt_pg/postgis_raster-3.so"
+
+  make -s -j"$JOBS" -C topology postgis_topology.o
+  make -s -j1 -C topology topology.sql topology_upgrade.sql uninstall_topology.sql
+  "$wasm_ld" \
+    --shared \
+    --shared-memory \
+    --experimental-pic \
+    --unresolved-symbols=import-dynamic \
+    --extra-features=atomics,bulk-memory,mutable-globals \
+    --export=__wasm_call_ctors \
+    --export-if-defined=__wasm_apply_data_relocs \
+    --export-all \
+    --no-gc-sections \
+    "$POSTGIS_BUILD_DIR/topology/postgis_topology.o" \
+    "$POSTGIS_BUILD_DIR/libpgcommon/libpgcommon.a" \
+    "$POSTGIS_BUILD_DIR/liblwgeom/.libs/liblwgeom.a" \
+    --Bdynamic \
+    -L"$POSTGIS_BUILD_DIR/postgis" \
+    -loliphaunt_postgis_deps \
+    -rpath '$ORIGIN' \
+    -o "$POSTGIS_BUILD_DIR/topology/postgis_topology-3.so"
+
+  # Keep extension SQL generation serial: the PostGIS SQL Makefiles share
+  # generated .tmp files and do not declare complete parallel dependency edges.
   oliphaunt_wasix_verify_side_module_sjlj "$postgis_deps_module"
   oliphaunt_wasix_verify_side_module_sjlj "$POSTGIS_BUILD_DIR/postgis/postgis-3.so"
-  # PostGIS core upgrade SQL still includes raster-unpackage stubs even when
-  # raster support is disabled. Generate those SQL inputs as a best-effort
-  # prerequisite before packaging PostGIS. Keep this serial: the
-  # PostGIS SQL Makefiles use generated .tmp files and have incomplete
-  # parallel dependency edges.
-  make -s -j1 raster-sql || true
-  make -s -j1 -C raster/rt_pg sql_objs
+  oliphaunt_wasix_verify_side_module_sjlj "$POSTGIS_BUILD_DIR/raster/rt_pg/postgis_raster-3.so"
+  oliphaunt_wasix_verify_side_module_sjlj "$POSTGIS_BUILD_DIR/topology/postgis_topology-3.so"
   make -s -j1 -C extensions postgis_extension_helper.sql
-  make -s -j1 -C extensions/postgis postgis.control all
+  make -s -j1 -C extensions all
   mkdir -p "$POSTGIS_BUILD_DIR/share"
   rm -rf "$POSTGIS_BUILD_DIR/share/proj"
   cp -R "$PROJ_PREFIX/share/proj" "$POSTGIS_BUILD_DIR/share/proj"
-} >&2
+  rm -rf "$POSTGIS_BUILD_DIR/share/gdal"
+  cp -R "$GDAL_PREFIX/share/gdal" "$POSTGIS_BUILD_DIR/share/gdal"
+  rm -rf "$POSTGIS_BUILD_DIR/share/extension-members"
+  mkdir -p "$POSTGIS_BUILD_DIR/share/extension-members"
+  for member in postgis_raster postgis_topology postgis_tiger_geocoder; do
+    cp "$POSTGIS_BUILD_DIR/extensions/$member/$member.control" \
+      "$POSTGIS_BUILD_DIR/share/extension-members/"
+    cp "$POSTGIS_BUILD_DIR/extensions/$member/sql/"*.sql \
+      "$POSTGIS_BUILD_DIR/share/extension-members/"
+  done
+) >&2
 
 oliphaunt_wasix_extension_build_outputs_exist "$REPO_ROOT" postgis "$POSTGIS_BUILD_DIR"
 printf '%s\n' "$stamp" > "$POSTGIS_BUILD_DIR/.oliphaunt-wasix-postgis-build"
