@@ -53,6 +53,24 @@ const documents = composeExtensionReleaseDocuments({
   releaseMetadata: spec.releaseMetadata,
 });
 const frozen = json(spec.outputs.frozen);
+const manifest = json(spec.outputs['control_manifest-json']);
+const schemaVersion = spec.members.length > 1 ? 2 : 1;
+const hasOwnership = spec.owner !== spec.product || family !== null;
+for (const [document, schema] of [
+  [frozen, `oliphaunt-extension-ci-artifacts-v${schemaVersion}`],
+  [manifest, `oliphaunt-extension-release-manifest-v${schemaVersion}`],
+] as const) {
+  assert.equal(document.schema, schema);
+  assert.equal(document.product, spec.product);
+  assert.equal(document.version, spec.version);
+  assert.deepEqual(document.compatibility, spec.releaseMetadata.compatibility);
+  assert.equal(Object.hasOwn(document, 'releaseProduct'), hasOwnership);
+  assert.equal(Object.hasOwn(document, 'family'), hasOwnership);
+  if (hasOwnership) {
+    assert.equal(document.releaseProduct, spec.owner);
+    assert.equal(document.family, family ?? 'combined');
+  }
+}
 const withoutAssetLocators = (value: any) => {
   const result = structuredClone(value);
   for (const asset of [
@@ -74,7 +92,6 @@ if (frozen.extensions)
   for (const member of frozen.extensions)
     for (const asset of member.assets)
       assert.equal(asset.path, `product/member-assets/${member.sqlName}/${asset.name}`);
-const manifest = json(spec.outputs['control_manifest-json']);
 assert.deepEqual(manifest, JSON.parse(JSON.stringify(documents.releaseData)));
 assert.equal(
   readFileSync(spec.outputs['control_manifest-properties'], 'utf8'),

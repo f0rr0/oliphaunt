@@ -798,6 +798,18 @@ export function composeExtensionReleaseDocuments({
   releaseMetadata,
   sourceIdentity = releaseMetadata.sourceIdentity,
 }) {
+  // A singleton frozen document also carries its leaf envelope, unlike a bundle member.
+  members = members.map(
+    ({
+      schema: _schema,
+      product: _product,
+      releaseProduct: _releaseProduct,
+      family: _family,
+      version: _version,
+      compatibility: _compatibility,
+      ...member
+    }) => member,
+  );
   const ownership =
     releaseProduct === product && family === null
       ? {}

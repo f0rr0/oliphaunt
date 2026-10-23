@@ -59,6 +59,81 @@ test('explicit external native controls retain their family while combined defau
     assert.equal(document.releaseProduct, product);
     assert.equal(document.family, 'native');
   }
+  const nativeBefore = structuredClone(native.manifest);
+  const combined = composeExtensionReleaseDocuments({ ...inputs, members: [native.manifest] });
+  for (const document of [combined.manifest, combined.releaseData]) {
+    assert.equal(Object.hasOwn(document, 'releaseProduct'), false);
+    assert.equal(Object.hasOwn(document, 'family'), false);
+  }
+  assert.deepEqual(native.manifest, nativeBefore);
+
+  const member = {
+    ...inputs.members[0],
+    assets: [
+      {
+        name: 'fixture.tar.gz',
+        family: 'native',
+        target: 'linux-x64-gnu',
+        kind: 'runtime',
+        identity: null,
+        sha256: 'a'.repeat(64),
+        bytes: 1,
+      },
+    ],
+  };
+  const envelope = ['schema', 'product', 'releaseProduct', 'family', 'version', 'compatibility'];
+  for (const count of [1, 2]) {
+    const members = Array.from({ length: count }, (_, index) => ({
+      ...member,
+      sqlName: `member${index}`,
+      schema: 'foreign-schema',
+      product: 'foreign-product',
+      releaseProduct: 'foreign-owner',
+      family: 'foreign-family',
+      version: '0.0.0',
+      compatibility: { foreign: true },
+    }));
+    const before = structuredClone(members);
+    for (const ownership of [
+      { releaseProduct: product, family: null },
+      { releaseProduct: product, family: 'native' },
+      { releaseProduct: 'liboliphaunt-wasix', family: 'wasix' },
+    ]) {
+      const documents = composeExtensionReleaseDocuments({
+        ...inputs,
+        ...ownership,
+        members,
+        directAssets: member.assets,
+      });
+      for (const [kind, document] of Object.entries(documents)) {
+        assert.equal(
+          document.schema,
+          `oliphaunt-extension-${kind === 'manifest' ? 'ci-artifacts' : 'release-manifest'}-v${count}`,
+        );
+        assert.equal(document.product, product);
+        assert.equal(document.version, inputs.version);
+        assert.deepEqual(document.compatibility, inputs.releaseMetadata.compatibility);
+        if (count === 2)
+          assert.deepEqual(
+            document[kind === 'manifest' ? 'carrierAssets' : 'assets'],
+            member.assets,
+          );
+        if (ownership.family === null) {
+          assert.equal(Object.hasOwn(document, 'releaseProduct'), false);
+          assert.equal(Object.hasOwn(document, 'family'), false);
+        } else {
+          assert.equal(document.releaseProduct, ownership.releaseProduct);
+          assert.equal(document.family, ownership.family);
+        }
+        for (const [index, row] of (count === 1 ? [document] : document.extensions).entries()) {
+          for (const [key, value] of Object.entries({ ...member, sqlName: `member${index}` }))
+            assert.deepEqual(row[key], value);
+          if (count === 2) for (const key of envelope) assert.equal(Object.hasOwn(row, key), false);
+        }
+      }
+    }
+    assert.deepEqual(members, before);
+  }
   const root = mkdtempSync(path.join(tmpdir(), 'external-native-controls-test-'));
   try {
     const productRoot = path.join(root, product);

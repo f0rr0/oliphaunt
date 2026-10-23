@@ -13,8 +13,10 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { mergeNativeFinalMembers } from '../../build_defs/extensions/owner_carriers.mts';
 import { sourceManifest } from '../../build_defs/languages/source-package.mts';
 import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
+import { composeExtensionReleaseDocuments } from '../../src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts';
 import { renderCargoToml } from '../packaging/cargo-manifest.mts';
 import { tarArchive } from '../packaging/testdata/tar-fixture.mts';
 import {
@@ -37,7 +39,12 @@ import {
 } from './native-release-preparation.mts';
 import { loadPublicationCatalog } from './publication-catalog.mts';
 import { discoverProductArtifacts, expectedProductArtifactRows } from './publication-lock.mts';
-import { allArtifactTargets, contribCarrierDescriptor } from './release-artifact-targets.mts';
+import {
+  allArtifactTargets,
+  contribCarrierDescriptor,
+  extensionMetadata,
+  extensionSourceIdentity,
+} from './release-artifact-targets.mts';
 import { loadProducts, ROOT } from './release-graph.mts';
 import { fixtureCompletedNativeInventory } from './testdata/prepare-release-candidate-fixtures.mts';
 import {
@@ -1151,6 +1158,62 @@ test('family staging preserves complete runtime, contrib and external publicatio
   };
   const retainFamily = (product, options = {}) => {
     const family = extensionGithubReleaseFixture(fixtureRoot, product, options);
+    if (product.kind === 'exact-extension-artifact') {
+      const frozen = JSON.parse(readFileSync(family.manifestPath, 'utf8'));
+      const releaseMetadata = {
+        ...extensionMetadata(product.id, 'family publication reader test'),
+        sourceIdentity: extensionSourceIdentity(product.id, 'family publication reader test'),
+      };
+      const inputs = {
+        product: product.id,
+        releaseProduct: product.id,
+        version: product.version,
+        releaseMetadata,
+      };
+      const targets = [...new Set(frozen.assets.map((asset) => asset.target))];
+      const cohorts = targets.map((target) => {
+        const assets = frozen.assets.filter((asset) => asset.target === target);
+        const leaf = composeExtensionReleaseDocuments({
+          ...inputs,
+          family: target === 'ios-xcframework' ? 'native' : null,
+          members: [
+            {
+              ...frozen,
+              assets,
+              iosNativeDependencies:
+                target === 'ios-xcframework' ? frozen.iosNativeDependencies : [],
+              iosRegistration: target === 'ios-xcframework' ? frozen.iosRegistration : null,
+              wasixInstall: assets[0].family === 'wasix' ? frozen.wasixInstall : null,
+            },
+          ],
+          directAssets: assets,
+        });
+        return { members: [leaf.manifest] };
+      });
+      const members = mergeNativeFinalMembers(
+        {
+          ...inputs,
+          members: [{ sqlName: frozen.sqlName }],
+        } as Parameters<typeof mergeNativeFinalMembers>[0],
+        cohorts,
+      );
+      const documents = composeExtensionReleaseDocuments({
+        ...inputs,
+        family: null,
+        members,
+        directAssets: family.assets,
+      });
+      expect(documents.manifest).toEqual(frozen);
+      expect(JSON.parse(JSON.stringify(documents.releaseData))).toEqual(
+        JSON.parse(
+          readFileSync(
+            path.join(family.directory, `${product.id}-${product.version}-manifest.json`),
+            'utf8',
+          ),
+        ),
+      );
+      writeFileSync(family.manifestPath, JSON.stringify(documents.manifest));
+    }
     retainPublic(product.id, family.directory);
     const row = expected.find((row) => row.product === product.id)!;
     const input = retain(
