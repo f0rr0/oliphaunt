@@ -124,14 +124,28 @@ cc_shipping_supplier = rule(
 )
 
 def merge_shipping_suppliers(inputs):
-    """Shared member inputs may reference the same actual supplier repeatedly."""
+    """Union exact File declarations for each supplier binding; unknown stays unknown."""
+    files = depset(transitive = [info.files for info in inputs])
+    if any([info.suppliers == None for info in inputs]):
+        return ShippingSupplierInfo(suppliers = None, files = files)
     suppliers = {}
     for info in inputs:
-        if info.suppliers == None:
-            return ShippingSupplierInfo(suppliers = None, files = depset(transitive = [item.files for item in inputs]))
         for supplier in info.suppliers:
-            suppliers[json.encode(supplier)] = supplier
-    return ShippingSupplierInfo(suppliers = suppliers.values(), files = depset(transitive = [info.files for info in inputs]))
+            key = json.encode({name: supplier[name] for name in ["product", "binding", "configuration", "origin"]})
+            if key not in suppliers:
+                suppliers[key] = dict(supplier, files = {})
+            merged = suppliers[key]
+            if merged["version"] != supplier["version"]:
+                fail("conflicting versions for native supplier binding: " + key)
+            for declaration in supplier["files"]:
+                path = declaration["path"]
+                if path in merged["files"] and merged["files"][path] != declaration:
+                    fail("conflicting native supplier File declaration: " + path)
+                merged["files"][path] = declaration
+    return ShippingSupplierInfo(
+        suppliers = [dict(suppliers[key], files = [suppliers[key]["files"][path] for path in sorted(suppliers[key]["files"])]) for key in sorted(suppliers)],
+        files = files,
+    )
 
 def _suppliers_impl(ctx):
     info = merge_shipping_suppliers([target[ShippingSupplierInfo] for target in ctx.attr.inputs])

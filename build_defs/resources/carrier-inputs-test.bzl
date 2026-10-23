@@ -3,21 +3,27 @@
 load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
 load("@oliphaunt_metadata//:metadata.bzl", "NATIVE_RUNTIME_ARTIFACTS")
 load("//build_defs/release:shipping.bzl", "ShippingInfo")
-load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "merge_shipping_suppliers")
+load(":mobile.bzl", "native_seed_domain")
 load(":resources.bzl", "NATIVE_SEED_ABI_CONFIGURATION", "NativeSeedInfo", "WasixSeedInfo", "native_seed_abi_shipping", "native_seed_abi_suppliers", "seed_envelopes")
 
 def _fixture_impl(ctx):
     file = ctx.actions.declare_file(ctx.label.name + ".fixture")
     ctx.actions.write(file, "analysis fixture; not a PostgreSQL seed")
-    fields = {"frozen": file, "runtime": file, "profile": ctx.attr.profile, "target": ctx.attr.target, "construction": file}
+    runtime = file
+    if ctx.attr.separate_runtime:
+        runtime = ctx.actions.declare_file(ctx.label.name + ".runtime")
+        ctx.actions.write(runtime, "analysis fixture; original runtime, not its ABI receipt")
+    fields = {"frozen": file, "runtime": runtime, "profile": ctx.attr.profile, "target": ctx.attr.target, "construction": file}
     seed = NativeSeedInfo(abi = file, **fields) if ctx.attr.family == "native" else WasixSeedInfo(**fields)
-    suppliers = native_seed_abi_suppliers([file]) if ctx.attr.family == "native" else ShippingSupplierInfo(suppliers = [], files = depset())
-    return [DefaultInfo(files = depset([file])), seed, suppliers, OutputGroupInfo(supplier_inputs = suppliers.files)]
+    suppliers = native_seed_abi_suppliers([runtime]) if ctx.attr.family == "native" else ShippingSupplierInfo(suppliers = [], files = depset())
+    return [DefaultInfo(files = depset([file])), seed, suppliers, OutputGroupInfo(supplier_inputs = suppliers.files, observation_inputs = depset([file]))]
 
 _fixture = rule(implementation = _fixture_impl, attrs = {
     "family": attr.string(default = "native"),
     "target": attr.string(default = "portable"),
     "profile": attr.string(default = "icu"),
+    "separate_runtime": attr.bool(),
 })
 
 def _inputs_test_impl(ctx):
@@ -36,13 +42,24 @@ def _inputs_test_impl(ctx):
         asserts.equals(env, "abi-contract", producer.role)
         asserts.equals(env, NATIVE_SEED_ABI_CONFIGURATION, producer.configuration)
         asserts.false(env, producer.configuration in [row["target"] for row in NATIVE_RUNTIME_ARTIFACTS], "seed provenance must not become a public runtime delivery slot")
-        asserts.equals(env, [ctx.attr.seed[NativeSeedInfo].runtime], producer.files.to_list())
+        expected_paths = sorted([source[NativeSeedInfo].runtime.path for source in ctx.attr.supplier_sources])
+        asserts.equals(env, expected_paths, sorted([file.path for file in producer.files.to_list()]))
+        asserts.equals(env, expected_paths, sorted([file.path for file in suppliers.files.to_list()]))
+        asserts.equals(env, 1, len(suppliers.suppliers), "the real domain must merge creator and target ABI Files into one supplier binding")
+        source_suppliers = [source[ShippingSupplierInfo] for source in ctx.attr.supplier_sources]
+        for sources in [source_suppliers[::-1], source_suppliers + source_suppliers]:
+            asserts.equals(env, suppliers.suppliers, merge_shipping_suppliers(sources).suppliers)
+        unknown = ShippingSupplierInfo(suppliers = None, files = depset([ctx.file.icu]))
+        for sources in [[unknown] + source_suppliers, source_suppliers + [unknown]]:
+            merged = merge_shipping_suppliers(sources)
+            asserts.equals(env, None, merged.suppliers)
+            asserts.equals(env, sorted(expected_paths + [ctx.file.icu.path]), sorted([file.path for file in merged.files.to_list()]))
         asserts.equals(env, [], producer.supplier_inputs)
         for supplier in suppliers.suppliers:
             asserts.equals(env, "abi-contract", supplier["binding"], "creator provenance must not imply compiled version coupling")
             asserts.equals(env, producer.product, supplier["product"])
             asserts.equals(env, producer.configuration, supplier["configuration"])
-            asserts.equals(env, [{"path": file.path} for file in producer.files.to_list()], supplier["files"])
+            asserts.equals(env, [{"path": path} for path in expected_paths], supplier["files"])
     return analysistest.end(env)
 
 _inputs_test = analysistest.make(_inputs_test_impl, attrs = {
@@ -51,6 +68,7 @@ _inputs_test = analysistest.make(_inputs_test_impl, attrs = {
     "seed": attr.label(providers = [ShippingSupplierInfo], mandatory = True),
     "shipping": attr.label(providers = [ShippingInfo], mandatory = True),
     "producer": attr.label(providers = [ShippingInfo]),
+    "supplier_sources": attr.label_list(providers = [NativeSeedInfo]),
 })
 
 def seed_carrier_inputs_tests():
@@ -64,10 +82,24 @@ def seed_carrier_inputs_tests():
     ]:
         for profile in profiles:
             prefix = "seed_carrier_" + target.replace("-", "_") + "_" + profile
-            _fixture(name = prefix + "_seed", family = family, target = target, profile = profile, **fixture_kwargs)
+            if target in ["ios-datum64", "android-datum64"]:
+                host = "macos-arm64" if target == "ios-datum64" else "linux-x64-gnu"
+                _fixture(name = prefix + "_creator", target = host, profile = profile, **fixture_kwargs)
+                receipts = []
+                for abi in ["device", "simulator"] if target == "ios-datum64" else ["arm64", "x64"]:
+                    name = prefix + "_" + abi + "_abi"
+                    _fixture(name = name, profile = profile, separate_runtime = target == "android-datum64", **fixture_kwargs)
+                    receipts.append(":" + name)
+                supplier_sources = [":" + prefix + "_creator"] + receipts
+                native_seed_domain(name = prefix + "_seed", producer = supplier_sources[0], receipts = receipts, suppliers = receipts,
+                                   domain = target, icu = ":seed_carrier_icu_fixture" if profile == "icu" else None, **fixture_kwargs)
+            else:
+                _fixture(name = prefix + "_seed", family = family, target = target, profile = profile, **fixture_kwargs)
+                supplier_sources = [":" + prefix + "_seed"] if family == "native" else []
             seed_envelopes(prefix, family, target, profile, ":" + prefix + "_seed", icu = ":seed_carrier_icu_fixture" if profile == "icu" else None,
                            consumer_runtime = ":seed_carrier_icu_fixture" if family == "wasix" else None, suppliers = ":" + prefix + "_seed", **fixture_kwargs)
             producer = native_seed_abi_shipping(prefix, ":" + prefix + "_seed", **fixture_kwargs) if family == "native" else None
             _inputs_test(name = prefix + "_inputs_test", target_under_test = ":" + prefix + "_carriers",
                          icu = ":seed_carrier_icu_fixture", needs_icu = profile == "icu" and target in ["ios-datum64", "android-datum64"],
-                         seed = ":" + prefix + "_seed", shipping = ":" + prefix + "_github_archive", producer = producer, size = "small")
+                         seed = ":" + prefix + "_seed", shipping = ":" + prefix + "_github_archive", producer = producer,
+                         supplier_sources = supplier_sources, size = "small")
